@@ -12,6 +12,7 @@ from 1h so both sources cover the same grid.
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
@@ -82,7 +83,7 @@ def to_bars(frame: pd.DataFrame) -> list[Bar]:
             )
         except (KeyError, TypeError, ValueError):
             continue
-        if bar.open == bar.open:  # drop NaN rows
+        if not math.isnan(bar.open):  # drop NaN rows
             bars.append(bar)
     return bars
 
@@ -92,7 +93,7 @@ def _optional_float(value: Any) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return None if number != number else number
+    return None if math.isnan(number) else number
 
 
 def resample(frame: pd.DataFrame, rule: str) -> pd.DataFrame:

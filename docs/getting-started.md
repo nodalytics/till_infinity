@@ -63,7 +63,7 @@ uv run till-infinity prices info
 └─────────────┴──────┴──────────────┴────┴──────┴──────────────┴──────────────┘
 ```
 
-Everything lands in `data/prices/prices.db` unless you pass `--db`.
+Everything lands in `.data/prices/prices.db` unless you pass `--db`.
 
 ## 4. Keep it current
 
@@ -93,7 +93,7 @@ uv run till-infinity prices quotes --log-file logs/quotes.log &
 It is a plain SQLite file, so anything can read it:
 
 ```bash
-sqlite3 data/prices/prices.db \
+sqlite3 .data/prices/prices.db \
   "SELECT venue, ts, close FROM bars
    WHERE feed='gold' AND interval='1h' ORDER BY ts DESC LIMIT 5;"
 ```
@@ -101,7 +101,7 @@ sqlite3 data/prices/prices.db \
 Which broker is quoting gold tightest right now:
 
 ```bash
-sqlite3 data/prices/prices.db \
+sqlite3 .data/prices/prices.db \
   "SELECT venue, ROUND(AVG(spread_bps),2) AS bps FROM quotes
    WHERE feed='gold' GROUP BY venue ORDER BY bps;"
 ```
@@ -112,12 +112,14 @@ From Python, without the CLI:
 import asyncio
 from till_infinity.prices import Settings, SeriesKey, SqliteStore, Symbol
 
+
 async def main():
     settings = Settings.from_env()
     async with SqliteStore(settings.database) as store:
         key = SeriesKey("tradingview", "gold", Symbol("OANDA", "XAUUSD"), "1h")
-        for bar in (await store.bars(key, limit=5)):
+        for bar in await store.bars(key, limit=5):
             print(bar.time, bar.close)
+
 
 asyncio.run(main())
 ```
@@ -127,11 +129,13 @@ Pandas, via the same file:
 ```python
 import pandas as pd, sqlite3
 
-with sqlite3.connect("data/prices/prices.db") as conn:
+with sqlite3.connect(".data/prices/prices.db") as conn:
     df = pd.read_sql(
         "SELECT ts, open, high, low, close, volume FROM bars"
         " WHERE feed=? AND venue=? AND interval=? ORDER BY ts",
-        conn, params=("gold", "OANDA", "1h"), index_col="ts",
+        conn,
+        params=("gold", "OANDA", "1h"),
+        index_col="ts",
     )
 df.index = pd.to_datetime(df.index, unit="s", utc=True)
 ```

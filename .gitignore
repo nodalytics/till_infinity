@@ -39,7 +39,7 @@ service-account*.json
 
 # Data & artifacts
 *.log
-data/
+.data/
 logs/
 
 # Price stores

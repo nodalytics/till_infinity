@@ -13,6 +13,7 @@ dependencies = [
     "httpx-ws>=0.9.0",
     "orjson>=3.11.9",
     "rich>=15.0.0",
+    "river[pandas]>=0.25.0",
     "tenacity>=9.1.4",
     "yfinance>=1.5.2",
 ]
@@ -32,6 +33,7 @@ module-root = ""
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.2",
     "pytest>=8.3.0",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=6.0.0",
@@ -43,7 +45,42 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+# Ruff covers pylint (the PL rules) alongside everything else, so there is one
+# linter, one config and one pass rather than two overlapping tools.
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # import sorting
+    "N",       # naming
+    "UP",      # pyupgrade
+    "ASYNC",   # async correctness
+    "B",       # bugbear
+    "A",       # shadowed builtins
+    "C4",      # comprehensions
+    "PIE",
+    "PT",      # pytest style
+    "RET",
+    "SIM",
+    "ARG",     # unused arguments
+    "PL",      # pylint
+    "PERF",
+    "RUF",
+]
+ignore = [
+    "PLC0415",  # lazy imports are deliberate — yfinance drags in pandas
+    "PLR0913",  # a click command takes one parameter per CLI option
+    "PLR0917",
+    "PLR2004",  # comparing against a literal is usually clearer than naming it
+    "ASYNC109", # we wrap httpx-ws, whose read API takes a timeout argument
+]
+
+[tool.ruff.lint.pylint]
+# The socket read loops branch on the protocol, not on tangled logic.
+max-branches = 15
+max-returns = 8
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG"]  # fakes accept arguments they have no reason to use
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

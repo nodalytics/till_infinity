@@ -64,7 +64,8 @@ _RESERVED = frozenset(vars(logging.LogRecord("", 0, "", 0, "", None, None))) | {
     "getMessage",
 }
 
-_configured = False
+#: Module state, held in a dict so setup/reset need no `global`.
+_state = {"configured": False}
 
 
 def log_level(value: str | int | None, default: str = DEFAULT_LEVEL) -> int:
@@ -89,9 +90,13 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "msg": record.getMessage(),
         }
-        for key, value in record.__dict__.items():
-            if key not in _RESERVED and not key.startswith("_"):
-                payload[key] = value
+        payload.update(
+            {
+                key: value
+                for key, value in record.__dict__.items()
+                if key not in _RESERVED and not key.startswith("_")
+            }
+        )
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
         return orjson.dumps(payload, default=str).decode()
@@ -111,9 +116,8 @@ def setup_logging(
     `verbose` forces DEBUG, `quiet` forces WARNING; an explicit `level` beats
     both. Without any of them the ``TILL_LOG_LEVEL`` env var decides.
     """
-    global _configured
     root = logging.getLogger()
-    if _configured and not force:
+    if _state["configured"] and not force:
         return root
 
     if level is not None:
@@ -158,7 +162,7 @@ def setup_logging(
 
     root.setLevel(resolved)
     quiet_noisy_loggers(logging.DEBUG if resolved <= logging.DEBUG else logging.WARNING)
-    _configured = True
+    _state["configured"] = True
     return root
 
 
@@ -175,9 +179,8 @@ def get_logger(name: str | None = None) -> logging.Logger:
 
 def reset_logging() -> None:
     """Forget the configuration (tests, or re-configuring mid-process)."""
-    global _configured
     root = logging.getLogger()
     for handler in list(root.handlers):
         root.removeHandler(handler)
         handler.close()
-    _configured = False
+    _state["configured"] = False

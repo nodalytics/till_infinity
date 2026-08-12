@@ -262,7 +262,8 @@ def test_the_scanner_transport_stores_under_the_venue_source(tmp_path):
     scanner = TradingViewScannerQuotes(Settings(data_dir=tmp_path))
     assert scanner.name == "scanner"
     keys = scanner.keys([FEEDS["gold"]])
-    assert keys and all(key.source == "tradingview" for key in keys)
+    assert keys
+    assert all(key.source == "tradingview" for key in keys)
     assert not scanner.streaming
 
 

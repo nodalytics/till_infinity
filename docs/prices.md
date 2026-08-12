@@ -103,9 +103,9 @@ which is why the still-forming bar is dropped unless you pass
 `--include-partial`.
 
 ```
-data/prices/prices.db                                   # sqlite: bars + quotes
-data/prices/tradingview/gold_OANDA_XAUUSD_1h.jsonl      # jsonl candles
-data/prices/quotes/tradingview/gold_OANDA_XAUUSD.jsonl  # jsonl quotes
+.data/prices/prices.db                                   # sqlite: bars + quotes
+.data/prices/tradingview/gold_OANDA_XAUUSD_1h.jsonl      # jsonl candles
+.data/prices/quotes/tradingview/gold_OANDA_XAUUSD.jsonl  # jsonl quotes
 ```
 
 Quotes are only written when the top of book actually moves; `--all-ticks`
@@ -154,10 +154,13 @@ Streaming quotes straight into your own handler, no store involved:
 ```python
 from till_infinity.prices import Settings, resolve_symbols, stream
 
+
 async def on_quote(key, quote):
     from till_infinity.prices import WriteResult
+
     print(key.symbol.full, quote.bid, quote.ask, quote.spread_bps)
     return WriteResult()
+
 
 await stream(settings=Settings(), feeds=resolve_symbols(("gold",)), sink=on_quote)
 ```

@@ -99,17 +99,17 @@ async def sweep(
         for source in build_sources(sources, settings):
             try:
                 live.append(await stack.enter_async_context(source))
-            except Exception as exc:  # noqa: BLE001 - one bad source must not sink the run
+            except Exception as exc:
                 log.error("source %s unavailable: %s", source.name, exc)
 
         tasks: list[asyncio.Task[JobResult]] = []
         async with asyncio.TaskGroup() as group:
             for source in live:
                 limit = asyncio.Semaphore(max(1, source.concurrency))
-                for job in source.jobs(feeds, intervals):
-                    tasks.append(
-                        group.create_task(_run_job(source, job, bars, sink, limit, settings))
-                    )
+                tasks.extend(
+                    group.create_task(_run_job(source, job, bars, sink, limit, settings))
+                    for job in source.jobs(feeds, intervals)
+                )
 
     for task in tasks:
         outcome = task.result()
@@ -144,7 +144,7 @@ async def _run_job(
                     return JobResult(job, await source.fetch(job, bars, sink))  # type: ignore[arg-type]
         except RetryError as exc:  # pragma: no cover - reraise=True makes this rare
             return JobResult(job, WriteResult(), str(exc))
-        except Exception as exc:  # noqa: BLE001 - a dead symbol must not kill the sweep
+        except Exception as exc:
             log.warning("%s failed: %s", job, exc)
             return JobResult(job, WriteResult(), str(exc))
     raise AssertionError("unreachable")

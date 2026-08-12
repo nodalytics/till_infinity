@@ -1,4 +1,6 @@
-# Till Infinity
+<p align="center">
+  <img src="docs/logo.svg" alt="Till Infinity" width="480">
+</p>
 
 ## Setup
 
@@ -35,9 +37,24 @@ Defaults to EURUSD, GBPUSD, gold and BTC; `-s` takes anything else
 ## Development
 
 ```bash
-uv run pytest          # tests
-uv run ruff check .    # lint
-uv run ruff format .   # format
-uv add <package>       # add a dependency
-uv add --dev <package> # add a dev dependency
+uv run pytest              # tests
+uv run ruff check .        # lint
+uv run ruff format .       # format
+uv add <package>           # add a dependency
+uv add --dev <package>     # add a dev dependency
 ```
+
+Linting is [ruff](https://docs.astral.sh/ruff/) only. It covers pylint's checks
+(the `PL` rules) alongside pyflakes, isort, bugbear, async correctness and the
+rest, so there is one tool and one config in `pyproject.toml` rather than two
+that overlap and disagree.
+
+Run the hooks on every commit:
+
+```bash
+uv run pre-commit install       # one time
+uv run pre-commit run --all-files
+```
+
+The same checks — lint, format, tests — run in CI on every push and pull
+request (`.github/workflows/ci.yml`). No test touches the network.

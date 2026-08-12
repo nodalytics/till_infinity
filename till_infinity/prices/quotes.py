@@ -21,6 +21,7 @@ nothing for that exchange on any transport.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, suppress
@@ -86,7 +87,7 @@ def _number(value: Any) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return None if number != number else number
+    return None if math.isnan(number) else number
 
 
 def parse_quote(payload: Any, *, now: float) -> Quote | None:
@@ -136,7 +137,6 @@ class QuoteSource:
 
     async def prepare(self, keys: Sequence[QuoteKey], sink: QuoteSink | None = None) -> None:
         """Called once with every symbol before the first read."""
-        return None
 
     async def quote(self, symbol: Symbol) -> Quote | None:
         raise NotImplementedError
@@ -382,11 +382,11 @@ class TradingViewScannerQuotes(QuoteSource):
             log.debug("scanner request failed for %s: %s", symbol.full, exc)
             return None
 
-        if response.status_code == 404:
+        if response.status_code == httpx.codes.NOT_FOUND:
             # The scanner does not carry every venue TradingView charts.
             self._note_unavailable(symbol, "symbol_not_exists — try --source tradingview")
             return None
-        if response.status_code != 200:
+        if response.status_code != httpx.codes.OK:
             log.debug("scanner returned %s for %s", response.status_code, symbol.full)
             return None
         try:
@@ -516,7 +516,7 @@ async def stream(
         for source in build_quote_sources(sources, settings):
             try:
                 live.append(await stack.enter_async_context(source))
-            except Exception as exc:  # noqa: BLE001 - one bad provider is not fatal
+            except Exception as exc:
                 log.error("quote source %s unavailable: %s", source.name, exc)
 
         for source in live:

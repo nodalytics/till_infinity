@@ -191,7 +191,7 @@ def _env_float(default: float, name: str) -> float:
     return float(raw) if raw else default
 
 
-DEFAULT_DATA_DIR = "data/prices"
+DEFAULT_DATA_DIR = ".data/prices"
 DEFAULT_TV_WS_URL = "wss://data.tradingview.com/socket.io/websocket"
 DEFAULT_TV_ORIGIN = "https://data.tradingview.com"
 DEFAULT_TV_TOKEN = "unauthorized_user_token"

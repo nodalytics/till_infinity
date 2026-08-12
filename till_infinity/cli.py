@@ -45,12 +45,26 @@ def prices() -> None:
 
 
 def _common(quotes: bool = False):
-    """Options shared by backfill, collect and quotes."""
+    """Options shared by backfill, bars and quotes.
+
+    `quotes` drops the two bar-only options: a quote has no interval, and there
+    is no such thing as a partial one.
+    """
     source_help = (
         f"Transport; repeatable. Default: {', '.join(px.DEFAULT_QUOTE_SOURCES)}."
         if quotes
         else "Provider; repeatable. Default: all."
     )
+    bar_options = [
+        click.option(
+            "--interval", "-i", multiple=True, help="Interval name; repeatable. Default: all."
+        ),
+        click.option(
+            "--include-partial",
+            is_flag=True,
+            help="Also store the still-forming bar (SQLite corrects it later; JSONL cannot).",
+        ),
+    ]
     options = [
         click.option(
             "--symbol",
@@ -63,9 +77,7 @@ def _common(quotes: bool = False):
                 "Default: eurusd, gbpusd, gold, btc."
             ),
         ),
-        click.option(
-            "--interval", "-i", multiple=True, help="Interval name; repeatable. Default: all."
-        ),
+        *([] if quotes else bar_options[:1]),
         click.option(
             "--source",
             "-S",
@@ -82,11 +94,7 @@ def _common(quotes: bool = False):
         ),
         click.option("--db", type=click.Path(path_type=Path), help="SQLite file."),
         click.option("--dir", "data_dir", type=click.Path(path_type=Path), help="JSONL root."),
-        click.option(
-            "--include-partial",
-            is_flag=True,
-            help="Also store the still-forming bar (SQLite corrects it later; JSONL cannot).",
-        ),
+        *([] if quotes else bar_options[1:]),
         click.option("-v", "--verbose", is_flag=True, help="Debug logging."),
         click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only."),
         click.option(
@@ -276,12 +284,10 @@ def info(store_kind, db, data_dir):
 @click.option("--all-ticks", is_flag=True, help="Store every update, not just price changes.")
 def quotes(
     symbol,
-    interval,
     source,
     store_kind,
     db,
     data_dir,
-    include_partial,
     verbose,
     quiet,
     log_file,
@@ -291,7 +297,7 @@ def quotes(
 ):
     """Stream live bid/ask across brokers — cross-broker spread and lead-lag."""
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
-    settings = _settings(db, data_dir, include_partial)
+    settings = _settings(db, data_dir, include_partial=False)
     if poll is not None:
         settings.quote_poll_seconds = poll
     feeds = px.resolve_symbols(symbol or None)

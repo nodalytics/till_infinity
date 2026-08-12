@@ -335,7 +335,14 @@ class JsonlStore(Store):
             handle.write(orjson.dumps(row) + b"\n")
         return WriteResult(inserted=1)
 
-    async def write(self, key: SeriesKey, bars: Sequence[Bar], interval: Interval) -> WriteResult:
+    async def write(
+        self,
+        key: SeriesKey,
+        bars: Sequence[Bar],
+        interval: Interval,  # noqa: ARG002 - required by the Store interface
+    ) -> WriteResult:
+        # JSONL never rewrites a bar, so it has no use for the interval: whether
+        # a bar is closed only matters to a store that could correct it later.
         if not bars:
             return WriteResult()
         async with self._lock:
