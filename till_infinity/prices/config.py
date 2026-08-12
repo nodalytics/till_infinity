@@ -1,7 +1,6 @@
 """Feed definitions and runtime settings.
 
-Env vars are read with a ``PRICES_`` prefix, falling back to the older ``TVC_``
-names so existing shell profiles keep working.
+Env vars are read with a ``PRICES_`` prefix.
 """
 
 from __future__ import annotations
@@ -178,21 +177,17 @@ def _merge(left: Feed, right: Feed) -> Feed:
     return Feed(name=left.name, symbols=symbols)
 
 
-def _env(*names: str) -> str | None:
-    for name in names:
-        value = os.environ.get(name)
-        if value:
-            return value
-    return None
+def _env(name: str) -> str | None:
+    return os.environ.get(name) or None
 
 
-def _env_int(default: int, *names: str) -> int:
-    raw = _env(*names)
+def _env_int(default: int, name: str) -> int:
+    raw = _env(name)
     return int(raw) if raw else default
 
 
-def _env_float(default: float, *names: str) -> float:
-    raw = _env(*names)
+def _env_float(default: float, name: str) -> float:
+    raw = _env(name)
     return float(raw) if raw else default
 
 
@@ -256,20 +251,20 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        data_dir = Path(_env("PRICES_DIR", "TVC_DIR") or DEFAULT_DATA_DIR)
+        data_dir = Path(_env("PRICES_DIR") or DEFAULT_DATA_DIR)
         db = _env("PRICES_DB")
         return cls(
             data_dir=data_dir,
             database=Path(db) if db else None,
-            backfill_bars=_env_int(5_000, "PRICES_BACKFILL_BARS", "TVC_BACKFILL_BARS"),
-            live_bars=_env_int(300, "PRICES_LIVE_BARS", "TVC_LIVE_BARS"),
-            cycle_seconds=_env_float(60.0, "PRICES_CYCLE_S", "TVC_CYCLE_S"),
+            backfill_bars=_env_int(5_000, "PRICES_BACKFILL_BARS"),
+            live_bars=_env_int(300, "PRICES_LIVE_BARS"),
+            cycle_seconds=_env_float(60.0, "PRICES_CYCLE_S"),
             tv_concurrency=_env_int(6, "PRICES_TV_CONCURRENCY"),
             tv_ws_url=_env("PRICES_TV_WS_URL") or DEFAULT_TV_WS_URL,
             tv_origin=_env("PRICES_TV_ORIGIN") or DEFAULT_TV_ORIGIN,
             tv_auth_token=_env("PRICES_TV_TOKEN") or DEFAULT_TV_TOKEN,
             yahoo_concurrency=_env_int(4, "PRICES_YAHOO_CONCURRENCY"),
-            quote_poll_seconds=_env_float(15.0, "PRICES_QUOTE_POLL", "TV_POLL"),
+            quote_poll_seconds=_env_float(15.0, "PRICES_QUOTE_POLL"),
             quote_concurrency=_env_int(8, "PRICES_QUOTE_CONCURRENCY"),
             retries=_env_int(3, "PRICES_RETRIES"),
             user_agent=_env("PRICES_USER_AGENT") or DEFAULT_USER_AGENT,

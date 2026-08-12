@@ -180,4 +180,4 @@ await stream(settings=Settings(), feeds=resolve_symbols(("gold",)), sink=on_quot
 `PRICES_DIR`, `PRICES_DB`, `PRICES_BACKFILL_BARS`, `PRICES_LIVE_BARS`,
 `PRICES_CYCLE_S`, `PRICES_QUOTE_POLL`, `PRICES_QUOTE_CONCURRENCY`,
 `PRICES_TV_CONCURRENCY`, `PRICES_YAHOO_CONCURRENCY`, `PRICES_RETRIES`,
-`PRICES_USER_AGENT`. The older `TVC_*` names still work.
+`PRICES_USER_AGENT`.

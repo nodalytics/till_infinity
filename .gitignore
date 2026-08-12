@@ -50,3 +50,6 @@ logs/
 *.sqlite3
 *.jsonl
 *.parquet
+
+# Claude Code
+.claude/
