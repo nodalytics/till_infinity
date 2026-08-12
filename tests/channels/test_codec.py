@@ -3,6 +3,7 @@
 Redis streams only accept string fields; the codec must round-trip
 arbitrary JSON payloads and preserve primitive types for flat dicts.
 """
+
 from till_infinity.channels.redis import RedisChannel
 
 

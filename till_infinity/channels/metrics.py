@@ -12,11 +12,12 @@ Usage:
     # after running...
     print(metrics.counters)   # {'sends:market:raw': 1024, 'errors:...': 3}
 """
+
 from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -31,11 +32,20 @@ class MetricsHook(Protocol):
 class NoOpMetrics:
     """Zero-cost default when metrics aren't configured."""
 
-    def send(self, channel: str, duration_s: float) -> None: pass
-    def recv(self, channel: str, duration_s: float) -> None: pass
-    def error(self, channel: str, operation: str, error: str) -> None: pass
-    def stash(self, channel: str) -> None: pass
-    def drain(self, channel: str, count: int) -> None: pass
+    def send(self, channel: str, duration_s: float) -> None:
+        pass
+
+    def recv(self, channel: str, duration_s: float) -> None:
+        pass
+
+    def error(self, channel: str, operation: str, error: str) -> None:
+        pass
+
+    def stash(self, channel: str) -> None:
+        pass
+
+    def drain(self, channel: str, count: int) -> None:
+        pass
 
 
 class InMemoryMetrics:
@@ -97,7 +107,7 @@ class timed:
         self._channel = channel
         self._t0 = 0.0
 
-    def __enter__(self) -> "timed":
+    def __enter__(self) -> timed:
         self._t0 = time.perf_counter()
         return self
 

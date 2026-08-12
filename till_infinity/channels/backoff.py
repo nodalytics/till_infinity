@@ -16,6 +16,7 @@ Usage:
         except Exception:
             await asyncio.sleep(policy.delay(attempt))
 """
+
 from __future__ import annotations
 
 import random
@@ -43,7 +44,7 @@ class ExponentialBackoff:
         initial: float = 0.5,
         multiplier: float = 2.0,
         max_delay: float = 30.0,
-        jitter: float = 0.0,   # fraction, 0.1 → ±10%
+        jitter: float = 0.0,  # fraction, 0.1 → ±10%
     ) -> None:
         self.initial = initial
         self.multiplier = multiplier
@@ -59,5 +60,8 @@ class ExponentialBackoff:
 
 
 DEFAULT_BACKOFF: BackoffPolicy = ExponentialBackoff(
-    initial=0.5, multiplier=2.0, max_delay=30.0, jitter=0.1,
+    initial=0.5,
+    multiplier=2.0,
+    max_delay=30.0,
+    jitter=0.1,
 )

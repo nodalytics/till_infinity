@@ -1,4 +1,5 @@
 """Tests for the in-memory channel backend."""
+
 import asyncio
 
 import pytest
@@ -23,6 +24,7 @@ def test_bounded_send_recv_roundtrip():
         await tx.send({"n": 2})
         assert await rx.recv() == {"n": 1}
         assert await rx.recv() == {"n": 2}
+
     run(scenario())
 
 
@@ -34,6 +36,7 @@ def test_unbounded_accepts_many():
         assert len(tx) == 100
         for i in range(100):
             assert await rx.recv() == i
+
     run(scenario())
 
 
@@ -49,6 +52,7 @@ def test_try_send_raises_when_full():
         tx.try_send("b")
         with pytest.raises(ChannelFull):
             tx.try_send("c")
+
     run(scenario())
 
 
@@ -57,6 +61,7 @@ def test_try_recv_raises_when_empty():
         _tx, rx = bounded(4)
         with pytest.raises(ChannelEmpty):
             rx.try_recv()
+
     run(scenario())
 
 
@@ -68,6 +73,7 @@ def test_close_prevents_further_sends():
             await tx.send("x")
         with pytest.raises(ChannelClosed):
             tx.try_send("x")
+
     run(scenario())
 
 
@@ -81,6 +87,7 @@ def test_close_drains_remaining_then_raises():
         assert await rx.recv() == "b"
         with pytest.raises(ChannelClosed):
             await rx.recv()
+
     run(scenario())
 
 
@@ -98,6 +105,7 @@ def test_mpmc_multiple_producers():
         while len(received) < 40:
             received.append(await rx.recv())
         assert len(received) == 40
+
     run(scenario())
 
 
@@ -109,6 +117,7 @@ def test_mpmc_multiple_consumers():
         await tx.close()
 
         results = []
+
         async def consumer():
             while True:
                 try:
@@ -119,6 +128,7 @@ def test_mpmc_multiple_consumers():
         await asyncio.gather(consumer(), consumer(), consumer())
         # All 20 messages consumed exactly once across consumers
         assert sorted(results) == list(range(20))
+
     run(scenario())
 
 
@@ -133,6 +143,7 @@ def test_receiver_async_iteration():
         async for msg in rx:
             collected.append(msg)
         assert collected == [0, 1, 2, 3, 4]
+
     run(scenario())
 
 
@@ -146,4 +157,5 @@ def test_len_tracks_queue_depth():
         assert len(rx) == 2
         await rx.recv()
         assert len(rx) == 1
+
     run(scenario())

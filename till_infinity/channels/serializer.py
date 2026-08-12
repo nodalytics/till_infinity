@@ -5,6 +5,7 @@ different Serializer when you need msgpack, protobuf, or a strict
 schema-enforced format. Every channel accepts an optional serializer
 argument; if None, JSONSerializer is used.
 """
+
 from __future__ import annotations
 
 import json

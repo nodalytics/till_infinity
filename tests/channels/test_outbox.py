@@ -1,12 +1,13 @@
 """Tests for the SQLite outbox that sits under Redis/Mongo senders."""
+
 import asyncio
+import contextlib
 import os
 import tempfile
 
 import pytest
 
-from till_infinity.channels import Outbox, DurableSender
-from till_infinity.channels.errors import ChannelClosed
+from till_infinity.channels import DurableSender, Outbox
 
 
 @pytest.fixture
@@ -14,10 +15,8 @@ def outbox_path():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path = f.name
     yield path
-    try:
+    with contextlib.suppress(FileNotFoundError):
         os.unlink(path)
-    except FileNotFoundError:
-        pass
 
 
 def test_outbox_stash_and_peek(outbox_path):

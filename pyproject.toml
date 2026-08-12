@@ -90,6 +90,17 @@ max-returns = 8
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG"]  # fakes accept arguments they have no reason to use
+# channels/ is a general-purpose transport library with its own naming. These
+# exemptions are for deliberate API choices, not defects: renaming ChannelFull
+# to ChannelFullError would break every caller to satisfy a convention, and the
+# `timed` decorator is lowercase because decorators read as verbs.
+"till_infinity/channels/*" = [
+    "N818",    # ChannelClosed / ChannelFull / ChannelEmpty are the public names
+    "N801",    # `timed` is a decorator, not a class you instantiate
+    "ARG002",  # backoff strategies share a signature; some ignore `attempt`
+    "PLW0603", # a module-level metrics default is set once, on purpose
+]
+"tests/channels/*" = ["PT011", "RUF012", "PERF401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

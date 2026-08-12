@@ -32,7 +32,7 @@ down*, and the reasoning is the only part that cannot be recomputed.
 `context` holds the state the decision was made from, **copied in**:
 
 ```python
-context={"venue": "OANDA", "spread_bps": 30.0, "avg_bps": 0.3}
+context = {"venue": "OANDA", "spread_bps": 30.0, "avg_bps": 0.3}
 ```
 
 Not a pointer to the quotes table. This is the difference between a dataset and
@@ -87,7 +87,8 @@ async with Journal() as journal:
 
     # ... four minutes later ...
     await outcome(
-        journal, ref,
+        journal,
+        ref,
         "Spread normalised within 4 minutes",
         rationale="Back to 0.31bps, so it was a momentary feed gap, not a dislocation",
         context={"spread_bps": 0.31},

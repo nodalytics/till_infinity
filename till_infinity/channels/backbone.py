@@ -4,10 +4,12 @@ All channel backends (in-memory, Redis, etc.) implement this protocol.
 Users generally create channels via the top-level helpers (bounded,
 unbounded, redis_channel) and interact with Sender/Receiver halves.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, Generic, TypeVar
+from collections.abc import AsyncIterator
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -40,7 +42,7 @@ class Backbone(ABC, Generic[T]):
 class Sender(Generic[T]):
     """Send half of a channel."""
 
-    def __init__(self, channel: "Channel[T]") -> None:
+    def __init__(self, channel: Channel[T]) -> None:
         self._channel = channel
 
     async def send(self, message: T) -> None:
@@ -63,7 +65,7 @@ class Sender(Generic[T]):
 class Receiver(Generic[T]):
     """Receive half of a channel."""
 
-    def __init__(self, channel: "Channel[T]") -> None:
+    def __init__(self, channel: Channel[T]) -> None:
         self._channel = channel
 
     async def recv(self) -> T:
@@ -84,6 +86,7 @@ class Receiver(Generic[T]):
 
     async def _iter(self) -> AsyncIterator[T]:
         from .errors import ChannelClosed
+
         while True:
             try:
                 yield await self.recv()

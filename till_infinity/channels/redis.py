@@ -15,15 +15,17 @@ siblings see it too) and raises ChannelClosed.
 
 Falls back to in-memory if redis is unavailable or REDIS_URL is unset.
 """
+
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import uuid
 from typing import Any, Generic, TypeVar
 
-from .backbone import Channel, Receiver, Sender
+from .backbone import Channel
 from .errors import ChannelClosed, ChannelEmpty, ChannelFull
 
 T = TypeVar("T")
@@ -56,26 +58,31 @@ class RedisChannel(Channel[T], Generic[T]):
         if self._sync_client is not None:
             return self._sync_client
         import redis
+
         self._sync_client = redis.from_url(self._url, decode_responses=True)
-        try:
+        # Raises if the group already exists, which is the normal case.
+        with contextlib.suppress(Exception):
             self._sync_client.xgroup_create(
-                self.key, self.group, id="0", mkstream=True,
+                self.key,
+                self.group,
+                id="0",
+                mkstream=True,
             )
-        except Exception:
-            pass  # group already exists
         return self._sync_client
 
     async def _ensure_async(self):
         if self._client is not None:
             return self._client
         import redis.asyncio as aioredis
+
         self._client = aioredis.from_url(self._url, decode_responses=True)
-        try:
+        with contextlib.suppress(Exception):
             await self._client.xgroup_create(
-                self.key, self.group, id="0", mkstream=True,
+                self.key,
+                self.group,
+                id="0",
+                mkstream=True,
             )
-        except Exception:
-            pass
         return self._client
 
     # ──── send ────
@@ -85,8 +92,10 @@ class RedisChannel(Channel[T], Generic[T]):
         client = await self._ensure_async()
         payload = self._encode(message)
         await client.xadd(
-            self.key, payload,
-            maxlen=self.maxlen, approximate=True,
+            self.key,
+            payload,
+            maxlen=self.maxlen,
+            approximate=True,
         )
 
     def try_send(self, message: T) -> None:
@@ -95,8 +104,10 @@ class RedisChannel(Channel[T], Generic[T]):
         client = self._ensure_sync()
         try:
             client.xadd(
-                self.key, self._encode(message),
-                maxlen=self.maxlen, approximate=True,
+                self.key,
+                self._encode(message),
+                maxlen=self.maxlen,
+                approximate=True,
             )
         except Exception as e:
             # Redis streams have no "full" concept but surface as ChannelFull
@@ -107,9 +118,11 @@ class RedisChannel(Channel[T], Generic[T]):
         client = await self._ensure_async()
         while True:
             entries = await client.xreadgroup(
-                self.group, self.consumer,
+                self.group,
+                self.consumer,
                 streams={self.key: ">"},
-                count=1, block=2000,
+                count=1,
+                block=2000,
             )
             if not entries:
                 if self._closed:
@@ -124,7 +137,8 @@ class RedisChannel(Channel[T], Generic[T]):
                         await client.xadd(
                             self.key,
                             {"__ctrl__": _CLOSED_SENTINEL},
-                            maxlen=self.maxlen, approximate=True,
+                            maxlen=self.maxlen,
+                            approximate=True,
                         )
                         raise ChannelClosed("channel closed")
                     return self._decode(fields)
@@ -132,9 +146,11 @@ class RedisChannel(Channel[T], Generic[T]):
     def try_recv(self) -> T:
         client = self._ensure_sync()
         entries = client.xreadgroup(
-            self.group, self.consumer,
+            self.group,
+            self.consumer,
             streams={self.key: ">"},
-            count=1, block=0,
+            count=1,
+            block=0,
         )
         if not entries:
             if self._closed:
@@ -148,7 +164,8 @@ class RedisChannel(Channel[T], Generic[T]):
                     client.xadd(
                         self.key,
                         {"__ctrl__": _CLOSED_SENTINEL},
-                        maxlen=self.maxlen, approximate=True,
+                        maxlen=self.maxlen,
+                        approximate=True,
                     )
                     raise ChannelClosed("channel closed")
                 return self._decode(fields)
@@ -161,8 +178,10 @@ class RedisChannel(Channel[T], Generic[T]):
         self._closed = True
         client = await self._ensure_async()
         await client.xadd(
-            self.key, {"__ctrl__": _CLOSED_SENTINEL},
-            maxlen=self.maxlen, approximate=True,
+            self.key,
+            {"__ctrl__": _CLOSED_SENTINEL},
+            maxlen=self.maxlen,
+            approximate=True,
         )
 
     @property
@@ -196,14 +215,14 @@ class RedisChannel(Channel[T], Generic[T]):
         if "__payload__" in fields:
             raw = fields["__payload__"]
             if raw.startswith("__json__"):
-                return json.loads(raw[len("__json__"):])
+                return json.loads(raw[len("__json__") :])
             return raw
         out: dict[str, Any] = {}
         for k, v in fields.items():
             if k == "__ctrl__":
                 continue
             if isinstance(v, str) and v.startswith("__json__"):
-                out[k] = json.loads(v[len("__json__"):])
+                out[k] = json.loads(v[len("__json__") :])
             else:
                 out[k] = v
         return out
@@ -233,5 +252,6 @@ def redis_channel(
     tx, rx = channel.split()
     if persistent_path:
         from .persistent import wrap_with_outbox
+
         tx = wrap_with_outbox(tx, persistent_path, channel_name=key)
     return tx, rx

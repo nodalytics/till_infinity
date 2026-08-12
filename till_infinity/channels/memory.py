@@ -4,6 +4,7 @@ Thin asyncio.Queue wrapper with close semantics matching Rust
 async-channel: once closed, sends raise ChannelClosed and pending
 receives drain the buffer then raise.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -44,7 +45,7 @@ class MemoryChannel(Channel[T], Generic[T]):
             # Wait for something to arrive — or the channel to close.
             try:
                 return await asyncio.wait_for(self._queue.get(), timeout=0.1)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     def try_recv(self) -> T:

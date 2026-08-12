@@ -56,8 +56,8 @@ workers and wrong for two different services watching the same topic. So each
 group gets its own channel, and `publish()` writes to every one:
 
 ```python
-agents = bus.subscribe(bus.QUOTES, group="agents")   # sees every quote
-audit  = bus.subscribe(bus.QUOTES, group="audit")    # also sees every quote
+agents = bus.subscribe(bus.QUOTES, group="agents")  # sees every quote
+audit = bus.subscribe(bus.QUOTES, group="audit")  # also sees every quote
 ```
 
 Two readers in the *same* group still share the work, which is how you run the

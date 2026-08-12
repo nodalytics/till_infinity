@@ -27,6 +27,7 @@ Usage:
 The persistent_path parameter on redis_channel()
 wraps those channels with this outbox.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -36,7 +37,10 @@ import os
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .dlq import DeadLetterQueue
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +106,8 @@ class Outbox:
         conn = self._ensure()
         placeholders = ",".join("?" * len(ids))
         cur = conn.execute(
-            f"DELETE FROM outbox WHERE id IN ({placeholders})", ids,
+            f"DELETE FROM outbox WHERE id IN ({placeholders})",
+            ids,
         )
         return cur.rowcount
 
@@ -120,7 +125,8 @@ class Outbox:
     def pending_count(self) -> int:
         conn = self._ensure()
         cur = conn.execute(
-            "SELECT COUNT(*) FROM outbox WHERE channel = ?", (self.channel,),
+            "SELECT COUNT(*) FROM outbox WHERE channel = ?",
+            (self.channel,),
         )
         (n,) = cur.fetchone()
         return int(n)
@@ -138,17 +144,18 @@ class DurableSender:
 
     def __init__(
         self,
-        primary,                        # type: ignore[no-untyped-def]
+        primary,  # type: ignore[no-untyped-def]
         outbox: Outbox,
         replay_interval: float = 5.0,
-        backoff=None,                   # BackoffPolicy or None → default
-        dlq=None,                       # DeadLetterQueue or None
+        backoff=None,  # BackoffPolicy or None → default
+        dlq=None,  # DeadLetterQueue or None
         max_attempts: int = 10,
-        metrics=None,                   # MetricsHook or None → default
+        metrics=None,  # MetricsHook or None → default
         channel_name: str | None = None,
     ) -> None:
         from .backoff import DEFAULT_BACKOFF
         from .metrics import get_default_metrics
+
         self._primary = primary
         self._outbox = outbox
         self._replay_interval = replay_interval
@@ -161,6 +168,7 @@ class DurableSender:
 
     async def send(self, message: Any) -> None:
         import time
+
         t0 = time.perf_counter()
         try:
             await self._primary.send(message)
@@ -170,7 +178,10 @@ class DurableSender:
             self._metrics.stash(self._channel_name)
             logger.warning("[channels] primary send failed, stashing to outbox: %s", e)
             await asyncio.get_event_loop().run_in_executor(
-                None, self._outbox.stash, message, str(e),
+                None,
+                self._outbox.stash,
+                message,
+                str(e),
             )
             self._ensure_replay()
 
@@ -220,26 +231,38 @@ class DurableSender:
                 except Exception as e:
                     # Check attempt count; if over max, park in DLQ
                     attempts_now = await loop.run_in_executor(
-                        None, self._attempt_count, row_id,
+                        None,
+                        self._attempt_count,
+                        row_id,
                     )
                     if attempts_now >= self._max_attempts:
                         if self._dlq is not None:
                             await loop.run_in_executor(
-                                None, self._dlq.park, payload, str(e),
+                                None,
+                                self._dlq.park,
+                                payload,
+                                str(e),
                             )
                             drained.append(row_id)  # remove from outbox
                             logger.warning(
                                 "[channels] parked to DLQ after %d attempts: %s",
-                                attempts_now, e,
+                                attempts_now,
+                                e,
                             )
                         else:
                             # No DLQ configured — leave in outbox, skip
                             await loop.run_in_executor(
-                                None, self._outbox.mark_attempt, [row_id], str(e),
+                                None,
+                                self._outbox.mark_attempt,
+                                [row_id],
+                                str(e),
                             )
                     else:
                         await loop.run_in_executor(
-                            None, self._outbox.mark_attempt, [row_id], str(e),
+                            None,
+                            self._outbox.mark_attempt,
+                            [row_id],
+                            str(e),
                         )
                     break  # stop on first failure — primary is flaky
             if drained:
@@ -252,7 +275,8 @@ class DurableSender:
     def _attempt_count(self, row_id: int) -> int:
         conn = self._outbox._ensure()
         cur = conn.execute(
-            "SELECT attempts FROM outbox WHERE id = ?", (row_id,),
+            "SELECT attempts FROM outbox WHERE id = ?",
+            (row_id,),
         )
         row = cur.fetchone()
         return int(row[0]) if row else 0
@@ -262,7 +286,7 @@ def wrap_with_outbox(
     sender,
     path: str | Path,
     channel_name: str,
-    dlq: bool | "DeadLetterQueue" = False,
+    dlq: bool | DeadLetterQueue = False,
     max_attempts: int = 10,
     backoff=None,
     metrics=None,
@@ -283,11 +307,13 @@ def wrap_with_outbox(
     dlq_obj = None
     if dlq is True:
         from .dlq import DeadLetterQueue
+
         dlq_obj = DeadLetterQueue(path, channel_name)
     elif dlq is not False and dlq is not None:
         dlq_obj = dlq
     return DurableSender(
-        sender, outbox,
+        sender,
+        outbox,
         backoff=backoff,
         dlq=dlq_obj,
         max_attempts=max_attempts,

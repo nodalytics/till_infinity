@@ -21,32 +21,55 @@ Redis backbone (durable, cross-process):
 
 The API surface stays the same regardless of backend.
 """
+
 from .backbone import Backbone, Channel, Receiver, Sender
-from .backoff import BackoffPolicy, ExponentialBackoff, FixedBackoff, DEFAULT_BACKOFF
+from .backoff import DEFAULT_BACKOFF, BackoffPolicy, ExponentialBackoff, FixedBackoff
 from .dlq import DeadLetterQueue
 from .errors import ChannelClosed, ChannelEmpty, ChannelFull
 from .memory import bounded, unbounded
 from .metrics import (
-    InMemoryMetrics, MetricsHook, NoOpMetrics,
-    get_default_metrics, set_default_metrics,
+    InMemoryMetrics,
+    MetricsHook,
+    NoOpMetrics,
+    get_default_metrics,
+    set_default_metrics,
 )
-from .persistent import Outbox, DurableSender, wrap_with_outbox
+from .persistent import DurableSender, Outbox, wrap_with_outbox
 from .redis import redis_channel
-from .serializer import JSONSerializer, Serializer, StringSerializer, DEFAULT_SERIALIZER
+from .serializer import DEFAULT_SERIALIZER, JSONSerializer, Serializer, StringSerializer
 
 __all__ = [
+    "DEFAULT_BACKOFF",
+    "DEFAULT_SERIALIZER",
     # core
-    "Backbone", "Channel", "Receiver", "Sender",
-    "ChannelClosed", "ChannelEmpty", "ChannelFull",
-    # factories
-    "bounded", "unbounded", "redis_channel",
-    # durability
-    "Outbox", "DurableSender", "wrap_with_outbox", "DeadLetterQueue",
+    "Backbone",
     # policies
-    "BackoffPolicy", "ExponentialBackoff", "FixedBackoff", "DEFAULT_BACKOFF",
-    # serialization
-    "Serializer", "JSONSerializer", "StringSerializer", "DEFAULT_SERIALIZER",
+    "BackoffPolicy",
+    "Channel",
+    "ChannelClosed",
+    "ChannelEmpty",
+    "ChannelFull",
+    "DeadLetterQueue",
+    "DurableSender",
+    "ExponentialBackoff",
+    "FixedBackoff",
+    "InMemoryMetrics",
+    "JSONSerializer",
     # metrics
-    "MetricsHook", "NoOpMetrics", "InMemoryMetrics",
-    "get_default_metrics", "set_default_metrics",
+    "MetricsHook",
+    "NoOpMetrics",
+    # durability
+    "Outbox",
+    "Receiver",
+    "Sender",
+    # serialization
+    "Serializer",
+    "StringSerializer",
+    # factories
+    "bounded",
+    "get_default_metrics",
+    "redis_channel",
+    "set_default_metrics",
+    "unbounded",
+    "wrap_with_outbox",
 ]

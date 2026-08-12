@@ -6,6 +6,7 @@ Operators can inspect the DLQ and decide whether to re-queue or drop.
 
 Reuses the SQLite outbox schema (with channel suffixed "-dlq").
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,8 @@ class DeadLetterQueue:
         """Move a poison message to the DLQ."""
         logger.warning(
             "[channels] message parked in DLQ channel=%s error=%s",
-            self.channel_name, last_error,
+            self.channel_name,
+            last_error,
         )
         return self._store.stash(message, last_error)
 

@@ -1,6 +1,8 @@
 """Tests for the pluggable channel abstractions:
-   serializer, backoff, metrics, DLQ."""
+serializer, backoff, metrics, DLQ."""
+
 import asyncio
+import contextlib
 import os
 import tempfile
 
@@ -8,12 +10,10 @@ import pytest
 
 from till_infinity.channels import (
     DeadLetterQueue,
-    DurableSender,
     ExponentialBackoff,
     FixedBackoff,
     InMemoryMetrics,
     JSONSerializer,
-    Outbox,
     StringSerializer,
     get_default_metrics,
     set_default_metrics,
@@ -26,10 +26,8 @@ def tmp_db():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path = f.name
     yield path
-    try:
+    with contextlib.suppress(FileNotFoundError):
         os.unlink(path)
-    except FileNotFoundError:
-        pass
 
 
 # ════════ Serializer ════════
@@ -155,8 +153,11 @@ def test_durable_sender_parks_to_dlq_after_max_attempts(tmp_db):
         metrics = InMemoryMetrics()
         dlq = DeadLetterQueue(tmp_db, "flaky")
         tx = wrap_with_outbox(
-            _FlakyPrimary(), tmp_db, "flaky",
-            dlq=dlq, max_attempts=2,
+            _FlakyPrimary(),
+            tmp_db,
+            "flaky",
+            dlq=dlq,
+            max_attempts=2,
             backoff=FixedBackoff(0.01),
             metrics=metrics,
         )
@@ -179,15 +180,25 @@ def test_durable_sender_records_success_metrics(tmp_db):
     class _OkPrimary:
         is_closed = False
         sent = []
-        async def send(self, m): self.sent.append(m)
-        def try_send(self, m): self.sent.append(m)
-        async def close(self): pass
-        def __len__(self): return 0
+
+        async def send(self, m):
+            self.sent.append(m)
+
+        def try_send(self, m):
+            self.sent.append(m)
+
+        async def close(self):
+            pass
+
+        def __len__(self):
+            return 0
 
     async def scenario():
         metrics = InMemoryMetrics()
         tx = wrap_with_outbox(
-            _OkPrimary(), tmp_db, "ok-ch",
+            _OkPrimary(),
+            tmp_db,
+            "ok-ch",
             metrics=metrics,
         )
         await tx.send({"a": 1})
