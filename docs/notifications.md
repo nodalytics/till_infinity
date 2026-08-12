@@ -95,6 +95,21 @@ instrument names are full of both. Everything interpolated is escaped.
 `{"ok": false}`; that is treated as the failure it is. A Discord webhook
 answers 204 with an empty body, so there is nothing to parse on success.
 
+## Listening on the bus
+
+Alerts do not have to come from your own code. `notify listen` subscribes to
+the `alerts` topic and delivers whatever an agent publishes there:
+
+```bash
+uv run till-infinity notify listen --redis redis://localhost:6379
+```
+
+Nothing off the bus is trusted: a payload with no title is dropped rather than
+sent as an empty alert, `fields` is flattened to strings, and an out-of-range
+level is clamped instead of raising. A failed delivery is logged and the loop
+continues — one unreachable webhook must not stop the next alert from reaching
+the chat that is up. See [bus.md](bus.md).
+
 ## Secrets
 
 Credentials are read from the environment and never stored, logged or printed.

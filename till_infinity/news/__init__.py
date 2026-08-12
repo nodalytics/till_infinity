@@ -40,7 +40,7 @@ from .models import (
     parse_time,
 )
 from .rss import RssSource
-from .service import SOURCES, Summary, build_sources, collect, poll_once
+from .service import SOURCES, Announcer, Summary, build_sources, collect, poll_once
 from .source import PermanentError, Source, SourceError, TransientError
 from .store import JsonlStore, MultiStore, SqliteStore, Store, open_store
 
@@ -55,6 +55,7 @@ __all__ = [
     "MEDIUM",
     "RSS_FEEDS",
     "SOURCES",
+    "Announcer",
     "Article",
     "Batch",
     "Event",

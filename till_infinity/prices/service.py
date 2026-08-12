@@ -21,6 +21,7 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
+from ..bus import BARS, Bus
 from ..logging import get_logger
 from .config import DEFAULT_SOURCES, Feed, Settings
 from .models import INTERVALS, Bar, Interval, SeriesKey, WriteResult
@@ -77,6 +78,23 @@ class Summary:
 ProgressHook = Callable[[JobResult], None]
 
 
+def announce_bars(key: SeriesKey, candles: Sequence[Bar], result: WriteResult) -> dict[str, object]:
+    """What goes on the wire when a series moves — a notice, not the candles."""
+    latest = max(candles, key=lambda bar: bar.time)
+    return {
+        "source": key.source,
+        "feed": key.feed,
+        "venue": key.symbol.venue,
+        "ticker": key.symbol.ticker,
+        "interval": key.interval,
+        "inserted": result.inserted,
+        "updated": result.updated,
+        "time": latest.time,
+        "close": latest.close,
+        "closed": latest.is_closed(INTERVALS[key.interval], time.time()),
+    }
+
+
 async def sweep(
     *,
     settings: Settings,
@@ -86,13 +104,19 @@ async def sweep(
     bars: int,
     sources: Sequence[str] | None = None,
     on_done: ProgressHook | None = None,
+    bus: Bus | None = None,
 ) -> Summary:
     """Run one pass over every (source, feed, symbol) and persist what comes back."""
     started = time.monotonic()
     summary = Summary()
 
     async def sink(key: SeriesKey, candles: Sequence[Bar]) -> WriteResult:
-        return await store.write(key, candles, INTERVALS[key.interval])
+        # Store first, announce after: the store is the source of truth, so a
+        # subscriber that hears about a bar can always go and read it.
+        result = await store.write(key, candles, INTERVALS[key.interval])
+        if bus is not None and result.touched and candles:
+            await bus.publish(BARS, announce_bars(key, candles, result), source="prices")
+        return result
 
     async with AsyncExitStack() as stack:
         live: list[Source] = []
@@ -160,6 +184,7 @@ async def backfill(
     sources: Sequence[str] | None = None,
     bars: int | None = None,
     on_done: ProgressHook | None = None,
+    bus: Bus | None = None,
 ) -> Summary:
     """One deep pull per series, as far back as each provider will go."""
     return await sweep(
@@ -170,6 +195,7 @@ async def backfill(
         bars=bars or settings.backfill_bars,
         sources=sources,
         on_done=on_done,
+        bus=bus,
     )
 
 
@@ -184,6 +210,7 @@ async def collect(
     cycles: int | None = None,
     on_cycle: Callable[[int, Summary], None] | None = None,
     on_done: ProgressHook | None = None,
+    bus: Bus | None = None,
 ) -> None:
     """Poll for new bars forever (or `cycles` times), pacing each pass."""
     window = bars or settings.live_bars
@@ -198,6 +225,7 @@ async def collect(
             bars=window,
             sources=sources,
             on_done=on_done,
+            bus=bus,
         )
         cycle += 1
         if on_cycle is not None:

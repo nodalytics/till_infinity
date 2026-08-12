@@ -73,6 +73,19 @@ uv run till-infinity notify send "..." -l warning
 
 Full guide: **[docs/notifications.md](docs/notifications.md)**.
 
+## Talking to each other
+
+Collectors publish what they store, so another process can react to it. Bars,
+quotes, headlines, calendar prints and alerts each get a topic.
+
+```bash
+uv run till-infinity prices collect --publish redis://localhost:6379
+uv run till-infinity notify listen  --redis   redis://localhost:6379
+```
+
+The store stays the source of truth — the bus carries notice that something
+happened, not the data itself. Full guide: **[docs/bus.md](docs/bus.md)**.
+
 ## Where it lands
 
 SQLite by default, under `.data/` and gitignored. JSONL alongside it with
@@ -96,6 +109,7 @@ lands.
 | [docs/prices.md](docs/prices.md) | candles, quotes, sources, storage, schema, library use |
 | [docs/news.md](docs/news.md) | headlines, economic calendar, event storage |
 | [docs/notifications.md](docs/notifications.md) | Telegram and Discord alerts, channels, chat discovery |
+| [docs/bus.md](docs/bus.md) | topics, publishing, fan-out, Redis |
 | [docs/logging.md](docs/logging.md) | log levels, JSON log files, adding a logger |
 
 ## Development

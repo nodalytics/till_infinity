@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,8 +16,10 @@ from rich.table import Table
 from . import news as nw
 from . import notifications as nt
 from . import prices as px
-from .logging import console, setup_logging
+from .bus import Bus
+from .logging import console, get_logger, setup_logging
 
+log = get_logger(__name__)
 T = TypeVar("T")
 
 
@@ -115,6 +118,34 @@ def _common(quotes: bool = False):
     return decorate
 
 
+publish_option = click.option(
+    "--publish",
+    metavar="REDIS_URL",
+    is_flag=False,
+    flag_value="",
+    default=None,
+    help=(
+        "Publish to the message bus so other services can consume. "
+        "Give a redis:// URL to reach another process; bare --publish uses "
+        "TILL_REDIS_URL, or an in-process bus when that is unset."
+    ),
+)
+
+
+def _bus(publish: str | None) -> Bus | None:
+    """Build the bus a collector announces on, or None if nobody asked for one.
+
+    An in-process bus with no subscriber is a no-op, which is why this returns
+    None unless `--publish` was given: the seam should cost nothing by default.
+    """
+    if publish is None:
+        return None
+    url = publish or os.environ.get("TILL_REDIS_URL") or None
+    bus = Bus(redis_url=url)
+    log.info("publishing to the %s bus", bus.backend)
+    return bus
+
+
 def _settings(db: Path | None, data_dir: Path | None, include_partial: bool) -> px.Settings:
     settings = px.Settings.from_env()
     if data_dir is not None:
@@ -180,6 +211,7 @@ def backfill(
 
 @prices.command("bars")
 @_common()
+@publish_option
 @click.option("--bars", type=int, help="Bars to request per pass. Default: PRICES_LIVE_BARS.")
 @click.option("--cycle", type=float, help="Seconds between passes. Default: PRICES_CYCLE_S.")
 @click.option("--once", is_flag=True, help="Run a single pass and exit.")
@@ -197,6 +229,7 @@ def bars_command(
     bars,
     cycle,
     once,
+    publish,
 ):
     """Keep candles current — sweep for newly closed bars, forever."""
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
@@ -211,18 +244,24 @@ def bars_command(
 
     async def go() -> None:
         store = px.open_store(store_kind, database=settings.database, data_dir=settings.data_dir)
-        async with store:
-            await px.collect(
-                settings=settings,
-                store=store,
-                feeds=feeds,
-                intervals=intervals,
-                sources=source or None,
-                bars=bars,
-                cycles=1 if once else None,
-                on_cycle=cycle_done,
-                on_done=_report if verbose else None,
-            )
+        bus = _bus(publish)
+        try:
+            async with store:
+                await px.collect(
+                    settings=settings,
+                    store=store,
+                    feeds=feeds,
+                    intervals=intervals,
+                    sources=source or None,
+                    bars=bars,
+                    cycles=1 if once else None,
+                    on_cycle=cycle_done,
+                    on_done=_report if verbose else None,
+                    bus=bus,
+                )
+        finally:
+            if bus is not None:
+                await bus.close()
 
     try:
         run(go())
@@ -274,6 +313,7 @@ def info(store_kind, db, data_dir):
 
 @prices.command()
 @_common(quotes=True)
+@publish_option
 @click.option(
     "--poll",
     type=float,
@@ -297,6 +337,7 @@ def quotes(
     poll,
     once,
     all_ticks,
+    publish,
 ):
     """Stream live bid/ask across brokers — cross-broker spread and lead-lag."""
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
@@ -318,15 +359,21 @@ def quotes(
             data_dir=settings.data_dir,
             dedupe_quotes=not all_ticks,
         )
-        async with store:
-            await px.stream(
-                settings=settings,
-                feeds=feeds,
-                sink=store.write_quote,
-                sources=source or None,
-                ticks=1 if once else None,
-                on_tick=show,
-            )
+        bus = _bus(publish)
+        try:
+            async with store:
+                await px.stream(
+                    settings=settings,
+                    feeds=feeds,
+                    sink=store.write_quote,
+                    sources=source or None,
+                    ticks=1 if once else None,
+                    on_tick=show,
+                    bus=bus,
+                )
+        finally:
+            if bus is not None:
+                await bus.close()
 
     try:
         run(go())
@@ -393,6 +440,7 @@ class _Ticker:
 
 @prices.command("collect")
 @_common()
+@publish_option
 @click.option("--bars", type=int, help="Bars to request per sweep. Default: PRICES_LIVE_BARS.")
 @click.option("--cycle", type=float, help="Seconds between bar sweeps. Default: PRICES_CYCLE_S.")
 @click.option(
@@ -416,6 +464,7 @@ def collect_command(
     poll,
     all_ticks,
     once,
+    publish,
 ):
     """Run bars and quotes together — the everyday collector.
 
@@ -447,28 +496,35 @@ def collect_command(
             data_dir=settings.data_dir,
             dedupe_quotes=not all_ticks,
         )
-        async with store, asyncio.TaskGroup() as group:
-            group.create_task(
-                px.collect(
-                    settings=settings,
-                    store=store,
-                    feeds=feeds,
-                    intervals=intervals,
-                    sources=source or None,
-                    bars=bars,
-                    cycles=1 if once else None,
-                    on_cycle=on_bars,
+        bus = _bus(publish)
+        try:
+            async with store, asyncio.TaskGroup() as group:
+                group.create_task(
+                    px.collect(
+                        settings=settings,
+                        store=store,
+                        feeds=feeds,
+                        intervals=intervals,
+                        sources=source or None,
+                        bars=bars,
+                        cycles=1 if once else None,
+                        on_cycle=on_bars,
+                        bus=bus,
+                    )
                 )
-            )
-            group.create_task(
-                px.stream(
-                    settings=settings,
-                    feeds=feeds,
-                    sink=store.write_quote,
-                    ticks=1 if once else None,
-                    on_tick=on_quotes,
+                group.create_task(
+                    px.stream(
+                        settings=settings,
+                        feeds=feeds,
+                        sink=store.write_quote,
+                        ticks=1 if once else None,
+                        on_tick=on_quotes,
+                        bus=bus,
+                    )
                 )
-            )
+        finally:
+            if bus is not None:
+                await bus.close()
 
     try:
         run(go())
@@ -544,9 +600,10 @@ def _news_common(func):
 
 @news.command()
 @_news_common
+@publish_option
 @click.option("--poll", type=float, help="Seconds between passes. Default: NEWS_POLL (300).")
 @click.option("--once", is_flag=True, help="Run a single pass and exit.")
-def collect(source, store_kind, db, data_dir, verbose, quiet, log_file, poll, once):
+def collect(source, store_kind, db, data_dir, verbose, quiet, log_file, publish, poll, once):
     """Poll headlines and calendars, forever."""
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
     settings = _news_settings(db, data_dir)
@@ -558,14 +615,20 @@ def collect(source, store_kind, db, data_dir, verbose, quiet, log_file, poll, on
 
     async def go() -> None:
         store = nw.open_store(store_kind, database=settings.database, data_dir=settings.data_dir)
-        async with store:
-            await nw.collect(
-                settings=settings,
-                store=store,
-                sources=source or None,
-                cycles=1 if once else None,
-                on_cycle=cycle_done,
-            )
+        bus = _bus(publish)
+        try:
+            async with store:
+                await nw.collect(
+                    settings=settings,
+                    store=store,
+                    sources=source or None,
+                    cycles=1 if once else None,
+                    on_cycle=cycle_done,
+                    bus=bus,
+                )
+        finally:
+            if bus is not None:
+                await bus.close()
 
     try:
         run(go())
@@ -823,6 +886,55 @@ def notify_test(target):
         console.print(f"  {mark} {escape(str(delivery))}")
     if not all(d.ok for d in results):
         raise SystemExit(1)
+
+
+@notify.command("listen")
+@click.option(
+    "--target",
+    "-T",
+    multiple=True,
+    type=click.Choice(sorted(nt.NOTIFIERS)),
+    help="Target; repeatable. Default: all configured.",
+)
+@click.option(
+    "--redis",
+    "redis_url",
+    metavar="URL",
+    help="Redis to subscribe on. Default: TILL_REDIS_URL.",
+)
+@click.option("--group", default="notifications", show_default=True, help="Consumer group name.")
+@click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
+@click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only.")
+@click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs.")
+def notify_listen(target, redis_url, group, verbose, quiet, log_file):
+    """Deliver alerts published to the bus, forever.
+
+    This is the consumer end of `--publish`: an agent puts an alert on the
+    `alerts` topic and this turns it into Telegram and Discord messages. It
+    needs Redis to hear another process — an in-process bus only reaches
+    publishers in this one.
+    """
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    url = redis_url or os.environ.get("TILL_REDIS_URL") or None
+    bus = Bus(redis_url=url)
+    if url is None:
+        console.print(
+            "[yellow]no redis configured[/] — listening on an in-process bus, "
+            "which only hears publishers inside this command. "
+            "Set TILL_REDIS_URL or pass --redis to consume from a collector."
+        )
+    console.print(f"listening on [bold]{bus.backend}[/] for alerts, Ctrl-C to stop")
+
+    async def go() -> None:
+        try:
+            await nt.listen(bus, targets=target or None, group=group)
+        finally:
+            await bus.close()
+
+    try:
+        run(go())
+    except KeyboardInterrupt:
+        console.print("stopped")
 
 
 if __name__ == "__main__":  # pragma: no cover

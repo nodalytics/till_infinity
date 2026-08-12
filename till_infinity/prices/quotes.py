@@ -32,6 +32,7 @@ import httpx
 import orjson
 from httpx_ws import aconnect_ws
 
+from ..bus import QUOTES, Bus
 from ..logging import get_logger
 from .config import TRADINGVIEW, YAHOO, Feed, Settings
 from .models import Quote, QuoteKey, Symbol, WriteResult
@@ -46,6 +47,38 @@ QUOTE_FIELDS: tuple[str, ...] = ("lp", "bid", "ask", "volume", "ch", "chp", "lp_
 SCANNER_FIELDS = ",".join(f for f in QUOTE_FIELDS if f != "lp_time")
 
 QuoteSink = Callable[[QuoteKey, Quote], Awaitable[WriteResult]]
+
+
+def announce_quote(key: QuoteKey, quote: Quote) -> dict[str, object]:
+    """Top of book as it goes on the wire. Time in epoch seconds, like the model."""
+    return {
+        "source": key.source,
+        "feed": key.feed,
+        "venue": key.symbol.venue,
+        "ticker": key.symbol.ticker,
+        "bid": quote.bid,
+        "ask": quote.ask,
+        "mid": quote.mid,
+        "spread_bps": quote.spread_bps,
+        "time": quote.time,
+    }
+
+
+def publishing(sink: QuoteSink | None, bus: Bus) -> QuoteSink:
+    """Wrap a sink so every stored quote is also announced.
+
+    Wrapping rather than publishing at the call sites is what makes pushed and
+    polled quotes behave the same: a streaming source is handed this sink in
+    `prepare()` and writes through it on push, so nothing has to know which
+    transport a venue happens to use.
+    """
+
+    async def announcing(key: QuoteKey, quote: Quote) -> WriteResult:
+        result = await sink(key, quote) if sink is not None else WriteResult()
+        await bus.publish(QUOTES, announce_quote(key, quote), source="prices")
+        return result
+
+    return announcing
 
 
 @dataclass(slots=True)
@@ -503,6 +536,7 @@ async def stream(
     sources: Sequence[str] | None = None,
     ticks: int | None = None,
     on_tick: Callable[[int, QuoteTick], None] | None = None,
+    bus: Bus | None = None,
 ) -> None:
     """Keep quotes flowing until `ticks` snapshots have been taken (or forever).
 
@@ -510,6 +544,8 @@ async def stream(
     ``quote_poll_seconds`` only sets how often the caller gets a summary and
     how often request/response sources are re-polled.
     """
+    if bus is not None:
+        sink = publishing(sink, bus)
     count = 0
     async with AsyncExitStack() as stack:
         live: list[QuoteSource] = []

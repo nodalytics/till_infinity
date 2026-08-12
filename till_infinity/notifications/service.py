@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from contextlib import AsyncExitStack
+from dataclasses import replace
+from typing import Any
 
 from tenacity import (
     AsyncRetrying,
@@ -19,10 +21,11 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
+from ..bus import ALERTS, Bus
 from ..logging import get_logger
 from .config import DEFAULT_TARGETS, Settings
 from .discord import DiscordNotifier
-from .models import Channel, Delivery, Notification
+from .models import Channel, Delivery, Level, Notification
 from .notifier import NotConfiguredError, Notifier, PermanentError, TransientError
 from .telegram import TelegramNotifier
 
@@ -112,3 +115,64 @@ async def notify(
         live = [await stack.enter_async_context(n) for n in notifiers]
         return list(await asyncio.gather(*(send_one(n, notification, settings) for n in live)))
     return []  # pragma: no cover - AsyncExitStack always returns above
+
+
+def from_message(payload: dict[str, Any]) -> Notification | None:
+    """Turn an `alerts` message into a Notification.
+
+    The payload comes off the bus, which means an agent wrote it — so nothing
+    here trusts it. A message with no title is dropped rather than sent as an
+    empty alert, and `fields` is flattened to strings because a notifier
+    renders text, not arbitrary JSON.
+    """
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        return None
+    raw = payload.get("fields")
+    fields = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+    return Notification(
+        title=title,
+        body=str(payload.get("body") or ""),
+        level=Level.parse(payload.get("level")),
+        url=str(payload.get("url") or ""),
+        fields=fields,
+        source=str(payload.get("source") or ""),
+    )
+
+
+async def listen(
+    bus: Bus,
+    *,
+    settings: Settings | None = None,
+    targets: Sequence[str] | None = None,
+    group: str = "notifications",
+    limit: int | None = None,
+) -> int:
+    """Deliver every alert published to the bus. Returns how many were sent.
+
+    Runs until the bus closes (or `limit` alerts have been handled). Delivery
+    failures are logged and the loop continues — one unreachable webhook must
+    not stop the next alert from reaching the chat that is up.
+    """
+    settings = settings or Settings.from_env()
+    handled = 0
+    async for message in bus.subscribe(ALERTS, group=group):
+        notification = from_message(message.payload)
+        if notification is None:
+            log.warning("alerts: dropped a message with no title")
+            continue
+        if not notification.source:
+            notification = replace(notification, source=message.source)
+        deliveries = await notify(notification, settings=settings, targets=targets)
+        failed = [d for d in deliveries if not d.ok]
+        log.info(
+            "alert %r -> %d/%d channels%s",
+            notification.title,
+            len(deliveries) - len(failed),
+            len(deliveries),
+            f" ({', '.join(d.target for d in failed)} failed)" if failed else "",
+        )
+        handled += 1
+        if limit is not None and handled >= limit:
+            return handled
+    return handled

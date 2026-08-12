@@ -167,7 +167,21 @@ uv run till-infinity notify test           # prove it works
 Each channel can set its own minimum level, so an on-call chat and a firehose
 can share one bot. Full guide: [notifications.md](notifications.md).
 
-## 8. Tune it
+## 8. Wire the services together
+
+Each collector can announce what it stored, so another process can react
+without polling the database:
+
+```bash
+uv run till-infinity prices collect --publish redis://localhost:6379 &
+uv run till-infinity news collect   --publish redis://localhost:6379 &
+uv run till-infinity notify listen  --redis   redis://localhost:6379 &
+```
+
+Nothing changes about storage — the database is still the source of truth, and
+without `--publish` there is no bus at all. Full guide: [bus.md](bus.md).
+
+## 9. Tune it
 
 Anything you pass repeatedly belongs in the environment:
 
@@ -177,10 +191,12 @@ export PRICES_CYCLE_S=30          # bars sweeps twice a minute
 export PRICES_BACKFILL_BARS=5000
 export NEWS_POLL=180              # headlines every three minutes
 export TILL_LOG_LEVEL=DEBUG
+export TILL_REDIS_URL=redis://localhost:6379
 ```
 
 Full lists in [prices.md](prices.md#environment), [news.md](news.md#environment),
-[notifications.md](notifications.md#setup) and [logging.md](logging.md).
+[notifications.md](notifications.md#setup), [bus.md](bus.md) and
+[logging.md](logging.md).
 
 ## Troubleshooting
 

@@ -55,6 +55,8 @@ __all__ = [
     "TransientError",
     "build_notifiers",
     "discover_telegram_chats",
+    "from_message",
+    "listen",
     "notify",
     "parse_channels",
     "parse_chats",
