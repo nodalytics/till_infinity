@@ -7,7 +7,7 @@ import random
 import pytest
 
 from till_infinity.structures import levels as lv
-from till_infinity.structures import pips, reactions
+from till_infinity.structures import pips, pivots, reactions
 from till_infinity.structures.engine import Engine
 from till_infinity.structures.levels import Kalman, Level, Outcome, Side, State
 from till_infinity.structures.volatility import Volatility
@@ -215,7 +215,8 @@ def test_a_level_answers_differently_from_each_side():
         _touch(tracker, level, Side.ABOVE, +40.0, 1_000_000 + i * 100_000, vol)
 
     above = level.stats(Side.ABOVE)
-    assert above.touches == 6
+    # Not exactly 6: the touches span days, so the early ones have aged.
+    assert 5.0 < above.touches <= 6.0
     assert level.stats(Side.BELOW).touches == 0
 
 
@@ -349,12 +350,30 @@ def _range_bound(bars: int = 700, seed: int = 9):
         }
 
 
-def test_the_engine_finds_a_handful_of_levels_not_a_forest():
+def test_the_engine_finds_a_handful_of_swing_levels_not_a_forest():
     """At one level every few basis points, every price is at a level."""
     engine = Engine(intervals=("5m",))
     for bar in _range_bound():
         engine.observe_bar(bar)
-    assert 1 <= len(engine.levels("gold")) <= 12
+    assert 1 <= len(engine.levels("gold", "5m")) <= 12
+
+
+def test_pivots_are_built_from_completed_sessions():
+    """They need no confirmation delay — yesterday fully determines today."""
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+    daily = engine.levels("gold", "daily")
+    assert daily
+    assert all(level.origin.startswith("pivot") for level in daily)
+
+
+def test_a_session_still_running_cannot_make_pivots():
+    engine = Engine(intervals=("5m",))
+    engine.observe_bar(
+        {"feed": "g", "interval": "5m", "time": 1_000_000, "high": 10, "low": 9, "close": 9.5}
+    )
+    assert engine.levels("g", "daily") == []
 
 
 def test_the_engine_produces_calls_with_evidence():
@@ -396,3 +415,179 @@ def test_a_corrected_bar_replaces_rather_than_appends():
     series = engine.series("g", "5m")
     assert len(series.closes) == 1
     assert series.closes[-1] == 4410.0
+
+
+# ------------------------------------------------------- levels going stale
+
+
+def test_old_evidence_fades_rather_than_counting_forever():
+    """Ten rejections in January must not outvote three breaks last week."""
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    start = 1_000_000.0
+    for i in range(10):
+        level.record(Side.ABOVE, Outcome.REJECT, 1.0, start + i)
+    old = level.stats(Side.ABOVE).touches
+
+    # three months later, the level starts breaking instead
+    later = start + 90 * 86_400
+    for i in range(3):
+        level.record(Side.ABOVE, Outcome.BREAK, -1.0, later + i)
+
+    stats = level.stats(Side.ABOVE)
+    assert stats.touches < old  # the ten have decayed below their raw count
+    assert stats.probability_up() < 0.5  # recent behaviour now dominates
+
+
+def test_evidence_survives_a_short_gap():
+    """Fading must be gradual — a level should not forget overnight."""
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    start = 1_000_000.0
+    for i in range(6):
+        level.record(Side.ABOVE, Outcome.REJECT, 1.0, start + i * 3600)
+    assert level.stats(Side.ABOVE).touches > 4.0
+
+
+def test_a_regime_change_discounts_what_a_level_learned():
+    """The tide changed: this level learned its behaviour in another market."""
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    for i in range(8):
+        level.record(Side.ABOVE, Outcome.REJECT, 1.0, 1_000_000.0 + i)
+    before = level.stats(Side.ABOVE).touches
+
+    level.regime_changed()
+    assert level.stats(Side.ABOVE).touches < before
+    assert level.stats(Side.ABOVE).touches > 0  # discounted, not erased
+
+
+def test_a_decisive_break_discounts_the_side_it_broke_from():
+    """A level that just conspicuously failed should stop predicting a bounce."""
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    for i in range(8):
+        level.record(Side.ABOVE, Outcome.REJECT, 1.0, 1_000_000.0 + i)
+    before = level.stats(Side.ABOVE).probability_up()
+
+    level.record(Side.ABOVE, Outcome.BREAK, -lv.DECISIVE_BREAK_VOL * 1.5, 1_000_100.0)
+    assert level.state is State.BROKEN
+    assert level.stats(Side.ABOVE).probability_up() < before
+
+
+def test_a_shallow_break_does_not_wipe_the_history():
+    """Not every break is decisive; a wick through is not a regime change."""
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    for i in range(8):
+        level.record(Side.ABOVE, Outcome.REJECT, 1.0, 1_000_000.0 + i)
+    level.record(Side.ABOVE, Outcome.BREAK, -0.1, 1_000_100.0)
+    assert level.stats(Side.ABOVE).touches > 7.0
+
+
+def test_the_engine_discounts_every_level_when_the_tide_turns():
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+    before = sum(level.touches for level in engine.levels("gold"))
+    assert engine.regime_changed("gold") > 0
+    assert sum(level.touches for level in engine.levels("gold")) < before
+
+
+def test_a_pivot_and_a_swing_are_told_apart_but_not_walled_off():
+    """Pivots behave differently; a pivot with no history still needs a prior."""
+    vol = _vol()
+    swing = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    pivot = Level(
+        feed="g", interval="daily", filter=Kalman(mean=4400.0, variance=0.5), origin="pivot:R1"
+    )
+    a = reactions.features_for(swing, Side.ABOVE, 4400.0, vol)
+    b = reactions.features_for(pivot, Side.ABOVE, 4400.0, vol)
+    assert a.pivot == 0.0
+    assert b.pivot == 1.0
+    assert 0 < a.distance(b) < float("inf")  # further apart, still comparable
+
+
+# --------------------------------------------------------------- look-ahead
+
+
+def test_the_engine_never_forms_a_level_from_an_unseen_swing(monkeypatch):
+    """The failure that does not show up until the numbers are being trusted.
+
+    A turning point is not knowable until the bars after it print. If the
+    engine ever passes an unconfirmed swing to `form`, it is drawing levels
+    nobody could have drawn and every measurement against them flatters itself.
+    """
+    engine = Engine(intervals=("5m",))
+    seen: list[tuple[int, int]] = []
+    real_form = lv.form
+
+    def spy(feed, interval, turns, vol, **kwargs):
+        seen.extend((point.confirmed, engine._now) for point in turns)
+        return real_form(feed, interval, turns, vol, **kwargs)
+
+    monkeypatch.setattr(lv, "form", spy)
+    monkeypatch.setattr("till_infinity.structures.engine.lv.form", spy)
+
+    for bar in _range_bound(400):
+        engine._now = bar["time"]
+        engine.observe_bar(bar)
+
+    assert seen, "the spy never ran, so this test proved nothing"
+    assert all(confirmed <= now for confirmed, now in seen)
+
+
+def test_no_level_is_created_before_the_bar_that_created_it():
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound(400):
+        engine.observe_bar(bar)
+        assert all(level.created <= bar["time"] for level in engine.levels("gold", "5m"))
+
+
+def test_a_pivot_is_never_available_during_its_own_session():
+    """Yesterday's range is knowable today. Today's is not."""
+    engine = Engine(intervals=("5m",))
+    day = 86_400
+    start = 1_000_000 - (1_000_000 % day)
+    for i in range(12):
+        when = start + i * 3600
+        engine.observe_bar(
+            {
+                "feed": "g",
+                "interval": "5m",
+                "time": when,
+                "high": 105.0,
+                "low": 95.0,
+                "close": 100.0,
+            }
+        )
+        assert engine.levels("g", "daily") == []
+
+    # a bar from the next day completes the session, and only then do pivots exist
+    engine.observe_bar(
+        {
+            "feed": "g",
+            "interval": "5m",
+            "time": start + day + 60,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+        }
+    )
+    daily = engine.levels("g", "daily")
+    assert daily
+    assert all(level.created <= start + day + 60 for level in daily)
+
+
+def test_a_pivot_uses_only_the_completed_session_range():
+    session = pivots.Session(start=0, end=86_400, high=110.0, low=90.0, close=100.0)
+    built = pivots.levels_from(session)
+    assert built["PP"] == pytest.approx(100.0)
+    assert built["PH"] == 110.0
+    assert built["R1"] == pytest.approx(110.0)
+
+
+def test_a_touch_is_only_resolved_by_prices_after_it_began():
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=3600)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    features = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
+    tracker.begin(level, 4400.0, features, when=1_000_000)
+    done = tracker.update(level, 4500.0, vol, when=1_000_600)
+    assert done is not None
+    assert done.resolved > done.started

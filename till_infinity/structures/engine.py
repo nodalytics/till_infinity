@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 from ..logging import get_logger
 from . import levels as lv
-from . import pips, reactions
+from . import pips, pivots, reactions
 from .models import Shape, Signal
 from .volatility import Book as VolBook
 
@@ -137,8 +137,14 @@ class Engine:
         self.intervals = intervals
         self.vol = VolBook()
         self.tracker = reactions.Tracker(horizon=horizon)
+        #: Pivots come from completed sessions, so they need no confirmation
+        #: delay and exist before price has ever turned there.
+        self.sessions = pivots.Sessions()
         self._series: dict[tuple[str, str], Series] = {}
         self._levels: dict[tuple[str, str], list[lv.Level]] = {}
+        #: The timestamp of the bar being processed. Held so that "what was
+        #: knowable" is answerable at any point, including from a test.
+        self._now: float = 0.0
         self.calls = 0
 
     # --------------------------------------------------------------- levels
@@ -187,10 +193,12 @@ class Engine:
         high = float(payload.get("high") or close)
         low = float(payload.get("low") or close)
 
+        self._now = max(self._now, when)
         series = self.series(feed, interval)
         series.add(when, high, low, float(close))
         vol = self.vol.of(feed)
         vol.update(float(close))
+        self._roll_sessions(feed, when, high, low, float(close), vol)
         if not series.ready:
             return []
         if series.due or not self._levels.get((feed, interval)):
@@ -211,11 +219,17 @@ class Engine:
         vol = self.vol.of(feed)
         vol.update(float(mid))
         calls: list[Call] = []
-        for interval in self.intervals:
+        # Pivot levels live under their session name, so quotes must check
+        # every interval this instrument has levels at, not just the bar ones.
+        for interval in self.intervals_for(feed):
             calls += self.check(feed, interval, float(mid), when)
         return calls
 
     # ------------------------------------------------------------- touching
+
+    def intervals_for(self, feed: str) -> list[str]:
+        """Every interval this instrument has levels at, pivots included."""
+        return sorted({interval for (this, interval) in self._levels if this == feed})
 
     def check(self, feed: str, interval: str, price: float, when: float) -> list[Call]:
         """Advance every open interaction, and open one where price has arrived."""
@@ -255,6 +269,33 @@ class Engine:
             self.calls += 1
         self.tracker.expire(when)
         return calls
+
+    def _roll_sessions(
+        self, feed: str, when: int, high: float, low: float, close: float, vol
+    ) -> None:
+        """Turn completed sessions into pivot levels for the next one."""
+        for session in self.sessions.observe(feed, when, high, low, close):
+            key = (feed, session.period)
+            built = pivots.build(feed, session, vol)
+            self._levels[key] = lv.merge(self._levels.get(key, []), built, vol)
+
+    def regime_changed(self, feed: str) -> int:
+        """Discount every level's history for this instrument.
+
+        The drift detector saying the volatility regime changed means these
+        levels learned their behaviour in a market that no longer exists. They
+        are still levels; their statistics are just much weaker evidence now.
+        """
+        touched = 0
+        for (this_feed, _), found in self._levels.items():
+            if this_feed != feed:
+                continue
+            for level in found:
+                level.regime_changed()
+                touched += 1
+        if touched:
+            log.info("levels: discounted %d %s levels after a regime change", touched, feed)
+        return touched
 
     def _approach(self, level: lv.Level, price: float) -> lv.Side:
         """Which side price came from — the previous bar, not the current one.

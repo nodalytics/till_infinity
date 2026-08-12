@@ -81,6 +81,24 @@ DRIFT_VOL_PER_HOUR = 0.02
 #: neighbours'. Below this, inference leans on kNN over similar levels.
 CONFIDENT_TOUCHES = 5
 
+#: Half-life of a touch, in days. Evidence decays because markets change: a
+#: level that rejected ten times in January and broke three times last week is
+#: not a rejecting level, and summing every touch equally is exactly how a
+#: model keeps insisting on behaviour that stopped months ago.
+TOUCH_HALF_LIFE_DAYS = 21.0
+
+#: Extra decay applied when the volatility regime itself changes. Not zero and
+#: not one: the level is still there, but what it did in the old regime is much
+#: weaker evidence about what it does in the new one.
+REGIME_DECAY = 0.4
+
+#: A break this far beyond the level, in volatility units, is decisive. Past
+#: this the level's prior behaviour on that side is mostly stale evidence.
+DECISIVE_BREAK_VOL = 2.0
+
+#: How much of the approach side's history survives a decisive break.
+BREAK_DECAY = 0.25
+
 
 class Side(StrEnum):
     """Which side price arrived from. The level behaves differently per side."""
@@ -174,14 +192,33 @@ class SideStats:
     magnitude cannot be sized or compared with the cost of being wrong.
     """
 
-    touches: int = 0
-    rejects: int = 0
-    breaks: int = 0
-    chops: int = 0
+    #: Counts are floats, not integers, because they decay. What is tracked is
+    #: an *effective* touch count — how much evidence there is once age has been
+    #: discounted — which is the number every downstream estimate wants anyway.
+    touches: float = 0.0
+    rejects: float = 0.0
+    breaks: float = 0.0
+    chops: float = 0.0
     #: Sum and sum-of-squares of the signed push, for mean and dispersion.
     push_sum: float = 0.0
     push_sq: float = 0.0
-    ups: int = 0
+    ups: float = 0.0
+
+    def decay(self, factor: float) -> None:
+        """Discount everything by `factor`. Old evidence fades; it is not erased.
+
+        Fading rather than dropping matters: a hard cut-off would make a level
+        forget its behaviour abruptly on an arbitrary boundary, and the
+        estimate would jump for a reason nobody could point at.
+        """
+        factor = min(max(factor, 0.0), 1.0)
+        self.touches *= factor
+        self.rejects *= factor
+        self.breaks *= factor
+        self.chops *= factor
+        self.push_sum *= factor
+        self.push_sq *= factor
+        self.ups *= factor
 
     def record(self, outcome: Outcome, push_vol: float) -> None:
         self.touches += 1
@@ -203,7 +240,7 @@ class SideStats:
 
     @property
     def push_sigma(self) -> float:
-        if self.touches < 2:
+        if self.touches < 2.0:
             return 0.0
         mean = self.mean_push
         var = max(0.0, self.push_sq / self.touches - mean * mean)
@@ -223,13 +260,13 @@ class SideStats:
 
     def to_dict(self) -> dict[str, float]:
         return {
-            "touches": self.touches,
-            "rejects": self.rejects,
-            "breaks": self.breaks,
-            "chops": self.chops,
+            "touches": round(self.touches, 3),
+            "rejects": round(self.rejects, 3),
+            "breaks": round(self.breaks, 3),
+            "chops": round(self.chops, 3),
             "mean_push_vol": round(self.mean_push, 4),
             "push_sigma_vol": round(self.push_sigma, 4),
-            "ups": self.ups,
+            "ups": round(self.ups, 3),
         }
 
 
@@ -255,7 +292,8 @@ class Level:
         return self.filter.mean
 
     @property
-    def touches(self) -> int:
+    def touches(self) -> float:
+        """Effective touches, after age has been discounted."""
         return sum(stats.touches for stats in self.sides.values())
 
     def stats(self, side: Side) -> SideStats:
@@ -299,7 +337,7 @@ class Level:
         it is stale, and treating longevity as authority is how a chart ends up
         covered in lines nobody trades.
         """
-        evidence = min(self.touches, 10) / 10.0
+        evidence = min(self.touches, 10.0) / 10.0
         agreement = 1.0 - min(1.0, self.filter.sigma / max(vol.price_units(self.price, 1.0), 1e-9))
         recency = (
             math.exp(-max(0.0, when - self.last_touch) / (14 * 86_400)) if self.last_touch else 0.3
@@ -324,14 +362,45 @@ class Level:
             self.state = State.TESTED
         return gain
 
-    def record(self, side: Side, outcome: Outcome, push_vol: float) -> None:
+    def age(self, when: float, half_life_days: float = TOUCH_HALF_LIFE_DAYS) -> None:
+        """Discount every side's evidence for the time since the last touch."""
+        if not self.last_touch or when <= self.last_touch:
+            return
+        elapsed_days = (when - self.last_touch) / 86_400.0
+        factor = 0.5 ** (elapsed_days / max(half_life_days, 1e-9))
+        for stats in self.sides.values():
+            stats.decay(factor)
+
+    def regime_changed(self, decay: float = REGIME_DECAY) -> None:
+        """The market changed character. What this level used to do counts less.
+
+        Called when the drift detector fires for this instrument. The level
+        itself survives — price still turns there — but its statistics were
+        learned in a market that no longer exists, and carrying them forward at
+        full weight is how a model keeps predicting the last regime.
+        """
+        for stats in self.sides.values():
+            stats.decay(decay)
+
+    def record(self, side: Side, outcome: Outcome, push_vol: float, when: float = 0.0) -> None:
+        when = when or self.last_touch
+        self.age(when)
         self.stats(side).record(outcome, push_vol)
         if outcome is Outcome.BREAK:
             self.state = State.BROKEN
+            if abs(push_vol) >= DECISIVE_BREAK_VOL:
+                # A decisive break says the level stopped doing what it did.
+                # Keeping its rejection history at full weight would have it
+                # still predicting a bounce it has just conspicuously failed.
+                self.stats(side).decay(BREAK_DECAY)
         elif outcome is Outcome.REJECT and self.state is State.BROKEN:
             # Broken, and now respected again — the level flipped, which is a
             # repeating structure rather than a dead one.
             self.state = State.FLIPPED
+        # The statistics keep their own clock. Relying on observe_touch to
+        # advance it would mean evidence silently never ages whenever a caller
+        # records an outcome without also folding in a price observation.
+        self.last_touch = max(self.last_touch, when)
 
     def to_dict(self, vol: Volatility | None = None, when: float | None = None) -> dict:
         when = time.time() if when is None else when

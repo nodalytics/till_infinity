@@ -230,6 +230,9 @@ class Watcher:
                 feed, mid = seen
                 found = self.drift.observe(feed, mid, message.time)
                 if found is not None:
+                    # The tide changed: every level for this instrument learned
+                    # its behaviour in the old regime, so discount it.
+                    self.engine.regime_changed(feed)
                     signals.append(found)
             return signals
         return []

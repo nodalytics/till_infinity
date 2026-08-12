@@ -85,6 +85,10 @@ class Features:
     #: Touch count, log-compressed: the difference between 1 and 5 touches
     #: matters far more than between 50 and 54.
     experience: float
+    #: 1.0 for a pivot, 0.0 for a swing level. A dimension rather than a hard
+    #: split: pivots do behave differently, but a pivot with no history should
+    #: still be able to borrow from swing levels rather than from nothing.
+    pivot: float = 0.0
 
     def distance(self, other: Features) -> float:
         """Similarity for kNN. Side is a hard constraint, not a dimension.
@@ -100,6 +104,7 @@ class Features:
             + (self.strength - other.strength) ** 2
             + (self.run_vol - other.run_vol) ** 2
             + (self.experience - other.experience) ** 2
+            + (self.pivot - other.pivot) ** 2
         )
 
     def to_dict(self) -> dict[str, float | str]:
@@ -110,11 +115,12 @@ class Features:
             "strength": round(self.strength, 4),
             "run_vol": round(self.run_vol, 4),
             "experience": round(self.experience, 4),
+            "pivot": self.pivot,
         }
 
 
-def experience_of(touches: int) -> float:
-    return math.log1p(max(0, touches)) / math.log1p(50)
+def experience_of(touches: float) -> float:
+    return math.log1p(max(0.0, touches)) / math.log1p(50)
 
 
 @dataclass(slots=True)
@@ -163,7 +169,7 @@ class Inference:
     push_sigma: float
     #: The unconditional rate, for comparison. If these match, there is no edge.
     base_rate_up: float
-    own_touches: int
+    own_touches: float
     neighbours: int
     detail: str = ""
 
@@ -201,7 +207,7 @@ class Inference:
             "push_sigma_vol": round(self.push_sigma, 4),
             "base_rate_up": round(self.base_rate_up, 4),
             "edge": round(self.edge, 4),
-            "own_touches": self.own_touches,
+            "own_touches": round(self.own_touches, 2),
             "neighbours": self.neighbours,
             "actionable": self.actionable,
             "detail": self.detail,
@@ -211,7 +217,7 @@ class Inference:
         return (
             f"{self.direction} p={self.probability_up:.0%} "
             f"(base {self.base_rate_up:.0%}) push={self.expected_push:+.2f}v "
-            f"n={self.own_touches}+{self.neighbours}"
+            f"n={self.own_touches:.1f}+{self.neighbours}"
         )
 
 
@@ -390,7 +396,7 @@ class Tracker:
         touch.push_vol = travelled
         touch.resolved = when
         self._open.pop(self.key(level), None)
-        level.record(side, outcome, touch.push_vol)
+        level.record(side, outcome, touch.push_vol, when)
         self.memory.add(touch)
         return touch
 
@@ -435,6 +441,7 @@ def features_for(
         strength=level.strength(when, vol),
         run_vol=run_vol,
         experience=experience_of(level.touches),
+        pivot=1.0 if level.origin.startswith("pivot") else 0.0,
     )
 
 

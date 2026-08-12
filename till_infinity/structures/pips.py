@@ -29,6 +29,7 @@ than on `time`. `as_of()` does it for you.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -61,8 +62,14 @@ class Point:
     #: points of price. The selection criterion, kept because it is also the
     #: best single measure of how pronounced the swing was.
     prominence_bps: float
-    #: When this became knowable. Never earlier than `time`.
-    confirmed: int
+    #: When this became knowable, or `inf` while it still is not.
+    #:
+    #: Infinity rather than "the end of the window" matters more than it looks:
+    #: clamping would let a swing one bar from the edge claim to be settled
+    #: after one bar instead of `confirm`, and those trailing swings are
+    #: precisely the ones that have not earned it yet. Every look-ahead bug in
+    #: this file would live in that clamp.
+    confirmed: float
 
     @property
     def is_turn(self) -> bool:
@@ -146,8 +153,14 @@ def points(
         gap = _vertical_gap(prices, left, right, index) if left != right else 0.0
         price = prices[index]
         # Confirmation is a *bar* offset, so a gap in the series (a weekend)
-        # does not make a swing look confirmed sooner than it was.
-        settled = times[min(index + confirm, last)] if swing is not Swing.EDGE else times[index]
+        # does not make a swing look confirmed sooner than it was. A swing
+        # without `confirm` bars after it yet is not confirmed at all.
+        if swing is Swing.EDGE:
+            settled: float = times[index]
+        elif index + confirm <= last:
+            settled = times[index + confirm]
+        else:
+            settled = math.inf
         found.append(
             Point(
                 index=index,
@@ -155,7 +168,7 @@ def points(
                 price=price,
                 swing=swing,
                 prominence_bps=(gap / price * 10_000) if price else 0.0,
-                confirmed=max(times[index], settled),
+                confirmed=max(float(times[index]), settled),
             )
         )
     return found
@@ -168,6 +181,8 @@ def as_of(found: Sequence[Point], when: float) -> list[Point]:
     include swings that had not yet happened as far as anyone watching could
     tell, which is the difference between a backtest and a fiction.
     """
+    # Trailing swings carry `inf` until enough bars follow them, so they fall
+    # out here without needing a special case.
     return [point for point in found if point.confirmed <= when]
 
 
