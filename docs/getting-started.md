@@ -181,7 +181,21 @@ uv run till-infinity notify listen  --redis   redis://localhost:6379 &
 Nothing changes about storage — the database is still the source of truth, and
 without `--publish` there is no bus at all. Full guide: [bus.md](bus.md).
 
-## 9. Tune it
+## 9. Let something watch it for you
+
+With the collectors publishing, an analyst can consume the same stream, decide
+when something is worth a model call, and alert you:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+uv run till-infinity agents ask "is anyone quoting gold out of line?"
+uv run till-infinity agents watch --redis redis://localhost:6379 &
+```
+
+It reads the databases read-only and stays quiet unless the data says
+otherwise. Full guide: [agents.md](agents.md).
+
+## 10. Tune it
 
 Anything you pass repeatedly belongs in the environment:
 
@@ -195,8 +209,8 @@ export TILL_REDIS_URL=redis://localhost:6379
 ```
 
 Full lists in [prices.md](prices.md#environment), [news.md](news.md#environment),
-[notifications.md](notifications.md#setup), [bus.md](bus.md) and
-[logging.md](logging.md).
+[notifications.md](notifications.md#setup), [bus.md](bus.md),
+[agents.md](agents.md#environment) and [logging.md](logging.md).
 
 ## Troubleshooting
 

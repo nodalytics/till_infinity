@@ -5,9 +5,9 @@
 <h1 align="center">Till Infinity</h1>
 
 <p align="center">
-  Market data for gold, BTC and FX — the same instrument priced by many brokers
-  at once, with the news and macro releases that move it.
-  <br>No API keys.
+  Finding high-probability directional structures in price, backed by
+  fundamentals.
+  <br>No API keys for the data.
 </p>
 
 <p align="center">
@@ -16,10 +16,34 @@
   </a>
 </p>
 
-The point of collecting one instrument from six venues is that the
-*differences* are the signal: cross-broker spread, which venue leads, where
-quotes diverge — and, alongside them, the calendar entry that explains the
-move.
+## The idea
+
+A directional call is only worth making when the price structure and the
+fundamentals point the same way. Most setups see one or the other. This one is
+built to see both at once, and to write down why it thought so at the time.
+
+Four things follow from that, and they are the four parts of the project:
+
+**Structure needs more than one view of the price.** The same instrument is
+quoted by six brokers at once, so the *differences* carry information a single
+feed cannot: which venue leads, where quotes diverge, when liquidity thins ahead
+of a move. That is why `prices` collects one instrument from many venues rather
+than many instruments from one.
+
+**Fundamentals separate a structure from a coincidence.** A move with a release
+behind it is a different animal from the same move on a quiet calendar. `news`
+keeps the economic calendar, the headlines and central bank reserves alongside
+the prices, on the same clock.
+
+**Judgement has to happen where both are visible.** `agents` puts a model over
+the stored data with read-only tools, and tells it plainly that "nothing is
+happening" is a correct answer. Most windows are.
+
+**Every call gets written down with its reasoning.** `journal` records what was
+decided, *why at that moment*, the state it was decided from, and what happened
+afterwards. Prices can be recomputed forever; the reasoning cannot be
+reconstructed at all once it is lost — which is what makes it the one thing
+worth capturing from day one.
 
 ## Setup
 
@@ -60,6 +84,36 @@ uv run till-infinity news latest          # recent headlines
 Two calendars are kept side by side on purpose, so a print can be cross-checked
 between providers. Full guide: **[docs/news.md](docs/news.md)**.
 
+## Agents
+
+A model over the stored data — ask it a question, or leave one watching and
+alerting when price and fundamentals line up.
+
+```bash
+uv run till-infinity agents ask "is anyone quoting gold out of line?"
+uv run till-infinity agents watch --redis redis://localhost:6379
+uv run till-infinity agents roles         # market, macro, risk
+```
+
+Every store an analyst reads is opened read-only, so a prompt injection in a
+headline reaches a model whose only verbs are SELECT. Full guide:
+**[docs/agents.md](docs/agents.md)**.
+
+## Journal
+
+What was decided, why at that moment, and what happened next.
+
+```bash
+uv run till-infinity journal list
+uv run till-infinity journal add "Widened the spread threshold to 12bps" \
+    --why "8bps fired six times overnight on TVC, none of them real"
+uv run till-infinity journal export -o data/journal.jsonl
+```
+
+Append-only and point-in-time: the state behind a decision is copied in, not
+referenced, so an entry read back a year later still shows the world it was
+actually made in. Full guide: **[docs/journal.md](docs/journal.md)**.
+
 ## Notifications
 
 Alerts to Telegram and Discord, fanned out across as many chats or webhooks as
@@ -67,24 +121,33 @@ you list, with per-channel level routing.
 
 ```bash
 uv run till-infinity notify chats          # discover Telegram chat ids
-uv run till-infinity notify test           # prove the wiring
+uv run till-infinity notify listen         # deliver what the agents publish
 uv run till-infinity notify send "..." -l warning
 ```
 
 Full guide: **[docs/notifications.md](docs/notifications.md)**.
 
-## Talking to each other
+## How the parts talk
 
-Collectors publish what they store, so another process can react to it. Bars,
-quotes, headlines, calendar prints and alerts each get a topic.
+Collectors publish what they store, agents consume it and publish alerts,
+notifications deliver those. The databases stay the source of truth — the bus
+carries notice that something happened, not the data itself.
 
-```bash
-uv run till-infinity prices collect --publish redis://localhost:6379
-uv run till-infinity notify listen  --redis   redis://localhost:6379
+```
+prices  ──┐                        ┌──▶ notifications
+          ├──▶ bus ──▶ agents ──▶ bus
+news    ──┘             │
+                        └──▶ journal
 ```
 
-The store stays the source of truth — the bus carries notice that something
-happened, not the data itself. Full guide: **[docs/bus.md](docs/bus.md)**.
+```bash
+uv run till-infinity prices collect --publish redis://localhost:6379 &
+uv run till-infinity news collect   --publish redis://localhost:6379 &
+uv run till-infinity agents watch   --redis   redis://localhost:6379 &
+uv run till-infinity notify listen  --redis   redis://localhost:6379 &
+```
+
+Full guide: **[docs/bus.md](docs/bus.md)**.
 
 ## Where it lands
 
@@ -92,14 +155,15 @@ SQLite by default, under `.data/` and gitignored. JSONL alongside it with
 `--store both`.
 
 ```
-.data/prices/prices.db    bars + quotes
-.data/news/news.db        articles + events + observations
+.data/prices/prices.db      bars + quotes
+.data/news/news.db          articles + events + observations
+.data/journal/journal.db    decisions + observations + outcomes
 ```
 
 Everything is stored as epoch seconds in **UTC** — local time never enters the
 project. Re-running a collector is cheap and safe: bars key on their open time,
 headlines on their id, calendar events get rewritten in place when the print
-lands.
+lands, and journal entries are content-addressed.
 
 ## Docs
 
@@ -108,6 +172,8 @@ lands.
 | [docs/getting-started.md](docs/getting-started.md) | **start here** — install to stored data, and how to read it back |
 | [docs/prices.md](docs/prices.md) | candles, quotes, sources, storage, schema, library use |
 | [docs/news.md](docs/news.md) | headlines, economic calendar, event storage |
+| [docs/agents.md](docs/agents.md) | analysts, tools, read-only access, watching the bus |
+| [docs/journal.md](docs/journal.md) | decisions, reasoning, outcomes, exporting for training |
 | [docs/notifications.md](docs/notifications.md) | Telegram and Discord alerts, channels, chat discovery |
 | [docs/bus.md](docs/bus.md) | topics, publishing, fan-out, Redis |
 | [docs/logging.md](docs/logging.md) | log levels, JSON log files, adding a logger |

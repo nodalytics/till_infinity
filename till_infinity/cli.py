@@ -13,6 +13,8 @@ import click
 from rich.markup import escape
 from rich.table import Table
 
+from . import agents as ag
+from . import journal as jr
 from . import news as nw
 from . import notifications as nt
 from . import prices as px
@@ -935,6 +937,368 @@ def notify_listen(target, redis_url, group, verbose, quiet, log_file):
         run(go())
     except KeyboardInterrupt:
         console.print("stopped")
+
+
+@main.group()
+def agents() -> None:
+    """Ask an analyst about the collected data, or leave one watching."""
+
+
+def _agent_settings(prices_db, news_db, model, role_name):
+    settings = ag.Settings.from_env()
+    if prices_db is not None:
+        settings.prices_db = Path(prices_db)
+    if news_db is not None:
+        settings.news_db = Path(news_db)
+    if model:
+        settings.model = model
+    if not settings.ready:
+        console.print("[red]ANTHROPIC_API_KEY is not set[/]")
+        raise SystemExit(1)
+    return settings, ag.resolve(role_name)
+
+
+agent_options = [
+    click.option(
+        "--role",
+        "-r",
+        "role_name",
+        type=click.Choice(sorted(ag.ROLES)),
+        default=ag.DEFAULT_ROLE,
+        show_default=True,
+        help="Which analyst. Each sees a different set of tools.",
+    ),
+    click.option("--model", "-m", help=f"Model id. Default: {ag.DEFAULT_MODEL}."),
+    click.option("--prices-db", type=click.Path(path_type=Path), help="Prices SQLite file."),
+    click.option("--news-db", type=click.Path(path_type=Path), help="News SQLite file."),
+    click.option("-v", "--verbose", is_flag=True, help="Debug logging."),
+    click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only."),
+    click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs."),
+]
+
+
+def _agent_common(func):
+    for option in reversed(agent_options):
+        func = option(func)
+    return func
+
+
+def _show(run: ag.Run) -> None:
+    console.print(f"[bold]{escape(run.analysis.summary)}[/]")
+    if not run.analysis.findings:
+        console.print("[dim]no findings — the data does not support an alert[/]")
+    for finding in run.analysis.findings:
+        colour = {"critical": "red", "warning": "yellow"}.get(finding.level, "cyan")
+        console.print(
+            f"\n[{colour}]{finding.level}[/] [bold]{escape(finding.title)}[/] "
+            f"[dim]({finding.confidence:.0%}"
+            f"{', ' + escape(finding.instrument) if finding.instrument else ''})[/]"
+        )
+        if finding.detail:
+            console.print(f"  {escape(finding.detail)}")
+        for line in finding.evidence:
+            console.print(f"  [dim]· {escape(line)}[/]")
+    console.print(f"\n[dim]{run.role} via {run.model}: {run}[/]")
+
+
+@agents.command("ask")
+@click.argument("question", nargs=-1, required=True)
+@_agent_common
+def agents_ask(question, role_name, model, prices_db, news_db, verbose, quiet, log_file):
+    """Ask a question about the stored data.
+
+    The analyst answers only from tool calls against the databases — it has no
+    prices of its own, and every store it reads is opened read-only.
+    """
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    settings, role = _agent_settings(prices_db, news_db, model, role_name)
+    try:
+        outcome = run(ag.analyse(" ".join(question), role=role, settings=settings))
+    except ag.NotConfiguredError as exc:
+        console.print(f"[red]{escape(str(exc))}[/]")
+        raise SystemExit(1) from None
+    _show(outcome)
+
+
+@agents.command("watch")
+@_agent_common
+@click.option(
+    "--redis",
+    "redis_url",
+    metavar="URL",
+    help="Redis to consume from. Default: TILL_REDIS_URL.",
+)
+@click.option("--window", type=float, help="Seconds of bus traffic per judgement. Default: 60.")
+@click.option("--spread-bps", type=float, help="Spread that wakes the model. Default: 8.")
+@click.option("--group", default="agents", show_default=True, help="Consumer group name.")
+@click.option("--journal-db", type=click.Path(path_type=Path), help="Journal SQLite file.")
+@click.option("--no-journal", is_flag=True, help="Do not record decisions.")
+@click.option("--once", is_flag=True, help="Judge a single window and exit.")
+def agents_watch(
+    role_name,
+    model,
+    prices_db,
+    news_db,
+    verbose,
+    quiet,
+    log_file,
+    redis_url,
+    window,
+    spread_bps,
+    group,
+    journal_db,
+    no_journal,
+    once,
+):
+    """Watch the bus and alert when something is worth a human's attention.
+
+    Consumes what the collectors publish, judges each window without a model
+    first, and only then asks one. Findings go to the `alerts` topic, which
+    `notify listen` delivers.
+    """
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    settings, role = _agent_settings(prices_db, news_db, model, role_name)
+    if window is not None:
+        settings.window_seconds = window
+    if spread_bps is not None:
+        settings.spread_bps = spread_bps
+    if journal_db is not None:
+        settings.journal_db = Path(journal_db)
+    if no_journal:
+        settings.journalling = False
+
+    url = redis_url or os.environ.get("TILL_REDIS_URL") or None
+    bus = Bus(redis_url=url)
+    if url is None:
+        console.print(
+            "[yellow]no redis configured[/] — an in-process bus only hears "
+            "publishers inside this command. Set TILL_REDIS_URL or pass --redis."
+        )
+    console.print(
+        f"[bold]{role.name}[/] watching {bus.backend} in "
+        f"{settings.window_seconds:.0f}s windows, Ctrl-C to stop"
+    )
+
+    def window_done(index, messages, outcome):
+        console.print(
+            f"[dim]{_clock()}[/] window {index}: {len(messages)} message(s)"
+            + ("" if outcome is None else f" -> {outcome}")
+        )
+        if outcome is not None:
+            _show(outcome)
+
+    async def go() -> None:
+        book = jr.Journal(settings.journal_db) if settings.journalling else None
+        try:
+            if book is not None:
+                await book.open()
+            await ag.watch(
+                bus,
+                settings=settings,
+                role=role,
+                group=group,
+                windows=1 if once else None,
+                on_window=window_done,
+                journal=book,
+            )
+        finally:
+            if book is not None:
+                await book.close()
+            await bus.close()
+
+    try:
+        run(go())
+    except KeyboardInterrupt:
+        console.print("stopped")
+
+
+@agents.command("roles")
+def agents_roles():
+    """Show the analysts and what each one can read."""
+    table = Table(title="analysts")
+    for column in ("role", "goal", "tools"):
+        table.add_column(column)
+    for name in sorted(ag.ROLES):
+        role = ag.ROLES[name]
+        table.add_row(
+            f"[bold]{name}[/]" + (" [dim](default)[/]" if name == ag.DEFAULT_ROLE else ""),
+            escape(role.goal),
+            escape(", ".join(role.tools)),
+        )
+    console.print(table)
+
+
+@main.group()
+def journal() -> None:
+    """The decision journal: what was decided, and why at that moment."""
+
+
+def _journal_db(path):
+    return Path(path) if path is not None else Path(os.environ.get("JOURNAL_DB") or jr.DEFAULT_DB)
+
+
+db_option = click.option("--db", type=click.Path(path_type=Path), help="Journal SQLite file.")
+
+
+def _entries_table(entries, title):
+    table = Table(title=title)
+    for column in ("when", "kind", "actor", "entry", "id"):
+        table.add_column(column, overflow="fold")
+    for entry in entries:
+        colour = {"decision": "cyan", "outcome": "green", "observation": "dim"}.get(
+            str(entry.kind), "white"
+        )
+        label = escape(entry.title)
+        if entry.confidence is not None:
+            label += f" [dim]({entry.confidence:.0%})[/]"
+        table.add_row(
+            _stamp(int(entry.time)),
+            f"[{colour}]{entry.kind}[/]",
+            escape(entry.actor),
+            label,
+            f"[dim]{entry.id}[/]",
+        )
+    console.print(table)
+
+
+@journal.command("add")
+@click.argument("title", nargs=-1, required=True)
+@db_option
+@click.option("--why", "-w", default="", help="Why, at this moment. The point of the entry.")
+@click.option(
+    "--kind",
+    "-k",
+    type=click.Choice([str(k) for k in jr.Kind]),
+    default=str(jr.Kind.NOTE),
+    show_default=True,
+)
+@click.option("--actor", "-a", default="human", show_default=True)
+@click.option("--tag", "-t", multiple=True, help="Instrument or venue; repeatable.")
+@click.option("--parent", "-p", default="", help="Entry this is an outcome of.")
+def journal_add(title, db, why, kind, actor, tag, parent):
+    """Record a decision, an observation or a note.
+
+    The `--why` is the part that matters. A title says what happened; the
+    reasoning at the time is the thing nobody can reconstruct later.
+    """
+    setup_logging()
+    entry = jr.Entry(
+        title=" ".join(title),
+        kind=jr.Kind.parse(kind),
+        actor=actor,
+        rationale=why,
+        tags=tuple(tag),
+        parent=parent,
+    )
+    if entry.kind is jr.Kind.DECISION and not why:
+        console.print("[yellow]a decision without a --why is only a log line[/]")
+
+    async def go():
+        async with jr.Journal(_journal_db(db)) as book:
+            return await book.write(entry)
+
+    written = run(go())
+    console.print(f"{'recorded' if written else 'already recorded'} [dim]{entry.id}[/]")
+
+
+@journal.command("list")
+@db_option
+@click.option("--kind", "-k", type=click.Choice([str(k) for k in jr.Kind]))
+@click.option("--actor", "-a", default="", help="Exact actor, e.g. agents/risk.")
+@click.option("--tag", "-t", default="", help="Instrument or venue.")
+@click.option("--hours", type=float, help="Only entries this recent.")
+@click.option("--limit", "-n", type=int, default=25, show_default=True)
+def journal_list(db, kind, actor, tag, hours, limit):
+    """Show recent entries, newest first."""
+    setup_logging()
+    try:
+        entries = jr.read(
+            _journal_db(db), kind=kind, actor=actor, tag=tag, hours=hours, limit=limit
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[yellow]{escape(str(exc))}[/]")
+        return
+    if not entries:
+        console.print("nothing matches")
+        return
+    _entries_table(entries, f"journal: {_journal_db(db)}")
+
+
+@journal.command("show")
+@click.argument("entry_id")
+@db_option
+def journal_show(entry_id, db):
+    """Show one entry in full, with anything that followed from it."""
+    setup_logging()
+    path = _journal_db(db)
+    try:
+        entry = jr.get(path, entry_id)
+    except FileNotFoundError as exc:
+        console.print(f"[yellow]{escape(str(exc))}[/]")
+        return
+    if entry is None:
+        console.print(f"no entry {escape(entry_id)}")
+        raise SystemExit(1)
+
+    console.print(f"[bold]{escape(entry.title)}[/] [dim]({entry.kind})[/]")
+    console.print(f"[dim]{_stamp(int(entry.time))} · {escape(entry.actor)}[/]")
+    if entry.rationale:
+        console.print(f"\n[bold]why[/]  {escape(entry.rationale)}")
+    if entry.confidence is not None:
+        console.print(f"[bold]confidence[/]  {entry.confidence:.0%}")
+    if entry.tags:
+        console.print(f"[bold]tags[/]  {escape(', '.join(entry.tags))}")
+    if entry.context:
+        console.print("\n[bold]state at the time[/]")
+        for key, value in entry.context.items():
+            console.print(f"  [dim]{escape(str(key))}[/] {escape(str(value))}")
+    followed = jr.read(path, parent=entry.id, limit=20)
+    if followed:
+        console.print()
+        _entries_table(followed, "what followed")
+
+
+@journal.command("info")
+@db_option
+def journal_info(db):
+    """What is in the journal, by actor and kind."""
+    setup_logging()
+    try:
+        rows = jr.summary(_journal_db(db))
+    except FileNotFoundError as exc:
+        console.print(f"[yellow]{escape(str(exc))}[/]")
+        return
+    table = Table(title=f"journal: {_journal_db(db)}")
+    for column in ("actor", "kind", "entries", "first", "last"):
+        table.add_column(column, justify="right" if column == "entries" else "left")
+    for row in rows:
+        table.add_row(
+            escape(row["actor"] or "—"),
+            escape(row["kind"]),
+            f"{row['entries']:,}",
+            _stamp(int(row["first"])),
+            _stamp(int(row["last"])),
+        )
+    console.print(table)
+    console.print(f"{sum(r['entries'] for r in rows):,} entries")
+
+
+@journal.command("export")
+@db_option
+@click.option("--out", "-o", type=click.Path(path_type=Path), help="Write here; default stdout.")
+@click.option("--kind", "-k", type=click.Choice([str(k) for k in jr.Kind]))
+@click.option("--hours", type=float, help="Only entries this recent.")
+@click.option("--limit", "-n", type=int, default=jr.MAX_ROWS, show_default=True)
+def journal_export(db, out, kind, hours, limit):
+    """Write the journal out as JSON lines, oldest first — training-set shaped."""
+    setup_logging(quiet=out is None)
+    try:
+        written = jr.export(_journal_db(db), target=out, kind=kind, hours=hours, limit=limit)
+    except FileNotFoundError as exc:
+        console.print(f"[yellow]{escape(str(exc))}[/]")
+        raise SystemExit(1) from None
+    if out is not None:
+        console.print(f"{written:,} entries -> {escape(str(out))}")
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -116,6 +116,16 @@ re-announce the whole feed. Calendar events are marked on `(source, id, actual)`
 rather than `(source, id)`, so an event announced as upcoming is announced again
 the moment it prints. That second announcement is usually the interesting one.
 
+## Who consumes what
+
+| consumer | subscribes to | publishes |
+|---|---|---|
+| `agents watch` | `prices.quotes`, `prices.bars`, `news.events`, `news.articles` | `alerts` |
+| `notify listen` | `alerts` | — |
+
+`news.macro` is deliberately not consumed: reserves move monthly, so a bulk row
+count is not a reason to wake anything. See [agents.md](agents.md).
+
 ## Backends
 
 | | in-memory | Redis |

@@ -1,7 +1,7 @@
 [project]
 name = "till-infinity"
 version = "0.1.0"
-description = "Add your description here"
+description = "Finding high-probability directional structures in price, backed by fundamentals"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
