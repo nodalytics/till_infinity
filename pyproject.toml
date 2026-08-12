@@ -1,0 +1,52 @@
+[project]
+name = "till-infinity"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Samuel Ojietohamen", email = "seekersoftec@gmail.com" }
+]
+dependencies = [
+    "click>=8.4.2",
+    "httpx>=0.28.1",
+    "httpx-ws>=0.9.0",
+    "orjson>=3.11.9",
+    "rich>=15.0.0",
+    "tenacity>=9.1.4",
+    "yfinance>=1.5.2",
+]
+
+[project.optional-dependencies]
+speed = ["uvloop>=0.21.0; sys_platform != 'win32'"]
+
+[project.scripts]
+till-infinity = "till_infinity.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.24,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.9.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
