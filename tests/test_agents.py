@@ -12,7 +12,7 @@ import sqlite3
 import pytest
 
 from till_infinity import agents as ag
-from till_infinity.agents import data, providers, roles, service, tools
+from till_infinity.agents import analyst, data, providers, roles, service, tools
 from till_infinity.agents.models import Analysis, Finding, Run
 from till_infinity.bus import ALERTS, ARTICLES, EVENTS, QUOTES, Bus, Message
 
@@ -379,6 +379,20 @@ def test_model_settings_follow_the_chosen_provider():
 
 
 def test_a_missing_client_names_the_command_that_installs_it(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    with pytest.raises(ag.ProviderUnavailableError, match="pydantic-ai-slim\\[openai\\]"):
-        ag.build_model(ag.Settings(model="openai:gpt-5", fallbacks=()))
+    """Whether openai is installed here is not the point — the message is."""
+
+    def absent(_name):
+        raise ImportError("no openai client")
+
+    monkeypatch.setattr(analyst, "infer_model", absent)
+    with pytest.raises(ag.ProviderUnavailableError, match=r"pydantic-ai-slim\[openai\]"):
+        analyst.one_model("openai:gpt-5")
+
+
+def test_a_provider_with_no_extra_still_reports_clearly(monkeypatch):
+    def absent(_name):
+        raise ImportError("nope")
+
+    monkeypatch.setattr(analyst, "infer_model", absent)
+    with pytest.raises(ag.ProviderUnavailableError, match="someone-new:model-1"):
+        analyst.one_model("someone-new:model-1")
