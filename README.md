@@ -42,6 +42,19 @@ uv run till-infinity news latest          # recent headlines
 
 Full guide: **[docs/news.md](docs/news.md)**.
 
+## Notifications
+
+Alerts to Telegram and Discord, fanned out across as many chats or webhooks as
+you list, with per-channel level routing.
+
+```bash
+uv run till-infinity notify chats          # discover Telegram chat ids
+uv run till-infinity notify test           # prove the wiring
+uv run till-infinity notify send "..." -l warning
+```
+
+Full guide: **[docs/notifications.md](docs/notifications.md)**.
+
 ## Docs
 
 | | |
@@ -49,6 +62,7 @@ Full guide: **[docs/news.md](docs/news.md)**.
 | [docs/getting-started.md](docs/getting-started.md) | **start here** — install to stored data, and how to read it back |
 | [docs/prices.md](docs/prices.md) | candles, quotes, sources, storage, schema, library use |
 | [docs/news.md](docs/news.md) | headlines, economic calendar, event storage |
+| [docs/notifications.md](docs/notifications.md) | Telegram and Discord alerts, channels, chat discovery |
 | [docs/logging.md](docs/logging.md) | log levels, JSON log files, adding a logger |
 
 ## Development

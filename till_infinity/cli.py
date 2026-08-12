@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import click
+from rich.markup import escape
 from rich.table import Table
 
 from . import news as nw
+from . import notifications as nt
 from . import prices as px
 from .logging import console, setup_logging
 
@@ -672,6 +674,155 @@ def news_sources():
     table.add_row("calendar", "tradingview", ", ".join(nw.CALENDAR_COUNTRIES))
     table.add_row("headlines", "tradingview", ", ".join(nw.HEADLINE_SYMBOLS))
     console.print(table)
+
+
+@main.group()
+def notify() -> None:
+    """Send alerts to Telegram and Discord."""
+
+
+@notify.command("send")
+@click.argument("message")
+@click.option("--title", "-t", default="", help="Headline. Defaults to the message itself.")
+@click.option(
+    "--level",
+    "-l",
+    default="info",
+    type=click.Choice(["info", "warning", "critical"]),
+    show_default=True,
+)
+@click.option(
+    "--target",
+    "-T",
+    multiple=True,
+    type=click.Choice(sorted(nt.NOTIFIERS)),
+    help="Destination; repeatable. Default: every configured one.",
+)
+@click.option("--url", default="", help="Link to attach.")
+@click.option("--field", "-f", multiple=True, metavar="KEY=VALUE", help="Extra field; repeatable.")
+@click.option("-v", "--verbose", is_flag=True)
+def notify_send(message, title, level, target, url, field, verbose):
+    """Send MESSAGE to the configured destinations."""
+    setup_logging(verbose=verbose)
+    fields: dict[str, str] = {}
+    for pair in field:
+        key, sep, value = pair.partition("=")
+        if not sep:
+            raise click.BadParameter(f"expected KEY=VALUE, got {pair!r}", param_hint="--field")
+        fields[key.strip()] = value.strip()
+
+    notification = nt.Notification(
+        title=title or message,
+        body="" if title == "" else message,
+        level=nt.Level.parse(level),
+        url=url,
+        fields=fields,
+        source="till-infinity",
+    )
+    results = run(nt.notify(notification, targets=target or None))
+    if not results:
+        console.print(
+            "[yellow]no target configured[/] — set TELEGRAM_BOT_TOKEN and "
+            "TELEGRAM_CHAT_ID, or DISCORD_WEBHOOK_URL"
+        )
+        raise SystemExit(1)
+    for delivery in results:
+        mark = "[green]✓[/]" if delivery.ok else "[red]✗[/]"
+        console.print(f"  {mark} {escape(str(delivery))}")
+    if not all(d.ok for d in results):
+        raise SystemExit(1)
+
+
+@notify.command("targets")
+def notify_targets():
+    """List the configured channels. Webhook URLs are masked."""
+    settings = nt.Settings.from_env()
+    table = Table()
+    for column in ("target", "label", "address", "min level"):
+        table.add_column(column)
+    rows = 0
+    for target in sorted(nt.NOTIFIERS):
+        for channel in settings.channels(target):
+            table.add_row(
+                target,
+                escape(channel.label),
+                escape(channel.masked),
+                channel.min_level.name.lower(),
+            )
+            rows += 1
+    if rows:
+        console.print(table)
+    if settings.telegram_auto_chats and not settings.telegram_chats:
+        console.print("[dim]telegram: auto-discovering chats (TELEGRAM_AUTO_CHATS)[/]")
+    elif not rows:
+        console.print("[yellow]no channel configured[/]")
+    missing = [t for t in sorted(nt.NOTIFIERS) if t not in settings.configured()]
+    needs = {
+        "telegram": "TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_IDS",
+        "discord": "DISCORD_WEBHOOK_URLS",
+    }
+    for target in missing:
+        console.print(f"[dim]{target}: needs {needs[target]}[/]")
+
+
+@notify.command("chats")
+@click.option("--verbose", "-v", is_flag=True)
+def notify_chats(verbose):
+    """Discover Telegram chat ids the bot can post to."""
+    setup_logging(verbose=verbose)
+    settings = nt.Settings.from_env()
+    if not settings.telegram_token:
+        console.print("[yellow]set TELEGRAM_BOT_TOKEN first[/]")
+        raise SystemExit(1)
+
+    try:
+        chats = run(nt.discover_telegram_chats(settings))
+    except Exception as exc:
+        console.print(f"[red]discovery failed:[/] {exc}")
+        raise SystemExit(1) from exc
+
+    if not chats:
+        console.print(
+            "no chats seen. Telegram's getUpdates only covers the last 24 hours — "
+            "send the bot a message, or post in the group, then try again."
+        )
+        return
+    table = Table()
+    for column in ("chat id", "name"):
+        table.add_column(column)
+    for chat in chats:
+        table.add_row(chat.address, escape(chat.label))
+    console.print(table)
+    console.print("\n[dim]add them with:[/]")
+    console.print("  export TELEGRAM_CHAT_IDS=" + ",".join(f"{c.label}={c.address}" for c in chats))
+
+
+@notify.command("test")
+@click.option(
+    "--target",
+    "-T",
+    multiple=True,
+    type=click.Choice(sorted(nt.NOTIFIERS)),
+)
+def notify_test(target):
+    """Send a test notification to prove the wiring."""
+    setup_logging()
+    notification = nt.Notification(
+        title="Till Infinity is wired up",
+        body="If you can read this, alerts will reach you.",
+        level=nt.Level.INFO,
+        fields={"sent": datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")},
+        source="till-infinity",
+    )
+    results = run(nt.notify(notification, targets=target or None))
+    if not results:
+        console.print("[yellow]no target configured[/] — see `till-infinity notify targets`")
+        raise SystemExit(1)
+    for delivery in results:
+        mark = "[green]✓[/]" if delivery.ok else "[red]✗[/]"
+        console.print(f"  {mark} {escape(str(delivery))}")
+    if not all(d.ok for d in results):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":  # pragma: no cover

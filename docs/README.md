@@ -5,6 +5,7 @@
 | [getting-started.md](getting-started.md) | how to use Till Infinity — install, first pull, keeping it current, reading the data back |
 | [news.md](news.md) | headlines and the economic calendar — sources, two clocks, storage |
 | [prices.md](prices.md) | OHLCV candles and realtime bid/ask across brokers — CLI, sources, storage, schema, library use |
+| [notifications.md](notifications.md) | Telegram and Discord alerts — channels, level routing, chat discovery |
 | [logging.md](logging.md) | project logging: levels, JSON log files, adding a logger to a module |
 
 Notes on what is *not* obvious about the data — which venues are missing from
