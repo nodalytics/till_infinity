@@ -51,7 +51,17 @@ DEFAULT_USER_AGENT = (
 #: TradingView's calendar and headline services check the browser origin.
 TRADINGVIEW_ORIGIN = "https://www.tradingview.com"
 
-DEFAULT_SOURCES: tuple[str, ...] = ("rss", "forexfactory", "tradingview", "headlines")
+#: IMF SDMX. Country codes are ISO-3 — "US" matches nothing, "USA" does.
+IMF_BASE_URL = "https://api.imf.org/external/sdmx/2.1"
+#: International Reserves and Foreign Currency Liquidity. The "+" resolves to
+#: the latest version, which moves (12.0.0 at time of writing).
+IMF_FLOW = "IMF.STA,IRFCL,+"
+IMF_COUNTRIES: tuple[str, ...] = ("USA", "GBR", "JPN", "CHN", "DEU", "CHE")
+IMF_FREQUENCY = "M"
+#: Reserves are monthly and revised slowly, so only a short window is re-pulled.
+IMF_MONTHS_BACK = 18
+
+DEFAULT_SOURCES: tuple[str, ...] = ("rss", "forexfactory", "tradingview", "headlines", "imf")
 
 
 def _env(name: str) -> str | None:
@@ -87,6 +97,7 @@ class Settings:
     timeout: float = 20.0
     retries: int = 3
     headline_limit: int = 30
+    imf_countries: tuple[str, ...] = IMF_COUNTRIES
     user_agent: str = DEFAULT_USER_AGENT
 
     def __post_init__(self) -> None:

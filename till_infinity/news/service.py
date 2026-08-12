@@ -25,6 +25,7 @@ from ..logging import get_logger
 from .calendar import ForexFactoryCalendar, TradingViewCalendar
 from .config import DEFAULT_SOURCES, Settings
 from .headlines import HeadlineSource
+from .imf import ImfSource
 from .models import Batch, WriteResult
 from .rss import RssSource
 from .source import Source, TransientError
@@ -37,6 +38,7 @@ SOURCES: dict[str, type[Source]] = {
     ForexFactoryCalendar.name: ForexFactoryCalendar,
     TradingViewCalendar.name: TradingViewCalendar,
     HeadlineSource.name: HeadlineSource,
+    ImfSource.name: ImfSource,
 }
 
 
@@ -54,6 +56,7 @@ class Summary:
 
     articles: WriteResult = field(default_factory=WriteResult)
     events: WriteResult = field(default_factory=WriteResult)
+    observations: WriteResult = field(default_factory=WriteResult)
     failed: int = 0
     elapsed: float = 0.0
 
@@ -61,6 +64,10 @@ class Summary:
         parts = [f"{self.articles.inserted} headlines"]
         if self.events.touched:
             parts.append(f"{self.events.inserted} new events, {self.events.updated} released")
+        if self.observations.touched:
+            parts.append(
+                f"{self.observations.inserted} macro rows, {self.observations.updated} revised"
+            )
         if self.failed:
             parts.append(f"{self.failed} failed")
         return ", ".join(parts) + f" in {self.elapsed:.1f}s"
@@ -100,6 +107,8 @@ async def poll_once(
             summary.articles += await store.write_articles(batch.articles)
         if batch.events:
             summary.events += await store.write_events(batch.events)
+        if batch.observations:
+            summary.observations += await store.write_observations(batch.observations)
 
     summary.elapsed = time.monotonic() - started
     return summary

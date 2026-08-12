@@ -235,3 +235,81 @@ def test_clean_and_digest():
     assert clean("<p>a   &amp; b</p>") == "a & b"
     assert digest("a", None, 1) == digest("a", None, 1)
     assert digest("a") != digest("b")
+
+
+IMF_XML = b"""<?xml version='1.0' encoding='UTF-8'?>
+<message:StructureSpecificData
+    xmlns:message="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/message">
+  <message:DataSet>
+    <Series COUNTRY="USA" INDICATOR="IRFCLDT1_IRFCL54_USD" SECTOR="S1XS1311"
+            FREQUENCY="M" SCALE="6">
+      <Obs TIME_PERIOD="2026-M06" OBS_VALUE="251000000000"/>
+      <Obs TIME_PERIOD="2026-M07" OBS_VALUE="252708091800"/>
+      <Obs TIME_PERIOD="2026-M08" OBS_VALUE=""/>
+    </Series>
+  </message:DataSet>
+</message:StructureSpecificData>"""
+
+
+def test_imf_dataset_becomes_observations():
+    from till_infinity.news.imf import parse_dataset
+
+    rows = parse_dataset(IMF_XML)
+    assert len(rows) == 2  # the empty observation is dropped
+    latest = rows[-1]
+    assert latest.country == "USA"
+    assert latest.indicator == "IRFCLDT1_IRFCL54_USD"
+    assert latest.series == "USA.IRFCLDT1_IRFCL54_USD.S1XS1311.M"
+    assert latest.period == "2026-M07"
+    assert latest.time == datetime(2026, 7, 1, tzinfo=UTC).timestamp()
+
+
+def test_imf_values_are_not_rescaled():
+    """SCALE=6 is provenance, not a multiplier — US reserves are $252.7bn, and
+    applying the exponent would report $252.7 quadrillion."""
+    from till_infinity.news.imf import parse_dataset
+
+    latest = parse_dataset(IMF_XML)[-1]
+    assert latest.scale == 6
+    assert latest.value == 252_708_091_800.0
+    assert 2e11 < latest.value < 3e11
+    assert "scaled" not in latest.to_dict()
+
+
+def test_imf_malformed_body_is_permanent():
+    from till_infinity.news.imf import parse_dataset
+
+    with pytest.raises(PermanentError, match="malformed"):
+        parse_dataset(b"<not xml")
+
+
+def test_imf_key_uses_iso3_with_open_middle_dimensions():
+    """`US...M` returns a valid but empty document; only `USA...M` has data."""
+    from till_infinity.news import Settings
+    from till_infinity.news.imf import ImfSource
+
+    source = ImfSource(Settings(data_dir="/tmp"), countries=("USA",))
+    assert source.key("USA") == "USA...M"
+    assert source.key("USA").count(".") == 3  # COUNTRY.INDICATOR.SECTOR.FREQUENCY
+
+
+@pytest.mark.parametrize(
+    ("period", "expected"),
+    [
+        ("2026-M07", datetime(2026, 7, 1, tzinfo=UTC)),
+        ("2026-Q3", datetime(2026, 7, 1, tzinfo=UTC)),
+        ("2026", datetime(2026, 1, 1, tzinfo=UTC)),
+    ],
+)
+def test_sdmx_periods_map_to_the_start_of_the_period(period, expected):
+    from till_infinity.news import parse_period
+
+    assert parse_period(period) == expected.timestamp()
+
+
+def test_imf_start_period_counts_months_back():
+    from till_infinity.news.imf import start_period
+
+    assert start_period(0, now=datetime(2026, 8, 12, tzinfo=UTC)) == "2026-08"
+    assert start_period(1, now=datetime(2026, 1, 12, tzinfo=UTC)) == "2025-12"
+    assert start_period(18, now=datetime(2026, 8, 12, tzinfo=UTC)) == "2025-02"

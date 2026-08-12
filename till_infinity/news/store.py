@@ -19,7 +19,7 @@ from typing import Self
 
 import orjson
 
-from .models import Article, Event, FeedInfo, WriteResult
+from .models import Article, Event, FeedInfo, Observation, WriteResult
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS articles (
@@ -56,6 +56,34 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS events_time ON events (time DESC);
 CREATE INDEX IF NOT EXISTS events_importance ON events (importance DESC, time DESC);
+
+CREATE TABLE IF NOT EXISTS observations (
+    source    TEXT    NOT NULL,
+    series    TEXT    NOT NULL,
+    time      REAL    NOT NULL,
+    value     REAL    NOT NULL,
+    scale     INTEGER NOT NULL DEFAULT 0,
+    country   TEXT,
+    indicator TEXT,
+    frequency TEXT,
+    period    TEXT,
+    updated   REAL    NOT NULL,
+    PRIMARY KEY (source, series, time)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS observations_country ON observations (country, time DESC);
+"""
+
+_UPSERT_OBSERVATION = """
+INSERT INTO observations
+    (source, series, time, value, scale, country, indicator, frequency, period, updated)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (source, series, time) DO UPDATE SET
+    value = excluded.value,
+    scale = excluded.scale,
+    updated = excluded.updated
+WHERE observations.value IS NOT excluded.value
+   OR observations.scale IS NOT excluded.scale
 """
 
 _INSERT_ARTICLE = """
@@ -110,6 +138,9 @@ class Store(ABC):
 
     @abstractmethod
     async def write_events(self, events: Sequence[Event]) -> WriteResult: ...
+
+    @abstractmethod
+    async def write_observations(self, rows: Sequence[Observation]) -> WriteResult: ...
 
     @abstractmethod
     async def feeds(self) -> list[FeedInfo]: ...
@@ -211,6 +242,61 @@ class SqliteStore(Store):
         inserted = sum(1 for e in events if (e.source, e.id) not in known)
         return WriteResult(inserted=inserted, updated=max(0, touched - inserted))
 
+    async def write_observations(self, rows: Sequence[Observation]) -> WriteResult:
+        if not rows:
+            return WriteResult()
+        async with self._lock:
+            return await asyncio.to_thread(self._write_observations, list(rows))
+
+    def _write_observations(self, rows: list[Observation]) -> WriteResult:
+        """Revisions are the norm here, so a changed value rewrites its row."""
+        conn = self._require()
+        now = time.time()
+        known = {
+            (source, series, when)
+            for source, series, when in conn.execute(
+                "SELECT source, series, time FROM observations"
+            )
+        }
+        payload = [
+            (
+                o.source,
+                o.series,
+                o.time,
+                o.value,
+                o.scale,
+                o.country,
+                o.indicator,
+                o.frequency,
+                o.period,
+                now,
+            )
+            for o in rows
+        ]
+        before = conn.total_changes
+        with conn:
+            conn.executemany(_UPSERT_OBSERVATION, payload)
+        touched = conn.total_changes - before
+        inserted = sum(1 for o in rows if (o.source, o.series, o.time) not in known)
+        return WriteResult(inserted=inserted, updated=max(0, touched - inserted))
+
+    async def observations(self, country: str = "", limit: int = 50) -> list[Observation]:
+        async with self._lock:
+            return await asyncio.to_thread(self._observations, country, limit)
+
+    def _observations(self, country: str, limit: int) -> list[Observation]:
+        conn = self._require()
+        sql = (
+            "SELECT source, series, time, value, country, indicator, frequency, scale, period"
+            " FROM observations"
+        )
+        params: tuple[object, ...] = ()
+        if country:
+            sql += " WHERE country = ?"
+            params = (country,)
+        sql += " ORDER BY time DESC LIMIT ?"
+        return [Observation(*row) for row in conn.execute(sql, (*params, limit))]
+
     async def feeds(self) -> list[FeedInfo]:
         async with self._lock:
             return await asyncio.to_thread(self._feeds)
@@ -221,6 +307,7 @@ class SqliteStore(Store):
         for kind, table, column in (
             ("news", "articles", "published"),
             ("calendar", "events", "time"),
+            ("macro", "observations", "time"),
         ):
             out.extend(
                 FeedInfo(kind, source, count, first, last)
@@ -292,6 +379,7 @@ class JsonlStore(Store):
         self.root = Path(root)
         self._seen_articles: set[tuple[str, str]] = set()
         self._seen_events: dict[tuple[str, str], str | None] = {}
+        self._seen_obs: dict[tuple[str, str, float], float] = {}
         self._lock = asyncio.Lock()
 
     def path(self, kind: str, source: str) -> Path:
@@ -332,12 +420,24 @@ class JsonlStore(Store):
             with open(path, "ab") as handle:
                 handle.write(b"".join(payload))
 
+    async def write_observations(self, rows: Sequence[Observation]) -> WriteResult:
+        if not rows:
+            return WriteResult()
+        async with self._lock:
+            fresh = [r for r in rows if self._seen_obs.get((r.source, r.series, r.time)) != r.value]
+            for row in fresh:
+                self._seen_obs[(row.source, row.series, row.time)] = row.value
+            if not fresh:
+                return WriteResult()
+            await asyncio.to_thread(self._append, "macro", [(r.source, r.to_dict()) for r in fresh])
+            return WriteResult(inserted=len(fresh))
+
     async def feeds(self) -> list[FeedInfo]:
         return await asyncio.to_thread(self._feeds)
 
     def _feeds(self) -> list[FeedInfo]:
         out: list[FeedInfo] = []
-        for kind, field in (("news", "published"), ("calendar", "time")):
+        for kind, field in (("news", "published"), ("calendar", "time"), ("macro", "time")):
             for path in sorted((self.root / kind).glob("*.jsonl")):
                 count = 0
                 first: float | None = None
@@ -382,6 +482,10 @@ class MultiStore(Store):
 
     async def write_events(self, events: Sequence[Event]) -> WriteResult:
         results = [await s.write_events(events) for s in self.stores]
+        return results[0]
+
+    async def write_observations(self, rows: Sequence[Observation]) -> WriteResult:
+        results = [await s.write_observations(rows) for s in self.stores]
         return results[0]
 
     async def feeds(self) -> list[FeedInfo]:

@@ -189,6 +189,7 @@ def test_build_sources_rejects_an_unknown_name(tmp_path):
         "forexfactory",
         "tradingview",
         "headlines",
+        "imf",
     }
     with pytest.raises(ValueError, match="unknown source"):
         build_sources(("bloomberg",), settings)
@@ -200,7 +201,8 @@ def test_open_store_rejects_an_unknown_kind(tmp_path):
         open_store("parquet", database=tmp_path / "n.db", data_dir=tmp_path)
 
 
-def test_calendars_are_polled_on_the_slow_clock(tmp_path):
+def test_slow_sources_run_on_the_slow_clock(tmp_path):
+    """Calendars barely move between prints, and IMF reserves are monthly."""
     settings = Settings(data_dir=tmp_path)
     slow = {s.name for s in build_sources(None, settings) if s.slow}
-    assert slow == {"forexfactory", "tradingview"}
+    assert slow == {"forexfactory", "tradingview", "imf"}

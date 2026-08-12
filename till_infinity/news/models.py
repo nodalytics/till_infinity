@@ -167,6 +167,64 @@ class Event:
 
 
 @dataclass(frozen=True, slots=True)
+class Observation:
+    """One macro data point — a value for a series at a period.
+
+    `value` is the quantity as published, in the series' own units. `scale` is
+    the provider's unit-multiplier metadata, kept for provenance only: it is
+    **already reflected in value** and must not be applied again. IMF sends
+    reserves with ``SCALE="6"`` yet the number is plain USD — US reserves for
+    2026-07 arrive as 252,708,091,800, which is the $252.7bn actually held.
+    Multiplying by 10**6 would report a quintillion.
+    """
+
+    source: str
+    series: str
+    time: float
+    value: float
+    country: str = ""
+    indicator: str = ""
+    frequency: str = ""
+    scale: int = 0
+    period: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "series": self.series,
+            "time": self.time,
+            "period": self.period,
+            "value": self.value,
+            "scale": self.scale,
+            "country": self.country,
+            "indicator": self.indicator,
+            "frequency": self.frequency,
+        }
+
+
+def parse_period(text: str) -> float | None:
+    """SDMX period -> epoch seconds at the start of that period, UTC.
+
+    Handles ``2026-M01`` (monthly), ``2026-Q1`` (quarterly), ``2026`` (annual)
+    and plain ISO dates.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    monthly = re.fullmatch(r"(\d{4})-?M(\d{1,2})", text)
+    if monthly:
+        year, month = int(monthly[1]), int(monthly[2])
+        return datetime(year, month, 1, tzinfo=UTC).timestamp()
+    quarterly = re.fullmatch(r"(\d{4})-?Q([1-4])", text)
+    if quarterly:
+        year, quarter = int(quarterly[1]), int(quarterly[2])
+        return datetime(year, quarter * 3 - 2, 1, tzinfo=UTC).timestamp()
+    if re.fullmatch(r"\d{4}", text):
+        return datetime(int(text), 1, 1, tzinfo=UTC).timestamp()
+    return parse_time(text)
+
+
+@dataclass(frozen=True, slots=True)
 class WriteResult:
     """What a store did with a batch."""
 
@@ -198,9 +256,10 @@ class Batch:
 
     articles: list[Article] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
+    observations: list[Observation] = field(default_factory=list)
 
     def __len__(self) -> int:
-        return len(self.articles) + len(self.events)
+        return len(self.articles) + len(self.events) + len(self.observations)
 
 
 def utc(value: float | None) -> datetime | None:
