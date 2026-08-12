@@ -20,6 +20,7 @@ from TradingView and Yahoo. No API keys.
 
 ```bash
 uv run till-infinity prices backfill      # deep history
+uv run till-infinity prices collect       # bars + quotes together, with a ticker
 uv run till-infinity prices bars          # new bars every 60s, forever
 uv run till-infinity prices quotes        # stream live bid/ask, forever
 uv run till-infinity prices info          # what is stored

@@ -34,6 +34,7 @@ from typing import Any
 import orjson
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.text import Text
 
 #: Human-facing command output (tables, summaries). Not for log records.
 console = Console()
@@ -144,7 +145,8 @@ def setup_logging(
             console=err_console,
             rich_tracebacks=True,
             show_path=resolved <= logging.DEBUG,
-            log_time_format="%H:%M:%S",
+            # Everything this project stores is UTC; the console should agree.
+            log_time_format=lambda when: Text(when.astimezone(UTC).strftime("%H:%M:%S")),
         )
         console_handler.setFormatter(logging.Formatter("%(message)s"))
     root.addHandler(console_handler)

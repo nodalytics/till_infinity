@@ -14,11 +14,26 @@ configured for it. Anything else works too.
 ```bash
 uv run till-infinity prices symbols            # what -s accepts
 uv run till-infinity prices backfill           # deep history, all sources
+uv run till-infinity prices collect            # bars + quotes together, with a ticker
 uv run till-infinity prices bars               # new bars every 60s, forever
 uv run till-infinity prices quotes             # stream live bid/ask, forever
 uv run till-infinity prices quotes --once      # one cross-broker snapshot
 uv run till-infinity prices info               # what is stored
 ```
+
+`collect` is the everyday command: it sweeps candles on the slow clock while
+quotes stream, and prints one compact line per tick rather than a line per
+update — a glance, with the database holding the detail.
+
+```
+20:15:23 eurusd 1.15223 ·   gbpusd 1.34904 ·   gold 4,409.60 ·   btc 63,452.01 ·
+20:15:32 bars  8073 new, 0 updated across 27 symbol sweeps in 13.6s
+20:15:33 eurusd 1.15222 ▼   gbpusd 1.34904 ·   gold 4,409.52 ▼   btc 63,450.19 ▼
+```
+
+The price shown per instrument is the tightest-spread broker's mid, and the
+arrow is its direction since the previous line. `--source` there selects candle
+providers; quotes always use the socket transport.
 
 `--once` makes `bars` and `quotes` do a single pass and exit. Without it they
 run until interrupted: `bars` sweeps every `--cycle` seconds (default 60),
@@ -120,8 +135,12 @@ quotes (source, feed, venue, ticker, ts, bid, ask, last, mid, spread,
         spread_bps, volume, change, change_pct)  PRIMARY KEY (…, ts)
 ```
 
-`bars.ts` is the bar's **open** time in epoch seconds; `quotes.ts` is epoch
-**milliseconds**, since quotes arrive faster than one a second. `bars.closed`
+**Everything is UTC.** `bars.ts` is the bar's **open** time in epoch seconds;
+`quotes.ts` is epoch **milliseconds**, since quotes arrive faster than one a
+second. Yahoo frames are converted with `tz_convert("UTC")` before storage, 2h
+and 4h buckets are resampled with `origin="epoch"` so they align to UTC
+midnight, and every timestamp printed by the CLI — including log records — is
+rendered in UTC. Local time never enters the project. `bars.closed`
 records whether the window had elapsed when the row was written — the UPSERT
 only overwrites rows where it is 0, so history is immutable and forming bars
 are not.

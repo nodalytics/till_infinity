@@ -357,6 +357,123 @@ def _price(value: float | None) -> str:
     return f"{value:,.5f}" if abs(value) < 100 else f"{value:,.2f}"
 
 
+def _clock() -> str:
+    return datetime.now(UTC).strftime("%H:%M:%S")
+
+
+class _Ticker:
+    """One line per tick: the tightest quote per instrument, and which way it moved.
+
+    Deliberately not one line per broker per update — that is thousands of lines
+    an hour and nobody reads it. This is a glance, and the database has the rest.
+    """
+
+    def __init__(self) -> None:
+        self._last: dict[str, float] = {}
+
+    def line(self, tick: px.QuoteTick) -> str:
+        parts: list[str] = []
+        for feed in dict.fromkeys(key.feed for key in tick.quotes):
+            best = next((q for _, q in tick.by_feed(feed) if q.mid is not None), None)
+            if best is None or best.mid is None:
+                continue
+            previous = self._last.get(feed)
+            self._last[feed] = best.mid
+            if previous is None or best.mid == previous:
+                mark, colour = "·", "dim"
+            elif best.mid > previous:
+                mark, colour = "▲", "green"
+            else:
+                mark, colour = "▼", "red"
+            parts.append(f"{feed} [{colour}]{_price(best.mid)} {mark}[/]")
+        return "   ".join(parts)
+
+
+@prices.command("collect")
+@_common()
+@click.option("--bars", type=int, help="Bars to request per sweep. Default: PRICES_LIVE_BARS.")
+@click.option("--cycle", type=float, help="Seconds between bar sweeps. Default: PRICES_CYCLE_S.")
+@click.option(
+    "--poll", type=float, help="Seconds between ticker lines. Default: PRICES_QUOTE_POLL."
+)
+@click.option("--all-ticks", is_flag=True, help="Store every quote update, not just changes.")
+@click.option("--once", is_flag=True, help="One bar sweep and one quote snapshot, then exit.")
+def collect_command(
+    symbol,
+    interval,
+    source,
+    store_kind,
+    db,
+    data_dir,
+    include_partial,
+    verbose,
+    quiet,
+    log_file,
+    bars,
+    cycle,
+    poll,
+    all_ticks,
+    once,
+):
+    """Run bars and quotes together — the everyday collector.
+
+    Candles are swept on the slower clock while quotes stream continuously.
+    `--source` selects candle providers; quotes use the default socket transport.
+    """
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    settings = _settings(db, data_dir, include_partial)
+    if cycle is not None:
+        settings.cycle_seconds = cycle
+    if poll is not None:
+        settings.quote_poll_seconds = poll
+    feeds = px.resolve_symbols(symbol or None)
+    intervals = px.resolve_intervals(interval or None)
+    ticker = _Ticker()
+
+    def on_bars(_index: int, summary: px.Summary) -> None:
+        console.print(f"[dim]{_clock()}[/] [bold]bars[/]  {summary}")
+
+    def on_quotes(_index: int, tick: px.QuoteTick) -> None:
+        line = ticker.line(tick)
+        if line:
+            console.print(f"[dim]{_clock()}[/] {line}")
+
+    async def go() -> None:
+        store = px.open_store(
+            store_kind,
+            database=settings.database,
+            data_dir=settings.data_dir,
+            dedupe_quotes=not all_ticks,
+        )
+        async with store, asyncio.TaskGroup() as group:
+            group.create_task(
+                px.collect(
+                    settings=settings,
+                    store=store,
+                    feeds=feeds,
+                    intervals=intervals,
+                    sources=source or None,
+                    bars=bars,
+                    cycles=1 if once else None,
+                    on_cycle=on_bars,
+                )
+            )
+            group.create_task(
+                px.stream(
+                    settings=settings,
+                    feeds=feeds,
+                    sink=store.write_quote,
+                    ticks=1 if once else None,
+                    on_tick=on_quotes,
+                )
+            )
+
+    try:
+        run(go())
+    except KeyboardInterrupt:
+        console.print("stopped")
+
+
 @prices.command()
 @click.argument("names", nargs=-1)
 def symbols(names):

@@ -36,6 +36,20 @@ class Job:
         return f"{self.source}:{self.feed} {self.symbol.full}"
 
 
+def first_cause(exc: BaseException, depth: int = 5) -> str:
+    """Name the real failure behind an ExceptionGroup.
+
+    anyio — which httpx-ws runs on — reports a failed connect as an
+    ExceptionGroup whose str() is the famously unhelpful "unhandled errors in a
+    TaskGroup (1 sub-exception)". Unwrap it so the log says what went wrong.
+    """
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions and depth > 0:
+        exc = exc.exceptions[0]
+        depth -= 1
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
 class SourceError(Exception):
     """Base for source failures."""
 

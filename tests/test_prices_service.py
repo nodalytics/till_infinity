@@ -127,3 +127,53 @@ def test_resolvers_reject_unknown_names():
     with pytest.raises(ValueError, match="unknown interval"):
         resolve_intervals(("3m",))
     assert set(resolve_intervals(None)) == set(INTERVALS.values())
+
+
+def test_first_cause_unwraps_exception_groups():
+    """anyio hides a connect failure inside an ExceptionGroup whose str() says
+    nothing. Unwrapped, the log names the actual error."""
+    from till_infinity.prices.source import first_cause
+
+    inner = ConnectionResetError("peer closed the connection")
+    group = BaseExceptionGroup("unhandled errors in a TaskGroup", [inner])
+    assert first_cause(group) == "ConnectionResetError: peer closed the connection"
+
+    nested = BaseExceptionGroup("outer", [BaseExceptionGroup("inner", [inner])])
+    assert "peer closed the connection" in first_cause(nested)
+
+    assert first_cause(ValueError("plain")) == "ValueError: plain"
+    assert first_cause(ValueError()) == "ValueError"
+
+
+@pytest.mark.asyncio
+async def test_an_unclassified_connect_error_is_retried(settings, monkeypatch):
+    """A failure anyio wrapped must still count as transient, or it never retries."""
+    service = __import__("till_infinity.prices.service", fromlist=["SOURCES"])
+    settings.retries = 3
+    made: list[FakeSource] = []
+
+    class GroupFailingSource(FakeSource):
+        async def fetch(self, job, bars, sink):
+            self.calls += 1
+            if self.calls == 1:
+                raise TransientError("connect failed: ConnectionResetError: peer closed")
+            return await super().fetch(job, bars, sink)
+
+    def flaky(s):
+        source = GroupFailingSource(s)
+        source.calls = 0
+        made.append(source)
+        return source
+
+    monkeypatch.setitem(service.SOURCES, "tradingview", flaky)
+    async with SqliteStore(settings.database) as store:
+        summary = await sweep(
+            settings=settings,
+            store=store,
+            feeds=resolve_feeds(("btc",)),
+            intervals=resolve_intervals(("1d",)),
+            bars=5,
+            sources=("tradingview",),
+        )
+    assert summary.failed == 0
+    assert made[0].calls > 1

@@ -34,7 +34,7 @@ from httpx_ws import AsyncWebSocketSession, aconnect_ws
 from ..logging import get_logger
 from .config import Settings
 from .models import Bar, Interval, WriteResult
-from .source import BarSink, Job, PermanentError, Source, TransientError
+from .source import BarSink, Job, PermanentError, Source, TransientError, first_cause
 
 log = get_logger(__name__)
 
@@ -297,8 +297,13 @@ class TradingViewSource(Source):
                 conn = Connection(ws, self.settings)
                 await conn.handshake()
                 yield conn
-        except (httpx.HTTPError, OSError) as exc:
-            raise TransientError(f"connect failed: {exc}") from exc
+        except (PermanentError, TransientError):
+            raise
+        except Exception as exc:
+            # anyio wraps a failed connect in an ExceptionGroup, which is
+            # neither HTTPError nor OSError — left unclassified it would skip
+            # the retry entirely, so anything unrecognised here is transient.
+            raise TransientError(f"connect failed: {first_cause(exc)}") from exc
 
     async def fetch(self, job: Job, bars: int, sink: BarSink) -> WriteResult:
         total = WriteResult()

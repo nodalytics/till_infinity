@@ -24,7 +24,7 @@ from tenacity import (
 from ..logging import get_logger
 from .config import DEFAULT_SOURCES, Feed, Settings
 from .models import INTERVALS, Bar, Interval, SeriesKey, WriteResult
-from .source import Job, Source, TransientError
+from .source import Job, Source, TransientError, first_cause
 from .store import Store
 from .tradingview import TradingViewSource
 from .yahoo import YahooSource
@@ -145,8 +145,9 @@ async def _run_job(
         except RetryError as exc:  # pragma: no cover - reraise=True makes this rare
             return JobResult(job, WriteResult(), str(exc))
         except Exception as exc:
-            log.warning("%s failed: %s", job, exc)
-            return JobResult(job, WriteResult(), str(exc))
+            reason = first_cause(exc)
+            log.warning("%s failed: %s", job, reason)
+            return JobResult(job, WriteResult(), reason)
     raise AssertionError("unreachable")
 
 

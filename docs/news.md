@@ -57,6 +57,10 @@ SQLite by default, and the two tables deliberately behave differently:
 ForexFactory supplies no event id, so one is derived from title + country +
 date — stable across polls, which is what makes the rewrite work.
 
+**Times are UTC**, stored as epoch seconds. The feeds send three different date
+formats — ISO-8601 with a literal `Z`, ISO with a numeric offset, and RFC 2822
+`pubDate` — and all three are parsed to the same absolute instant.
+
 ```
 .data/news/news.db                        # sqlite: articles + events
 .data/news/news/forexlive.jsonl           # jsonl headlines, one file per source
