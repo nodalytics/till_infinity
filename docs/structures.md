@@ -1,8 +1,8 @@
 # Structures
 
 The numeric layer. It watches quotes and fast bars, learns continuously what is
-normal, and says when something is not — **without an API key, without a
-language model, and without stopping when either is unavailable.**
+normal, and says when something is not — **arithmetic, not judgement, and it
+does not stop when a model provider does.**
 
 ```bash
 uv run till-infinity structures watch --redis redis://localhost:6379
@@ -59,6 +59,14 @@ a bad feed hides.
 **"Spoke" and "moved" are tracked separately.** A dead feed usually keeps
 sending; it just keeps sending the same price. Staleness measures the second.
 
+## Key levels
+
+The largest part of this package, and it has [its own guide](levels.md):
+swings found by Perceptually Important Points, each level tracked as a Kalman
+state whose variance *is* its zone, statistics kept **per approach side**, and
+an answer of the form *given price arrived from this side, P(pushed up) is p and
+the expected push is n volatility units — against a base rate of q*.
+
 ## The four shapes
 
 | shape | what happened | needs an agent? |
@@ -67,6 +75,7 @@ sending; it just keeps sending the same price. Staleness measures the second.
 | `spread` | its spread is wide for the group *and* for itself | yes |
 | `stale` | it has stopped moving while the others have not | **no** |
 | `drift` | the volatility regime itself changed | yes |
+| `level` | price arrived at a key level with a history | yes — see [levels.md](levels.md) |
 
 A **stale** feed goes straight to `alerts`. It needs no language model to
 interpret and no economic release to explain, and making it wait for an agent

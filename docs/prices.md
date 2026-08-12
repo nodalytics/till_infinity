@@ -1,7 +1,7 @@
 # Prices
 
 `till_infinity.prices` fetches OHLCV candles and realtime bid/ask for the same
-instrument across many brokers, then stores them. No API keys.
+instrument across many brokers, then stores them.
 
 The point of tracking one instrument across brokers is that the *differences*
 are the signal: cross-broker spread, which venue leads, where quotes diverge.

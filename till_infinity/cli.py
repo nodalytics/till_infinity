@@ -1195,8 +1195,6 @@ def structures_watch(
     the others. Findings go to `structures.signals` for an agent to weigh
     against the calendar; the unambiguous ones — a feed that has stopped —
     go straight to `alerts`.
-
-    Needs no API key, and keeps running when the model providers are down.
     """
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
     settings = sx.Settings.from_env()

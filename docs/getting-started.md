@@ -183,8 +183,8 @@ without `--publish` there is no bus at all. Full guide: [bus.md](bus.md).
 
 ## 9. Let the numbers watch first
 
-`structures` learns what normal looks like across venues and needs no API key,
-so it is the cheapest thing to leave running:
+`structures` learns what normal looks like across venues, so it is the cheapest
+thing to leave running:
 
 ```bash
 uv run till-infinity structures watch --redis redis://localhost:6379 &

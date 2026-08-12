@@ -7,7 +7,6 @@
 <p align="center">
   Finding high-probability directional structures in price, backed by
   fundamentals.
-  <br>No API keys for the data.
 </p>
 
 <p align="center">
@@ -33,8 +32,8 @@ than many instruments from one.
 **Finding the structure is arithmetic, not judgement.** `structures` measures
 every venue against the median of the others and learns, online, what normal
 looks like for each — because "unusual" only means anything relative to
-something, and a constant threshold is the wrong something. It needs no API key
-and keeps running when the model providers do not.
+something, and a constant threshold is the wrong something. It runs
+continuously, independently of anything else.
 
 **Fundamentals separate a structure from a coincidence.** A move with a release
 behind it is a different animal from the same move on a quiet calendar. `news`
@@ -63,7 +62,7 @@ uv sync --extra speed   # adds uvloop
 ## Prices
 
 OHLCV candles and realtime bid/ask for the same instrument across many brokers,
-from TradingView and Yahoo. No API keys.
+from TradingView and Yahoo.
 
 ```bash
 uv run till-infinity prices backfill      # deep history
@@ -94,15 +93,17 @@ between providers. Full guide: **[docs/news.md](docs/news.md)**.
 
 Online models over the price data. Every venue is measured against the
 consensus of the others, continuously, and the models keep learning as the
-market changes.
+market changes. It also finds the **key levels** price keeps turning at, and
+infers which way it goes from what happened last time it arrived —
+**[docs/levels.md](docs/levels.md)**.
 
 ```bash
 uv run till-infinity structures watch --redis redis://localhost:6379
 uv run till-infinity structures info
 ```
 
-No API key, no LLM, and it keeps running when the model providers are down —
-which is why it is a separate service rather than part of `agents`. Full guide:
+A separate service from `agents` rather than part of it, so the numeric layer
+keeps running independently. Full guide:
 **[docs/structures.md](docs/structures.md)**.
 
 ## Agents
@@ -200,6 +201,7 @@ lands, and journal entries are content-addressed.
 | [docs/prices.md](docs/prices.md) | candles, quotes, sources, storage, schema, library use |
 | [docs/news.md](docs/news.md) | headlines, economic calendar, event storage |
 | [docs/structures.md](docs/structures.md) | online models, cross-venue features, avoiding false positives |
+| [docs/levels.md](docs/levels.md) | key levels — PIP swings, Kalman tracking, per-side directional inference |
 | [docs/agents.md](docs/agents.md) | analysts, tools, models, read-only access, watching the bus |
 | [docs/journal.md](docs/journal.md) | decisions, reasoning, outcomes, exporting for training |
 | [docs/notifications.md](docs/notifications.md) | Telegram and Discord alerts, channels, chat discovery |

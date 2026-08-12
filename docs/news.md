@@ -2,7 +2,7 @@
 
 `till_infinity.news` collects headlines and the economic calendar around them —
 the event-proximity context a vol or regime model needs to know *why* a price
-moved. No API keys.
+moved.
 
 ```bash
 uv run till-infinity news collect          # poll forever
