@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 210" width="660" height="210"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="34 14 230 128" width="230" height="128"
      role="img" aria-label="Till Infinity">
   <title>Till Infinity</title>
-  <desc>An infinity symbol above a rising series of candles.</desc>
+  <desc>A price line that traces an infinity loop, then breaks out to a new high.</desc>
 
   <defs>
     <linearGradient id="ti-sweep" x1="0" y1="1" x2="1" y2="0">
@@ -10,42 +10,17 @@
     </linearGradient>
   </defs>
 
-  <!-- Mark: one continuous stroke, so the line never ends. -->
-  <path d="M 46,86
+  <!-- One unbroken stroke: around the figure-eight, then up and out.
+       The loop is the infinity, the tail is the chart. -->
+  <path d="M 198,86
+           C 198,44 152,44 122,86
+           C 92,128 46,128 46,86
            C 46,44 92,44 122,86
            C 152,128 198,128 198,86
-           C 198,44 152,44 122,86
-           C 92,128 46,128 46,86 Z"
-        fill="none" stroke="url(#ti-sweep)" stroke-width="15"
-        stroke-linecap="round" stroke-linejoin="round"/>
+           L 222,60 L 248,30"
+        fill="none" stroke="url(#ti-sweep)" stroke-width="12"
+        stroke-linejoin="round" stroke-linecap="round"/>
 
-  <!-- Candles stepping up into it: each close above the last. -->
-  <g fill="#E0A63C" stroke="#E0A63C" stroke-width="3" stroke-linecap="round">
-    <g opacity="0.55">
-      <line x1="62" y1="166" x2="62" y2="198"/>
-      <rect x="55" y="172" width="14" height="20" rx="2" stroke="none"/>
-    </g>
-    <g opacity="0.7">
-      <line x1="108" y1="157" x2="108" y2="192"/>
-      <rect x="101" y="163" width="14" height="22" rx="2" stroke="none"/>
-    </g>
-    <g opacity="0.85">
-      <line x1="154" y1="146" x2="154" y2="186"/>
-      <rect x="147" y="152" width="14" height="26" rx="2" stroke="none"/>
-    </g>
-    <g>
-      <line x1="200" y1="134" x2="200" y2="180"/>
-      <rect x="193" y="140" width="14" height="30" rx="2" stroke="none"/>
-    </g>
-  </g>
-
-  <!-- Wordmark. Colours chosen to hold up on both light and dark backgrounds. -->
-  <g font-family="Helvetica, Arial, sans-serif">
-    <text x="256" y="112" font-size="58" font-weight="700" letter-spacing="1">
-      <tspan fill="#78839A">TILL</tspan><tspan fill="#E0A63C"> INFINITY</tspan>
-    </text>
-    <text x="260" y="150" font-size="17" font-weight="500" letter-spacing="5" fill="#8A94A6">
-      CROSS-BROKER PRICES
-    </text>
-  </g>
+  <!-- The last print. -->
+  <circle cx="248" cy="30" r="8.5" fill="#E0A63C"/>
 </svg>

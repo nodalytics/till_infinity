@@ -1,6 +1,8 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="Till Infinity" width="480">
+  <img src="docs/logo.svg" alt="Till Infinity" width="150">
 </p>
+
+<h1 align="center">Till Infinity</h1>
 
 ## Setup
 
