@@ -181,7 +181,21 @@ uv run till-infinity notify listen  --redis   redis://localhost:6379 &
 Nothing changes about storage — the database is still the source of truth, and
 without `--publish` there is no bus at all. Full guide: [bus.md](bus.md).
 
-## 9. Let something watch it for you
+## 9. Let the numbers watch first
+
+`structures` learns what normal looks like across venues and needs no API key,
+so it is the cheapest thing to leave running:
+
+```bash
+uv run till-infinity structures watch --redis redis://localhost:6379 &
+uv run till-infinity structures info    # what it has learned so far
+```
+
+It publishes findings for an agent to weigh, and alerts you directly about the
+ones that interpret themselves — a feed that has stopped while the others move.
+Full guide: [structures.md](structures.md).
+
+## 10. Let something judge it for you
 
 With the collectors publishing, an analyst can consume the same stream, decide
 when something is worth a model call, and alert you:
@@ -195,7 +209,7 @@ uv run till-infinity agents watch --redis redis://localhost:6379 &
 It reads the databases read-only and stays quiet unless the data says
 otherwise. Full guide: [agents.md](agents.md).
 
-## 10. Tune it
+## 11. Tune it
 
 Anything you pass repeatedly belongs in the environment:
 
@@ -206,11 +220,13 @@ export PRICES_BACKFILL_BARS=5000
 export NEWS_POLL=180              # headlines every three minutes
 export TILL_LOG_LEVEL=DEBUG
 export TILL_REDIS_URL=redis://localhost:6379
+export STRUCTURES_SIGMA=4          # how far off consensus is unusual
 ```
 
 Full lists in [prices.md](prices.md#environment), [news.md](news.md#environment),
 [notifications.md](notifications.md#setup), [bus.md](bus.md),
-[agents.md](agents.md#environment) and [logging.md](logging.md).
+[agents.md](agents.md#environment), [structures.md](structures.md#environment),
+[journal.md](journal.md#environment) and [logging.md](logging.md).
 
 ## Troubleshooting
 

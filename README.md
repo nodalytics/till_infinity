@@ -22,13 +22,19 @@ A directional call is only worth making when the price structure and the
 fundamentals point the same way. Most setups see one or the other. This one is
 built to see both at once, and to write down why it thought so at the time.
 
-Four things follow from that, and they are the four parts of the project:
+Five things follow from that, and they are the five parts of the project:
 
 **Structure needs more than one view of the price.** The same instrument is
 quoted by six brokers at once, so the *differences* carry information a single
 feed cannot: which venue leads, where quotes diverge, when liquidity thins ahead
 of a move. That is why `prices` collects one instrument from many venues rather
 than many instruments from one.
+
+**Finding the structure is arithmetic, not judgement.** `structures` measures
+every venue against the median of the others and learns, online, what normal
+looks like for each — because "unusual" only means anything relative to
+something, and a constant threshold is the wrong something. It needs no API key
+and keeps running when the model providers do not.
 
 **Fundamentals separate a structure from a coincidence.** A move with a release
 behind it is a different animal from the same move on a quiet calendar. `news`
@@ -84,6 +90,21 @@ uv run till-infinity news latest          # recent headlines
 Two calendars are kept side by side on purpose, so a print can be cross-checked
 between providers. Full guide: **[docs/news.md](docs/news.md)**.
 
+## Structures
+
+Online models over the price data. Every venue is measured against the
+consensus of the others, continuously, and the models keep learning as the
+market changes.
+
+```bash
+uv run till-infinity structures watch --redis redis://localhost:6379
+uv run till-infinity structures info
+```
+
+No API key, no LLM, and it keeps running when the model providers are down —
+which is why it is a separate service rather than part of `agents`. Full guide:
+**[docs/structures.md](docs/structures.md)**.
+
 ## Agents
 
 A model over the stored data — ask it a question, or leave one watching and
@@ -134,17 +155,22 @@ notifications deliver those. The databases stay the source of truth — the bus
 carries notice that something happened, not the data itself.
 
 ```
-prices  ──┐                        ┌──▶ notifications
-          ├──▶ bus ──▶ agents ──▶ bus
-news    ──┘             │
-                        └──▶ journal
+prices ──┬──▶ structures ──┬──▶ signals ──┐
+         │                 └──────────────┼──▶ alerts ──▶ notifications
+         └──▶ bus ──────────▶ agents ─────┘
+news   ──────▶ bus ──────────▶    │
+                                  └──▶ journal ◀── structures
 ```
 
+`structures` reaches `alerts` directly for findings that interpret themselves —
+a feed that has stopped needs no model and no calendar.
+
 ```bash
-uv run till-infinity prices collect --publish redis://localhost:6379 &
-uv run till-infinity news collect   --publish redis://localhost:6379 &
-uv run till-infinity agents watch   --redis   redis://localhost:6379 &
-uv run till-infinity notify listen  --redis   redis://localhost:6379 &
+uv run till-infinity prices collect    --publish redis://localhost:6379 &
+uv run till-infinity news collect      --publish redis://localhost:6379 &
+uv run till-infinity structures watch  --redis   redis://localhost:6379 &
+uv run till-infinity agents watch      --redis   redis://localhost:6379 &
+uv run till-infinity notify listen     --redis   redis://localhost:6379 &
 ```
 
 Full guide: **[docs/bus.md](docs/bus.md)**.
@@ -158,6 +184,7 @@ SQLite by default, under `.data/` and gitignored. JSONL alongside it with
 .data/prices/prices.db      bars + quotes
 .data/news/news.db          articles + events + observations
 .data/journal/journal.db    decisions + observations + outcomes
+.data/structures/           online model state, restored on restart
 ```
 
 Everything is stored as epoch seconds in **UTC** — local time never enters the
@@ -172,7 +199,8 @@ lands, and journal entries are content-addressed.
 | [docs/getting-started.md](docs/getting-started.md) | **start here** — install to stored data, and how to read it back |
 | [docs/prices.md](docs/prices.md) | candles, quotes, sources, storage, schema, library use |
 | [docs/news.md](docs/news.md) | headlines, economic calendar, event storage |
-| [docs/agents.md](docs/agents.md) | analysts, tools, read-only access, watching the bus |
+| [docs/structures.md](docs/structures.md) | online models, cross-venue features, avoiding false positives |
+| [docs/agents.md](docs/agents.md) | analysts, tools, models, read-only access, watching the bus |
 | [docs/journal.md](docs/journal.md) | decisions, reasoning, outcomes, exporting for training |
 | [docs/notifications.md](docs/notifications.md) | Telegram and Discord alerts, channels, chat discovery |
 | [docs/bus.md](docs/bus.md) | topics, publishing, fan-out, Redis |

@@ -1,8 +1,12 @@
 """Settings for the agents package.
 
-The model is named once here rather than at each call site, and the two store
-paths default to where the collectors put them, so an agent run needs no
-arguments in the common case.
+The model is named once here rather than at each call site, and the store paths
+default to where the collectors put them, so an agent run needs no arguments in
+the common case.
+
+No credential appears in this object. Every provider's client reads its own key
+straight from the environment, so a key is never held in a settings instance
+that might end up in a log line, a repr or a journal entry.
 """
 
 from __future__ import annotations
@@ -10,6 +14,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import providers
 
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_FALLBACKS = ("claude-sonnet-5",)
@@ -50,7 +56,6 @@ class Settings:
 
     model: str = DEFAULT_MODEL
     fallbacks: tuple[str, ...] = DEFAULT_FALLBACKS
-    api_key: str = ""
     prices_db: Path = field(default_factory=lambda: Path(DEFAULT_PRICES_DB))
     news_db: Path = field(default_factory=lambda: Path(DEFAULT_NEWS_DB))
     journal_db: Path = field(default_factory=lambda: Path(DEFAULT_JOURNAL_DB))
@@ -70,8 +75,6 @@ class Settings:
         return cls(
             model=os.environ.get("AGENTS_MODEL") or DEFAULT_MODEL,
             fallbacks=fallbacks or DEFAULT_FALLBACKS,
-            # Read but never stored anywhere else, never logged, never printed.
-            api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
             prices_db=Path(os.environ.get("PRICES_DB") or DEFAULT_PRICES_DB),
             news_db=Path(os.environ.get("NEWS_DB") or DEFAULT_NEWS_DB),
             journal_db=Path(os.environ.get("JOURNAL_DB") or DEFAULT_JOURNAL_DB),
@@ -87,4 +90,9 @@ class Settings:
 
     @property
     def ready(self) -> bool:
-        return bool(self.api_key)
+        """Whether the chosen model's provider has what it needs."""
+        return providers.ready(self.model)
+
+    @property
+    def provider(self) -> str:
+        return providers.split(self.model)[0]

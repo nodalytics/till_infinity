@@ -45,6 +45,10 @@ reach.
 An analyst that cannot read the calendar cannot invent a calendar entry. That
 is enforced by the toolset, not by asking nicely.
 
+Every role also gets `recent`, its own history from the [journal](journal.md).
+An analyst with no memory reports the same dislocation every hour and never
+learns that the last one resolved itself.
+
 Every role inherits the same ground rules: every claim comes from a tool call,
 an empty findings list is a correct answer, quote your figures in `evidence`,
 and confidence below 0.5 is discarded rather than softened.
@@ -101,6 +105,54 @@ asyncio.run(main())
 code: an alert is routed by `level`, deduped by `key` and dropped below a
 confidence floor. Free text would make all three guesswork.
 
+## Other providers
+
+Claude is the default, not a requirement. Name a model `provider:model` and a
+bare name stays Anthropic's, so `claude-opus-5` keeps working as it always has.
+
+```bash
+uv run till-infinity agents providers                       # what is usable here
+uv run till-infinity agents ask "..." --model openai:gpt-5
+uv run till-infinity agents ask "..." --model google:gemini-2.5-pro
+uv run till-infinity agents ask "..." --model xai:grok-4
+```
+
+Each provider needs its client and its own key:
+
+| prefix | models | environment | install |
+|---|---|---|---|
+| `anthropic` *(default)* | Claude | `ANTHROPIC_API_KEY` | included |
+| `openai` | GPT | `OPENAI_API_KEY` | `uv sync --extra openai` |
+| `google` | Gemini | `GOOGLE_API_KEY` | `uv sync --extra google` |
+| `xai` | Grok | `XAI_API_KEY` | `uv sync --extra openai` |
+| `groq` | Groq-hosted | `GROQ_API_KEY` | `uv sync --extra groq` |
+| `openrouter` | anything | `OPENROUTER_API_KEY` | `uv sync --extra openai` |
+| `ollama` | local | none | `uv sync --extra openai` |
+
+`xai` is Grok, from xAI. `groq` is a different company whose name differs by one
+letter and which serves other people's models fast. Getting them confused reads
+the wrong environment variable, which is why they are listed next to each other.
+
+No credential is ever held in a settings object — every provider's client reads
+its own key straight from the environment, so a key cannot end up in a log line,
+a repr, or a journal entry.
+
+**Fallbacks may cross providers.** A Claude primary with a GPT spare survives an
+outage at either:
+
+```bash
+export AGENTS_MODEL=claude-opus-5
+export AGENTS_FALLBACK_MODELS="openai:gpt-5, google:gemini-2.5-pro"
+```
+
+A spare whose client is not installed, or whose key is not set, is dropped with
+a warning rather than taking the run down. It is a spare; refusing to start
+because a spare is missing defeats the point.
+
+Reasoning is the one setting that is genuinely provider-shaped — Anthropic takes
+`anthropic_thinking`, OpenAI an effort level, Google a thinking config — so the
+single `AGENTS_THINKING` switch is mapped onto whichever key the provider wants.
+
 ## Model configuration
 
 Built on [pydantic-ai](https://github.com/pydantic/pydantic-ai), which supplies
@@ -119,9 +171,9 @@ what it exposes but does not choose:
 
 | | |
 |---|---|
-| `ANTHROPIC_API_KEY` | required; read from the environment, never stored or logged |
-| `AGENTS_MODEL` | default `claude-opus-5` |
-| `AGENTS_FALLBACK_MODELS` | comma separated; default `claude-sonnet-5` |
+| `ANTHROPIC_API_KEY` | required for Claude; other providers read their own (see above) |
+| `AGENTS_MODEL` | `provider:model`; a bare name is Anthropic's. Default `claude-opus-5` |
+| `AGENTS_FALLBACK_MODELS` | comma separated, may cross providers; default `claude-sonnet-5` |
 | `AGENTS_WINDOW_S` | seconds of bus traffic per judgement (60) |
 | `AGENTS_SPREAD_BPS` | spread that wakes the model (8) |
 | `AGENTS_IMPORTANCE` | minimum calendar importance that wakes it (3) |

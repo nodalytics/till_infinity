@@ -12,7 +12,7 @@ import sqlite3
 import pytest
 
 from till_infinity import agents as ag
-from till_infinity.agents import data, roles, service, tools
+from till_infinity.agents import data, providers, roles, service, tools
 from till_infinity.agents.models import Analysis, Finding, Run
 from till_infinity.bus import ALERTS, ARTICLES, EVENTS, QUOTES, Bus, Message
 
@@ -254,9 +254,15 @@ async def test_a_failed_analysis_does_not_end_the_watch(monkeypatch):
 # ----------------------------------------------------------- configuration
 
 
-def test_no_api_key_is_a_refusal_not_a_silent_no_op():
-    with pytest.raises(ag.NotConfiguredError):
-        ag.build_model(ag.Settings(api_key=""))
+def test_no_api_key_is_a_refusal_not_a_silent_no_op(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(ag.NotConfiguredError, match="ANTHROPIC_API_KEY"):
+        ag.build_model(ag.Settings())
+
+
+def test_no_credential_is_ever_held_in_settings():
+    """Keys are read by each provider's client, never stored where they could leak."""
+    assert "api_key" not in str(ag.Settings())
 
 
 def test_thinking_is_adaptive_not_a_token_budget():
@@ -270,13 +276,22 @@ def test_thinking_can_be_turned_off():
     assert "anthropic_thinking" not in ag.model_settings(ag.Settings(thinking=False))
 
 
-def test_a_fallback_model_stands_behind_the_primary():
-    settings = ag.Settings(api_key="test-key", fallbacks=("claude-sonnet-5",))
+def test_a_fallback_model_stands_behind_the_primary(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    settings = ag.Settings(fallbacks=("claude-sonnet-5",))
     assert type(ag.build_model(settings)).__name__ == "FallbackModel"
 
 
-def test_no_fallbacks_means_a_plain_model():
-    settings = ag.Settings(api_key="test-key", fallbacks=())
+def test_no_fallbacks_means_a_plain_model(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert type(ag.build_model(ag.Settings(fallbacks=()))).__name__ == "AnthropicModel"
+
+
+def test_a_fallback_without_a_key_is_dropped_not_fatal(monkeypatch):
+    """A spare is a spare. Refusing to start because one is missing defeats it."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    settings = ag.Settings(fallbacks=("openai:gpt-5",))
     assert type(ag.build_model(settings)).__name__ == "AnthropicModel"
 
 
@@ -291,3 +306,79 @@ def test_settings_read_the_key_from_the_environment(monkeypatch):
 def test_a_bad_numeric_env_var_falls_back_instead_of_crashing(monkeypatch):
     monkeypatch.setenv("AGENTS_WINDOW_S", "soon")
     assert ag.Settings.from_env().window_seconds == ag.config.DEFAULT_WINDOW_SECONDS
+
+
+# ------------------------------------------------------------- providers
+
+
+@pytest.mark.parametrize(
+    ("given", "want"),
+    [
+        ("claude-opus-5", ("anthropic", "claude-opus-5")),
+        ("anthropic:claude-opus-5", ("anthropic", "claude-opus-5")),
+        ("openai:gpt-5", ("openai", "gpt-5")),
+        ("google:gemini-2.5-pro", ("google", "gemini-2.5-pro")),
+        ("xai:grok-4", ("xai", "grok-4")),
+        ("  OpenAI : gpt-5  ", ("openai", "gpt-5")),
+    ],
+)
+def test_a_model_name_splits_into_provider_and_model(given, want):
+    assert providers.split(given) == want
+
+
+def test_a_bare_name_stays_anthropic():
+    """claude-opus-5 has always worked without a prefix and must keep working."""
+    assert providers.qualified("claude-opus-5") == "anthropic:claude-opus-5"
+
+
+def test_each_provider_is_checked_against_its_own_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert not providers.ready("claude-opus-5")
+    assert providers.ready("openai:gpt-5")
+    assert "OPENAI_API_KEY" not in providers.missing("claude-opus-5")
+
+
+def test_a_local_model_needs_no_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    assert providers.ready("ollama:llama3")
+    assert providers.missing("ollama:llama3") == ""
+
+
+def test_an_unknown_provider_is_allowed_to_try():
+    """Better the SDK's own error than refusing something that works."""
+    assert providers.ready("someone-new:model-1")
+
+
+def test_grok_and_groq_are_different_companies():
+    """One letter apart, and getting it wrong reads the wrong environment variable."""
+    assert providers.provider_for("xai:grok-4").env == "XAI_API_KEY"
+    assert providers.provider_for("groq:llama-3.3").env == "GROQ_API_KEY"
+
+
+def test_reasoning_is_spelled_per_provider():
+    assert providers.reasoning("claude-opus-5", True) == {
+        "anthropic_thinking": {"type": "adaptive"}
+    }
+    assert "openai_reasoning_effort" in providers.reasoning("openai:gpt-5", True)
+    assert "google_thinking_config" in providers.reasoning("google:gemini-2.5-pro", True)
+    assert providers.reasoning("xai:grok-4", True) == {}
+
+
+def test_thinking_off_says_nothing_to_any_provider():
+    for model in ("claude-opus-5", "openai:gpt-5", "google:gemini-2.5-pro"):
+        assert providers.reasoning(model, False) == {}
+
+
+def test_model_settings_follow_the_chosen_provider():
+    claude = ag.model_settings(ag.Settings(model="claude-opus-5"))
+    gpt = ag.model_settings(ag.Settings(model="openai:gpt-5"))
+    assert "anthropic_thinking" in claude
+    assert "anthropic_thinking" not in gpt
+    assert gpt["max_tokens"] == claude["max_tokens"]  # the common levers are common
+
+
+def test_a_missing_client_names_the_command_that_installs_it(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    with pytest.raises(ag.ProviderUnavailableError, match="pydantic-ai-slim\\[openai\\]"):
+        ag.build_model(ag.Settings(model="openai:gpt-5", fallbacks=()))

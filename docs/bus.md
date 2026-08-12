@@ -25,7 +25,8 @@ instead of by being told.
 | `news.articles` | a headline is seen for the first time | source, provider, title, url, published, symbols, urgency |
 | `news.events` | a calendar entry appears, **and again when it prints** | source, country, title, time, importance, actual, forecast, previous, unit, released |
 | `news.macro` | a macro pull changed rows | source, inserted, updated, rows |
-| `alerts` | an agent wants a human told | title, body, level, url, fields |
+| `structures.signals` | an online model found something unusual | shape, feed, venue, score, detail, features, interval |
+| `alerts` | an agent or a model wants a human told | title, body, level, url, fields |
 
 Macro is a count rather than a row per observation on purpose: one IMF pull is
 ~15,000 rows of historic reserves, and announcing each would be noise. The
@@ -120,8 +121,13 @@ the moment it prints. That second announcement is usually the interesting one.
 
 | consumer | subscribes to | publishes |
 |---|---|---|
+| `structures watch` | `prices.quotes`, `prices.bars` | `structures.signals`, `alerts` |
 | `agents watch` | `prices.quotes`, `prices.bars`, `news.events`, `news.articles` | `alerts` |
 | `notify listen` | `alerts` | — |
+
+`structures` reaches `alerts` directly, bypassing `agents`, for findings that
+interpret themselves — a dead feed needs no model and no calendar, and should
+not depend on one being reachable. See [structures.md](structures.md).
 
 `news.macro` is deliberately not consumed: reserves move monthly, so a bulk row
 count is not a reason to wake anything. See [agents.md](agents.md).

@@ -18,8 +18,15 @@ available verbs are SELECT.
 
 from __future__ import annotations
 
-from . import data
-from .analyst import NotConfiguredError, analyse, build, build_model, model_settings
+from . import data, providers
+from .analyst import (
+    NotConfiguredError,
+    ProviderUnavailableError,
+    analyse,
+    build,
+    build_model,
+    model_settings,
+)
 from .config import DEFAULT_MODEL, Settings
 from .models import Analysis, Finding, Run, Trigger
 from .roles import DEFAULT_ROLE, GROUND_RULES, ROLES, Role, resolve
@@ -38,6 +45,7 @@ __all__ = [
     "Deps",
     "Finding",
     "NotConfiguredError",
+    "ProviderUnavailableError",
     "Role",
     "Run",
     "Settings",
@@ -50,6 +58,7 @@ __all__ = [
     "interesting",
     "model_settings",
     "prompt_for",
+    "providers",
     "resolve",
     "watch",
 ]

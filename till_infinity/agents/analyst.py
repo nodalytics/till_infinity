@@ -12,13 +12,13 @@ import time
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.models import Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
 from ..logging import get_logger
-from . import tools
+from . import providers, tools
 from .config import Settings
 from .models import Analysis, Run
 from .roles import Role, resolve
@@ -27,39 +27,66 @@ log = get_logger(__name__)
 
 
 class NotConfiguredError(RuntimeError):
-    """No API key. Raised rather than logged, because nothing can proceed."""
+    """No credentials for the chosen provider. Nothing can proceed."""
 
 
-def build_model(settings: Settings) -> AnthropicModel | FallbackModel:
+class ProviderUnavailableError(RuntimeError):
+    """The provider's client is not installed. Says which extra installs it."""
+
+
+def one_model(name: str) -> Model:
+    """Resolve one `provider:model` name, turning SDK gaps into a clear error."""
+    try:
+        return infer_model(providers.qualified(name))
+    except ImportError as exc:
+        known = providers.provider_for(name)
+        hint = f" — install it with `{known.install}`" if known.extra else ""
+        raise ProviderUnavailableError(f"{providers.qualified(name)} needs a client{hint}") from exc
+
+
+def build_model(settings: Settings) -> Model:
     """The model to run against, with fallbacks behind it.
 
     A monitor that goes quiet because one model returned a 529 is a monitor
     that failed at the only moment it mattered, so a degraded answer from the
-    next model down beats no answer.
+    next model down beats no answer. Fallbacks may cross providers — a Claude
+    primary with a GPT spare survives an outage at either.
+
+    A fallback whose client is not installed, or whose key is not set, is
+    dropped with a warning rather than taking the run down. It is a spare;
+    refusing to start because a spare is missing defeats the point.
     """
     if not settings.ready:
-        raise NotConfiguredError("ANTHROPIC_API_KEY is not set")
-    provider = AnthropicProvider(api_key=settings.api_key)
-    primary = AnthropicModel(settings.model, provider=provider)
-    spares = [AnthropicModel(name, provider=provider) for name in settings.fallbacks]
+        raise NotConfiguredError(providers.missing(settings.model))
+    primary = one_model(settings.model)
+
+    spares: list[Model] = []
+    for name in settings.fallbacks:
+        if not providers.ready(name):
+            log.debug("fallback %s skipped: %s", name, providers.missing(name))
+            continue
+        try:
+            spares.append(one_model(name))
+        except ProviderUnavailableError as exc:
+            log.warning("fallback %s unavailable: %s", name, exc)
     return FallbackModel(primary, *spares) if spares else primary
 
 
-def model_settings(settings: Settings) -> AnthropicModelSettings:
-    """Claude-specific levers, set once.
+def model_settings(settings: Settings) -> ModelSettings:
+    """Per-run levers, in whichever dialect the provider speaks.
 
-    Adaptive thinking rather than a fixed budget: the current models reject
-    `budget_tokens`, and the depth wanted here genuinely varies — "is this
-    spread unusual" is one tool call, "does the calendar explain this move" is
-    several rounds of reading and comparing.
+    `max_tokens` and `timeout` are common to every provider. Reasoning is not —
+    each spells it differently — so `providers.reasoning` maps the one
+    `thinking` switch onto the right key. The depth wanted here genuinely
+    varies: "is this spread unusual" is one tool call, "does the calendar
+    explain this move" is several rounds of reading and comparing.
     """
     options: dict[str, Any] = {
         "max_tokens": settings.max_tokens,
         "timeout": settings.timeout,
+        **providers.reasoning(settings.model, settings.thinking),
     }
-    if settings.thinking:
-        options["anthropic_thinking"] = {"type": "adaptive"}
-    return AnthropicModelSettings(**options)
+    return ModelSettings(**options)
 
 
 def build(

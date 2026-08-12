@@ -18,6 +18,7 @@ from . import journal as jr
 from . import news as nw
 from . import notifications as nt
 from . import prices as px
+from . import structures as sx
 from .bus import Bus
 from .logging import console, get_logger, setup_logging
 
@@ -953,7 +954,7 @@ def _agent_settings(prices_db, news_db, model, role_name):
     if model:
         settings.model = model
     if not settings.ready:
-        console.print("[red]ANTHROPIC_API_KEY is not set[/]")
+        console.print(f"[red]{escape(ag.providers.missing(settings.model))}[/]")
         raise SystemExit(1)
     return settings, ag.resolve(role_name)
 
@@ -968,7 +969,14 @@ agent_options = [
         show_default=True,
         help="Which analyst. Each sees a different set of tools.",
     ),
-    click.option("--model", "-m", help=f"Model id. Default: {ag.DEFAULT_MODEL}."),
+    click.option(
+        "--model",
+        "-m",
+        help=(
+            "provider:model — openai:gpt-5, google:gemini-2.5-pro, xai:grok-4. "
+            f"A bare name is Anthropic's. Default: {ag.DEFAULT_MODEL}."
+        ),
+    ),
     click.option("--prices-db", type=click.Path(path_type=Path), help="Prices SQLite file."),
     click.option("--news-db", type=click.Path(path_type=Path), help="News SQLite file."),
     click.option("-v", "--verbose", is_flag=True, help="Debug logging."),
@@ -1014,7 +1022,7 @@ def agents_ask(question, role_name, model, prices_db, news_db, verbose, quiet, l
     settings, role = _agent_settings(prices_db, news_db, model, role_name)
     try:
         outcome = run(ag.analyse(" ".join(question), role=role, settings=settings))
-    except ag.NotConfiguredError as exc:
+    except (ag.NotConfiguredError, ag.ProviderUnavailableError) as exc:
         console.print(f"[red]{escape(str(exc))}[/]")
         raise SystemExit(1) from None
     _show(outcome)
@@ -1112,6 +1120,27 @@ def agents_watch(
         console.print("stopped")
 
 
+@agents.command("providers")
+def agents_providers():
+    """Show which model providers are usable from here."""
+    setup_logging()
+    table = Table(title="model providers")
+    for column in ("prefix", "models", "environment", "ready", "installs with"):
+        table.add_column(column)
+    for name in sorted({p.name for p in ag.providers.PROVIDERS.values()}):
+        known = ag.providers.PROVIDERS[name]
+        ready = ag.providers.ready(f"{name}:x")
+        table.add_row(
+            f"[bold]{name}[/]" + (" [dim](default)[/]" if name == "anthropic" else ""),
+            escape(known.label),
+            escape(known.env or "—"),
+            "[green]yes[/]" if ready else "[dim]no[/]",
+            escape(known.install or "—"),
+        )
+    console.print(table)
+    console.print("[dim]Use as[/] --model openai:gpt-5 [dim]· a bare name is Anthropic's[/]")
+
+
 @agents.command("roles")
 def agents_roles():
     """Show the analysts and what each one can read."""
@@ -1125,6 +1154,129 @@ def agents_roles():
             escape(role.goal),
             escape(", ".join(role.tools)),
         )
+    console.print(table)
+
+
+@main.group()
+def structures() -> None:
+    """Online models over the price data — what is unusual, what has changed."""
+
+
+@structures.command("watch")
+@click.option("--redis", "redis_url", metavar="URL", help="Redis. Default: TILL_REDIS_URL.")
+@click.option("--dir", "state_dir", type=click.Path(path_type=Path), help="Where models persist.")
+@click.option("--warmup", type=int, help="Readings before a score means anything. Default: 60.")
+@click.option("--quantile", type=float, help="Joint-model cutoff. Default: 0.999.")
+@click.option("--sigma", type=float, help="Per-venue cutoff, in sigma. Default: 4.")
+@click.option("--group", default="structures", show_default=True, help="Consumer group name.")
+@click.option("--no-alerts", is_flag=True, help="Publish signals only; never alert directly.")
+@click.option("--no-journal", is_flag=True, help="Do not record detections.")
+@click.option("--messages", type=int, help="Stop after this many bus messages.")
+@click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
+@click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only.")
+@click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs.")
+def structures_watch(
+    redis_url,
+    state_dir,
+    warmup,
+    quantile,
+    sigma,
+    group,
+    no_alerts,
+    no_journal,
+    messages,
+    verbose,
+    quiet,
+    log_file,
+):
+    """Learn what is normal across venues, and say when something is not.
+
+    Consumes quotes and fast bars, measuring every venue against the median of
+    the others. Findings go to `structures.signals` for an agent to weigh
+    against the calendar; the unambiguous ones — a feed that has stopped —
+    go straight to `alerts`.
+
+    Needs no API key, and keeps running when the model providers are down.
+    """
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    settings = sx.Settings.from_env()
+    if state_dir is not None:
+        settings.state_dir = Path(state_dir)
+    if warmup is not None:
+        settings.warmup = warmup
+    if quantile is not None:
+        settings.quantile = quantile
+    if sigma is not None:
+        settings.sigma = sigma
+    if no_alerts:
+        settings.alert_direct = False
+    if no_journal:
+        settings.journalling = False
+
+    url = redis_url or os.environ.get("TILL_REDIS_URL") or None
+    bus = Bus(redis_url=url)
+    if url is None:
+        console.print(
+            "[yellow]no redis configured[/] — an in-process bus only hears "
+            "publishers inside this command. Set TILL_REDIS_URL or pass --redis."
+        )
+
+    def show(signal) -> None:
+        colour = {"stale": "red", "drift": "magenta", "spread": "yellow"}.get(
+            str(signal.shape), "cyan"
+        )
+        console.print(
+            f"[dim]{_clock()}[/] [{colour}]{signal.shape}[/] "
+            f"[bold]{escape(signal.venue)}[/] {escape(signal.feed)} "
+            f"[dim]{signal.score:.3f}[/] {escape(signal.detail)}"
+        )
+
+    async def go() -> None:
+        book = jr.Journal(settings.journal_db) if settings.journalling else None
+        watcher = sx.Watcher(bus, settings=settings, group=group, journal=book)
+        try:
+            if book is not None:
+                await book.open()
+            console.print(
+                f"[bold]{'warm' if watcher.load() else 'cold'}[/] start on "
+                f"{bus.backend}, models in {escape(str(settings.state_dir))}, Ctrl-C to stop"
+            )
+            await watcher.run(messages=messages, on_signal=show)
+        finally:
+            console.print(f"{watcher.published} signal(s), {watcher.alerted} direct alert(s)")
+            if book is not None:
+                await book.close()
+            await bus.close()
+
+    try:
+        run(go())
+    except KeyboardInterrupt:
+        console.print("stopped")
+
+
+@structures.command("info")
+@click.option("--dir", "state_dir", type=click.Path(path_type=Path), help="Where models persist.")
+def structures_info(state_dir):
+    """What the models have learned so far."""
+    setup_logging()
+    settings = sx.Settings.from_env()
+    if state_dir is not None:
+        settings.state_dir = Path(state_dir)
+    state = sx.load(settings.state_dir)
+    if not state:
+        console.print(
+            f"[yellow]no model state in {escape(str(settings.state_dir))}[/] — "
+            "nothing learned yet, or it was written by another river/python version"
+        )
+        return
+    table = Table(title=f"models: {settings.state_dir}")
+    for column in ("model", "instrument", "readings", "warm"):
+        table.add_column(column, justify="right" if column == "readings" else "left")
+    detector = state.get("detector")
+    for feed, count in sorted(getattr(detector, "seen", dict)().items()):
+        table.add_row("anomaly", feed, f"{count:,}", "yes" if count >= detector.warmup else "no")
+    for feed, count in sorted(getattr(state.get("drift"), "seen", dict)().items()):
+        table.add_row("drift", feed, f"{count:,}", "—")
     console.print(table)
 
 

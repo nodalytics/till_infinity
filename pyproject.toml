@@ -22,6 +22,13 @@ dependencies = [
 
 [project.optional-dependencies]
 speed = ["uvloop>=0.21.0; sys_platform != 'win32'"]
+# Agents run on Claude out of the box. These add the clients for other
+# providers — `openai` also covers xAI's Grok, DeepSeek and OpenRouter, which
+# all speak the OpenAI wire format.
+openai = ["pydantic-ai-slim[openai]>=2.28.0"]
+google = ["pydantic-ai-slim[google]>=2.28.0"]
+groq = ["pydantic-ai-slim[groq]>=2.28.0"]
+redis = ["redis>=5.0.0"]
 
 [project.scripts]
 till-infinity = "till_infinity.cli:main"

@@ -39,10 +39,13 @@ QUOTES = "prices.quotes"
 ARTICLES = "news.articles"
 EVENTS = "news.events"
 MACRO = "news.macro"
+#: What the online models found. Agents consume it as evidence; an unambiguous
+#: one goes straight to ALERTS without waiting for a model to agree.
+SIGNALS = "structures.signals"
 #: What agents ask for. Notifications is the consumer.
 ALERTS = "alerts"
 
-TOPICS: tuple[str, ...] = (BARS, QUOTES, ARTICLES, EVENTS, MACRO, ALERTS)
+TOPICS: tuple[str, ...] = (BARS, QUOTES, ARTICLES, EVENTS, MACRO, SIGNALS, ALERTS)
 
 DEFAULT_CAPACITY = 1_000
 DEFAULT_GROUP = "default"
