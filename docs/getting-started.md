@@ -140,7 +140,34 @@ with sqlite3.connect(".data/prices/prices.db") as conn:
 df.index = pd.to_datetime(df.index, unit="s", utc=True)
 ```
 
-## 6. Tune it
+## 6. Add the context
+
+Prices tell you *that* something moved. The news collector tells you why, and
+runs the same way — poll, store, query:
+
+```bash
+uv run till-infinity news collect --once   # headlines, calendars, IMF reserves
+uv run till-infinity news upcoming --high  # what is about to move the market
+```
+
+It lands in its own database (`.data/news/news.db`) with headlines, calendar
+events and macro observations. Full guide: [news.md](news.md).
+
+## 7. Get told about it
+
+Alerts go to Telegram and Discord, to as many chats or webhooks as you list:
+
+```bash
+export TELEGRAM_BOT_TOKEN=123456:AA...
+uv run till-infinity notify chats          # find your chat ids
+export TELEGRAM_CHAT_IDS="ops=-1001111"
+uv run till-infinity notify test           # prove it works
+```
+
+Each channel can set its own minimum level, so an on-call chat and a firehose
+can share one bot. Full guide: [notifications.md](notifications.md).
+
+## 8. Tune it
 
 Anything you pass repeatedly belongs in the environment:
 
@@ -148,10 +175,12 @@ Anything you pass repeatedly belongs in the environment:
 export PRICES_DB=/data/prices.db
 export PRICES_CYCLE_S=30          # bars sweeps twice a minute
 export PRICES_BACKFILL_BARS=5000
+export NEWS_POLL=180              # headlines every three minutes
 export TILL_LOG_LEVEL=DEBUG
 ```
 
-Full list in [prices.md](prices.md#environment) and [logging.md](logging.md).
+Full lists in [prices.md](prices.md#environment), [news.md](news.md#environment),
+[notifications.md](notifications.md#setup) and [logging.md](logging.md).
 
 ## Troubleshooting
 

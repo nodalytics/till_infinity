@@ -4,6 +4,23 @@
 
 <h1 align="center">Till Infinity</h1>
 
+<p align="center">
+  Market data for gold, BTC and FX — the same instrument priced by many brokers
+  at once, with the news and macro releases that move it.
+  <br>No API keys.
+</p>
+
+<p align="center">
+  <a href="https://github.com/nodalytics/till_infinity/actions/workflows/ci.yml">
+    <img src="https://github.com/nodalytics/till_infinity/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
+</p>
+
+The point of collecting one instrument from six venues is that the
+*differences* are the signal: cross-broker spread, which venue leads, where
+quotes diverge — and, alongside them, the calendar entry that explains the
+move.
+
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/). Python 3.11 is pinned in `.python-version`.
@@ -31,16 +48,17 @@ Defaults to EURUSD, GBPUSD, gold and BTC; `-s` takes anything else
 
 ## News
 
-Headlines and the economic calendar around them, from RSS, TradingView and
-ForexFactory. No API keys.
+Headlines, the economic calendar around them, and central bank reserves — from
+five RSS feeds, TradingView, ForexFactory and the IMF.
 
 ```bash
-uv run till-infinity news collect         # poll headlines + calendars
+uv run till-infinity news collect         # poll headlines + calendars + IMF
 uv run till-infinity news upcoming --high # next high-impact releases
 uv run till-infinity news latest          # recent headlines
 ```
 
-Full guide: **[docs/news.md](docs/news.md)**.
+Two calendars are kept side by side on purpose, so a print can be cross-checked
+between providers. Full guide: **[docs/news.md](docs/news.md)**.
 
 ## Notifications
 
@@ -54,6 +72,21 @@ uv run till-infinity notify send "..." -l warning
 ```
 
 Full guide: **[docs/notifications.md](docs/notifications.md)**.
+
+## Where it lands
+
+SQLite by default, under `.data/` and gitignored. JSONL alongside it with
+`--store both`.
+
+```
+.data/prices/prices.db    bars + quotes
+.data/news/news.db        articles + events + observations
+```
+
+Everything is stored as epoch seconds in **UTC** — local time never enters the
+project. Re-running a collector is cheap and safe: bars key on their open time,
+headlines on their id, calendar events get rewritten in place when the print
+lands.
 
 ## Docs
 
