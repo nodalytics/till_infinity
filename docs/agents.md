@@ -123,7 +123,7 @@ Each provider needs its client and its own key:
 |---|---|---|---|
 | `anthropic` *(default)* | Claude | `ANTHROPIC_API_KEY` | included |
 | `openai` | GPT | `OPENAI_API_KEY` | `uv sync --extra openai` |
-| `google` | Gemini | `GOOGLE_API_KEY` | `uv sync --extra google` |
+| `google` | Gemini | `GOOGLE_API_KEY` or `GEMINI_API_KEY` | `uv sync --extra google` |
 | `xai` | Grok | `XAI_API_KEY` | `uv sync --extra openai` |
 | `groq` | Groq-hosted | `GROQ_API_KEY` | `uv sync --extra groq` |
 | `openrouter` | anything | `OPENROUTER_API_KEY` | `uv sync --extra openai` |
@@ -132,6 +132,7 @@ Each provider needs its client and its own key:
 `xai` is Grok, from xAI. `groq` is a different company whose name differs by one
 letter and which serves other people's models fast. Getting them confused reads
 the wrong environment variable, which is why they are listed next to each other.
+The keys tell them apart at a glance: xAI's start `xai-`, Groq's start `gsk_`.
 
 No credential is ever held in a settings object — every provider's client reads
 its own key straight from the environment, so a key cannot end up in a log line,

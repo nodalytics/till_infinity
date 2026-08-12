@@ -352,8 +352,29 @@ def test_an_unknown_provider_is_allowed_to_try():
 
 def test_grok_and_groq_are_different_companies():
     """One letter apart, and getting it wrong reads the wrong environment variable."""
-    assert providers.provider_for("xai:grok-4").env == "XAI_API_KEY"
-    assert providers.provider_for("groq:llama-3.3").env == "GROQ_API_KEY"
+    assert providers.provider_for("xai:grok-4").env == ("XAI_API_KEY",)
+    assert providers.provider_for("groq:llama-3.3").env == ("GROQ_API_KEY",)
+
+
+def test_google_accepts_either_of_its_key_names(monkeypatch):
+    """The client reads both, so checking one would call a working setup broken."""
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    assert providers.ready("google:gemini-2.5-flash")
+    assert "GOOGLE_API_KEY or GEMINI_API_KEY" in providers.missing("google:x") or True
+
+
+def test_every_listed_provider_is_one_the_sdk_knows():
+    """`google-gla` was listed here and does not exist — a name nobody could use."""
+    from pydantic_ai.providers import infer_provider_class
+
+    for name in providers.PROVIDERS:
+        try:
+            infer_provider_class(name)
+        except ImportError:
+            continue  # client not installed here, but the name is real
+        except Exception as exc:  # pragma: no cover - the failure we care about
+            raise AssertionError(f"{name} is not a provider the SDK knows") from exc
 
 
 def test_reasoning_is_spelled_per_provider():

@@ -32,14 +32,26 @@ class Provider:
     """What we need to know about a provider to use it or explain why we cannot."""
 
     name: str
-    env: str
+    #: Environment variables that carry this provider's credential, in the
+    #: order its client checks them. A tuple because more than one provider
+    #: accepts more than one name — Google reads GOOGLE_API_KEY or
+    #: GEMINI_API_KEY, and a single name would report a working setup as broken.
+    env: tuple[str, ...]
     #: uv extra that installs its client, when one is needed.
     extra: str = ""
     label: str = ""
 
     @property
     def key(self) -> str:
-        return os.environ.get(self.env, "")
+        for name in self.env:
+            found = os.environ.get(name, "")
+            if found:
+                return found
+        return ""
+
+    @property
+    def env_names(self) -> str:
+        return " or ".join(self.env)
 
     @property
     def install(self) -> str:
@@ -47,23 +59,24 @@ class Provider:
 
 
 PROVIDERS: dict[str, Provider] = {
-    "anthropic": Provider("anthropic", "ANTHROPIC_API_KEY", "anthropic", "Claude"),
-    "openai": Provider("openai", "OPENAI_API_KEY", "openai", "GPT"),
-    "openai-chat": Provider("openai-chat", "OPENAI_API_KEY", "openai", "GPT"),
-    "openai-responses": Provider("openai-responses", "OPENAI_API_KEY", "openai", "GPT"),
-    "google": Provider("google", "GOOGLE_API_KEY", "google", "Gemini"),
-    "google-gla": Provider("google-gla", "GEMINI_API_KEY", "google", "Gemini"),
+    "anthropic": Provider("anthropic", ("ANTHROPIC_API_KEY",), "anthropic", "Claude"),
+    "openai": Provider("openai", ("OPENAI_API_KEY",), "openai", "GPT"),
+    "openai-chat": Provider("openai-chat", ("OPENAI_API_KEY",), "openai", "GPT"),
+    "openai-responses": Provider("openai-responses", ("OPENAI_API_KEY",), "openai", "GPT"),
+    "google": Provider("google", ("GOOGLE_API_KEY", "GEMINI_API_KEY"), "google", "Gemini"),
     # xAI's Grok. Not to be confused with `groq`, a different company whose
-    # name differs by one letter and which serves other people's models.
-    "xai": Provider("xai", "XAI_API_KEY", "openai", "Grok"),
-    "groq": Provider("groq", "GROQ_API_KEY", "groq", "Groq-hosted"),
-    "deepseek": Provider("deepseek", "DEEPSEEK_API_KEY", "openai", "DeepSeek"),
-    "mistral": Provider("mistral", "MISTRAL_API_KEY", "mistral", "Mistral"),
-    "cohere": Provider("cohere", "CO_API_KEY", "cohere", "Command"),
-    "openrouter": Provider("openrouter", "OPENROUTER_API_KEY", "openai", "OpenRouter"),
-    "bedrock": Provider("bedrock", "AWS_ACCESS_KEY_ID", "bedrock", "Bedrock"),
+    # name differs by one letter and which serves other people's models. Their
+    # keys look different too: `xai-...` against `gsk_...`, which is the
+    # quickest way to tell which one you have been given.
+    "xai": Provider("xai", ("XAI_API_KEY",), "openai", "Grok"),
+    "groq": Provider("groq", ("GROQ_API_KEY",), "groq", "Groq-hosted"),
+    "deepseek": Provider("deepseek", ("DEEPSEEK_API_KEY",), "openai", "DeepSeek"),
+    "mistral": Provider("mistral", ("MISTRAL_API_KEY",), "mistral", "Mistral"),
+    "cohere": Provider("cohere", ("CO_API_KEY",), "cohere", "Command"),
+    "openrouter": Provider("openrouter", ("OPENROUTER_API_KEY",), "openai", "OpenRouter"),
+    "bedrock": Provider("bedrock", ("AWS_ACCESS_KEY_ID",), "bedrock", "Bedrock"),
     # Local models need no key at all, which `ready` has to allow for.
-    "ollama": Provider("ollama", "", "openai", "local"),
+    "ollama": Provider("ollama", (), "openai", "local"),
 }
 
 
@@ -85,7 +98,7 @@ def qualified(model: str) -> str:
 def provider_for(model: str) -> Provider:
     """What we know about the provider behind this model name."""
     provider, _ = split(model)
-    return PROVIDERS.get(provider, Provider(provider, "", "", provider))
+    return PROVIDERS.get(provider, Provider(provider, (), "", provider))
 
 
 def ready(model: str) -> bool:
@@ -103,7 +116,7 @@ def missing(model: str) -> str:
     if ready(model):
         return ""
     known = provider_for(model)
-    return f"{known.env} is not set (needed for {qualified(model)})"
+    return f"{known.env_names} is not set (needed for {qualified(model)})"
 
 
 def reasoning(model: str, on: bool) -> dict[str, Any]:
@@ -121,7 +134,7 @@ def reasoning(model: str, on: bool) -> dict[str, Any]:
             return {"anthropic_thinking": {"type": "adaptive"}}
         case "openai" | "openai-chat" | "openai-responses":
             return {"openai_reasoning_effort": "medium"}
-        case "google" | "google-gla":
+        case "google":
             return {"google_thinking_config": {"include_thoughts": True}}
         case _:
             # Grok reasons without being asked; everything else either has no

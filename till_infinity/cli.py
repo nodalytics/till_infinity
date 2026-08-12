@@ -1133,7 +1133,7 @@ def agents_providers():
         table.add_row(
             f"[bold]{name}[/]" + (" [dim](default)[/]" if name == "anthropic" else ""),
             escape(known.label),
-            escape(known.env or "—"),
+            escape(known.env_names or "—"),
             "[green]yes[/]" if ready else "[dim]no[/]",
             escape(known.install or "—"),
         )
