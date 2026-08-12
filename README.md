@@ -28,12 +28,26 @@ uv run till-infinity prices info          # what is stored
 Defaults to EURUSD, GBPUSD, gold and BTC; `-s` takes anything else
 (`-s OANDA:XAUUSD`, `-s AAPL`). Full guide: **[docs/prices.md](docs/prices.md)**.
 
+## News
+
+Headlines and the economic calendar around them, from RSS, TradingView and
+ForexFactory. No API keys.
+
+```bash
+uv run till-infinity news collect         # poll headlines + calendars
+uv run till-infinity news upcoming --high # next high-impact releases
+uv run till-infinity news latest          # recent headlines
+```
+
+Full guide: **[docs/news.md](docs/news.md)**.
+
 ## Docs
 
 | | |
 |---|---|
 | [docs/getting-started.md](docs/getting-started.md) | **start here** — install to stored data, and how to read it back |
 | [docs/prices.md](docs/prices.md) | candles, quotes, sources, storage, schema, library use |
+| [docs/news.md](docs/news.md) | headlines, economic calendar, event storage |
 | [docs/logging.md](docs/logging.md) | log levels, JSON log files, adding a logger |
 
 ## Development

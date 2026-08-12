@@ -11,6 +11,7 @@ from typing import Any, TypeVar
 import click
 from rich.table import Table
 
+from . import news as nw
 from . import prices as px
 from .logging import console, setup_logging
 
@@ -373,6 +374,187 @@ def symbols(names):
         console.print("aliases: " + ", ".join(sorted(px.SYMBOL_ALIASES)))
         console.print("anything else works too: -s OANDA:XAUUSD, -s AAPL, -s YAHOO:GC=F")
     console.print("intervals: " + ", ".join(px.INTERVALS))
+
+
+@main.group()
+def news() -> None:
+    """Headlines and the economic calendar around them."""
+
+
+def _news_settings(db: Path | None, data_dir: Path | None) -> nw.Settings:
+    settings = nw.Settings.from_env()
+    if data_dir is not None:
+        settings.data_dir = Path(data_dir)
+        if db is None:
+            settings.database = settings.data_dir / "news.db"
+    if db is not None:
+        settings.database = Path(db)
+    return settings
+
+
+def _news_common(func):
+    options = [
+        click.option(
+            "--source",
+            "-S",
+            multiple=True,
+            type=click.Choice(sorted(nw.SOURCES)),
+            help="Source; repeatable. Default: all.",
+        ),
+        click.option(
+            "--store",
+            "store_kind",
+            default="sqlite",
+            type=click.Choice(["sqlite", "jsonl", "both"]),
+            show_default=True,
+        ),
+        click.option("--db", type=click.Path(path_type=Path), help="SQLite file."),
+        click.option("--dir", "data_dir", type=click.Path(path_type=Path), help="JSONL root."),
+        click.option("-v", "--verbose", is_flag=True, help="Debug logging."),
+        click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only."),
+        click.option(
+            "--log-file",
+            type=click.Path(path_type=Path),
+            help="Also write JSON-lines logs here (rotated).",
+        ),
+    ]
+    for option in reversed(options):
+        func = option(func)
+    return func
+
+
+@news.command()
+@_news_common
+@click.option("--poll", type=float, help="Seconds between passes. Default: NEWS_POLL (300).")
+@click.option("--once", is_flag=True, help="Run a single pass and exit.")
+def collect(source, store_kind, db, data_dir, verbose, quiet, log_file, poll, once):
+    """Poll headlines and calendars, forever."""
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    settings = _news_settings(db, data_dir)
+    if poll is not None:
+        settings.news_poll_seconds = poll
+
+    def cycle_done(index: int, summary: nw.Summary) -> None:
+        console.print(f"[bold]pass {index}:[/] {summary}")
+
+    async def go() -> None:
+        store = nw.open_store(store_kind, database=settings.database, data_dir=settings.data_dir)
+        async with store:
+            await nw.collect(
+                settings=settings,
+                store=store,
+                sources=source or None,
+                cycles=1 if once else None,
+                on_cycle=cycle_done,
+            )
+
+    try:
+        run(go())
+    except KeyboardInterrupt:
+        console.print("stopped")
+
+
+@news.command("info")
+@click.option(
+    "--store",
+    "store_kind",
+    default="sqlite",
+    type=click.Choice(["sqlite", "jsonl"]),
+    show_default=True,
+)
+@click.option("--db", type=click.Path(path_type=Path))
+@click.option("--dir", "data_dir", type=click.Path(path_type=Path))
+def news_info(store_kind, db, data_dir):
+    """Show what is stored: headlines and events per source."""
+    settings = _news_settings(db, data_dir)
+
+    async def go() -> list[nw.FeedInfo]:
+        store = nw.open_store(store_kind, database=settings.database, data_dir=settings.data_dir)
+        async with store:
+            return await store.feeds()
+
+    rows = run(go())
+    if not rows:
+        console.print("nothing stored yet")
+        return
+    table = Table(title=str(settings.database if store_kind == "sqlite" else settings.data_dir))
+    for column in ("kind", "source", "rows", "from", "to"):
+        table.add_column(column, justify="right" if column == "rows" else "left")
+    for row in rows:
+        table.add_row(
+            row.kind, row.source, f"{row.rows:,}", _stamp(row.first_time), _stamp(row.last_time)
+        )
+    console.print(table)
+
+
+@news.command()
+@click.option("--limit", "-n", default=15, show_default=True)
+@click.option("--source", "-S", help="Only this source.")
+@click.option("--db", type=click.Path(path_type=Path))
+def latest(limit, source, db):
+    """Most recent headlines."""
+    settings = _news_settings(db, None)
+
+    async def go() -> list[nw.Article]:
+        async with nw.SqliteStore(settings.database) as store:
+            return await store.latest_articles(limit=limit, source=source)
+
+    rows = run(go())
+    if not rows:
+        console.print("no headlines stored yet — run `till-infinity news collect --once`")
+        return
+    table = Table(show_lines=False)
+    for column in ("when", "source", "headline"):
+        table.add_column(column, overflow="fold" if column == "headline" else "ellipsis")
+    for article in rows:
+        table.add_row(_stamp(article.published), article.provider or article.source, article.title)
+    console.print(table)
+
+
+@news.command()
+@click.option("--limit", "-n", default=15, show_default=True)
+@click.option("--high", is_flag=True, help="High-impact releases only.")
+@click.option("--db", type=click.Path(path_type=Path))
+def upcoming(limit, high, db):
+    """The next scheduled releases."""
+    settings = _news_settings(db, None)
+
+    async def go() -> list[nw.Event]:
+        async with nw.SqliteStore(settings.database) as store:
+            return await store.upcoming(limit=limit, min_importance=nw.HIGH if high else nw.LOW)
+
+    rows = run(go())
+    if not rows:
+        console.print("no events stored yet — run `till-infinity news collect --once`")
+        return
+    table = Table()
+    for column in ("when", "country", "impact", "event", "forecast", "previous"):
+        table.add_column(column)
+    impact = {nw.LOW: "low", nw.MEDIUM: "med", nw.HIGH: "[bold]HIGH[/]"}
+    for event in rows:
+        table.add_row(
+            _stamp(event.time),
+            event.country,
+            impact.get(event.importance, "?"),
+            event.title,
+            event.forecast or "-",
+            event.previous or "-",
+        )
+    console.print(table)
+
+
+@news.command("sources")
+def news_sources():
+    """List the configured feeds."""
+    table = Table()
+    for column in ("kind", "name", "detail"):
+        table.add_column(column)
+    for name, url in nw.RSS_FEEDS.items():
+        table.add_row("rss", name, url)
+    table.add_row("calendar", "forexfactory", "this week + next, by currency")
+    table.add_row("calendar", "tradingview", ", ".join(nw.CALENDAR_COUNTRIES))
+    table.add_row("headlines", "tradingview", ", ".join(nw.HEADLINE_SYMBOLS))
+    console.print(table)
 
 
 if __name__ == "__main__":  # pragma: no cover
