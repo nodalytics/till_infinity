@@ -1278,6 +1278,135 @@ def structures_info(state_dir):
     console.print(table)
 
 
+def _load_engine(state_dir):
+    """The engine as `structures watch` last saved it, or None."""
+    settings = sx.Settings.from_env()
+    if state_dir is not None:
+        settings.state_dir = Path(state_dir)
+    state = sx.load(settings.state_dir)
+    engine = (state or {}).get("engine")
+    if engine is None:
+        console.print(
+            f"[yellow]no levels in {escape(str(settings.state_dir))}[/] — run "
+            "`till-infinity structures watch` first, or the state was written "
+            "by another river/python version"
+        )
+    return engine
+
+
+def _state_colour(state: str) -> str:
+    return {"broken": "red", "flipped": "magenta", "tested": "green"}.get(state, "dim")
+
+
+@structures.command("levels")
+@click.option("--dir", "state_dir", type=click.Path(path_type=Path), help="Where models persist.")
+@click.option("--feed", "-s", help="Instrument. Default: all.")
+@click.option("--interval", "-i", help="Interval or pivot session (5m, 1h, daily).")
+@click.option(
+    "--min-touches",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Hide levels with less evidence than this.",
+)
+@click.option("--pivots/--no-pivots", default=True, show_default=True, help="Include pivots.")
+@click.option(
+    "--at",
+    "price",
+    type=float,
+    help="Price to judge from — shows the directional call at the nearest levels.",
+)
+def structures_levels(state_dir, feed, interval, min_touches, pivots, price):
+    """Show the key levels found, and what they do when price arrives.
+
+    Touch counts are *effective* counts: evidence decays with age, so a level
+    tested ten times last quarter reads lower than one tested ten times this
+    week. That is the point — a level is only as good as its recent behaviour.
+
+    With `--at`, the nearest levels are judged from that price: which way the
+    history says it goes, against the base rate, and whether that clears the
+    bar for being worth acting on.
+    """
+    setup_logging()
+    engine = _load_engine(state_dir)
+    if engine is None:
+        raise SystemExit(1)
+
+    rows = [row for row in engine.summary() if row["touches"] >= min_touches]
+    if feed:
+        rows = [row for row in rows if row["feed"] == feed]
+    if interval:
+        rows = [row for row in rows if row["interval"] == interval]
+    if not pivots:
+        rows = [row for row in rows if not row["origin"].startswith("pivot")]
+    if not rows:
+        console.print("no levels match")
+        return
+
+    table = Table(title="key levels")
+    for column in ("feed", "tf", "price", "zone", "state", "from above", "from below", "str"):
+        table.add_column(column, justify="right" if column in ("price", "str") else "left")
+    for row in sorted(rows, key=lambda r: (r["feed"], r["interval"], r["price"])):
+        sides = row["sides"]
+        table.add_row(
+            escape(row["feed"]),
+            escape(row["interval"]),
+            f"{row['price']:.5g}",
+            f"[dim]{row['low']:.5g}-{row['high']:.5g}[/]",
+            f"[{_state_colour(row['state'])}]{row['state']}[/]"
+            + (
+                f" [dim]{escape(row['origin'].partition(':')[2])}[/]"
+                if row["origin"].startswith("pivot")
+                else ""
+            ),
+            _side_cell(sides.get("above")),
+            _side_cell(sides.get("below")),
+            f"{row['strength']:.2f}",
+        )
+    console.print(table)
+    console.print(f"{len(rows)} level(s) [dim]· touches are effective counts, decayed by age[/]")
+
+    if price is not None:
+        _judge_at(engine, feed, price)
+
+
+def _side_cell(stats) -> str:
+    """Touches and mean push for one side, or a dash."""
+    if not stats or not stats["touches"]:
+        return "[dim]—[/]"
+    push = stats["mean_push_vol"]
+    colour = "green" if push > 0 else "red" if push < 0 else "dim"
+    return f"{stats['touches']:.1f}x [{colour}]{push:+.2f}v[/]"
+
+
+def _judge_at(engine, feed: str | None, price: float) -> None:
+    """What the history says about arriving at `price` right now."""
+    from till_infinity.structures import reactions
+
+    feeds = [feed] if feed else sorted({row["feed"] for row in engine.summary()})
+    for name in feeds:
+        vol = engine.vol.of(name)
+        near = sx.levels_near(engine, name, price)
+        if not near:
+            continue
+        console.print(
+            f"\n[bold]{escape(name)}[/] arriving at {price:.5g} "
+            f"[dim](volatility {vol.bps:.2f}bps)[/]"
+        )
+        for level in near:
+            side = level.side_of(price)
+            features = reactions.features_for(level, side, price, vol)
+            found = reactions.infer(level, side, features, engine.tracker.memory)
+            mark = "[bold green]![/]" if found.actionable else "[dim]·[/]"
+            arrow = "↑" if found.direction == "up" else "↓"
+            console.print(
+                f"  {mark} {level.price:.5g} [dim]({level.distance_vol(price, vol):+.2f}v away, "
+                f"from {side})[/] {arrow} {found.probability_up:.0%} "
+                f"[dim]vs {found.base_rate_up:.0%} base[/] "
+                f"push {found.expected_push:+.2f}v [dim]{escape(found.detail)}[/]"
+            )
+
+
 @main.group()
 def journal() -> None:
     """The decision journal: what was decided, and why at that moment."""

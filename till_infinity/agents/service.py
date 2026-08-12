@@ -23,7 +23,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 
-from ..bus import ALERTS, ARTICLES, BARS, EVENTS, QUOTES, Bus, Message
+from ..bus import ALERTS, ARTICLES, BARS, EVENTS, QUOTES, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe
 from ..logging import get_logger
 from .analyst import analyse
@@ -35,7 +35,7 @@ log = get_logger(__name__)
 
 #: What the watcher listens to. Macro is left out on purpose: reserves move
 #: monthly, so a bulk row count is not a reason to wake anything.
-TOPICS: tuple[str, ...] = (QUOTES, BARS, EVENTS, ARTICLES)
+TOPICS: tuple[str, ...] = (QUOTES, BARS, EVENTS, ARTICLES, SIGNALS)
 
 #: A finding has to clear this to become an alert.
 MIN_CONFIDENCE = 0.5
@@ -52,7 +52,22 @@ def interesting(messages: Sequence[Message], settings: Settings) -> list[Trigger
 
     for message in messages:
         payload = message.payload
-        if message.topic == QUOTES:
+        if message.topic == SIGNALS:
+            # A signal has already cleared the numeric layer's own guards, so
+            # it needs no second arithmetic gate here — it arrives *because*
+            # something passed one. Re-filtering would discard the work that
+            # made it worth sending.
+            triggers.append(
+                Trigger(
+                    reason=(
+                        f"{payload.get('venue', '')} {payload.get('feed', '')}: "
+                        f"{payload.get('detail') or payload.get('shape', 'signal')}"
+                    ).strip(),
+                    topic=SIGNALS,
+                    payload=dict(payload),
+                )
+            )
+        elif message.topic == QUOTES:
             bps = payload.get("spread_bps")
             if (
                 isinstance(bps, int | float)

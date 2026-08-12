@@ -14,7 +14,7 @@ import pytest
 from till_infinity import agents as ag
 from till_infinity.agents import analyst, data, providers, roles, service, tools
 from till_infinity.agents.models import Analysis, Finding, Run
-from till_infinity.bus import ALERTS, ARTICLES, EVENTS, QUOTES, Bus, Message
+from till_infinity.bus import ALERTS, ARTICLES, EVENTS, QUOTES, SIGNALS, Bus, Message
 
 # ------------------------------------------------------------- read-only
 
@@ -417,3 +417,51 @@ def test_a_provider_with_no_extra_still_reports_clearly(monkeypatch):
     monkeypatch.setattr(analyst, "infer_model", absent)
     with pytest.raises(ag.ProviderUnavailableError, match="someone-new:model-1"):
         analyst.one_model("someone-new:model-1")
+
+
+# ------------------------------------------------- structures -> agents
+
+
+def _signal_message(**payload):
+    base = {
+        "shape": "level",
+        "feed": "gold",
+        "venue": "consensus",
+        "detail": "up from above at 4401 — p=80% vs 47% base, push +1.78v",
+        "score": 0.33,
+    }
+    return Message(topic=SIGNALS, payload={**base, **payload})
+
+
+def test_agents_listen_to_what_structures_publishes():
+    """The numeric layer emits for agents; agents have to be subscribed."""
+    assert SIGNALS in service.TOPICS
+
+
+def test_a_structures_signal_wakes_the_model_on_its_own():
+    """It already cleared the numeric layer's guards — re-filtering discards that."""
+    triggers = service.interesting([_signal_message()], ag.Settings(spread_bps=1000.0))
+    assert len(triggers) == 1
+    assert "4401" in triggers[0].reason
+
+
+def test_a_signal_names_the_instrument_and_what_was_found():
+    trigger = service.interesting([_signal_message()], ag.Settings())[0]
+    assert "gold" in trigger.reason
+    assert trigger.payload["shape"] == "level"
+
+
+def test_a_signal_with_no_detail_still_says_something_useful():
+    trigger = service.interesting([_signal_message(detail="", shape="stale")], ag.Settings())[0]
+    assert "stale" in trigger.reason
+
+
+def test_a_window_of_signals_and_quotes_triggers_on_both():
+    settings = ag.Settings(spread_bps=8.0)
+    window = [
+        _signal_message(),
+        Message(topic=QUOTES, payload={"venue": "OANDA", "feed": "gold", "spread_bps": 30.0}),
+    ]
+    reasons = [t.reason for t in service.interesting(window, settings)]
+    assert len(reasons) == 2
+    assert any("30.0bps" in r for r in reasons)

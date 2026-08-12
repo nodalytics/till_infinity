@@ -17,6 +17,93 @@ worth acting on; a 55% chance of two volatility units might be.
 
 ---
 
+## 0. What a "volatility unit" is
+
+Every distance in this document is quoted in **volatility units**, written
+`v`. One volatility unit is **the size of a typical recent move** for that
+instrument, on that timeframe, right now.
+
+It is a ratio, so it has no dimension of its own:
+
+```
+1v  =  the current volatility estimate, in basis points
+```
+
+and the current estimate is the exponentially-weighted mean absolute return
+(§4). So converting is one multiplication:
+
+```
+basis points  =  volatility units x current volatility (bps)
+per cent      =  basis points / 100
+price         =  per cent / 100 x price
+```
+
+### The chain of units
+
+| unit | meaning | example on gold at 4400 |
+|---|---|---|
+| 1 basis point (bps) | one hundredth of a per cent, `0.0001` | $0.44 |
+| 1 per cent | 100 bps | $44.00 |
+| **1 volatility unit** | one typical move — **however big that is today** | see below |
+
+Basis points and per cent are **fixed**: 1bps is always 0.01%. A volatility
+unit is **not fixed** — it is whatever a normal move happens to be at the
+moment you ask.
+
+### A worked example
+
+Gold, 5-minute bars, with the volatility estimate reading `4.68bps`:
+
+| | volatility units | basis points | per cent | price at 4400 |
+|---|---|---|---|---|
+| a typical 5m move | 1.00v | 4.68 | 0.047% | $2.06 |
+| the level zone floor | 0.35v | 1.64 | 0.016% | $0.72 |
+| a push worth acting on | 0.50v | 2.34 | 0.023% | $1.03 |
+| the call at 4401 above | 1.78v | 8.33 | 0.083% | $3.67 |
+| a decisive break | 2.00v | 9.36 | 0.094% | $4.12 |
+
+Now the same numbers during a violent session where volatility has risen to
+`25bps`:
+
+| | volatility units | basis points | per cent | price at 4400 |
+|---|---|---|---|---|
+| a typical 5m move | 1.00v | 25.0 | 0.25% | $11.00 |
+| a decisive break | 2.00v | 50.0 | 0.50% | $22.00 |
+
+**Nothing in the model changed.** "A decisive break is 2v" held in both
+sessions, while the basis-point number it corresponds to more than quintupled.
+That is the entire reason for the unit.
+
+### Reading it
+
+| | |
+|---|---|
+| `0.2v` | inside the noise; price does this constantly |
+| `0.5v` | half a typical move — the floor for a call being worth anything |
+| `1v` | one typical move |
+| `2v` | twice a typical move — a decisive break |
+| `4v` | far outside normal; this is the anomaly detector's threshold |
+
+### Why not just use basis points
+
+Two failures it avoids, both of which look fine until they do not:
+
+**Across instruments.** Gold moves ~5bps in five minutes, BTC ten times that,
+EURUSD less. A single "wide spread" or "big push" threshold in basis points is
+simultaneously too tight for one and too loose for another, so a model tuned on
+gold silently mis-reads BTC. In volatility units they share one number.
+
+**Across time.** A level learned in a calm January and consulted in a violent
+June is consulted with January's expectations. A 20bps push meant "large" then
+and means "ordinary" now, so the level's own history would stop describing the
+level. Dividing by current volatility keeps the record comparable with itself.
+
+Signed throughout: **positive is up**, negative is down, regardless of which
+side price arrived from. A consumer wants to know which way to lean, not
+whether the level "won".
+
+---
+
 ## 1. Finding the swings: Perceptually Important Points
 
 A price series has thousands of bars and perhaps a dozen turns that matter. PIP
@@ -112,11 +199,9 @@ with no separate rule.
 Uncertainty also grows with time untested (`q²·Δt`), so a level nobody has
 touched for a month widens back into a guess.
 
-## 4. Everything is in volatility units
+## 4. Where the volatility number comes from
 
-A 20bps push is enormous in a quiet hour and noise in a violent one. Raw basis
-points would make a level's history incomparable with its own past the moment
-the regime changed — and would stop gold and EURUSD sharing one model.
+§0 defines the unit; this is how the denominator is estimated.
 
 Volatility is the exponentially-weighted **mean absolute return**, in bps:
 

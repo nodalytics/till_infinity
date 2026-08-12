@@ -29,7 +29,7 @@ from .config import INTERVALS, Settings
 from .drift import Drift
 from .engine import Call, Engine
 from .features import Book, Books, Reading
-from .levels import Level, Outcome, Side, State
+from .levels import Level, Outcome, Side, State, nearby
 from .models import Consensus, Shape, Signal
 from .reactions import Features, Inference, Memory, Touch, Tracker
 from .service import TOPICS, UNAMBIGUOUS, BarConsensus, Watcher, watch
@@ -63,9 +63,22 @@ __all__ = [
     "Tracker",
     "Volatility",
     "Watcher",
+    "levels_near",
     "load",
+    "nearby",
     "pips",
     "reactions",
     "save",
     "watch",
 ]
+
+
+def levels_near(engine: Engine, feed: str, price: float, within_vol: float = 3.0) -> list[Level]:
+    """Levels close enough to `price` to matter, nearest first.
+
+    Lives here rather than on the engine because it spans intervals: a price
+    can sit against a 5m swing level and a daily pivot at once, and which of
+    those matters is exactly what the caller is asking.
+    """
+    vol = engine.vol.of(feed)
+    return nearby(engine.levels(feed), price, vol, within_vol)

@@ -91,6 +91,13 @@ Routing is deliberately **not** keyed on score. Score measures statistical
 rarity, and rarity is not unambiguity: an unusually wide spread is rare and is
 exactly the case that needs the fundamentals before anyone is woken.
 
+## A note on units
+
+Distances here are in **basis points** (1bps = 0.01%), and ratios like
+`spread_ratio` are dimensionless. The levels model uses a third unit —
+**volatility units**, where `1v` is one typical move — which is defined with
+worked conversions in [levels.md](levels.md#0-what-a-volatility-unit-is).
+
 ## Timeframes
 
 Ticks up to five-minute bars. Above that, "cross-venue disagreement" is mostly

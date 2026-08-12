@@ -296,9 +296,9 @@ def infer(level: Level, side: Side, features: Features, memory: Memory) -> Infer
     push = weight * own.mean_push + (1 - weight) * prior_push
 
     if own.touches >= CONFIDENT_TOUCHES:
-        detail = f"{own.touches} prior touches from {side}"
+        detail = f"{own.touches:.1f} prior touches from {side}"
     elif neighbours:
-        detail = f"{own.touches} own touches, {neighbours} similar elsewhere"
+        detail = f"{own.touches:.1f} own touches, {neighbours} similar elsewhere"
     else:
         detail = "no comparable history"
 
