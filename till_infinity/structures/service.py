@@ -36,6 +36,7 @@ from . import store
 from .anomaly import Detector
 from .config import INTERVALS, Settings
 from .drift import Drift
+from .engine import Engine
 from .models import Shape, Signal
 
 log = get_logger(__name__)
@@ -106,6 +107,10 @@ class Watcher:
         )
         self.drift = Drift()
         self.bars = BarConsensus()
+        #: Key levels and what they do when price arrives. Fed by both bars
+        #: (which form the levels) and quotes (which detect the touch in time
+        #: to matter — waiting for a 5m close reports it after the fact).
+        self.engine = Engine()
         self._sent: OrderedDict[tuple[str, str, str], float] = OrderedDict()
         self._saved = 0.0
         self.published = 0
@@ -120,12 +125,16 @@ class Watcher:
             return False
         self.detector = state.get("detector", self.detector)
         self.drift = state.get("drift", self.drift)
+        self.engine = state.get("engine", self.engine)
         log.info("structures: restored models (%s)", self.detector.seen())
         return True
 
     def save(self) -> None:
         try:
-            store.save({"detector": self.detector, "drift": self.drift}, self.settings.state_dir)
+            store.save(
+                {"detector": self.detector, "drift": self.drift, "engine": self.engine},
+                self.settings.state_dir,
+            )
         except Exception as exc:  # losing a save must not stop the watch
             log.warning("structures: could not save state: %s", exc)
         self._saved = time.monotonic()
@@ -212,15 +221,32 @@ class Watcher:
     async def handle(self, message: Message) -> list[Signal]:
         """One bus message in, zero or more findings out."""
         if message.topic == QUOTES:
-            return self.detector.observe(message.payload)
+            signals = self.detector.observe(message.payload)
+            return signals + self._level_calls(self.engine.observe_quote(message.payload))
         if message.topic == BARS:
+            signals = self._level_calls(self.engine.observe_bar(message.payload))
             seen = self.bars.observe(message.payload)
-            if seen is None:
-                return []
-            feed, mid = seen
-            found = self.drift.observe(feed, mid, message.time)
-            return [found] if found else []
+            if seen is not None:
+                feed, mid = seen
+                found = self.drift.observe(feed, mid, message.time)
+                if found is not None:
+                    signals.append(found)
+            return signals
         return []
+
+    def _level_calls(self, calls: Sequence[object]) -> list[Signal]:
+        """Turn level calls into signals, dropping the ones with no edge.
+
+        `actionable` is the filter, and it is strict on purpose: it wants
+        enough evidence, enough separation from the base rate, and enough size.
+        A call that merely restates the base rate is not information, however
+        confident the number looks.
+        """
+        return [
+            call.to_signal(self.engine.vol.of(call.feed))
+            for call in calls
+            if call.inference.actionable
+        ]
 
     async def run(
         self,

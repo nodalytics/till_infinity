@@ -1,0 +1,517 @@
+"""Key price levels: where they are, and what they do when price arrives.
+
+A level is not a line on a chart. It is a **latent state observed noisily**:
+price turned somewhere near it a dozen times, never at exactly the same place,
+and each of those turns is one noisy measurement of where the level actually
+sits. That framing decides most of the design.
+
+## The level is a Kalman state
+
+Each touch updates a 1D Kalman filter whose state is the level's price and
+whose transition is a slow random walk — levels do drift, slowly, as the market
+repositions around them.
+
+This is what gives the level its ability to be pushed up or down by what price
+actually does, without anyone choosing a smoothing constant. The Kalman gain
+weights a new touch by how uncertain the level currently is against how noisy
+that observation is, so a level with twenty consistent touches barely moves for
+the twenty-first while a fresh level moves a long way. An exponential average
+needs an alpha picked in advance and is wrong at both ends of that range.
+
+The posterior variance is not a by-product either: **it is the zone**. A level
+we are confident about is a thin band; a level inferred from three scattered
+touches is a wide one. The width comes from the same arithmetic as the centre.
+
+## A level does different things from different sides
+
+The important asymmetry. The same price met from below and met from above are
+two different objects: one is a ceiling being tested, the other a floor. What
+matters is not "does the level hold" but "given price arrived from *this* side,
+which way does it get pushed, and how hard".
+
+So every statistic here is kept **per approach side**, and the answer is a
+direction with a magnitude rather than a hold-or-break bit.
+
+## Everything is in volatility units
+
+A 20bps push is enormous in a quiet hour and noise in a violent one. Storing
+raw basis points would make a level's history incomparable with its own past
+the moment the regime changed. Distances, zone widths and pushes are all
+divided by current volatility, which is what lets a level learned in January
+still mean something in June — and what lets gold and EURUSD share one model.
+"""
+
+from __future__ import annotations
+
+import math
+import time
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+from .pips import Point
+from .volatility import Volatility
+
+#: How wide a level's zone is, as a multiple of its own uncertainty. Two
+#: standard deviations: price inside this band is touching the level in any
+#: sense the data can distinguish.
+ZONE_SIGMA = 2.0
+
+#: A zone is never narrower than this many volatility units, however confident
+#: the filter becomes. A band tighter than a typical move is a band price
+#: crosses by accident, and every crossing would count as a touch.
+MIN_ZONE_VOL = 0.35
+
+#: ...and never wider than this, however scattered the touches. Past this the
+#: "level" is a region, and a region that wide predicts nothing.
+MAX_ZONE_VOL = 3.0
+
+#: How far price must travel away from a level, in volatility units, before the
+#: interaction counts as resolved rather than still in progress.
+RESOLVE_VOL = 1.5
+
+#: How far beyond a level price must close for a break rather than a wick.
+BREAK_VOL = 0.75
+
+#: Process noise per hour, in volatility units. Levels drift slowly; this is
+#: what stops a filter with many observations from freezing solid.
+DRIFT_VOL_PER_HOUR = 0.02
+
+#: Touches needed before a level's own history is worth more than its
+#: neighbours'. Below this, inference leans on kNN over similar levels.
+CONFIDENT_TOUCHES = 5
+
+
+class Side(StrEnum):
+    """Which side price arrived from. The level behaves differently per side."""
+
+    #: Price came down onto the level — a floor being tested.
+    ABOVE = "above"
+    #: Price came up into the level — a ceiling being tested.
+    BELOW = "below"
+
+    @property
+    def opposite(self) -> Side:
+        return Side.BELOW if self is Side.ABOVE else Side.ABOVE
+
+    @property
+    def rejection_is_up(self) -> bool:
+        """A floor tested from above rejects upward; a ceiling rejects downward."""
+        return self is Side.ABOVE
+
+
+class Outcome(StrEnum):
+    """What the level did to price."""
+
+    #: Pushed it back the way it came.
+    REJECT = "reject"
+    #: Let it through, and it kept going.
+    BREAK = "break"
+    #: Neither, within the horizon. Kept because "nothing happened" is a real
+    #: answer and a model that never sees it will predict a move every time.
+    CHOP = "chop"
+    #: Still in progress.
+    OPEN = "open"
+
+
+class State(StrEnum):
+    FRESH = "fresh"
+    TESTED = "tested"
+    BROKEN = "broken"
+    #: Broken, then respected from the other side — the classic flip. Worth its
+    #: own state because a flipped level is a *repeating structure*, which is
+    #: the thing this whole package exists to notice.
+    FLIPPED = "flipped"
+
+
+@dataclass(slots=True)
+class Kalman:
+    """One-dimensional Kalman filter over a slowly drifting price.
+
+    `mean` is where the level is, `variance` how unsure we are. Both are in
+    price units; callers convert to volatility units at the point of use, since
+    the volatility that matters is the one at the moment of the question.
+    """
+
+    mean: float
+    variance: float
+    updated: float = field(default_factory=time.time)
+
+    def predict(self, when: float, drift_per_hour: float) -> None:
+        """Let uncertainty grow with time. A level untested for a month is a
+        guess; one tested a minute ago is not."""
+        elapsed_hours = max(0.0, (when - self.updated)) / 3600.0
+        self.variance += (drift_per_hour**2) * elapsed_hours
+        self.updated = max(self.updated, when)
+
+    def update(self, observation: float, noise: float, when: float) -> float:
+        """Fold in one touch. Returns the Kalman gain that was applied.
+
+        The gain is returned because it *is* the answer to "how much did this
+        touch move the level", which is worth journalling: a gain near 1 means
+        the level had no idea where it was, near 0 that it was already sure.
+        """
+        self.predict(when, 0.0)
+        noise = max(noise, 1e-12)
+        gain = self.variance / (self.variance + noise)
+        self.mean += gain * (observation - self.mean)
+        self.variance *= 1.0 - gain
+        self.updated = max(self.updated, when)
+        return gain
+
+    @property
+    def sigma(self) -> float:
+        return math.sqrt(max(self.variance, 0.0))
+
+
+@dataclass(slots=True)
+class SideStats:
+    """What the level has done to price arriving from one particular side.
+
+    Push is signed and in volatility units: positive is upward. Summing the
+    signed push rather than counting rejections is deliberate — two rejections
+    of very different size are not the same evidence, and a direction with no
+    magnitude cannot be sized or compared with the cost of being wrong.
+    """
+
+    touches: int = 0
+    rejects: int = 0
+    breaks: int = 0
+    chops: int = 0
+    #: Sum and sum-of-squares of the signed push, for mean and dispersion.
+    push_sum: float = 0.0
+    push_sq: float = 0.0
+    ups: int = 0
+
+    def record(self, outcome: Outcome, push_vol: float) -> None:
+        self.touches += 1
+        self.push_sum += push_vol
+        self.push_sq += push_vol * push_vol
+        if push_vol > 0:
+            self.ups += 1
+        match outcome:
+            case Outcome.REJECT:
+                self.rejects += 1
+            case Outcome.BREAK:
+                self.breaks += 1
+            case Outcome.CHOP:
+                self.chops += 1
+
+    @property
+    def mean_push(self) -> float:
+        return self.push_sum / self.touches if self.touches else 0.0
+
+    @property
+    def push_sigma(self) -> float:
+        if self.touches < 2:
+            return 0.0
+        mean = self.mean_push
+        var = max(0.0, self.push_sq / self.touches - mean * mean)
+        return math.sqrt(var)
+
+    def probability_up(self, prior_up: float = 0.5, prior_weight: float = 4.0) -> float:
+        """Beta-binomial posterior that the next push is upward.
+
+        Shrunk towards a prior on purpose. Three touches that all went up is
+        not 100% — reporting it as such is how a system talks itself into a
+        trade it has no evidence for. The prior is where kNN over similar
+        levels supplies what this level's own history cannot.
+        """
+        alpha = prior_up * prior_weight + self.ups
+        beta = (1.0 - prior_up) * prior_weight + (self.touches - self.ups)
+        return alpha / (alpha + beta)
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "touches": self.touches,
+            "rejects": self.rejects,
+            "breaks": self.breaks,
+            "chops": self.chops,
+            "mean_push_vol": round(self.mean_push, 4),
+            "push_sigma_vol": round(self.push_sigma, 4),
+            "ups": self.ups,
+        }
+
+
+@dataclass(slots=True)
+class Level:
+    """One key price level, and what it has done to price."""
+
+    feed: str
+    interval: str
+    filter: Kalman
+    origin: str = "pip"
+    created: float = field(default_factory=time.time)
+    state: State = State.FRESH
+    last_touch: float = 0.0
+    #: Statistics per approach side. The asymmetry is the whole point.
+    sides: dict[Side, SideStats] = field(default_factory=dict)
+    #: How many distinct swings formed it. A level from six swings is not the
+    #: same object as one from two, however similar their prices.
+    swings: int = 1
+
+    @property
+    def price(self) -> float:
+        return self.filter.mean
+
+    @property
+    def touches(self) -> int:
+        return sum(stats.touches for stats in self.sides.values())
+
+    def stats(self, side: Side) -> SideStats:
+        found = self.sides.get(side)
+        if found is None:
+            found = self.sides[side] = SideStats()
+        return found
+
+    def zone(self, vol: Volatility) -> tuple[float, float]:
+        """The band that counts as touching, in price.
+
+        Width comes from the filter's own uncertainty, then is clamped in
+        volatility units so it stays meaningful in any regime.
+        """
+        half = self.filter.sigma * ZONE_SIGMA
+        floor = vol.price_units(self.price, MIN_ZONE_VOL)
+        ceiling = vol.price_units(self.price, MAX_ZONE_VOL)
+        half = min(max(half, floor), ceiling)
+        return self.price - half, self.price + half
+
+    def contains(self, price: float, vol: Volatility) -> bool:
+        low, high = self.zone(vol)
+        return low <= price <= high
+
+    def distance_vol(self, price: float, vol: Volatility) -> float:
+        """Signed distance from the level, in volatility units. Positive above."""
+        if not self.price:
+            return 0.0
+        return ((price - self.price) / self.price * 10_000) / vol.bps
+
+    def side_of(self, price: float) -> Side:
+        """Which side price is on now, hence which side it would arrive from."""
+        return Side.ABOVE if price >= self.price else Side.BELOW
+
+    def strength(self, when: float, vol: Volatility) -> float:
+        """How much this level deserves attention, in [0, 1].
+
+        Three things, and they trade off. Touches are evidence. Confidence — a
+        tight zone — means the evidence agrees. Age cuts both ways, so it is
+        deliberately not rewarded: an old level with two touches is not strong,
+        it is stale, and treating longevity as authority is how a chart ends up
+        covered in lines nobody trades.
+        """
+        evidence = min(self.touches, 10) / 10.0
+        agreement = 1.0 - min(1.0, self.filter.sigma / max(vol.price_units(self.price, 1.0), 1e-9))
+        recency = (
+            math.exp(-max(0.0, when - self.last_touch) / (14 * 86_400)) if self.last_touch else 0.3
+        )
+        breadth = min(self.swings, 5) / 5.0
+        return round(
+            0.4 * evidence + 0.25 * max(0.0, agreement) + 0.2 * recency + 0.15 * breadth, 4
+        )
+
+    def observe_touch(self, extreme: float, vol: Volatility, when: float) -> float:
+        """Fold a touch into the level's position. Returns the Kalman gain.
+
+        Observation noise scales with volatility: in a violent market the price
+        at which price turned says less about where the level is, and the
+        filter should — and now does — believe it less.
+        """
+        self.filter.predict(when, vol.price_units(self.price, DRIFT_VOL_PER_HOUR))
+        noise = vol.price_units(self.price, 0.5) ** 2
+        gain = self.filter.update(extreme, noise, when)
+        self.last_touch = when
+        if self.state is State.FRESH:
+            self.state = State.TESTED
+        return gain
+
+    def record(self, side: Side, outcome: Outcome, push_vol: float) -> None:
+        self.stats(side).record(outcome, push_vol)
+        if outcome is Outcome.BREAK:
+            self.state = State.BROKEN
+        elif outcome is Outcome.REJECT and self.state is State.BROKEN:
+            # Broken, and now respected again — the level flipped, which is a
+            # repeating structure rather than a dead one.
+            self.state = State.FLIPPED
+
+    def to_dict(self, vol: Volatility | None = None, when: float | None = None) -> dict:
+        when = time.time() if when is None else when
+        out: dict = {
+            "feed": self.feed,
+            "interval": self.interval,
+            "price": round(self.price, 8),
+            "sigma": round(self.filter.sigma, 8),
+            "origin": self.origin,
+            "state": str(self.state),
+            "touches": self.touches,
+            "swings": self.swings,
+            "created": self.created,
+            "last_touch": self.last_touch,
+            "sides": {str(side): stats.to_dict() for side, stats in self.sides.items()},
+        }
+        if vol is not None:
+            low, high = self.zone(vol)
+            out |= {
+                "low": round(low, 8),
+                "high": round(high, 8),
+                "strength": self.strength(when, vol),
+                "vol_bps": round(vol.bps, 4),
+            }
+        return out
+
+
+# ------------------------------------------------------------------ forming
+
+
+def seed_price(point: Point) -> float:
+    return point.price
+
+
+def form(
+    feed: str,
+    interval: str,
+    turns: Sequence[Point],
+    vol: Volatility,
+    *,
+    tolerance_vol: float = 1.0,
+    min_swings: int = 3,
+) -> list[Level]:
+    """Cluster swing points into levels.
+
+    Agglomerative and one-dimensional: sort the swings by price and merge
+    neighbours that sit within `tolerance_vol` volatility units of each other.
+    Simple, and correct for the shape of the problem — the data is a line, so
+    the cluster boundaries are just the gaps in it, and the popular alternatives
+    (k-means, DBSCAN) either need k chosen in advance or rediscover exactly this
+    in more code.
+
+    Clustering in **volatility units** rather than basis points is what lets one
+    tolerance work across gold, BTC and EURUSD at once.
+
+    A cluster needs `min_swings` distinct turns. Two is not enough: any two
+    swings define a line, so a two-swing level is not evidence of anything, and
+    admitting them is how a chart ends up with a level every few basis points —
+    at which density every price is "at a level" and the model predicts nothing.
+    """
+    ordered = sorted((point for point in turns if point.is_turn), key=lambda p: p.price)
+    if not ordered:
+        return []
+
+    clusters: list[list[Point]] = [[ordered[0]]]
+    for point in ordered[1:]:
+        last = clusters[-1][-1]
+        gap_bps = abs(point.price - last.price) / last.price * 10_000 if last.price else 0.0
+        if vol.units(gap_bps) <= tolerance_vol:
+            clusters[-1].append(point)
+        else:
+            clusters.append([point])
+
+    levels: list[Level] = []
+    for cluster in clusters:
+        if len(cluster) < min_swings:
+            continue
+        prices = [point.price for point in cluster]
+        centre = sum(prices) / len(prices)
+        # Initial variance from the spread of the swings that formed it, with a
+        # floor: three touches at an identical price is luck, not certainty.
+        spread = _variance(prices, centre)
+        floor = vol.price_units(centre, MIN_ZONE_VOL / ZONE_SIGMA) ** 2
+        newest = max(point.confirmed for point in cluster)
+        levels.append(
+            Level(
+                feed=feed,
+                interval=interval,
+                filter=Kalman(mean=centre, variance=max(spread, floor), updated=newest),
+                origin="pip",
+                created=newest,
+                swings=len(cluster),
+            )
+        )
+    return levels
+
+
+def _variance(values: Sequence[float], mean: float) -> float:
+    if len(values) < 2:
+        return 0.0
+    return sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+
+
+def merge(existing: Sequence[Level], found: Sequence[Level], vol: Volatility) -> list[Level]:
+    """Fold newly formed levels into the ones already known.
+
+    A level rediscovered is not a new level — it is evidence about an old one,
+    and treating it as new would throw away exactly the touch history that
+    makes it worth anything.
+    """
+    kept = list(existing)
+    for candidate in found:
+        near = _nearest(kept, candidate.price, vol)
+        # Merge if the candidate falls inside the existing level's own zone,
+        # not inside a fixed tolerance. The zone already encodes how sure that
+        # level is about where it sits, which is exactly the right question:
+        # a confident level absorbs only what is close, an uncertain one
+        # absorbs more and tightens as a result.
+        if near is not None and near.contains(candidate.price, vol):
+            near.filter.update(
+                candidate.price, vol.price_units(candidate.price, 0.5) ** 2, candidate.created
+            )
+            near.swings += candidate.swings
+        else:
+            kept.append(candidate)
+    return dedupe(kept, vol)
+
+
+def dedupe(levels: Sequence[Level], vol: Volatility) -> list[Level]:
+    """Fold together levels whose zones overlap.
+
+    Levels drift as they learn, so two that formed apart can converge onto the
+    same price. Left alone they split the touch history between them and both
+    look weaker than the one real level they describe.
+    """
+    ordered = sorted(levels, key=lambda level: level.price)
+    kept: list[Level] = []
+    for level in ordered:
+        if not kept:
+            kept.append(level)
+            continue
+        previous = kept[-1]
+        _, prev_high = previous.zone(vol)
+        low, _ = level.zone(vol)
+        if low > prev_high:
+            kept.append(level)
+            continue
+        # Keep the better-evidenced one and give it the other's history.
+        winner, loser = (
+            (previous, level) if previous.touches >= level.touches else (level, previous)
+        )
+        winner.filter.update(loser.price, vol.price_units(loser.price, 0.5) ** 2, loser.created)
+        winner.swings += loser.swings
+        for side, stats in loser.sides.items():
+            into = winner.stats(side)
+            into.touches += stats.touches
+            into.rejects += stats.rejects
+            into.breaks += stats.breaks
+            into.chops += stats.chops
+            into.push_sum += stats.push_sum
+            into.push_sq += stats.push_sq
+            into.ups += stats.ups
+        winner.last_touch = max(winner.last_touch, loser.last_touch)
+        kept[-1] = winner
+    return kept
+
+
+def _nearest(levels: Sequence[Level], price: float, vol: Volatility) -> Level | None:
+    if not levels:
+        return None
+    return min(levels, key=lambda level: abs(level.distance_vol(price, vol)))
+
+
+def nearby(
+    levels: Sequence[Level], price: float, vol: Volatility, within_vol: float = 3.0
+) -> list[Level]:
+    """Levels close enough to matter, nearest first."""
+    scored = [
+        (abs(level.distance_vol(price, vol)), level)
+        for level in levels
+        if abs(level.distance_vol(price, vol)) <= within_vol
+    ]
+    return [level for _, level in sorted(scored, key=lambda pair: pair[0])]

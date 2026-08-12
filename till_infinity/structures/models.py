@@ -36,6 +36,8 @@ class Shape(StrEnum):
     SPREAD = "spread"
     #: The distribution itself moved — a regime change, not a single reading.
     DRIFT = "drift"
+    #: Price arrived at a key level, and its history says which way it goes.
+    LEVEL = "level"
 
 
 @dataclass(frozen=True, slots=True)
