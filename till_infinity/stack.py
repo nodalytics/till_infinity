@@ -313,9 +313,13 @@ class Stack:
 
     async def _run_structures(self, book) -> None:
         watcher = sx.Watcher(self.bus, journal=book)
-        # Restore first, then warm. A saved model already contains the history;
-        # replaying it on top would count every stored bar twice.
-        if not watcher.load():
+        # One line, in one place — `structures.watch` had the same two lines and
+        # only one of them was fixed, so production kept the bug for a deploy
+        # after the fix shipped. Warming is decided by whether there are levels,
+        # not by whether the restore worked.
+        watcher.load()
+        if watcher.cold:
+            log.info("stack: structures restored no levels, warming from the store")
             watcher.warm()
         await watcher.run()
 
