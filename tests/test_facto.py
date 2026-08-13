@@ -177,3 +177,21 @@ def test_a_single_feature_has_no_interaction_to_report():
 
 def test_an_unfitted_model_has_no_opinion():
     assert Model().predict({"a": 1.0, "b": 2.0}) == 0.0
+
+
+def test_a_non_finite_prediction_is_no_opinion_rather_than_a_nan():
+    """A NaN propagates through MAE and reads as 'not better', not as broken."""
+    import math
+
+    from till_infinity.structures.facto import Model
+
+    model = Model()
+    model.learn({"a": 1.0, "b": 2.0}, 1.0)
+
+    class Diverged:
+        def predict_one(self, _features):
+            return float("nan")
+
+    model._fm = Diverged()
+    assert model.predict({"a": 1.0, "b": 2.0}) == 0.0
+    assert not math.isnan(model.predict({"a": 1.0, "b": 2.0}))

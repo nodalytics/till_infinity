@@ -432,6 +432,22 @@ on **every first example**; the second by any sparse row. Both return zero
 here, which is also the honest answer — a model with no history, or no pair to
 look at, has no opinion.
 
+### Examples have an expiry, and it is not time
+
+A measurement bug corrupts every example recorded while it was live, not only
+the numbers it printed. Inflated touch counts fed `experience` and `strength`;
+a pooled base rate made `edge` wrong on every row. Examples from before those
+fixes describe a model that no longer exists, and fitting across the boundary
+teaches the FM the relationship between features and outcomes *as they were
+mismeasured* — worse than no model, because it looks like one.
+
+`fit(journal_db, since=<unix ts>)` counts only what was recorded after a
+known-good point. There is deliberately no default: where that boundary sits is
+a judgement about a particular deployment's history, and the code cannot know
+it. The cost is real — it resets progress toward `MIN_EXAMPLES` — and it is
+still cheaper than a confident model fitted on a ruler that has since changed
+length.
+
 ## Environment
 
 | | |

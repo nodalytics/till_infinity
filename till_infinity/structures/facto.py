@@ -42,6 +42,7 @@ noise wearing a decimal point.
 
 from __future__ import annotations
 
+import math
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -122,7 +123,7 @@ def encode(context: dict[str, Any]) -> dict[str, float]:
     return out
 
 
-def dataset(journal_db: Path | str, *, limit: int = 5_000) -> list[Example]:
+def dataset(journal_db: Path | str, *, limit: int = 5_000, since: float = 0.0) -> list[Example]:
     """Assemble `(features, outcome)` pairs from the journal, oldest first.
 
     The outcome entry carries both, which is not an accident: it was written
@@ -137,6 +138,8 @@ def dataset(journal_db: Path | str, *, limit: int = 5_000) -> list[Example]:
     except FileNotFoundError:
         return []
 
+    if since:
+        rows = [entry for entry in rows if entry.time >= since]
     by_id = {entry.id: entry for entry in rows}
     found: list[Example] = []
     for entry in rows:
@@ -265,7 +268,17 @@ class Model:
         """
         if not self._fitted or len(features) < 2:
             return 0.0
-        return float(self._fm.predict_one(features))
+        guess = float(self._fm.predict_one(features))
+        # river's FM warns rather than raises when its latent factors go
+        # non-finite — `invalid value encountered in scalar add` — and hands
+        # back a NaN. A NaN propagates silently through `metrics.MAE`, which
+        # then reports a NaN error the comparisons read as "not better", so a
+        # diverged model would be scored as merely unhelpful. Zero is the
+        # honest answer: a model that has produced a non-number has no opinion.
+        if not math.isfinite(guess):
+            log.warning("facto: model produced a non-finite prediction — treating as no opinion")
+            return 0.0
+        return guess
 
     def learn(self, features: dict[str, float], target: float) -> None:
         self._fm.learn_one(features, target)
@@ -316,6 +329,19 @@ def evaluate(examples: Sequence[Example], *, model: Model | None = None) -> Repo
     )
 
 
-def fit(journal_db: Path | str, **kwargs) -> Report:
-    """Read the journal and report. The everyday entry point."""
-    return evaluate(dataset(journal_db), **kwargs)
+def fit(journal_db: Path | str, *, since: float = 0.0, **kwargs) -> Report:
+    """Read the journal and report. The everyday entry point.
+
+    `since` exists because a measurement bug does not only corrupt the numbers
+    it produced — it corrupts every example recorded while it was live. Touch
+    counts fed `experience` and `strength`, and a pooled base rate made `edge`
+    wrong on every row, so examples from before those were fixed describe a
+    model that no longer exists. Fitting across the boundary would teach the FM
+    the relationship between features and outcomes *as they were mismeasured*,
+    which is worse than having no model, because it would look like one.
+
+    Pass a unix timestamp to count only what was recorded after a known-good
+    point. There is no default: where the boundary sits is a judgement about
+    this deployment's history, not something the code can know.
+    """
+    return evaluate(dataset(journal_db, since=since), **kwargs)
