@@ -28,36 +28,23 @@ A directional call is only worth making when the price structure and the
 fundamentals point the same way. Most setups see one or the other. This one is
 built to see both at once, and to write down why it thought so at the time.
 
-Five things follow from that, and they are the five parts of the project:
+Five parts, in dependency order:
 
-**Structure needs more than one view of the price.** The same instrument is
-quoted by six brokers at once, so the *differences* carry information a single
-feed cannot: which venue leads, where quotes diverge, when liquidity thins ahead
-of a move. That is why `prices` collects one instrument from many venues rather
-than many instruments from one.
+| | |
+|---|---|
+| `prices` | one instrument from **many venues**, because the disagreement between feeds carries information no single feed does |
+| `structures` | arithmetic, not judgement — online models over the venues, and the **key levels** price keeps turning at, answered per approach side |
+| `news` | the calendar and the headlines on the same clock, because a move with a release behind it is a different animal |
+| `agents` | a model over the stored data, told plainly that "nothing is happening" is a correct answer. The only part needing a credential, and the only optional one |
+| `journal` | what was decided, **why at that moment**, and what followed. Prices can be recomputed forever; the reasoning cannot be reconstructed once lost |
 
-**Finding the structure is arithmetic, not judgement.** `structures` measures
-every venue against the median of the others and learns, online, what normal
-looks like for each — because "unusual" only means anything relative to
-something, and a constant threshold is the wrong something. It also finds the
-**key levels** price keeps turning at, and infers which way it goes from what
-happened last time it arrived *from that side*. It runs continuously,
-independently of anything else.
+The load-bearing idea is that a level is **where volatility turns, not where
+price poked**: the leg in and the leg out meet at an *origin*, and the wick
+beyond it is the zone's width rather than its position. Everything is measured
+in **volatility units**, so gold and EURUSD, 3m and 1w, are comparable without
+per-instrument tuning.
 
-**Fundamentals separate a structure from a coincidence.** A move with a release
-behind it is a different animal from the same move on a quiet calendar. `news`
-keeps the economic calendar, the headlines and central bank reserves alongside
-the prices, on the same clock.
-
-**Judgement has to happen where both are visible.** `agents` puts a model over
-the stored data with read-only tools, and tells it plainly that "nothing is
-happening" is a correct answer. Most windows are.
-
-**Every call gets written down with its reasoning.** `journal` records what was
-decided, *why at that moment*, the state it was decided from, and what happened
-afterwards. Prices can be recomputed forever; the reasoning cannot be
-reconstructed at all once it is lost — which is what makes it the one thing
-worth capturing from day one.
+**[The full version, with the reasoning behind each choice →](docs/idea.md)**
 
 ## Run it
 
