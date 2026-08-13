@@ -238,6 +238,99 @@ rather than counting rejections is deliberate: two rejections of very different
 size are not the same evidence, and a direction with no magnitude cannot be
 sized or compared against the cost of being wrong.
 
+## 5b. The origin, and why it is not the extreme
+
+Which price *is* the level? The obvious answer is the extreme — the high of the
+swing, the low of the wick. It is the wrong one, and this is the single
+correction that most changed what the model learns.
+
+A leg of volatility comes into a level and a leg of volatility leaves it. The
+**origin** is where those two meet: where the move in stopped and the move out
+began. Most of the time that is the close of one bar sitting on the open of the
+next. The extreme is somewhere past it — the distance price was pushed *beyond*
+the turn before it turned.
+
+```
+        ╱╲   ← extreme (the wick's tip)
+       ╱  ╲
+──────•─────  ← origin (leg in ends, leg out begins)
+     ╱
+    ╱
+```
+
+The distinction matters because the two prices answer different questions:
+
+- **the origin** is where the level *is*. Price turning here twice is the same
+  level twice, and it is what the statistics in §5 and the Kalman update in §3
+  are fed.
+- **the extreme** is how far past it price was pushed getting there. That is not
+  a second level; it is the **width of the first one**.
+
+Feeding the extreme to the filter instead makes every level drift outward by
+whatever the last wick happened to be, and makes two touches of the same level
+look like two levels a wick apart.
+
+### Which extreme, and it depends on the approach
+
+A wick only runs *through* a level in the direction price was already going, so
+the relevant extreme is fixed by the side of the approach:
+
+| price arrives | it wicks | extreme used |
+|---|---|---|
+| from **above** | *down* through the level | the bar's **low** |
+| from **below** | *up* through the level | the bar's **high** |
+
+```
+reach = low if side is ABOVE else high
+```
+
+Taking the high of a touch approached from above would measure the leg that
+brought price *in*, not the overshoot — a number about the approach wearing the
+name of the level.
+
+### Wick depth, and the zone it defines
+
+Depth is measured from the origin to the extreme, in volatility units (§0), so
+it means the same thing on gold as on EURUSD:
+
+```
+depth = |wick − origin| / origin × 10⁴ / bps
+```
+
+and folded into a per-side EWMA, the same shape as everything else here — the
+level's *recent* habit, not its lifetime average:
+
+```
+wick_vol ← 0.8·wick_vol + 0.2·depth
+```
+
+That number is one edge of the zone. And because it is recorded per approach
+side, **the zone is asymmetric**: the side price keeps overshooting into is the
+side that stretches.
+
+```
+half     = clamp(σ_kalman × 2.0,  0.35v,  3.0v)      ← §3, the filter's own doubt
+lower    = price − min(max(half, wick_vol[from above]), 3.0v)
+upper    = price + min(max(half, wick_vol[from below]), 3.0v)
+```
+
+Read the indices carefully — they cross on purpose. Touches coming **from above**
+wick *downwards*, so they set the **lower** edge.
+
+The floor and the two clamps each stop a different failure. `half` keeps a level
+with no wicks yet from being an infinitely thin line nothing ever touches; the
+0.35v floor keeps a filter that has become very confident from shrinking the
+zone to nothing; the 3.0v ceiling stops one violent wick from turning a level
+into a region so wide that everything is inside it.
+
+### What this bought
+
+Levels stopped drifting. Before the change, `observe_touch` was fed the extreme
+and the Kalman mean walked away from the price that was actually being defended,
+a fraction of a wick at a time. The zone was also symmetric, which said a
+ceiling being tested and a floor being tested overshoot equally — they do not,
+and the asymmetry is now a measured number per side rather than an assumption.
+
 ## 6. Levels break, and the tide changes
 
 A level that rejected ten times in January and broke three times last week is

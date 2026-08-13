@@ -110,6 +110,52 @@ level is clamped instead of raising. A failed delivery is logged and the loop
 continues — one unreachable webhook must not stop the next alert from reaching
 the chat that is up. See [bus.md](bus.md).
 
+## Filtering: what a channel accepts
+
+A channel people actually read is quiet most of the time. The detectors are not
+quiet — a stale feed re-fires every few seconds for as long as it stays stale,
+and a wide spread does the same. All of it belongs in the journal, where it is
+evidence. Very little of it belongs on a phone.
+
+Level routing (`info` / `warning` / `critical`) was the only filter there was,
+and it is the wrong axis on its own: a stale feed and a level call can both be
+`warning` while being completely different things to a reader. Four more, each
+answering something the others cannot:
+
+| variable | filters on | example |
+|---|---|---|
+| `NOTIFY_SHAPES` | kind of finding | `level,drift` — level calls and regime changes, nothing else |
+| `NOTIFY_FEEDS` | instrument | `gold,btc` |
+| `NOTIFY_COOLDOWN_S` | the same finding again | `900` — at most once per 15 minutes (default) |
+| `NOTIFY_MAX_PER_HOUR` | everything, together | `20` (default) |
+
+Shapes are the ones in [structures.md](structures.md#the-four-shapes) —
+`level`, `stale`, `spread`, `dislocation`, `drift` — plus the `source` of
+anything an agent publishes without one.
+
+```bash
+NOTIFY_SHAPES=level,drift
+NOTIFY_FEEDS=gold,btc
+NOTIFY_COOLDOWN_S=1800
+NOTIFY_MAX_PER_HOUR=10
+```
+
+Four details that are deliberate:
+
+- **Everything is allowed by default.** An allowlist nobody set is not applied.
+  A filter that silently drops things nobody configured is worse than the noise.
+- **The cooldown is per finding**, keyed on `(shape, instrument, venue)`. Gold
+  going quiet does not silence BTC.
+- **A dropped alert does not consume an hourly slot**, so a shape nobody wants
+  cannot crowd out one they do.
+- **The hour rolls** from each alert rather than resetting on the clock hour,
+  which would let twenty through at 10:59 and twenty more at 11:00.
+
+The filter sits in the `notify listen` consumer, not at the publisher. What is
+worth *recording* and what is worth *interrupting someone with* are different
+questions — the journal keeps everything either way, and a dropped alert is
+logged with the reason at `debug`.
+
 ## Secrets
 
 Credentials are read from the environment and never stored, logged or printed.

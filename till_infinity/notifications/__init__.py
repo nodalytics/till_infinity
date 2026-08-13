@@ -20,6 +20,7 @@ Each provider fans out to as many channels as you list.
 
 from .config import DEFAULT_TARGETS, Settings, parse_channels
 from .discord import DiscordNotifier
+from .filters import Filter
 from .models import COLOURS, Channel, Delivery, Level, Notification, truncate
 from .notifier import (
     NotConfiguredError,
@@ -46,6 +47,7 @@ __all__ = [
     "Channel",
     "Delivery",
     "DiscordNotifier",
+    "Filter",
     "Level",
     "NotConfiguredError",
     "Notification",

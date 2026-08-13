@@ -25,6 +25,7 @@ from ..bus import ALERTS, Bus
 from ..logging import get_logger
 from .config import DEFAULT_TARGETS, Settings
 from .discord import DiscordNotifier
+from .filters import Filter
 from .models import Channel, Delivery, Level, Notification
 from .notifier import NotConfiguredError, Notifier, PermanentError, TransientError
 from .telegram import TelegramNotifier
@@ -147,6 +148,7 @@ async def listen(
     targets: Sequence[str] | None = None,
     group: str = "notifications",
     limit: int | None = None,
+    alert_filter: Filter | None = None,
 ) -> int:
     """Deliver every alert published to the bus. Returns how many were sent.
 
@@ -155,11 +157,18 @@ async def listen(
     not stop the next alert from reaching the chat that is up.
     """
     settings = settings or Settings.from_env()
+    alert_filter = alert_filter or Filter.from_env()
+    log.info("notify: accepting %s", alert_filter.describe())
     handled = 0
     async for message in bus.subscribe(ALERTS, group=group):
         notification = from_message(message.payload)
         if notification is None:
             log.warning("alerts: dropped a message with no title")
+            continue
+        # Filtered here rather than at the publisher: what is worth *recording*
+        # and what is worth *interrupting someone with* are different
+        # questions, and the journal should keep everything either way.
+        if not alert_filter.accept(message.payload):
             continue
         if not notification.source:
             notification = replace(notification, source=message.source)

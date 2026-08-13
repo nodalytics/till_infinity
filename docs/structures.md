@@ -112,6 +112,11 @@ state whose variance *is* its zone, statistics kept **per approach side**, and
 an answer of the form *given price arrived from this side, P(pushed up) is p and
 the expected push is n volatility units — against a base rate of q*.
 
+The level's price is the **origin** — where the leg in ended and the leg out
+began — and not the wick's extreme. The extreme is not a second level; it is how
+far past the first one price was pushed, which is what makes the zone
+[asymmetric](levels.md#5b-the-origin-and-why-it-is-not-the-extreme).
+
 ## The four shapes
 
 | shape | what happened | needs an agent? |
