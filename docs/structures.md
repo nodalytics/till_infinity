@@ -49,15 +49,60 @@ disagreement between them carries information no single feed does.
 | `spread_ratio` | its spread against the group's, right now |
 | `staleness_ratio` | how long it has been still, against how long the group has |
 
-Two details in there matter more than they look.
+### The formulas
 
-**The consensus is a median, taken without the venue being measured.** Robust to
-the one feed that has gone wrong — a mean is dragged by the outlier it is meant
-to expose, and including a venue in the number it is judged by is precisely how
-a bad feed hides.
+For venue `v` at time `t`, with `V` the set of venues quoting the same
+instrument and still fresh (a quote older than 300s is not evidence about now):
 
-**"Spoke" and "moved" are tracked separately.** A dead feed usually keeps
-sending; it just keeps sending the same price. Staleness measures the second.
+**Consensus** — the median of everyone *except* the venue being judged:
+
+```
+mid*(v)     = median{ mid(u) : u in V, u != v }
+spread*(v)  = median{ spread_bps(u) : u in V, u != v }
+```
+
+The exclusion is not a detail. Including a venue in the number it is measured
+against is precisely how a bad feed hides: with six venues one wrong reading
+barely moves the number, and with two it moves it halfway. And a **median**
+rather than a mean because a mean is dragged by the outlier it exists to expose.
+
+**Deviation** — how far this venue sits from where the others agree, in basis
+points, signed:
+
+```
+dev_bps(v)      = (mid(v) - mid*(v)) / mid*(v) x 10000
+abs_dev_bps(v)  = | dev_bps(v) |
+```
+
+**Spread ratio** — wide compared with everyone quoting the same instrument at
+the same instant, not wide against a constant:
+
+```
+spread_ratio(v) = spread_bps(v) / spread*(v)          (1.0 if spread* = 0)
+```
+
+**Staleness** — seconds since this venue's mid last *changed*, against how long
+the group has been still:
+
+```
+still(v)            = t - moved(v)
+group_still         = median{ still(u) : u != v }
+staleness_ratio(v)  = still(v) / max(group_still, 1s)
+```
+
+The floor of one second in the denominator is load-bearing. When every other
+venue is updating, their median stillness is near zero — dividing by it either
+explodes or, worse, gets guarded away to a constant, blinding the ratio at
+exactly the moment it matters most. That was a real bug.
+
+Two details matter more than they look.
+
+**`moved` is not `t`.** A dead feed usually keeps *sending*; it just keeps
+sending the same price. `moved(v)` only advances when the mid actually changes,
+which is what makes a stale feed detectable at all.
+
+**Everything is a ratio or a basis point.** No feature carries a price, which is
+what lets one model serve gold, BTC and EURUSD without per-instrument tuning.
 
 ## Key levels
 
@@ -97,6 +142,85 @@ Distances here are in **basis points** (1bps = 0.01%), and ratios like
 `spread_ratio` are dimensionless. The levels model uses a third unit —
 **volatility units**, where `1v` is one typical move — which is defined with
 worked conversions in [levels.md](levels.md#0-what-a-volatility-unit-is).
+
+## The detectors, and what their numbers mean
+
+Three scorers, each answering a different question, and each with a different
+notion of "unusual" — which is why none of their outputs is comparable with
+another's without the conversions below.
+
+### GaussianScorer — is this unusual *for this venue*
+
+One per `(instrument, venue, metric)`. It fits a normal to the stream and
+returns
+
+```
+score(y) = 2 * | CDF(y) - 0.5 |
+```
+
+which is in `[0, 1]` and two-tailed. For a normal that is exactly
+
+```
+score = erf( z / sqrt(2) )
+```
+
+so a sigma threshold converts **exactly**, not by a fit:
+
+| sigma | threshold | expected rate |
+|---|---|---|
+| 2 | 0.9545 | ~1 in 22 |
+| 3 | 0.9973 | ~1 in 370 |
+| **4** | **0.999937** | **~1 in 15,787** |
+
+That is why the knob is `STRUCTURES_SIGMA` and not a raw score: sigma is the
+unit anyone reasoning about markets already thinks in.
+
+**The metric must be the one the fit assumes.** `dev_bps` is scored *signed*,
+not absolute. A signed cross-venue deviation is roughly normal, so the fit is
+sound and the two-tailed score already covers both directions; folding it to
+absolute first makes it half-normal, which a normal cannot represent — the
+upper tail is then permanently overweight and the scorer cries wolf. That was
+also a real bug.
+
+### HalfSpaceTrees + QuantileFilter — is this *combination* unusual
+
+Scores the joint vector `(abs_dev_bps, spread_ratio, staleness_ratio)`, catching
+combinations no single threshold would: a small deviation is fine, a slightly
+wide spread is fine, both at once on a venue that has gone quiet is not.
+
+Its score is **not calibrated** — on normal cross-venue data the median lands
+around **0.77**, so a fixed `>= 0.75` cutoff fired on 55% of everything.
+`QuantileFilter` supplies the missing calibration by tracking the running
+distribution of scores and flagging only
+
+```
+score(x) > Q_q( scores seen so far )        q = 0.999
+```
+
+A threshold that retunes itself as the market changes, which is the whole reason
+to be online. It also refuses to learn from what it just flagged, so a detector
+cannot drift toward accepting its own detections.
+
+Inputs are min-max scaled first, because HST partitions ranges and staleness in
+seconds would otherwise dominate a deviation in basis points.
+
+### ADWIN — has the distribution itself moved
+
+Maintains an adaptive window over absolute returns and cuts it wherever two
+sub-windows stop looking like the same distribution — a Hoeffding-style bound,
+so no window length has to be chosen in advance and the horizon is discovered
+rather than configured.
+
+**Absolute** returns, because ADWIN watches the size of moves: a market that
+starts trending and one that starts chopping both register, whereas signed
+returns average to zero either way and would hide both.
+
+```
+r(t) = | mid(t) - mid(t-1) | / mid(t-1) x 10000
+```
+
+Confirmation across timeframes then applies (§*One timeframe is not enough* in
+the module): a slow timeframe is believed alone, fast ones need a quorum.
 
 ## Timeframes
 

@@ -244,11 +244,35 @@ A level that rejected ten times in January and broke three times last week is
 not a rejecting level. Counts are therefore **floats carrying an effective touch
 count**, discounted three ways:
 
-| decay | when | why |
+Every counter in a side's record is multiplied by the same factor, so the
+*ratios* survive and only the weight changes:
+
+```
+n, rejects, breaks, chops, ups, sum(push), sum(push^2)   <-  all x f
+```
+
+Three factors compose:
+
+| factor | when | why |
 |---|---|---|
-| `0.5^(days / 21)` | on every touch | evidence ages; markets change |
-| `× 0.25` | a break beyond 2 volatility units | a level that just conspicuously failed should stop predicting a bounce |
-| `× 0.4` | the drift detector fires for this instrument | its behaviour was learned in a market that no longer exists |
+| `f = 0.5^(Δdays / 21)` | on every touch, for the gap since the last one | evidence ages; markets change |
+| `f = 0.25` | a break with `\|push\| ≥ 2v` | a level that just conspicuously failed should stop predicting a bounce |
+| `f = 0.4` | the drift detector confirms for this instrument | its behaviour was learned in a market that no longer exists |
+
+Because counts are multiplied rather than dropped, `n` becomes an **effective
+touch count** — a real number, not an integer — and every estimate downstream
+gets age-weighting for free without knowing it exists.
+
+Worked: ten rejections, then a three-month gap, then three breaks.
+
+```
+after the gap:   n = 10 x 0.5^(90/21) = 10 x 0.052 = 0.52
+after 3 breaks:  n = 0.52 + 3 = 3.52,  ups = 0.52
+P(up) = (0.5x4 + 0.52) / (4 + 3.52) = 0.33
+```
+
+The ten January rejections no longer outvote three breaks last week, which is
+the entire point.
 
 Discounted, never erased — the level is still there, and a hard cut-off would
 make it forget abruptly on an arbitrary boundary, with the estimate jumping for
@@ -291,8 +315,23 @@ features plus a pivot flag:
 | `experience` | log-compressed touch count |
 | `pivot` | 1.0 for a pivot, 0.0 for a swing level |
 
-**Side is a hard constraint, not a dimension** — distance is infinite across
-sides, because a floor's history must never vote on a ceiling's future.
+Distance is plain Euclidean over those six, with side as a gate rather than a
+term:
+
+```
+d(a, b) = inf                             if side(a) != side(b)
+        = sqrt( sum_k (a_k - b_k)^2 )     otherwise
+```
+
+**Side is a hard constraint, not a dimension** — infinite across sides, because
+a floor's history must never vote on a ceiling's future. Contributions are
+distance-weighted, so a close neighbour counts for more than a marginal one:
+
+```
+w_i    = 1 / (1 + d_i)
+P(up)  = sum( w_i . [push_i > 0] ) / sum( w_i )
+push   = sum( w_i . push_i )       / sum( w_i )
+```
 
 **Shrinkage between them**, so a level's own history takes over as it earns one:
 
@@ -348,8 +387,25 @@ arrives — the same discipline the swing detection follows.
 
 ## 10. Level formation
 
-Swings are clustered one-dimensionally: sort by price, merge neighbours within
-`1.0` volatility units. Simple and correct for the shape of the problem — the
+Swings are clustered one-dimensionally: sort by price, and start a new cluster
+wherever consecutive swings are further apart than the tolerance —
+
+```
+gap(i) = | p(i) - p(i-1) | / p(i-1) x 10000 / vol_bps      (volatility units)
+
+same cluster   if gap(i) <= 1.0
+new cluster    otherwise
+```
+
+then seed each cluster's filter from its members:
+
+```
+x0  = mean(prices in cluster)
+P0  = max( var(prices in cluster), (0.175v in price)^2 )
+```
+
+The variance floor matters: three touches at an identical price is luck, not
+certainty, and a filter that starts at zero variance can never be moved again. Simple and correct for the shape of the problem — the
 data is a line, so cluster boundaries are just the gaps in it, and k-means or
 DBSCAN either need k chosen in advance or rediscover exactly this in more code.
 
@@ -373,6 +429,19 @@ model predicts nothing. Three fixes brought it to seven:
 Re-forming **merges into** the existing set rather than replacing it. A level
 rediscovered is evidence about an old level, not a new one — replacing would
 throw away the touch history that makes it worth anything.
+
+### How strong is a level
+
+```
+strength = 0.40 x min(n, 10)/10          evidence
+         + 0.25 x max(0, 1 - sigma/1v)   agreement — a tight zone
+         + 0.20 x exp(-Δt / 14 days)     recency
+         + 0.15 x min(swings, 5)/5       breadth
+```
+
+Age is deliberately **not** rewarded. An old level with two touches is not
+strong, it is stale, and treating longevity as authority is how a chart ends up
+covered in lines nobody trades.
 
 ## 11. Multi-timeframe confluence
 
@@ -426,10 +495,36 @@ A shape is the last five confirmed swings, normalised twice:
 - **time** is dropped and only order kept, because two instances of a pattern
   rarely take the same number of bars.
 
+Normalising is z-scoring:
+
+```
+z(i) = ( p(i) - mean(p) ) / stdev(p)        zeros if stdev ~ 0
+```
+
 That second point is what **dynamic time warping** exists for. Comparing
 point-by-point would call a three-day double top and a three-hour double top
-different shapes; DTW finds the order-preserving alignment minimising total
-distance, so a stretched instance matches a compressed one:
+different shapes. DTW finds the order-preserving alignment minimising total
+distance, by the recurrence
+
+```
+D(i,j) = |a(i) - b(j)|  +  min( D(i-1, j),      insert
+                                D(i,   j-1),    delete
+                                D(i-1, j-1) )   match
+
+d(a,b) = D(n,m) / (n + m)
+```
+
+with `D(0,0) = 0` and everything else initialised to infinity. Dividing by
+`n + m` is what makes distances comparable between shapes of different lengths;
+without it a longer sequence is penalised for being long.
+
+The **Sakoe-Chiba band** restricts `j` to `|i - j| <= w`:
+
+```
+w = max( 0.4 x max(n, m), |n - m| ) + 1
+```
+
+so a stretched instance matches a compressed one:
 
 | | normalised DTW distance | |
 |---|---|---|
