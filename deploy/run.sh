@@ -16,6 +16,29 @@ DATA="/home/ubuntu/till-data"
 
 mkdir -p "$DATA"
 
+# Written once, then left alone — this is the file to edit on the box to turn
+# agents on or point at a different instrument set. Recreating it on every
+# deploy would silently discard whatever was configured there.
+ENV_FILE="/home/ubuntu/till.env"
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "no $ENV_FILE — writing defaults"
+  cat > "$ENV_FILE" <<'DEFAULTS'
+# Till Infinity on this instance. Edit and re-run the deploy to apply.
+#
+# Agents are off: they need a paid credential, and this box has 908 MB of RAM,
+# so the free path is the one that fits. Set AGENTS_ENABLED=1 and add a key to
+# turn them on.
+AGENTS_ENABLED=0
+PRICES_ENABLED=1
+NEWS_ENABLED=1
+STRUCTURES_ENABLED=1
+JOURNAL=1
+# No Telegram or Discord configured, so delivery is skipped rather than failed.
+NOTIFICATIONS_ENABLED=1
+TZ=UTC
+DEFAULTS
+fi
+
 echo "pulling $IMAGE:$TAG"
 docker pull "$IMAGE:$TAG"
 
