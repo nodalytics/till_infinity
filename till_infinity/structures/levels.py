@@ -275,6 +275,11 @@ class SideStats:
     #: which is different from one that simply holds.
     traps: float = 0.0
     chops: float = 0.0
+    #: How far past the origin the wick reached, in volatility units, averaged
+    #: over touches from this side. The zone's far edge: the origin is where
+    #: price turned and the wick is how far it was pushed to get there, so the
+    #: level occupies the span between them rather than a band centred on one.
+    wick_vol: float = 0.0
     #: Sum and sum-of-squares of the signed push, for mean and dispersion.
     push_sum: float = 0.0
     push_sq: float = 0.0
@@ -297,6 +302,11 @@ class SideStats:
         self.push_sum *= factor
         self.push_sq *= factor
         self.ups *= factor
+
+    def observe_wick(self, depth_vol: float) -> None:
+        """Fold in how far the wick ran past the origin, exponentially."""
+        depth_vol = max(0.0, depth_vol)
+        self.wick_vol = depth_vol if not self.wick_vol else self.wick_vol * 0.8 + depth_vol * 0.2
 
     def record(self, outcome: Outcome, push_vol: float) -> None:
         self.touches += 1
@@ -361,6 +371,7 @@ class SideStats:
             "breaks": round(self.breaks, 3),
             "traps": round(self.traps, 3),
             "chops": round(self.chops, 3),
+            "wick_vol": round(self.wick_vol, 4),
             "mean_push_vol": round(self.mean_push, 4),
             "push_sigma_vol": round(self.push_sigma, 4),
             "ups": round(self.ups, 3),
@@ -407,14 +418,26 @@ class Level:
     def zone(self, vol: Volatility) -> tuple[float, float]:
         """The band that counts as touching, in price.
 
-        Width comes from the filter's own uncertainty, then is clamped in
-        volatility units so it stays meaningful in any regime.
+        A level is a zone, not a line, and it is not symmetric. The centre is
+        the **origin** — where the leg in ended and the leg out began — and each
+        edge extends by however far the **wick** ran past it on that side. Price
+        arriving from above wicks *down* through the level, so the lower edge is
+        the one that stretches; arriving from below stretches the upper.
+
+        Width also has a floor from the filter's own uncertainty, so a level
+        with no wicks recorded yet is still a band rather than a line, and both
+        edges are clamped in volatility units to stay meaningful in any regime.
         """
         half = self.filter.sigma * ZONE_SIGMA
         floor = vol.price_units(self.price, MIN_ZONE_VOL)
         ceiling = vol.price_units(self.price, MAX_ZONE_VOL)
         half = min(max(half, floor), ceiling)
-        return self.price - half, self.price + half
+
+        below = self.sides.get(Side.ABOVE)
+        above = self.sides.get(Side.BELOW)
+        down = max(half, vol.price_units(self.price, below.wick_vol) if below else 0.0)
+        up = max(half, vol.price_units(self.price, above.wick_vol) if above else 0.0)
+        return self.price - min(down, ceiling), self.price + min(up, ceiling)
 
     def contains(self, price: float, vol: Volatility) -> bool:
         low, high = self.zone(vol)
@@ -489,6 +512,13 @@ class Level:
         return round(
             0.4 * evidence + 0.25 * max(0.0, agreement) + 0.2 * recency + 0.15 * breadth, 4
         )
+
+    def observe_wick(self, side: Side, origin: float, wick: float, vol: Volatility) -> None:
+        """Record how far past the origin the wick ran, on the side it came from."""
+        if not origin:
+            return
+        depth = abs((wick - origin) / origin * 10_000) / vol.bps
+        self.stats(side).observe_wick(depth)
 
     def observe_touch(self, extreme: float, vol: Volatility, when: float) -> float:
         """Fold a touch into the level's position. Returns the Kalman gain.

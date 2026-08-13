@@ -810,14 +810,20 @@ def test_agreement_between_the_two_is_not_mixed():
 # --------------------------------------------------- false breakouts (traps)
 
 
-def _walk(tracker, level, side, path, vol, start=1_000_000.0):
-    """Run price along `path` (in bps from the level) until the touch resolves."""
+def _walk(tracker, level, side, path, vol, start=1_000_000.0, wick_bps=0.0):
+    """Run price along `path` (bps from the level) until the touch resolves.
+
+    `wick_bps` extends each bar beyond its close, which is what separates the
+    extreme from the origin — without it they are the same number.
+    """
     entry = level.price
     features = reactions.features_for(level, side, entry, vol, approach_vol=1.0, when=start)
     tracker.begin(level, entry, features, start)
     for step, offset in enumerate(path, start=1):
         moved = level.price * (1 + offset / 10_000)
-        done = tracker.update(level, moved, vol, start + step * 60)
+        low = level.price * (1 + (offset - wick_bps) / 10_000)
+        high = level.price * (1 + (offset + wick_bps) / 10_000)
+        done = tracker.update(level, moved, vol, start + step * 60, low, high)
         if done:
             return done
     return None
@@ -1014,3 +1020,123 @@ def test_back_checks_learn_from_other_back_checks():
     retest = reactions.Features(Side.ABOVE, 1.0, 0.5, 0.5, 1.0, 0.5, backcheck=1.0)
     assert first.distance(retest) > 0
     assert first.distance(first) == 0.0
+
+
+# ------------------------------------ the origin: where the two legs meet
+
+
+def test_the_origin_is_where_the_move_turned_not_the_wick():
+    """The extreme is liquidity taken beyond the level at a price nobody traded."""
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=7200)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+
+    # closes reach -6bps, but each bar wicks 3bps further than it closes
+    done = _walk(tracker, level, Side.ABOVE, [-2, -4, -6, -3, 5, 20, 40], vol, wick_bps=3.0)
+
+    assert done is not None
+    assert done.extreme < done.origin  # the wick is deeper than the turn
+    assert done.origin == pytest.approx(level.price * (1 - 6 / 10_000), rel=1e-4)
+    assert done.extreme == pytest.approx(level.price * (1 - 9 / 10_000), rel=1e-4)
+
+
+def test_the_level_learns_from_the_origin_rather_than_the_extreme():
+    """A level drawn at the wick is drawn where nobody traded."""
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound(400):
+        engine.observe_bar(bar)
+    touched = [lv for lv in engine.levels("gold", "5m") if lv.touches >= 1]
+    assert touched  # the path ran; the observation fed in was the origin
+
+
+def test_a_hard_rejection_leaves_faster_than_it_arrived():
+    """Weak in, strong out. The number that says the level did something."""
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=7200)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    done = _walk(tracker, level, Side.ABOVE, [-1, -2, 10, 25, 45], vol)
+
+    assert done is not None
+    assert done.departure_vol > 0
+    assert done.energy > 1.0
+
+
+def test_energy_needs_both_legs_to_mean_anything():
+    """Recording only the approach makes absorption and rejection identical."""
+    from till_infinity.structures.reactions import Features, Touch
+
+    quiet = Touch(
+        feed="g",
+        level_price=4400.0,
+        features=Features(
+            Side.ABOVE, approach_vol=4.0, depth_vol=0.5, strength=0.5, run_vol=1.0, experience=0.5
+        ),
+        started=1.0,
+        entry=4400.0,
+        extreme=4400.0,
+        departure_vol=1.0,
+    )
+    assert quiet.energy < 1.0  # walked in, drifted out — the level was scenery
+
+
+def test_an_approach_of_zero_has_no_energy_ratio():
+    from till_infinity.structures.reactions import Features, Touch
+
+    touch = Touch(
+        feed="g",
+        level_price=4400.0,
+        features=Features(Side.ABOVE, 0.0, 0.5, 0.5, 1.0, 0.5),
+        started=1.0,
+        entry=4400.0,
+        extreme=4400.0,
+        departure_vol=2.0,
+    )
+    assert touch.energy == 0.0
+
+
+def test_the_zone_stretches_on_the_side_the_wick_ran():
+    """A level is a zone from origin to wick, and it is not symmetric."""
+    vol = _vol()
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    origin, wick = 4400.0, 4400.0 * (1 - 20 / 10_000)  # came from above, wicked down
+
+    level.observe_wick(Side.ABOVE, origin, wick, vol)
+    low, high = level.zone(vol)
+
+    assert level.price - low > high - level.price  # the lower edge stretched
+
+
+def test_arriving_from_below_stretches_the_other_edge():
+    vol = _vol()
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    level.observe_wick(Side.BELOW, 4400.0, 4400.0 * (1 + 20 / 10_000), vol)
+    low, high = level.zone(vol)
+    assert high - level.price > level.price - low
+
+
+def test_a_level_with_no_wicks_is_still_a_band():
+    vol = _vol()
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    low, high = level.zone(vol)
+    assert high > low
+
+
+def test_wick_depth_is_averaged_rather_than_taken_from_the_last_one():
+    """One unusually long wick should not redefine the zone by itself."""
+    vol = _vol()
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    for _ in range(6):
+        level.observe_wick(Side.ABOVE, 4400.0, 4400.0 * (1 - 5 / 10_000), vol)
+    steady = level.stats(Side.ABOVE).wick_vol
+    level.observe_wick(Side.ABOVE, 4400.0, 4400.0 * (1 - 60 / 10_000), vol)
+    assert level.stats(Side.ABOVE).wick_vol < steady * 3
+
+
+def test_the_zone_is_still_clamped_however_long_the_wick():
+    vol = _vol()
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    for _ in range(20):
+        level.observe_wick(Side.ABOVE, 4400.0, 4400.0 * (1 - 5000 / 10_000), vol)
+    low, _high = level.zone(vol)
+    width = (level.price - low) / level.price * 10_000 / vol.bps
+    assert width <= lv.MAX_ZONE_VOL + 1e-6

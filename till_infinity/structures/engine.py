@@ -437,7 +437,7 @@ class Engine:
             return []
         if series.due or not self._levels.get((feed, interval)):
             self.reform(series, when)
-        return self.check(feed, interval, float(close), when)
+        return self.check(feed, interval, float(close), when, low, high)
 
     def observe_quote(self, payload: dict) -> list[Call]:
         """A quote moves price against existing levels without re-forming them.
@@ -467,8 +467,23 @@ class Engine:
         """Every interval this instrument has levels at, pivots included."""
         return sorted({interval for (this, interval) in self._levels if this == feed})
 
-    def check(self, feed: str, interval: str, price: float, when: float) -> list[Call]:
-        """Advance every open interaction, and open one where price has arrived."""
+    def check(
+        self,
+        feed: str,
+        interval: str,
+        price: float,
+        when: float,
+        low: float | None = None,
+        high: float | None = None,
+    ) -> list[Call]:
+        """Advance every open interaction, and open one where price has arrived.
+
+        `low` and `high` are how far the bar reached beyond its close. Both are
+        offered and each touch takes the end that faces the side it arrived
+        from. Without them the extreme and the origin are the same number, and
+        the distinction between where liquidity was taken and where the level
+        is drawn disappears.
+        """
         vol = self.vol.of(feed, interval)
         if not vol.warm:
             return []
@@ -476,11 +491,18 @@ class Engine:
         for level in self._levels.get((feed, interval), []):
             open_touch = self.tracker.open_touch(level)
             if open_touch is not None:
-                done = self.tracker.update(level, price, vol, when)
+                done = self.tracker.update(level, price, vol, when, low, high)
                 if done is not None:
-                    # Where price actually turned is the better observation of
-                    # where the level is than where it first arrived.
-                    level.observe_touch(done.extreme, vol, when)
+                    # The origin, not the extreme. The extreme is a wick —
+                    # liquidity taken a fraction beyond the level at a price
+                    # nobody traded around — while the origin is where the leg
+                    # in ended and the leg out began, which is the price the
+                    # level is actually drawn at.
+                    level.observe_touch(done.origin or done.extreme, vol, when)
+                    # The wick is the zone's far edge, not noise to discard.
+                    level.observe_wick(
+                        done.features.side, done.origin or done.extreme, done.extreme, vol
+                    )
                     log.debug("level %s %.5g resolved %s", feed, level.price, done.outcome)
                     self._resolved.append((level, done))
                     # Bounded: a consumer that stops draining must not become a

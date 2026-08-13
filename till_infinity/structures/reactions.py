@@ -147,9 +147,24 @@ class Touch:
     features: Features
     started: float
     entry: float
-    #: The furthest price reached while inside the zone — the Kalman filter's
-    #: observation of where the level actually is.
+    #: The furthest price reached while inside the zone. Kept, but **not** what
+    #: the level's position is learned from — see `origin`.
     extreme: float
+    #: Where the leg coming in ended and the leg going out began.
+    #:
+    #: The better observation of where the level actually is. The extreme is a
+    #: wick: liquidity taken a fraction beyond the level, at a price nobody
+    #: traded around. The origin is where the move *turned* — in bar terms the
+    #: close of the last bar in against the open of the first bar out, which
+    #: are usually the same price outside a session gap.
+    origin: float = 0.0
+    #: How hard price left, in volatility units. Against `features.approach_vol`
+    #: this is the whole reaction: weak in and strong out is a hard rejection,
+    #: strong in and weak out is absorption, and the two look identical if only
+    #: one of them is recorded.
+    departure_vol: float = 0.0
+    #: Set once price has turned, so the origin stops being updated.
+    turned: bool = False
     outcome: Outcome = Outcome.OPEN
     push_vol: float = 0.0
     resolved: float = 0.0
@@ -169,6 +184,17 @@ class Touch:
         """Through the level, but not yet proven to have stayed through."""
         return bool(self.broke_at) and self.open
 
+    @property
+    def energy(self) -> float:
+        """How much harder it left than it arrived.
+
+        Above one, the level pushed price away faster than price came in —
+        which is what a level doing something looks like. At or below one,
+        price walked in and drifted out, and the level was scenery.
+        """
+        approach = self.features.approach_vol
+        return self.departure_vol / approach if approach else 0.0
+
     def to_dict(self) -> dict:
         return {
             "feed": self.feed,
@@ -176,6 +202,9 @@ class Touch:
             "started": self.started,
             "entry": round(self.entry, 8),
             "extreme": round(self.extreme, 8),
+            "origin": round(self.origin or self.extreme, 8),
+            "departure_vol": round(self.departure_vol, 4),
+            "energy": round(self.energy, 4),
             "outcome": str(self.outcome),
             "push_vol": round(self.push_vol, 4),
             "excursion_vol": round(self.excursion_vol, 4),
@@ -463,22 +492,52 @@ class Tracker:
         self._open[self.key(level)] = touch
         return touch
 
-    def update(self, level: Level, price: float, vol: Volatility, when: float) -> Touch | None:
+    def update(
+        self,
+        level: Level,
+        price: float,
+        vol: Volatility,
+        when: float,
+        low: float | None = None,
+        high: float | None = None,
+    ) -> Touch | None:
         """Advance an open interaction. Returns it once resolved.
 
-        The extreme is tracked throughout, because where price actually turned
-        is a better observation of the level than where it first arrived — and
-        it is what the Kalman filter should be fed.
+        `price` is where the bar closed (or the current mid); `wick` is how far
+        it reached — the bar's low approaching from above, its high from below.
+        The two are what separate the **extreme** from the **origin**, and with
+        only one of them they collapse into the same number: the deepest price
+        seen is trivially also the last one before the turn.
+
+        The wick is where liquidity was taken. The close is where the leg in
+        ended and the leg out began, and it is the close that the level is
+        drawn at.
         """
         touch = self._open.get(self.key(level))
         if touch is None:
             return None
 
         side = touch.features.side
+        # Which end of the bar is the reach depends on which way price came in.
+        reach = (low if side is Side.ABOVE else high) or price
+        # The wick sets the extreme; the close sets the origin. They move
+        # together only when no wick was supplied.
         if side is Side.ABOVE:
-            touch.extreme = min(touch.extreme, price)
+            touch.extreme = min(touch.extreme, reach)
+            deeper = price <= (touch.origin or price)
         else:
-            touch.extreme = max(touch.extreme, price)
+            touch.extreme = max(touch.extreme, reach)
+            deeper = price >= (touch.origin or price)
+        if deeper and not touch.turned:
+            touch.origin = price
+        elif not touch.turned and touch.origin:
+            # First close that did not extend the move: the legs meet here, and
+            # the origin is fixed from now on.
+            touch.turned = True
+        touch.departure_vol = max(
+            touch.departure_vol,
+            abs(level.distance_vol(price, vol) - level.distance_vol(touch.origin or price, vol)),
+        )
 
         travelled = level.distance_vol(price, vol)
         away = travelled if side is Side.ABOVE else -travelled
