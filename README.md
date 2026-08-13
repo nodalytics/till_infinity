@@ -67,6 +67,28 @@ for: they scale and fail independently, so a collector restarting does not take
 the levels model with it. Agents sit behind a profile because they are the only
 part that costs money.
 
+### On a server
+
+`.github/workflows/deploy.yml` builds the image on push to `main` — after the
+tests pass — publishes it to GHCR, and has the instance pull it.
+
+The instance does **not** build its own image. Building river and pandas on two
+cores and 908 MB is slow at best and OOM-killed at worst.
+
+It runs as **one container**, not the compose split, and that is measured
+rather than assumed: six separate services need about **861 MB** with the
+modules imported, against a box with **908 MB total** — before Redis, before
+any data, before the OS. `till-infinity run` is one process with an in-process
+bus, which is the shape that hardware can hold.
+
+Three secrets, set once:
+
+```bash
+gh secret set EC2_HOST    --body "your-instance.compute.amazonaws.com"
+gh secret set EC2_USER    --body "ubuntu"
+gh secret set EC2_SSH_KEY < path/to/key.pem
+```
+
 ### Locally
 
 Requires [uv](https://docs.astral.sh/uv/). Python 3.11 is pinned in `.python-version`.
