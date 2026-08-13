@@ -410,9 +410,15 @@ class Watcher:
 
         best: dict[object, tuple[float, Signal]] = {}
         loners: list[Signal] = []
+        # Grouped once per instrument per batch, not once per call: a busy
+        # instrument produces dozens of calls in one batch and regrouping for
+        # each was doing the same work dozens of times over the same levels.
+        grouped: dict[str, list] = {}
         for call in worth:
             signal = call.to_signal(self.engine.vol.of(call.feed, call.interval))
-            zone = self._zone_for(call.feed, call.level)
+            if call.feed not in grouped:
+                grouped[call.feed] = self._zones(call.feed)
+            zone = self._zone_for(grouped[call.feed], call.level)
             if zone is None:
                 loners.append(signal)
                 continue
@@ -428,11 +434,14 @@ class Watcher:
         return loners + [signal for _score, signal in best.values()]
 
     def _zones(self, feed: str) -> list[object]:
-        """Confluence zones for one instrument, rebuilt per batch.
+        """Confluence zones for one instrument, rebuilt once per batch.
 
-        Not cached: levels move under the Kalman filter and are pruned between
-        batches, so a cached zone would name timeframes that have since stopped
-        agreeing. A batch is a few dozen levels, which is nothing to regroup.
+        Not cached *across* batches, and that is the deliberate half. Levels
+        move under the Kalman filter and are pruned between batches, so a zone
+        held longer than a batch would name timeframes that had since stopped
+        agreeing — staleness that reads as confidence, which is the worst kind.
+        Within a batch nothing moves, so grouping once is both correct and
+        cheap: a few dozen levels through one pass of overlap grouping.
         """
         return cf.combine(
             self.engine.levels(feed),
@@ -440,9 +449,9 @@ class Watcher:
             volatility=lambda level: self.engine.vol.of(feed, level.interval),
         )
 
-    def _zone_for(self, feed: str, level: object) -> object | None:
+    def _zone_for(self, zones: Sequence[object], level: object) -> object | None:
         """The zone this level belongs to, if any timeframe agrees with it."""
-        for zone in self._zones(feed):
+        for zone in zones:
             if len(zone.members) > 1 and any(member is level for member in zone.members):
                 return zone
         return None
