@@ -270,6 +270,43 @@ Feeding the extreme to the filter instead makes every level drift outward by
 whatever the last wick happened to be, and makes two touches of the same level
 look like two levels a wick apart.
 
+### Planned: an origin spans periods, not bars
+
+The implementation locates the origin at a **bar boundary** — the close of the
+last bar in against the open of the first bar out. That is a convenient
+approximation and it is not what the idea says.
+
+The leg coming in and the leg going out are each *runs of volatility*, and a run
+is not one bar. It can be six bars on the 3m, or most of a session, or a stretch
+that only resolves into a single move when you step back to the daily. The
+origin is where those two runs **meet** — the intersection of a period of
+arrival with a period of departure — and only in the simplest case does that
+intersection land on a bar boundary.
+
+This has a consequence already visible in the data. If the origin were a
+property of one bar on one timeframe, the same origin would not keep appearing
+across timeframes — yet the confluence table routinely shows one price agreed on
+by `1d+5m+3m`. That is what a run intersection looks like when it is measured
+three times at three resolutions: the runs differ in length, the meeting point
+does not.
+
+So the origin should be located **per run**, not per bar:
+
+1. segment the approach and the departure into runs — the same volatility-unit
+   threshold the swing selection already needs, rather than a bar count;
+2. take the origin as the boundary between them, which may fall *inside* a bar
+   on the coarse timeframe and be visible exactly at a bar edge on a fine one;
+3. keep the current close/open rule as the degenerate case, since it is what a
+   run intersection reduces to when both runs are one bar long.
+
+The reason this is worth doing rather than filing away: a bar-boundary origin is
+quantised by the timeframe it was found on, so the *same* structure gets a
+slightly different price on every timeframe, and the inverse-variance fusion in
+§11 then spends its precision reconciling an artefact of the sampling rather
+than a disagreement about the market. Per-run origins should make the
+timeframes agree more sharply, and if they do not, that is evidence the
+confluence being seen is coincidence.
+
 ### Which extreme, and it depends on the approach
 
 A wick only runs *through* a level in the direction price was already going, so
