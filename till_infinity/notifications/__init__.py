@@ -32,6 +32,8 @@ from .service import (
     NOTIFIERS,
     build_notifiers,
     discover_telegram_chats,
+    from_message,
+    listen,
     notify,
     send_one,
 )
