@@ -44,8 +44,11 @@ MACRO = "news.macro"
 SIGNALS = "structures.signals"
 #: What agents ask for. Notifications is the consumer.
 ALERTS = "alerts"
+#: Decisions and their reasoning, on their way to the journal. Any service can
+#: publish here; `journal listen` is what writes them down.
+JOURNAL = "journal"
 
-TOPICS: tuple[str, ...] = (BARS, QUOTES, ARTICLES, EVENTS, MACRO, SIGNALS, ALERTS)
+TOPICS: tuple[str, ...] = (BARS, QUOTES, ARTICLES, EVENTS, MACRO, SIGNALS, ALERTS, JOURNAL)
 
 DEFAULT_CAPACITY = 1_000
 DEFAULT_GROUP = "default"

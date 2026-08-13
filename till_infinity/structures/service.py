@@ -34,7 +34,7 @@ from ..journal import Journal, decide
 from ..logging import get_logger
 from . import store
 from .anomaly import Detector
-from .config import INTERVALS, Settings
+from .config import DRIFT_INTERVALS, Settings
 from .drift import Drift
 from .engine import Engine
 from .models import Shape, Signal
@@ -53,6 +53,9 @@ MIN_VENUES = 3
 class BarConsensus:
     """Median close per (instrument, interval), for the drift detector.
 
+    Kept per interval rather than collapsed, because drift is now judged across
+    timeframes and needs to know which one each price came from.
+
     Bars arrive one venue at a time. Feeding drift a single venue's series
     would mix market moves with that venue's own quirks, which is the thing
     having six venues exists to cancel.
@@ -61,13 +64,13 @@ class BarConsensus:
     def __init__(self) -> None:
         self._closes: dict[tuple[str, str], dict[str, tuple[int, float]]] = {}
 
-    def observe(self, payload: dict) -> tuple[str, float] | None:
+    def observe(self, payload: dict) -> tuple[str, float, str] | None:
         feed = str(payload.get("feed") or "")
         venue = str(payload.get("venue") or "")
         interval = str(payload.get("interval") or "")
         close = payload.get("close")
         when = payload.get("time")
-        if interval not in INTERVALS or not feed or not venue:
+        if interval not in DRIFT_INTERVALS or not feed or not venue:
             return None
         if not isinstance(close, int | float) or not close:
             return None
@@ -80,7 +83,7 @@ class BarConsensus:
         aligned = [price for ts, price in group.values() if ts == latest]
         if len(aligned) < MIN_VENUES:
             return None
-        return feed, statistics.median(aligned)
+        return feed, statistics.median(aligned), interval
 
 
 class Watcher:
@@ -227,8 +230,8 @@ class Watcher:
             signals = self._level_calls(self.engine.observe_bar(message.payload))
             seen = self.bars.observe(message.payload)
             if seen is not None:
-                feed, mid = seen
-                found = self.drift.observe(feed, mid, message.time)
+                feed, mid, interval = seen
+                found = self.drift.observe(feed, mid, message.time, interval)
                 if found is not None:
                     # The tide changed: every level for this instrument learned
                     # its behaviour in the old regime, so discount it.

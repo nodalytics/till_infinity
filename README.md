@@ -32,8 +32,10 @@ than many instruments from one.
 **Finding the structure is arithmetic, not judgement.** `structures` measures
 every venue against the median of the others and learns, online, what normal
 looks like for each — because "unusual" only means anything relative to
-something, and a constant threshold is the wrong something. It runs
-continuously, independently of anything else.
+something, and a constant threshold is the wrong something. It also finds the
+**key levels** price keeps turning at, and infers which way it goes from what
+happened last time it arrived *from that side*. It runs continuously,
+independently of anything else.
 
 **Fundamentals separate a structure from a coincidence.** A move with a release
 behind it is a different animal from the same move on a quiet calendar. `news`
@@ -91,20 +93,30 @@ between providers. Full guide: **[docs/news.md](docs/news.md)**.
 
 ## Structures
 
-Online models over the price data. Every venue is measured against the
-consensus of the others, continuously, and the models keep learning as the
-market changes. It also finds the **key levels** price keeps turning at, and
-infers which way it goes from what happened last time it arrived —
-**[docs/levels.md](docs/levels.md)**.
+Online models over the price data: every venue measured against the consensus
+of the others, and the key levels price keeps turning at.
 
 ```bash
 uv run till-infinity structures watch --redis redis://localhost:6379
+uv run till-infinity structures levels --at 4405     # what the history says
 uv run till-infinity structures info
 ```
 
-A separate service from `agents` rather than part of it, so the numeric layer
-keeps running independently. Full guide:
-**[docs/structures.md](docs/structures.md)**.
+A level is tracked as a **Kalman state** rather than a line — each touch is a
+noisy observation, so the filter's variance *is* the zone, and it widens with
+volatility on its own. Statistics are kept **per approach side**, because the
+same price met from above and from below are two different objects:
+
+```
+gold arriving at 4405.5
+  · 4405.5  (from above)  ↑ 59% vs 47% base   push +0.42v
+  ! 4401.3  (from above)  ↑ 80% vs 47% base   push +1.78v
+```
+
+Every conditional is shown beside its base rate — a level whose P(up) matches
+the unconditional rate has said nothing. Guides:
+**[docs/structures.md](docs/structures.md)** and
+**[docs/levels.md](docs/levels.md)**.
 
 ## Agents
 
@@ -126,6 +138,7 @@ headline reaches a model whose only verbs are SELECT. Full guide:
 What was decided, why at that moment, and what happened next.
 
 ```bash
+uv run till-infinity journal listen --redis redis://localhost:6379  # record
 uv run till-infinity journal list
 uv run till-infinity journal add "Widened the spread threshold to 12bps" \
     --why "8bps fired six times overnight on TVC, none of them real"
@@ -156,21 +169,24 @@ notifications deliver those. The databases stay the source of truth — the bus
 carries notice that something happened, not the data itself.
 
 ```
-prices ──┬──▶ structures ──┬──▶ signals ──┐
-         │                 └──────────────┼──▶ alerts ──▶ notifications
-         └──▶ bus ──────────▶ agents ─────┘
-news   ──────▶ bus ──────────▶    │
-                                  └──▶ journal ◀── structures
+prices ──┬─▶ structures ─┬─▶ structures.signals ─┐
+         │               └───────────────────────┼─▶ alerts ─▶ notifications
+news  ───┴─────────────────────▶ agents ─────────┘
+                                   │
+             structures, agents ───┴──▶ journal ──▶ journal.db
 ```
 
-`structures` reaches `alerts` directly for findings that interpret themselves —
-a feed that has stopped needs no model and no calendar.
+Every part is a service and every arrow is a bus topic — including the
+journal, so one process writes it and a service on another machine can record
+a decision at all. `structures` reaches `alerts` directly for findings that
+interpret themselves: a feed that has stopped needs no model and no calendar.
 
 ```bash
 uv run till-infinity prices collect    --publish redis://localhost:6379 &
 uv run till-infinity news collect      --publish redis://localhost:6379 &
 uv run till-infinity structures watch  --redis   redis://localhost:6379 &
 uv run till-infinity agents watch      --redis   redis://localhost:6379 &
+uv run till-infinity journal listen    --redis   redis://localhost:6379 &
 uv run till-infinity notify listen     --redis   redis://localhost:6379 &
 ```
 

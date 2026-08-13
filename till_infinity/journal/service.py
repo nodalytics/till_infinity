@@ -16,15 +16,24 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from ..bus import Bus
 from ..logging import get_logger
+from . import bus as journal_bus
 from .models import Entry, Kind
 from .store import DEFAULT_DB, Journal, get
 
 log = get_logger(__name__)
 
 
-async def record(journal: Journal | None, entry: Entry) -> str:
-    """Append one entry. Returns its id, or "" if nothing was written."""
+async def record(journal: Journal | None, entry: Entry, bus: Bus | None = None) -> str:
+    """Append one entry. Returns its id, or "" if nothing was written.
+
+    With a bus, the entry is published for whichever process writes the journal
+    and this returns immediately. Without one it is written here. A caller that
+    passes both gets the bus, because the point of the bus is a single writer.
+    """
+    if bus is not None and await journal_bus.publish(bus, entry):
+        return entry.id
     if journal is None:
         return ""
     try:
@@ -44,6 +53,7 @@ async def decide(
     context: dict[str, Any] | None = None,
     tags: Sequence[str] = (),
     confidence: float | None = None,
+    bus: Bus | None = None,
 ) -> str:
     """Record a choice and the reasoning behind it.
 
@@ -62,6 +72,7 @@ async def decide(
             tags=tuple(tags),
             confidence=confidence,
         ),
+        bus,
     )
 
 
@@ -73,6 +84,7 @@ async def observe(
     actor: str = "",
     context: dict[str, Any] | None = None,
     tags: Sequence[str] = (),
+    bus: Bus | None = None,
 ) -> str:
     """Record something noticed but not acted on.
 
@@ -89,6 +101,7 @@ async def observe(
             context=dict(context or {}),
             tags=tuple(tags),
         ),
+        bus,
     )
 
 
@@ -101,6 +114,7 @@ async def outcome(
     actor: str = "",
     context: dict[str, Any] | None = None,
     tags: Sequence[str] = (),
+    bus: Bus | None = None,
 ) -> str:
     """Record what happened after an earlier entry. This is the label."""
     if not parent:
@@ -117,6 +131,7 @@ async def outcome(
             tags=tuple(tags) or _inherited_tags(journal, parent),
             parent=parent,
         ),
+        bus,
     )
 
 
@@ -143,11 +158,13 @@ async def note(
     rationale: str = "",
     actor: str = "human",
     tags: Sequence[str] = (),
+    bus: Bus | None = None,
 ) -> str:
     """Human context — why a threshold changed, what a run was for."""
     return await record(
         journal,
         Entry(title=title, kind=Kind.NOTE, actor=actor, rationale=rationale, tags=tuple(tags)),
+        bus,
     )
 
 

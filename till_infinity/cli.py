@@ -1537,6 +1537,52 @@ def journal_show(entry_id, db):
         _entries_table(followed, "what followed")
 
 
+@journal.command("listen")
+@db_option
+@click.option("--redis", "redis_url", metavar="URL", help="Redis. Default: TILL_REDIS_URL.")
+@click.option("--group", default="journal", show_default=True, help="Consumer group name.")
+@click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
+@click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only.")
+@click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs.")
+def journal_listen(db, redis_url, group, verbose, quiet, log_file):
+    """Write down what the other services publish to the `journal` topic.
+
+    The journal is a service like the rest: agents and structures publish their
+    decisions and this records them, so there is one writer rather than one per
+    process — and a service on another machine can record a decision at all.
+    """
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    url = redis_url or os.environ.get("TILL_REDIS_URL") or None
+    bus = Bus(redis_url=url)
+    path = _journal_db(db)
+    if url is None:
+        console.print(
+            "[yellow]no redis configured[/] — an in-process bus only hears "
+            "publishers inside this command. Set TILL_REDIS_URL or pass --redis."
+        )
+    console.print(f"recording to [bold]{escape(str(path))}[/] from {bus.backend}, Ctrl-C to stop")
+
+    def show(entry, fresh: bool) -> None:
+        mark = "[green]+[/]" if fresh else "[dim]=[/]"
+        console.print(
+            f"  {mark} [dim]{entry.kind}[/] {escape(entry.title)} [dim]{escape(entry.actor)}[/]"
+        )
+
+    async def go() -> None:
+        written = 0
+        try:
+            async with jr.Journal(path) as book:
+                written = await jr.listen(bus, book, group=group, on_entry=show)
+        finally:
+            console.print(f"{written} entr(y/ies) recorded")
+            await bus.close()
+
+    try:
+        run(go())
+    except KeyboardInterrupt:
+        console.print("stopped")
+
+
 @journal.command("info")
 @db_option
 def journal_info(db):

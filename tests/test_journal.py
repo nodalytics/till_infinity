@@ -235,3 +235,95 @@ async def test_explicit_outcome_tags_win(book):
     await jr.outcome(book, ref, "Normalised", tags=("btc",))
     assert jr.read(book.path, tag="gold")[0].kind is Kind.DECISION
     assert jr.read(book.path, tag="btc")[0].kind is Kind.OUTCOME
+
+
+# ------------------------------------------------------- journal as a service
+
+
+async def test_an_entry_survives_the_bus_round_trip(book):
+    from till_infinity.bus import JOURNAL, Bus
+
+    bus = Bus()
+    sub = bus.subscribe(JOURNAL, group="journal")
+    entry = Entry(
+        title="Alerted on gold",
+        kind=Kind.DECISION,
+        actor="agents/risk",
+        rationale="30bps against a 0.3bps average",
+        context={"spread_bps": 30.0},
+        tags=("gold",),
+        confidence=0.9,
+    )
+
+    assert await jr.publish(bus, entry)
+    rebuilt = jr.from_message((await sub.next()).payload)
+    assert rebuilt == entry
+    assert rebuilt.id == entry.id
+
+
+async def test_listen_writes_what_is_published(book):
+    from till_infinity.bus import JOURNAL, Bus
+
+    bus = Bus()
+    bus.subscribe(JOURNAL, group="journal")
+    await jr.publish(bus, Entry(title="one", actor="structures"))
+    await jr.publish(bus, Entry(title="two", actor="agents"))
+
+    assert await jr.listen(bus, book, limit=2) == 2
+    assert {entry.title for entry in jr.read(book.path)} == {"one", "two"}
+
+
+async def test_two_services_publishing_one_decision_is_one_row(book):
+    """Ids are recomputed from content, so a duplicate collapses."""
+    from till_infinity.bus import JOURNAL, Bus
+
+    bus = Bus()
+    bus.subscribe(JOURNAL, group="journal")
+    entry = Entry(title="same call", actor="agents/risk", time=1_000.0)
+    await jr.publish(bus, entry)
+    await jr.publish(bus, entry)
+
+    await jr.listen(bus, book, limit=1)
+    assert len(jr.read(book.path)) == 1
+
+
+async def test_a_sender_cannot_claim_an_id_that_is_not_its_content():
+    payload = Entry(title="real", actor="a", time=1.0).to_dict()
+    payload["id"] = "deadbeefdeadbeef"
+    assert jr.from_message(payload).id != "deadbeefdeadbeef"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [None, "text", 42, {}, {"title": "  "}, {"kind": "decision"}],
+)
+def test_junk_on_the_wire_is_dropped_not_written(payload):
+    assert jr.from_message(payload) is None
+
+
+def test_hostile_fields_are_coerced_rather_than_trusted():
+    rebuilt = jr.from_message(
+        {"title": "x", "context": ["not", "a", "dict"], "tags": "gold", "confidence": "high"}
+    )
+    assert rebuilt.context == {}
+    assert rebuilt.tags == ()
+    assert rebuilt.confidence is None
+
+
+async def test_recording_prefers_the_bus_when_there_is_one(book):
+    """One writer is the point; a caller passing both should not write twice."""
+    from till_infinity.bus import JOURNAL, Bus
+
+    bus = Bus()
+    sub = bus.subscribe(JOURNAL, group="journal")
+    ref = await jr.decide(book, "over the bus", rationale="r", bus=bus)
+
+    assert ref
+    assert (await sub.next()).payload["title"] == "over the bus"
+    assert jr.read(book.path) == []  # published, not written here
+
+
+async def test_recording_falls_back_to_writing_when_there_is_no_bus(book):
+    """A bus is a dependency; recording a decision must not require one."""
+    ref = await jr.decide(book, "written directly", rationale="r", bus=None)
+    assert jr.get(book.path, ref) is not None

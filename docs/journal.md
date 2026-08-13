@@ -132,6 +132,38 @@ features = pd.json_normalize(df["context"])
 
 Join decisions to outcomes on `parent` to get `(state, action, result)` triples.
 
+## The journal is a service
+
+Everything else talks over the bus, and the journal used to be the exception —
+a library each service called in-process, so `agents` and `structures` each held
+their own connection to the same file.
+
+```bash
+uv run till-infinity journal listen --redis redis://localhost:6379
+```
+
+Now they publish to the `journal` topic and one process records:
+
+```
+agents ─────┐
+structures ─┼──▶ journal ──▶ journal listen ──▶ journal.db
+anything ───┘
+```
+
+One writer, and a service on another machine can record a decision at all.
+
+**The direct path stays.** `Journal.write` is still there and is what tests and
+one-off scripts use — a bus is a dependency, and recording a decision should not
+require one to be running. A caller passing both gets the bus, since a single
+writer is the point.
+
+**Nothing off the bus is trusted.** An entry arrives as a dict from a process we
+did not write, so it is validated rather than assumed: a missing title is
+dropped, a `context` that is not a mapping becomes empty, a `confidence` that is
+not a number becomes None. The `id` on the wire is ignored and recomputed from
+the content, so a sender cannot claim an id that does not match what it sent —
+and two services publishing the same decision still collapse to one row.
+
 ## Environment
 
 | | |

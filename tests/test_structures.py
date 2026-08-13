@@ -205,35 +205,89 @@ def test_sigma_converts_exactly():
 # -------------------------------------------------------------------- drift
 
 
+def _drift_series(detector, interval, seed=3, calm=600, wild=600, start=0.0):
+    """Run a calm stretch then a violent one through one timeframe."""
+    rand = random.Random(seed)
+    mid, when, fired = 4400.0, start, []
+    for _ in range(calm):
+        mid *= 1 + rand.gauss(0, 0.00002)
+        when += 60
+        found = detector.observe("gold", mid, when, interval)
+        if found:
+            fired.append(found)
+    for _ in range(wild):
+        mid *= 1 + rand.gauss(0, 0.0006)
+        when += 60
+        found = detector.observe("gold", mid, when, interval)
+        if found:
+            fired.append(found)
+    return fired, when
+
+
 def test_a_calm_series_never_reports_drift():
     detector, mid, rand = Drift(), 4400.0, random.Random(3)
     fired = []
     for i in range(600):
         mid *= 1 + rand.gauss(0, 0.00002)
-        found = detector.observe("gold", mid, float(i))
+        found = detector.observe("gold", mid, float(i * 60), "5m")
         if found:
             fired.append(found)
     assert fired == []
 
 
-def test_a_volatility_regime_change_is_reported():
-    detector, mid, rand = Drift(), 4400.0, random.Random(3)
-    for i in range(600):
-        mid *= 1 + rand.gauss(0, 0.00002)
-        detector.observe("gold", mid, float(i))
-    found = None
-    for i in range(600, 1200):
-        mid *= 1 + rand.gauss(0, 0.0006)
-        found = detector.observe("gold", mid, float(i))
-        if found:
-            break
-    assert found is not None
-    assert found.shape is Shape.DRIFT
-    assert found.venue == "consensus"
+def test_one_fast_timeframe_alone_is_a_busy_hour_not_a_regime_change():
+    """A false drift discounts every level's history, so it has to be confirmed."""
+    detector = Drift()
+    fired, _ = _drift_series(detector, "5m")
+    assert fired == []  # the detector fired internally; it was not believed
+
+
+def test_pending_shows_what_fired_but_has_not_been_confirmed():
+    detector = Drift()
+    detector._fired[("gold", "5m")] = 1_000.0
+    assert detector.pending("gold", 1_100.0) == ["5m"]
+    assert detector.agreement("gold", 1_100.0) == []  # one fast timeframe alone
+    assert detector.pending("gold", 1_000_000.0) == []  # long expired
+
+
+def test_two_fast_timeframes_agreeing_is_a_regime_change():
+    detector = Drift()
+    _drift_series(detector, "5m")
+    fired, _ = _drift_series(detector, "15m", seed=4)
+    assert fired
+    assert fired[0].shape is Shape.DRIFT
+    assert fired[0].venue == "consensus"
+    assert fired[0].features["timeframes"] >= 2
+
+
+def test_a_slow_timeframe_is_believed_on_its_own():
+    """A 4h regime change is a regime change; it is not a busy hour."""
+    detector = Drift()
+    fired, _ = _drift_series(detector, "4h")
+    assert fired
+    assert "4h" in fired[0].detail
+
+
+def test_a_stale_fire_does_not_count_towards_agreement():
+    """Two timeframes firing a week apart are not agreeing about anything."""
+    detector = Drift()
+    _drift_series(detector, "5m", start=0.0)
+    long_after = 7 * 86_400
+    fired, _ = _drift_series(detector, "15m", seed=4, start=long_after)
+    assert fired == []
+
+
+def test_a_confirmed_change_is_announced_once():
+    detector = Drift()
+    _drift_series(detector, "5m")
+    fired, when = _drift_series(detector, "15m", seed=4)
+    more, _ = _drift_series(detector, "30m", seed=5, start=when)
+    assert len(fired) == 1
+    assert more == []  # inside the same window, already announced
 
 
 def test_the_first_reading_cannot_be_a_return():
-    assert Drift().observe("gold", 4400.0) is None
+    assert Drift().observe("gold", 4400.0, 1.0, "5m") is None
 
 
 # ------------------------------------------------------------ bar consensus
@@ -247,7 +301,7 @@ def test_bars_need_several_venues_before_they_mean_anything():
     consensus = BarConsensus()
     assert consensus.observe(bar("OANDA", 4400.0)) is None
     assert consensus.observe(bar("SAXO", 4401.0)) is None
-    assert consensus.observe(bar("TVC", 4402.0)) == ("gold", 4401.0)
+    assert consensus.observe(bar("TVC", 4402.0)) == ("gold", 4401.0, "5m")
 
 
 def test_only_venues_on_the_same_bar_are_blended():
@@ -258,11 +312,18 @@ def test_only_venues_on_the_same_bar_are_blended():
     assert consensus.observe(bar("OANDA", 5000.0, ts=120)) is None
 
 
-def test_slow_intervals_are_ignored():
-    """Above five minutes, disagreement is bar boundaries, not opinions."""
+def test_the_interval_travels_with_the_price():
+    """Drift is judged across timeframes, so it must know which one this is."""
+    consensus = BarConsensus()
+    for venue in VENUES[:2]:
+        consensus.observe(bar(venue, 4400.0, interval="1h"))
+    assert consensus.observe(bar("TVC", 4400.0, interval="1h")) == ("gold", 4400.0, "1h")
+
+
+def test_an_interval_drift_does_not_watch_is_ignored():
     consensus = BarConsensus()
     for venue in VENUES[:4]:
-        assert consensus.observe(bar(venue, 4400.0, interval="1h")) is None
+        assert consensus.observe(bar(venue, 4400.0, interval="1d")) is None
 
 
 # ------------------------------------------------------------------ routing

@@ -33,6 +33,8 @@ entry pointing back at its parent. A journal you can edit is not a journal.
 
 from __future__ import annotations
 
+from . import bus as bus_transport
+from .bus import from_message, listen, publish, to_message
 from .models import Entry, Kind
 from .service import decide, note, observe, open_journal, outcome, record
 from .store import DEFAULT_DB, MAX_ROWS, Journal, export, get, read, read_only, summary
@@ -43,15 +45,20 @@ __all__ = [
     "Entry",
     "Journal",
     "Kind",
+    "bus_transport",
     "decide",
     "export",
+    "from_message",
     "get",
+    "listen",
     "note",
     "observe",
     "open_journal",
     "outcome",
+    "publish",
     "read",
     "read_only",
     "record",
     "summary",
+    "to_message",
 ]

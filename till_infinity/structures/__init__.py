@@ -23,9 +23,10 @@ await watch(Bus(redis_url="redis://localhost:6379"))
 
 from __future__ import annotations
 
-from . import pips, reactions
+from . import confluence, pips, reactions
 from .anomaly import Detector
-from .config import INTERVALS, Settings
+from .config import DRIFT_INTERVALS, INTERVALS, Settings
+from .confluence import Zone, combine
 from .drift import Drift
 from .engine import Call, Engine
 from .features import Book, Books, Reading
@@ -37,6 +38,7 @@ from .store import load, save
 from .volatility import Volatility
 
 __all__ = [
+    "DRIFT_INTERVALS",
     "INTERVALS",
     "TOPICS",
     "UNAMBIGUOUS",
@@ -63,6 +65,9 @@ __all__ = [
     "Tracker",
     "Volatility",
     "Watcher",
+    "Zone",
+    "combine",
+    "confluence",
     "levels_near",
     "load",
     "nearby",

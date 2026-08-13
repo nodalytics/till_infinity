@@ -18,6 +18,11 @@ DEFAULT_JOURNAL_DB = ".data/journal/journal.db"
 #: different bar boundaries, not different opinions about the price.
 INTERVALS: tuple[str, ...] = ("1m", "5m")
 
+#: Timeframes the drift detector watches. Wider than INTERVALS on purpose: a
+#: regime change now discounts every level's history, so it has to be confirmed
+#: across timeframes rather than declared by whichever one is noisiest.
+DRIFT_INTERVALS: tuple[str, ...] = ("5m", "15m", "1h", "4h")
+
 #: Seconds between saves. An online model that resets on every restart has
 #: learned nothing, so persistence is not optional — only its frequency is.
 DEFAULT_SAVE_SECONDS = 300.0
