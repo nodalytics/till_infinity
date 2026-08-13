@@ -36,8 +36,10 @@ INTERVAL_CODES: dict[str, str] = {
     "1w": "1wk",
 }
 
-#: Intervals Yahoo does not serve, rebuilt from a finer one.
-RESAMPLE_FROM: dict[str, str] = {"2h": "1h", "4h": "1h"}
+#: Intervals Yahoo does not serve, rebuilt from a finer one. Yahoo offers 2m
+#: but not 3m, so this one comes off the 1m series — which caps its history at
+#: Yahoo's 7-day 1m window, unlike the venues that serve 3m directly.
+RESAMPLE_FROM: dict[str, str] = {"2h": "1h", "4h": "1h", "3m": "1m"}
 
 #: How far back Yahoo will go per interval, in days (None = unlimited).
 MAX_LOOKBACK_DAYS: dict[str, int | None] = {

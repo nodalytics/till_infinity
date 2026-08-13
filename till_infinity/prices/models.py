@@ -33,6 +33,7 @@ class Interval:
 
 INTERVALS: dict[str, Interval] = {
     "1m": Interval("1m", 60),
+    "3m": Interval("3m", 180),
     "5m": Interval("5m", 300),
     "15m": Interval("15m", 900),
     "1h": Interval("1h", 3_600),

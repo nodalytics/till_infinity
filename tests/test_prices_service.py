@@ -125,7 +125,7 @@ def test_resolvers_reject_unknown_names():
     with pytest.raises(ValueError, match="unknown feed"):
         resolve_feeds(("platinum",))
     with pytest.raises(ValueError, match="unknown interval"):
-        resolve_intervals(("3m",))
+        resolve_intervals(("7m",))
     assert set(resolve_intervals(None)) == set(INTERVALS.values())
 
 

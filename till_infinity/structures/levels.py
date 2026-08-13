@@ -105,6 +105,7 @@ CONFIDENT_TOUCHES = 5
 #: up if the conversion is written down.
 SECONDS: dict[str, float] = {
     "1m": 60.0,
+    "3m": 180.0,
     "5m": 300.0,
     "15m": 900.0,
     "30m": 1_800.0,
@@ -399,6 +400,18 @@ class Level:
     #: link it is just another touch at a level that happens to have flipped.
     broke_at: float = 0.0
     broke_from: Side | None = None
+    #: True while price has not yet left the zone since the last interaction
+    #: resolved. A level in this state cannot start another touch.
+    #:
+    #: Without it, one visit becomes one touch *per quote*: the interaction
+    #: resolves, the next quote arrives with price still inside the zone and no
+    #: open touch, and a fresh touch begins immediately. The counter then
+    #: measures how long price loitered rather than how many times it turned,
+    #: which is the opposite of evidence — a level price hovers at looks
+    #: stronger than one it reverses off hard. It reached 316 "touches" on a BTC
+    #: level in a day, on an instrument with 288 five-minute bars in one, and
+    #: swamped the beta-binomial prior badly enough to report p=100%.
+    waiting: bool = False
 
     @property
     def price(self) -> float:

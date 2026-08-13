@@ -516,9 +516,20 @@ class Engine:
                     # slow memory leak in a service designed to run for months.
                     if len(self._resolved) > MAX_RESOLVED:
                         del self._resolved[: len(self._resolved) - MAX_RESOLVED]
+                    # Only hold the level back if price is *still* in the zone.
+                    # An interaction that resolved by price leaving has already
+                    # done the leaving, and making it wait for a second exit
+                    # would drop the next genuine approach.
+                    level.waiting = level.contains(price, vol)
                 continue
 
             if not level.contains(price, vol):
+                # Out of the zone: the next arrival is a genuine new approach.
+                level.waiting = False
+                continue
+
+            # Inside the zone, but this is the same visit that just resolved.
+            if level.waiting:
                 continue
             side = self._approach(level, price)
             features = reactions.features_for(

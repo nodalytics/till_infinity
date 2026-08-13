@@ -72,7 +72,7 @@ ORDER: tuple[str, ...] = (
 #: from — and it only became usable once volatility and evidence decay were
 #: measured per timeframe, since a weekly level in 5m units is placed to the
 #: nearest dollar and forgets a touch before the next one arrives.
-TIMEFRAMES: tuple[str, ...] = ("5m", "15m", "1h", "4h", "1d", "1w")
+TIMEFRAMES: tuple[str, ...] = ("3m", "5m", "15m", "1h", "4h", "1d", "1w")
 
 #: Alias kept for readers who think of it as a span rather than a list.
 DEFAULT_SPAN: tuple[str, ...] = TIMEFRAMES

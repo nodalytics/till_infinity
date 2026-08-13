@@ -45,6 +45,7 @@ MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 
 INTERVAL_CODES: dict[str, str] = {
     "1m": "1",
+    "3m": "3",
     "5m": "5",
     "15m": "15",
     "1h": "60",

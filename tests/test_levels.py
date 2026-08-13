@@ -1255,3 +1255,52 @@ def test_both_spellings_reach_the_journal():
     assert row["probability_down"] == pytest.approx(0.77)
     assert row["probability"] == pytest.approx(0.77)
     assert row["base_rate"] == pytest.approx(0.53)
+
+
+def _seed_level(engine, feed, interval, price):
+    """Put one level in the engine, the way a formed level would arrive."""
+    level = Level(feed=feed, interval=interval, filter=Kalman(mean=price, variance=0.01))
+    engine._levels[(feed, interval)] = [level]
+    return level
+
+
+def test_one_visit_is_one_touch_however_long_price_loiters():
+    """The counter must measure turns, not time spent in the zone.
+
+    Before this, a resolved interaction left the level immediately eligible: the
+    next quote arrived with price still inside the zone and no open touch, so a
+    fresh touch began, resolved, and began again. A BTC level reached 316
+    "touches" in a day — on an instrument with 288 five-minute bars in one — and
+    that swamped the beta-binomial prior badly enough to report p=100%.
+    """
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold", "5m")
+    for _ in range(120):
+        vol.update(2000.0)
+    level = _seed_level(engine, "gold", "5m", 2000.0)
+    low, high = level.zone(vol)
+    inside = (low + high) / 2
+    outside = high + (high - low) * 5
+
+    # Two hundred quotes without price ever leaving: one interaction.
+    for n in range(200):
+        engine.check("gold", "5m", inside, 1_000.0 + n)
+    assert level.touches <= 1.0, f"{level.touches} touches from one visit"
+
+    # Leave, come back: that is a second, and it is allowed.
+    engine.check("gold", "5m", outside, 2_000.0)
+    engine.check("gold", "5m", inside, 2_100.0)
+    assert not level.waiting
+
+
+def test_leaving_the_zone_re_arms_the_level():
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold", "5m")
+    for _ in range(120):
+        vol.update(2000.0)
+    level = _seed_level(engine, "gold", "5m", 2000.0)
+    low, high = level.zone(vol)
+    level.waiting = True
+
+    engine.check("gold", "5m", high + (high - low) * 5, 1_000.0)
+    assert not level.waiting
