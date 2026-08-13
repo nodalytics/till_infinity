@@ -8,6 +8,7 @@
 | [notifications.md](notifications.md) | Telegram and Discord alerts — channels, level routing, chat discovery |
 | [bus.md](bus.md) | the message bus — topics, publishing, fan-out, Redis |
 | [structures.md](structures.md) | online models over price — cross-venue anomaly, drift, persistence |
+| [score.md](score.md) | **planned** — one number per instrument in [−1, +1], smoothed three ways, thresholds it measures rather than assumes |
 | [levels.md](levels.md) | key price levels — PIP swings, Kalman tracking, per-side directional inference |
 | [agents.md](agents.md) | LLM analysis over the stored data — roles, tools, read-only access, watching |
 | [journal.md](journal.md) | the decision journal — reasoning, outcomes, exporting for training |
