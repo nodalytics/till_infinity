@@ -162,6 +162,71 @@ features cannot be recovered later: the consensus at that instant is not
 written down anywhere else, and by tomorrow the quotes table describes a
 different world. See [journal.md](journal.md).
 
+## Planned: grading a regime change instead of flagging it
+
+ADWIN answers *whether* the regime changed. It has no opinion on **how much**,
+and that gap is now load-bearing: a confirmed change applies a flat `x 0.4` to
+every level's accumulated history, so a marginal change and a violent one are
+treated identically — and `0.4` is a number somebody picked.
+
+Two ways to fix it, in the order they are worth doing.
+
+### 1. Percentiles (cheap, and the pattern is already proven here)
+
+The anomaly detector had exactly this defect. HalfSpaceTrees' raw scores turned
+out to be uncalibrated — median 0.77 on normal data — and a fixed cutoff fired
+on 55% of everything. `QuantileFilter` fixed it by learning the running
+distribution of scores. Drift has the same shape of problem and no fix yet.
+
+Three applications, most valuable first:
+
+**Grade the decay.** Keep a running quantile of observed change magnitudes and
+scale by where this one falls:
+
+```
+decay = 1 - p * (1 - REGIME_DECAY)      p = percentile of this change
+```
+
+A 99th-percentile change nearly resets the level's history; a 55th-percentile
+one barely touches it. That replaces a hand-picked constant with something
+learned, which is the same move that rescued the anomaly detector.
+
+**Gate the confirmation.** ADWIN fires on changes that are statistically real
+and practically trivial. Requiring the new volatility to sit outside, say, the
+85th/15th percentile band of its own recent history removes those, more cheaply
+and more precisely than the multi-timeframe quorum — and complementary to it,
+since one filters by size and the other by agreement.
+
+**Make the regime a feature.** "Volatility is at the 92nd percentile of the
+last month" is directly usable by the levels kNN; "volatility is 25bps" is not.
+`river.stats.RollingQuantile` is the piece.
+
+### 2. Bayesian online changepoint detection (more work, one real trap)
+
+BOCPD maintains a posterior over **run length** — how long since the last
+changepoint — so it gives a *probability* of a change rather than a flag, and
+its run-length posterior directly answers **how old the current regime is**.
+
+That last part is the thing percentiles cannot supply, and it matters: level
+evidence currently decays on wall-clock days, which is a proxy for regime age
+rather than the thing itself. Two weeks inside one stable regime should discount
+a level's history far less than two weeks spanning three.
+
+**The trap is the predictive model.** BOCPD needs one, plus a hazard rate — both
+assumptions ADWIN pointedly avoids. A Gaussian model on fat-tailed financial
+returns fires on kurtosis alone and would be *noisier* than what is here now.
+Done properly it wants a normal-inverse-gamma conjugate prior, whose posterior
+predictive is Student-t and handles the tails correctly. That is the difference
+between an improvement and a regression, and it is not optional.
+
+Cost: river does not ship it, so it is an implementation — log-space numerics
+for stability and run-length pruning to keep it O(1) per step rather than O(t).
+
+**Order.** Percentiles first, because they deliver the graded magnitude — the
+main reason to want BOCPD — at a fraction of the cost and with no distributional
+assumption. BOCPD after, once it is clear whether regime *age* changes any
+decision, rather than writing a detector that can be subtly wrong to find out.
+
 ## `facto.py` is deliberately empty
 
 Factorisation machines model how features *combine* — venue × instrument ×

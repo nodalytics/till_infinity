@@ -23,6 +23,15 @@ So a detector runs per timeframe and a change is only declared when they
 change, it is not noise — or two fast ones fire close together. One fast
 timeframe on its own is a busy hour and is deliberately ignored.
 
+## What this still cannot say
+
+ADWIN answers *whether*, never *how much*. A confirmed change applies a flat
+discount to every level's history, so a marginal change and a violent one are
+treated the same. The fix is a running quantile of change magnitudes — the same
+calibration trick that rescued the anomaly detector — and, after that, a
+changepoint posterior for regime *age*. Both are written up under "Planned:
+grading a regime change instead of flagging it" in the structures guide.
+
 What is watched is the **consensus** price, not one venue's. A single venue's
 series mixes market moves with that venue's own quirks, which is what having
 six venues exists to cancel.

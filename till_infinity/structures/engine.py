@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 from ..logging import get_logger
 from . import levels as lv
-from . import pips, pivots, reactions
+from . import patterns, pips, pivots, reactions
 from .models import Shape, Signal
 from .volatility import Book as VolBook
 
@@ -44,6 +44,10 @@ PIP_COUNT = 50
 #: Re-form levels this often, in bars. Every bar would be wasted work — the
 #: swings barely change — and never would let the set go stale.
 REFORM_EVERY = 20
+
+#: Bars after a shape completes before its outcome is counted. Long enough for
+#: the move to develop, short enough that it is still attributable to the shape.
+SHAPE_HORIZON = 12
 
 #: Intervals levels are built from. Levels are a structure of the chart people
 #: look at, and nobody draws them from tick data.
@@ -131,7 +135,9 @@ class Engine:
         pip_count: int = PIP_COUNT,
         intervals: tuple[str, ...] = LEVEL_INTERVALS,
         horizon: float = 3600.0,
+        shape_horizon: int = SHAPE_HORIZON,
     ) -> None:
+        self.shape_horizon = shape_horizon
         self.window = window
         self.pip_count = pip_count
         self.intervals = intervals
@@ -140,6 +146,12 @@ class Engine:
         #: Pivots come from completed sessions, so they need no confirmation
         #: delay and exist before price has ever turned there.
         self.sessions = pivots.Sessions()
+        #: Shapes seen before and what followed. Independent of levels: a level
+        #: is a price, a shape is not, so a double top repeats across
+        #: instruments and prices where a level cannot.
+        self.shapes = patterns.Library()
+        #: Open shape instances, waiting for the horizon to say what followed.
+        self._pending: dict[tuple[str, str], tuple[int, float, int]] = {}
         self._series: dict[tuple[str, str], Series] = {}
         self._levels: dict[tuple[str, str], list[lv.Level]] = {}
         #: The timestamp of the bar being processed. Held so that "what was
@@ -176,7 +188,60 @@ class Engine:
         merged = lv.merge(self._levels.get(key, []), candidates, vol)
         self._levels[key] = merged
         series.since_reform = 0
+        self._record_shape(series, visible)
         return merged
+
+    # -------------------------------------------------------------- shapes
+
+    def _record_shape(self, series: Series, visible: list[pips.Point]) -> None:
+        """Note the shape the last few confirmed swings make.
+
+        Only confirmed swings, for the same reason levels use only confirmed
+        swings: a shape whose last point has not settled is a shape nobody
+        could have recognised yet.
+        """
+        turns = pips.turns(visible)
+        if len(turns) < patterns.SHAPE_POINTS:
+            return
+        shape = patterns.Shape.of(turns[-patterns.SHAPE_POINTS :], series.feed, series.interval)
+        if shape is None or shape.flat:
+            return
+        key = (series.feed, series.interval)
+        if key in self._pending:
+            return  # one open shape per series; overlapping ones are the same episode
+        handle = self.shapes.add(shape)
+        if handle >= 0:
+            self._pending[key] = (handle, series.closes[-1], len(series.closes))
+
+    def match_shape(self, feed: str, interval: str) -> patterns.Match | None:
+        """What the library says about the shape currently forming here."""
+        series = self._series.get((feed, interval))
+        if series is None or not series.ready:
+            return None
+        found = pips.points(list(series.times), list(series.closes), self.pip_count)
+        turns = pips.turns(pips.as_of(found, self._now))
+        if len(turns) < patterns.SHAPE_POINTS:
+            return None
+        shape = patterns.Shape.of(turns[-patterns.SHAPE_POINTS :], feed, interval)
+        return self.shapes.match(shape) if shape else None
+
+    def _resolve_shapes(self, series: Series, vol) -> None:
+        """Close out any shape whose horizon has passed.
+
+        The move is measured in volatility units from where the shape completed,
+        so a pattern that "works" in a violent week and one that works in a calm
+        one are the same observation.
+        """
+        key = (series.feed, series.interval)
+        pending = self._pending.get(key)
+        if pending is None:
+            return
+        handle, price, at_bar = pending
+        if len(series.closes) - at_bar < self.shape_horizon:
+            return
+        moved = (series.closes[-1] - price) / price * 10_000 if price else 0.0
+        self.shapes.resolve(handle, moved / vol.bps)
+        self._pending.pop(key, None)
 
     # -------------------------------------------------------------- feeding
 
@@ -199,6 +264,7 @@ class Engine:
         vol = self.vol.of(feed)
         vol.update(float(close))
         self._roll_sessions(feed, when, high, low, float(close), vol)
+        self._resolve_shapes(series, vol)
         if not series.ready:
             return []
         if series.due or not self._levels.get((feed, interval)):

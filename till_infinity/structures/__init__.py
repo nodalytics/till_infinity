@@ -23,7 +23,7 @@ await watch(Bus(redis_url="redis://localhost:6379"))
 
 from __future__ import annotations
 
-from . import confluence, pips, reactions
+from . import confluence, patterns, pips, reactions
 from .anomaly import Detector
 from .config import DRIFT_INTERVALS, INTERVALS, Settings
 from .confluence import Zone, combine
@@ -71,6 +71,7 @@ __all__ = [
     "levels_near",
     "load",
     "nearby",
+    "patterns",
     "pips",
     "reactions",
     "save",

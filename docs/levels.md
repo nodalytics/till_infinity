@@ -374,6 +374,82 @@ Re-forming **merges into** the existing set rather than replacing it. A level
 rediscovered is evidence about an old level, not a new one — replacing would
 throw away the touch history that makes it worth anything.
 
+## 11. Multi-timeframe confluence
+
+A level on the 4h chart and one on the 15m chart at the same price are one
+level at two resolutions, and each knows something the other does not:
+
+| | knows |
+|---|---|
+| **higher** timeframe | that the level *matters* — it is a larger structure |
+| **lower** timeframe | *where it is* — its swings cluster in a tighter band |
+
+Fusing them is **inverse-variance weighting**, which is already the right tool
+because every level carries a Kalman variance and a finer timeframe naturally
+has a smaller one:
+
+```
+1/sigma^2  =  sum of 1/sigma_i^2
+x          =  sum(x_i / sigma_i^2) / sum(1 / sigma_i^2)
+```
+
+So the finer timeframe dominates the position — *the lower you go, the more
+precise you get* is not a rule anyone wrote, it falls out of the arithmetic.
+The fused sigma is smaller than any member's, which is correct: several
+timeframes agreeing is more evidence about where the price is than any one.
+
+**Confluence is carried separately.** A price that is a level on 15m, 1h *and*
+4h is a different object from one that appears only on 15m, and no
+per-timeframe statistic can express that, so `depth` is its own term and lifts
+strength as a multiplier. Averaging would let a weak 15m level drag down a
+strong 4h one it merely sits beside.
+
+**Significance follows the highest timeframe, precision the lowest.** A 15m
+level breaking inside a 4h level that holds is an ordinary morning; letting the
+finer timeframe overrule the coarser one on significance would invert the point.
+
+Touch histories merge across members, because evidence at three resolutions of
+one price is evidence about the same price — rather than three thin piles none
+of which clears the bar alone.
+
+## 12. Repeating structures
+
+Levels answer *"price has been here before"*. This answers *"price has done
+this before"*, and the two are independent: a double top is the same structure
+at 4400 and at 95,000, on gold and on BTC, in January and in June. Nothing in
+the level machinery can see that, because a level is a price and a shape is not.
+
+A shape is the last five confirmed swings, normalised twice:
+
+- **price** is z-scored, so the same shape at any level or any volatility is
+  the same shape;
+- **time** is dropped and only order kept, because two instances of a pattern
+  rarely take the same number of bars.
+
+That second point is what **dynamic time warping** exists for. Comparing
+point-by-point would call a three-day double top and a three-hour double top
+different shapes; DTW finds the order-preserving alignment minimising total
+distance, so a stretched instance matches a compressed one:
+
+| | normalised DTW distance | |
+|---|---|---|
+| peak vs a stretched peak | 0.196 | **match** |
+| peak vs an inverted peak | 0.748 | no |
+| peak vs a straight rise | 0.479 | no |
+
+The Sakoe-Chiba band is not an optimisation detail: unconstrained warping will
+align almost anything to almost anything, so without it the "matches" are
+alignments rather than resemblances.
+
+Searching many shapes across many instruments **will** turn up repeats by
+chance — that is what multiple comparisons do. The guards are the same three
+the level model uses, because it is the same failure: enough instances, an edge
+clear of the base rate, and a move worth having in volatility units.
+
+DTW is not a metric — it violates the triangle inequality — so the library is a
+linear scan rather than a spatial index, which is honest at a few thousand short
+sequences and would be complexity bought with nothing at this size.
+
 ## Honest status
 
 Everything above is validated on **synthetic mean-reverting data**, where the
