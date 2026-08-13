@@ -125,6 +125,7 @@ which before reading a word. Direction wins over shape when a signal claims one.
 | ↔️ | a spread blew out |
 | ⚡ | one venue is away from the consensus |
 | 🧭 | the [score](score.md), when it exists |
+| 🤖 | an agent finding |
 | • ▲ ■ | nothing claimed — falls back to severity |
 
 Then the instrument, timeframe and direction lead the headline, and the
@@ -167,11 +168,15 @@ answering something the others cannot:
 | `NOTIFY_MAX_PER_HOUR` | everything, together | `20` (default) |
 
 Shapes are the ones in [structures.md](structures.md#the-four-shapes) —
-`level`, `stale`, `spread`, `dislocation`, `drift` — plus the `source` of
-anything an agent publishes without one.
+`level`, `stale`, `spread`, `dislocation`, `drift` — plus **`agent`**, which is
+what an [agent](agents.md) finding carries. That last one matters: agents
+publish to the same `alerts` topic, so a channel narrowed to `level,drift` drops
+every analysis silently, which is the worst way for one to fail. Anything
+publishing without a shape falls back to its `source`, taking the part before
+the slash, so `agents/analyst` matches a filter naming `agents`.
 
 ```bash
-NOTIFY_SHAPES=level,drift
+NOTIFY_SHAPES=level,drift,agent
 NOTIFY_FEEDS=gold,btc
 NOTIFY_COOLDOWN_S=1800
 NOTIFY_MAX_PER_HOUR=10

@@ -80,8 +80,12 @@ class Filter:
     def key(self, payload: dict[str, Any]) -> tuple[str, str, str]:
         """What makes two alerts "the same finding" for the repeat check."""
         fields = payload.get("fields") or {}
+        # The source is `agents/analyst`, not `agents`, so the fallback takes
+        # the part before the slash: a filter naming `agents` should match every
+        # role rather than none of them.
+        source = str(payload.get("source") or "").split("/")[0]
         return (
-            str(fields.get("shape") or payload.get("source") or ""),
+            str(fields.get("shape") or source),
             str(fields.get("instrument") or ""),
             str(fields.get("venue") or ""),
         )

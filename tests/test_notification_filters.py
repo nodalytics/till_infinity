@@ -114,11 +114,34 @@ def test_the_memory_of_past_findings_is_bounded():
 
 
 def test_falls_back_to_source_when_there_is_no_shape():
-    """Agent-written alerts carry a source rather than a structures shape."""
+    """Alerts from elsewhere carry a source rather than a structures shape."""
     quiet = Filter(cooldown=900)
     payload = {"title": "gold looks stretched", "source": "agents"}
     assert quiet.accept(payload, when=0.0)
     assert not quiet.accept(payload, when=10.0)
+
+
+def test_the_source_fallback_ignores_the_role():
+    """`agents/analyst` must match a filter naming `agents`, not miss it."""
+    # cooldown=0: both roles collapse to the same key by design, and the
+    # repeat check would otherwise suppress the second before the shape
+    # allowlist got a look at it.
+    only_agents = Filter(shapes=frozenset({"agents"}), cooldown=0)
+    assert only_agents.accept({"title": "a", "source": "agents/analyst"})
+    assert only_agents.accept({"title": "b", "source": "agents/risk"})
+    assert not only_agents.accept({"title": "c", "source": "structures"})
+
+
+def test_an_agent_finding_carries_a_shape_of_its_own():
+    """Otherwise a channel narrowed to level,drift drops every analysis."""
+    allowed = Filter(shapes=frozenset({"level", "agent"}))
+    finding = {
+        "title": "gold is stretched against the calendar",
+        "fields": {"shape": "agent", "instrument": "gold", "confidence": "82%"},
+        "source": "agents/analyst",
+    }
+    assert allowed.accept(finding)
+    assert not Filter(shapes=frozenset({"level"})).accept(finding)
 
 
 def test_env_configuration(monkeypatch: pytest.MonkeyPatch):

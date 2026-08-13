@@ -52,6 +52,7 @@ SHAPES: dict[str, str] = {
     "spread": "↔️",
     "dislocation": "⚡",
     "score": "🧭",
+    "agent": "🤖",
 }
 
 #: The direction wins over the shape when there is one, because it is the whole

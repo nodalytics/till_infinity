@@ -270,7 +270,13 @@ class Watcher:
             if not self.unseen(finding):
                 log.debug("already alerted: %s", finding.title)
                 continue
-            fields = {"instrument": finding.instrument} if finding.instrument else {}
+            # `shape` is what the notification filter routes on, and an agent
+            # finding needs one for the same reason a detector does: a channel
+            # narrowed to `level,drift` would otherwise drop every one of these
+            # silently, which is the worst way for an analysis to fail.
+            fields = {"shape": "agent"}
+            if finding.instrument:
+                fields["instrument"] = finding.instrument
             if finding.evidence:
                 fields["evidence"] = "; ".join(finding.evidence[:4])
             fields["confidence"] = f"{finding.confidence:.0%}"
