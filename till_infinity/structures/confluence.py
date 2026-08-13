@@ -49,6 +49,7 @@ from .volatility import Volatility
 #: and pivot sessions sit at the top because a daily pivot is a daily structure.
 ORDER: tuple[str, ...] = (
     "1m",
+    "3m",
     "5m",
     "15m",
     "30m",
@@ -157,7 +158,18 @@ class Zone:
         that its own timeframe cannot see as sharply.
         """
         bands = [level.zone(vol) for level in self.members]
-        return max(low for low, _ in bands), min(high for _, high in bands)
+        low, high = max(lo for lo, _ in bands), min(hi for _, hi in bands)
+        if low <= high:
+            return low, high
+        # No band common to every member. Grouping is by *pairwise* overlap and
+        # overlap chains: A can overlap B and B overlap C while A and C do not
+        # touch, so the intersection is empty and the narrowest-band rule above
+        # returns an inverted pair. Fall back to the tightest member's width,
+        # centred on the fused price — the members still agree on roughly where
+        # this is, which is what put them in one zone, and a band that reads
+        # high-then-low is worse than a slightly generous one.
+        width = min(hi - lo for lo, hi in bands) / 2.0
+        return self.price - width, self.price + width
 
     def strength(self, when: float, vol: Volatility) -> float:
         """Best member, lifted by how many timeframes agree.

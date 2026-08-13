@@ -377,3 +377,33 @@ def test_the_reference_falls_back_when_no_quotes_have_arrived():
         price *= 1.0002
         vol.update(price)
     assert engine.reference("gold") is vol
+
+
+def test_three_minutes_ranks_between_one_and_five():
+    """An interval missing from ORDER sorts last, which reverses to first."""
+    from till_infinity.structures.confluence import ORDER, TIMEFRAMES, rank
+
+    assert rank("1m") < rank("3m") < rank("5m") < rank("1d")
+    # Every timeframe levels are built on must be rankable, or the coarsest
+    # timeframe in a zone is whichever one ORDER has never heard of.
+    for interval in TIMEFRAMES:
+        assert rank(interval) < len(ORDER), interval
+
+
+def test_a_zone_band_is_never_inverted():
+    """Overlap chains: A touches B, B touches C, A and C do not."""
+    from till_infinity.structures.confluence import Zone
+    from till_infinity.structures.levels import Kalman, Level
+    from till_infinity.structures.volatility import Volatility
+
+    vol = Volatility()
+    for _ in range(200):
+        vol.update(100.0)
+    far = [
+        Level(feed="gold", interval="3m", filter=Kalman(mean=99.0, variance=0.001)),
+        Level(feed="gold", interval="1d", filter=Kalman(mean=101.0, variance=0.001)),
+    ]
+    zone = Zone(feed="gold", price=100.0, sigma=0.5, members=far)
+    low, high = zone.band(vol)
+    assert low <= high, (low, high)
+    assert low <= zone.price <= high
