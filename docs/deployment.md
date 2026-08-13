@@ -61,8 +61,15 @@ AWS have neither problem.
 - **Write the env file once.** Recreating it every deploy would silently
   discard whatever had been configured on the box, which is the worse failure
   because it looks like it worked.
-- **Prune old images.** An image per deploy on a 6.7 GB disk fills up weeks
-  later, as a confusing failure rather than an obvious one.
+- **Prune old images *before* the pull.** An image per deploy on a 6.7 GB disk
+  fills up weeks later, as a confusing failure rather than an obvious one. It
+  did: five 973 MB images took the box to 99% and the deploy died on `no space
+  left on device`. The cleanup was already there — it ran *after* the pull, so
+  `set -e` ended the script above the line that would have fixed it, and it
+  carried an `until=72h` filter that spares every image from a busy day. A
+  cleanup that only runs when it was not needed is not a cleanup. Docker never
+  removes the image a running container is using, so `-af` before the pull is
+  safe; a rollback should come from the registry, not the local cache.
 - **Check it came back up.** A deploy that reports success without looking is a
   deploy that reports success while the container restart-loops.
 

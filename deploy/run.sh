@@ -39,6 +39,22 @@ TZ=UTC
 DEFAULTS
 fi
 
+# Reclaim *before* pulling, not after. A cleanup that runs after the pull is
+# unreachable exactly when it is needed: the disk fills, the pull fails, and
+# `set -e` ends the script above the line that would have fixed it. That is how
+# this box reached 99% full with five 973 MB images on a 6.7 GB disk.
+#
+# `-af` with no age filter, because an age filter is the same bug in slower
+# form — several deploys in one day are all newer than any window worth setting.
+# Docker never removes the image a running container is using, so the version
+# currently serving is safe; what is lost is a local copy of the *previous*
+# one, and that lives in the registry, which is where a rollback should come
+# from anyway.
+echo "reclaiming disk before the pull"
+docker container prune -f >/dev/null 2>&1 || true
+docker image prune -af >/dev/null 2>&1 || true
+df -h / | awk 'NR==2 {print "  " $4 " free of " $2}'
+
 echo "pulling $IMAGE:$TAG"
 docker pull "$IMAGE:$TAG"
 
@@ -58,8 +74,9 @@ docker run -d \
   --log-opt max-size=10m --log-opt max-file=3 \
   "$IMAGE:$TAG" run
 
-# 3.3 GB free on a 6.7 GB disk, and every deploy adds an image. Without this
-# the box fills up and the failure arrives weeks later as a confusing one.
-docker image prune -af --filter "until=72h" >/dev/null 2>&1 || true
+# The old image is only unreferenced once the new container is up, so a second
+# sweep here collects it. The one above is what guarantees room to pull; this
+# one is what stops the box sitting at two images between deploys.
+docker image prune -af >/dev/null 2>&1 || true
 
 docker ps --filter "name=$NAME" --format '{{.Names}}  {{.Status}}  {{.Image}}'
