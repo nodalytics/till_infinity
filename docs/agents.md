@@ -38,9 +38,24 @@ reach.
 
 | role | goal | can read |
 |---|---|---|
-| `market` | where brokers disagree about price, and where liquidity changed | instruments, quotes, spreads, divergence, bars, move |
-| `macro` | what the calendar and newsflow say about the next few hours | events, headlines, reserves |
-| `risk` | whether anything justifies interrupting a human (**default**) | all nine |
+| `market` | where brokers disagree about price, and where liquidity changed | prices + levels + memory |
+| `macro` | what the calendar and newsflow say about the next few hours | news + memory |
+| `risk` | whether anything justifies interrupting a human (**default**) | everything |
+
+The tools themselves:
+
+| group | tools | |
+|---|---|---|
+| prices | `instruments` `quotes` `spreads` `divergence` `bars` `move` | what the market is doing now |
+| levels | `levels` `level_at` `next_levels` `zones` | where price has turned before, what it did there, and when it is likely back |
+| news | `events` `headlines` `reserves` | the calendar and the coverage |
+| memory | `recent` | what this system already concluded |
+
+`level_at` is the one to reach for when price is near something: it returns the
+direction, the probability, **the base rate beside it**, the expected push in
+volatility units, and whether the two halves of the answer agree. `next_levels`
+answers "and when" — ordered by time rather than distance, since a level on a
+fast timeframe can be reached long before a nearer one on a slow one.
 
 An analyst that cannot read the calendar cannot invent a calendar entry. That
 is enforced by the toolset, not by asking nicely.

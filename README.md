@@ -101,8 +101,10 @@ uv run till-infinity prices quotes        # stream live bid/ask, forever
 uv run till-infinity prices info          # what is stored
 ```
 
-Defaults to EURUSD, GBPUSD, gold and BTC; `-s` takes anything else
-(`-s OANDA:XAUUSD`, `-s AAPL`). Intervals run 1m to 1w. Full guide:
+Six instruments by default — **EURUSD, GBPUSD, gold, BTC, US100** (Nasdaq 100)
+and **SPX500** — each from five to seven venues, on intervals from 1m to 1w.
+Indices answer to whatever you call them (`-s nasdaq`, `-s sp500`, `-s ndx`),
+and `-s` also takes `VENUE:TICKER` or a bare Yahoo ticker. Full guide:
 **[docs/prices.md](docs/prices.md)**.
 
 ## News

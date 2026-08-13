@@ -10,9 +10,46 @@ from till_infinity.prices import (
 )
 
 
-def test_defaults_are_eurusd_gbpusd_gold_and_btc():
-    assert {feed.name for feed in resolve_symbols(None)} == {"eurusd", "gbpusd", "gold", "btc"}
-    assert DEFAULT_SYMBOLS == ("eurusd", "gbpusd", "gold", "btc")
+def test_the_defaults_are_the_tracked_instruments():
+    tracked = {"eurusd", "gbpusd", "gold", "btc", "us100", "spx500"}
+    assert {feed.name for feed in resolve_symbols(None)} == tracked
+    assert set(DEFAULT_SYMBOLS) == tracked
+
+
+@pytest.mark.parametrize(
+    ("typed", "feed"),
+    [
+        ("us100", "us100"),
+        ("nas100", "us100"),
+        ("nasdaq", "us100"),
+        ("NDX", "us100"),
+        ("spx500", "spx500"),
+        ("us500", "spx500"),
+        ("sp500", "spx500"),
+        ("S&P500", "spx500"),
+        ("SPX", "spx500"),
+    ],
+)
+def test_an_index_answers_to_every_name_people_use(typed, feed):
+    """Indices go by more names than anything else, and each is somebody's first."""
+    (found,) = resolve_symbols([typed])
+    assert found.name == feed
+
+
+def test_an_index_is_quoted_by_several_venues_like_everything_else():
+    """The whole thesis is cross-venue disagreement; one feed would defeat it."""
+    for name in ("us100", "spx500"):
+        (feed,) = resolve_symbols([name])
+        assert len(feed.for_source(TRADINGVIEW)) >= 4
+        assert len(feed.for_source(YAHOO)) >= 1
+
+
+def test_only_venues_that_carry_the_index_are_listed():
+    """SAXO and DERIV do not, and asking would log a symbol_error every sweep."""
+    (us100,) = resolve_symbols(["us100"])
+    venues = {symbol.venue for symbol in us100.for_source(TRADINGVIEW)}
+    assert "SAXO" not in venues
+    assert "DERIV" not in venues
 
 
 @pytest.mark.parametrize("name", ["gold", "GOLD", "xauusd", "XAU"])

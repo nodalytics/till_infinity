@@ -61,6 +61,34 @@ A bare ticker goes to Yahoo because TradingView needs a venue prefix to resolve
 a symbol at all. `prices symbols <anything>` shows what a given input resolves
 to before you commit to a long run.
 
+## Instruments
+
+Six tracked by default, each quoted by several venues — the disagreement
+between them is the point, so a one-venue instrument would not earn its place.
+
+| feed | what it is | venues |
+|---|---|---|
+| `gold` | spot gold | 6 TradingView + Yahoo `GC=F` |
+| `btc` | bitcoin | 5 exchanges + Yahoo |
+| `eurusd`, `gbpusd` | major FX | 6 each + Yahoo |
+| `us100` | Nasdaq 100 | 5 + Yahoo `^NDX`, `NQ=F` |
+| `spx500` | S&P 500 | 6 + Yahoo `^GSPC`, `ES=F` |
+
+**Indices answer to whatever you call them.** `us100`, `nas100`, `nasdaq`,
+`ndx`, `nq` all reach the same feed; so do `spx500`, `spx`, `us500`, `sp500`,
+`s&p500`, `es`. There is no canonical name for an index in practice, so the
+aliases are the interface.
+
+The venue lists for the indices are shorter and less uniform than for FX, and
+that is checked rather than assumed: brokers quote the Nasdaq CFD under
+`NAS100USD`, `NAS100`, `NSXUSD` and `US100`, while SAXO, DERIV and BLACKBULL do
+not carry it at all. Listing a venue that does not have a symbol would log a
+`symbol_error` on every sweep, forever, for something nobody expects to appear.
+
+Both index feeds carry the **cash index and the continuous future** — `^NDX`
+with `NQ=F`, `^GSPC` with `ES=F` — because the future trades when the cash
+index does not, and the gap between them at the open is itself information.
+
 ## Sources
 
 | | TradingView | Yahoo |

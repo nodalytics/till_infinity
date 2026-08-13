@@ -89,16 +89,62 @@ FEEDS: dict[str, Feed] = {
             ),
             yahoo=("GBPUSD=X",),
         ),
+        _feed(
+            "us100",
+            # The Nasdaq 100. Brokers quote a CFD on it under half a dozen
+            # names — NAS100USD, NAS100, NSXUSD, US100 — so the venue list is
+            # less uniform than for FX. SAXO, DERIV and BLACKBULL were checked
+            # and do not carry it; asking anyway would log a symbol_error every
+            # sweep, forever, for a symbol nobody expects to appear.
+            tradingview=(
+                "OANDA:NAS100USD",
+                "PEPPERSTONE:NAS100",
+                "FOREXCOM:NSXUSD",
+                "CAPITALCOM:US100",
+                "TVC:NDX",
+            ),
+            # ^NDX is the index itself; NQ=F is the CME continuous future, kept
+            # because it trades when the cash index does not.
+            yahoo=("^NDX", "NQ=F"),
+        ),
+        _feed(
+            "spx500",
+            tradingview=(
+                "OANDA:SPX500USD",
+                "PEPPERSTONE:US500",
+                "FOREXCOM:SPXUSD",
+                "CAPITALCOM:US500",
+                "BLACKBULL:US500",
+                "TVC:SPX",
+            ),
+            yahoo=("^GSPC", "ES=F"),
+        ),
     )
 }
 
 DEFAULT_SOURCES: tuple[str, ...] = (TRADINGVIEW, YAHOO)
 
-#: Tracked unless the caller names something else: EURUSD, GBPUSD, gold, BTC.
-DEFAULT_SYMBOLS: tuple[str, ...] = ("eurusd", "gbpusd", "gold", "btc")
+#: Tracked unless the caller names something else.
+DEFAULT_SYMBOLS: tuple[str, ...] = ("eurusd", "gbpusd", "gold", "btc", "us100", "spx500")
 
 #: What people actually type, mapped to the feed it means.
 SYMBOL_ALIASES: dict[str, str] = {
+    # Indices go by more names than anything else here, and every one of them
+    # is what somebody calls it first.
+    "us100": "us100",
+    "nas100": "us100",
+    "nasdaq": "us100",
+    "nasdaq100": "us100",
+    "ndx": "us100",
+    "nq": "us100",
+    "spx500": "spx500",
+    "spx": "spx500",
+    "us500": "spx500",
+    "sp500": "spx500",
+    "s&p500": "spx500",
+    "sandp": "spx500",
+    "gspc": "spx500",
+    "es": "spx500",
     "xauusd": "gold",
     "xau": "gold",
     "gold": "gold",
