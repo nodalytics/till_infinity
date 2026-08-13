@@ -93,6 +93,13 @@ class Features:
     #: back check is a different setup from a first touch, and the neighbours
     #: worth learning from are the other back checks.
     backcheck: float = 0.0
+    #: Where volatility sat in its own recent range when this happened, in
+    #: [0, 1]. Everything else here is *scaled* by volatility, which makes
+    #: sizes comparable but deliberately erases the regime — and a level held
+    #: in a dead session is weaker evidence about a violent one than the
+    #: normalised numbers suggest. This puts that back as a dimension, so a
+    #: touch is compared with touches from a market that felt the same.
+    regime: float = 0.5
 
     def distance(self, other: Features) -> float:
         """Similarity for kNN. Side is a hard constraint, not a dimension.
@@ -110,6 +117,7 @@ class Features:
             + (self.experience - other.experience) ** 2
             + (self.pivot - other.pivot) ** 2
             + (self.backcheck - other.backcheck) ** 2
+            + (self.regime - other.regime) ** 2
         )
 
     def to_dict(self) -> dict[str, float | str]:
@@ -122,6 +130,7 @@ class Features:
             "experience": round(self.experience, 4),
             "pivot": self.pivot,
             "backcheck": self.backcheck,
+            "regime": round(self.regime, 4),
         }
 
 
@@ -579,6 +588,7 @@ def features_for(
         experience=experience_of(level.touches),
         pivot=1.0 if level.origin.startswith("pivot") else 0.0,
         backcheck=1.0 if level.is_backcheck(side, when) else 0.0,
+        regime=vol.regime,
     )
 
 

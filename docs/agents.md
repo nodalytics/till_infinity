@@ -83,6 +83,31 @@ Two gates stand between a quote and an API call:
    because a hundred ticks are one situation.
 2. **The analyst**, told plainly that returning no findings is correct.
 
+### The first gate does not use a constant
+
+A `structures` signal is a trigger **on its own**. It has already cleared
+calibrated, per-venue models, and re-filtering it here would discard the work
+that made it worth sending.
+
+The quote gate that remains is a fallback for when `structures` is not running,
+and it calibrates itself: a running quantile of the spreads actually seen at
+each venue, plus a multiple of that venue's typical spread. Both are needed —
+a quantile alone is degenerate on a steady venue, where every reading is 20bps
+so the 99th percentile is 20bps and 20.1 clears it.
+
+The constant it replaced was wrong in both directions at once:
+
+| | normal | reading | constant (8bps) | calibrated |
+|---|---|---|---|---|
+| btc / KRAKEN | 20bps | 25bps | **wake** | ignore |
+| btc / KRAKEN | 20bps | 60bps | wake | wake |
+| eurusd / OANDA | 0.3bps | 3bps | **ignore** | wake |
+
+It cried wolf on BTC and missed a tenfold widening on EURUSD, because one
+number cannot be right for both. Until a venue has enough readings to place a
+quantile the configured threshold is still used — a percentile from six
+observations would be worse than the constant it replaced.
+
 A release only triggers when it *prints* — being on the calendar is not news,
 the `actual` landing away from forecast is.
 

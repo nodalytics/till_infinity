@@ -314,6 +314,8 @@ features plus a pivot flag:
 | `run_vol` | how far price had already travelled in this leg |
 | `experience` | log-compressed touch count |
 | `pivot` | 1.0 for a pivot, 0.0 for a swing level |
+| `backcheck` | 1.0 when this is a retest of a recent break |
+| `regime` | where volatility sat in its own recent range, in [0, 1] |
 
 Distance is plain Euclidean over those six, with side as a gate rather than a
 term:
@@ -322,6 +324,12 @@ term:
 d(a, b) = inf                             if side(a) != side(b)
         = sqrt( sum_k (a_k - b_k)^2 )     otherwise
 ```
+
+`regime` is there because everything else is *scaled* by volatility, which
+makes sizes comparable and deliberately erases what the market felt like. A
+level held in a dead session is weaker evidence about a violent one than the
+normalised numbers suggest, so the regime goes back in as its own dimension and
+a touch is compared with touches from a market that felt the same.
 
 **Side is a hard constraint, not a dimension** — infinite across sides, because
 a floor's history must never vote on a ceiling's future. Contributions are

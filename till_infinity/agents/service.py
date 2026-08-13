@@ -12,6 +12,17 @@ Two gates stand between a quote and an API call:
 2. The analyst itself, which is told plainly that returning no findings is a
    correct answer.
 
+The first gate does **not** decide what is unusual by comparing against a
+constant. `structures` already answers that question properly — calibrated,
+per-venue, self-tuning — and a threshold here would be a worse duplicate of it,
+wrong for every instrument but whichever one it was chosen on. A signal from
+`structures` is therefore a trigger on its own.
+
+The quote gate that remains is a fallback for when `structures` is not running,
+and it is self-calibrating: a running quantile of the spreads actually seen at
+each venue, so "wide" means wide for that venue rather than wide against a
+number somebody picked.
+
 What survives both is published to `alerts`, which `notify listen` delivers.
 """
 
@@ -40,12 +51,81 @@ TOPICS: tuple[str, ...] = (QUOTES, BARS, EVENTS, ARTICLES, SIGNALS)
 #: A finding has to clear this to become an alert.
 MIN_CONFIDENCE = 0.5
 
+#: Spreads remembered per venue for the fallback gate. Enough to place a
+#: quantile, few enough that it follows the session rather than the month.
+SPREAD_MEMORY = 400
 
-def interesting(messages: Sequence[Message], settings: Settings) -> list[Trigger]:
+#: Observations before a quantile is trusted. Below this the fallback defers to
+#: `settings.spread_bps`, because a percentile from six readings is a confident
+#: number derived from nothing.
+SPREAD_WARMUP = 60
+
+#: How unusual a spread must be, against that venue's own recent spreads.
+SPREAD_QUANTILE = 0.99
+
+#: ...and how much wider than that venue's *typical* spread. Both are needed.
+#: A quantile alone is degenerate on a steady venue — if every reading is 20bps
+#: then the 99th percentile is 20bps and 20.1 clears it, so a hair above normal
+#: would wake a model. The multiple is what makes "wide" mean wide.
+SPREAD_MULTIPLE = 1.5
+
+
+class Spreads:
+    """What each venue's spread normally looks like.
+
+    Exists only so the fallback gate has something better than a constant. The
+    real answer lives in `structures`, which scores per venue against a fitted
+    distribution; this is the cheap version for when that is not running, and
+    it is still self-calibrating, which the constant never was.
+    """
+
+    def __init__(
+        self,
+        memory: int = SPREAD_MEMORY,
+        quantile: float = SPREAD_QUANTILE,
+        multiple: float = SPREAD_MULTIPLE,
+    ) -> None:
+        self.memory = memory
+        self.quantile = quantile
+        self.multiple = multiple
+        self._seen: dict[tuple[str, str], list[float]] = {}
+
+    def observe(self, feed: str, venue: str, bps: float) -> None:
+        seen = self._seen.setdefault((feed, venue), [])
+        seen.append(bps)
+        if len(seen) > self.memory:
+            del seen[: len(seen) - self.memory]
+
+    def unusual(self, feed: str, venue: str, bps: float, fallback: float) -> bool:
+        """Whether this spread is wide *for this venue*.
+
+        Falls back to the configured threshold until there are enough readings
+        to place a quantile — a percentile from six observations would be worse
+        than the constant it replaced.
+        """
+        seen = self._seen.get((feed, venue), [])
+        if len(seen) < SPREAD_WARMUP:
+            return bps >= fallback
+        ordered = sorted(seen)
+        cut = ordered[min(int(len(ordered) * self.quantile), len(ordered) - 1)]
+        typical = ordered[len(ordered) // 2]
+        # Rare *and* materially wide. Either alone fails: the quantile is
+        # degenerate on a steady venue, and a multiple alone fires every time a
+        # normally-tight venue has an ordinary busy minute.
+        return bps >= cut and bps >= typical * self.multiple
+
+
+def interesting(
+    messages: Sequence[Message], settings: Settings, spreads: Spreads | None = None
+) -> list[Trigger]:
     """Decide, without a model, whether this window is worth analysing.
 
     Cheap and deliberately blunt. Its only job is to keep quiet markets free;
     anything it lets through is judged properly by the analyst afterwards.
+
+    `spreads` makes the quote gate self-calibrating. Without it the configured
+    threshold is used, which is the old behaviour and is only right for
+    whichever instrument it was chosen on.
     """
     triggers: list[Trigger] = []
     widest: Message | None = None
@@ -69,11 +149,16 @@ def interesting(messages: Sequence[Message], settings: Settings) -> list[Trigger
             )
         elif message.topic == QUOTES:
             bps = payload.get("spread_bps")
-            if (
-                isinstance(bps, int | float)
-                and bps >= settings.spread_bps
-                and (widest is None or bps > (widest.payload.get("spread_bps") or 0))
-            ):
+            if not isinstance(bps, int | float):
+                continue
+            feed = str(payload.get("feed") or "")
+            venue = str(payload.get("venue") or "")
+            if spreads is not None:
+                spreads.observe(feed, venue, float(bps))
+                wide = spreads.unusual(feed, venue, float(bps), settings.spread_bps)
+            else:
+                wide = bps >= settings.spread_bps
+            if wide and (widest is None or bps > (widest.payload.get("spread_bps") or 0)):
                 widest = message
         elif message.topic == EVENTS:
             importance = payload.get("importance") or 0
@@ -157,6 +242,9 @@ class Watcher:
         self.journal = journal
         self._sent: OrderedDict[tuple[str, str], float] = OrderedDict()
         self._window: list[Message] = []
+        #: What each venue's spread normally is, so the fallback gate does not
+        #: need a constant. `structures` answers this better when it is running.
+        self.spreads = Spreads()
 
     # ------------------------------------------------------------- alerting
 
@@ -225,7 +313,7 @@ class Watcher:
         """Judge one window. Returns the run if the model was actually asked."""
         if not window:
             return None
-        triggers = interesting(window, self.settings)
+        triggers = interesting(window, self.settings, self.spreads)
         if not triggers:
             log.debug("%d message(s), nothing above threshold", len(window))
             return None

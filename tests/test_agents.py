@@ -465,3 +465,66 @@ def test_a_window_of_signals_and_quotes_triggers_on_both():
     reasons = [t.reason for t in service.interesting(window, settings)]
     assert len(reasons) == 2
     assert any("30.0bps" in r for r in reasons)
+
+
+# ----------------------------------------- a gate that calibrates itself
+
+
+def _venue_quote(feed: str, venue: str, bps: float) -> Message:
+    """A quote naming its venue, which the calibrating gate needs."""
+    return Message(topic=QUOTES, payload={"feed": feed, "venue": venue, "spread_bps": bps})
+
+
+def test_wide_means_wide_for_this_venue_not_against_a_constant():
+    """One threshold is right for whichever instrument it was chosen on."""
+    spreads = service.Spreads()
+    settings = ag.Settings(spread_bps=8.0)
+
+    # a venue that normally quotes 20bps: 25 is ordinary for it
+    for _ in range(service.SPREAD_WARMUP + 10):
+        spreads.observe("btc", "KRAKEN", 20.0)
+    assert not spreads.unusual("btc", "KRAKEN", 25.0, settings.spread_bps)
+
+    # a venue that normally quotes 0.3bps: 3 is remarkable, and a constant of
+    # 8 would have missed it entirely
+    for _ in range(service.SPREAD_WARMUP + 10):
+        spreads.observe("eurusd", "OANDA", 0.3)
+    assert spreads.unusual("eurusd", "OANDA", 3.0, settings.spread_bps)
+
+
+def test_the_constant_is_used_until_there_is_enough_to_calibrate():
+    """A percentile from six readings is worse than the constant it replaced."""
+    spreads = service.Spreads()
+    settings = ag.Settings(spread_bps=8.0)
+    for _ in range(5):
+        spreads.observe("gold", "OANDA", 0.3)
+    assert spreads.unusual("gold", "OANDA", 9.0, settings.spread_bps)
+    assert not spreads.unusual("gold", "OANDA", 1.0, settings.spread_bps)
+
+
+def test_a_quiet_venue_never_triggers_on_its_own_normal():
+    spreads = service.Spreads()
+    settings = ag.Settings(spread_bps=8.0)
+    window = [_venue_quote("eurusd", "OANDA", 0.3) for _ in range(service.SPREAD_WARMUP + 50)]
+    assert service.interesting(window, settings, spreads) == []
+
+
+def test_the_gate_still_works_without_a_calibrator():
+    """Passing none is the old behaviour, not a crash."""
+    settings = ag.Settings(spread_bps=8.0)
+    assert service.interesting([_venue_quote("gold", "OANDA", 30.0)], settings)
+    assert service.interesting([_venue_quote("gold", "OANDA", 0.3)], settings) == []
+
+
+def test_spread_memory_is_bounded():
+    spreads = service.Spreads(memory=10)
+    for n in range(100):
+        spreads.observe("gold", "OANDA", float(n))
+    assert len(spreads._seen[("gold", "OANDA")]) == 10
+
+
+def test_a_structures_signal_needs_no_spread_gate_at_all():
+    """It already cleared calibrated per-venue models; re-filtering discards that."""
+    settings = ag.Settings(spread_bps=10_000.0)  # a gate nothing could pass
+    triggers = service.interesting([_signal_message()], settings, service.Spreads())
+    assert len(triggers) == 1
