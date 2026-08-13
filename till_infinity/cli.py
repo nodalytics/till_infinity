@@ -18,6 +18,7 @@ from . import journal as jr
 from . import news as nw
 from . import notifications as nt
 from . import prices as px
+from . import stack as st
 from . import structures as sx
 from .bus import Bus
 from .logging import console, get_logger, setup_logging
@@ -42,10 +43,29 @@ def _stamp(value: int | None) -> str:
     return datetime.fromtimestamp(value, UTC).strftime("%Y-%m-%d %H:%M")
 
 
+def _load_env() -> None:
+    """Read `.env` before anything looks at the environment.
+
+    Every setting here comes from an environment variable, which is right for
+    deployment and tedious for development — a dozen exports before a run, and
+    one forgotten export produces a service that starts and silently does less.
+    A `.env` file makes the whole configuration one reviewable thing.
+
+    Real environment variables win over the file, so a deployment that sets
+    them properly is never overridden by a stray `.env` that got committed.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:  # pragma: no cover - dotenv is a dependency
+        return
+    load_dotenv(override=False)
+
+
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(package_name="till-infinity")
 def main() -> None:
     """till-infinity."""
+    _load_env()
 
 
 @main.group()
@@ -1624,6 +1644,67 @@ def journal_export(db, out, kind, hours, limit):
         raise SystemExit(1) from None
     if out is not None:
         console.print(f"{written:,} entries -> {escape(str(out))}")
+
+
+@main.command("run")
+@click.option("--redis", "redis_url", metavar="URL", help="Redis. Default: TILL_REDIS_URL.")
+@click.option("--agents/--no-agents", default=None, help="Override AGENTS_ENABLED.")
+@click.option("--notify/--no-notify", default=None, help="Override NOTIFICATIONS_ENABLED.")
+@click.option("-s", "--symbol", multiple=True, help="Instrument; repeatable.")
+@click.option("-i", "--interval", multiple=True, help="Interval; repeatable.")
+@click.option("--for", "duration", type=float, help="Stop after this many seconds.")
+@click.option("--once", is_flag=True, help="One collection pass, then stop.")
+@click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
+@click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only.")
+@click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs.")
+def run_command(
+    redis_url, agents, notify, symbol, interval, duration, once, verbose, quiet, log_file
+):
+    """Run every service together — the end-to-end path.
+
+    Collectors publish, structures finds levels and anomalies, agents judge,
+    notifications deliver, and the journal records. One bus, one process.
+
+    Agents are off unless `AGENTS_ENABLED=1` or `--agents`: they are the only
+    part needing a paid credential, and the rest should not be hostage to it.
+    Anything that cannot start says why and the others carry on.
+    """
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    plan = st.Plan.from_env()
+    if redis_url:
+        plan.redis_url = redis_url
+    if agents is not None:
+        plan.agents = agents
+    if notify is not None:
+        plan.notifications = notify
+    if symbol:
+        plan.symbols = tuple(symbol)
+    if interval:
+        plan.intervals = tuple(interval)
+    if duration is not None:
+        plan.duration = duration
+    plan.once = once
+
+    bus_kind = "redis" if plan.redis_url else "in-process"
+    console.print(f"[bold]till infinity[/] · {bus_kind} bus · {', '.join(plan.wanted())}")
+    for name, why in st.check(plan).items():
+        console.print(f"  [yellow]{name} unavailable[/] — {escape(why)}")
+
+    def event(name: str, note: str) -> None:
+        colour = "red" if "stopped" in note else "green"
+        console.print(f"[dim]{_clock()}[/] [{colour}]{name}[/] {escape(note)}")
+
+    async def go() -> st.Status:
+        return await st.run(plan, on_event=event)
+
+    try:
+        status = run(go())
+    except KeyboardInterrupt:
+        console.print("stopped")
+        return
+    console.print(f"\n{escape(str(status))} in {status.elapsed:.0f}s")
+    if status.failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":  # pragma: no cover

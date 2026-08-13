@@ -234,8 +234,9 @@ class Watcher:
                 found = self.drift.observe(feed, mid, message.time, interval)
                 if found is not None:
                     # The tide changed: every level for this instrument learned
-                    # its behaviour in the old regime, so discount it.
-                    self.engine.regime_changed(feed)
+                    # its behaviour in the old regime, so discount it — by how
+                    # big this change was against past ones, not by a constant.
+                    self.engine.regime_changed(feed, found.features.get("severity_pct", 0.5))
                     signals.append(found)
             return signals
         return []

@@ -371,14 +371,23 @@ class Level:
         for stats in self.sides.values():
             stats.decay(factor)
 
-    def regime_changed(self, decay: float = REGIME_DECAY) -> None:
+    def regime_changed(self, severity: float = 0.5) -> None:
         """The market changed character. What this level used to do counts less.
 
-        Called when the drift detector fires for this instrument. The level
-        itself survives — price still turns there — but its statistics were
-        learned in a market that no longer exists, and carrying them forward at
-        full weight is how a model keeps predicting the last regime.
+        `severity` is the change's percentile among past changes, in [0, 1], so
+        the discount is graded rather than flat:
+
+            decay = 1 - severity * (1 - REGIME_DECAY)
+
+        A 99th-percentile change nearly resets the history; a 55th-percentile
+        one barely touches it. Grading matters because the alternative is one
+        constant standing in for every regime change there will ever be.
+
+        The level itself survives either way — price still turns there. It is
+        the statistics that were learned in a market that no longer exists.
         """
+        severity = min(max(severity, 0.0), 1.0)
+        decay = 1.0 - severity * (1.0 - REGIME_DECAY)
         for stats in self.sides.values():
             stats.decay(decay)
 

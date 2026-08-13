@@ -345,22 +345,28 @@ class Engine:
             built = pivots.build(feed, session, vol)
             self._levels[key] = lv.merge(self._levels.get(key, []), built, vol)
 
-    def regime_changed(self, feed: str) -> int:
+    def regime_changed(self, feed: str, severity: float = 0.5) -> int:
         """Discount every level's history for this instrument.
 
         The drift detector saying the volatility regime changed means these
         levels learned their behaviour in a market that no longer exists. They
         are still levels; their statistics are just much weaker evidence now.
+
+        `severity` is the change's percentile among past changes, so a marginal
+        change costs a level little and a violent one costs it most of its
+        history. A flat discount would treat both the same.
         """
         touched = 0
         for (this_feed, _), found in self._levels.items():
             if this_feed != feed:
                 continue
             for level in found:
-                level.regime_changed()
+                level.regime_changed(severity)
                 touched += 1
         if touched:
-            log.info("levels: discounted %d %s levels after a regime change", touched, feed)
+            log.info(
+                "levels: discounted %d %s levels, severity %.0f%%", touched, feed, severity * 100
+            )
         return touched
 
     def _approach(self, level: lv.Level, price: float) -> lv.Side:

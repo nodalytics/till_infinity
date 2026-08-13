@@ -424,3 +424,94 @@ def test_state_from_another_river_version_is_refused(tmp_path):
 def test_a_save_leaves_no_temp_file_behind(tmp_path):
     store.save({"detector": Detector()}, tmp_path)
     assert [p.name for p in tmp_path.iterdir()] == [store.STATE_FILE]
+
+
+# ------------------------------------------------- grading a regime change
+
+
+def test_severity_is_scale_free():
+    """A doubling counts the same on gold as on BTC."""
+    assert Drift.severity(1.0, 2.0) == pytest.approx(Drift.severity(1000.0, 2000.0))
+
+
+def test_a_market_going_quiet_is_as_much_a_change_as_one_going_wild():
+    assert Drift.severity(1.0, 4.0) == pytest.approx(Drift.severity(4.0, 1.0))
+
+
+def test_severity_of_no_change_is_zero():
+    assert Drift.severity(5.0, 5.0) == 0.0
+    assert Drift.severity(0.0, 5.0) == 0.0  # undefined rather than infinite
+
+
+def test_a_percentile_is_not_claimed_from_three_samples():
+    """A confident number derived from nothing is worse than admitting none."""
+    detector = Drift()
+    for value in (0.1, 0.2, 0.3):
+        detector._remember(value)
+    assert detector.percentile(99.0) == 0.5
+
+
+def test_severity_is_graded_against_past_changes():
+    detector = Drift()
+    for value in (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8):
+        detector._remember(value)
+    assert detector.percentile(0.05) == 0.0
+    assert detector.percentile(0.45) == pytest.approx(0.5)
+    assert detector.percentile(9.0) == 1.0
+
+
+def test_a_bigger_change_costs_a_level_more_of_its_history():
+    """The whole point of grading: a marginal change must not act like a rout."""
+    from till_infinity.structures.levels import Kalman, Level, Outcome, Side
+
+    def _stocked():
+        level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+        for i in range(8):
+            level.record(Side.ABOVE, Outcome.REJECT, 1.0, 1_000_000.0 + i)
+        return level
+
+    marginal, severe = _stocked(), _stocked()
+    before = marginal.stats(Side.ABOVE).touches
+
+    marginal.regime_changed(0.05)
+    severe.regime_changed(0.99)
+
+    assert severe.stats(Side.ABOVE).touches < marginal.stats(Side.ABOVE).touches < before
+    assert marginal.stats(Side.ABOVE).touches > 0.9 * before  # barely touched
+
+
+# ------------------------------------------------------ volatility regimes
+
+
+def _run(vol, sigma, steps, seed=2):
+    rand = random.Random(seed)
+    price = 4400.0
+    for _ in range(steps):
+        price *= 1 + rand.gauss(0, sigma)
+        vol.update(price)
+    return vol
+
+
+def test_the_regime_percentile_says_what_the_number_cannot():
+    """'25bps' means nothing without knowing what this instrument usually does."""
+    from till_infinity.structures.volatility import Volatility
+
+    vol = _run(Volatility(), 0.00003, 400)
+    calm = vol.regime
+    _run(vol, 0.0008, 200)
+    assert vol.regime > calm
+    assert vol.violent
+
+
+def test_a_quiet_market_reads_low_rather_than_merely_small():
+    from till_infinity.structures.volatility import Volatility
+
+    vol = _run(Volatility(), 0.0008, 300)
+    _run(vol, 0.00002, 400)
+    assert vol.regime < 0.3
+
+
+def test_no_regime_is_claimed_before_there_is_history():
+    from till_infinity.structures.volatility import Volatility
+
+    assert Volatility().regime == 0.5

@@ -23,14 +23,27 @@ So a detector runs per timeframe and a change is only declared when they
 change, it is not noise — or two fast ones fire close together. One fast
 timeframe on its own is a busy hour and is deliberately ignored.
 
-## What this still cannot say
+## How much, not just whether
 
-ADWIN answers *whether*, never *how much*. A confirmed change applies a flat
-discount to every level's history, so a marginal change and a violent one are
-treated the same. The fix is a running quantile of change magnitudes — the same
-calibration trick that rescued the anomaly detector — and, after that, a
-changepoint posterior for regime *age*. Both are written up under "Planned:
-grading a regime change instead of flagging it" in the structures guide.
+ADWIN answers *whether*. On its own that is not enough, because a confirmed
+change discounts every level's accumulated history — and a marginal change and
+a violent one would get the same flat discount, from a constant somebody picked.
+
+So the magnitude is measured and **calibrated against past magnitudes**, the
+same trick that rescued the anomaly detector from HalfSpaceTrees' uncalibrated
+scores. Severity is the log-ratio of the mean move before and after the cut:
+
+    severity = |log(after / before)|
+
+which is scale-free, so a doubling counts the same on gold and on BTC. Its
+running quantile turns it into a number in [0, 1] that means "bigger than this
+fraction of the changes we have seen", and that grades the decay:
+
+    decay = 1 - p * (1 - REGIME_DECAY)
+
+A 99th-percentile change nearly resets a level's history; a 55th-percentile one
+barely touches it. Nobody picks a constant, and the scale adapts as the market
+does.
 
 What is watched is the **consensus** price, not one venue's. A single venue's
 series mixes market moves with that venue's own quirks, which is what having
@@ -39,6 +52,7 @@ six venues exists to cancel.
 
 from __future__ import annotations
 
+import math
 import time
 
 from river import drift as river_drift
@@ -62,6 +76,14 @@ AGREEMENT_WINDOW = 3_600.0
 #: How many fast timeframes must agree when no slow one has fired.
 FAST_QUORUM = 2
 
+#: Past change magnitudes kept for calibration. A change is only "big" relative
+#: to other changes, so this is the sample that makes the word mean anything.
+SEVERITY_WINDOW = 200
+
+#: Severities below this many observations are not calibrated yet, so a change
+#: is treated as middling rather than assigned a percentile from three samples.
+SEVERITY_WARMUP = 8
+
 
 class Drift:
     """Regime detection per (instrument, timeframe), reported on agreement."""
@@ -74,6 +96,9 @@ class Drift:
         self._fired: dict[tuple[str, str], float] = {}
         self._announced: dict[str, float] = {}
         self._seen: dict[tuple[str, str], int] = {}
+        self._before: dict[tuple[str, str], float] = {}
+        #: Past severities, so "how big" can be answered relative to something.
+        self._severities: list[float] = []
 
     def _detector(self, key: tuple[str, str]) -> river_drift.ADWIN:
         found = self._detectors.get(key)
@@ -100,12 +125,16 @@ class Drift:
             return None
 
         detector = self._detector(key)
+        before = float(detector.estimation)
         detector.update(change)
         self._seen[key] = self._seen.get(key, 0) + 1
         if not detector.drift_detected:
+            self._before[key] = before
             return None
 
         self._fired[key] = when
+        severity = self.severity(self._before.get(key, before), float(detector.estimation))
+        self._before[key] = float(detector.estimation)
         agreed = self.agreement(feed, when)
         if not agreed:
             log.debug("drift: %s %s fired alone, waiting for agreement", feed, interval)
@@ -116,7 +145,14 @@ class Drift:
             return None
         self._announced[feed] = when
 
-        log.info("drift: %s regime changed, confirmed by %s", feed, "+".join(agreed))
+        graded = self.percentile(severity)
+        self._remember(severity)
+        log.info(
+            "drift: %s regime changed, confirmed by %s, severity %.0f%%",
+            feed,
+            "+".join(agreed),
+            graded * 100,
+        )
         return Signal(
             shape=Shape.DRIFT,
             feed=feed,
@@ -130,10 +166,44 @@ class Drift:
                 "mean_move_bps": float(detector.estimation),
                 "window": float(detector.width),
                 "timeframes": float(len(agreed)),
+                "severity": severity,
+                # In [0, 1]: how big this change is against past changes. The
+                # consumer grades its response by this rather than by a flag.
+                "severity_pct": graded,
             },
             interval=interval,
             time=when,
         )
+
+    @staticmethod
+    def severity(before: float, after: float) -> float:
+        """How big the change was, scale-free.
+
+        The log-ratio of the mean move either side of the cut, so a doubling
+        counts the same on gold as on BTC — and a halving counts the same as a
+        doubling, because a market going quiet is as much a regime change as one
+        going wild.
+        """
+        if before <= 0 or after <= 0:
+            return 0.0
+        return abs(math.log(after / before))
+
+    def percentile(self, severity: float) -> float:
+        """Where this severity sits among past ones, in [0, 1].
+
+        Middling until there are enough past changes to place it. Assigning a
+        percentile from three samples would be a confident number derived from
+        nothing, which is worse than admitting there is no calibration yet.
+        """
+        if len(self._severities) < SEVERITY_WARMUP:
+            return 0.5
+        below = sum(1 for value in self._severities if value < severity)
+        return below / len(self._severities)
+
+    def _remember(self, severity: float) -> None:
+        self._severities.append(severity)
+        if len(self._severities) > SEVERITY_WINDOW:
+            del self._severities[: len(self._severities) - SEVERITY_WINDOW]
 
     def agreement(self, feed: str, when: float) -> list[str]:
         """Timeframes that have fired recently enough to count, or [].
