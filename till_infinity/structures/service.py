@@ -86,6 +86,60 @@ class BarConsensus:
         return feed, statistics.median(aligned), interval
 
 
+def alert_payload(signal: Signal) -> dict[str, object]:
+    """The message a person actually reads, as opposed to the record.
+
+    `Signal.title` is built for a log line — venue, feed, then the whole detail
+    string — which arrives on a phone as one long sentence with the numbers
+    buried in it. What a reader wants first is the instrument, the timeframe and
+    the direction; the evidence belongs underneath, one claim per line.
+
+    Routing fields (`shape`, `instrument`, `venue`, `direction`) are set for the
+    notification filter and are deliberately not rendered again — the title
+    already carries them.
+    """
+    fields = {
+        "instrument": signal.feed,
+        "venue": signal.venue,
+        "shape": str(signal.shape),
+        "direction": signal.direction,
+    }
+    if signal.shape is not Shape.LEVEL:
+        return {
+            "title": signal.title,
+            "body": "",
+            "level": "warning",
+            "fields": {**fields, "score": f"{signal.score:.3f}"},
+            "source": "structures",
+        }
+
+    got = signal.features
+    price = got.get("level", 0.0)
+    up = signal.direction == "up"
+    probability = got.get("probability") or (
+        got.get("probability_up", 0.5) if up else 1.0 - got.get("probability_up", 0.5)
+    )
+    base = got.get("base_rate_up", 0.5) if up else 1.0 - got.get("base_rate_up", 0.5)
+    touches, similar = got.get("own_touches", 0.0), int(got.get("neighbours", 0))
+    risk = got.get("risk_vol", 0.0)
+    push = got.get("expected_push_vol", 0.0)
+
+    body = [
+        f"level {price:.5g}",
+        "",
+        f"{signal.direction} {probability:.0%} — against a {base:.0%} base rate",
+        f"expected push {push:+.2f}v" + (f" · risk {risk:.2f}v" if risk else ""),
+        f"{touches:.0f} touches here + {similar} similar · strength {got.get('strength', 0.0):.2f}",
+    ]
+    return {
+        "title": f"{signal.feed.upper()} {signal.interval} — {signal.direction}",
+        "body": "\n".join(body),
+        "level": "warning",
+        "fields": fields,
+        "source": "structures",
+    }
+
+
 class Watcher:
     """The online layer as a running service."""
 
@@ -203,6 +257,17 @@ class Watcher:
             return False
         if signal.shape in UNAMBIGUOUS:
             return True
+        # A level call is the exception to the paragraph above, and on purpose.
+        # It is not unambiguous in that sense — a fundamental absolutely can
+        # explain why a level gave way — but it is the only shape here that is
+        # a *finding* rather than a fault, and the one the channel exists for.
+        # Every call that reaches this point is already `actionable`
+        # (`_level_calls` drops the rest), which is a stricter gate than any
+        # score: enough evidence, enough separation from the base rate, enough
+        # size. Routing it through agents that are switched off means publishing
+        # it to a topic nobody is subscribed to.
+        if signal.shape is Shape.LEVEL:
+            return self.settings.alert_levels
         return (
             signal.shape is Shape.DISLOCATION
             and signal.features.get("abs_dev_bps", 0.0) >= self.settings.direct_dev_bps
@@ -219,22 +284,7 @@ class Watcher:
             sent += 1
 
             if self.direct(signal):
-                await self.bus.publish(
-                    ALERTS,
-                    {
-                        "title": signal.title,
-                        "body": signal.detail,
-                        "level": "warning",
-                        "fields": {
-                            "instrument": signal.feed,
-                            "venue": signal.venue,
-                            "shape": str(signal.shape),
-                            "score": f"{signal.score:.3f}",
-                        },
-                        "source": "structures",
-                    },
-                    source="structures",
-                )
+                await self.bus.publish(ALERTS, alert_payload(signal), source="structures")
                 self.alerted += 1
 
             # Journalled with the features it was found from, because those are

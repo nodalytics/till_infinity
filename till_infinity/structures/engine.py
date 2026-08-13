@@ -171,10 +171,14 @@ class Call:
     time: float
 
     def to_signal(self, vol) -> Signal:
+        # `probability`, not `probability_up`: quoting P(up) beside a *down*
+        # call reads as the confidence in down when it is the confidence
+        # against it. The base rate flips with it or the pair is not a
+        # comparison. See reactions.Inference.probability.
         detail = (
             f"{self.inference.direction} from {self.inference.side} at "
-            f"{self.level.price:.5g} — p={self.inference.probability_up:.0%} "
-            f"vs {self.inference.base_rate_up:.0%} base, "
+            f"{self.level.price:.5g} — p={self.inference.probability:.0%} "
+            f"vs {self.inference.base_rate:.0%} base, "
             f"push {self.inference.expected_push:+.2f}v"
         )
         return Signal(
@@ -186,13 +190,16 @@ class Call:
             features={
                 "level": self.level.price,
                 "probability_up": self.inference.probability_up,
+                "probability": self.inference.probability,
                 "expected_push_vol": self.inference.expected_push,
                 "base_rate_up": self.inference.base_rate_up,
                 "edge": self.inference.edge,
                 "own_touches": float(self.inference.own_touches),
                 "neighbours": float(self.inference.neighbours),
                 "strength": self.level.strength(self.time, vol),
+                "risk_vol": self.inference.risk_vol,
             },
+            direction=self.inference.direction,
             interval=self.interval,
             time=self.time,
         )

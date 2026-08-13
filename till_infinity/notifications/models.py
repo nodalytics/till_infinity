@@ -42,6 +42,27 @@ COLOURS: dict[Level, int] = {
 
 MARKS: dict[Level, str] = {Level.INFO: "•", Level.WARNING: "▲", Level.CRITICAL: "■"}
 
+#: A glance-level icon per kind of finding. Severity is the wrong axis for the
+#: leading character — a stale feed and a level call can both be `warning`, and
+#: the reader wants to know *which* before reading a word of it.
+SHAPES: dict[str, str] = {
+    "level": "📊",
+    "drift": "🌊",
+    "stale": "💤",
+    "spread": "↔️",
+    "dislocation": "⚡",
+    "score": "🧭",
+}
+
+#: The direction wins over the shape when there is one, because it is the whole
+#: point of the message.
+DIRECTIONS: dict[str, str] = {"up": "📈", "down": "📉"}
+
+#: Keys the notification filter routes on. Rendered nowhere: every publisher
+#: that sets them already names them in the title, so printing `instrument:
+#: gold` under a headline containing "gold" is the machine talking to itself.
+ROUTING: frozenset[str] = frozenset({"shape", "instrument", "venue", "direction"})
+
 
 @dataclass(frozen=True, slots=True)
 class Channel:
@@ -96,7 +117,12 @@ class Notification:
 
     @property
     def mark(self) -> str:
-        return MARKS[self.level]
+        """The leading icon: direction if claimed, else shape, else severity."""
+        return (
+            DIRECTIONS.get(self.fields.get("direction", ""))
+            or SHAPES.get(self.fields.get("shape", ""))
+            or MARKS[self.level]
+        )
 
     def as_text(self, *, escape: bool = False, limit: int | None = None) -> str:
         """Flatten to plain text — the shape Telegram and logs both want."""
@@ -105,6 +131,8 @@ class Notification:
         if self.body:
             lines.append(esc(self.body))
         for key, value in self.fields.items():
+            if key in ROUTING:
+                continue
             lines.append(f"{esc(key)}: {esc(str(value))}")
         if self.url:
             lines.append(esc(self.url))

@@ -68,6 +68,10 @@ class Signal:
     features: dict[str, float] = field(default_factory=dict)
     interval: str = "tick"
     time: float = field(default_factory=_now)
+    #: "up", "down" or "" — set only by shapes that claim one. Carried
+    #: separately from `features` because a reader's first glance is the
+    #: direction, and a float dict is not where a headline should live.
+    direction: str = ""
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -87,6 +91,7 @@ class Signal:
             "features": {k: round(v, 6) for k, v in self.features.items()},
             "interval": self.interval,
             "time": self.time,
+            "direction": self.direction,
         }
 
     def __str__(self) -> str:

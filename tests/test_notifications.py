@@ -67,9 +67,16 @@ def test_text_rendering_escapes_html():
 
 
 def test_text_rendering_includes_fields_and_url():
-    text = alert(fields={"instrument": "gold"}, url="https://example.com").as_text()
-    assert "instrument: gold" in text
+    text = alert(fields={"spread_bps": "4.2"}, url="https://example.com").as_text()
+    assert "spread_bps: 4.2" in text
     assert "https://example.com" in text
+
+
+def test_text_rendering_omits_the_fields_the_filter_routes_on():
+    """`instrument: gold` under a headline containing "gold" is noise."""
+    text = alert(fields={"instrument": "gold", "shape": "level"}).as_text()
+    assert "instrument: gold" not in text
+    assert "shape: level" not in text
 
 
 def test_truncate_marks_the_cut():

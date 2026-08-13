@@ -199,3 +199,72 @@ async def test_an_unconfigured_listener_still_delivers_everything(monkeypatch: p
 
     assert await nt.listen(bus, limit=3) == 3
     assert len(sent) == 3
+
+
+def test_the_icon_says_which_kind_of_finding_before_a_word_is_read():
+    """Severity is the wrong axis: stale and level are both `warning`."""
+    from till_infinity.notifications.models import Level, Notification
+
+    def mark(**fields):
+        return Notification(title="t", level=Level.WARNING, fields=fields).mark
+
+    assert mark(shape="level", direction="up") == "📈"
+    assert mark(shape="level", direction="down") == "📉"
+    assert mark(shape="stale") == "💤"
+    assert mark(shape="drift") == "🌊"
+    assert mark() == "▲"  # nothing claimed — fall back to severity
+
+
+def test_routing_fields_are_not_printed_back_at_the_reader():
+    from till_infinity.notifications.models import Notification
+
+    text = Notification(
+        title="GOLD 1h — up",
+        fields={"shape": "level", "instrument": "gold", "venue": "consensus", "strength": "0.94"},
+    ).as_text()
+    assert "instrument: gold" not in text
+    assert "shape: level" not in text
+    assert "strength: 0.94" in text  # content still shows
+
+
+def test_a_level_alert_leads_with_the_instrument_and_the_direction():
+    from till_infinity.notifications.service import from_message
+    from till_infinity.structures.models import Shape, Signal
+    from till_infinity.structures.service import alert_payload
+
+    signal = Signal(
+        shape=Shape.LEVEL,
+        feed="gold",
+        venue="consensus",
+        score=0.24,
+        interval="4h",
+        direction="down",
+        features={
+            "level": 3421.5,
+            "probability": 0.77,
+            "probability_up": 0.23,
+            "base_rate_up": 0.47,
+            "expected_push_vol": -1.87,
+            "own_touches": 9.0,
+            "neighbours": 12.0,
+            "strength": 0.94,
+            "risk_vol": 0.62,
+        },
+    )
+    text = from_message(alert_payload(signal)).as_text()
+    assert text.startswith("📉 GOLD 4h — down")
+    # The claimed direction's probability, not P(up).
+    assert "down 77%" in text
+    assert "53% base rate" in text
+    assert "-1.87v" in text
+    assert "9 touches here + 12 similar" in text
+
+
+def test_a_level_signal_survives_missing_features():
+    """A payload built from a sparse signal must not take the service down."""
+    from till_infinity.structures.models import Shape, Signal
+    from till_infinity.structures.service import alert_payload
+
+    payload = alert_payload(Signal(shape=Shape.LEVEL, feed="btc", venue="consensus", score=0.1))
+    assert payload["title"].startswith("BTC")
+    assert isinstance(payload["body"], str)

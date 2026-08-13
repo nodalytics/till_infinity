@@ -69,6 +69,11 @@ class Settings:
     direct_dev_bps: float = DEFAULT_DIRECT_DEV_BPS
     cooldown: float = DEFAULT_COOLDOWN
     alert_direct: bool = True
+    #: Whether an actionable level call reaches a person without an agent in
+    #: between. On by default, because it is the thing the system is *for* —
+    #: with it off and agents disabled, level calls are published to a topic
+    #: nobody is subscribed to and the channel receives only feed faults.
+    alert_levels: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -85,4 +90,5 @@ class Settings:
             direct_dev_bps=_float("STRUCTURES_DIRECT_DEV_BPS", DEFAULT_DIRECT_DEV_BPS),
             cooldown=_float("STRUCTURES_COOLDOWN_S", DEFAULT_COOLDOWN),
             alert_direct=os.environ.get("STRUCTURES_DIRECT", "1") not in ("0", "false", "no"),
+            alert_levels=os.environ.get("STRUCTURES_ALERT_LEVELS", "1") not in ("0", "false", "no"),
         )
