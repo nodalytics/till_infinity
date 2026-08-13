@@ -174,9 +174,17 @@ async def listen(
             notification = replace(notification, source=message.source)
         deliveries = await notify(notification, settings=settings, targets=targets)
         failed = [d for d in deliveries if not d.ok]
+        # The first body line comes along, because the title alone cannot be
+        # checked against anything. For a level call that line carries the
+        # price and which timeframes agreed — the one claim in the message that
+        # is verifiable from outside, against `structures zones` for the same
+        # instrument. Logging what was *sent* rather than what was computed is
+        # the point: those are the two things that can silently disagree.
+        summary = notification.body.splitlines()[0] if notification.body else ""
         log.info(
-            "alert %r -> %d/%d channels%s",
+            "alert %r%s -> %d/%d channels%s",
             notification.title,
+            f" [{summary}]" if summary else "",
             len(deliveries) - len(failed),
             len(deliveries),
             f" ({', '.join(d.target for d in failed)} failed)" if failed else "",
