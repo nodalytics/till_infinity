@@ -368,6 +368,54 @@ on, and the disagreement is surfaced as `mixed` rather than hidden. A mixed
 signal is never `actionable`: whichever half you act on, the other says you are
 wrong.
 
+## 7b. False breakouts
+
+A trap is price getting through a level convincingly enough to invite the
+breakout trade, and then giving it all back. It is not a shade of "break" and
+not a shade of "reject" — the price action before it is a break and the price
+action after it is a rejection — so a model with only those two words records
+it as **a break that worked**, which is the opposite of what happened.
+
+That is what this did until it was measured. On the stored history:
+
+| outcome | | |
+|---|---|---|
+| chop | 535 | 74.3% |
+| reject | 115 | 16.0% |
+| break | 43 | 6.0% |
+| **trap** | **27** | **3.8%** |
+
+**27 of 70 breakout attempts were false — 39%.** All of them previously counted
+as clean breaks, so the model was learning that breaking works about 1.6 times
+more often than it does.
+
+### A break is provisional until it survives
+
+Which is how anyone trading one treats it. Price crossing `resolve_vol` beyond
+the level no longer resolves the touch; it marks it `breaking` and starts a
+clock:
+
+- price comes back through the level by `TRAP_VOL` -> **trap**
+- the clock runs out with price still beyond -> **break**
+
+The push recorded for a trap is where price *ended*, not how far it went — a
+breakout entry loses, and the number has to say so. How far it went is kept
+separately as `excursion_vol`: what the trade was offered before it was taken
+back.
+
+### A trap is the level holding
+
+Violently, after letting price through first. So a trap does not mark the level
+broken and does not decay its history — this is the level doing exactly what it
+did before, and the evidence is worth more, not less.
+
+`trap_rate` is the number worth knowing before trading a break: of the times
+price got through here, how often it was taken back. A level where half the
+breakouts fail is not a level you break out of.
+
+On the real history, `btc 63,678.75` (5m, from below) carries three effective
+traps and **no** clean breaks.
+
 ## 8. What stops it fooling itself
 
 Every conditional is reported beside the **base rate** — the unconditional

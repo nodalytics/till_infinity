@@ -73,6 +73,15 @@ RESOLVE_VOL = 1.5
 #: How far beyond a level price must close for a break rather than a wick.
 BREAK_VOL = 0.75
 
+#: How far back through a level a broken-out price must come for the break to
+#: have been a trap. Measured from the level, on the side price started from,
+#: so a drift back into the zone is not enough — it has to give it all back.
+TRAP_VOL = 0.5
+
+#: How long a break stays provisional, in seconds. A break is not a break until
+#: it survives; before this elapses the outcome is genuinely not yet known.
+TRAP_WINDOW = 1_800.0
+
 #: Process noise per hour, in volatility units. Levels drift slowly; this is
 #: what stops a filter with many observations from freezing solid.
 DRIFT_VOL_PER_HOUR = 0.02
@@ -164,6 +173,11 @@ class Outcome(StrEnum):
     REJECT = "reject"
     #: Let it through, and it kept going.
     BREAK = "break"
+    #: Let it through, then took it back — a false breakout. Distinct from both
+    #: of the above and not a shade of either: the price action that precedes it
+    #: is a break, and the price action that follows is a rejection, so a model
+    #: that only has those two words records it as a break that worked.
+    TRAP = "trap"
     #: Neither, within the horizon. Kept because "nothing happened" is a real
     #: answer and a model that never sees it will predict a move every time.
     CHOP = "chop"
@@ -237,6 +251,10 @@ class SideStats:
     touches: float = 0.0
     rejects: float = 0.0
     breaks: float = 0.0
+    #: False breakouts. Tracked apart from rejects because they are the more
+    #: useful fact: a level that traps is one where the obvious trade loses,
+    #: which is different from one that simply holds.
+    traps: float = 0.0
     chops: float = 0.0
     #: Sum and sum-of-squares of the signed push, for mean and dispersion.
     push_sum: float = 0.0
@@ -254,6 +272,7 @@ class SideStats:
         self.touches *= factor
         self.rejects *= factor
         self.breaks *= factor
+        self.traps *= factor
         self.chops *= factor
         self.push_sum *= factor
         self.push_sq *= factor
@@ -270,12 +289,24 @@ class SideStats:
                 self.rejects += 1
             case Outcome.BREAK:
                 self.breaks += 1
+            case Outcome.TRAP:
+                self.traps += 1
             case Outcome.CHOP:
                 self.chops += 1
 
     @property
     def mean_push(self) -> float:
         return self.push_sum / self.touches if self.touches else 0.0
+
+    @property
+    def trap_rate(self) -> float:
+        """Of the times price got through, how often it was taken back.
+
+        The number worth knowing before trading a break: a level where half the
+        breakouts fail is not a level you break out of.
+        """
+        attempts = self.breaks + self.traps
+        return self.traps / attempts if attempts else 0.0
 
     @property
     def push_sigma(self) -> float:
@@ -302,6 +333,7 @@ class SideStats:
             "touches": round(self.touches, 3),
             "rejects": round(self.rejects, 3),
             "breaks": round(self.breaks, 3),
+            "traps": round(self.traps, 3),
             "chops": round(self.chops, 3),
             "mean_push_vol": round(self.mean_push, 4),
             "push_sigma_vol": round(self.push_sigma, 4),
@@ -446,6 +478,11 @@ class Level:
                 # Keeping its rejection history at full weight would have it
                 # still predicting a bounce it has just conspicuously failed.
                 self.stats(side).decay(BREAK_DECAY)
+        elif outcome is Outcome.TRAP:
+            # A trap is the level holding, not failing — violently, after
+            # letting price through first. Its history stays intact, because
+            # this is the level doing exactly what it did before.
+            self.state = State.FLIPPED if self.state is State.BROKEN else State.TESTED
         elif outcome is Outcome.REJECT and self.state is State.BROKEN:
             # Broken, and now respected again — the level flipped, which is a
             # repeating structure rather than a dead one.

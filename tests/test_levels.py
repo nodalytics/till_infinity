@@ -805,3 +805,103 @@ def test_agreement_between_the_two_is_not_mixed():
     assert not found.mixed
     assert found.direction == "up"
     assert found.actionable
+
+
+# --------------------------------------------------- false breakouts (traps)
+
+
+def _walk(tracker, level, side, path, vol, start=1_000_000.0):
+    """Run price along `path` (in bps from the level) until the touch resolves."""
+    entry = level.price
+    features = reactions.features_for(level, side, entry, vol, approach_vol=1.0, when=start)
+    tracker.begin(level, entry, features, start)
+    for step, offset in enumerate(path, start=1):
+        moved = level.price * (1 + offset / 10_000)
+        done = tracker.update(level, moved, vol, start + step * 60)
+        if done:
+            return done
+    return None
+
+
+def test_a_break_that_comes_straight_back_is_a_trap_not_a_break():
+    """The obvious trade lost. Recording it as a clean break teaches the opposite."""
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=7200, trap_window=3600)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+
+    # up through the level, then all the way back down through it
+    done = _walk(tracker, level, Side.BELOW, [10, 20, 30, 20, 5, -10, -20], vol)
+
+    assert done is not None
+    assert done.outcome is Outcome.TRAP
+    assert done.excursion_vol > 0  # what the breakout entry was offered
+
+
+def test_a_break_that_holds_is_still_a_break():
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=7200, trap_window=300)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+
+    done = _walk(tracker, level, Side.BELOW, [10, 20, 30, 35, 40, 45, 50, 55, 60], vol)
+
+    assert done is not None
+    assert done.outcome is Outcome.BREAK
+
+
+def test_a_break_is_provisional_until_it_survives():
+    """It is not a break until it holds, which is how anyone trading one treats it."""
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=7200, trap_window=3600)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    features = reactions.features_for(level, Side.BELOW, 4400.0, vol)
+    tracker.begin(level, 4400.0, features, 1_000_000.0)
+
+    for step, offset in enumerate([10, 20, 30], start=1):
+        moved = level.price * (1 + offset / 10_000)
+        assert tracker.update(level, moved, vol, 1_000_000.0 + step * 60) is None
+
+    assert tracker.open_touch(level).breaking
+
+
+def test_a_trap_leaves_the_level_intact():
+    """It held — violently, after letting price through. That is not failing."""
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=7200, trap_window=3600)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    _walk(tracker, level, Side.BELOW, [10, 20, 30, 20, 5, -10, -20], vol)
+
+    assert level.state is not State.BROKEN
+    assert level.stats(Side.BELOW).traps >= 1
+
+
+def test_the_trap_rate_says_whether_breaks_here_are_worth_trading():
+    stats = lv.SideStats()
+    for _ in range(3):
+        stats.record(Outcome.BREAK, 2.0)
+    for _ in range(1):
+        stats.record(Outcome.TRAP, -1.0)
+    assert stats.trap_rate == pytest.approx(0.25)
+
+
+def test_a_level_never_broken_has_no_trap_rate():
+    stats = lv.SideStats()
+    stats.record(Outcome.REJECT, 1.0)
+    assert stats.trap_rate == 0.0
+
+
+def test_a_trap_is_pushed_the_way_it_ended_not_the_way_it_broke():
+    """A breakout entry loses; the push has to reflect that, not the excursion."""
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=7200, trap_window=3600)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    done = _walk(tracker, level, Side.BELOW, [10, 20, 30, 20, 5, -10, -20], vol)
+    assert done.push_vol < 0  # ended below, despite having broken up
+
+
+def test_traps_and_breaks_are_counted_apart():
+    stats = lv.SideStats()
+    stats.record(Outcome.BREAK, 2.0)
+    stats.record(Outcome.TRAP, -2.0)
+    assert stats.breaks == 1
+    assert stats.traps == 1
+    assert stats.touches == 2

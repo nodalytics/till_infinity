@@ -144,6 +144,12 @@ gold arriving at 4405.5
 Every conditional is shown beside its base rate — a level whose P(up) matches
 the unconditional rate has said nothing.
 
+**False breakouts are a distinct outcome**, because they are neither a break
+nor a rejection and a model with only those two words scores a trap as a break
+that worked. A break stays provisional until it survives; give it back and it
+is a trap, recorded with the push it *ended* on. On the stored history 27 of 70
+breakout attempts were false — 39%.
+
 Levels are built on **5m, 15m, 1h, 4h, 1d and 1w**, and each timeframe keeps
 its own volatility and its own rate of forgetting. Those differ by more than
 anyone guesses:

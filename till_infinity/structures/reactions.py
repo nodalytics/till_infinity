@@ -49,7 +49,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from .levels import CONFIDENT_TOUCHES, Level, Outcome, Side
+from .levels import CONFIDENT_TOUCHES, TRAP_VOL, TRAP_WINDOW, Level, Outcome, Side
 from .volatility import Volatility
 
 #: Neighbours consulted for the cold-start prior.
@@ -138,10 +138,21 @@ class Touch:
     outcome: Outcome = Outcome.OPEN
     push_vol: float = 0.0
     resolved: float = 0.0
+    #: When price first got beyond the level. A break is provisional until it
+    #: survives `TRAP_WINDOW`, so this is set long before the outcome is.
+    broke_at: float = 0.0
+    #: Furthest it reached beyond the level, in volatility units. What a
+    #: breakout entry would have been offered before it was taken back.
+    excursion_vol: float = 0.0
 
     @property
     def open(self) -> bool:
         return self.outcome is Outcome.OPEN
+
+    @property
+    def breaking(self) -> bool:
+        """Through the level, but not yet proven to have stayed through."""
+        return bool(self.broke_at) and self.open
 
     def to_dict(self) -> dict:
         return {
@@ -152,6 +163,7 @@ class Touch:
             "extreme": round(self.extreme, 8),
             "outcome": str(self.outcome),
             "push_vol": round(self.push_vol, 4),
+            "excursion_vol": round(self.excursion_vol, 4),
             "resolved": self.resolved,
             **self.features.to_dict(),
         }
@@ -379,6 +391,10 @@ class Tracker:
     resolve_vol: float = 1.5
     break_vol: float = 0.75
     horizon: float = 3600.0
+    #: How far back through the level counts as the break being taken back.
+    trap_vol: float = TRAP_VOL
+    #: How long a break stays provisional before it counts as having held.
+    trap_window: float = TRAP_WINDOW
     memory: Memory = field(default_factory=Memory)
     _open: dict[tuple[str, float], Touch] = field(default_factory=dict)
 
@@ -420,10 +436,26 @@ class Tracker:
         away = travelled if side is Side.ABOVE else -travelled
         beyond = -away
 
+        if touch.breaking:
+            # A break is provisional. Coming back through the level means the
+            # breakout was a trap, and the trade it invited has lost — which is
+            # a different fact from the level holding in the first place, and
+            # the one worth knowing before trading the next break here.
+            touch.excursion_vol = max(touch.excursion_vol, beyond)
+            if away >= self.trap_vol:
+                return self._close(level, touch, Outcome.TRAP, travelled, side, when)
+            if when - touch.broke_at >= self.trap_window:
+                return self._close(level, touch, Outcome.BREAK, travelled, side, when)
+            return None
+
         if away >= self.resolve_vol:
             return self._close(level, touch, Outcome.REJECT, travelled, side, when)
         if beyond >= self.resolve_vol:
-            return self._close(level, touch, Outcome.BREAK, travelled, side, when)
+            # Through it — but not resolved yet. A break is not a break until
+            # it survives, which is how anyone trading one treats it.
+            touch.broke_at = when
+            touch.excursion_vol = beyond
+            return None
         if when - touch.started >= self.horizon:
             return self._close(level, touch, Outcome.CHOP, travelled, side, when)
         return None
@@ -456,14 +488,21 @@ class Tracker:
         return len(self._open)
 
     def expire(self, when: float) -> list[Touch]:
-        """Chop out anything that has sat open past the horizon."""
+        """Close out anything that has sat open too long.
+
+        A touch that broke and then went quiet counts as a break: it got
+        through and nothing took it back. One that never got anywhere is chop.
+        """
         stale = [
-            key for key, touch in self._open.items() if when - touch.started >= self.horizon * 2
+            key
+            for key, touch in self._open.items()
+            if when - touch.started >= self.horizon * 2
+            or (touch.breaking and when - touch.broke_at >= self.trap_window)
         ]
         dropped = []
         for key in stale:
             touch = self._open.pop(key)
-            touch.outcome = Outcome.CHOP
+            touch.outcome = Outcome.BREAK if touch.breaking else Outcome.CHOP
             touch.resolved = when
             self.memory.add(touch)
             dropped.append(touch)
