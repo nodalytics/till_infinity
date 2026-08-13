@@ -1128,8 +1128,14 @@ def test_wick_depth_is_averaged_rather_than_taken_from_the_last_one():
     for _ in range(6):
         level.observe_wick(Side.ABOVE, 4400.0, 4400.0 * (1 - 5 / 10_000), vol)
     steady = level.stats(Side.ABOVE).wick_vol
+
+    # one wick twelve times as long as the others
     level.observe_wick(Side.ABOVE, 4400.0, 4400.0 * (1 - 60 / 10_000), vol)
-    assert level.stats(Side.ABOVE).wick_vol < steady * 3
+    after = level.stats(Side.ABOVE).wick_vol
+    raw = 60.0 / vol.bps
+
+    assert after > steady  # it moved
+    assert after < steady + (raw - steady) * 0.5  # but took less than half the jump
 
 
 def test_the_zone_is_still_clamped_however_long_the_wick():
