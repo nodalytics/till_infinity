@@ -905,3 +905,112 @@ def test_traps_and_breaks_are_counted_apart():
     assert stats.breaks == 1
     assert stats.traps == 1
     assert stats.touches == 2
+
+
+# ------------------------------------------------------------ back checks
+
+
+def _broken(interval: str = "5m", when: float = 1_000_000.0) -> Level:
+    """A level price has broken upward through."""
+    level = Level(feed="g", interval=interval, filter=Kalman(mean=4400.0, variance=0.5))
+    level.record(Side.BELOW, Outcome.BREAK, 2.0, when)
+    return level
+
+
+def test_a_retest_from_the_new_side_is_a_back_check():
+    """Momentum proven by the break, entry on the pullback, stop beyond the level."""
+    assert _broken().is_backcheck(Side.ABOVE, 1_000_600.0)
+
+
+def test_a_return_from_the_old_side_is_not_a_back_check():
+    """That is the break failing late, which is a different thing entirely."""
+    assert not _broken().is_backcheck(Side.BELOW, 1_000_600.0)
+
+
+def test_a_visit_long_after_the_break_is_just_a_level():
+    level = _broken()
+    assert not level.is_backcheck(Side.ABOVE, 1_000_000.0 + 90 * 86_400)
+
+
+def test_the_back_check_window_scales_with_the_timeframe():
+    """Thirty bars is a couple of hours on 5m and most of a year on 1w."""
+    fast = _broken("5m").backcheck_window()
+    slow = _broken("1w").backcheck_window()
+    assert slow > 100 * fast
+
+
+def test_a_level_never_broken_has_no_back_check():
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    assert not level.is_backcheck(Side.ABOVE, 1_000_000.0)
+
+
+def test_a_held_retest_is_recorded_as_a_back_check():
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=7200, trap_window=300)
+    level = _broken(when=1_000_000.0)
+
+    # price comes back down to it and bounces
+    _walk(tracker, level, Side.ABOVE, [-2, -1, 5, 15, 25, 35], vol, start=1_000_600.0)
+
+    stats = level.stats(Side.ABOVE)
+    assert stats.backchecks >= 1
+    assert stats.rejects >= 1  # it is also a rejection; the level held
+    assert level.state is State.FLIPPED
+
+
+def test_a_first_touch_is_not_counted_as_a_back_check():
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=7200)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    _walk(tracker, level, Side.ABOVE, [-2, 5, 15, 25, 35], vol)
+    assert level.stats(Side.ABOVE).backchecks == 0
+
+
+def test_the_stop_sits_beyond_the_zone_not_at_the_level():
+    """A stop inside the zone is a stop inside the noise — the level working hits it."""
+    vol = _vol()
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    low, high = level.zone(vol)
+
+    assert level.stop_for(Side.ABOVE, vol) < low
+    assert level.stop_for(Side.BELOW, vol) > high
+
+
+def test_risk_is_reported_in_the_same_units_as_the_reward():
+    vol = _vol()
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    risk = level.risk_vol(Side.ABOVE, 4400.0, vol)
+    assert risk > 0
+
+    found = reactions.Inference(
+        side=Side.ABOVE,
+        probability_up=0.7,
+        expected_push=2.0,
+        push_sigma=0.5,
+        base_rate_up=0.5,
+        own_touches=10,
+        neighbours=12,
+        risk_vol=risk,
+    )
+    assert found.reward_to_risk == pytest.approx(2.0 / risk)
+
+
+def test_an_expected_move_with_no_risk_recorded_has_no_ratio():
+    found = reactions.Inference(
+        side=Side.ABOVE,
+        probability_up=0.7,
+        expected_push=2.0,
+        push_sigma=0.5,
+        base_rate_up=0.5,
+        own_touches=10,
+        neighbours=12,
+    )
+    assert found.reward_to_risk == 0.0
+
+
+def test_back_checks_learn_from_other_back_checks():
+    """A retest is a different setup from a first touch, so the neighbours differ."""
+    first = reactions.Features(Side.ABOVE, 1.0, 0.5, 0.5, 1.0, 0.5, backcheck=0.0)
+    retest = reactions.Features(Side.ABOVE, 1.0, 0.5, 0.5, 1.0, 0.5, backcheck=1.0)
+    assert first.distance(retest) > 0
+    assert first.distance(first) == 0.0

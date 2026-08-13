@@ -254,6 +254,97 @@ def headlines(
     return rows
 
 
+# ----------------------------------------------------------------- levels
+
+
+def _engine(state_dir: Path):
+    """The level engine as `structures` last saved it, or None.
+
+    Loaded rather than recomputed: the levels an analyst reasons about must be
+    the ones the system is actually watching, and rebuilding them here would
+    produce a second set that quietly disagreed with the ones being alerted on.
+    """
+    from ..structures import store
+
+    state = store.load(state_dir)
+    return (state or {}).get("engine")
+
+
+def levels(state_dir: Path, feed: str, interval: str = "", limit: int = 25) -> list[dict[str, Any]]:
+    """Key price levels found for one instrument, strongest first.
+
+    Each carries where it is, how wide the zone is, how many *effective*
+    touches it has from each side, and what price did on arrival — including
+    `trap_rate`, the share of breakouts here that were taken back.
+
+    Touch counts are decayed by age, so they are smaller than a raw tally and
+    are the number that should be reasoned about: a level tested ten times last
+    quarter is weaker evidence than one tested twice this week.
+    """
+    engine = _engine(state_dir)
+    if engine is None:
+        return [{"error": "no level state yet — the structures service has not run"}]
+    rows = [row for row in engine.summary() if row["feed"] == feed]
+    if interval:
+        rows = [row for row in rows if row["interval"] == interval]
+    rows.sort(key=lambda row: row.get("strength", 0.0), reverse=True)
+    return rows[: _clamp(limit)]
+
+
+def level_at(state_dir: Path, feed: str, price: float, limit: int = 5) -> list[dict[str, Any]]:
+    """What history says happens when price arrives at `price`, nearest first.
+
+    This is the question levels exist to answer: given price came from a
+    particular side, which way did it get pushed, how hard, and how does that
+    compare with the unconditional rate. A conditional matching the base rate
+    has said nothing, so both are always returned.
+    """
+    engine = _engine(state_dir)
+    if engine is None:
+        return [{"error": "no level state yet — the structures service has not run"}]
+    from ..structures import reactions
+
+    vol = engine.reference(feed)
+    found = sorted(engine.levels(feed), key=lambda level: abs(level.distance_vol(price, vol)))
+    out: list[dict[str, Any]] = []
+    for level in found[: _clamp(limit)]:
+        side = level.side_of(price)
+        features = reactions.features_for(level, side, price, vol)
+        inference = reactions.infer(level, side, features, engine.tracker.memory)
+        stats = level.stats(side)
+        out.append(
+            {
+                "level": round(level.price, 8),
+                "interval": level.interval,
+                "state": str(level.state),
+                "distance_vol": round(level.distance_vol(price, vol), 3),
+                "arriving_from": str(side),
+                "trap_rate": round(stats.trap_rate, 3),
+                **inference.to_dict(),
+            }
+        )
+    return out
+
+
+def zones(state_dir: Path, feed: str, limit: int = 15) -> list[dict[str, Any]]:
+    """Levels combined across timeframes, strongest first.
+
+    A price that is a level on 15m, 1h *and* 4h is a different object from one
+    that appears only on 15m — `depth` is how many agree, `span` how big a
+    structure it is, `precision` how finely it is placed.
+    """
+    engine = _engine(state_dir)
+    if engine is None:
+        return [{"error": "no level state yet — the structures service has not run"}]
+    from .. import structures as sx
+
+    vol = engine.reference(feed)
+    now = time.time()
+    found = sx.zones_for(engine, feed)
+    found.sort(key=lambda zone: zone.strength(now, vol), reverse=True)
+    return [zone.to_dict(vol, now) for zone in found[: _clamp(limit)]]
+
+
 def reserves(news_db: Path, country: str = "", limit: int = 20) -> list[dict[str, Any]]:
     """IMF reserve observations. Values are already in USD — `scale` is provenance."""
     sql = (

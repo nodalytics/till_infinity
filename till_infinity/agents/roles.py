@@ -53,6 +53,10 @@ class Role:
 
 
 PRICE_TOOLS = ("instruments", "quotes", "spreads", "divergence", "bars", "move")
+#: The structural view: where price has turned before and what it did there.
+#: Separate from PRICE_TOOLS because it answers a different question — those
+#: describe the present, these describe what the present has meant before.
+LEVEL_TOOLS = ("levels", "level_at", "zones")
 NEWS_TOOLS = ("events", "headlines", "reserves")
 #: Every role gets its own history. An analyst with no memory reports the same
 #: dislocation every hour and never learns that the last one resolved itself.
@@ -69,6 +73,9 @@ The same instrument is quoted by several brokers at once, so the differences
 between them are the signal, not the level itself.
 
 What is worth reporting:
+- Price arriving at a level with a history (`level_at`, `zones`), where what
+  happened before actually says something. Always compare `probability_up`
+  against `base_rate_up` — equal means the level has told you nothing.
 - One venue's mid drifting away from the others (`divergence`), which is either
   a stale feed or a real dislocation. Say which you think it is.
 - A spread widening against its own recent average (`spreads`), not against
@@ -80,7 +87,7 @@ What is worth reporting:
 What is not worth reporting: that a price changed, that FX is quiet at the
 weekend, or that a venue you cannot see data for might be doing something.
 """.strip(),
-    tools=PRICE_TOOLS + MEMORY_TOOLS,
+    tools=PRICE_TOOLS + LEVEL_TOOLS + MEMORY_TOOLS,
 )
 
 MACRO = Role(
@@ -113,14 +120,18 @@ reaches someone's phone. Most of the time the answer is no, and returning no
 findings is you doing your job well.
 
 Interrupt someone when price and context agree — a dislocation that a release
-explains, or a release whose expected move has not shown up in price yet.
+explains, a release whose expected move has not shown up in price yet, or price
+arriving at a level whose history points the same way the calendar does.
 A number on its own is rarely worth a phone buzzing.
+
+`level_at` gives the structural half. Treat `actionable` as a floor rather than
+a verdict, and never report an edge without the base rate beside it.
 
 Set `critical` only when waiting an hour would cost something. Everything else
 is `warning` at most. An alert that is merely interesting is `info`, which
 means most people will never see it, and that is correct.
 """.strip(),
-    tools=PRICE_TOOLS + NEWS_TOOLS + MEMORY_TOOLS,
+    tools=PRICE_TOOLS + LEVEL_TOOLS + NEWS_TOOLS + MEMORY_TOOLS,
 )
 
 ROLES: dict[str, Role] = {role.name: role for role in (MARKET, MACRO, RISK)}

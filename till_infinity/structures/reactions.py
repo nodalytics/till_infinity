@@ -89,6 +89,10 @@ class Features:
     #: split: pivots do behave differently, but a pivot with no history should
     #: still be able to borrow from swing levels rather than from nothing.
     pivot: float = 0.0
+    #: 1.0 when this touch is a retest of a recent break. Also a dimension: a
+    #: back check is a different setup from a first touch, and the neighbours
+    #: worth learning from are the other back checks.
+    backcheck: float = 0.0
 
     def distance(self, other: Features) -> float:
         """Similarity for kNN. Side is a hard constraint, not a dimension.
@@ -105,6 +109,7 @@ class Features:
             + (self.run_vol - other.run_vol) ** 2
             + (self.experience - other.experience) ** 2
             + (self.pivot - other.pivot) ** 2
+            + (self.backcheck - other.backcheck) ** 2
         )
 
     def to_dict(self) -> dict[str, float | str]:
@@ -116,6 +121,7 @@ class Features:
             "run_vol": round(self.run_vol, 4),
             "experience": round(self.experience, 4),
             "pivot": self.pivot,
+            "backcheck": self.backcheck,
         }
 
 
@@ -184,6 +190,11 @@ class Inference:
     own_touches: float
     neighbours: int
     detail: str = ""
+    #: A retest of a recent break, arriving from the side it broke to.
+    backcheck: bool = False
+    #: Distance to a stop beyond the flipped level, in volatility units. What
+    #: being wrong costs, which an expected push means nothing without.
+    risk_vol: float = 0.0
 
     @property
     def direction(self) -> str:
@@ -218,6 +229,16 @@ class Inference:
         return self.probability_up - self.base_rate_up
 
     @property
+    def reward_to_risk(self) -> float:
+        """Expected push against what being wrong costs, both in volatility units.
+
+        The number that decides whether an edge is worth taking. A 70% call
+        worth half what it risks is a losing trade; a 55% call worth three
+        times it is not.
+        """
+        return abs(self.expected_push) / self.risk_vol if self.risk_vol else 0.0
+
+    @property
     def actionable(self) -> bool:
         """Enough evidence, enough separation from the base rate, enough size.
 
@@ -245,6 +266,9 @@ class Inference:
             "base_rate_up": round(self.base_rate_up, 4),
             "edge": round(self.edge, 4),
             "own_touches": round(self.own_touches, 2),
+            "backcheck": self.backcheck,
+            "risk_vol": round(self.risk_vol, 3),
+            "reward_to_risk": round(self.reward_to_risk, 3),
             "neighbours": self.neighbours,
             "actionable": self.actionable,
             "mixed": self.mixed,
@@ -343,8 +367,21 @@ class Memory:
         return len(self._touches)
 
 
-def infer(level: Level, side: Side, features: Features, memory: Memory) -> Inference:
-    """Combine the level's own record with its neighbours' into one answer."""
+def infer(
+    level: Level,
+    side: Side,
+    features: Features,
+    memory: Memory,
+    vol: Volatility | None = None,
+    price: float = 0.0,
+) -> Inference:
+    """Combine the level's own record with its neighbours' into one answer.
+
+    With `vol` and `price` the risk geometry is filled in too — where a stop
+    would sit beyond the flipped level, and what the expected push is worth
+    against it. An expected move without the cost of being wrong is only half
+    a decision.
+    """
     own = level.stats(side)
     prior_up, prior_push, neighbours = memory.prior(features)
 
@@ -371,6 +408,8 @@ def infer(level: Level, side: Side, features: Features, memory: Memory) -> Infer
         own_touches=own.touches,
         neighbours=neighbours,
         detail=detail,
+        backcheck=bool(features.backcheck),
+        risk_vol=level.risk_vol(side, price or level.price, vol) if vol is not None else 0.0,
     )
 
 
@@ -449,7 +488,11 @@ class Tracker:
             return None
 
         if away >= self.resolve_vol:
-            return self._close(level, touch, Outcome.REJECT, travelled, side, when)
+            # A retest of a recent break that holds is a back check, not a
+            # plain rejection: the direction is already established, so this is
+            # a continuation entry rather than a reversal one.
+            held = Outcome.BACKCHECK if level.is_backcheck(side, touch.started) else Outcome.REJECT
+            return self._close(level, touch, held, travelled, side, when)
         if beyond >= self.resolve_vol:
             # Through it — but not resolved yet. A break is not a break until
             # it survives, which is how anyone trading one treats it.
@@ -477,6 +520,12 @@ class Tracker:
         touch.resolved = when
         self._open.pop(self.key(level), None)
         level.record(side, outcome, touch.push_vol, when)
+        if outcome is Outcome.BREAK and touch.broke_at:
+            # The retest clock starts when price *got through*, not when the
+            # break was confirmed. Confirmation waits out the trap window, so
+            # dating it from there spends most of the window before a retest
+            # could possibly happen — which is why almost none were detected.
+            level.broke_at = touch.broke_at
         self.memory.add(touch)
         return touch
 
@@ -529,6 +578,7 @@ def features_for(
         run_vol=run_vol,
         experience=experience_of(level.touches),
         pivot=1.0 if level.origin.startswith("pivot") else 0.0,
+        backcheck=1.0 if level.is_backcheck(side, when) else 0.0,
     )
 
 

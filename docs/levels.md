@@ -416,6 +416,72 @@ breakouts fail is not a level you break out of.
 On the real history, `btc 63,678.75` (5m, from below) carries three effective
 traps and **no** clean breaks.
 
+## 7c. Back checks
+
+The third thing that happens at a level, and the one worth the most.
+
+Price breaks a level and the break holds. Price then comes back to that same
+level — now flipped, old resistance become support — holds, and carries on the
+way it broke. It sits between the other two:
+
+| | momentum | entry | risk |
+|---|---|---|---|
+| breakout | proven | chasing | undefined |
+| **back check** | **proven** | **pullback** | **defined by the flipped level** |
+| false breakout | — | — | you were wrong |
+
+Two conditions, and both are the definition rather than a threshold:
+
+- the break must be **recent** — `BACKCHECK_BARS` of that timeframe, so a
+  couple of hours on 5m and most of a year on 1w. A return three months later
+  is a level, not a retest.
+- price must arrive from the side it broke **to**. Arriving from the original
+  side is the break failing late, which is a different event entirely.
+
+A back check is recorded as *both* a reject and a back check: the level held,
+and it held in this particular way. `backcheck` is also a kNN dimension, so a
+retest learns from other retests rather than from first touches — a
+continuation setup and a reversal setup are not the same population.
+
+### Risk is the point
+
+The reason this structure matters is that it defines the stop, so the trade is
+finally comparable with any other:
+
+```
+stop            = beyond the zone, by STOP_BUFFER_VOL
+risk_vol        = |price - stop| in volatility units
+reward_to_risk  = |expected push| / risk_vol
+```
+
+The stop goes **beyond the zone**, not at the level. The zone is precisely the
+band where price can sit and still be respecting the level, so a stop inside it
+is a stop inside the noise — it gets hit by the level working.
+
+`reward_to_risk` is what decides whether an edge is worth taking. A 70% call
+worth half what it risks is a losing trade; a 55% call worth three times it is
+not.
+
+### How often it actually happens
+
+Rarely, on the history collected so far — and the honest numbers are more
+useful than a tuned threshold:
+
+| | |
+|---|---|
+| breaks recorded | 43 |
+| breaks ever revisited | **15** |
+| back checks | **1** |
+
+The ceiling is 15, not 43: most breaks are never retested at all, which is what
+a break is. The binding constraint on the rest is the 74% chop rate — a retest
+that drifts sideways rather than moving resolves as chop, which is correct,
+because a back check that produces no move is not a tradeable one.
+
+One occurrence is not evidence about anything. The mechanism is verified by
+construction in the tests; whether back checks pay is a question for the
+journal once there are enough of them to ask.
+
 ## 8. What stops it fooling itself
 
 Every conditional is reported beside the **base rate** — the unconditional

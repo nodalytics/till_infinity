@@ -144,11 +144,17 @@ gold arriving at 4405.5
 Every conditional is shown beside its base rate — a level whose P(up) matches
 the unconditional rate has said nothing.
 
-**False breakouts are a distinct outcome**, because they are neither a break
-nor a rejection and a model with only those two words scores a trap as a break
-that worked. A break stays provisional until it survives; give it back and it
-is a trap, recorded with the push it *ended* on. On the stored history 27 of 70
-breakout attempts were false — 39%.
+Three things happen at a level and the model tells them apart, because a model
+with only "held" and "broke" scores the other two wrong:
+
+| | what it is | recorded |
+|---|---|---|
+| **break** | through, and it stayed through | provisional until it survives |
+| **false breakout** | through, then given back | the push it *ended* on, not the excursion |
+| **back check** | broke, pulled back, held, carried on | risk defined by the flipped level |
+
+On the stored history 27 of 70 breakout attempts were false — **39%** — and
+every one of those previously counted as a break that worked.
 
 Levels are built on **5m, 15m, 1h, 4h, 1d and 1w**, and each timeframe keeps
 its own volatility and its own rate of forgetting. Those differ by more than

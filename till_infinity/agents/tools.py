@@ -27,6 +27,7 @@ from pydantic_ai.tools import Tool
 from ..journal import read as read_journal
 from ..journal.store import DEFAULT_DB as DEFAULT_JOURNAL
 from ..logging import get_logger
+from ..structures.config import DEFAULT_STATE_DIR
 from . import data
 
 log = get_logger(__name__)
@@ -39,6 +40,7 @@ class Deps:
     prices_db: Path
     news_db: Path
     journal_db: Path = Path(DEFAULT_JOURNAL)
+    structures_dir: Path = Path(DEFAULT_STATE_DIR)
 
 
 def _guard(call: Callable[[], Any], what: str) -> Any:
@@ -168,6 +170,55 @@ def reserves(ctx: RunContext[Deps], country: str = "", limit: int = 20) -> Any:
     return _guard(lambda: data.reserves(ctx.deps.news_db, country, limit), "reserves")
 
 
+# ------------------------------------------------------------------ levels
+
+
+def levels(ctx: RunContext[Deps], feed: str, interval: str = "", limit: int = 25) -> Any:
+    """Key price levels for one instrument, strongest first.
+
+    Where price has repeatedly turned, how wide the zone is, and what it did on
+    arrival **from each side** — the same level often behaves oppositely
+    depending on which direction price came from, so `sides` is keyed that way.
+
+    `touches` are *effective* counts, decayed by age: a level tested ten times
+    last quarter is weaker evidence than one tested twice this week, and the
+    number already accounts for that.
+
+    `trap_rate` is the share of breakouts here that were taken back. A level
+    where half the breakouts fail is not a level to trade a breakout at.
+
+    `interval` filters to 5m, 15m, 1h, 4h, 1d or 1w. Leave it empty for all.
+    """
+    return _guard(lambda: data.levels(ctx.deps.structures_dir, feed, interval, limit), "levels")
+
+
+def level_at(ctx: RunContext[Deps], feed: str, price: float, limit: int = 5) -> Any:
+    """What happened historically when price arrived at this price.
+
+    The question levels exist to answer. Returns, for the nearest levels:
+    which way price got pushed given the side it arrived from
+    (`probability_up`, `expected_push_vol` in volatility units), and the
+    `base_rate_up` beside it.
+
+    **Compare the two.** A level whose `probability_up` matches `base_rate_up`
+    has told you nothing, however confident it looks — `edge` is the difference
+    and `actionable` is whether it clears the bar for evidence, edge and size
+    together. `mixed` means the win rate and the expected move disagree, which
+    is a real shape and not a call.
+    """
+    return _guard(lambda: data.level_at(ctx.deps.structures_dir, feed, price, limit), "level_at")
+
+
+def zones(ctx: RunContext[Deps], feed: str, limit: int = 15) -> Any:
+    """Levels that several timeframes agree on, strongest first.
+
+    A price that is a level on 15m, 1h *and* 4h is a stronger object than one
+    appearing on 15m alone: `depth` is how many timeframes agree, `span` the
+    largest structure involved, `precision` the finest placement.
+    """
+    return _guard(lambda: data.zones(ctx.deps.structures_dir, feed, limit), "zones")
+
+
 # ------------------------------------------------------------------ memory
 
 
@@ -218,6 +269,9 @@ REGISTRY: dict[str, Callable[..., Any]] = {
     "events": events,
     "headlines": headlines,
     "reserves": reserves,
+    "levels": levels,
+    "level_at": level_at,
+    "zones": zones,
     "recent": recent,
 }
 

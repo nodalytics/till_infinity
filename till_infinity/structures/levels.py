@@ -82,6 +82,16 @@ TRAP_VOL = 0.5
 #: it survives; before this elapses the outcome is genuinely not yet known.
 TRAP_WINDOW = 1_800.0
 
+#: Bars after a break within which a return counts as a back check rather than
+#: an unrelated visit. Scaled by timeframe, because "recently" on a weekly
+#: chart and on a five-minute one are different amounts of time.
+BACKCHECK_BARS = 30.0
+
+#: How far beyond the flipped level a stop belongs, in volatility units, on top
+#: of the zone itself. The zone is where price can sit and still be respecting
+#: the level; the stop has to be outside it or it is inside the noise.
+STOP_BUFFER_VOL = 0.5
+
 #: Process noise per hour, in volatility units. Levels drift slowly; this is
 #: what stops a filter with many observations from freezing solid.
 DRIFT_VOL_PER_HOUR = 0.02
@@ -173,6 +183,11 @@ class Outcome(StrEnum):
     REJECT = "reject"
     #: Let it through, and it kept going.
     BREAK = "break"
+    #: Price came back to a level it recently broke, held, and carried on the
+    #: way it broke. The middle ground between the two below it: momentum is
+    #: already proven by the break, the entry is a pullback rather than a
+    #: chase, and the risk is defined because the flipped level is the stop.
+    BACKCHECK = "backcheck"
     #: Let it through, then took it back — a false breakout. Distinct from both
     #: of the above and not a shade of either: the price action that precedes it
     #: is a break, and the price action that follows is a rejection, so a model
@@ -250,6 +265,10 @@ class SideStats:
     #: discounted — which is the number every downstream estimate wants anyway.
     touches: float = 0.0
     rejects: float = 0.0
+    #: Retests of a recent break that held. Counted apart from plain rejects
+    #: because the trade is different: the direction is already established, so
+    #: it is a continuation rather than a reversal.
+    backchecks: float = 0.0
     breaks: float = 0.0
     #: False breakouts. Tracked apart from rejects because they are the more
     #: useful fact: a level that traps is one where the obvious trade loses,
@@ -271,6 +290,7 @@ class SideStats:
         factor = min(max(factor, 0.0), 1.0)
         self.touches *= factor
         self.rejects *= factor
+        self.backchecks *= factor
         self.breaks *= factor
         self.traps *= factor
         self.chops *= factor
@@ -287,6 +307,11 @@ class SideStats:
         match outcome:
             case Outcome.REJECT:
                 self.rejects += 1
+            case Outcome.BACKCHECK:
+                # Also a rejection — the level held — but recorded as its own
+                # thing so "does a retest work here" can be asked directly.
+                self.rejects += 1
+                self.backchecks += 1
             case Outcome.BREAK:
                 self.breaks += 1
             case Outcome.TRAP:
@@ -332,6 +357,7 @@ class SideStats:
         return {
             "touches": round(self.touches, 3),
             "rejects": round(self.rejects, 3),
+            "backchecks": round(self.backchecks, 3),
             "breaks": round(self.breaks, 3),
             "traps": round(self.traps, 3),
             "chops": round(self.chops, 3),
@@ -357,6 +383,11 @@ class Level:
     #: How many distinct swings formed it. A level from six swings is not the
     #: same object as one from two, however similar their prices.
     swings: int = 1
+    #: When it was last broken, and the side price broke *from*. Kept because a
+    #: back check is only a back check relative to a recent break — without the
+    #: link it is just another touch at a level that happens to have flipped.
+    broke_at: float = 0.0
+    broke_from: Side | None = None
 
     @property
     def price(self) -> float:
@@ -398,6 +429,47 @@ class Level:
     def side_of(self, price: float) -> Side:
         """Which side price is on now, hence which side it would arrive from."""
         return Side.ABOVE if price >= self.price else Side.BELOW
+
+    def backcheck_window(self) -> float:
+        """How long after a break a return still counts as a retest, in seconds."""
+        return BACKCHECK_BARS * SECONDS.get(self.interval, 3_600.0)
+
+    def is_backcheck(self, side: Side, when: float) -> bool:
+        """Whether a touch from `side` right now is a retest of a recent break.
+
+        Two conditions, and both matter. The break has to be **recent** — a
+        return three months later is a level, not a retest — and price has to be
+        arriving from the side it broke *to*, which is the definition of coming
+        back to it. Arriving from the original side is not a back check; it is
+        the break failing late.
+        """
+        if not self.broke_at or self.broke_from is None:
+            return False
+        if when - self.broke_at > self.backcheck_window():
+            return False
+        return side is self.broke_from.opposite
+
+    def stop_for(self, side: Side, vol: Volatility) -> float:
+        """Where a stop belongs for a trade taken at this level from `side`.
+
+        Beyond the zone, not at the level. The zone is precisely the band in
+        which price can sit and still be respecting the level, so a stop inside
+        it is a stop inside the noise — it gets hit by the level working.
+        """
+        low, high = self.zone(vol)
+        buffer = vol.price_units(self.price, STOP_BUFFER_VOL)
+        return low - buffer if side is Side.ABOVE else high + buffer
+
+    def risk_vol(self, side: Side, price: float, vol: Volatility) -> float:
+        """Distance from `price` to the stop, in volatility units.
+
+        The number that makes a setup comparable with any other: an expected
+        push is only worth having next to what it costs to be wrong.
+        """
+        stop = self.stop_for(side, vol)
+        if not price:
+            return 0.0
+        return abs((price - stop) / price * 10_000) / vol.bps
 
     def strength(self, when: float, vol: Volatility) -> float:
         """How much this level deserves attention, in [0, 1].
@@ -473,6 +545,7 @@ class Level:
         self.stats(side).record(outcome, push_vol)
         if outcome is Outcome.BREAK:
             self.state = State.BROKEN
+            self.broke_at, self.broke_from = when, side
             if abs(push_vol) >= DECISIVE_BREAK_VOL:
                 # A decisive break says the level stopped doing what it did.
                 # Keeping its rejection history at full weight would have it
@@ -483,7 +556,7 @@ class Level:
             # letting price through first. Its history stays intact, because
             # this is the level doing exactly what it did before.
             self.state = State.FLIPPED if self.state is State.BROKEN else State.TESTED
-        elif outcome is Outcome.REJECT and self.state is State.BROKEN:
+        elif outcome in (Outcome.REJECT, Outcome.BACKCHECK) and self.state is State.BROKEN:
             # Broken, and now respected again — the level flipped, which is a
             # repeating structure rather than a dead one.
             self.state = State.FLIPPED
