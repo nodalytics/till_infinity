@@ -1404,3 +1404,51 @@ def test_riding_the_zone_edge_is_not_a_touch_each_time():
         engine.check("gold", "5m", inside, 1_000.0 + n * 2)
         engine.check("gold", "5m", just_outside, 1_001.0 + n * 2)
     assert level.touches <= 1.0, f"{level.touches} touches from one consolidation"
+
+
+def test_the_leg_in_survives_a_pause_and_ends_on_a_run():
+    """The origin is where two runs meet, not where one observation paused.
+
+    Ending the leg on the first price that fails to extend makes the origin a
+    property of the sampling rate: the finer the timeframe, the sooner some tick
+    fails to extend, so the same structure gets a different origin on every
+    timeframe and the fusion in confluence spends its precision reconciling the
+    sampling rather than the market.
+    """
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold", "5m")
+    for n in range(300):
+        vol.update(2000.0 + (n % 11) * 2.0)  # real movement, so a unit means something
+    unit = 2000.0 * vol.bps / 10_000.0
+    assert unit > 0
+
+    # A deliberately wide zone, so half-unit steps stay inside it and the touch
+    # is not resolved out from under the assertions.
+    level = Level(feed="gold", interval="5m", filter=Kalman(mean=2000.0, variance=(2 * unit) ** 2))
+    engine._levels[("gold", "5m")] = [level]
+    features = reactions.features_for(
+        level, Side.ABOVE, 2000.0, vol, approach_vol=1.0, when=0.0
+    )
+    touch = engine.tracker.begin(level, 2000.0, features, 0.0)
+
+    # Arriving from above: deeper means lower.
+    engine.tracker.update(level, 2000.0 - 0.4 * unit, vol, 1.0)
+    assert touch.origin == pytest.approx(2000.0 - 0.4 * unit)
+
+    # A pause — back off the low by well under a run. Not a departure.
+    engine.tracker.update(level, 2000.0 - 0.3 * unit, vol, 2.0)
+    assert not touch.turned, "one non-extending observation ended the leg"
+
+    # It resumes deeper, and the origin follows it there.
+    engine.tracker.update(level, 2000.0 - 0.8 * unit, vol, 3.0)
+    assert touch.origin == pytest.approx(2000.0 - 0.8 * unit)
+    assert not touch.turned
+
+    # A real departure — a run's worth back off the low — fixes it.
+    engine.tracker.update(level, 2000.0 - 0.2 * unit, vol, 4.0)
+    assert touch.turned
+    settled = touch.origin
+
+    # And it stays fixed even if price returns.
+    engine.tracker.update(level, 2000.0 - 0.9 * unit, vol, 5.0)
+    assert touch.origin == pytest.approx(settled)
