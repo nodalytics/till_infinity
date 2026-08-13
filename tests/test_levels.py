@@ -1426,9 +1426,7 @@ def test_the_leg_in_survives_a_pause_and_ends_on_a_run():
     # is not resolved out from under the assertions.
     level = Level(feed="gold", interval="5m", filter=Kalman(mean=2000.0, variance=(2 * unit) ** 2))
     engine._levels[("gold", "5m")] = [level]
-    features = reactions.features_for(
-        level, Side.ABOVE, 2000.0, vol, approach_vol=1.0, when=0.0
-    )
+    features = reactions.features_for(level, Side.ABOVE, 2000.0, vol, approach_vol=1.0, when=0.0)
     touch = engine.tracker.begin(level, 2000.0, features, 0.0)
 
     # Arriving from above: deeper means lower.
