@@ -1146,3 +1146,112 @@ def test_the_zone_is_still_clamped_however_long_the_wick():
     low, _high = level.zone(vol)
     width = (level.price - low) / level.price * 10_000 / vol.bps
     assert width <= lv.MAX_ZONE_VOL + 1e-6
+
+
+def test_p_down_is_the_complement_and_nothing_else():
+    """One counter, two outcomes. Not a second model."""
+    from till_infinity.structures.reactions import Inference
+
+    call = Inference(
+        side=Side.ABOVE,
+        probability_up=0.23,
+        expected_push=-1.4,
+        push_sigma=0.8,
+        base_rate_up=0.47,
+        own_touches=9.0,
+        neighbours=12,
+    )
+    assert call.probability_down == pytest.approx(0.77)
+    assert call.probability_up + call.probability_down == pytest.approx(1.0)
+
+
+def test_a_down_call_reports_the_probability_of_going_down():
+    """`down p=23%` reads as 23% confidence in down. It is 77% — say that."""
+    from till_infinity.structures.reactions import Inference
+
+    call = Inference(
+        side=Side.ABOVE,
+        probability_up=0.23,
+        expected_push=-1.4,
+        push_sigma=0.8,
+        base_rate_up=0.47,
+        own_touches=9.0,
+        neighbours=12,
+    )
+    assert call.direction == "down"
+    assert call.probability == pytest.approx(0.77)
+    assert "p=77%" in str(call)
+    # The base rate has to move with it, or the pair is not a comparison.
+    assert call.base_rate == pytest.approx(0.53)
+    assert "base 53%" in str(call)
+
+
+def test_an_up_call_is_unchanged_by_any_of_this():
+    from till_infinity.structures.reactions import Inference
+
+    call = Inference(
+        side=Side.BELOW,
+        probability_up=0.78,
+        expected_push=1.1,
+        push_sigma=0.6,
+        base_rate_up=0.47,
+        own_touches=9.0,
+        neighbours=12,
+    )
+    assert call.probability == pytest.approx(call.probability_up)
+    assert call.base_rate == pytest.approx(call.base_rate_up)
+    assert "p=78%" in str(call)
+    assert "base 47%" in str(call)
+
+
+def test_the_edge_is_the_same_size_whichever_way_it_points():
+    """(1-p) - (1-b) = -(p - b). The gates use abs(edge) for this reason."""
+    from till_infinity.structures.reactions import Inference
+
+    kwargs = {"push_sigma": 0.5, "base_rate_up": 0.5, "own_touches": 9.0, "neighbours": 12}
+    up = Inference(side=Side.BELOW, probability_up=0.7, expected_push=1.0, **kwargs)
+    down = Inference(side=Side.ABOVE, probability_up=0.3, expected_push=-1.0, **kwargs)
+    assert up.edge == pytest.approx(-down.edge)
+    assert up.edge_for_direction == pytest.approx(down.edge_for_direction)
+    assert up.actionable
+    assert down.actionable
+
+
+def test_a_mixed_call_shows_a_probability_below_half_rather_than_hiding_it():
+    """Direction from the push, win rate the other way — visible, and not actionable."""
+    from till_infinity.structures.reactions import Inference
+
+    call = Inference(
+        side=Side.ABOVE,
+        probability_up=0.35,
+        expected_push=0.9,  # a few large ups against many small downs
+        push_sigma=2.0,
+        base_rate_up=0.5,
+        own_touches=9.0,
+        neighbours=12,
+    )
+    assert call.mixed
+    assert call.direction == "up"
+    assert call.probability == pytest.approx(0.35)
+    assert "mixed" in str(call)
+    assert not call.actionable
+
+
+def test_both_spellings_reach_the_journal():
+    """probability_up keeps its meaning for the models; probability is for people."""
+    from till_infinity.structures.reactions import Inference
+
+    call = Inference(
+        side=Side.ABOVE,
+        probability_up=0.23,
+        expected_push=-1.4,
+        push_sigma=0.8,
+        base_rate_up=0.47,
+        own_touches=9.0,
+        neighbours=12,
+    )
+    row = call.to_dict()
+    assert row["probability_up"] == pytest.approx(0.23)
+    assert row["probability_down"] == pytest.approx(0.77)
+    assert row["probability"] == pytest.approx(0.77)
+    assert row["base_rate"] == pytest.approx(0.53)

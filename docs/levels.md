@@ -395,6 +395,31 @@ P(up) = (π·w + ups) / (w + touches)
 Three touches that all went up is not 100%. Reporting it as such is how a system
 talks itself into a trade it has no evidence for.
 
+**There is no separate P(down).** It is `1 − P(up)`, exactly: a touch either
+pushed up or it did not, so the beta-binomial's `β` term is `touches − ups` and
+one counter carries both. (One wrinkle, invisible otherwise: a push of *exactly*
+zero falls to the down side of `push_vol > 0`. Push is continuous in volatility
+units, so this is measure-zero rather than a lean — but it is a tie broken by an
+implementation detail rather than by evidence.)
+
+What is reported, though, is the probability of **the direction being claimed**,
+not always P(up). Printing P(up) beside a down call renders as `down p=23%`,
+which invites reading 23% as the confidence in down when it is the confidence
+against it. The same call now reads:
+
+```
+down p=77% (base 53%) push=-1.40v n=9.0+12
+```
+
+The base rate flips with it, because a conditional in one direction against a
+base rate in the other is not a comparison — and it is exactly the shape most
+likely to be quoted approvingly. `probability_up` keeps its meaning in the
+journal and in `facto.py`, since the models are keyed on it; `probability` and
+`base_rate` are the ones for a person. When the call is `mixed` (§7, win rate
+and expected move disagreeing) this deliberately prints below 50%, which is the
+honest rendering: the direction came from the push while the win rate points the
+other way, and `mixed` sits next to it.
+
 **Neighbours** — kNN over resolved touches at *other* levels, distance-weighted
 so a close neighbour counts for more than a distant one, over five scale-free
 features plus a pivot flag:

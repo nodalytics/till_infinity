@@ -262,9 +262,59 @@ class Inference:
         return leans_up != (self.expected_push > 0) and self.expected_push != 0
 
     @property
+    def probability_down(self) -> float:
+        """`1 - P(up)`, exactly — not a second model.
+
+        There is one number because there are two outcomes: `record` increments
+        `ups` when the push was positive, and the beta-binomial's `beta` term is
+        `touches - ups`, so everything that was not an up is a down. Asking for
+        P(down) separately would be asking the same counter twice.
+
+        The one wrinkle, stated because it is invisible otherwise: a push of
+        *exactly* zero falls to the down side of `push_vol > 0`. Push is a
+        continuous quantity in volatility units, so this is a measure-zero case
+        rather than a lean, but it is a tie broken by an implementation detail
+        rather than by evidence.
+        """
+        return 1.0 - self.probability_up
+
+    @property
+    def probability(self) -> float:
+        """P(the direction actually being claimed).
+
+        The number a reader wants, and the reason this exists: printing P(up)
+        beside a *down* call renders as `down p=23%`, which invites reading 23%
+        as the confidence in down when it is the confidence against it. When
+        `mixed`, this deliberately comes out below 50% — the direction is taken
+        from the expected push while the win rate points the other way, and the
+        honest rendering of that is a low number with `mixed` beside it.
+        """
+        return self.probability_up if self.direction == "up" else self.probability_down
+
+    @property
+    def base_rate(self) -> float:
+        """The unconditional rate for the *same* direction, so the pair compares.
+
+        A conditional in one direction against a base rate in the other is not a
+        comparison, and it is the shape most likely to be quoted approvingly.
+        """
+        return self.base_rate_up if self.direction == "up" else 1.0 - self.base_rate_up
+
+    @property
     def edge(self) -> float:
-        """How far the conditional sits from the unconditional. The real number."""
+        """How far the conditional sits from the unconditional. The real number.
+
+        Signed in the *up* direction, which makes it direction-agnostic in
+        magnitude: for a down call the same separation appears as `-edge`,
+        because `(1-p) - (1-b) = -(p - b)`. Gates use `abs(edge)` for this
+        reason; `edge_for_direction` is the one to show a person.
+        """
         return self.probability_up - self.base_rate_up
+
+    @property
+    def edge_for_direction(self) -> float:
+        """The separation from the base rate, in the direction being claimed."""
+        return self.probability - self.base_rate
 
     @property
     def reward_to_risk(self) -> float:
@@ -299,10 +349,17 @@ class Inference:
             "side": str(self.side),
             "direction": self.direction,
             "probability_up": round(self.probability_up, 4),
+            # Both, because `probability_up` is what the models and the journal
+            # are keyed on and must not change meaning, while `probability` is
+            # the one that reads correctly for a down call.
+            "probability_down": round(self.probability_down, 4),
+            "probability": round(self.probability, 4),
             "expected_push_vol": round(self.expected_push, 4),
             "push_sigma_vol": round(self.push_sigma, 4),
             "base_rate_up": round(self.base_rate_up, 4),
+            "base_rate": round(self.base_rate, 4),
             "edge": round(self.edge, 4),
+            "edge_for_direction": round(self.edge_for_direction, 4),
             "own_touches": round(self.own_touches, 2),
             "backcheck": self.backcheck,
             "risk_vol": round(self.risk_vol, 3),
@@ -316,8 +373,8 @@ class Inference:
     def __str__(self) -> str:
         note = " mixed" if self.mixed else ""
         return (
-            f"{self.direction} p={self.probability_up:.0%} "
-            f"(base {self.base_rate_up:.0%}) push={self.expected_push:+.2f}v "
+            f"{self.direction} p={self.probability:.0%} "
+            f"(base {self.base_rate:.0%}) push={self.expected_push:+.2f}v "
             f"n={self.own_touches:.1f}+{self.neighbours}{note}"
         )
 

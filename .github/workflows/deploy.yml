@@ -67,6 +67,23 @@ jobs:
           chmod 600 ~/.ssh/deploy.pem
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
+      # `run.sh` prunes before it pulls, which is where the guarantee lives.
+      # This step exists anyway, for two reasons worth the duplication: it runs
+      # before a single byte is transferred, so a full disk cannot fail the scp
+      # either; and it holds even when deploying a commit whose `run.sh`
+      # predates that fix — a rollback to an old tag is exactly when the box is
+      # already full. Reporting free space makes the next failure legible
+      # instead of arriving as `no space left on device` with no context.
+      - name: Reclaim disk on the instance
+        env:
+          HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy.pem "$HOST" '
+            docker container prune -f >/dev/null 2>&1 || true
+            docker image prune -af  >/dev/null 2>&1 || true
+            df -h / | awk "NR==2 {print \$4 \" free of \" \$2 \" (\" \$5 \" used)\"}"
+          '
+
       - name: Deploy
         env:
           HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
