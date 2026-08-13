@@ -407,6 +407,21 @@ inside and waiting:  no new touch
 A touch that resolved *by* price leaving re-arms at once. It has already done
 the leaving, and requiring a second exit would drop the next real approach.
 
+**Leaving the zone is not the same as going away from the level**, and the first
+version of this fix missed the difference. Price sitting on a zone edge crosses
+it constantly, so re-arming on any exit still counted one consolidation as
+dozens of turns — a BTC zone read **337 effective touches** on a cold start,
+after the flag above was already in place. Re-arming therefore needs distance:
+
+```
+re-armed when |distance from the level| ≥ REARM_VOL   (1 volatility unit)
+```
+
+In volatility units, so it means the same thing on a quiet 3m chart and a
+violent daily one. This is the second half of the same bug, and it is worth
+noticing that the first fix looked complete and was not: the flag stopped price
+*loitering* from counting, and left price *hovering* untouched.
+
 ## 7. Turning history into a direction
 
 Two sources of evidence, and an honest weighting between them.

@@ -1381,3 +1381,26 @@ def test_buckets_stay_in_step_with_eviction():
     assert sum(n for _ups, n in memory._buckets.values()) == len(memory._touches)
     # BTC aged out entirely rather than leaving a stale count behind.
     assert ("btc", "15m") not in memory._buckets
+
+
+def test_riding_the_zone_edge_is_not_a_touch_each_time():
+    """Leaving the zone is not the same as going away from the level.
+
+    A price sitting on the edge crosses it constantly. Re-arming on each
+    crossing counts one consolidation as dozens of turns — the residue of the
+    same inflation the `waiting` flag was added for, which the flag alone did
+    not reach: a BTC zone still read 337 effective touches after a cold start.
+    """
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold", "5m")
+    for _ in range(120):
+        vol.update(2000.0)
+    level = _seed_level(engine, "gold", "5m", 2000.0)
+    low, high = level.zone(vol)
+    inside = (low + high) / 2
+    just_outside = high * 1.0000001  # over the edge, nowhere near a unit away
+
+    for n in range(60):
+        engine.check("gold", "5m", inside, 1_000.0 + n * 2)
+        engine.check("gold", "5m", just_outside, 1_001.0 + n * 2)
+    assert level.touches <= 1.0, f"{level.touches} touches from one consolidation"

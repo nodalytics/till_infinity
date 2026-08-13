@@ -70,6 +70,13 @@ MAX_ZONE_VOL = 3.0
 #: interaction counts as resolved rather than still in progress.
 RESOLVE_VOL = 1.5
 
+#: How far price must get from a level, in volatility units, before another
+#: interaction can begin. Leaving the *zone* is not enough: an edge crossed by a
+#: hundredth of a unit is noise, and counting each crossing turns one
+#: consolidation into dozens of turns. This is the difference between "price
+#: left" and "price went away", and only the second is a new approach.
+REARM_VOL = 1.0
+
 #: How far beyond a level price must close for a break rather than a wick.
 BREAK_VOL = 0.75
 

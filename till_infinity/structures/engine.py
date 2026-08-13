@@ -524,8 +524,13 @@ class Engine:
                 continue
 
             if not level.contains(price, vol):
-                # Out of the zone: the next arrival is a genuine new approach.
-                level.waiting = False
+                # Out of the zone is not the same as away from the level. Price
+                # sitting on the edge crosses it constantly, and re-arming on
+                # each crossing counts a consolidation as dozens of turns — the
+                # residue of the same bug the `waiting` flag was added for,
+                # which the flag alone did not reach.
+                if abs(level.distance_vol(price, vol)) >= lv.REARM_VOL:
+                    level.waiting = False
                 continue
 
             # Inside the zone, but this is the same visit that just resolved.
