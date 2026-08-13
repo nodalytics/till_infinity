@@ -13,6 +13,13 @@
   <a href="https://github.com/nodalytics/till_infinity/actions/workflows/ci.yml">
     <img src="https://github.com/nodalytics/till_infinity/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
+  <a href="https://t.me/till_infinity_signals">
+    <img src="https://img.shields.io/badge/telegram-signals-2CA5E0?logo=telegram&logoColor=white" alt="Telegram">
+  </a>
+</p>
+
+<p align="center">
+  Live alerts: <a href="https://t.me/till_infinity_signals"><b>t.me/till_infinity_signals</b></a>
 </p>
 
 ## The idea
@@ -54,40 +61,15 @@ worth capturing from day one.
 
 ## Run it
 
-### With Docker
-
-```bash
-cp .env.example .env
-docker compose up -d                    # collectors, levels, journal
-docker compose --profile agents up -d   # including the paid one
-```
-
-One process per service over Redis, which is the shape the bus was designed
-for: they scale and fail independently, so a collector restarting does not take
-the levels model with it. Agents sit behind a profile because they are the only
-part that costs money.
-
 ### On a server
 
-`.github/workflows/deploy.yml` builds the image on push to `main` — after the
-tests pass — publishes it to GHCR, and has the instance pull it.
-
-The instance does **not** build its own image. Building river and pandas on two
-cores and 908 MB is slow at best and OOM-killed at worst.
-
-It runs as **one container**, not the compose split, and that is measured
-rather than assumed: six separate services need about **861 MB** with the
-modules imported, against a box with **908 MB total** — before Redis, before
-any data, before the OS. `till-infinity run` is one process with an in-process
-bus, which is the shape that hardware can hold.
-
-Three secrets, set once:
-
 ```bash
-gh secret set EC2_HOST    --body "your-instance.compute.amazonaws.com"
-gh secret set EC2_USER    --body "ubuntu"
-gh secret set EC2_SSH_KEY < path/to/key.pem
+docker compose up -d        # one container per service, over Redis
 ```
+
+Or push to `main` and let CI build, publish and deploy it. Sizing matters more
+than preference — six services need about 861 MB, so a small box wants the
+single process instead. Full guide: **[docs/deployment.md](docs/deployment.md)**.
 
 ### Locally
 
@@ -170,9 +152,9 @@ uv run till-infinity structures watch             # run it on its own
 ```
 
 A level is tracked as a **Kalman state** rather than a line — each touch is a
-noisy observation, so the filter's variance *is* the zone, and it widens with
-volatility on its own. Statistics are kept **per approach side**, because the
-same price met from above and from below are two different objects:
+noisy observation of where it sits, so the filter's variance *is* the zone.
+Statistics are kept **per approach side**, because the same price met from
+above and from below are two different objects:
 
 ```
 gold arriving at 4405.5
@@ -180,49 +162,26 @@ gold arriving at 4405.5
   ! 4401.3  (from above)  ↑ 80% vs 47% base   push +1.78v
 ```
 
-Every conditional is shown beside its base rate — a level whose P(up) matches
-the unconditional rate has said nothing.
+Every conditional sits beside its base rate. A level whose P(up) matches the
+unconditional rate has said nothing, however confident it looks.
 
-Three things happen at a level and the model tells them apart, because a model
-with only "held" and "broke" scores the other two wrong:
+Three things happen at a level and the model tells them apart, because one with
+only "held" and "broke" scores the other two wrong — on the stored history
+**27 of 70 breakout attempts were false**, and every one had counted as a break
+that worked:
 
-| | what it is | recorded |
-|---|---|---|
-| **break** | through, and it stayed through | provisional until it survives |
-| **false breakout** | through, then given back | the push it *ended* on, not the excursion |
-| **back check** | broke, pulled back, held, carried on | risk defined by the flipped level |
+| | what it is |
+|---|---|
+| **break** | through, and it stayed through |
+| **false breakout** | through, then given back |
+| **back check** | broke, pulled back, held, carried on — risk defined by the flipped level |
 
-On the stored history 27 of 70 breakout attempts were false — **39%** — and
-every one of those previously counted as a break that worked.
+Built on **5m through 1w**, each timeframe with its own volatility and its own
+rate of forgetting — one volatility unit on gold is $0.75 on 5m and $52.23 on
+1w, seventy times end to end. Levels at one price across timeframes combine,
+the higher carrying significance and the lower placement.
 
-Levels are built on **5m, 15m, 1h, 4h, 1d and 1w**, and each timeframe keeps
-its own volatility and its own rate of forgetting. Those differ by more than
-anyone guesses:
-
-| | 1 volatility unit (gold) | evidence half-life |
-|---|---|---|
-| 5m | $0.75 | 0.9 days |
-| 1h | $2.07 | 10 days |
-| 4h | $9.87 | 42 days |
-| 1d | $27.80 | 250 days |
-| **1w** | **$52.23** | **1750 days** |
-
-Seventy times, end to end. One estimate for all of them puts a weekly level to
-the nearest dollar and makes it forget a touch before the next one arrives —
-which is why the higher timeframes produced almost nothing until this was
-per-timeframe.
-
-Levels at one price across timeframes are then combined, the higher timeframe
-carrying significance and the lower one placement:
-
-```
-btc   63500.18  [1h+15m+5m]  span=1h  precision=5m  6.7 touches  strength 0.90
-gold   4339.46  [1d+15m]     span=1d  precision=15m
-```
-
-It warms from stored history on start — 25,000 bars in under two seconds — so
-levels exist immediately instead of after days of listening. Guides:
-**[docs/structures.md](docs/structures.md)** and
+Guides: **[docs/structures.md](docs/structures.md)** and
 **[docs/levels.md](docs/levels.md)**.
 
 ## Agents
@@ -266,6 +225,9 @@ uv run till-infinity notify chats          # discover Telegram chat ids
 uv run till-infinity notify listen         # deliver what the agents publish
 uv run till-infinity notify send "..." -l warning
 ```
+
+What this instance publishes goes to
+**[t.me/till_infinity_signals](https://t.me/till_infinity_signals)**.
 
 Full guide: **[docs/notifications.md](docs/notifications.md)**.
 
@@ -336,6 +298,7 @@ lands, and journal entries are content-addressed.
 | [docs/journal.md](docs/journal.md) | decisions, reasoning, outcomes, exporting for training |
 | [docs/notifications.md](docs/notifications.md) | Telegram and Discord alerts, channels, chat discovery |
 | [docs/bus.md](docs/bus.md) | topics, publishing, fan-out, Redis |
+| [docs/deployment.md](docs/deployment.md) | one process, compose, or CI to a server — and how to size it |
 | [docs/logging.md](docs/logging.md) | log levels, JSON log files, adding a logger |
 
 ## Development

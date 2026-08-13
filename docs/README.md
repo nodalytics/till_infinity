@@ -11,6 +11,7 @@
 | [levels.md](levels.md) | key price levels — PIP swings, Kalman tracking, per-side directional inference |
 | [agents.md](agents.md) | LLM analysis over the stored data — roles, tools, read-only access, watching |
 | [journal.md](journal.md) | the decision journal — reasoning, outcomes, exporting for training |
+| [deployment.md](deployment.md) | running it — one process, compose, or CI to a server |
 | [logging.md](logging.md) | project logging: levels, JSON log files, adding a logger to a module |
 
 Notes on what is *not* obvious about the data — which venues are missing from
