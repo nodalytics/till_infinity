@@ -75,6 +75,9 @@ SEED_BARS = WINDOW
 #: precisely because price left it.
 KEEP_VOL = 8.0
 
+#: Resolutions held for a consumer that may not be draining them.
+MAX_RESOLVED = 500
+
 #: Ceiling per (instrument, interval), strongest kept. Without one a long
 #: history accrues a level every few basis points, and at that density every
 #: price is "at a level" and the model predicts nothing. Fifteen is roughly
@@ -278,6 +281,11 @@ class Engine:
         #: The timestamp of the bar being processed. Held so that "what was
         #: knowable" is answerable at any point, including from a test.
         self._now: float = 0.0
+        #: Touches that have resolved since anyone last looked, with the level
+        #: they resolved at. Queued rather than pushed because the engine has
+        #: no journal and should not grow one — a resolution is a fact about
+        #: price, and who wants to record it is not the engine's business.
+        self._resolved: list[tuple[lv.Level, reactions.Touch]] = []
         self.calls = 0
 
     # --------------------------------------------------------------- levels
@@ -474,6 +482,11 @@ class Engine:
                     # where the level is than where it first arrived.
                     level.observe_touch(done.extreme, vol, when)
                     log.debug("level %s %.5g resolved %s", feed, level.price, done.outcome)
+                    self._resolved.append((level, done))
+                    # Bounded: a consumer that stops draining must not become a
+                    # slow memory leak in a service designed to run for months.
+                    if len(self._resolved) > MAX_RESOLVED:
+                        del self._resolved[: len(self._resolved) - MAX_RESOLVED]
                 continue
 
             if not level.contains(price, vol):
@@ -623,6 +636,16 @@ class Engine:
             ", ".join(sorted({row["feed"] for row in rows})) or "nothing",
         )
         return replayed
+
+    def drain_resolved(self) -> list[tuple[lv.Level, reactions.Touch]]:
+        """Take the touches that have resolved since the last call.
+
+        Draining rather than reading, because each resolution should be
+        recorded once: a consumer that read without clearing would journal the
+        same outcome on every message.
+        """
+        found, self._resolved = self._resolved, []
+        return found
 
     def summary(self) -> list[dict]:
         """What the engine knows, for `structures levels`."""

@@ -30,7 +30,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 
 from ..bus import ALERTS, BARS, QUOTES, SIGNALS, Bus, Message
-from ..journal import Journal, decide
+from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
 from . import store
 from .anomaly import Detector
@@ -115,6 +115,11 @@ class Watcher:
         #: to matter — waiting for a 5m close reports it after the fact).
         self.engine = Engine()
         self._sent: OrderedDict[tuple[str, str, str], float] = OrderedDict()
+        #: Level -> the journal entry recording why we called it. Kept so the
+        #: result can be attached to the decision that predicted it, which is
+        #: the whole difference between a log and a training example.
+        self._awaiting: OrderedDict[tuple[str, float], str] = OrderedDict()
+        self.outcomes = 0
         self._saved = 0.0
         self.published = 0
         self.alerted = 0
@@ -224,7 +229,7 @@ class Watcher:
             # the inputs a later model would need and they cannot be recovered
             # from the stores — the consensus at that instant is not written
             # down anywhere else.
-            await decide(
+            ref = await decide(
                 self.journal,
                 signal.title,
                 rationale=signal.detail,
@@ -233,7 +238,68 @@ class Watcher:
                 tags=(signal.feed, signal.venue, str(signal.shape)),
                 confidence=min(1.0, signal.score),
             )
+            if ref and signal.shape is Shape.LEVEL:
+                # Level calls only. A touch resolving is unambiguous ground
+                # truth about what followed; a wide spread has no comparable
+                # moment of being proven right or wrong, and pretending it does
+                # would fill the record with labels nobody could check.
+                self._remember(signal.feed, signal.features.get("level"), ref)
         return sent
+
+    # ------------------------------------------------------------- outcomes
+
+    def _remember(self, feed: str, level_price: float | None, ref: str) -> None:
+        """Note which decision predicted what would happen at this level."""
+        if level_price is None:
+            return
+        key = (feed, round(float(level_price), 8))
+        self._awaiting[key] = ref
+        self._awaiting.move_to_end(key)
+        while len(self._awaiting) > self.memory:
+            self._awaiting.popitem(last=False)
+
+    async def record_outcomes(self) -> int:
+        """Attach what happened to the decision that predicted it.
+
+        A decision without its result is half a training example, and until
+        this ran the journal held only halves — decisions with no outcomes and
+        no parent links at all. The touch resolving *is* the label: which way
+        price went from the level, how far, and whether a break it made was
+        taken back.
+        """
+        written = 0
+        for level, touch in self.engine.drain_resolved():
+            # Keyed on the price recorded *with the touch*, not the level's
+            # current one. The Kalman mean moves when the touch is folded in,
+            # and it is folded in before this runs — so looking up by
+            # `level.price` searches for a key that no longer exists.
+            ref = self._awaiting.pop((level.feed, round(touch.level_price, 8)), None)
+            if ref is None:
+                continue  # nothing predicted this; the result is a fact, not a label
+            went = "up" if touch.push_vol > 0 else "down"
+            recorded = await outcome(
+                self.journal,
+                ref,
+                f"{level.feed} {level.price:.5g}: {touch.outcome}, {went} "
+                f"{abs(touch.push_vol):.2f}v",
+                rationale=(
+                    f"Resolved {touch.outcome} {touch.resolved - touch.started:.0f}s after "
+                    f"first contact, pushing {touch.push_vol:+.2f} volatility units"
+                ),
+                actor="structures",
+                context={
+                    "outcome": str(touch.outcome),
+                    "push_vol": round(touch.push_vol, 4),
+                    "excursion_vol": round(touch.excursion_vol, 4),
+                    "seconds": round(touch.resolved - touch.started),
+                    "level": round(level.price, 8),
+                    "interval": level.interval,
+                    **touch.features.to_dict(),
+                },
+            )
+            written += bool(recorded)
+        self.outcomes += written
+        return written
 
     # -------------------------------------------------------------- running
 
@@ -241,9 +307,13 @@ class Watcher:
         """One bus message in, zero or more findings out."""
         if message.topic == QUOTES:
             signals = self.detector.observe(message.payload)
-            return signals + self._level_calls(self.engine.observe_quote(message.payload))
+            calls = self.engine.observe_quote(message.payload)
+            await self._watch_calls(calls)
+            return signals + self._level_calls(calls)
         if message.topic == BARS:
-            signals = self._level_calls(self.engine.observe_bar(message.payload))
+            calls = self.engine.observe_bar(message.payload)
+            await self._watch_calls(calls)
+            signals = self._level_calls(calls)
             seen = self.bars.observe(message.payload)
             if seen is not None:
                 feed, mid, interval = seen
@@ -266,10 +336,38 @@ class Watcher:
         confident the number looks.
         """
         return [
-            call.to_signal(self.engine.vol.of(call.feed))
+            call.to_signal(self.engine.vol.of(call.feed, call.interval))
             for call in calls
             if call.inference.actionable
         ]
+
+    async def _watch_calls(self, calls: Sequence[object]) -> None:
+        """Record every level call, acted on or not, so the result can be paired.
+
+        Only `actionable` calls become signals — but a dataset containing only
+        the calls we acted on is the worst possible sample to learn from. It
+        cannot say when holding off was right, because holding off is never in
+        it. Non-actionable calls are journalled as observations instead: same
+        features, same outcome attached later, no alert.
+        """
+        for call in calls:
+            if call.inference.actionable:
+                continue  # `emit` records these, with the alert
+            ref = await observe(
+                self.journal,
+                f"{call.feed} at {call.level.price:.5g}: not worth acting on",
+                rationale=str(call.inference),
+                actor="structures",
+                context={
+                    "shape": "level",
+                    "level": call.level.price,
+                    "interval": call.interval,
+                    **call.inference.to_dict(),
+                },
+                tags=(call.feed, call.interval, "level"),
+            )
+            if ref:
+                self._remember(call.feed, call.level.price, ref)
 
     async def run(
         self,
@@ -300,6 +398,9 @@ class Watcher:
                             log.info("structures: %s", signal)
                             if on_signal is not None:
                                 on_signal(signal)
+                    # Every message, because a resolution that is not drained
+                    # promptly is one the engine is holding for no reason.
+                    await self.record_outcomes()
                     if time.monotonic() - self._saved >= self.settings.save_seconds:
                         self.save()
             finally:

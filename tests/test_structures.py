@@ -16,6 +16,7 @@ from till_infinity.bus import ALERTS, BARS, QUOTES, SIGNALS, Bus, Message
 from till_infinity.structures import features, store
 from till_infinity.structures.anomaly import Detector, _describe, _sigma_to_score
 from till_infinity.structures.drift import Drift
+from till_infinity.structures.levels import Side
 from till_infinity.structures.models import Shape, Signal
 from till_infinity.structures.service import BarConsensus, Watcher
 
@@ -515,3 +516,152 @@ def test_no_regime_is_claimed_before_there_is_history():
     from till_infinity.structures.volatility import Volatility
 
     assert Volatility().regime == 0.5
+
+
+# ------------------------------------------- closing the loop on a decision
+
+
+async def test_a_level_call_gets_its_outcome_attached(tmp_path):
+    """A decision without its result is half a training example."""
+    from till_infinity import journal as jr
+    from till_infinity.structures.levels import Kalman, Level
+    from till_infinity.structures.levels import Outcome as LevelOutcome
+    from till_infinity.structures.models import Shape
+    from till_infinity.structures.reactions import Features, Touch
+
+    bus = Bus()
+    bus.subscribe(SIGNALS, group="agents")
+    async with jr.Journal(tmp_path / "j.db") as book:
+        watcher = Watcher(bus, settings=sx.Settings(state_dir=tmp_path), journal=book)
+
+        level = Level(feed="gold", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+        call = Signal(
+            shape=Shape.LEVEL,
+            feed="gold",
+            venue="consensus",
+            score=0.3,
+            detail="up from above",
+            features={"level": level.price},
+        )
+        assert await watcher.emit([call]) == 1
+
+        # the touch that prompted it resolves
+        touch = Touch(
+            feed="gold",
+            level_price=level.price,
+            features=Features(Side.ABOVE, 1.0, 0.5, 0.5, 1.0, 0.5),
+            started=1_000_000.0,
+            entry=4400.0,
+            extreme=4399.0,
+            outcome=LevelOutcome.REJECT,
+            push_vol=1.8,
+            resolved=1_000_600.0,
+        )
+        watcher.engine._resolved.append((level, touch))
+        assert await watcher.record_outcomes() == 1
+
+        entries = jr.read(book.path)
+        decision = next(e for e in entries if e.kind is jr.Kind.DECISION)
+        result = next(e for e in entries if e.kind is jr.Kind.OUTCOME)
+
+        assert result.parent == decision.id  # the pair a model needs
+        assert result.context["outcome"] == "reject"
+        assert result.context["push_vol"] == 1.8
+
+
+async def test_a_resolution_nobody_predicted_is_not_an_outcome(tmp_path):
+    """An outcome with no decision behind it is a fact, not a label."""
+    from till_infinity import journal as jr
+    from till_infinity.structures.levels import Kalman, Level
+    from till_infinity.structures.levels import Outcome as LevelOutcome
+    from till_infinity.structures.reactions import Features, Touch
+
+    async with jr.Journal(tmp_path / "j.db") as book:
+        watcher = Watcher(Bus(), settings=sx.Settings(state_dir=tmp_path), journal=book)
+        level = Level(feed="gold", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+        watcher.engine._resolved.append(
+            (
+                level,
+                Touch(
+                    feed="gold",
+                    level_price=level.price,
+                    features=Features(Side.ABOVE, 1.0, 0.5, 0.5, 1.0, 0.5),
+                    started=1.0,
+                    entry=4400.0,
+                    extreme=4400.0,
+                    outcome=LevelOutcome.CHOP,
+                    resolved=2.0,
+                ),
+            )
+        )
+        assert await watcher.record_outcomes() == 0
+        assert jr.read(book.path) == []
+
+
+async def test_an_outcome_is_written_once(tmp_path):
+    """Reading without draining would journal the same result every message."""
+    from till_infinity import journal as jr
+    from till_infinity.structures.levels import Kalman, Level
+    from till_infinity.structures.levels import Outcome as LevelOutcome
+    from till_infinity.structures.models import Shape
+    from till_infinity.structures.reactions import Features, Touch
+
+    bus = Bus()
+    bus.subscribe(SIGNALS, group="agents")
+    async with jr.Journal(tmp_path / "j.db") as book:
+        watcher = Watcher(bus, settings=sx.Settings(state_dir=tmp_path), journal=book)
+        level = Level(feed="gold", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+        await watcher.emit(
+            [
+                Signal(
+                    shape=Shape.LEVEL,
+                    feed="gold",
+                    venue="consensus",
+                    score=0.3,
+                    features={"level": level.price},
+                )
+            ]
+        )
+        watcher.engine._resolved.append(
+            (
+                level,
+                Touch(
+                    feed="gold",
+                    level_price=level.price,
+                    features=Features(Side.ABOVE, 1.0, 0.5, 0.5, 1.0, 0.5),
+                    started=1.0,
+                    entry=4400.0,
+                    extreme=4400.0,
+                    outcome=LevelOutcome.BREAK,
+                    push_vol=-2.0,
+                    resolved=2.0,
+                ),
+            )
+        )
+        assert await watcher.record_outcomes() == 1
+        assert await watcher.record_outcomes() == 0
+
+
+async def test_only_level_calls_wait_for_an_outcome(tmp_path):
+    """A wide spread has no moment of being proven right or wrong."""
+    from till_infinity import journal as jr
+    from till_infinity.structures.models import Shape
+
+    bus = Bus()
+    bus.subscribe(SIGNALS, group="agents")
+    async with jr.Journal(tmp_path / "j.db") as book:
+        watcher = Watcher(bus, settings=sx.Settings(state_dir=tmp_path), journal=book)
+        await watcher.emit(
+            [Signal(shape=Shape.SPREAD, feed="gold", venue="OANDA", score=1.0, detail="wide")]
+        )
+        assert watcher._awaiting == {}
+
+
+async def test_the_pending_map_is_bounded(tmp_path):
+    from till_infinity import journal as jr
+
+    async with jr.Journal(tmp_path / "j.db") as book:
+        watcher = Watcher(Bus(), settings=sx.Settings(state_dir=tmp_path), journal=book, memory=5)
+        for n in range(20):
+            watcher._remember("gold", 4400.0 + n, f"ref{n}")
+        assert len(watcher._awaiting) == 5

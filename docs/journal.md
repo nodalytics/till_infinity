@@ -99,6 +99,38 @@ An outcome inherits its decision's tags unless given its own — otherwise a
 filter on `gold` would hide the very entry saying the gold situation resolved
 itself.
 
+## What structures records automatically
+
+The levels model produces the one thing here with **unambiguous ground truth**:
+a touch resolves, and the resolution says what price did. So every level call
+is journalled and its result attached when it arrives.
+
+```
+decision    gold 4401.78: up from above, p=71% vs 48% base, push +1.6v
+  outcome   gold 4401.7: reject, up 15.57v      (parent -> the decision)
+```
+
+**Calls that were not acted on are recorded too**, as observations. Only
+`actionable` calls become alerts, and a dataset containing only the calls we
+acted on is the worst possible sample to learn from: it cannot say when holding
+off was right, because holding off never appears in it. Same features, same
+outcome attached later, no alert.
+
+One replay of stored history produced 2 decisions, 19 observations and 20
+outcomes — twenty complete `(state, action, outcome)` triples across rejects,
+breaks, a trap and a back check.
+
+Two details that had to be right for any of this to work:
+
+- The pairing key is the level price **recorded with the touch**, not the
+  level's current one. The Kalman mean moves when the touch is folded in, and
+  that happens before the outcome is written — so looking up by the level's
+  price searches for a key that no longer exists. This produced zero outcomes
+  until it was found.
+- Only level calls wait for an outcome. A wide spread has no comparable moment
+  of being proven right or wrong, and inventing one would fill the record with
+  labels nobody could check.
+
 ## What the agents record automatically
 
 `agents watch` journals every window it takes to a model:
