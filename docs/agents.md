@@ -250,6 +250,25 @@ within about twenty minutes of market activity. On the free tier set it to
 remember the wake is gated on the market actually doing something, so the real
 count is lower.
 
+### Two free tiers back each other up
+
+`AGENTS_FALLBACK_MODELS` is what makes two thin quotas usable: Gemini runs as
+the primary for its quality, and Groq takes the calls once the twenty are gone.
+The failure modes are different enough to be complementary — a daily request cap
+against a per-minute token cap — so the hours Gemini cannot serve are exactly
+the ones Groq can, provided the call fits in 12k tokens.
+
+```
+AGENTS_MODEL=google:gemini-2.5-flash
+AGENTS_FALLBACK_MODELS=groq:llama-3.3-70b-versatile
+```
+
+**`groq` is not `grok`.** Different companies: `groq` is the inference host
+whose keys begin `gsk_`, and `grok` is xAI's model, reached through the `xai`
+provider with keys beginning `xai-`. A key filed under the wrong name is
+rejected by the other's API with a message about an incorrect key rather than
+about the wrong provider, which is a slow way to find out.
+
 The alternative is a paid key, and the honest framing is that this is what the
 rest of the system is designed not to depend on: the collectors, the levels
 model and the notifications all run without one.
