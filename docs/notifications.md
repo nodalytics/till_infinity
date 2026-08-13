@@ -110,6 +110,43 @@ level is clamped instead of raising. A failed delivery is logged and the loop
 continues — one unreachable webhook must not stop the next alert from reaching
 the chat that is up. See [bus.md](bus.md).
 
+## How a message is laid out
+
+The first character says what kind of finding it is, because severity does not:
+a stale feed and a level call are both `warning` and a reader wants to know
+which before reading a word. Direction wins over shape when a signal claims one.
+
+| | |
+|---|---|
+| 📈 📉 | a directional call, up or down |
+| 📊 | a level finding with no direction claimed |
+| 🌊 | the volatility regime changed |
+| 💤 | a feed has stopped moving |
+| ↔️ | a spread blew out |
+| ⚡ | one venue is away from the consensus |
+| 🧭 | the [score](score.md), when it exists |
+| • ▲ ■ | nothing claimed — falls back to severity |
+
+Then the instrument, timeframe and direction lead the headline, and the
+evidence sits underneath, one claim per line:
+
+```
+📉 GOLD 4h — down
+level 3421.5
+
+down 77% — against a 53% base rate
+expected push -1.87v · risk 0.62v
+9 touches here + 12 similar · strength 0.94
+```
+
+Two details worth stating. The probability is for **the direction being
+claimed** — quoting P(up) beside a down call reads as the confidence in down
+when it is the confidence against it — and the base rate moves with it, or the
+pair is not a comparison. And the fields the filter routes on (`shape`,
+`instrument`, `venue`, `direction`) are never printed back: they are already in
+the headline, so `instrument: gold` under a line containing "GOLD" is the
+machine talking to itself.
+
 ## Filtering: what a channel accepts
 
 A channel people actually read is quiet most of the time. The detectors are not

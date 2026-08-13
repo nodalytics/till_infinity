@@ -125,7 +125,7 @@ far past the first one price was pushed, which is what makes the zone
 | `spread` | its spread is wide for the group *and* for itself | yes |
 | `stale` | it has stopped moving while the others have not | **no** |
 | `drift` | the volatility regime itself changed | yes |
-| `level` | price arrived at a key level with a history | yes — see [levels.md](levels.md) |
+| `level` | price arrived at a key level with a history | **no**, when actionable |
 
 A **stale** feed goes straight to `alerts`. It needs no language model to
 interpret and no economic release to explain, and making it wait for an agent
@@ -133,6 +133,17 @@ would put an LLM in the path of the one message that most needs to arrive
 during an outage. So does a dislocation beyond `STRUCTURES_DIRECT_DEV_BPS`
 (default 100bps) — nothing on the calendar moves one venue 100bps while five
 others hold still, so that is a broken quote, not a market opinion.
+
+An **actionable level call** also goes straight through, and it is the one
+exception to the paragraph above rather than an instance of it. A fundamental
+absolutely can explain why a level gave way — but a level call is the only shape
+here that is a *finding* rather than a fault, and it is what the channel exists
+for. Every call that reaches the alert path has already passed `actionable`
+(enough evidence, enough separation from the base rate, enough size), which is a
+stricter gate than any score. Routing it through agents that are switched off
+means publishing it to a topic nobody is subscribed to, which is exactly what
+happened: the channel carried nothing but feed faults. `STRUCTURES_ALERT_LEVELS=0`
+restores the old behaviour if an agent should see them first.
 
 Everything else is *evidence*, published to `structures.signals` for an agent
 to weigh against the calendar.
@@ -431,5 +442,6 @@ look at, has no opinion.
 | `STRUCTURES_SIGMA` | per-venue cutoff, in sigma (4) |
 | `STRUCTURES_COOLDOWN_S` | one signal per situation per this long (900) |
 | `STRUCTURES_DIRECT` | `0` to never alert without an agent |
+| `STRUCTURES_ALERT_LEVELS` | `0` to hold actionable level calls back for an agent |
 | `STRUCTURES_DIRECT_DEV_BPS` | deviation that is a broken quote (100) |
 | `STRUCTURES_SAVE_S` | seconds between saves (300) |
