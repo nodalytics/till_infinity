@@ -49,7 +49,15 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from .levels import CONFIDENT_TOUCHES, TRAP_VOL, TRAP_WINDOW, Level, Outcome, Side
+from .levels import (
+    CONFIDENT_TOUCHES,
+    RUN_VOL,
+    TRAP_VOL,
+    TRAP_WINDOW,
+    Level,
+    Outcome,
+    Side,
+)
 from .volatility import Volatility
 
 #: Neighbours consulted for the cold-start prior.
@@ -651,9 +659,13 @@ class Tracker:
         if deeper and not touch.turned:
             touch.origin = price
         elif not touch.turned and touch.origin:
-            # First close that did not extend the move: the legs meet here, and
-            # the origin is fixed from now on.
-            touch.turned = True
+            # Not the first observation that fails to extend — that is a pause,
+            # not a departure. The leg in is a *run*, and it is over only once
+            # price has come back off its deepest point by a run's worth. Until
+            # then a deeper print re-extends it and moves the origin with it.
+            back = abs(level.distance_vol(price, vol) - level.distance_vol(touch.origin, vol))
+            if back >= RUN_VOL:
+                touch.turned = True
         touch.departure_vol = max(
             touch.departure_vol,
             abs(level.distance_vol(price, vol) - level.distance_vol(touch.origin or price, vol)),

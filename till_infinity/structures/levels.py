@@ -70,6 +70,17 @@ MAX_ZONE_VOL = 3.0
 #: interaction counts as resolved rather than still in progress.
 RESOLVE_VOL = 1.5
 
+#: How far price must come back off its deepest point, in volatility units,
+#: before the leg in is treated as over and the origin is fixed.
+#:
+#: The legs meeting at an origin are *runs*, and a run survives noise: a single
+#: observation that fails to extend the move is not a departure, it is a pause.
+#: Fixing the origin on the first such tick makes the origin a property of the
+#: sampling rate — the finer the timeframe, the earlier some tick fails to
+#: extend, so the same structure gets a different origin on every timeframe and
+#: the multi-timeframe fusion then spends its precision reconciling an artefact.
+RUN_VOL = 0.5
+
 #: How far price must get from a level, in volatility units, before another
 #: interaction can begin. Leaving the *zone* is not enough: an edge crossed by a
 #: hundredth of a unit is noise, and counting each crossing turns one

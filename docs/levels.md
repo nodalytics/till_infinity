@@ -272,7 +272,17 @@ look like two levels a wick apart.
 
 ### Planned: an origin spans periods, not bars
 
-The implementation locates the origin at a **bar boundary** — the close of the
+**Partly implemented.** The leg in now ends when price has come back off its
+deepest point by `RUN_VOL` (0.5 units) rather than on the first observation that
+fails to extend — a single non-extending tick is a pause, not a departure, and
+treating it as one made the origin a property of the sampling rate. What is
+*not* yet done is segmenting the departure the same way, or locating an origin
+that falls inside a coarse bar from evidence on a finer one.
+
+The paragraph below describes what the original implementation did, and remains
+the shape of what is left.
+
+The implementation located the origin at a **bar boundary** — the close of the
 last bar in against the open of the first bar out. That is a convenient
 approximation and it is not what the idea says.
 
