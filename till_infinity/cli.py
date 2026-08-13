@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import Coroutine
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from . import stack as st
 from . import structures as sx
 from .bus import Bus
 from .logging import console, get_logger, setup_logging
+from .structures import confluence as cf
 
 log = get_logger(__name__)
 T = TypeVar("T")
@@ -1323,6 +1325,84 @@ def _load_engine(state_dir):
 
 def _state_colour(state: str) -> str:
     return {"broken": "red", "flipped": "magenta", "tested": "green"}.get(state, "dim")
+
+
+@structures.command("zones")
+@click.option("--dir", "state_dir", type=click.Path(path_type=Path), help="Where models persist.")
+@click.option("--feed", "-s", help="Instrument. Default: all.")
+@click.option(
+    "--min-timeframes", type=int, default=1, show_default=True, help="Hide thinner zones."
+)
+@click.option("--at", "price", type=float, help="Price to judge from — shows what is near it.")
+def structures_zones(state_dir, feed, min_timeframes, price):
+    """Where several timeframes agree on the same price.
+
+    A level found on the 5m and again on the 4h is one structure seen twice, not
+    two structures. This groups them by **zone overlap** rather than a shared
+    tolerance, because a tolerance has to be expressed in some timeframe's
+    volatility and they differ by more than an order of magnitude — on gold, one
+    volatility unit is $0.74 on 5m and $9.87 on 4h.
+
+    The position is fused inverse-variance, so a timeframe that is certain where
+    the level sits moves the answer more than one that is vague. `span` is the
+    largest structure present and `precision` the finest: a zone reading
+    `1w..5m` is a weekly level placed to five-minute accuracy, which is the one
+    worth waiting for.
+
+    `--min-timeframes 2` hides everything only one timeframe has seen, which is
+    the quickest way to find the prices worth watching.
+    """
+    setup_logging()
+    engine = _load_engine(state_dir)
+    if engine is None:
+        raise SystemExit(1)
+
+    feeds = [feed] if feed else sorted({key[0] for key in engine._levels})
+    when = time.time()
+    shown = 0
+    for name in feeds:
+        zones = [z for z in sx.zones_for(engine, name) if len(z.timeframes) >= min_timeframes]
+        if not zones:
+            continue
+        vol = engine.reference(name)
+        table = Table(title=f"confluence — {name}")
+        for column in ("price", "band", "timeframes", "span..precision", "touches", "str"):
+            table.add_column(column, justify="right" if column in ("price", "str") else "left")
+        for zone in sorted(zones, key=lambda z: -len(z.timeframes)):
+            low, high = zone.band(vol)
+            agree = len(zone.timeframes)
+            table.add_row(
+                f"{zone.price:.5g}",
+                f"[dim]{low:.5g}-{high:.5g}[/]",
+                f"[{'green' if agree > 2 else 'yellow' if agree > 1 else 'dim'}]"
+                f"{escape('+'.join(zone.timeframes))}[/]",
+                f"[dim]{escape(zone.span)}..{escape(zone.precision)}[/]",
+                f"{zone.touches:.1f}",
+                f"{zone.strength(when, vol):.2f}",
+            )
+            shown += 1
+        console.print(table)
+
+        if price is not None:
+            near = cf.at(zones, price, vol)
+            if not near:
+                console.print(f"  [dim]nothing within 3v of {price:.5g}[/]")
+            for zone in near:
+                where = "above" if zone.price > price else "below"
+                console.print(
+                    f"  {price:.5g} is {abs(zone.price - price) / price * 10_000 / vol.bps:.1f}v "
+                    f"{where} a {'+'.join(zone.timeframes)} zone at {zone.price:.5g}"
+                )
+
+    if not shown:
+        console.print(
+            "no zones match"
+            + (
+                f" [dim]— nothing agreed on by {min_timeframes}+ timeframes[/]"
+                if min_timeframes > 1
+                else ""
+            )
+        )
 
 
 @structures.command("levels")
