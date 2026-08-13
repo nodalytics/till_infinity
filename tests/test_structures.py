@@ -697,3 +697,84 @@ def test_the_schema_follows_the_fields_rather_than_a_constant():
     finally:
         reactions.Features.__slots__ = real
     assert store._schema() == before
+
+
+# ------------------------------------- a cold engine must not stay cold
+
+
+def test_a_restored_but_empty_engine_still_warms(tmp_path, monkeypatch):
+    """The bug: a state file saved before any history existed made emptiness
+    permanent, because every restart restored nothing and skipped warming on
+    the grounds that the restore had succeeded."""
+    from till_infinity.structures.anomaly import Detector
+    from till_infinity.structures.drift import Drift
+
+    settings = sx.Settings(state_dir=tmp_path, prices_db=tmp_path / "p.db")
+    store.save({"detector": Detector(), "drift": Drift(), "engine": sx.Engine()}, tmp_path)
+
+    watcher = Watcher(Bus(), settings=settings)
+    assert watcher.load()  # the restore works
+    assert watcher.cold  # and leaves nothing behind
+
+    warmed = []
+    monkeypatch.setattr(watcher.engine, "seed", lambda *a, **k: warmed.append(1) or 0)
+    if watcher.cold:
+        watcher.warm()
+    assert warmed  # so it warms anyway
+
+
+def test_an_engine_with_levels_is_not_cold(tmp_path):
+    from till_infinity.structures.levels import Kalman, Level
+
+    watcher = Watcher(Bus(), settings=sx.Settings(state_dir=tmp_path))
+    assert watcher.cold
+    watcher.engine._levels[("gold", "5m")] = [
+        Level(feed="gold", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    ]
+    assert not watcher.cold
+
+
+async def test_a_thin_store_is_backfilled_before_anything_starts(tmp_path, monkeypatch):
+    """History has to be in the store before the level engine looks at it."""
+    from till_infinity import stack as st
+
+    plan = st.Plan(
+        prices=False,
+        news=False,
+        structures=False,
+        journal=False,
+        notifications=False,
+        backfill=True,
+    )
+    plan.prices = True
+    stack = st.Stack(plan)
+
+    order: list[str] = []
+    monkeypatch.setattr(st, "_stored_bars", lambda _p: 0)
+
+    async def fake_backfill(**kwargs):
+        order.append("backfill")
+        raise RuntimeError("stop here")  # the ordering is the subject, not the pull
+
+    monkeypatch.setattr(st.px, "backfill", fake_backfill)
+    await stack._backfill(lambda *a: order.append("say"))
+    assert "backfill" in order
+
+
+async def test_a_full_store_is_not_backfilled_again(tmp_path, monkeypatch):
+    """A restart should cost nothing."""
+    from till_infinity import stack as st
+
+    stack = st.Stack(st.Plan(backfill=True))
+    monkeypatch.setattr(st, "_stored_bars", lambda _p: st.MIN_BARS + 1)
+
+    called = []
+    monkeypatch.setattr(st.px, "backfill", lambda **k: called.append(1))
+    assert await stack._backfill(lambda *a: None) == 0
+    assert not called
+
+
+def test_counting_bars_in_a_store_that_does_not_exist(tmp_path):
+    from till_infinity import stack as st
+
+    assert st._stored_bars(tmp_path / "nothing.db") == 0

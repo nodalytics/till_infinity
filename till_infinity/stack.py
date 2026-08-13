@@ -60,6 +60,16 @@ ORDER: tuple[str, ...] = (
     "news",
 )
 
+#: Bars in the store below which a fresh backfill is worth the thirty seconds.
+#: A level needs a few hundred bars per timeframe, and six instruments across
+#: six timeframes is thousands before the first one can be placed.
+MIN_BARS = 20_000
+
+#: Depth per series when backfilling on start. Enough for the level windows
+#: without pulling years nobody asked for.
+BACKFILL_BARS = 1_500
+
+
 #: The services that finish. Everything else is a consumer that runs until it
 #: is stopped, which is why `--once` has to know the difference: waiting for
 #: all of them would wait forever.
@@ -102,6 +112,11 @@ class Plan:
     #: Stop after this long. None runs until interrupted.
     duration: float | None = None
     once: bool = False
+    #: Pull history before starting, when the store has too little for levels
+    #: to form. A fresh machine otherwise collects for days before the levels
+    #: model can place anything — the bus carries a notice per sweep, not a
+    #: series, so it is not a source of history however long it runs.
+    backfill: bool = True
 
     @classmethod
     def from_env(cls) -> Plan:
@@ -115,6 +130,7 @@ class Plan:
             prices=truthy("PRICES_ENABLED", "1"),
             news=truthy("NEWS_ENABLED", "1"),
             journal=truthy("JOURNAL", "1"),
+            backfill=truthy("BACKFILL_ON_START", "1"),
             symbols=tuple(s.strip() for s in symbols.split(",") if s.strip()),
             intervals=tuple(i.strip() for i in intervals.split(",") if i.strip()),
         )
@@ -198,6 +214,9 @@ class Stack:
         runnable = [name for name in wanted if name not in blocked]
         say = on_event or (lambda name, note: log.info("stack: %s %s", name, note))
 
+        if self.plan.backfill and self.plan.prices:
+            await self._backfill(say)
+
         async with self._stack:
             book = None
             if self.plan.journal:
@@ -221,6 +240,42 @@ class Stack:
                     await asyncio.sleep(self.plan.duration)
                     group._abort()
         return self.status
+
+    async def _backfill(self, say) -> int:
+        """Pull history before anything starts, if the store is too thin.
+
+        Ordered deliberately: the collectors publish notices and `structures`
+        warms from the *store*, so history has to be there before the level
+        engine looks. Starting first and backfilling after would mean the
+        engine warms from an empty store, saves that emptiness, and restores it
+        on every restart afterwards.
+
+        Skipped when the store already has enough, so a restart costs nothing.
+        """
+        settings = px.Settings.from_env()
+        have = _stored_bars(settings.database)
+        if have >= MIN_BARS:
+            return 0
+
+        say("backfill", f"store has {have:,} bars, pulling history first")
+        feeds = px.resolve_symbols(self.plan.symbols or None)
+        intervals = px.resolve_intervals(self.plan.intervals or None)
+        store = px.open_store("sqlite", database=settings.database, data_dir=settings.data_dir)
+        try:
+            async with store:
+                summary = await px.backfill(
+                    settings=settings,
+                    store=store,
+                    feeds=feeds,
+                    intervals=intervals,
+                    bars=BACKFILL_BARS,
+                )
+            say("backfill", str(summary))
+            return summary.total.touched
+        except Exception as exc:
+            # A thin store is a slow start, not a reason to refuse to run.
+            say("backfill", f"skipped: {first_cause(exc)}")
+            return 0
 
     def _start(self, group: asyncio.TaskGroup, name: str, book, say):
         """Launch one service as a supervised task. Returns it, or None."""
@@ -303,6 +358,19 @@ class Stack:
 
     async def close(self) -> None:
         await self.bus.close()
+
+
+def _stored_bars(database: Path) -> int:
+    """How many bars are already stored. Zero when there is no store yet."""
+    import sqlite3
+
+    if not Path(database).exists():
+        return 0
+    try:
+        with sqlite3.connect(f"file:{Path(database)}?mode=ro", uri=True) as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM bars").fetchone()[0])
+    except sqlite3.Error:
+        return 0
 
 
 def _journal_db() -> Path:

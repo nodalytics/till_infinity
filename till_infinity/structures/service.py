@@ -126,6 +126,18 @@ class Watcher:
 
     # ---------------------------------------------------------- persistence
 
+    @property
+    def cold(self) -> bool:
+        """True when the engine holds no levels, however it was started.
+
+        The condition that matters is "do I have levels", not "did state
+        load". A state file saved before any history existed restores an empty
+        engine perfectly happily, and keying the warm-up off the load meant
+        that emptiness became permanent: every restart restored nothing and
+        skipped warming because the restore had *succeeded*.
+        """
+        return not any(self.engine._levels.values())
+
     def warm(self) -> int:
         """Fill the level windows from stored price history.
 
@@ -421,8 +433,10 @@ async def watch(
 ) -> int:
     """Run the online layer over the bus. The everyday entry point."""
     watcher = Watcher(bus, settings=settings, group=group, journal=journal)
-    # Restore first, then warm: saved models already know their history, and
-    # replaying it over them would count every stored bar twice.
-    if not watcher.load():
+    # Restore first, then warm only if the restore left us with no levels.
+    # Warming over a populated engine would count every stored bar twice;
+    # skipping it because a restore succeeded leaves an empty engine empty.
+    watcher.load()
+    if watcher.cold:
         watcher.warm()
     return await watcher.run(messages=messages, on_signal=on_signal)
