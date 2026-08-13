@@ -39,6 +39,7 @@ INTERVALS: dict[str, Interval] = {
     "2h": Interval("2h", 7_200),
     "4h": Interval("4h", 14_400),
     "1d": Interval("1d", 86_400),
+    "1w": Interval("1w", 604_800),
 }
 
 DEFAULT_INTERVALS: tuple[str, ...] = tuple(INTERVALS)

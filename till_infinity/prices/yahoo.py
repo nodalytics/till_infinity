@@ -33,6 +33,7 @@ INTERVAL_CODES: dict[str, str] = {
     "15m": "15m",
     "1h": "1h",
     "1d": "1d",
+    "1w": "1wk",
 }
 
 #: Intervals Yahoo does not serve, rebuilt from a finer one.
@@ -45,6 +46,7 @@ MAX_LOOKBACK_DAYS: dict[str, int | None] = {
     "15m": 59,
     "1h": 729,
     "1d": None,
+    "1w": None,
 }
 
 #: Bars are sparse (weekends, holidays, half days) so ask for a wider window.

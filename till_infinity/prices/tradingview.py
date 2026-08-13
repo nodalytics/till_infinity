@@ -51,6 +51,7 @@ INTERVAL_CODES: dict[str, str] = {
     "2h": "120",
     "4h": "240",
     "1d": "1D",
+    "1w": "1W",
 }
 
 _FRAME = re.compile(r"~m~(\d+)~m~")

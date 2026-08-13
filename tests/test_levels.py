@@ -215,8 +215,10 @@ def test_a_level_answers_differently_from_each_side():
         _touch(tracker, level, Side.ABOVE, +40.0, 1_000_000 + i * 100_000, vol)
 
     above = level.stats(Side.ABOVE)
-    # Not exactly 6: the touches span days, so the early ones have aged.
-    assert 5.0 < above.touches <= 6.0
+    # Far fewer than 6 effective: these are 5m touches spread over days, and a
+    # 5m level's evidence halves in under one. That is the point of scaling the
+    # half-life by timeframe rather than holding one constant for all of them.
+    assert 0 < above.touches < 6.0
     assert level.stats(Side.BELOW).touches == 0
 
 
@@ -707,3 +709,33 @@ def test_a_touch_is_only_resolved_by_prices_after_it_began():
     done = tracker.update(level, 4500.0, vol, when=1_000_600)
     assert done is not None
     assert done.resolved > done.started
+
+
+# ------------------------------------------- evidence ages by timeframe
+
+
+def test_a_weekly_level_remembers_far_longer_than_a_five_minute_one():
+    """One constant cannot serve both: a weekly level is tested a few times a year."""
+    fast = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    slow = Level(feed="g", interval="1w", filter=Kalman(mean=4400.0, variance=0.5))
+    start = 1_000_000.0
+    for level in (fast, slow):
+        level.record(Side.ABOVE, Outcome.REJECT, 1.0, start)
+
+    month = start + 30 * 86_400
+    for level in (fast, slow):
+        level.age(month)
+
+    assert fast.stats(Side.ABOVE).touches < 0.01  # a month is forever on 5m
+    assert slow.stats(Side.ABOVE).touches > 0.95  # and nothing at all on 1w
+
+
+def test_the_half_life_scales_with_the_timeframe():
+    steps = [lv.half_life_days(tf) for tf in ("5m", "15m", "1h", "4h", "1d", "1w")]
+    assert steps == sorted(steps)
+    assert steps[0] < 1.0
+    assert steps[-1] > 1000.0
+
+
+def test_an_unknown_timeframe_falls_back_rather_than_crashing():
+    assert lv.half_life_days("fortnightly") == lv.TOUCH_HALF_LIFE_DAYS

@@ -53,9 +53,12 @@ ORDER: tuple[str, ...] = (
     "15m",
     "30m",
     "1h",
+    "2h",
     "4h",
     "1d",
+    # A daily pivot is a daily structure, so it ranks with 1d rather than above.
     "daily",
+    "1w",
     "weekly",
 )
 
@@ -64,9 +67,12 @@ ORDER: tuple[str, ...] = (
 #: while the engine never built it, so it spent its life looking for a
 #: timeframe that did not exist.
 #:
-#: Finest first. Below 5m a "level" is mostly the noise of the session; above 4h
-#: a window spans months and there are too few swings in it to place one.
-TIMEFRAMES: tuple[str, ...] = ("5m", "15m", "1h", "4h")
+#: Finest first. Below 5m a "level" is mostly the noise of the session. The top
+#: end runs to 1w because that is where the levels people actually trade come
+#: from — and it only became usable once volatility and evidence decay were
+#: measured per timeframe, since a weekly level in 5m units is placed to the
+#: nearest dollar and forgets a touch before the next one arrives.
+TIMEFRAMES: tuple[str, ...] = ("5m", "15m", "1h", "4h", "1d", "1w")
 
 #: Alias kept for readers who think of it as a span rather than a list.
 DEFAULT_SPAN: tuple[str, ...] = TIMEFRAMES

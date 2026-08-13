@@ -60,6 +60,11 @@ ORDER: tuple[str, ...] = (
     "news",
 )
 
+#: The services that finish. Everything else is a consumer that runs until it
+#: is stopped, which is why `--once` has to know the difference: waiting for
+#: all of them would wait forever.
+COLLECTORS: frozenset[str] = frozenset({"prices", "news"})
+
 
 def first_cause(exc: BaseException, depth: int = 0) -> str:
     """The innermost real error, not the group that wrapped it.
@@ -174,9 +179,14 @@ class Stack:
     ) -> Status:
         """Start everything wanted and available, then wait.
 
-        Returns once `duration` has elapsed, `once` has completed a pass, or the
-        caller cancels. A service that raises takes itself down and is recorded;
-        the rest keep running.
+        Returns once `duration` has elapsed, `once` has finished a collection
+        pass, or the caller cancels. A service that raises takes itself down and
+        is recorded; the rest keep running.
+
+        `once` waits for the **collectors** and then stops the rest. The
+        consumers have no notion of a pass — they run until stopped — so
+        waiting for everything would wait forever, which is exactly what it did
+        before this knew the difference.
         """
         blocked = check(self.plan)
         wanted = self.plan.wanted()
@@ -194,23 +204,30 @@ class Stack:
                 book = await self._stack.enter_async_context(jr.Journal(_journal_db()))
 
             async with asyncio.TaskGroup() as group:
+                collectors: list[asyncio.Task[None]] = []
                 for name in runnable:
-                    started = self._start(group, name, book, say)
-                    if started:
+                    task = self._start(group, name, book, say)
+                    if task is not None:
                         self.status.running.append(name)
                         say(name, "started")
+                        if name in COLLECTORS:
+                            collectors.append(task)
 
-                if self.plan.duration is not None:
+                if self.plan.once and collectors:
+                    await asyncio.wait(collectors)
+                    say("stack", "collection pass complete")
+                    group._abort()
+                elif self.plan.duration is not None:
                     await asyncio.sleep(self.plan.duration)
                     group._abort()
         return self.status
 
-    def _start(self, group: asyncio.TaskGroup, name: str, book, say) -> bool:
-        """Launch one service as a supervised task."""
+    def _start(self, group: asyncio.TaskGroup, name: str, book, say):
+        """Launch one service as a supervised task. Returns it, or None."""
         runner = getattr(self, f"_run_{name}", None)
         if runner is None:  # pragma: no cover - ORDER and methods are written together
             self.status.failed[name] = "no runner"
-            return False
+            return None
 
         async def supervised() -> None:
             try:
@@ -224,8 +241,7 @@ class Stack:
                 log.error("stack: %s stopped: %s", name, reason, exc_info=True)
                 say(name, f"stopped: {reason}")
 
-        group.create_task(supervised(), name=f"stack:{name}")
-        return True
+        return group.create_task(supervised(), name=f"stack:{name}")
 
     # ----------------------------------------------------------- the services
 

@@ -52,14 +52,41 @@ afterwards. Prices can be recomputed forever; the reasoning cannot be
 reconstructed at all once it is lost — which is what makes it the one thing
 worth capturing from day one.
 
-## Setup
+## Run it
 
 Requires [uv](https://docs.astral.sh/uv/). Python 3.11 is pinned in `.python-version`.
 
 ```bash
-uv sync                 # runtime + dev deps
-uv sync --extra speed   # adds uvloop
+uv sync                      # runtime + dev deps
+cp .env.example .env         # optional: every setting, documented
+uv run till-infinity run     # collectors, levels, journal — all of it
 ```
+
+That is the whole thing running: prices and news collecting, `structures`
+finding levels and anomalies, the journal recording, notifications delivering.
+One bus, one process.
+
+```
+till infinity · in-process bus · journal, structures, prices, news
+00:33:18  structures  dislocation gold/PEPPERSTONE +1.06bps off where 5 other venues agree
+00:33:22  structures  spread gold/SAXO 2.2x the group at 0.88bps
+```
+
+**Agents are off by default** — they are the only part needing a paid
+credential, and the rest should not be hostage to it:
+
+```bash
+AGENTS_ENABLED=1 uv run till-infinity run     # or --agents
+uv run till-infinity run --for 300 -s gold    # one instrument, five minutes
+uv run till-infinity run --once               # one collection pass, then stop
+```
+
+Anything that cannot start says why at second zero and the others carry on.
+Settings come from `.env` — see [.env.example](.env.example) — with real
+environment variables winning, so a deployment is never overridden by a file.
+
+For a shared bus across machines, set `TILL_REDIS_URL` and run the services
+separately; see [how the parts talk](#how-the-parts-talk).
 
 ## Prices
 
@@ -75,7 +102,8 @@ uv run till-infinity prices info          # what is stored
 ```
 
 Defaults to EURUSD, GBPUSD, gold and BTC; `-s` takes anything else
-(`-s OANDA:XAUUSD`, `-s AAPL`). Full guide: **[docs/prices.md](docs/prices.md)**.
+(`-s OANDA:XAUUSD`, `-s AAPL`). Intervals run 1m to 1w. Full guide:
+**[docs/prices.md](docs/prices.md)**.
 
 ## News
 
@@ -97,9 +125,9 @@ Online models over the price data: every venue measured against the consensus
 of the others, and the key levels price keeps turning at.
 
 ```bash
-uv run till-infinity structures watch --redis redis://localhost:6379
-uv run till-infinity structures levels --at 4405     # what the history says
-uv run till-infinity structures info
+uv run till-infinity structures levels            # what it has found
+uv run till-infinity structures levels --at 4405  # what the history says
+uv run till-infinity structures watch             # run it on its own
 ```
 
 A level is tracked as a **Kalman state** rather than a line — each touch is a
@@ -114,7 +142,35 @@ gold arriving at 4405.5
 ```
 
 Every conditional is shown beside its base rate — a level whose P(up) matches
-the unconditional rate has said nothing. Guides:
+the unconditional rate has said nothing.
+
+Levels are built on **5m, 15m, 1h, 4h, 1d and 1w**, and each timeframe keeps
+its own volatility and its own rate of forgetting. Those differ by more than
+anyone guesses:
+
+| | 1 volatility unit (gold) | evidence half-life |
+|---|---|---|
+| 5m | $0.75 | 0.9 days |
+| 1h | $2.07 | 10 days |
+| 4h | $9.87 | 42 days |
+| 1d | $27.80 | 250 days |
+| **1w** | **$52.23** | **1750 days** |
+
+Seventy times, end to end. One estimate for all of them puts a weekly level to
+the nearest dollar and makes it forget a touch before the next one arrives —
+which is why the higher timeframes produced almost nothing until this was
+per-timeframe.
+
+Levels at one price across timeframes are then combined, the higher timeframe
+carrying significance and the lower one placement:
+
+```
+btc   63500.18  [1h+15m+5m]  span=1h  precision=5m  6.7 touches  strength 0.90
+gold   4339.46  [1d+15m]     span=1d  precision=15m
+```
+
+It warms from stored history on start — 25,000 bars in under two seconds — so
+levels exist immediately instead of after days of listening. Guides:
 **[docs/structures.md](docs/structures.md)** and
 **[docs/levels.md](docs/levels.md)**.
 
@@ -181,6 +237,10 @@ journal, so one process writes it and a service on another machine can record
 a decision at all. `structures` reaches `alerts` directly for findings that
 interpret themselves: a feed that has stopped needs no model and no calendar.
 
+`till-infinity run` starts all of these in one process against one bus, which
+is what you want for a laptop or an end-to-end check. Run them separately when
+they should scale or fail independently:
+
 ```bash
 uv run till-infinity prices collect    --publish redis://localhost:6379 &
 uv run till-infinity news collect      --publish redis://localhost:6379 &
@@ -203,6 +263,9 @@ SQLite by default, under `.data/` and gitignored. JSONL alongside it with
 .data/journal/journal.db    decisions + observations + outcomes
 .data/structures/           online model state, restored on restart
 ```
+
+Nothing is regenerated on restart that does not have to be: the online models
+are restored, and the level windows warm from the stored bars.
 
 Everything is stored as epoch seconds in **UTC** — local time never enters the
 project. Re-running a collector is cheap and safe: bars key on their open time,

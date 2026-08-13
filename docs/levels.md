@@ -448,14 +448,16 @@ covered in lines nobody trades.
 The unit in §0 is *a typical move* — and a typical 4h move is not a typical 5m
 move. Measured on gold:
 
-| timeframe | volatility | 1v at 4400 |
-|---|---|---|
-| 5m | 1.67bps | $0.74 |
-| 15m | 2.49bps | $1.10 |
-| 1h | 4.70bps | $2.07 |
-| **4h** | **22.44bps** | **$9.87** |
+| timeframe | volatility | 1v at 4400 | evidence half-life |
+|---|---|---|---|
+| 5m | 1.70bps | $0.75 | 0.9 days |
+| 15m | 2.49bps | $1.10 | 2.6 days |
+| 1h | 4.70bps | $2.07 | 10 days |
+| 4h | 22.44bps | $9.87 | 42 days |
+| 1d | 63.17bps | $27.80 | 250 days |
+| **1w** | **118.70bps** | **$52.23** | **1750 days** |
 
-Thirteen times, end to end. A single estimate per instrument — in practice
+Seventy times, end to end. A single estimate per instrument — in practice
 dominated by whichever series updates most often — therefore makes every
 threshold expressed in volatility units wrong for every timeframe but one.
 
@@ -468,6 +470,15 @@ denominator.
 
 So estimates are kept per `(instrument, timeframe)`, updated from that
 timeframe's bars, and used for that timeframe's zones, clustering and pushes.
+
+**Evidence ages on the same scale.** A single decay constant cannot serve both
+ends either: twenty-one days is far too long for a 5m level — behaviour from
+three weeks ago on a five-minute chart is not evidence about now — and far too
+short for a weekly one, which might be tested a handful of times a year and
+would forget each touch before the next arrived. The half-life is anchored to
+the window instead, so evidence halves over roughly half the history that
+timeframe can see. A 1w gold level at 1806 still carries 6.4 effective touches
+from years back, which is correct and would be zero under a fixed constant.
 
 **One exception, and it is deliberate.** Cross-timeframe questions — which
 level is nearest, is this one worth acting on — need a single denominator, or

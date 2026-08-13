@@ -81,11 +81,50 @@ DRIFT_VOL_PER_HOUR = 0.02
 #: neighbours'. Below this, inference leans on kNN over similar levels.
 CONFIDENT_TOUCHES = 5
 
-#: Half-life of a touch, in days. Evidence decays because markets change: a
-#: level that rejected ten times in January and broke three times last week is
-#: not a rejecting level, and summing every touch equally is exactly how a
-#: model keeps insisting on behaviour that stopped months ago.
+#: How long one bar of each timeframe lasts. Needed here because evidence
+#: decays in *time* while a level lives on a timeframe, and the two only line
+#: up if the conversion is written down.
+SECONDS: dict[str, float] = {
+    "1m": 60.0,
+    "5m": 300.0,
+    "15m": 900.0,
+    "30m": 1_800.0,
+    "1h": 3_600.0,
+    "2h": 7_200.0,
+    "4h": 14_400.0,
+    "1d": 86_400.0,
+    "daily": 86_400.0,
+    "1w": 604_800.0,
+    "weekly": 604_800.0,
+}
+
+#: Bars of evidence half-life. Anchored to the window a level is formed from
+#: (500 bars), so evidence halves over roughly half the history the timeframe
+#: can see.
+HALF_LIFE_BARS = 250.0
+
+#: Fallback for a timeframe with no duration on record.
 TOUCH_HALF_LIFE_DAYS = 21.0
+
+
+def half_life_days(interval: str) -> float:
+    """How fast a level's evidence should fade, for its timeframe.
+
+    A single constant cannot serve both ends. Twenty-one days is far too long
+    for a 5m level — behaviour from three weeks ago on a five-minute chart is
+    not evidence about now — and far too short for a weekly one, which might
+    only be tested a handful of times a year and would have forgotten each
+    touch before the next arrived.
+
+    Anchoring to the window instead makes it self-scaling: evidence halves over
+    about half the history that timeframe can see. That works out at under a
+    day for 5m, ten days for 1h, six weeks for 4h and most of a year for 1d.
+    """
+    seconds = SECONDS.get(interval)
+    if not seconds:
+        return TOUCH_HALF_LIFE_DAYS
+    return max(0.5, HALF_LIFE_BARS * seconds / 86_400.0)
+
 
 #: Extra decay applied when the volatility regime itself changes. Not zero and
 #: not one: the level is still there, but what it did in the old regime is much
@@ -362,12 +401,17 @@ class Level:
             self.state = State.TESTED
         return gain
 
-    def age(self, when: float, half_life_days: float = TOUCH_HALF_LIFE_DAYS) -> None:
-        """Discount every side's evidence for the time since the last touch."""
+    def age(self, when: float, half_life: float | None = None) -> None:
+        """Discount every side's evidence for the time since the last touch.
+
+        The half-life comes from the level's own timeframe unless one is given:
+        a weekly level and a five-minute level forget at very different rates.
+        """
         if not self.last_touch or when <= self.last_touch:
             return
+        half_life = half_life_days(self.interval) if half_life is None else half_life
         elapsed_days = (when - self.last_touch) / 86_400.0
-        factor = 0.5 ** (elapsed_days / max(half_life_days, 1e-9))
+        factor = 0.5 ** (elapsed_days / max(half_life, 1e-9))
         for stats in self.sides.values():
             stats.decay(factor)
 
