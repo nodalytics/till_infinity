@@ -291,3 +291,30 @@ def test_a_level_signal_survives_missing_features():
     payload = alert_payload(Signal(shape=Shape.LEVEL, feed="btc", venue="consensus", score=0.1))
     assert payload["title"].startswith("BTC")
     assert isinstance(payload["body"], str)
+
+
+def test_a_level_alert_names_the_timeframes_that_agree():
+    from till_infinity.notifications.service import from_message
+    from till_infinity.structures.models import Shape, Signal
+    from till_infinity.structures.service import alert_payload
+
+    def body(confluence):
+        signal = Signal(
+            shape=Shape.LEVEL,
+            feed="gbpusd",
+            venue="consensus",
+            score=0.65,
+            interval="1h",
+            direction="up",
+            confluence=confluence,
+            features={"level": 1.3486, "probability": 0.94, "base_rate_up": 0.29},
+        )
+        return from_message(alert_payload(signal)).as_text()
+
+    agreed = body(("1d", "4h", "1h"))
+    assert "confirmed by 1d, 4h" in agreed
+    # Its own timeframe is not evidence that it agrees with itself.
+    assert "1h," not in agreed
+
+    # Nothing agreeing is information too, not a blank.
+    assert "this timeframe only" in body(())

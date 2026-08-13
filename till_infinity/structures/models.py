@@ -72,6 +72,10 @@ class Signal:
     #: separately from `features` because a reader's first glance is the
     #: direction, and a float dict is not where a headline should live.
     direction: str = ""
+    #: The other timeframes agreeing on this price, coarsest first, as
+    #: "1d+4h+1h". Empty means no other timeframe has a level here — which is
+    #: information too, and is reported as such rather than left blank.
+    confluence: tuple[str, ...] = ()
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -92,6 +96,7 @@ class Signal:
             "interval": self.interval,
             "time": self.time,
             "direction": self.direction,
+            "confluence": list(self.confluence),
         }
 
     def __str__(self) -> str:

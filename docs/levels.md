@@ -1039,6 +1039,48 @@ removed. Yesterday's pivots are watched; the ones from twelve days ago are not.
 Result on the same history: **8–14 levels per instrument** across all
 timeframes, which is the order of magnitude a person marks on a chart.
 
+## Planned: levels from ticks
+
+Levels are **built** from bars and **touched** by quotes. That split is
+deliberate and this section is about the case for narrowing it, not for
+abandoning it.
+
+Quotes already drive detection — `Engine.observe_quote` runs the touch check on
+every interval an instrument has levels at, which is why a daily level can fire
+mid-session instead of at the close, and why the interaction is reported as
+price arrives rather than confirmed afterwards. What quotes do *not* do is form
+levels, and there are two reasons, one weak and one strong.
+
+The weak one is mechanical: PIP selection needs a high and a low, and a quote
+has neither. A synthetic bar built from ticks over a rolling window solves that.
+
+The strong one is that **a level is a price other people are watching**, and
+tick data is far better at showing where price *went* than where anyone is
+waiting. Run PIP on ticks and every local squiggle qualifies: the swing count
+explodes, the merge step folds most of it back together, and what survives is a
+level at essentially every price — the same failure as the 38-levels-for-2-real
+episode in §"Pruning", arrived at from the other direction.
+
+Three things would have to be true before this is worth building:
+
+1. **A vertical-distance threshold in volatility units, not in ticks.** The PIP
+   selection would need a floor on how far a swing must travel before it counts
+   — probably around 1v — and that floor is the whole design. Without it this is
+   a noise generator.
+2. **Enough tick history to test on.** Quotes are stored, but a level formed
+   from ticks has to be judged by whether price later respects it, and that
+   needs weeks of stored quotes to evaluate honestly.
+3. **A reason bars cannot already do it.** The 3m series exists precisely
+   because a finer view was wanted. If 3m levels turn out to hold as well as 5m
+   ones, then 1m is the next cheap step and ticks are unnecessary; if 3m levels
+   are visibly noisier than 5m, that is evidence *against* going finer still,
+   and it should be believed.
+
+The honest expectation is that (3) settles it before (1) and (2) get built. It
+is written down because the question keeps coming up, and the answer is not
+obvious from the code — nothing in `pips.py` says "this would not work on
+ticks", and it wouldn't.
+
 ## Honest status
 
 Everything above is validated on **synthetic mean-reverting data**, where the

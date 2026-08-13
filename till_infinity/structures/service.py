@@ -28,10 +28,12 @@ import statistics
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 
 from ..bus import ALERTS, BARS, QUOTES, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
+from . import confluence as cf
 from . import store
 from .anomaly import Detector
 from .config import DRIFT_INTERVALS, Settings
@@ -124,8 +126,13 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     risk = got.get("risk_vol", 0.0)
     push = got.get("expected_push_vol", 0.0)
 
+    story = (
+        f"confirmed by {', '.join(t for t in signal.confluence if t != signal.interval)}"
+        if len(signal.confluence) > 1
+        else "this timeframe only"
+    )
     body = [
-        f"level {price:.5g}",
+        f"level {price:.5g} · {story}",
         "",
         f"{signal.direction} {probability:.0%} — against a {base:.0%} base rate",
         f"expected push {push:+.2f}v" + (f" · risk {risk:.2f}v" if risk else ""),
@@ -397,11 +404,48 @@ class Watcher:
         A call that merely restates the base rate is not information, however
         confident the number looks.
         """
-        return [
-            call.to_signal(self.engine.vol.of(call.feed, call.interval))
-            for call in calls
-            if call.inference.actionable
-        ]
+        worth = [call for call in calls if call.inference.actionable]
+        if not worth:
+            return []
+
+        best: dict[object, tuple[float, Signal]] = {}
+        loners: list[Signal] = []
+        for call in worth:
+            signal = call.to_signal(self.engine.vol.of(call.feed, call.interval))
+            zone = self._zone_for(call.feed, call.level)
+            if zone is None:
+                loners.append(signal)
+                continue
+            signal = replace(signal, confluence=zone.timeframes)
+            # One zone, one message. Three timeframes agreeing on a price is one
+            # structure seen three times, and sending it three times says the
+            # opposite of what it means — it reads as three findings when it is
+            # really one with more behind it. The strongest call speaks for the
+            # zone, and the timeframes it beat are named in the message.
+            key = id(zone)
+            if key not in best or abs(signal.score) > best[key][0]:
+                best[key] = (abs(signal.score), signal)
+        return loners + [signal for _score, signal in best.values()]
+
+    def _zones(self, feed: str) -> list[object]:
+        """Confluence zones for one instrument, rebuilt per batch.
+
+        Not cached: levels move under the Kalman filter and are pruned between
+        batches, so a cached zone would name timeframes that have since stopped
+        agreeing. A batch is a few dozen levels, which is nothing to regroup.
+        """
+        return cf.combine(
+            self.engine.levels(feed),
+            self.engine.reference(feed),
+            volatility=lambda level: self.engine.vol.of(feed, level.interval),
+        )
+
+    def _zone_for(self, feed: str, level: object) -> object | None:
+        """The zone this level belongs to, if any timeframe agrees with it."""
+        for zone in self._zones(feed):
+            if len(zone.members) > 1 and any(member is level for member in zone.members):
+                return zone
+        return None
 
     async def _watch_calls(self, calls: Sequence[object]) -> None:
         """Record every level call, acted on or not, so the result can be paired.
