@@ -443,6 +443,39 @@ Age is deliberately **not** rewarded. An old level with two touches is not
 strong, it is stale, and treating longevity as authority is how a chart ends up
 covered in lines nobody trades.
 
+## 10b. Volatility is per timeframe
+
+The unit in §0 is *a typical move* — and a typical 4h move is not a typical 5m
+move. Measured on gold:
+
+| timeframe | volatility | 1v at 4400 |
+|---|---|---|
+| 5m | 1.67bps | $0.74 |
+| 15m | 2.49bps | $1.10 |
+| 1h | 4.70bps | $2.07 |
+| **4h** | **22.44bps** | **$9.87** |
+
+Thirteen times, end to end. A single estimate per instrument — in practice
+dominated by whichever series updates most often — therefore makes every
+threshold expressed in volatility units wrong for every timeframe but one.
+
+The symptom was concrete: clustering swings at 1.0 volatility unit meant
+grouping within **$0.86**, while the 4h window spanned seventy days over a $574
+range. Swings at that scale essentially never clustered, so 4h produced almost
+no levels at all — and the fault was invisible, because "few levels on the
+highest timeframe" looks like a reasonable outcome rather than a broken
+denominator.
+
+So estimates are kept per `(instrument, timeframe)`, updated from that
+timeframe's bars, and used for that timeframe's zones, clustering and pushes.
+
+**One exception, and it is deliberate.** Cross-timeframe questions — which
+level is nearest, is this one worth acting on — need a single denominator, or
+"three volatility units away" means something different for every level and
+they cannot be ranked against each other. That is the **reference** estimate:
+the tick-level one fed by quotes, falling back to the finest timeframe with
+data when no quotes have arrived, which is the case when warming from bars.
+
 ## 11. Multi-timeframe confluence
 
 A level on the 4h chart and one on the 15m chart at the same price are one
@@ -453,9 +486,20 @@ level at two resolutions, and each knows something the other does not:
 | **higher** timeframe | that the level *matters* — it is a larger structure |
 | **lower** timeframe | *where it is* — its swings cluster in a tighter band |
 
-Fusing them is **inverse-variance weighting**, which is already the right tool
-because every level carries a Kalman variance and a finer timeframe naturally
-has a smaller one:
+Levels are grouped by **zone overlap**, each zone computed in its own
+timeframe's volatility. Not by a shared tolerance: a tolerance is necessarily
+expressed in one timeframe's units, and with 4h at thirteen times 5m a shared
+one meant a 4h level had to sit within about fifty cents of a 5m level to count
+as the same price. Nothing ever combined, and the zero looked like a market
+observation rather than a bug.
+
+A level's zone already encodes how precisely its timeframe can place it, so two
+levels describe one price when their zones overlap — the same test `dedupe`
+uses within a timeframe, applied across them.
+
+Fusing them is then **inverse-variance weighting**, which is already the right
+tool because every level carries a Kalman variance and a finer timeframe
+naturally has a smaller one:
 
 ```
 1/sigma^2  =  sum of 1/sigma_i^2
@@ -476,6 +520,17 @@ strong 4h one it merely sits beside.
 **Significance follows the highest timeframe, precision the lowest.** A 15m
 level breaking inside a 4h level that holds is an ordinary morning; letting the
 finer timeframe overrule the coarser one on significance would invert the point.
+
+Measured on stored history:
+
+```
+btc      63500.18  [1h+15m+5m]  span=1h  precision=5m  6.7 touches  strength 0.90
+eurusd       1.15  [4h+5m]      span=4h  precision=5m  8.9 touches  strength 0.83
+```
+
+Gold has none, and that is a real answer rather than a failure: it has been
+trending, so its timeframes describe different price ranges and there is
+nothing at one price for them to agree about.
 
 Touch histories merge across members, because evidence at three resolutions of
 one price is evidence about the same price — rather than three thin piles none

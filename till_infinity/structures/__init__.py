@@ -76,6 +76,7 @@ __all__ = [
     "reactions",
     "save",
     "watch",
+    "zones_for",
 ]
 
 
@@ -86,5 +87,22 @@ def levels_near(engine: Engine, feed: str, price: float, within_vol: float = 3.0
     can sit against a 5m swing level and a daily pivot at once, and which of
     those matters is exactly what the caller is asking.
     """
-    vol = engine.vol.of(feed)
+    # The reference estimate, not any one timeframe's: ranking levels from
+    # different timeframes needs one denominator or the distances are not
+    # comparable with each other.
+    vol = engine.reference(feed)
     return nearby(engine.levels(feed), price, vol, within_vol)
+
+
+def zones_for(engine: Engine, feed: str) -> list[Zone]:
+    """Confluence zones for one instrument, each level measured on its own
+    timeframe.
+
+    The resolver is the point: a 4h level's zone must be computed in 4h
+    volatility or it is compared against the others on the wrong scale.
+    """
+    return combine(
+        engine.levels(feed),
+        engine.reference(feed),
+        volatility=lambda level: engine.vol.of(feed, level.interval),
+    )

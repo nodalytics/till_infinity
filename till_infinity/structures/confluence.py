@@ -39,7 +39,7 @@ same price.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from .levels import Level, Side, SideStats, State
@@ -210,17 +210,30 @@ def combine(
     vol: Volatility,
     *,
     span: Sequence[str] = DEFAULT_SPAN,
-    tolerance_vol: float = 0.75,
+    volatility: Callable[[Level], Volatility] | None = None,
 ) -> list[Zone]:
     """Group levels across timeframes into confluence zones, cheapest first.
 
-    Grouping is on price proximity in volatility units, the same currency used
-    everywhere else, so one tolerance works for gold and for BTC.
+    Grouping is on **zone overlap**, not on a single tolerance, and that is the
+    difference between this working and not. A shared tolerance is necessarily
+    expressed in one timeframe's volatility, and the timeframes differ by more
+    than an order of magnitude — measured on gold, one volatility unit is $0.74
+    on 5m and $9.87 on 4h. With a 5m-scale tolerance a 4h level would have to
+    sit within about fifty cents of a 5m level to be considered the same price,
+    which almost never happens, so nothing ever combined.
+
+    A level's zone already encodes how precisely its own timeframe can place
+    it. Two levels describe one price when those zones overlap — which is the
+    same test `dedupe` uses within a timeframe, applied across them.
+
+    `volatility` resolves each level's estimate; without it every level is
+    measured with `vol`, which is only correct when they share a timeframe.
 
     Levels outside `span` are ignored rather than merged. Combining a 1m level
     into a 4h zone would drag the fused price toward whichever minute-scale
     wiggle happened to be nearby, which is precision about the wrong thing.
     """
+    resolve = volatility or (lambda _level: vol)
     wanted = set(span)
     usable = sorted(
         (level for level in levels if level.interval in wanted),
@@ -230,15 +243,17 @@ def combine(
         return []
 
     groups: list[list[Level]] = [[usable[0]]]
+    reach = usable[0].zone(resolve(usable[0]))[1]
     for level in usable[1:]:
-        previous = groups[-1][-1]
-        gap_bps = (
-            abs(level.price - previous.price) / previous.price * 10_000 if previous.price else 0.0
-        )
-        if vol.units(gap_bps) <= tolerance_vol:
+        low, high = level.zone(resolve(level))
+        if low <= reach:
             groups[-1].append(level)
+            # The group reaches as far as its widest member — a coarse level
+            # that overlaps a fine one also reaches whatever else it covers.
+            reach = max(reach, high)
         else:
             groups.append([level])
+            reach = high
 
     zones: list[Zone] = []
     for members in groups:

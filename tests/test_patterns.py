@@ -186,7 +186,7 @@ def test_a_shape_needs_enough_points_to_be_one():
 # -------------------------------------------------------------- confluence
 
 
-def _level(price: float, interval: str, variance: float, touches: int = 0) -> Level:
+def _level(price: float, interval: str, variance: float = 0.5, touches: int = 0) -> Level:
     level = Level(feed="gold", interval=interval, filter=Kalman(mean=price, variance=variance))
     for i in range(touches):
         level.record(Side.ABOVE, Outcome.REJECT, 1.0, 1_000_000.0 + i)
@@ -274,3 +274,106 @@ def test_zones_near_a_price_are_nearest_first():
 
 def test_no_levels_means_no_zones():
     assert confluence.combine([], _vol()) == []
+
+
+# ------------------------------------------- confluence across timeframes
+
+
+def _tf_vol(bps: float) -> Volatility:
+    vol, price = Volatility(), 4400.0
+    for _ in range(60):
+        price *= 1 + bps / 10_000
+        vol.update(price)
+    return vol
+
+
+def test_zones_group_by_overlap_not_by_one_tolerance():
+    """A shared tolerance is in one timeframe's units, and they differ 13x."""
+    fine, coarse = _tf_vol(1.7), _tf_vol(22.0)
+    per = {"5m": fine, "4h": coarse}
+
+    near = _level(4400.0, "5m", variance=0.01)
+    far = _level(4404.0, "4h", variance=4.0)  # inside the 4h zone, far in 5m units
+
+    zones = confluence.combine([near, far], fine, volatility=lambda lv: per[lv.interval])
+    assert len(zones) == 1
+    assert zones[0].depth == 2
+
+
+def test_a_fine_level_outside_every_zone_stays_its_own():
+    fine = _tf_vol(1.7)
+    apart = [_level(4400.0, "5m", variance=0.001), _level(4600.0, "5m", variance=0.001)]
+    assert len(confluence.combine(apart, fine)) == 2
+
+
+def test_significance_and_precision_come_from_opposite_ends():
+    fine, coarse = _tf_vol(1.7), _tf_vol(22.0)
+    per = {"5m": fine, "4h": coarse}
+    zone = confluence.combine(
+        [_level(4400.0, "5m", 0.01), _level(4401.0, "4h", 4.0)],
+        fine,
+        volatility=lambda lv: per[lv.interval],
+    )[0]
+    assert zone.span == "4h"  # how much it matters
+    assert zone.precision == "5m"  # where it is
+    assert zone.price == pytest.approx(4400.0, abs=0.3)  # the fine one places it
+
+
+def test_the_engine_resolves_each_level_on_its_own_timeframe():
+    """The resolver is the whole fix; without it 4h is measured in 5m units."""
+    from till_infinity import structures as sx
+    from till_infinity.structures.engine import Engine
+
+    engine = Engine()
+    for interval, bps in (("5m", 1.7), ("4h", 22.0)):
+        vol = engine.vol.of("gold", interval)
+        price = 4400.0
+        for _ in range(60):
+            price *= 1 + bps / 10_000
+            vol.update(price)
+    engine._levels[("gold", "5m")] = [_level(4400.0, "5m", 0.01)]
+    engine._levels[("gold", "4h")] = [_level(4404.0, "4h", 4.0)]
+
+    zones = sx.zones_for(engine, "gold")
+    assert len(zones) == 1
+    assert zones[0].depth == 2
+
+
+# -------------------------------------------- volatility per timeframe
+
+
+def test_each_timeframe_keeps_its_own_estimate():
+    """A typical 4h move is not a typical 5m move, and one number cannot be both."""
+    from till_infinity.structures.volatility import Book
+
+    book = Book()
+    for interval, bps in (("5m", 1.7), ("4h", 22.0)):
+        price = 4400.0
+        for _ in range(60):
+            price *= 1 + bps / 10_000
+            book.update("gold", price, interval)
+
+    assert book.of("gold", "4h").bps > 5 * book.of("gold", "5m").bps
+    assert book.intervals("gold") == ["4h", "5m"]
+
+
+def test_the_tick_estimate_is_separate_from_every_timeframe():
+    from till_infinity.structures.volatility import Book
+
+    book = Book()
+    book.update("gold", 4400.0, "4h")
+    book.update("gold", 4500.0, "4h")
+    assert book.of("gold").bps != book.of("gold", "4h").bps
+
+
+def test_the_reference_falls_back_when_no_quotes_have_arrived():
+    """Seeding from bars alone must still be able to rank levels."""
+    from till_infinity.structures.engine import Engine
+
+    engine = Engine()
+    vol = engine.vol.of("gold", "5m")
+    price = 4400.0
+    for _ in range(60):
+        price *= 1.0002
+        vol.update(price)
+    assert engine.reference("gold") is vol

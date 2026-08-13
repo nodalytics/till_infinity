@@ -35,6 +35,7 @@ from . import confluence, patterns, pips, pivots, reactions
 from . import levels as lv
 from .models import Shape, Signal
 from .volatility import Book as VolBook
+from .volatility import Volatility
 
 log = get_logger(__name__)
 
@@ -300,7 +301,7 @@ class Engine:
 
     def reform(self, series: Series, when: float) -> list[lv.Level]:
         """Re-derive levels from the confirmed swings in the window."""
-        vol = self.vol.of(series.feed)
+        vol = self.vol.of(series.feed, series.interval)
         found = pips.points(list(series.times), list(series.closes), self.pip_count)
         visible = pips.as_of(found, when)
         candidates = lv.form(series.feed, series.interval, pips.turns(visible), vol)
@@ -414,9 +415,15 @@ class Engine:
         self._now = max(self._now, when)
         series = self.series(feed, interval)
         series.add(when, high, low, float(close))
-        vol = self.vol.of(feed)
+        # This timeframe's own volatility: a typical 4h move is not a typical
+        # 5m move, and one estimate for both makes every threshold expressed in
+        # volatility units wrong for all but whichever series updates most.
+        vol = self.vol.of(feed, interval)
         vol.update(float(close))
-        self._roll_sessions(feed, when, high, low, float(close), vol)
+        # Pivots are session structures priced at today's scale, so they use the
+        # reference estimate rather than the bar interval that happened to
+        # deliver them — a 4h bar completing a day does not make it a 4h level.
+        self._roll_sessions(feed, when, high, low, float(close), self.reference(feed))
         self._resolve_shapes(series, vol)
         if not series.ready:
             return []
@@ -435,6 +442,8 @@ class Engine:
         if not feed or not isinstance(mid, int | float) or not mid:
             return []
         when = float(payload.get("time") or time.time())
+        # Quotes feed the tick-level estimate, which is the common denominator
+        # every timeframe's levels are ranked against.
         vol = self.vol.of(feed)
         vol.update(float(mid))
         calls: list[Call] = []
@@ -452,7 +461,7 @@ class Engine:
 
     def check(self, feed: str, interval: str, price: float, when: float) -> list[Call]:
         """Advance every open interaction, and open one where price has arrived."""
-        vol = self.vol.of(feed)
+        vol = self.vol.of(feed, interval)
         if not vol.warm:
             return []
         calls: list[Call] = []
@@ -541,6 +550,24 @@ class Engine:
             return level.side_of(series.closes[-2])
         return level.side_of(price)
 
+    def reference(self, feed: str) -> Volatility:
+        """The estimate levels from every timeframe are compared against.
+
+        Cross-timeframe questions — which level is nearest, is this one worth
+        acting on — need one denominator, or "three volatility units away" means
+        something different for each level and they cannot be ranked.
+        """
+        tick = self.vol.of(feed)
+        if tick.warm:
+            return tick
+        # Before any quotes have arrived, the finest timeframe with data is the
+        # closest thing to a tick estimate.
+        for interval in self.intervals:
+            found = self.vol.of(feed, interval)
+            if found.warm:
+                return found
+        return tick
+
     def _speed(self, feed: str, interval: str, vol) -> float:
         """How fast price is moving, in volatility units per bar."""
         series = self._series.get((feed, interval))
@@ -601,7 +628,7 @@ class Engine:
         """What the engine knows, for `structures levels`."""
         rows = []
         for (feed, interval), found in sorted(self._levels.items()):
-            vol = self.vol.of(feed)
+            vol = self.vol.of(feed, interval)
             for level in sorted(found, key=lambda level: level.price):
                 rows.append(level.to_dict(vol))
                 rows[-1]["interval"] = interval

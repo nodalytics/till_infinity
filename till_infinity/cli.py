@@ -1412,7 +1412,7 @@ def _judge_at(engine, feed: str | None, price: float) -> None:
 
     feeds = [feed] if feed else sorted({row["feed"] for row in engine.summary()})
     for name in feeds:
-        vol = engine.vol.of(name)
+        vol = engine.reference(name)
         near = sx.levels_near(engine, name, price)
         if not near:
             continue

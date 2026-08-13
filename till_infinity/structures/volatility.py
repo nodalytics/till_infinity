@@ -147,19 +147,39 @@ class Volatility:
 
 @dataclass(slots=True)
 class Book:
-    """One volatility estimate per instrument."""
+    """One volatility estimate per instrument **and timeframe**.
+
+    Per timeframe, not merely per instrument, and that distinction is
+    load-bearing. A typical 4h move on gold is tens of times a typical 5m move,
+    so a single estimate — in practice dominated by whichever series updates
+    most often — makes every threshold expressed in volatility units wrong for
+    every timeframe but one.
+
+    Concretely: with one estimate, gold's clustering tolerance came out at about
+    $0.86 while the 4h window spanned seventy days over a $574 range. Swings at
+    that scale essentially never clustered, so the higher timeframes produced
+    almost no levels at all.
+
+    An empty `interval` is the instrument's tick-level estimate, updated from
+    quotes. That is the right denominator for cross-timeframe comparisons: it
+    is the only one every level can be measured against on the same footing.
+    """
 
     half_life: float = HALF_LIFE
-    _by_feed: dict[str, Volatility] = field(default_factory=dict)
+    _by_key: dict[tuple[str, str], Volatility] = field(default_factory=dict)
 
-    def of(self, feed: str) -> Volatility:
-        found = self._by_feed.get(feed)
+    def of(self, feed: str, interval: str = "") -> Volatility:
+        key = (feed, interval)
+        found = self._by_key.get(key)
         if found is None:
-            found = self._by_feed[feed] = Volatility(half_life=self.half_life)
+            found = self._by_key[key] = Volatility(half_life=self.half_life)
         return found
 
-    def update(self, feed: str, price: float) -> float:
-        return self.of(feed).update(price)
+    def update(self, feed: str, price: float, interval: str = "") -> float:
+        return self.of(feed, interval).update(price)
 
     def feeds(self) -> list[str]:
-        return sorted(self._by_feed)
+        return sorted({feed for feed, _ in self._by_key})
+
+    def intervals(self, feed: str) -> list[str]:
+        return sorted(interval for this, interval in self._by_key if this == feed and interval)
