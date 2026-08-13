@@ -209,6 +209,29 @@ def level_at(ctx: RunContext[Deps], feed: str, price: float, limit: int = 5) -> 
     return _guard(lambda: data.level_at(ctx.deps.structures_dir, feed, price, limit), "level_at")
 
 
+def next_levels(ctx: RunContext[Deps], feed: str, price: float, limit: int = 5) -> Any:
+    """Which levels price is likely to reach next, and roughly when.
+
+    Ordered by time rather than distance: a level on a fast timeframe can be
+    reached long before a nearer one on a slow timeframe.
+
+    `median` is the typical time to get there and `slow` the unlucky case;
+    `within_window` is the chance of reaching it inside the next 24 bars of
+    that timeframe. Time goes as the **square** of distance, so a level twice
+    as far away takes four times as long, not twice.
+
+    There is deliberately no average — the first-passage distribution has an
+    infinite mean, so an average would grow with the length of the sample. Use
+    the median.
+
+    This is a null model from distance and volatility alone; it says nothing
+    about direction. Pair it with `level_at` for that.
+    """
+    return _guard(
+        lambda: data.next_levels(ctx.deps.structures_dir, feed, price, limit), "next_levels"
+    )
+
+
 def zones(ctx: RunContext[Deps], feed: str, limit: int = 15) -> Any:
     """Levels that several timeframes agree on, strongest first.
 
@@ -271,6 +294,7 @@ REGISTRY: dict[str, Callable[..., Any]] = {
     "reserves": reserves,
     "levels": levels,
     "level_at": level_at,
+    "next_levels": next_levels,
     "zones": zones,
     "recent": recent,
 }

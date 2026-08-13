@@ -56,7 +56,7 @@ PRICE_TOOLS = ("instruments", "quotes", "spreads", "divergence", "bars", "move")
 #: The structural view: where price has turned before and what it did there.
 #: Separate from PRICE_TOOLS because it answers a different question — those
 #: describe the present, these describe what the present has meant before.
-LEVEL_TOOLS = ("levels", "level_at", "zones")
+LEVEL_TOOLS = ("levels", "level_at", "next_levels", "zones")
 NEWS_TOOLS = ("events", "headlines", "reserves")
 #: Every role gets its own history. An analyst with no memory reports the same
 #: dislocation every hour and never learns that the last one resolved itself.

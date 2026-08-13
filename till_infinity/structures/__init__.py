@@ -23,7 +23,7 @@ await watch(Bus(redis_url="redis://localhost:6379"))
 
 from __future__ import annotations
 
-from . import confluence, patterns, pips, reactions
+from . import confluence, patterns, pips, reactions, timing
 from .anomaly import Detector
 from .config import DRIFT_INTERVALS, INTERVALS, Settings
 from .confluence import Zone, combine
@@ -35,6 +35,7 @@ from .models import Consensus, Shape, Signal
 from .reactions import Features, Inference, Memory, Touch, Tracker
 from .service import TOPICS, UNAMBIGUOUS, BarConsensus, Watcher, watch
 from .store import load, save
+from .timing import Approach, bars_to_reach, estimate, next_levels, probability_within
 from .volatility import Volatility
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "INTERVALS",
     "TOPICS",
     "UNAMBIGUOUS",
+    "Approach",
     "BarConsensus",
     "Book",
     "Books",
@@ -66,15 +68,20 @@ __all__ = [
     "Volatility",
     "Watcher",
     "Zone",
+    "bars_to_reach",
     "combine",
     "confluence",
+    "estimate",
     "levels_near",
     "load",
     "nearby",
+    "next_levels",
     "patterns",
     "pips",
+    "probability_within",
     "reactions",
     "save",
+    "timing",
     "watch",
     "zones_for",
 ]

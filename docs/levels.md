@@ -482,6 +482,63 @@ One occurrence is not evidence about anything. The mechanism is verified by
 construction in the tests; whether back checks pay is a question for the
 journal once there are enough of them to ask.
 
+## 7d. When price will get there
+
+A level three volatility units away is not "near" or "far" — it is a distance a
+walk has to cover, which is a **first-passage time** problem with a known
+answer. The input is the distance in volatility units, which is exactly what
+`distance_vol` already produces.
+
+```
+bars(q)  =  ( n / Phi^-1(1 - q/2) )^2
+
+P(touched within N bars)  =  2 * ( 1 - Phi( n / sqrt(N) ) )
+```
+
+Both exact for Brownian motion, and neither needs anything beyond the normal
+quantile function.
+
+### Time goes as the square of distance
+
+The single most useful thing here, because it is not what intuition offers:
+
+| distance | median | slow (90th) | within 24 bars |
+|---|---|---|---|
+| 1v | 2.2 bars | 63 | 84% |
+| 2v | 8.8 bars | 253 | 68% |
+| 3v | 19.8 bars | 570 | 54% |
+| 5v | 55 bars | 1583 | 31% |
+| 10v | 220 bars | 6333 | 4% |
+
+**Twice as far is four times as long, not twice.**
+
+### There is no average, and that is not pedantry
+
+The expected first-passage time of a driftless walk is **infinite** — the tail
+is heavy enough that the mean does not converge. Any "average time to reach"
+would be an artefact of where the sample was cut, and would grow the longer you
+collected data for. Quantiles are reported instead: a median and a slow case,
+with the slow case reading `beyond` when it hits the bound rather than printing
+a ceiling as though it were an estimate.
+
+### Ordered by time, not distance
+
+The clock differs by more than the distance does, so the orderings are not the
+same. On live btc, a level at +0.13% on 15m ranks *behind* one at +0.13% on 5m,
+because the same distance is 13 hours on one clock and 5 on the other.
+
+### What it is not
+
+Markets are not Brownian: volatility clusters, tails are fat, price trends.
+This is the **null model** — what distance and volatility alone imply, before
+anything about direction. A level reached far sooner than this repeatedly is
+saying something, and the estimate is what makes "sooner" mean anything.
+
+Drift is excluded deliberately. Estimating it from recent data is noisy enough
+that a wrong sign makes the answer worse than the null, and the honest version
+of "price is heading there" is the directional inference, which is a separate
+question with its own answer.
+
 ## 8. What stops it fooling itself
 
 Every conditional is reported beside the **base rate** — the unconditional

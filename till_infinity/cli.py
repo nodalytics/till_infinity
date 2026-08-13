@@ -1426,9 +1426,10 @@ def _judge_at(engine, feed: str | None, price: float) -> None:
             found = reactions.infer(level, side, features, engine.tracker.memory)
             mark = "[bold green]![/]" if found.actionable else "[dim]·[/]"
             arrow = "↑" if found.direction == "up" else "↓"
+            when = sx.timing.to_level(level, price, vol)
             console.print(
-                f"  {mark} {level.price:.5g} [dim]({level.distance_vol(price, vol):+.2f}v away, "
-                f"from {side})[/] {arrow} {found.probability_up:.0%} "
+                f"  {mark} {level.price:.5g} [dim]({level.distance_vol(price, vol):+.2f}v, "
+                f"from {side}, ~{when.median})[/] {arrow} {found.probability_up:.0%} "
                 f"[dim]vs {found.base_rate_up:.0%} base[/] "
                 f"push {found.expected_push:+.2f}v [dim]{escape(found.detail)}[/]"
             )

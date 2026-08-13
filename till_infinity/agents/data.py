@@ -326,6 +326,40 @@ def level_at(state_dir: Path, feed: str, price: float, limit: int = 5) -> list[d
     return out
 
 
+def next_levels(state_dir: Path, feed: str, price: float, limit: int = 5) -> list[dict[str, Any]]:
+    """Which levels price is likely to reach next, soonest first.
+
+    Ordered by *time*, not distance — a level on a fast timeframe can be
+    reached long before a nearer one on a slow timeframe, because the clocks
+    differ by more than the distances do.
+
+    Each carries a median time and a slow case. There is no average: the
+    first-passage distribution has an infinite mean, so any "average time to
+    reach" grows with however long you collected data for.
+    """
+    engine = _engine(state_dir)
+    if engine is None:
+        return [{"error": "no level state yet — the structures service has not run"}]
+    from ..structures import timing
+
+    vol = engine.reference(feed)
+    out: list[dict[str, Any]] = []
+    for level, approach, side in timing.next_levels(
+        engine.levels(feed), price, vol, limit=_clamp(limit)
+    ):
+        out.append(
+            {
+                "level": round(level.price, 8),
+                "interval": level.interval,
+                "state": str(level.state),
+                "arriving_from": str(side),
+                "strength": level.strength(time.time(), vol),
+                **approach.to_dict(),
+            }
+        )
+    return out
+
+
 def zones(state_dir: Path, feed: str, limit: int = 15) -> list[dict[str, Any]]:
     """Levels combined across timeframes, strongest first.
 
