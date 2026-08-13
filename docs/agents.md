@@ -259,9 +259,18 @@ against a per-minute token cap — so the hours Gemini cannot serve are exactly
 the ones Groq can, provided the call fits in 12k tokens.
 
 ```
-AGENTS_MODEL=google:gemini-2.5-flash
-AGENTS_FALLBACK_MODELS=groq:llama-3.3-70b-versatile
+AGENTS_MODEL=groq:llama-3.3-70b-versatile
+AGENTS_FALLBACK_MODELS=google:gemini-2.5-flash
 ```
+
+Groq leads, and the reason is the *kind* of failure rather than a quality
+judgement. A per-minute token cap **defers** — the client backs off sixteen
+seconds and the call goes through — while a daily request cap **stops**, and
+stops silently, for however many hours remain in the day. At a 90-minute wake
+that is roughly sixteen calls, which Groq serves without noticing and Gemini can
+only just cover before going dark. The one measured against the other, on one
+call each: Groq 9,181 tokens in 32.5s, Gemini 4,401 in 1.2s. Gemini is far
+faster; it is the one that runs out.
 
 **`groq` is not `grok`.** Different companies: `groq` is the inference host
 whose keys begin `gsk_`, and `grok` is xAI's model, reached through the `xai`
