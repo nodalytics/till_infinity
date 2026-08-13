@@ -59,6 +59,12 @@ DEFAULT_K = 12
 #: oldest touches describe a market that no longer exists anyway.
 MEMORY = 4_000
 
+#: How many of a series' own resolved touches it takes before its base rate
+#: mostly stops leaning on the pooled one. Higher than `PRIOR_WEIGHT` on
+#: purpose: a base rate is the reference everything else is measured against,
+#: so it should move more slowly than any single conditional built on it.
+BASE_WEIGHT = 20.0
+
 #: How strongly a kNN prior counts, in pseudo-touches. Roughly: borrowed
 #: evidence is worth this much of the level's own.
 PRIOR_WEIGHT = 4.0
@@ -146,10 +152,17 @@ class Touch:
     level_price: float
     features: Features
     started: float
+
     entry: float
     #: The furthest price reached while inside the zone. Kept, but **not** what
     #: the level's position is learned from — see `origin`.
     extreme: float
+    #: The timeframe this level lives on. The base rate is per
+    #: `(feed, interval)`, since an unconditional rate pooled across BTC 15m and
+    #: GBPUSD daily describes neither. Empty means "do not bucket this" — a
+    #: touch assembled by hand has no timeframe to speak for, and guessing one
+    #: would put it in a bucket it does not belong to.
+    interval: str = ""
     #: Where the leg coming in ended and the leg going out began.
     #:
     #: The better observation of where the level actually is. The extreme is a
@@ -392,17 +405,38 @@ class Memory:
         self.k = k
         self._touches: list[Touch] = []
         self._ups = 0
+        #: (feed, interval) -> [ups, n]. Maintained alongside the pooled counts
+        #: rather than derived on demand, because deriving it would mean a scan
+        #: of every touch on every call.
+        self._buckets: dict[tuple[str, str], list[int]] = {}
+
+    def _bucket(self, touch: Touch) -> list[int] | None:
+        if not touch.interval:
+            return None
+        return self._buckets.setdefault((touch.feed, touch.interval), [0, 0])
 
     def add(self, touch: Touch) -> None:
         if touch.open:
             return
         self._touches.append(touch)
+        bucket = self._bucket(touch)
+        if bucket is not None:
+            bucket[1] += 1
         if touch.push_vol > 0:
             self._ups += 1
+            if bucket is not None:
+                bucket[0] += 1
         while len(self._touches) > self.capacity:
             dropped = self._touches.pop(0)
+            gone = self._bucket(dropped)
+            if gone is not None:
+                gone[1] -= 1
             if dropped.push_vol > 0:
                 self._ups -= 1
+                if gone is not None:
+                    gone[0] -= 1
+            if gone is not None and gone[1] <= 0:
+                self._buckets.pop((dropped.feed, dropped.interval), None)
 
     @property
     def base_rate_up(self) -> float:
@@ -417,6 +451,34 @@ class Memory:
         if not self._touches:
             return 0.5
         return (self._ups + 0.5) / (len(self._touches) + 1.0)
+
+    def base_rate_for(self, feed: str, interval: str) -> float:
+        """The unconditional rate for *this* series, not for everything at once.
+
+        The pooled rate above is one number for the whole system, and for a
+        while it was the only one: every call on every instrument and timeframe
+        was measured against it. That is wrong in a way that does real damage,
+        because `edge` is `conditional - base` and `actionable` gates on it —
+        so a pool that happens to sit at 72% down hands every down call a
+        twenty-point apparent edge and handicaps every up call, systematically,
+        on instruments that have nothing to do with the samples that set it.
+
+        BTC on 15m and GBPUSD on the daily do not share an unconditional drift,
+        and the neighbours being pooled across them is a separate matter: the
+        features are scale-free so that a *conditional* can borrow evidence, and
+        borrowing a conditional is not the same as borrowing the thing it is
+        supposed to be compared against.
+
+        Shrunk toward the pooled rate rather than switched to the bucket the
+        moment one exists, because a bucket with three touches in it is not an
+        estimate of anything. `BASE_WEIGHT` is how many of its own observations
+        a series needs before it mostly speaks for itself.
+        """
+        pooled = self.base_rate_up
+        ups, seen = self._buckets.get((feed, interval), (0, 0))
+        if not seen:
+            return pooled
+        return (ups + BASE_WEIGHT * pooled) / (seen + BASE_WEIGHT)
 
     def neighbours(self, features: Features) -> list[tuple[float, Touch]]:
         """The k most similar resolved touches, nearest first."""
@@ -499,7 +561,7 @@ def infer(
         probability_up=probability,
         expected_push=push,
         push_sigma=own.push_sigma,
-        base_rate_up=memory.base_rate_up,
+        base_rate_up=memory.base_rate_for(level.feed, level.interval),
         own_touches=own.touches,
         neighbours=neighbours,
         detail=detail,
@@ -540,6 +602,7 @@ class Tracker:
         two sources for one fact is two things that can disagree."""
         touch = Touch(
             feed=level.feed,
+            interval=level.interval,
             level_price=level.price,
             features=features,
             started=when,

@@ -395,6 +395,25 @@ P(up) = (π·w + ups) / (w + touches)
 Three touches that all went up is not 100%. Reporting it as such is how a system
 talks itself into a trade it has no evidence for.
 
+**The base rate is per `(feed, interval)`.** For a while it was not: one
+pooled rate over the whole kNN memory served every call on every instrument and
+timeframe, so GBPUSD on the daily and BTC on 15m were both reported against the
+same 72%. That is wrong in a way that does real damage, because `edge` is
+`conditional − base` and `actionable` gates on `|edge| ≥ 0.08` — a pool sitting
+at 72% down hands every down call a twenty-point apparent edge and handicaps
+every up call, on series that had nothing to do with the samples that set it.
+
+The neighbours stay pooled, and that is not the same thing. The features are
+scale-free precisely so a *conditional* can borrow evidence across instruments;
+borrowing a conditional is not borrowing the thing it is supposed to be measured
+against. A series' own rate is shrunk toward the pooled one until it has
+`BASE_WEIGHT` (20) observations of its own, because a bucket with three touches
+in it is not an estimate:
+
+```
+base(feed, interval) = (ups + 20·pooled) / (n + 20)
+```
+
 **There is no separate P(down).** It is `1 − P(up)`, exactly: a touch either
 pushed up or it did not, so the beta-binomial's `β` term is `touches − ups` and
 one counter carries both. (One wrinkle, invisible otherwise: a push of *exactly*

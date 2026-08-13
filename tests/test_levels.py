@@ -1304,3 +1304,80 @@ def test_leaving_the_zone_re_arms_the_level():
 
     engine.check("gold", "5m", high + (high - low) * 5, 1_000.0)
     assert not level.waiting
+
+
+def _resolved(feed: str, interval: str, push: float) -> reactions.Touch:
+    """A resolved touch, the shape `Memory.add` accepts."""
+    features = reactions.Features(
+        side=Side.ABOVE, approach_vol=1.0, depth_vol=0.5, strength=0.5, run_vol=1.0, experience=0.5
+    )
+    return reactions.Touch(
+        feed=feed,
+        level_price=100.0,
+        features=features,
+        started=0.0,
+        entry=100.0,
+        extreme=100.0,
+        interval=interval,
+        outcome=Outcome.REJECT,
+        push_vol=push,
+        resolved=1.0,
+    )
+
+
+def test_the_base_rate_is_per_series_not_one_number_for_everything():
+    """BTC 15m and GBPUSD daily do not share an unconditional drift."""
+    memory = reactions.Memory()
+    for _ in range(60):
+        memory.add(_resolved("btc", "15m", -1.0))
+    for _ in range(60):
+        memory.add(_resolved("gbpusd", "1d", +1.0))
+
+    btc = memory.base_rate_for("btc", "15m")
+    cable = memory.base_rate_for("gbpusd", "1d")
+    assert btc < 0.25, btc
+    assert cable > 0.75, cable
+    # The pooled rate sits between them and is what each was reported as before.
+    assert 0.4 < memory.base_rate_up < 0.6
+
+
+def test_a_thin_series_leans_on_the_pool_rather_than_inventing_a_rate():
+    """Three touches is not an estimate of anything."""
+    memory = reactions.Memory()
+    for _ in range(100):
+        memory.add(_resolved("btc", "15m", +1.0))
+    for _ in range(3):
+        memory.add(_resolved("gold", "1h", -1.0))
+
+    gold = memory.base_rate_for("gold", "1h")
+    # Pulled down by its own three, but nowhere near the 0.0 they alone imply.
+    assert 0.6 < gold < memory.base_rate_up
+
+
+def test_an_unknown_series_gets_the_pooled_rate():
+    memory = reactions.Memory()
+    for _ in range(40):
+        memory.add(_resolved("btc", "15m", +1.0))
+    assert memory.base_rate_for("eurusd", "4h") == memory.base_rate_up
+
+
+def test_a_touch_with_no_timeframe_never_lands_in_a_bucket():
+    """Hand-built touches must not pollute a series they know nothing about."""
+    memory = reactions.Memory()
+    for _ in range(30):
+        memory.add(_resolved("btc", "", +1.0))
+    assert not memory._buckets
+    assert memory.base_rate_for("btc", "15m") == memory.base_rate_up
+
+
+def test_buckets_stay_in_step_with_eviction():
+    """The tally is maintained, not derived, so eviction must decrement it."""
+    memory = reactions.Memory(capacity=50)
+    for _ in range(50):
+        memory.add(_resolved("btc", "15m", +1.0))
+    for _ in range(50):
+        memory.add(_resolved("gold", "1h", -1.0))
+
+    assert sum(n for _ups, n in memory._buckets.values()) == len(memory._touches)
+    # BTC aged out entirely rather than leaving a stale count behind.
+    assert ("btc", "15m") not in memory._buckets
