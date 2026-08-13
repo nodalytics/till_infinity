@@ -739,3 +739,69 @@ def test_the_half_life_scales_with_the_timeframe():
 
 def test_an_unknown_timeframe_falls_back_rather_than_crashing():
     assert lv.half_life_days("fortnightly") == lv.TOUCH_HALF_LIFE_DAYS
+
+
+# ------------------------------------ certainty the evidence cannot support
+
+
+def test_neighbours_agreeing_is_evidence_not_proof():
+    """Twelve neighbours all going one way must not produce a claim of 0% or 100%."""
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=3600)
+    when = 1_000_000.0
+    for n in range(12):
+        level = Level(feed=f"f{n}", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+        when += 50_000
+        _touch(tracker, level, Side.ABOVE, +40.0, when, vol)  # every one goes up
+
+    fresh = Level(feed="new", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    features = reactions.features_for(fresh, Side.ABOVE, 4400.0, vol)
+    found = reactions.infer(fresh, Side.ABOVE, features, tracker.memory)
+
+    assert found.own_touches == 0
+    assert found.neighbours >= 8
+    assert 0.0 < found.probability_up < 1.0
+
+
+def test_a_direction_follows_the_expected_move_not_the_win_rate():
+    """Four small losses and one large win is a positive expectation."""
+    found = reactions.Inference(
+        side=Side.ABOVE,
+        probability_up=0.2,
+        expected_push=1.4,
+        push_sigma=2.0,
+        base_rate_up=0.5,
+        own_touches=20,
+        neighbours=12,
+    )
+    assert found.direction == "up"
+    assert found.mixed
+
+
+def test_a_mixed_signal_is_not_a_call():
+    """Whichever half you act on, the other says you are wrong."""
+    found = reactions.Inference(
+        side=Side.ABOVE,
+        probability_up=0.2,
+        expected_push=1.4,
+        push_sigma=2.0,
+        base_rate_up=0.5,
+        own_touches=20,
+        neighbours=12,
+    )
+    assert not found.actionable
+
+
+def test_agreement_between_the_two_is_not_mixed():
+    found = reactions.Inference(
+        side=Side.ABOVE,
+        probability_up=0.75,
+        expected_push=1.4,
+        push_sigma=0.3,
+        base_rate_up=0.5,
+        own_touches=20,
+        neighbours=12,
+    )
+    assert not found.mixed
+    assert found.direction == "up"
+    assert found.actionable

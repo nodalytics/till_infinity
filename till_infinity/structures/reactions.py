@@ -175,9 +175,30 @@ class Inference:
 
     @property
     def direction(self) -> str:
-        if self.probability_up >= 0.5:
+        """Which way to lean — taken from the expected push, not the win rate.
+
+        The two can disagree, and when they do the expected value is what a
+        consumer acts on: a level that drifts down four times in five and jumps
+        hard on the fifth has a losing win rate and a positive expectation.
+        Reporting "down" there while the expected move is upward would be
+        incoherent to anyone reading it.
+        """
+        if self.expected_push > 0:
             return "up"
-        return "down"
+        if self.expected_push < 0:
+            return "down"
+        return "up" if self.probability_up >= 0.5 else "down"
+
+    @property
+    def mixed(self) -> bool:
+        """True when the win rate and the expected move point opposite ways.
+
+        Not an error — it is a skewed distribution, usually many small moves one
+        way and a few large ones the other. Worth surfacing rather than hiding,
+        because it is exactly the shape where a win rate alone misleads.
+        """
+        leans_up = self.probability_up >= 0.5
+        return leans_up != (self.expected_push > 0) and self.expected_push != 0
 
     @property
     def edge(self) -> float:
@@ -196,6 +217,10 @@ class Inference:
             self.own_touches + self.neighbours >= 8
             and abs(self.edge) >= 0.08
             and abs(self.expected_push) >= 0.5
+            # A win rate and an expected move pointing opposite ways is a real
+            # shape, but it is not a call — whichever one you act on, the other
+            # says you are wrong.
+            and not self.mixed
         )
 
     def to_dict(self) -> dict:
@@ -210,14 +235,16 @@ class Inference:
             "own_touches": round(self.own_touches, 2),
             "neighbours": self.neighbours,
             "actionable": self.actionable,
+            "mixed": self.mixed,
             "detail": self.detail,
         }
 
     def __str__(self) -> str:
+        note = " mixed" if self.mixed else ""
         return (
             f"{self.direction} p={self.probability_up:.0%} "
             f"(base {self.base_rate_up:.0%}) push={self.expected_push:+.2f}v "
-            f"n={self.own_touches:.1f}+{self.neighbours}"
+            f"n={self.own_touches:.1f}+{self.neighbours}{note}"
         )
 
 
@@ -248,8 +275,17 @@ class Memory:
 
     @property
     def base_rate_up(self) -> float:
-        """The unconditional rate. Without it no conditional means anything."""
-        return self._ups / len(self._touches) if self._touches else 0.5
+        """The unconditional rate. Without it no conditional means anything.
+
+        Jeffreys-smoothed — `(ups + 0.5) / (n + 1)` — so it never reaches 0 or
+        1. Twenty observations that all went up make the base rate 0.98, not
+        1.0, and the difference matters because everything else is shrunk
+        *toward* this number: an unsmoothed 1.0 would propagate certainty into
+        every conditional built on it, and no finite sample earns that.
+        """
+        if not self._touches:
+            return 0.5
+        return (self._ups + 0.5) / (len(self._touches) + 1.0)
 
     def neighbours(self, features: Features) -> list[tuple[float, Touch]]:
         """The k most similar resolved touches, nearest first."""
@@ -269,6 +305,14 @@ class Memory:
         one. Without the weighting, k neighbours of wildly different similarity
         vote equally and the estimate is dominated by whichever level happened
         to be touched most.
+
+        The result is then **shrunk toward the base rate**, which matters more
+        than it sounds: twelve neighbours that all went the same way would
+        otherwise return exactly 0.0 or 1.0, and a level with no history of its
+        own would inherit that certainty and report it. Twelve agreeing
+        observations are evidence; they are not proof, and a system that prints
+        "0%" from them will eventually print it about something it is wrong
+        about.
         """
         found = self.neighbours(features)
         if not found:
@@ -277,7 +321,11 @@ class Memory:
         total = sum(weights)
         ups = sum(w for w, (_, touch) in zip(weights, found, strict=True) if touch.push_vol > 0)
         push = sum(w * touch.push_vol for w, (_, touch) in zip(weights, found, strict=True))
-        return ups / total, push / total, len(found)
+
+        base = self.base_rate_up
+        weight = len(found) / (len(found) + PRIOR_WEIGHT)
+        smoothed = weight * (ups / total) + (1.0 - weight) * base
+        return smoothed, push / total, len(found)
 
     def __len__(self) -> int:
         return len(self._touches)

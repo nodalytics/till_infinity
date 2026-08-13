@@ -343,6 +343,31 @@ P = w · own + (1 - w) · neighbours
 With no touches this is entirely the neighbours' answer. That is the cold-start
 fix: a brand-new level gets a prior instead of a shrug.
 
+### Certainty the evidence cannot support
+
+Two places where an unsmoothed count would print a number nobody earned.
+
+The **base rate** is Jeffreys-smoothed, `(ups + 0.5) / (n + 1)`, so it never
+reaches 0 or 1. Everything else is shrunk *toward* it, so an unsmoothed 1.0
+would propagate certainty into every conditional built on top of it.
+
+The **kNN prior** is shrunk toward that base rate by neighbour count. Twelve
+neighbours that all went the same way would otherwise return exactly 0.0, and a
+level with no history of its own would inherit that and report it — a system
+that prints "0%" from twelve observations will eventually print it about
+something it is wrong about.
+
+### When the win rate and the expected move disagree
+
+They measure different things and can point opposite ways: a level that drifts
+down four times in five and jumps hard on the fifth has a losing win rate and a
+positive expectation. That is a real shape, not an error.
+
+`direction` follows the **expected move**, because that is what a consumer acts
+on, and the disagreement is surfaced as `mixed` rather than hidden. A mixed
+signal is never `actionable`: whichever half you act on, the other says you are
+wrong.
+
 ## 8. What stops it fooling itself
 
 Every conditional is reported beside the **base rate** — the unconditional
