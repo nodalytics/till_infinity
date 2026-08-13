@@ -351,16 +351,70 @@ main reason to want BOCPD — at a fraction of the cost and with no distribution
 assumption. BOCPD after, once it is clear whether regime *age* changes any
 decision, rather than writing a detector that can be subtly wrong to find out.
 
-## `facto.py` is deliberately empty
+## `facto.py` — the interaction model
 
-Factorisation machines model how features *combine* — venue × instrument ×
-session × calendar-proximity. That is genuinely the next thing worth having and
-genuinely not buildable yet: an FM is supervised, and the honest targets are
-things like "what happened over the next five minutes", which is to say
-*labels*. Those are what the journal has just started collecting.
+Factorisation machines model how features *combine*. The levels model treats
+them one at a time — deviation, then spread, then how recently the level broke
+— and a back check on a strong level in a violent regime is not the sum of
+those three. An additive model cannot say so; an FM can.
 
-Collect first, fit second. Writing one now would mean inventing a target, and a
-model fitted to an invented target learns to predict the invention.
+This was empty until the journal started attaching outcomes, because an FM is
+supervised and there was nothing to fit. Collect first, fit second.
+
+```bash
+uv run till-infinity structures fit
+```
+
+### Walk-forward by construction
+
+Every example is **predicted before it is learned**, in time order:
+
+```
+for example in sorted(examples, key=time):
+    error += |predict(x) - y|
+    model.learn(x, y)
+```
+
+There is no split to arrange incorrectly and no way for a later example to
+inform an earlier prediction. A shuffled split would leak badly here: two
+touches at the same level minutes apart are nearly the same observation, so
+splitting them across train and test measures memorisation.
+
+### Two baselines, always
+
+A score alone means nothing, so it is reported beside:
+
+- **predict the average** — the floor. A model that cannot beat this has
+  learned nothing from the features.
+- **the levels model** — what `reactions.infer` said at the time, already in
+  the journal. An FM that does not beat the model it was meant to improve on
+  is not an improvement.
+
+Both need beating by a **margin**, not by any amount. On pure noise the FM
+edged the running mean by 1.3% — not from learning, but because the running
+mean starts cold and is handicapped early. Calling that a win is how a system
+talks itself into believing its own noise.
+
+### It declines rather than guess
+
+Below 200 examples it reports the count and stops. A factorisation machine over
+eighteen rows will produce a number, and the number is noise wearing a decimal
+point. Verified on synthetic data with a pure interaction — sign depending on
+`side × regime` with no main effect, which is exactly what an additive model
+cannot represent:
+
+```
+900 examples · MAE 0.301v (mean 1.513v) · direction 98% vs 75%
+```
+
+### Two river edges worth knowing
+
+`FMRegressor.predict_one` raises `AttributeError` rather than anything
+catchable by intent, in two situations: before anything has been learned, and
+when given fewer than two features. The first is hit by progressive validation
+on **every first example**; the second by any sparse row. Both return zero
+here, which is also the honest answer — a model with no history, or no pair to
+look at, has no opinion.
 
 ## Environment
 

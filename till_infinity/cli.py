@@ -1435,6 +1435,53 @@ def _judge_at(engine, feed: str | None, price: float) -> None:
             )
 
 
+@structures.command("fit")
+@click.option("--db", type=click.Path(path_type=Path), help="Journal SQLite file.")
+@click.option("--factors", type=int, default=4, show_default=True, help="Latent dimensions.")
+def structures_fit(db, factors):
+    """Fit a factorisation machine on what actually happened, and score it.
+
+    Reads the journal for resolved level calls — the features a call was made
+    from, and the push that followed — and fits progressively: every example is
+    predicted before it is learned, so the evaluation is walk-forward by
+    construction rather than by an arrangement that can be got wrong.
+
+    The score is reported next to two baselines, because alone it means
+    nothing: predicting the average, and what the levels model already said at
+    the time. An FM that does not beat the model it was meant to improve on is
+    not an improvement.
+    """
+    setup_logging()
+    path = _journal_db(db)
+    report = sx.fit(path, model=sx.Model(n_factors=factors))
+
+    if not report.enough:
+        console.print(
+            f"[yellow]{escape(report.verdict)}[/]\n"
+            "[dim]Leave `till-infinity run` going; every resolved level call adds one.[/]"
+        )
+        raise SystemExit(1)
+
+    table = Table(title=f"factorisation machine · {report.examples} examples")
+    for column in ("what", "MAE (v)", "note"):
+        table.add_column(column, justify="right" if "MAE" in column else "left")
+    table.add_row("this model", f"{report.model_mae:.3f}", "")
+    table.add_row(
+        "predict the average", f"{report.baseline_mae:.3f}", "the floor for learning anything"
+    )
+    if report.levels_examples:
+        table.add_row(
+            "the levels model", f"{report.levels_mae:.3f}", f"on {report.levels_examples} of them"
+        )
+    console.print(table)
+    console.print(
+        f"direction called right {report.direction:.0%} "
+        f"[dim](always guessing the commoner way: {report.base_rate:.0%})[/]"
+    )
+    colour = "green" if report.beats_levels else "yellow"
+    console.print(f"[{colour}]{escape(report.verdict)}[/]")
+
+
 @main.group()
 def journal() -> None:
     """The decision journal: what was decided, and why at that moment."""

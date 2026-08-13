@@ -29,6 +29,7 @@ from .config import DRIFT_INTERVALS, INTERVALS, Settings
 from .confluence import Zone, combine
 from .drift import Drift
 from .engine import Call, Engine
+from .facto import Example, Model, Report, dataset, evaluate, fit
 from .features import Book, Books, Reading
 from .levels import Level, Outcome, Side, State, nearby
 from .models import Consensus, Shape, Signal
@@ -52,12 +53,15 @@ __all__ = [
     "Detector",
     "Drift",
     "Engine",
+    "Example",
     "Features",
     "Inference",
     "Level",
     "Memory",
+    "Model",
     "Outcome",
     "Reading",
+    "Report",
     "Settings",
     "Shape",
     "Side",
@@ -71,7 +75,11 @@ __all__ = [
     "bars_to_reach",
     "combine",
     "confluence",
+    "dataset",
     "estimate",
+    "evaluate",
+    "facto",
+    "fit",
     "levels_near",
     "load",
     "nearby",
