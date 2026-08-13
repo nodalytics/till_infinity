@@ -242,7 +242,10 @@ class Stack:
 
     async def _run_structures(self, book) -> None:
         watcher = sx.Watcher(self.bus, journal=book)
-        watcher.load()
+        # Restore first, then warm. A saved model already contains the history;
+        # replaying it on top would count every stored bar twice.
+        if not watcher.load():
+            watcher.warm()
         await watcher.run()
 
     async def _run_prices(self, _book) -> None:

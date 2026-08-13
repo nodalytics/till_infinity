@@ -121,6 +121,22 @@ class Watcher:
 
     # ---------------------------------------------------------- persistence
 
+    def warm(self) -> int:
+        """Fill the level windows from stored price history.
+
+        The bus carries a notice per sweep, not a series — roughly one bar per
+        venue per minute — so an engine that only learned from it would take
+        days to see enough bars to place a level. The store already holds the
+        history, read-only.
+        """
+        if not self.settings.warm:
+            return 0
+        try:
+            return self.engine.seed(self.settings.prices_db)
+        except Exception as exc:  # warming is an optimisation, not a requirement
+            log.warning("structures: could not warm from %s: %s", self.settings.prices_db, exc)
+            return 0
+
     def load(self) -> bool:
         """Restore what was learned last run. False means starting cold."""
         state = store.load(self.settings.state_dir)
@@ -304,5 +320,8 @@ async def watch(
 ) -> int:
     """Run the online layer over the bus. The everyday entry point."""
     watcher = Watcher(bus, settings=settings, group=group, journal=journal)
-    watcher.load()
+    # Restore first, then warm: saved models already know their history, and
+    # replaying it over them would count every stored bar twice.
+    if not watcher.load():
+        watcher.warm()
     return await watcher.run(messages=messages, on_signal=on_signal)

@@ -21,9 +21,14 @@ evidence about an old level, not a new one.
 
 from __future__ import annotations
 
+import sqlite3
+import statistics
 import time
 from collections import deque
+from collections.abc import Sequence
+from contextlib import closing
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..logging import get_logger
 from . import levels as lv
@@ -52,6 +57,68 @@ SHAPE_HORIZON = 12
 #: Intervals levels are built from. Levels are a structure of the chart people
 #: look at, and nobody draws them from tick data.
 LEVEL_INTERVALS: tuple[str, ...] = ("5m", "15m", "1h")
+
+#: Venues that must report a bar before its consensus close is usable. Below
+#: this the "median" is one venue's opinion wearing a median's clothes.
+MIN_VENUES = 3
+
+#: Bars read per (instrument, interval) when warming from the store. One window
+#: is all the engine can hold; more would be read and immediately discarded.
+SEED_BARS = WINDOW
+
+#: An untouched level this far from price, in volatility units, is not going to
+#: be tested soon and is only crowding the set. Touched levels are kept
+#: regardless of distance — a level price has reacted at is worth remembering
+#: precisely because price left it.
+KEEP_VOL = 8.0
+
+#: Ceiling per (instrument, interval), strongest kept. Without one a long
+#: history accrues a level every few basis points, and at that density every
+#: price is "at a level" and the model predicts nothing. Fifteen is roughly
+#: what a person marks on one chart, which is the right order of magnitude —
+#: the constraint is attention, not storage.
+MAX_LEVELS = 15
+
+
+@dataclass(slots=True)
+class Consensus:
+    """Median bar across venues, per instrument and interval.
+
+    Bars arrive one venue at a time and several venues report the same bar.
+    Without this the series took whichever venue published last, and the winner
+    changed from bar to bar — so the swing detection was reading a series
+    stitched together from different venues, injecting exactly the cross-venue
+    disagreement this project exists to *measure* rather than suffer.
+
+    The median is taken across whichever venues have reported that bar so far
+    and recomputed as more arrive, so the estimate improves within the sweep
+    rather than waiting for a venue that may never report.
+    """
+
+    #: (feed, interval) -> ts -> venue -> (high, low, close)
+    _bars: dict[tuple[str, str], dict[int, dict[str, tuple[float, float, float]]]] = field(
+        default_factory=dict
+    )
+
+    def observe(
+        self, feed: str, interval: str, venue: str, when: int, high: float, low: float, close: float
+    ) -> tuple[float, float, float] | None:
+        """Fold one venue's bar in. Returns the consensus once enough agree."""
+        key = (feed, interval)
+        bars = self._bars.setdefault(key, {})
+        at = bars.setdefault(when, {})
+        at[venue] = (high, low, close)
+        # Only the bars still being filled are worth keeping.
+        if len(bars) > 4:
+            for stale in sorted(bars)[:-4]:
+                del bars[stale]
+        if len(at) < MIN_VENUES:
+            return None
+        return (
+            statistics.median([h for h, _, _ in at.values()]),
+            statistics.median([low for _, low, _ in at.values()]),
+            statistics.median([c for _, _, c in at.values()]),
+        )
 
 
 @dataclass(slots=True)
@@ -125,6 +192,55 @@ class Call:
         )
 
 
+def _read_bars(
+    database: Path | str,
+    feeds: Sequence[str],
+    intervals: Sequence[str],
+    bars: int,
+) -> list[dict]:
+    """Stored bars as bus-shaped payloads, oldest first.
+
+    Shaped like a `prices.bars` message so the replay goes through exactly the
+    same code the live path does. A separate warm-up path would be a second
+    implementation of level formation, and the two would drift.
+    """
+    path = Path(database)
+    if not path.exists():
+        return []
+    if not intervals:
+        return []
+
+    marks = ",".join("?" * len(intervals))
+    where = f"interval IN ({marks})"
+    params: list[object] = list(intervals)
+    if feeds:
+        where += f" AND feed IN ({','.join('?' * len(feeds))})"
+        params.extend(feeds)
+
+    rows: list[dict] = []
+    try:
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10.0)) as conn:
+            conn.row_factory = sqlite3.Row
+            for feed, interval in conn.execute(
+                f"SELECT DISTINCT feed, interval FROM bars WHERE {where}",
+                tuple(params),
+            ).fetchall():
+                found = conn.execute(
+                    "SELECT feed, venue, interval, ts, high, low, close FROM bars"
+                    " WHERE feed = ? AND interval = ? ORDER BY ts DESC LIMIT ?",
+                    (feed, interval, bars * 8),  # several venues per bar
+                ).fetchall()
+                rows.extend(dict(row) for row in found)
+    except sqlite3.Error as exc:
+        log.warning("levels: could not warm from %s: %s", path, exc)
+        return []
+
+    # Oldest first, and grouped so every venue on one bar arrives together —
+    # the consensus needs them adjacent to reach a quorum on that timestamp.
+    rows.sort(key=lambda row: (row["ts"], row["feed"], row["interval"]))
+    return [{**row, "time": row["ts"]} for row in rows]
+
+
 class Engine:
     """Levels and directional calls for every instrument at once."""
 
@@ -146,6 +262,8 @@ class Engine:
         #: Pivots come from completed sessions, so they need no confirmation
         #: delay and exist before price has ever turned there.
         self.sessions = pivots.Sessions()
+        #: Bars are per venue; levels are not. This makes them one series.
+        self.consensus = Consensus()
         #: Shapes seen before and what followed. Independent of levels: a level
         #: is a price, a shape is not, so a double top repeats across
         #: instruments and prices where a level cannot.
@@ -186,10 +304,37 @@ class Engine:
         candidates = lv.form(series.feed, series.interval, pips.turns(visible), vol)
         key = (series.feed, series.interval)
         merged = lv.merge(self._levels.get(key, []), candidates, vol)
-        self._levels[key] = merged
+        self._levels[key] = self.prune(merged, series.closes[-1], vol, when)
         series.since_reform = 0
         self._record_shape(series, visible)
-        return merged
+        return self._levels[key]
+
+    def prune(self, levels: list[lv.Level], price: float, vol, when: float) -> list[lv.Level]:
+        """Drop levels that are not earning their place.
+
+        A swing price never returned to is not a level, it is a swing. On real
+        history most of them are exactly that — warming from a fortnight of
+        gold produced 148 levels of which 135 had never been touched — and
+        keeping them means every price is near something.
+
+        Two rules, in this order. **Anything with a touch stays**, however far
+        away it now is: a level price reacted at is worth remembering precisely
+        because price left it. Everything else must be close enough to be
+        tested soon, and then only the strongest survive the cap.
+        """
+        touched = [level for level in levels if level.touches >= 1.0]
+        fresh = [
+            level
+            for level in levels
+            if level.touches < 1.0 and abs(level.distance_vol(price, vol)) <= KEEP_VOL
+        ]
+        fresh.sort(key=lambda level: level.strength(when, vol), reverse=True)
+        room = max(0, MAX_LEVELS - len(touched))
+        kept = touched + fresh[:room]
+        dropped = len(levels) - len(kept)
+        if dropped:
+            log.debug("levels: dropped %d untested levels", dropped)
+        return kept
 
     # -------------------------------------------------------------- shapes
 
@@ -257,6 +402,12 @@ class Engine:
         when = int(payload.get("time") or time.time())
         high = float(payload.get("high") or close)
         low = float(payload.get("low") or close)
+        venue = str(payload.get("venue") or "")
+
+        agreed = self.consensus.observe(feed, interval, venue, when, high, low, float(close))
+        if agreed is None:
+            return []  # not enough venues on this bar yet
+        high, low, close = agreed
 
         self._now = max(self._now, when)
         series = self.series(feed, interval)
@@ -339,11 +490,19 @@ class Engine:
     def _roll_sessions(
         self, feed: str, when: int, high: float, low: float, close: float, vol
     ) -> None:
-        """Turn completed sessions into pivot levels for the next one."""
+        """Turn completed sessions into pivot levels for the next one.
+
+        Pruned like any other level, and that is not optional: a session adds
+        ten pivots and sessions keep completing, so without it a fortnight of
+        history accrues a hundred and forty of them and nothing ever removes
+        one. Yesterday's pivots are watched; the ones from twelve days ago are
+        not, unless price actually reacted at them.
+        """
         for session in self.sessions.observe(feed, when, high, low, close):
             key = (feed, session.period)
             built = pivots.build(feed, session, vol)
-            self._levels[key] = lv.merge(self._levels.get(key, []), built, vol)
+            merged = lv.merge(self._levels.get(key, []), built, vol)
+            self._levels[key] = self.prune(merged, close, vol, float(when))
 
     def regime_changed(self, feed: str, severity: float = 0.5) -> int:
         """Discount every level's history for this instrument.
@@ -391,6 +550,50 @@ class Engine:
         return abs((latest - previous) / previous * 10_000) / vol.bps
 
     # ---------------------------------------------------------------- state
+
+    # ------------------------------------------------------------- warming
+
+    def seed(
+        self,
+        database: Path | str,
+        *,
+        feeds: Sequence[str] = (),
+        intervals: Sequence[str] = (),
+        bars: int = SEED_BARS,
+    ) -> int:
+        """Warm the windows from stored history. Returns bars replayed.
+
+        Without this the engine can only learn from the bus, which carries a
+        *notice* per sweep rather than a series — roughly one bar per venue per
+        minute. Levels need hundreds, so bootstrapping from the bus alone would
+        take days while a backfilled store already holds the history.
+
+        The store is opened **read-only**: the numeric layer reads prices, it
+        does not own them, and enforcing that at the driver is cheaper than
+        remembering it.
+
+        Bars are replayed in time order through the ordinary path, so levels
+        form from confirmed swings exactly as they would live, and the touch
+        statistics that make the directional inference work exist from the
+        first minute. Calls produced during the replay are discarded — they
+        describe touches that happened days ago, and publishing them would
+        alert on history.
+        """
+        wanted = tuple(intervals) or self.intervals
+        rows = _read_bars(database, feeds, wanted, bars)
+        if not rows:
+            return 0
+
+        replayed = 0
+        for row in rows:
+            self.observe_bar(row)  # calls discarded on purpose
+            replayed += 1
+        log.info(
+            "levels: warmed from %d stored bars across %s",
+            replayed,
+            ", ".join(sorted({row["feed"] for row in rows})) or "nothing",
+        )
+        return replayed
 
     def summary(self) -> list[dict]:
         """What the engine knows, for `structures levels`."""

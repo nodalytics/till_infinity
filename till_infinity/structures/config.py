@@ -13,6 +13,7 @@ from pathlib import Path
 
 DEFAULT_STATE_DIR = ".data/structures"
 DEFAULT_JOURNAL_DB = ".data/journal/journal.db"
+DEFAULT_PRICES_DB = ".data/prices/prices.db"
 
 #: Only fast data. Above five minutes a "cross-venue disagreement" is mostly
 #: different bar boundaries, not different opinions about the price.
@@ -57,6 +58,9 @@ class Settings:
 
     state_dir: Path = field(default_factory=lambda: Path(DEFAULT_STATE_DIR))
     journal_db: Path = field(default_factory=lambda: Path(DEFAULT_JOURNAL_DB))
+    #: Read-only, and only to warm the level windows on start.
+    prices_db: Path = field(default_factory=lambda: Path(DEFAULT_PRICES_DB))
+    warm: bool = True
     journalling: bool = True
     warmup: int = 60
     quantile: float = 0.999
@@ -71,6 +75,8 @@ class Settings:
         return cls(
             state_dir=Path(os.environ.get("STRUCTURES_DIR") or DEFAULT_STATE_DIR),
             journal_db=Path(os.environ.get("JOURNAL_DB") or DEFAULT_JOURNAL_DB),
+            prices_db=Path(os.environ.get("PRICES_DB") or DEFAULT_PRICES_DB),
+            warm=os.environ.get("STRUCTURES_WARM", "1") not in ("0", "false", "no"),
             journalling=os.environ.get("JOURNAL", "1") not in ("0", "false", "no"),
             warmup=_int("STRUCTURES_WARMUP", 60),
             quantile=_float("STRUCTURES_QUANTILE", 0.999),

@@ -545,6 +545,64 @@ DTW is not a metric — it violates the triangle inequality — so the library i
 linear scan rather than a spatial index, which is honest at a few thousand short
 sequences and would be complexity bought with nothing at this size.
 
+## 13. Bootstrapping, and why the bus is not enough
+
+The bus carries **notice, not data** — a `prices.bars` message announces the
+latest bar per sweep, so the engine sees roughly one bar per venue per minute.
+Levels need hundreds. Learning from the bus alone would take days while a
+backfilled store already holds the history.
+
+So on start the engine **warms from the store**, read-only:
+
+```bash
+uv run till-infinity structures watch          # warms automatically
+uv run till-infinity structures watch --no-warm
+```
+
+25,000 stored bars replay in under two seconds. Bars go through the ordinary
+`observe_bar` path rather than a separate loader, so levels form from confirmed
+swings exactly as they would live and there is no second implementation to
+drift. Calls produced during the replay are **discarded** — they describe
+touches from days ago and publishing them would alert on history.
+
+Saved model state wins over warming: a restored model already contains that
+history, and replaying it on top would count every stored bar twice.
+
+The payoff is that the touch statistics exist from the first minute. Without
+them every level starts at zero touches and the directional inference has only
+kNN to work with.
+
+### One series, not one per venue
+
+Bars arrive per venue and several venues report the same bar. The series took
+whichever published *last*, and the winner changed from bar to bar — so the
+swing detection was reading a series stitched together from different venues,
+injecting exactly the cross-venue disagreement this project exists to *measure*.
+
+It now takes the **median across venues** at each timestamp, recomputed as more
+arrive, and a bar needs three venues before it counts. Below that the "median"
+is one venue's opinion wearing a median's clothes.
+
+### Pruning, or every price is at a level
+
+Warming from a fortnight of gold produced **148 levels, 135 of them never
+touched**. A swing price never returned to is a swing, not a level, and at that
+density every price is near something.
+
+Two rules, in order:
+
+- **anything with a touch stays**, however far away price has since moved — a
+  level price reacted at is worth remembering precisely *because* price left it;
+- everything else must be within 8 volatility units to be tested soon, and then
+  only the strongest 15 per timeframe survive.
+
+Pivots are pruned the same way, and that is not optional: a session adds ten of
+them and sessions keep completing, so a fortnight accrued 140 that nothing ever
+removed. Yesterday's pivots are watched; the ones from twelve days ago are not.
+
+Result on the same history: **8–14 levels per instrument** across all
+timeframes, which is the order of magnitude a person marks on a chart.
+
 ## Honest status
 
 Everything above is validated on **synthetic mean-reverting data**, where the

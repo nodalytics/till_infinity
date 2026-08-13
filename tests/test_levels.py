@@ -331,6 +331,25 @@ def test_neighbours_never_cross_sides():
 # ------------------------------------------------------------------ engine
 
 
+#: The engine takes a median across venues, so a bar needs a quorum to count.
+QUORUM = ("OANDA", "SAXO", "TVC")
+
+
+def _bar(feed, interval, when, price, rand=None, venues=QUORUM):
+    """One bar as every venue reports it — the shape the bus delivers."""
+    for venue in venues:
+        wobble = rand.gauss(0, 0.02) if rand else 0.0
+        yield {
+            "feed": feed,
+            "venue": venue,
+            "interval": interval,
+            "time": when,
+            "high": price + abs(wobble) + 1.0,
+            "low": price - abs(wobble) - 1.0,
+            "close": price + wobble,
+        }
+
+
 def _range_bound(bars: int = 700, seed: int = 9):
     rand = random.Random(seed)
     price, when = 4425.0, 1_000_000
@@ -340,14 +359,7 @@ def _range_bound(bars: int = 700, seed: int = 9):
             price = 4400 + (4400 - price) * 0.8
         if price > 4450:
             price = 4450 - (price - 4450) * 0.8
-        yield {
-            "feed": "gold",
-            "interval": "5m",
-            "time": when + i * 300,
-            "high": price + abs(rand.gauss(0, 1)),
-            "low": price - abs(rand.gauss(0, 1)),
-            "close": price,
-        }
+        yield from _bar("gold", "5m", when + i * 300, price, rand)
 
 
 def test_the_engine_finds_a_handful_of_swing_levels_not_a_forest():
@@ -391,6 +403,30 @@ def test_an_interval_the_engine_does_not_watch_is_ignored():
     assert engine.observe_bar({"feed": "gold", "interval": "1d", "close": 4400.0}) == []
 
 
+def test_one_venue_is_not_a_consensus():
+    """The series took whichever venue published last, which mixed them."""
+    engine = Engine(intervals=("5m",))
+    engine.observe_bar(next(iter(_bar("gold", "5m", 1_000, 4400.0, venues=("OANDA",)))))
+    assert len(engine.series("gold", "5m").closes) == 0
+
+
+def test_a_bar_enters_the_series_once_enough_venues_agree():
+    engine = Engine(intervals=("5m",))
+    for payload in _bar("gold", "5m", 1_000, 4400.0):
+        engine.observe_bar(payload)
+    series = engine.series("gold", "5m")
+    assert len(series.closes) == 1
+    assert series.closes[-1] == pytest.approx(4400.0, abs=0.1)
+
+
+def test_the_consensus_is_a_median_across_venues():
+    """One venue printing nonsense must not move the series."""
+    engine = Engine(intervals=("5m",))
+    for venue, price in zip(QUORUM, (4400.0, 4400.0, 9999.0), strict=True):
+        engine.observe_bar(next(iter(_bar("gold", "5m", 1_000, price, venues=(venue,)))))
+    assert engine.series("gold", "5m").closes[-1] == pytest.approx(4400.0, abs=0.1)
+
+
 @pytest.mark.parametrize(
     "payload",
     [{}, {"feed": "gold"}, {"feed": "gold", "interval": "5m"}, {"interval": "5m", "close": 1.0}],
@@ -399,22 +435,78 @@ def test_junk_bars_produce_nothing(payload):
     assert Engine(intervals=("5m",)).observe_bar(payload) == []
 
 
+# ------------------------------------------------------------ warming up
+
+
+def test_an_engine_warms_from_stored_history(tmp_path):
+    """The bus carries a notice per sweep; levels need a series."""
+    import sqlite3
+
+    path = tmp_path / "prices.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE bars (source TEXT, feed TEXT, venue TEXT, ticker TEXT, interval TEXT,"
+        " ts INTEGER, open REAL, high REAL, low REAL, close REAL, volume REAL,"
+        " closed INT, updated REAL)"
+    )
+    rows = [
+        (
+            "tv",
+            payload["feed"],
+            payload["venue"],
+            "X",
+            payload["interval"],
+            payload["time"],
+            payload["close"],
+            payload["high"],
+            payload["low"],
+            payload["close"],
+            0,
+            1,
+            0.0,
+        )
+        for payload in _range_bound(300)
+    ]
+    conn.executemany("INSERT INTO bars VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    engine = Engine(intervals=("5m",))
+    assert engine.seed(path) > 0
+    assert engine.levels("gold", "5m")
+    assert len(engine.tracker.memory) > 0  # touch history exists from minute one
+
+
+def test_warming_from_a_missing_store_is_not_an_error(tmp_path):
+    assert Engine(intervals=("5m",)).seed(tmp_path / "nothing.db") == 0
+
+
+def test_untested_levels_are_pruned_but_touched_ones_are_kept():
+    """A swing price never returned to is a swing, not a level."""
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound(700):
+        engine.observe_bar(bar)
+    levels = engine.levels("gold", "5m")
+    assert len(levels) <= 20
+    assert any(level.touches >= 1 for level in levels)
+
+
+def test_pivots_do_not_accumulate_forever():
+    """Ten per session, and sessions keep completing."""
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound(2000):
+        engine.observe_bar(bar)
+    assert len(engine.levels("gold", "daily")) <= 20
+
+
 def test_a_corrected_bar_replaces_rather_than_appends():
     engine = Engine(intervals=("5m",))
-    for close in (4400.0, 4410.0):
-        engine.observe_bar(
-            {
-                "feed": "g",
-                "interval": "5m",
-                "time": 1_000,
-                "high": close,
-                "low": close,
-                "close": close,
-            }
-        )
+    for price in (4400.0, 4410.0):
+        for payload in _bar("g", "5m", 1_000, price):
+            engine.observe_bar(payload)
     series = engine.series("g", "5m")
     assert len(series.closes) == 1
-    assert series.closes[-1] == 4410.0
+    assert series.closes[-1] == pytest.approx(4410.0, abs=0.1)
 
 
 # ------------------------------------------------------- levels going stale
@@ -545,30 +637,13 @@ def test_a_pivot_is_never_available_during_its_own_session():
     day = 86_400
     start = 1_000_000 - (1_000_000 % day)
     for i in range(12):
-        when = start + i * 3600
-        engine.observe_bar(
-            {
-                "feed": "g",
-                "interval": "5m",
-                "time": when,
-                "high": 105.0,
-                "low": 95.0,
-                "close": 100.0,
-            }
-        )
+        for payload in _bar("g", "5m", start + i * 3600, 100.0):
+            engine.observe_bar(payload)
         assert engine.levels("g", "daily") == []
 
     # a bar from the next day completes the session, and only then do pivots exist
-    engine.observe_bar(
-        {
-            "feed": "g",
-            "interval": "5m",
-            "time": start + day + 60,
-            "high": 101.0,
-            "low": 99.0,
-            "close": 100.0,
-        }
-    )
+    for payload in _bar("g", "5m", start + day + 60, 100.0):
+        engine.observe_bar(payload)
     daily = engine.levels("g", "daily")
     assert daily
     assert all(level.created <= start + day + 60 for level in daily)

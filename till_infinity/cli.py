@@ -1190,6 +1190,7 @@ def structures() -> None:
 @click.option("--sigma", type=float, help="Per-venue cutoff, in sigma. Default: 4.")
 @click.option("--group", default="structures", show_default=True, help="Consumer group name.")
 @click.option("--no-alerts", is_flag=True, help="Publish signals only; never alert directly.")
+@click.option("--no-warm", is_flag=True, help="Do not seed levels from stored price history.")
 @click.option("--no-journal", is_flag=True, help="Do not record detections.")
 @click.option("--messages", type=int, help="Stop after this many bus messages.")
 @click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
@@ -1203,6 +1204,7 @@ def structures_watch(
     sigma,
     group,
     no_alerts,
+    no_warm,
     no_journal,
     messages,
     verbose,
@@ -1228,6 +1230,8 @@ def structures_watch(
         settings.sigma = sigma
     if no_alerts:
         settings.alert_direct = False
+    if no_warm:
+        settings.warm = False
     if no_journal:
         settings.journalling = False
 
@@ -1255,9 +1259,12 @@ def structures_watch(
         try:
             if book is not None:
                 await book.open()
+            restored = watcher.load()
+            seeded = 0 if restored else watcher.warm()
+            how = "restored" if restored else (f"warmed from {seeded:,} bars" if seeded else "cold")
             console.print(
-                f"[bold]{'warm' if watcher.load() else 'cold'}[/] start on "
-                f"{bus.backend}, models in {escape(str(settings.state_dir))}, Ctrl-C to stop"
+                f"[bold]{how}[/] on {bus.backend}, models in "
+                f"{escape(str(settings.state_dir))}, Ctrl-C to stop"
             )
             await watcher.run(messages=messages, on_signal=show)
         finally:
