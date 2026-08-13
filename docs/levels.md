@@ -378,6 +378,35 @@ States: `fresh → tested → broken → flipped`. **Flipped** — broken, then
 respected from the other side — has its own state because it is a *repeating
 structure*, which is the thing this package exists to notice.
 
+## 6b. One visit is one touch
+
+A touch counter must measure how many times price *turned* at a level, not how
+long it sat there. For a while it measured the second thing.
+
+The bug was in the arming, not the counting. An interaction resolved, and the
+level became eligible again immediately — so the next quote arrived with price
+still inside the zone and no open touch, and a fresh touch began. It resolved,
+and another began. One visit became one touch per quote for as long as price
+loitered.
+
+The damage was not a wrong number, it was a wrong number that looked like
+confidence. A BTC level reached **316 effective touches in a day** — on an
+instrument with 288 five-minute bars in one — and at 316 counts the
+beta-binomial prior of §7 is swamped, so it reported **P(up) = 100%**, the exact
+outcome the shrinkage exists to prevent. A level price hovered at outranked one
+it reversed off hard, which is backwards.
+
+So a level has to be **re-armed by price leaving its zone**:
+
+```
+resolved:            waiting ← price is still inside the zone
+outside the zone:    waiting ← false
+inside and waiting:  no new touch
+```
+
+A touch that resolved *by* price leaving re-arms at once. It has already done
+the leaving, and requiring a second exit would drop the next real approach.
+
 ## 7. Turning history into a direction
 
 Two sources of evidence, and an honest weighting between them.

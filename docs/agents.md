@@ -225,3 +225,31 @@ what it exposes but does not choose:
 
 A bad numeric value falls back to the default rather than crashing a
 long-running watcher.
+
+
+## Free tiers, and what actually fits
+
+Agents are the only part of this that needs a credential, and the free tiers
+are small enough to change the design rather than merely inconvenience it. Two
+measured on this project:
+
+| provider | limit that bites | what it means here |
+|---|---|---|
+| Groq | 12k tokens/minute | one analysis call is ~33k. Nothing fits. |
+| Gemini (`gemini-2.5-flash`) | **20 requests/day** | fits, at about one call per 90 minutes |
+
+The Gemini one is a *daily* cap, which is worse than it sounds: the service runs
+fine, wakes on schedule, and every call comes back 429 for the rest of the day
+once the twentieth is spent. It fails as silence rather than as an error you
+notice.
+
+`AGENTS_WINDOW_S` is the lever — the batching window before the model sees
+anything. The default of 60s assumes a paid key and will exhaust a 20/day quota
+within about twenty minutes of market activity. On the free tier set it to
+**5400** (90 minutes), which caps the day at 16 calls with headroom, and
+remember the wake is gated on the market actually doing something, so the real
+count is lower.
+
+The alternative is a paid key, and the honest framing is that this is what the
+rest of the system is designed not to depend on: the collectors, the levels
+model and the notifications all run without one.
