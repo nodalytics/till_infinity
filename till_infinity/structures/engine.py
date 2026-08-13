@@ -31,8 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..logging import get_logger
+from . import confluence, patterns, pips, pivots, reactions
 from . import levels as lv
-from . import patterns, pips, pivots, reactions
 from .models import Shape, Signal
 from .volatility import Book as VolBook
 
@@ -54,9 +54,11 @@ REFORM_EVERY = 20
 #: the move to develop, short enough that it is still attributable to the shape.
 SHAPE_HORIZON = 12
 
-#: Intervals levels are built from. Levels are a structure of the chart people
-#: look at, and nobody draws them from tick data.
-LEVEL_INTERVALS: tuple[str, ...] = ("5m", "15m", "1h")
+#: The timeframes levels are built on. Defined in `confluence` and used here so
+#: there is one list rather than two that drift — which they did: confluence
+#: spanned 4h while the engine never built it, so combining across timeframes
+#: was quietly looking for something that never existed.
+LEVEL_INTERVALS: tuple[str, ...] = confluence.TIMEFRAMES
 
 #: Venues that must report a bar before its consensus close is usable. Below
 #: this the "median" is one venue's opinion wearing a median's clothes.

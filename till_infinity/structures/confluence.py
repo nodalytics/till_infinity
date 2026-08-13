@@ -59,10 +59,17 @@ ORDER: tuple[str, ...] = (
     "weekly",
 )
 
-#: Timeframes worth combining by default, coarsest first. Below 15m a "level"
-#: is mostly the noise of the session; above 4h there are too few swings in any
-#: window to place one precisely.
-DEFAULT_SPAN: tuple[str, ...] = ("4h", "1h", "15m")
+#: The timeframes levels are built on, and therefore the ones confluence can
+#: combine. One list, because they were two and drifted: confluence spanned 4h
+#: while the engine never built it, so it spent its life looking for a
+#: timeframe that did not exist.
+#:
+#: Finest first. Below 5m a "level" is mostly the noise of the session; above 4h
+#: a window spans months and there are too few swings in it to place one.
+TIMEFRAMES: tuple[str, ...] = ("5m", "15m", "1h", "4h")
+
+#: Alias kept for readers who think of it as a span rather than a list.
+DEFAULT_SPAN: tuple[str, ...] = TIMEFRAMES
 
 
 def rank(interval: str) -> int:

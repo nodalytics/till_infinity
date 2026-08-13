@@ -481,8 +481,49 @@ def test_warming_from_a_missing_store_is_not_an_error(tmp_path):
     assert Engine(intervals=("5m",)).seed(tmp_path / "nothing.db") == 0
 
 
-def test_untested_levels_are_pruned_but_touched_ones_are_kept():
+def test_an_untouched_level_far_from_price_is_dropped():
     """A swing price never returned to is a swing, not a level."""
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold")
+    for _ in range(60):
+        vol.update(4400.0 * (1 + 0.0005))
+
+    near = Level(feed="gold", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    far = Level(feed="gold", interval="5m", filter=Kalman(mean=9000.0, variance=0.5))
+    kept = engine.prune([near, far], price=4400.0, vol=vol, when=1_000_000.0)
+
+    assert near in kept
+    assert far not in kept
+
+
+def test_a_touched_level_survives_however_far_price_has_moved():
+    """It is worth remembering precisely because price left it."""
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold")
+    for _ in range(60):
+        vol.update(4400.0 * (1 + 0.0005))
+
+    far = Level(feed="gold", interval="5m", filter=Kalman(mean=9000.0, variance=0.5))
+    far.record(Side.ABOVE, Outcome.REJECT, 1.0, 1_000_000.0)
+
+    assert far in engine.prune([far], price=4400.0, vol=vol, when=1_000_100.0)
+
+
+def test_untouched_levels_are_capped_at_what_a_person_would_mark():
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold")
+    for _ in range(60):
+        vol.update(4400.0 * (1 + 0.0005))
+
+    crowd = [
+        Level(feed="gold", interval="5m", filter=Kalman(mean=4400.0 + i * 0.05, variance=0.5))
+        for i in range(120)
+    ]
+    kept = engine.prune(crowd, price=4400.0, vol=vol, when=1_000_000.0)
+    assert len(kept) <= 15
+
+
+def test_levels_stay_bounded_over_a_long_history():
     engine = Engine(intervals=("5m",))
     for bar in _range_bound(700):
         engine.observe_bar(bar)
