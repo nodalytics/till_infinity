@@ -54,6 +54,21 @@ worth capturing from day one.
 
 ## Run it
 
+### With Docker
+
+```bash
+cp .env.example .env
+docker compose up -d                    # collectors, levels, journal
+docker compose --profile agents up -d   # including the paid one
+```
+
+One process per service over Redis, which is the shape the bus was designed
+for: they scale and fail independently, so a collector restarting does not take
+the levels model with it. Agents sit behind a profile because they are the only
+part that costs money.
+
+### Locally
+
 Requires [uv](https://docs.astral.sh/uv/). Python 3.11 is pinned in `.python-version`.
 
 ```bash

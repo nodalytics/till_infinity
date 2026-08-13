@@ -13,12 +13,25 @@ refuses to load into a mismatch, which costs a warmup and is the correct trade
 — silently loading a half-restored model would give scores that look fine and
 mean nothing.
 
+The same applies to **our own classes**, and that one is easier to miss. These
+are slotted dataclasses, so adding a field does not raise on unpickling: the
+old objects come back without the new slot and fail later, at whatever line
+first reads it. That happened — a `regime` feature was added and a running
+service died hours afterwards on state written before the change, with a
+message naming neither the field nor the cause.
+
+So the fingerprint includes a hash of the field names of every class that gets
+persisted. A field added, removed or renamed invalidates old state
+automatically, which is better than a version constant somebody has to remember
+to bump — nobody remembers, and the failure is silent until it is not.
+
 Writes are atomic (temp file, then rename). A process killed mid-save leaves
 the previous state intact rather than a truncated file that fails to load.
 """
 
 from __future__ import annotations
 
+import hashlib
 import pickle
 import sys
 from pathlib import Path
@@ -30,8 +43,31 @@ from ..logging import get_logger
 
 log = get_logger(__name__)
 
-FORMAT = 1
+FORMAT = 2
 STATE_FILE = "models.pkl"
+
+
+def _schema() -> str:
+    """A hash of the shape of everything we persist.
+
+    Imported lazily: `store` is imported by the modules these classes live in,
+    and asking for them at module scope would be a cycle.
+    """
+    from . import levels, patterns, reactions
+
+    classes = (
+        levels.Level,
+        levels.Kalman,
+        levels.SideStats,
+        reactions.Features,
+        reactions.Touch,
+        patterns.Shape,
+        patterns.Instance,
+    )
+    shape = ";".join(
+        f"{cls.__name__}:{','.join(getattr(cls, '__slots__', ()) or ())}" for cls in classes
+    )
+    return hashlib.sha256(shape.encode()).hexdigest()[:16]
 
 
 def _fingerprint() -> dict[str, Any]:
@@ -39,6 +75,7 @@ def _fingerprint() -> dict[str, Any]:
         "format": FORMAT,
         "river": river.__version__,
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "schema": _schema(),
     }
 
 
@@ -77,7 +114,7 @@ def load(directory: Path | str) -> dict[str, Any] | None:
         return None
 
     want = _fingerprint()
-    for field in ("format", "river", "python"):
+    for field in ("format", "river", "python", "schema"):
         if payload.get(field) != want[field]:
             log.warning(
                 "structures: %s was written with %s %s, this is %s — starting cold",

@@ -1,0 +1,79 @@
+# Till Infinity, split the way it was designed to run.
+#
+# `till-infinity run` starts every service in one process against an in-process
+# bus, which is right for a laptop. This is the other shape: one process per
+# service over Redis, so they scale and fail independently — a collector
+# restarting does not take the levels model with it.
+#
+#   docker compose up -d                    everything except agents
+#   docker compose --profile agents up -d   including the paid one
+#
+# Configuration comes from .env; see .env.example. Nothing here bakes a
+# credential into an image or a command line.
+
+x-common: &common
+  build: .
+  image: till-infinity:latest
+  restart: unless-stopped
+  env_file: [.env]
+  environment:
+    TILL_REDIS_URL: redis://redis:6379
+    TZ: UTC
+  volumes:
+    - data:/app/.data
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  # The bus. Everything talks through it, so it is the one hard dependency.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Append-only: a bus that loses its backlog on restart drops whatever was
+    # in flight, and the collectors will not resend it.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── collectors ────────────────────────────────────────────────────────────
+  prices:
+    <<: *common
+    command: ["prices", "collect", "--publish", "redis://redis:6379"]
+
+  news:
+    <<: *common
+    command: ["news", "collect", "--publish", "redis://redis:6379"]
+
+  # ── the numeric layer: no credentials, always on ──────────────────────────
+  structures:
+    <<: *common
+    command: ["structures", "watch", "--redis", "redis://redis:6379"]
+
+  # ── the record ────────────────────────────────────────────────────────────
+  # One writer for the journal, which is the reason it moved onto the bus.
+  journal:
+    <<: *common
+    command: ["journal", "listen", "--redis", "redis://redis:6379"]
+
+  # ── delivery ──────────────────────────────────────────────────────────────
+  # Exits quietly when no Telegram or Discord channel is configured, so leaving
+  # it up costs nothing until credentials exist.
+  notifications:
+    <<: *common
+    command: ["notify", "listen", "--redis", "redis://redis:6379"]
+
+  # ── judgement: the only part that costs money, so opt in ──────────────────
+  agents:
+    <<: *common
+    profiles: ["agents"]
+    command: ["agents", "watch", "--redis", "redis://redis:6379"]
+
+volumes:
+  data:
+  redis:

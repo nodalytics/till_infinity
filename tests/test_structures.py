@@ -665,3 +665,35 @@ async def test_the_pending_map_is_bounded(tmp_path):
         for n in range(20):
             watcher._remember("gold", 4400.0 + n, f"ref{n}")
         assert len(watcher._awaiting) == 5
+
+
+# --------------------------------------- state that no longer fits the code
+
+
+def test_adding_a_field_invalidates_old_state(tmp_path, monkeypatch):
+    """A slotted dataclass unpickles without a new slot and fails much later.
+
+    That is exactly what happened: a `regime` feature was added and a running
+    service died on state written before the change, with a message naming
+    neither the field nor the cause.
+    """
+    store.save({"detector": Detector()}, tmp_path)
+    assert store.load(tmp_path) is not None
+
+    # the shape of what we persist changes
+    monkeypatch.setattr(store, "_schema", lambda: "different")
+    assert store.load(tmp_path) is None
+
+
+def test_the_schema_follows_the_fields_rather_than_a_constant():
+    """Nobody remembers to bump a version, and the failure is silent until it is not."""
+    from till_infinity.structures import reactions
+
+    before = store._schema()
+    real = reactions.Features.__slots__
+    try:
+        reactions.Features.__slots__ = (*real, "something_new")
+        assert store._schema() != before
+    finally:
+        reactions.Features.__slots__ = real
+    assert store._schema() == before

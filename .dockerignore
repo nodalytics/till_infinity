@@ -1,0 +1,25 @@
+# Anything that would land a secret, a database or a cache in the image.
+.secrets/
+.env
+.data/
+data/
+*.db
+*.db-wal
+*.db-shm
+*.jsonl
+*.pkl
+
+.git/
+.github/
+.venv/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+tests/
+docs/
+.claude/
+Dockerfile
+docker-compose.yml
+.dockerignore

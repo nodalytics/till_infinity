@@ -132,7 +132,11 @@ async def analyse(
         # is a model that keeps re-reading the same table looking for a story.
         usage_limits=UsageLimits(tool_calls_limit=settings.tool_calls),
     )
-    usage = result.usage()
+    # A property, not a method. Calling it raised "'RunUsage' object is not
+    # callable" *after* a successful analysis, so a working run was thrown away
+    # at the last step — and only a live call could show that, since the
+    # failure is in accounting for work already done.
+    usage = result.usage
     return Run(
         analysis=result.output,
         role=chosen.name,

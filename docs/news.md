@@ -111,15 +111,23 @@ async with SqliteStore(Settings.from_env().database) as store:
 
 ## Not yet included
 
-**FRED** (US money supply, Fed balance sheet, credit facilities). Unreachable
-from the machine this was built on: `fred.stlouisfed.org` and
-`api.stlouisfed.org` both resolve to `104.82.240.89` but every TCP connection
-times out, on the keyless `fredgraph.csv` endpoint and the root alike. The
-integration is small — `fredgraph.csv?id=WALCL` returns plain CSV with no key —
-but shipping it unverified would mean shipping a guess. Series worth adding
-when it can be tested: `WALCL` (Fed total assets), `M2SL`, `RRPONTSYD`
-(reverse repo), `WRESBAL` (reserves), `TOTBKCR` (bank credit),
-`ECBASSETSW` (ECB), `JPNASSETS` (BoJ).
+**FRED** (US money supply, Fed balance sheet, credit facilities). This section
+used to say FRED was unreachable — every TCP connection to
+`api.stlouisfed.org` timed out, so the integration was left unwritten rather
+than shipped unverified. **That is no longer true.** Retested with a key:
+
+```
+GET /fred/series/observations?series_id=DGS10  ->  200, data from 1962
+```
+
+Whether the earlier failure was the network, the host or the keyless endpoint
+is not worth reconstructing; what matters is that it is testable now, so the
+reason for leaving it out is gone.
+
+It needs `FRED_API_KEY` and a source module in the shape of the others. Series
+worth having: `WALCL` (Fed total assets), `M2SL`, `RRPONTSYD` (reverse repo),
+`WRESBAL` (reserves), `TOTBKCR` (bank credit), `DGS10` and `DGS2` (the curve
+the levels model would actually use), `ECBASSETSW` (ECB), `JPNASSETS` (BoJ).
 
 ## IMF reserves
 

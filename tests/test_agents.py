@@ -528,3 +528,37 @@ def test_a_structures_signal_needs_no_spread_gate_at_all():
     settings = ag.Settings(spread_bps=10_000.0)  # a gate nothing could pass
     triggers = service.interesting([_signal_message()], settings, service.Spreads())
     assert len(triggers) == 1
+
+
+def test_usage_is_read_as_a_property_not_called():
+    """It is a property; calling it threw away a successful analysis."""
+    from pydantic_ai.agent import AgentRunResult
+
+    assert isinstance(AgentRunResult.usage, property)
+
+
+async def test_a_run_reports_what_it_cost(monkeypatch):
+    """The accounting must not be able to discard work already done."""
+    from dataclasses import dataclass
+
+    from till_infinity.agents import analyst
+    from till_infinity.agents.models import Analysis
+
+    @dataclass
+    class FakeUsage:
+        requests: int = 2
+        input_tokens: int = 1200
+        output_tokens: int = 300
+
+    class FakeResult:
+        output = Analysis(summary="quiet", findings=[])
+        usage = FakeUsage()
+
+    class FakeAgent:
+        async def run(self, *_args, **_kwargs):
+            return FakeResult()
+
+    run = await analyst.analyse("anything", settings=ag.Settings(), agent=FakeAgent())
+    assert run.input_tokens == 1200
+    assert run.output_tokens == 300
+    assert run.tokens == 1500
