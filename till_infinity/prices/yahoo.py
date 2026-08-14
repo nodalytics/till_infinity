@@ -161,8 +161,30 @@ class YahooSource(Source):
             )
             cache[code] = frame
 
-        if source_name != interval.name:
-            frame = resample(frame, interval.name)
+        # Off the event loop, like the download above and for a better reason.
+        # The download at least waits on a socket; these two are pure work.
+        # `resample` is pandas over the whole frame and `to_bars` is a Python
+        # loop over every row of it, building a dict per row — tens of thousands
+        # of iterations for a 1m backfill, none of which yields.
+        #
+        # Everything here runs in one process on two cores — bus, journal,
+        # notifications, agents, structures, prices, news — so for as long as
+        # this ran, the structures consumer was not scheduled at all. Its queue
+        # filled and the bus dropped quotes at eight a second, and since a
+        # backfill runs on every startup, every deploy took the level pipeline
+        # down for as long as the backfill lasted rather than for as long as
+        # the restart did.
+        #
+        # A thread does not dodge the GIL for the row loop, but it does turn
+        # "blocked until finished" into "interleaved every few milliseconds",
+        # which is the difference that matters to a consumer being starved.
+        return await asyncio.to_thread(self._shape, frame, source_name, interval.name, bars)
+
+    @staticmethod
+    def _shape(frame: pd.DataFrame, source_name: str, interval_name: str, bars: int) -> list[Bar]:
+        """Resample and convert. Pure CPU, so it is called in a thread."""
+        if source_name != interval_name:
+            frame = resample(frame, interval_name)
         return to_bars(frame)[-bars:]
 
     def _download(self, ticker: str, code: str, start: datetime) -> pd.DataFrame:

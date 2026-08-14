@@ -67,3 +67,39 @@ def test_supported_covers_every_interval_via_resampling():
     source = YahooSource.__new__(YahooSource)
     assert {i.name for i in source.supported(list(INTERVALS.values()))} == set(INTERVALS)
     assert set(RESAMPLE_FROM) <= set(INTERVALS)
+
+
+@pytest.mark.asyncio
+async def test_shaping_a_frame_does_not_block_the_event_loop():
+    """Everything runs in one process, so on-loop CPU starves every consumer.
+
+    `_download` was already threaded, but `resample` and `to_bars` were not,
+    and they are the expensive half: pandas over the whole frame, then a Python
+    loop building a dict per row. On the box that starved the structures
+    consumer for the length of every backfill — its queue filled and the bus
+    dropped quotes at eight a second — and because a backfill runs on every
+    startup, each deploy took the level pipeline down for the length of the
+    backfill rather than the length of the restart.
+    """
+    import asyncio
+
+    source = YahooSource.__new__(YahooSource)
+    big = frame(40_000, freq="1min")
+    cache = {"1h": big}  # pre-seeded, so no download is attempted
+
+    ticks = 0
+
+    async def heartbeat() -> None:
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0.001)
+
+    beat = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0)  # let it start
+    bars = await source._series("X", INTERVALS["4h"], 50, cache)
+    beat.cancel()
+
+    assert bars, "the shaping produced nothing, so the test proves nothing"
+    assert len(bars) <= 50
+    assert ticks > 1, "the loop never ran while the frame was being shaped"
