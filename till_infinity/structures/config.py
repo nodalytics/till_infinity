@@ -74,6 +74,17 @@ class Settings:
     #: with it off and agents disabled, level calls are published to a topic
     #: nobody is subscribed to and the channel receives only feed faults.
     alert_levels: bool = True
+    #: Whether the measured spread is charged against every level call before
+    #: it is judged. On by default: a push that has not had the cost of taking
+    #: it deducted is a gross number, and the gap between gross and net is the
+    #: whole difference between a figure and a decision.
+    #:
+    #: Turning it off is for comparison, not for production — run the same
+    #: history both ways and the difference is exactly what the cost is worth.
+    #: Worth knowing before doing so: the charge is not uniform, running from
+    #: 0.003v on btc to 2.5v on gbpusd intraday, so switching it off does not
+    #: loosen one gate evenly. See levels.md, "What the cost actually comes to".
+    charge_spread: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -91,4 +102,6 @@ class Settings:
             cooldown=_float("STRUCTURES_COOLDOWN_S", DEFAULT_COOLDOWN),
             alert_direct=os.environ.get("STRUCTURES_DIRECT", "1") not in ("0", "false", "no"),
             alert_levels=os.environ.get("STRUCTURES_ALERT_LEVELS", "1") not in ("0", "false", "no"),
+            charge_spread=os.environ.get("STRUCTURES_CHARGE_SPREAD", "1")
+            not in ("0", "false", "no"),
         )

@@ -174,7 +174,7 @@ class Watcher:
         #: Key levels and what they do when price arrives. Fed by both bars
         #: (which form the levels) and quotes (which detect the touch in time
         #: to matter — waiting for a 5m close reports it after the fact).
-        self.engine = Engine()
+        self.engine = Engine(charge_spread=self.settings.charge_spread)
         self._sent: OrderedDict[tuple[str, str, str], float] = OrderedDict()
         #: Level -> the journal entry recording why we called it. Kept so the
         #: result can be attached to the decision that predicted it, which is

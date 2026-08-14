@@ -1575,3 +1575,52 @@ def test_a_single_wide_print_does_not_disqualify_an_edge():
     # A median over the window: one print out of sixty-one cannot move it at
     # all, which is the property, not a tolerance chosen to pass.
     assert spiked == pytest.approx(settled)
+
+
+def _quoted_engine(*, charge_spread: bool) -> tuple[Engine, object]:
+    engine = Engine(intervals=("5m",), charge_spread=charge_spread)
+    vol = engine.vol.of("gold", "5m")
+    for n in range(300):
+        vol.update(2000.0 + (n % 11) * 2.0)
+    for _ in range(60):
+        engine.observe_quote(
+            {"feed": "gold", "venue": "OANDA", "mid": 2000.0, "spread_bps": 4.0, "time": 1.0}
+        )
+    return engine, vol
+
+
+def test_the_spread_charge_can_be_turned_off():
+    """Off is for asking what the model would have said gross, and nothing else.
+
+    Charged and uncharged runs differ in this one term, which is what makes the
+    comparison worth anything — so the test pins that the *same* quotes and the
+    *same* volatility produce a real cost with it on and exactly zero with it
+    off.
+    """
+    on, vol_on = _quoted_engine(charge_spread=True)
+    off, vol_off = _quoted_engine(charge_spread=False)
+
+    assert on.cost_of("gold", vol_on) == pytest.approx(4.0 / vol_on.bps, rel=0.05)
+    assert off.cost_of("gold", vol_off) == 0.0
+    # The spreads were still observed either way — the switch decides whether
+    # they are charged, not whether they are measured, so turning it back on
+    # must not need a fresh window.
+    off.charge_spread = True
+    assert off.cost_of("gold", vol_off) == pytest.approx(on.cost_of("gold", vol_on))
+
+
+def test_disabling_the_charge_says_so_rather_than_going_quiet(caplog):
+    """A configured zero must not read like a broken one.
+
+    Both present as `cost_vol: 0.0` in the journal, and the whole reason the
+    cost was found to be inert in production is that nothing distinguished
+    them.
+    """
+    with caplog.at_level("WARNING"):
+        Engine(intervals=("5m",), charge_spread=False)
+    assert any("spread costs disabled" in record.message for record in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        Engine(intervals=("5m",))
+    assert not any("spread costs disabled" in record.message for record in caplog.records)

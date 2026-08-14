@@ -461,3 +461,4 @@ length.
 | `STRUCTURES_ALERT_LEVELS` | `0` to hold actionable level calls back for an agent |
 | `STRUCTURES_DIRECT_DEV_BPS` | deviation that is a broken quote (100) |
 | `STRUCTURES_SAVE_S` | seconds between saves (300) |
+| `STRUCTURES_CHARGE_SPREAD` | `0` to judge level calls on their gross push, for comparison only — it says so in the log, because a configured `cost_vol: 0.0` and a broken one are otherwise identical ([levels.md](levels.md)) |

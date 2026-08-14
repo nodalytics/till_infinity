@@ -268,7 +268,17 @@ class Engine:
         intervals: tuple[str, ...] = LEVEL_INTERVALS,
         horizon: float = 3600.0,
         shape_horizon: int = SHAPE_HORIZON,
+        charge_spread: bool = True,
     ) -> None:
+        #: Whether the quoted spread is charged against every level call. On by
+        #: default, because an uncharged edge is a gross number and acting on
+        #: one is the mistake the cost exists to prevent.
+        #:
+        #: Off is for answering "what would this have said without the cost" —
+        #: the two runs are directly comparable, since nothing else changes. It
+        #: is deliberately not a threshold to tune: the cost is measured, and
+        #: something measured is either charged or it is not.
+        self.charge_spread = charge_spread
         self.shape_horizon = shape_horizon
         self.window = window
         self.pip_count = pip_count
@@ -301,6 +311,16 @@ class Engine:
         #: A window rather than a running value, so the cost can be a *median*.
         self._spread: dict[str, deque[float]] = {}
         self.calls = 0
+        if not charge_spread:
+            # Said out loud, once, because a disabled charge and an unarmed one
+            # both record `cost_vol` of 0.0 and are indistinguishable in the
+            # journal afterwards. A zero that was configured should not be
+            # readable as a zero that went wrong.
+            log.warning(
+                "structures: spread costs disabled — every level call will be "
+                "judged on its gross push, and cost_vol will read 0.0 for that "
+                "reason rather than for want of quotes"
+            )
 
     # --------------------------------------------------------------- levels
 
@@ -499,6 +519,8 @@ class Engine:
         moved the charged cost tenfold, which would silence a whole instrument
         for as long as it took to decay.
         """
+        if not self.charge_spread:
+            return 0.0
         seen = self._spread.get(feed)
         if not seen or vol is None or not vol.bps:
             return 0.0

@@ -1372,6 +1372,27 @@ made, which is precisely when a cold start makes the most of them.
 Worth stating plainly: the spread cost has therefore never yet suppressed a
 single signal in production. The quiet channel is not this feature working.
 
+### Turning it off, and why that needs to be audible
+
+`STRUCTURES_CHARGE_SPREAD=0` (or `Engine(charge_spread=False)`) stops the
+charge. It exists for one purpose — running the same history both ways, where
+the difference *is* what the cost is worth — and not for production, where an
+uncharged edge is a gross number.
+
+It is a switch rather than a threshold on purpose. The cost is measured; a
+measured quantity is either charged or it is not, and a dial on it would be
+inventing a number to sit between two honest positions.
+
+The switch **logs a warning when it is off**, which is the part that matters.
+A disabled charge and an unarmed one both write `cost_vol: 0.0` into the
+journal and are indistinguishable there forever after — which is exactly how
+the inert charge above went unnoticed. A zero that was configured must not be
+readable as a zero that went wrong.
+
+Remember that the charge is not uniform when reading the difference: switching
+it off relaxes btc by 0.003v and gbpusd intraday by 2.5v. It does not loosen
+one gate evenly, it removes six different gates.
+
 ## Honest status
 
 Everything above is validated on **synthetic mean-reverting data**, where the
