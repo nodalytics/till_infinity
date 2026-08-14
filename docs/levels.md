@@ -684,6 +684,36 @@ on, and the disagreement is surfaced as `mixed` rather than hidden. A mixed
 signal is never `actionable`: whichever half you act on, the other says you are
 wrong.
 
+### Closed markets, and why the weekend is a data problem rather than an alert one
+
+FX and the indices stop trading at the weekend; crypto does not. Two questions
+follow, and only one of them was a problem.
+
+**Alerts are structurally safe, by accident rather than design.**
+`staleness_ratio` divides a venue's stillness by the *group's*, so when every
+FX venue freezes together the ratio stays near 1 and nothing fires. The
+cross-venue construction that exists to catch one dead feed also happens to
+recognise a closed market. Level calls are safe for a different reason: a new
+call needs a *new* touch to open, and a frozen price opens nothing.
+
+**The outcomes were not safe.** A touch open at the Friday close stayed open,
+and `_close` records `push_vol` as the distance at the moment of closing — so
+the Sunday reopening gap would be written into the level's own statistics and
+into `facto`'s training targets as this level's reaction to being touched. On
+EURUSD a weekend resolved as a **27-volatility-unit rejection**, which is the
+market having been shut rather than the level having done anything.
+
+`GAP_FACTOR` (4× the horizon) discards those instead of resolving them, and the
+check runs **before anything is read from the price** — placing it after the
+movement tests, as the first attempt did, meant the gap was already being read
+as a decisive rejection before the elapsed time was ever considered.
+
+Discarding rather than recording is the honest answer: an interaction spanning
+a period nobody observed has no outcome, and inventing one is worse than losing
+it. Chop is deliberately kept — price arriving, sitting and doing nothing is a
+real result, and a model never shown it predicts a move every time. Only the
+absence of observation is thrown away.
+
 ## 7b. False breakouts
 
 A trap is price getting through a level convincingly enough to invite the

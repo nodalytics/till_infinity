@@ -324,6 +324,48 @@ def test_an_interaction_that_goes_nowhere_is_kept_as_chop():
     assert done.outcome is Outcome.CHOP
 
 
+def test_a_touch_spanning_a_closed_market_is_discarded_rather_than_resolved():
+    """The weekend case, and it is a data-quality bug rather than an alert one.
+
+    FX shuts on Friday evening and reopens on Sunday. A touch open at the close
+    would otherwise resolve on the reopen, and `_close` records `push_vol` as
+    the distance at the moment of closing — so the level's own statistics and
+    `facto`'s training targets would learn the **opening gap** as this level's
+    reaction to being touched. It is not a reaction to anything.
+    """
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=3600)
+    level = Level(feed="eurusd", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    features = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
+    tracker.begin(level, 4400.0, features, 1_000_000)
+
+    # The market reopens two days later, well past the gap factor, and gaps.
+    done = tracker.update(level, 4460.0, vol, 1_000_000 + 2 * 86_400)
+
+    assert done is None, "a gap was recorded as an outcome"
+    assert tracker.open_touch(level) is None, "and the touch was left open"
+    assert level.touches == 0, "the gap reached the level's own statistics"
+
+
+def test_a_slow_session_still_resolves_as_chop():
+    """The other half: only an absence of observation is thrown away.
+
+    Discarding anything that outlives its horizon would lose chop entirely,
+    and chop is the outcome a model most needs to be shown.
+    """
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=120)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    features = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
+    tracker.begin(level, 4400.0, features, 1_000_000)
+
+    # Past the horizon but inside the gap factor.
+    done = tracker.update(level, 4400.0, vol, 1_000_000 + 200)
+
+    assert done is not None
+    assert done.outcome is Outcome.CHOP
+
+
 def test_neighbours_never_cross_sides():
     """A floor's history must not vote on a ceiling's future."""
     above = reactions.Features(Side.ABOVE, 1.0, 0.5, 0.5, 1.0, 0.5)

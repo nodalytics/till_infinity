@@ -78,6 +78,27 @@ BASE_WEIGHT = 20.0
 #: evidence is worth this much of the level's own.
 PRIOR_WEIGHT = 4.0
 
+#: Multiples of the horizon after which an open touch is **discarded** rather
+#: than resolved.
+#:
+#: A touch that outlives its horizon normally means price sat at the level and
+#: did nothing, which is `chop` and worth recording — a model never shown
+#: "nothing happened" predicts a move every time. But a touch open for two days
+#: does not mean that. It means nobody was watching: the FX market shut on
+#: Friday evening and reopened on Sunday, or the collector was down.
+#:
+#: The difference matters because `_close` records `push_vol` as the distance
+#: at the moment of closing. A touch opened before the weekend and closed after
+#: it writes **the opening gap** into the level's own statistics and into
+#: `facto`'s training targets, labelled as this level's reaction. It is not a
+#: reaction to anything; it is the price of the market being shut.
+#:
+#: Four rather than two, so an ordinary slow session still resolves as chop and
+#: only a genuine absence of observation is thrown away. Discarding is the
+#: honest answer: an interaction spanning a period nobody observed has no
+#: outcome, and inventing one is worse than losing it.
+GAP_FACTOR = 4.0
+
 #: The least a call may be worth against what being wrong costs.
 #:
 #: One, and that is a break-even rather than a preference: below it the move
@@ -729,7 +750,7 @@ class Tracker:
         ended and the leg out began, and it is the close that the level is
         drawn at.
         """
-        touch = self._open.get(self.key(level))
+        touch = self._live(level, when)
         if touch is None:
             return None
 
@@ -798,6 +819,23 @@ class Tracker:
             return self._close(level, touch, Outcome.CHOP, travelled, side, when)
         return None
 
+    def _live(self, level: Level, when: float) -> Touch | None:
+        """The open touch, unless it has outlived any reading of the price.
+
+        Checked before anything is read from `price`, because a touch open this
+        long spans a period nobody observed and where price sits *now* says
+        nothing about what this level did. The movement tests in `update` would
+        otherwise read the reopening gap as a decisive reaction — a weekend on
+        EURUSD resolving as a 27-volatility-unit rejection, which is the market
+        having been shut rather than the level having done anything. Dropped
+        without an outcome; see GAP_FACTOR.
+        """
+        touch = self._open.get(self.key(level))
+        if touch is not None and when - touch.started >= self.horizon * GAP_FACTOR:
+            self._open.pop(self.key(level), None)
+            return None
+        return touch
+
     def _close(
         self,
         level: Level,
@@ -846,6 +884,8 @@ class Tracker:
         dropped = []
         for key in stale:
             touch = self._open.pop(key)
+            if when - touch.started >= self.horizon * GAP_FACTOR:
+                continue  # a gap, not an outcome — see GAP_FACTOR
             touch.outcome = Outcome.BREAK if touch.breaking else Outcome.CHOP
             touch.resolved = when
             self.memory.add(touch)
