@@ -123,6 +123,87 @@ FEEDS: dict[str, Feed] = {
             ),
             yahoo=("GBPUSD=X",),
         ),
+        # The rest of the majors. One venue list, because every one of these is
+        # quoted by all six brokers — checked, not assumed.
+        _feed(
+            "usdjpy",
+            tradingview=(
+                "OANDA:USDJPY",
+                "PEPPERSTONE:USDJPY",
+                "FOREXCOM:USDJPY",
+                "SAXO:USDJPY",
+                "FX_IDC:USDJPY",
+                "DERIV:USDJPY",
+            ),
+            yahoo=("JPY=X",),
+        ),
+        _feed(
+            "audusd",
+            tradingview=(
+                "OANDA:AUDUSD",
+                "PEPPERSTONE:AUDUSD",
+                "FOREXCOM:AUDUSD",
+                "SAXO:AUDUSD",
+                "FX_IDC:AUDUSD",
+                "DERIV:AUDUSD",
+            ),
+            yahoo=("AUDUSD=X",),
+        ),
+        _feed(
+            "usdcad",
+            tradingview=(
+                "OANDA:USDCAD",
+                "PEPPERSTONE:USDCAD",
+                "FOREXCOM:USDCAD",
+                "SAXO:USDCAD",
+                "FX_IDC:USDCAD",
+                "DERIV:USDCAD",
+            ),
+            yahoo=("CAD=X",),
+        ),
+        _feed(
+            "usdchf",
+            tradingview=(
+                "OANDA:USDCHF",
+                "PEPPERSTONE:USDCHF",
+                "FOREXCOM:USDCHF",
+                "SAXO:USDCHF",
+                "FX_IDC:USDCHF",
+                "DERIV:USDCHF",
+            ),
+            yahoo=("CHF=X",),
+        ),
+        _feed(
+            "nzdusd",
+            tradingview=(
+                "OANDA:NZDUSD",
+                "PEPPERSTONE:NZDUSD",
+                "FOREXCOM:NZDUSD",
+                "SAXO:NZDUSD",
+                "FX_IDC:NZDUSD",
+                "DERIV:NZDUSD",
+            ),
+            yahoo=("NZDUSD=X",),
+        ),
+        _feed(
+            "usdcnh",
+            # The **offshore** yuan, and that is deliberate. Onshore USDCNY is
+            # carried by exactly one of our venues (FX_IDC) — OANDA, SAXO,
+            # FOREXCOM and DERIV all return symbol_error for it — which is
+            # below the three-venue quorum a consensus bar needs, so a `usdcny`
+            # feed would form no levels at all and do it silently. CNH is the
+            # rate that trades outside the mainland's daily band, all six
+            # venues quote it, and `usdcny` is an alias onto it.
+            tradingview=(
+                "OANDA:USDCNH",
+                "PEPPERSTONE:USDCNH",
+                "FOREXCOM:USDCNH",
+                "SAXO:USDCNH",
+                "FX_IDC:USDCNH",
+                "DERIV:USDCNH",
+            ),
+            yahoo=("CNH=X",),
+        ),
         _feed(
             "us100",
             # The Nasdaq 100. Brokers quote a CFD on it under half a dozen
@@ -162,6 +243,12 @@ DEFAULT_SOURCES: tuple[str, ...] = (TRADINGVIEW, YAHOO)
 DEFAULT_SYMBOLS: tuple[str, ...] = (
     "eurusd",
     "gbpusd",
+    "usdjpy",
+    "audusd",
+    "usdcad",
+    "usdchf",
+    "nzdusd",
+    "usdcnh",
     "gold",
     "btc",
     "eth",
@@ -208,6 +295,32 @@ SYMBOL_ALIASES: dict[str, str] = {
     "eurusd": "eurusd",
     "gbp": "gbpusd",
     "gbpusd": "gbpusd",
+    # The rest of the majors, under the desk names as well as the tickers —
+    # nobody asks for USDJPY out loud.
+    "jpy": "usdjpy",
+    "usdjpy": "usdjpy",
+    "yen": "usdjpy",
+    "aud": "audusd",
+    "audusd": "audusd",
+    "aussie": "audusd",
+    "cad": "usdcad",
+    "usdcad": "usdcad",
+    "loonie": "usdcad",
+    "chf": "usdchf",
+    "usdchf": "usdchf",
+    "swissy": "usdchf",
+    "franc": "usdchf",
+    "nzd": "nzdusd",
+    "nzdusd": "nzdusd",
+    "kiwi": "nzdusd",
+    # Onshore and offshore both land on CNH, which is the one our venues
+    # actually quote. See the feed for why.
+    "cnh": "usdcnh",
+    "usdcnh": "usdcnh",
+    "cny": "usdcnh",
+    "usdcny": "usdcnh",
+    "yuan": "usdcnh",
+    "renminbi": "usdcnh",
 }
 
 

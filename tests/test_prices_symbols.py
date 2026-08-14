@@ -11,7 +11,22 @@ from till_infinity.prices import (
 
 
 def test_the_defaults_are_the_tracked_instruments():
-    tracked = {"eurusd", "gbpusd", "gold", "btc", "eth", "sol", "us100", "spx500"}
+    tracked = {
+        "eurusd",
+        "gbpusd",
+        "usdjpy",
+        "audusd",
+        "usdcad",
+        "usdchf",
+        "nzdusd",
+        "usdcnh",
+        "gold",
+        "btc",
+        "eth",
+        "sol",
+        "us100",
+        "spx500",
+    }
     assert {feed.name for feed in resolve_symbols(None)} == tracked
     assert set(DEFAULT_SYMBOLS) == tracked
 
@@ -81,6 +96,47 @@ def test_btc_aliases(name):
 )
 def test_eth_and_sol_answer_to_what_people_call_them(typed, feed):
     assert resolve_symbols([typed])[0].name == feed
+
+
+@pytest.mark.parametrize(
+    ("typed", "feed"),
+    [
+        ("usdjpy", "usdjpy"),
+        ("jpy", "usdjpy"),
+        ("yen", "usdjpy"),
+        ("aussie", "audusd"),
+        ("loonie", "usdcad"),
+        ("swissy", "usdchf"),
+        ("kiwi", "nzdusd"),
+        ("cnh", "usdcnh"),
+        ("yuan", "usdcnh"),
+    ],
+)
+def test_the_majors_answer_to_their_desk_names(typed, feed):
+    """Nobody asks for USDJPY out loud."""
+    assert resolve_symbols([typed])[0].name == feed
+
+
+def test_the_onshore_yuan_resolves_to_the_offshore_feed():
+    """USDCNY is carried by one venue of ours, which is below the quorum.
+
+    A consensus bar needs three venues, so a `usdcny` feed would form no levels
+    and would do it silently — the failure that looks exactly like a quiet
+    market. CNH is what the six venues actually quote.
+    """
+    (feed,) = resolve_symbols(["usdcny"])
+    assert feed.name == "usdcnh"
+    tickers = {symbol.ticker for symbol in feed.for_source(TRADINGVIEW)}
+    assert tickers == {"USDCNH"}
+    assert len(feed.for_source(TRADINGVIEW)) >= 3
+
+
+def test_every_major_is_quoted_by_enough_venues_to_reach_quorum():
+    """Three venues before a consensus close is usable; below that, nothing forms."""
+    for name in ("usdjpy", "audusd", "usdcad", "usdchf", "nzdusd", "usdcnh"):
+        (feed,) = resolve_symbols([name])
+        assert len(feed.for_source(TRADINGVIEW)) >= 3, name
+        assert len(feed.for_source(YAHOO)) >= 1, name
 
 
 def test_the_crypto_feeds_carry_the_same_venues():
