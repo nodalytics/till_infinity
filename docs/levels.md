@@ -639,6 +639,58 @@ accurate precisely where it is used.
 *happened*, so an instrument yet to print a single-step move reads coarser than
 it is, and the error is upward. `MAX_ZONE_VOL` bounds what that can do.
 
+### Why the finely-quoted instruments do not need a better estimate
+
+btc's estimate is 0.32 against a real tick nearer 0.12, because in 300 bars of
+3m data btc never prints a single-tick move — most of its changes are hundreds
+of ticks, so even the first percentile is several. **No estimator recovers a
+tick the data never shows**, and that is a property of the data rather than a
+flaw to fix.
+
+It does not need fixing, and the margin says by how much. The floor only binds
+when `MIN_ZONE_TICKS × tick` exceeds `MIN_ZONE_VOL × volatility`, so each
+instrument has a factor by which the estimate could be wrong before anything
+changes:
+
+| | binds today | margin |
+|---|---|---|
+| ADA | yes | 10.8x past the threshold |
+| LTC | yes | 6.9x |
+| SOL | yes | 4.2x |
+| XRP | yes | 2.8x |
+| LINK | yes | 2.1x |
+| **btc** | **no** | inert until **5.7x** larger |
+| **eth** | **no** | inert until **6.5x** larger |
+
+btc's estimate is roughly 2.7x too large and would need to be 5.7x too large to
+matter. The design is robust there **by irrelevance rather than by accuracy** —
+and that is the useful shape, because it means precision is only ever demanded
+where the estimator is exact, which is the instruments whose changes really are
+one tick.
+
+### The unified resolution scale, tested and rejected
+
+The tidier framing was to drop the special case entirely: since everything here
+is measured in volatility units and the tick is a second scale, take
+`resolution = max(volatility unit, tick)` as the instrument's real resolution
+and let the zone floor fall out of it.
+
+Measured, it does not work:
+
+| | tick / vol unit | floor as shipped | floor under one scale | |
+|---|---|---|---|---|
+| ADA | 0.63 | 0.000600 | 0.000056 | **0.09x** |
+| LTC | 0.40 | 0.060000 | 0.008736 | 0.15x |
+| SOL | 0.25 | 0.060000 | 0.014173 | 0.24x |
+| btc | 0.01 | 10.92 | 10.92 | 1.00x |
+
+The tick never exceeds one volatility unit on any instrument — 0.63 at worst —
+so `max()` always chooses volatility and the fix disappears. It compares *one*
+tick against *one* volatility unit, where the floor that works compares six
+ticks against 0.35 units: a ratio of seventeen. Recovering that means writing
+`max(unit, 17 × tick)`, which is the same two constants with one fewer place to
+read them. **The elegance was in the notation rather than in the model.**
+
 Still a **candidate for the outcome rate specifically**: the granularity is
 measured and the causal link to sol's 2,430 outcomes is not. But it is now a
 measured property of six tracked-or-plausible instruments rather than a story
