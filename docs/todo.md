@@ -21,12 +21,32 @@ fixes did not close. It was `observe_bar` running the touch check at its own
 interval during replay, which item 1 has now split out. On production
 `own_touches` fell from 171 to 0.0.
 
-Two things still stand between here and a fit. **Re-measure the rate** over a
-few post-fix hours — it should be far lower, and if it is not, the fourth route
-was not the last one. And the older examples remain unusable regardless: they
-were recorded under the inflated counts, which is not a tidiness problem but a
-correctness one — the pre-fix journal calls direction correctly 99.9% of the
-time because a level's history and its next outcome were the same move counted
+**Re-measured on 2026-08-14 after the split, and it is not fixed.** 18,228
+outcomes over 20.4 hours is **895/hour**, against the 976/hour that raised this
+item; the three most recent full hours were 2,290, 2,257 and 2,285. Splitting
+`observe_bar` fixed the *per-level* inflation — `own_touches` fell from 171 to
+single figures — and did not touch the rate. Those were two problems wearing
+one symptom.
+
+The consequence this item exists for is therefore unchanged and now measured:
+**200 consecutive outcomes accumulate in a median of 4.9 minutes**, fastest 1.1.
+`MIN_EXAMPLES` is reached from five minutes of one afternoon, which is not a
+spread of market conditions and not the dataset progressive validation assumes.
+
+They are concentrated as well as fast. Of the last 5,000: `sol` alone accounts
+for 2,430, and 3m and 5m for 4,305 between them, against 10 on 4h and none on
+the daily or weekly. So a fit would learn one instrument on two fine
+timeframes over one afternoon and report it as a model of everything.
+
+**So `fit` stays gated, and the fourth route was not the last one.** What to
+look for next: the rate is dominated by fine timeframes on one instrument, so
+the question is what makes a 3m sol level resolve so often — re-arm, zone
+width, or a touch check that runs on every quote against a level that price is
+sitting inside.
+
+The older examples remain unusable regardless: recorded under the inflated
+counts, and the pre-fix journal calls direction correctly 99.9% of the time
+because a level's history and its next outcome were the same move counted
 twice. `fit(since=)` exists for exactly this boundary. Do not fit across it.
 
 **~~Agents have never woken~~** — done, and it was neither of the suspects. Not
@@ -71,11 +91,14 @@ Worth carrying forward: a curve fit through two points will happily predict the
 thing you already saw while pointing at the wrong cause. The profiler took five
 minutes and disagreed with it immediately.
 
-**Still open, and cheap:** the better fix is to fold each message into the
-running answer as it arrives and never hold the list — `interesting()` already
-computes exactly that. And **swap still does not exist**, which is why an
-overshoot is a kill rather than a slowdown; that does not improve on a bigger
-box, it just gets harder to reach.
+**The window is streamed now**, not bounded: `Window` folds each message into
+the running answer and keeps none, so the 101,297-message window that cost
+199MB costs 464 bytes. `interesting()` folds a sequence into the same
+accumulator, so there is one implementation rather than two that could drift.
+
+**Still open:** swap does not exist, which is why an overshoot is a kill rather
+than a slowdown — and that does not improve on a bigger box, it just gets
+harder to reach.
 
 ## 0b. Three found on 2026-08-14 while tracing the silent channel
 

@@ -8,7 +8,6 @@ and what survives on the way to an alert.
 from __future__ import annotations
 
 import sqlite3
-from collections import deque
 
 import pytest
 
@@ -488,33 +487,53 @@ def test_a_structures_signal_wakes_the_model_on_its_own():
     assert "4401" in triggers[0].reason
 
 
-@pytest.mark.asyncio
-async def test_the_window_is_bounded_and_says_what_it_dropped():
-    """The window was where the memory went, and nobody looked there first.
+def test_the_window_keeps_no_messages_at_all():
+    """Where the memory went, and why bounding it was only the stopgap.
 
-    Thirty minutes over fourteen instruments held 101,297 messages — 199MB,
-    about half the resident size when the box was OOM-killed — to derive
-    fifteen triggers from. It is bounded now, keeping the recent end, and it
-    reports the loss rather than leaving the count quietly wrong.
+    A thirty-minute window over fourteen instruments held 101,297 messages —
+    199MB, about half the resident size when the box was OOM-killed — to derive
+    fifteen triggers. Nothing downstream ever wanted the messages, so the
+    accumulator keeps none: its size tracks the number of *instruments*, not
+    the traffic, and a busy session now costs no more than a quiet one.
     """
-    bus = Bus()
-    watcher = service.Watcher(bus, settings=ag.Settings())
-    watcher._window = deque(maxlen=5)
+    settings = ag.Settings(spread_bps=8.0)
+    window = service.Window(settings=settings)
 
-    for n in range(12):
-        if len(watcher._window) == watcher._window.maxlen:
-            watcher._dropped += 1
-        watcher._window.append(_quote(float(n)))
+    for n in range(50_000):
+        window.add(_quote(0.4 + (n % 7) * 0.01))
 
-    assert len(watcher._window) == 5
-    assert watcher._dropped == 7
-    # The recent end survives: dropping the newest would also bound it.
-    assert [m.payload["spread_bps"] for m in watcher._window] == [7.0, 8.0, 9.0, 10.0, 11.0]
+    assert window.messages == 50_000
+    assert window.quotes == 50_000
+    # One instrument quoted, so one entry in each of the per-instrument maps
+    # however many messages went past.
+    assert len(window.loudest) == 0  # quotes are not signals
+    assert not hasattr(window, "_messages")
+    assert window.widest_bps > 0  # it still knows the worst it saw
 
 
-def test_the_window_bound_is_large_enough_for_the_gate():
-    """It has to hold more than the gate needs, or the cap is doing the deciding."""
-    assert service.WINDOW_MESSAGES >= 10_000
+def test_the_streaming_and_batch_paths_agree():
+    """One implementation, or the two answer differently and nobody can see it.
+
+    `interesting()` folds a sequence into the same accumulator the watcher
+    fills live, so this is really a test that the fold is the only path.
+    """
+    settings = ag.Settings(spread_bps=8.0, importance=3)
+    messages = [
+        _quote(0.4),
+        _quote(30.0),
+        _signal_message(feed="gold", score=0.5),
+        _signal_message(feed="btc", score=0.9),
+        _event(3, released=True),
+    ]
+
+    batch = service.interesting(messages, settings)
+
+    streamed = service.Window(settings=settings)
+    for message in messages:
+        streamed.add(message)
+
+    assert [t.reason for t in streamed.triggers()] == [t.reason for t in batch]
+    assert str(streamed.quiet()) == str(service.why_quiet(messages, settings))
 
 
 def test_one_instrument_dislocating_at_four_venues_is_one_trigger():

@@ -83,7 +83,7 @@ Two gates stand between a quote and an API call:
    because a hundred ticks are one situation.
 2. **The analyst**, told plainly that returning no findings is correct.
 
-### The window is bounded, and this is where the memory went
+### The window keeps no messages, and this is where the memory went
 
 `_read` appended every message of every topic into a list drained only when the
 window elapsed. At `AGENTS_WINDOW_S=1800` over fourteen instruments that came to
@@ -91,16 +91,23 @@ window elapsed. At `AGENTS_WINDOW_S=1800` over fourteen instruments that came to
 OOM-killed, held in order to derive fifteen triggers. One quote `Message`
 measures 1,970 bytes; the arithmetic is not subtle once anyone looks.
 
-`WINDOW_MESSAGES` caps it at 20,000, roughly 40MB, which is far more than the
-gate needs — it wants the widest spread and the loudest signal per instrument,
-not a complete record. A `deque` drops from the front, so an overflowing window
-keeps the *recent* end, and the number dropped is logged rather than leaving the
-message count in the prompt quietly wrong.
+Nothing downstream ever wanted the messages. `interesting` reduces them to the
+widest spread, the loudest signal per instrument and the releases that printed;
+`prompt_for` wants counts. All of that is computable one message at a time, so
+`Window` folds each in as it arrives and keeps none.
 
-The better fix is to fold each message into the running answer as it arrives and
-never hold the list at all, which `interesting()` already computes. The bound is
-the stopgap: small, obvious and reversible, where streaming aggregation changes
-what `prompt_for` can say.
+The same window that cost 199MB now costs **464 bytes**. Memory is proportional
+to the number of *instruments* rather than to the traffic, so a busy session
+costs no more than a quiet one — and the spread spike that a bounded list could
+drop from its front can no longer be lost, which the bound could not promise.
+
+**One implementation, not two.** `interesting()` and `why_quiet()` fold a
+sequence into the same accumulator the watcher fills live, so the batch path
+and the streaming path cannot answer differently — a divergence there would be
+invisible from either side. A test asserts they agree.
+
+This replaced a bounded `deque`, which was the honest stopgap: small, obvious
+and reversible while the shape of the fix was still in question.
 
 ### One trigger per instrument, not one per venue
 

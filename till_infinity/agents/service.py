@@ -31,9 +31,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from collections import OrderedDict, deque
+from collections import Counter, OrderedDict
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..bus import ALERTS, ARTICLES, BARS, EVENTS, QUOTES, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe
@@ -69,27 +69,6 @@ SPREAD_QUANTILE = 0.99
 #: then the 99th percentile is 20bps and 20.1 clears it, so a hair above normal
 #: would wake a model. The multiple is what makes "wide" mean wide.
 SPREAD_MULTIPLE = 1.5
-
-#: Messages held for one judgement.
-#:
-#: This is where the memory went, and it was not where anyone looked first. A
-#: thirty-minute window over fourteen instruments held **101,297 messages,
-#: 199MB** — about half the resident size when the box was OOM-killed — and all
-#: of it to derive fifteen triggers. Quotes dominate: fourteen instruments times
-#: six venues at a fifteen-second poll is a message every few hundredths of a
-#: second, and the window keeps every one until it elapses.
-#:
-#: 20,000 is roughly 40MB, which is affordable, and comfortably more than the
-#: gate needs — it wants the widest spread and the loudest signal per
-#: instrument, not a complete record. The cost of overflowing is that the
-#: *oldest* messages go, so a spread spike early in a very busy window can be
-#: missed. That is a real loss and it is logged rather than hidden.
-#:
-#: The better fix is to fold each message into the running answer as it arrives
-#: and never hold the list at all — the gate already computes exactly that. Left
-#: as the next step because a bounded list is small, obvious and reversible,
-#: while streaming aggregation changes what `prompt_for` can say.
-WINDOW_MESSAGES = 20_000
 
 #: Triggers handed to the analyst in one window.
 #:
@@ -152,6 +131,168 @@ class Spreads:
         return bps >= cut and bps >= typical * self.multiple
 
 
+@dataclass(slots=True)
+class Window:
+    """What a window of bus traffic amounts to, folded in as it arrives.
+
+    The list this replaces held every message until the window elapsed —
+    101,297 of them, 199MB, to derive fifteen triggers. Nothing downstream
+    ever wanted the messages: `interesting` reduces them to the widest spread,
+    the loudest signal per instrument and the releases that printed, and
+    `prompt_for` wants counts. All of that is computable one message at a time,
+    so none of it needs keeping.
+
+    Bounding the list was the stopgap; this removes the question. Memory is now
+    proportional to the number of *instruments*, not to the traffic, so a busy
+    session costs no more than a quiet one — and the spread spike that a bound
+    could drop from the front of a full window can no longer be lost.
+
+    One accumulator, used by both paths: `interesting()` folds a sequence into
+    it and asks the same questions the watcher asks live, so the two cannot
+    drift.
+    """
+
+    settings: Settings
+    spreads: Spreads | None = None
+    messages: int = 0
+    quotes: int = 0
+    events: int = 0
+    unreleased: int = 0
+    topics: Counter = field(default_factory=Counter)
+    #: The strongest signal per instrument. One dislocation seen at four venues
+    #: is one instrument dislocating, not four findings.
+    loudest: dict[str, tuple[float, Trigger]] = field(default_factory=dict)
+    #: Releases that actually printed and cleared the importance floor.
+    releases: list[Trigger] = field(default_factory=list)
+    #: The widest spread that was unusual *for its venue*, and the widest seen
+    #: at all — the second is for explaining a decline, not for triggering.
+    widest: Message | None = None
+    widest_bps: float = 0.0
+    widest_at: str = ""
+    top_importance: int = 0
+
+    def add(self, message: Message) -> None:
+        """Fold one message in. Constant work, constant memory."""
+        payload = message.payload
+        self.messages += 1
+        self.topics[message.topic] += 1
+        if message.topic == SIGNALS:
+            self._signal(payload)
+        elif message.topic == QUOTES:
+            self._quote(payload)
+        elif message.topic == EVENTS:
+            self._event(payload)
+
+    def _signal(self, payload: dict) -> None:
+        # A signal has already cleared the numeric layer's own guards, so it
+        # needs no second arithmetic gate — it arrives *because* something
+        # passed one. Re-filtering would discard the work that made it worth
+        # sending.
+        feed = str(payload.get("feed") or "")
+        score = abs(float(payload.get("score") or 0.0))
+        trigger = Trigger(
+            reason=(
+                f"{payload.get('venue', '')} {payload.get('feed', '')}: "
+                f"{payload.get('detail') or payload.get('shape', 'signal')}"
+            ).strip(),
+            topic=SIGNALS,
+            payload=dict(payload),
+        )
+        known = self.loudest.get(feed)
+        if known is None or score > known[0]:
+            self.loudest[feed] = (score, trigger)
+
+    def _quote(self, payload: dict) -> None:
+        bps = payload.get("spread_bps")
+        if not isinstance(bps, int | float):
+            return
+        self.quotes += 1
+        feed = str(payload.get("feed") or "")
+        venue = str(payload.get("venue") or "")
+        if float(bps) > self.widest_bps:
+            self.widest_bps = float(bps)
+            self.widest_at = f"{venue} {feed}".strip()
+        if self.spreads is not None:
+            self.spreads.observe(feed, venue, float(bps))
+            wide = self.spreads.unusual(feed, venue, float(bps), self.settings.spread_bps)
+        else:
+            wide = bps >= self.settings.spread_bps
+        if wide and (self.widest is None or bps > (self.widest.payload.get("spread_bps") or 0)):
+            self.widest = Message(topic=QUOTES, payload=dict(payload))
+
+    def _event(self, payload: dict) -> None:
+        self.events += 1
+        importance = int(payload.get("importance") or 0)
+        # A release *printing* is the event, not its being on the calendar.
+        if not payload.get("released"):
+            self.unreleased += 1
+            return
+        self.top_importance = max(self.top_importance, importance)
+        if importance >= self.settings.importance:
+            self.releases.append(
+                Trigger(
+                    reason=(
+                        f"{payload.get('country', '')} {payload.get('title', '')} printed at "
+                        f"{payload.get('actual')} against a forecast of "
+                        f"{payload.get('forecast')}"
+                    ).strip(),
+                    topic=EVENTS,
+                    payload=dict(payload),
+                )
+            )
+
+    def triggers(self) -> list[Trigger]:
+        """What in this window is worth waking a model for."""
+        found = list(self.releases)
+        # Loudest first, so anything the cap drops is the least of them.
+        found += [
+            trigger for _score, trigger in sorted(self.loudest.values(), key=lambda it: -it[0])
+        ]
+        # One trigger for the worst spread, not one per quote: the whole point
+        # of the window is that a hundred ticks are one situation.
+        if self.widest is not None:
+            found.append(
+                Trigger(
+                    reason=(
+                        f"{self.widest.payload.get('venue')} is quoting "
+                        f"{self.widest.payload.get('feed')} at "
+                        f"{float(self.widest.payload.get('spread_bps') or 0):.1f}bps"
+                    ),
+                    topic=QUOTES,
+                    payload=dict(self.widest.payload),
+                )
+            )
+        if len(found) > MAX_TRIGGERS:
+            # Said out loud rather than trimmed quietly. A cap that silently
+            # drops findings reads afterwards as "that is all there was".
+            log.info(
+                "agents: %d triggers in this window, analysing the strongest %d",
+                len(found),
+                MAX_TRIGGERS,
+            )
+            found = found[:MAX_TRIGGERS]
+        return found
+
+    def quiet(self) -> Quiet:
+        """How close this window came, for one that crossed nothing."""
+        return Quiet(
+            messages=self.messages,
+            quotes=self.quotes,
+            events=self.events,
+            widest_bps=self.widest_bps,
+            widest_at=self.widest_at,
+            spread_threshold=self.settings.spread_bps,
+            calibrated=self.spreads is not None,
+            top_importance=self.top_importance,
+            importance_threshold=self.settings.importance,
+            unreleased=self.unreleased,
+        )
+
+    def seen(self) -> str:
+        """What arrived, for the prompt — counts rather than the messages."""
+        return ", ".join(f"{n} {topic}" for topic, n in sorted(self.topics.items())) or "nothing"
+
+
 def interesting(
     messages: Sequence[Message], settings: Settings, spreads: Spreads | None = None
 ) -> list[Trigger]:
@@ -160,93 +301,30 @@ def interesting(
     Cheap and deliberately blunt. Its only job is to keep quiet markets free;
     anything it lets through is judged properly by the analyst afterwards.
 
+    A fold over `Window`, which is the same accumulator the watcher fills live.
+    Keeping one implementation matters more than it looks: the streaming path
+    and the batch path answering differently would be a bug nobody could see
+    from either side.
+
     `spreads` makes the quote gate self-calibrating. Without it the configured
     threshold is used, which is the old behaviour and is only right for
     whichever instrument it was chosen on.
     """
-    triggers: list[Trigger] = []
-    widest: Message | None = None
-    #: The strongest signal per instrument. One dislocation seen at four venues
-    #: is one instrument dislocating, not four findings — the same reasoning the
-    #: quote gate below already applies to a hundred ticks.
-    loudest: dict[str, tuple[float, Trigger]] = {}
+    return _fold(messages, settings, spreads).triggers()
 
+
+def why_quiet(
+    messages: Sequence[Message], settings: Settings, spreads: object | None = None
+) -> Quiet:
+    """Summarise a window that woke nobody, so the silence can be read."""
+    return _fold(messages, settings, spreads).quiet()
+
+
+def _fold(messages: Sequence[Message], settings: Settings, spreads: object | None = None) -> Window:
+    window = Window(settings=settings, spreads=spreads)
     for message in messages:
-        payload = message.payload
-        if message.topic == SIGNALS:
-            # A signal has already cleared the numeric layer's own guards, so
-            # it needs no second arithmetic gate here — it arrives *because*
-            # something passed one. Re-filtering would discard the work that
-            # made it worth sending.
-            feed = str(payload.get("feed") or "")
-            score = abs(float(payload.get("score") or 0.0))
-            trigger = Trigger(
-                reason=(
-                    f"{payload.get('venue', '')} {payload.get('feed', '')}: "
-                    f"{payload.get('detail') or payload.get('shape', 'signal')}"
-                ).strip(),
-                topic=SIGNALS,
-                payload=dict(payload),
-            )
-            known = loudest.get(feed)
-            if known is None or score > known[0]:
-                loudest[feed] = (score, trigger)
-        elif message.topic == QUOTES:
-            bps = payload.get("spread_bps")
-            if not isinstance(bps, int | float):
-                continue
-            feed = str(payload.get("feed") or "")
-            venue = str(payload.get("venue") or "")
-            if spreads is not None:
-                spreads.observe(feed, venue, float(bps))
-                wide = spreads.unusual(feed, venue, float(bps), settings.spread_bps)
-            else:
-                wide = bps >= settings.spread_bps
-            if wide and (widest is None or bps > (widest.payload.get("spread_bps") or 0)):
-                widest = message
-        elif message.topic == EVENTS:
-            importance = payload.get("importance") or 0
-            # A release *printing* is the event, not its being on the calendar.
-            if payload.get("released") and int(importance) >= settings.importance:
-                triggers.append(
-                    Trigger(
-                        reason=(
-                            f"{payload.get('country', '')} {payload.get('title', '')} printed at "
-                            f"{payload.get('actual')} against a forecast of "
-                            f"{payload.get('forecast')}"
-                        ).strip(),
-                        topic=EVENTS,
-                        payload=dict(payload),
-                    )
-                )
-
-    # Loudest first, so anything the cap below drops is the least of them.
-    triggers += [trigger for _score, trigger in sorted(loudest.values(), key=lambda it: -it[0])]
-
-    # One trigger for the worst spread in the window, not one per quote: the
-    # whole point of the window is that a hundred ticks are one situation.
-    if widest is not None:
-        triggers.append(
-            Trigger(
-                reason=(
-                    f"{widest.payload.get('venue')} is quoting {widest.payload.get('feed')} "
-                    f"at {float(widest.payload.get('spread_bps') or 0):.1f}bps"
-                ),
-                topic=QUOTES,
-                payload=dict(widest.payload),
-            )
-        )
-
-    if len(triggers) > MAX_TRIGGERS:
-        # Said out loud rather than trimmed quietly. A cap that silently drops
-        # findings reads afterwards as "that is all there was".
-        log.info(
-            "agents: %d triggers in this window, analysing the strongest %d",
-            len(triggers),
-            MAX_TRIGGERS,
-        )
-        triggers = triggers[:MAX_TRIGGERS]
-    return triggers
+        window.add(message)
+    return window
 
 
 @dataclass(slots=True)
@@ -303,54 +381,24 @@ class Quiet:
         )
 
 
-def why_quiet(
-    messages: Sequence[Message], settings: Settings, spreads: object | None = None
-) -> Quiet:
-    """Summarise a window that woke nobody, so the silence can be read.
-
-    Deliberately a second pass rather than a richer return from `interesting`:
-    it runs only when nothing fired, and keeping the hot path returning a plain
-    list of triggers means the gate itself stays the cheap, blunt thing it is
-    described as being.
-    """
-    found = Quiet(
-        messages=len(messages),
-        spread_threshold=settings.spread_bps,
-        importance_threshold=settings.importance,
-        calibrated=spreads is not None,
-    )
-    for message in messages:
-        payload = message.payload
-        if message.topic == QUOTES:
-            bps = payload.get("spread_bps")
-            if not isinstance(bps, int | float):
-                continue
-            found.quotes += 1
-            if float(bps) > found.widest_bps:
-                found.widest_bps = float(bps)
-                found.widest_at = (f"{payload.get('venue', '')} {payload.get('feed', '')}").strip()
-        elif message.topic == EVENTS:
-            found.events += 1
-            importance = int(payload.get("importance") or 0)
-            if not payload.get("released"):
-                found.unreleased += 1
-            elif importance > found.top_importance:
-                found.top_importance = importance
-    return found
-
-
-def prompt_for(triggers: Sequence[Trigger], messages: Sequence[Message]) -> str:
+def prompt_for(triggers: Sequence[Trigger], seen: str | Sequence[Message]) -> str:
     """Turn a window into a question.
 
     The triggers are stated as what changed rather than as conclusions, and the
     model is pointed at its tools instead of being handed the data — the store
     holds far more than the window does, and the comparison it needs (is this
     spread unusual *for this venue*) is not in the messages at all.
+
+    `seen` is the one-line summary of what arrived. A sequence of messages is
+    still accepted and counted, because that is what the tests hand it and the
+    counting is trivial; the watcher passes the string, having counted as the
+    messages went past rather than keeping them to count later.
     """
-    counts: dict[str, int] = {}
-    for message in messages:
-        counts[message.topic] = counts.get(message.topic, 0) + 1
-    seen = ", ".join(f"{n} {topic}" for topic, n in sorted(counts.items())) or "nothing"
+    if not isinstance(seen, str):
+        counts: dict[str, int] = {}
+        for message in seen:
+            counts[message.topic] = counts.get(message.topic, 0) + 1
+        seen = ", ".join(f"{n} {topic}" for topic, n in sorted(counts.items())) or "nothing"
     lines = "\n".join(f"- {trigger.reason}" for trigger in triggers)
     return (
         f"In the last window the collectors reported {seen}. "
@@ -388,18 +436,15 @@ class Watcher:
         self.memory = memory
         self.journal = journal
         self._sent: OrderedDict[tuple[str, str], float] = OrderedDict()
-        #: Bounded, because this is where the memory went. A thirty-minute
-        #: window over fourteen instruments held **101,297 messages — 199MB**,
-        #: about half the resident size at the moment the box was OOM-killed,
-        #: to derive fifteen triggers from. `deque` drops from the front, so a
-        #: window that overflows keeps the recent end.
-        self._window: deque[Message] = deque(maxlen=WINDOW_MESSAGES)
-        #: How many were dropped, so the truncation can be reported rather than
-        #: leaving the count in the prompt quietly wrong.
-        self._dropped = 0
         #: What each venue's spread normally is, so the fallback gate does not
         #: need a constant. `structures` answers this better when it is running.
         self.spreads = Spreads()
+        #: Folded in as messages arrive rather than kept. This is where the
+        #: memory went: a thirty-minute window over fourteen instruments held
+        #: **101,297 messages — 199MB**, about half the resident size when the
+        #: box was OOM-killed, to derive fifteen triggers from. Nothing
+        #: downstream wanted the messages, so none are kept.
+        self._window = Window(settings=self.settings, spreads=self.spreads)
 
     # ------------------------------------------------------------- alerting
 
@@ -470,30 +515,37 @@ class Watcher:
 
     # -------------------------------------------------------------- running
 
-    async def consider(self, window: Sequence[Message]) -> Run | None:
-        """Judge one window. Returns the run if the model was actually asked."""
-        if not window:
+    async def consider(self, window: Window | Sequence[Message]) -> Run | None:
+        """Judge one window. Returns the run if the model was actually asked.
+
+        Takes the accumulator the watcher fills, or a plain sequence — folded
+        into one on the way in, so a caller with a list of messages (a test, a
+        replay) is not obliged to build one.
+        """
+        if not isinstance(window, Window):
+            window = _fold(window, self.settings, self.spreads)
+        if not window.messages:
             return None
-        triggers = interesting(window, self.settings, self.spreads)
+        triggers = window.triggers()
         if not triggers:
             # At INFO, and saying how close it came. This was DEBUG and said
             # only that nothing crossed, which production never printed — so a
             # gate declining correctly every thirty minutes was indistinguishable
             # from an agent loop that had never run at all.
-            log.info("no wake: %s", why_quiet(window, self.settings, self.spreads))
+            log.info("no wake: %s", window.quiet())
             return None
 
-        log.info("%d message(s) -> %s", len(window), "; ".join(t.reason for t in triggers))
+        log.info("%d message(s) -> %s", window.messages, "; ".join(t.reason for t in triggers))
         try:
             run = await analyse(
-                prompt_for(triggers, window), role=self.role, settings=self.settings
+                prompt_for(triggers, window.seen()), role=self.role, settings=self.settings
             )
         except Exception as exc:  # a bad run must not end the watch
             log.error("analysis failed: %s", exc)
             return None
         context = {
             "triggers": [t.reason for t in triggers],
-            "window_messages": len(window),
+            "window_messages": window.messages,
             "spread_bps_threshold": self.settings.spread_bps,
         }
         sent = await self.publish(run, context)
@@ -526,17 +578,10 @@ class Watcher:
             try:
                 while windows is None or count < windows:
                     await asyncio.sleep(self.settings.window_seconds)
-                    window = list(self._window)
-                    if self._dropped:
-                        log.info(
-                            "agents: window held %d of %d message(s); the oldest %d "
-                            "were dropped to keep it bounded",
-                            len(window),
-                            len(window) + self._dropped,
-                            self._dropped,
-                        )
-                    self._window.clear()
-                    self._dropped = 0
+                    window, self._window = (
+                        self._window,
+                        Window(settings=self.settings, spreads=self.spreads),
+                    )
                     count += 1
                     run = await self.consider(window)
                     made += run is not None
@@ -550,9 +595,8 @@ class Watcher:
     async def _read(self, topic: str) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             async for message in self.bus.subscribe(topic, group=self.group):
-                if len(self._window) == self._window.maxlen:
-                    self._dropped += 1
-                self._window.append(message)
+                # Folded in here, so the message is not retained past this line.
+                self._window.add(message)
 
 
 async def watch(
