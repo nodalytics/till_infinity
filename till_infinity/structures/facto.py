@@ -59,6 +59,18 @@ log = get_logger(__name__)
 #: feature; fitting them from a few dozen rows is curve-drawing, not learning.
 MIN_EXAMPLES = 200
 
+#: Journal rows read to assemble a dataset. Large because this reads *recent
+#: entries and filters*, rather than querying outcomes directly, and the journal
+#: does not grow at the rate it was first sized for: every level call is
+#: recorded, actionable or not, so it accrues around a thousand rows an hour
+#: rather than dozens a day. At the original 5,000 a fit drew its examples from
+#: the last two hours however long the service had run — walk-forward validated
+#: inside a single afternoon, which is not the guarantee the discipline is
+#: supposed to give. The real fix is to select outcomes and their parents in
+#: SQL; this is the honest interim, and it is bounded so a journal that has run
+#: for years cannot exhaust memory.
+JOURNAL_ROWS = 200_000
+
 #: How much better than a baseline counts as better at all. A model that edges
 #: the running mean by one per cent over a few hundred examples has not learned
 #: anything — it has been handed a small advantage by the baseline starting
@@ -123,7 +135,7 @@ def encode(context: dict[str, Any]) -> dict[str, float]:
     return out
 
 
-def dataset(journal_db: Path | str, *, limit: int = 5_000, since: float = 0.0) -> list[Example]:
+def dataset(journal_db: Path | str, *, limit: int = JOURNAL_ROWS, since: float = 0.0) -> list[Example]:
     """Assemble `(features, outcome)` pairs from the journal, oldest first.
 
     The outcome entry carries both, which is not an accident: it was written
