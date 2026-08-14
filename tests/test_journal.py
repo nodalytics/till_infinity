@@ -111,11 +111,29 @@ async def test_a_tag_filter_does_not_match_a_longer_tag(book):
     assert jr.read(book.path, tag="gold") == []
 
 
-async def test_reads_are_newest_first_and_capped(book):
+async def test_reads_are_newest_first(book):
     await book.write([Entry(title=f"e{n}", time=float(n)) for n in range(10)])
     entries = jr.read(book.path, limit=3)
     assert [e.title for e in entries] == ["e9", "e8", "e7"]
-    assert len(jr.read(book.path, limit=10_000)) <= jr.MAX_ROWS
+
+
+async def test_an_explicit_limit_is_honoured_past_the_display_ceiling(book):
+    """`limit` used to be clamped to MAX_ROWS, silently.
+
+    `facto.dataset` asked for its 200,000 rows, got 500, and reported a few
+    hundred usable examples from a journal holding thousands — a truncation
+    that read as missing data. The count here is deliberately past MAX_ROWS:
+    the old assertion wrote ten entries and checked they numbered under five
+    hundred, which was true however the clamp behaved.
+    """
+    total = jr.MAX_ROWS * 2
+    await book.write([Entry(title=f"e{n}", time=float(n)) for n in range(total)])
+
+    assert len(jr.read(book.path, limit=total)) == total
+    assert len(jr.read(book.path, limit=jr.MAX_ROWS)) == jr.MAX_ROWS
+    # The oldest entry is reachable, which is the point: a fit that cannot see
+    # past the recent window is validating itself inside one afternoon.
+    assert jr.read(book.path, limit=total)[-1].title == "e0"
 
 
 async def test_hours_filters_by_age(book):

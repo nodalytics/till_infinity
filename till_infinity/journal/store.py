@@ -27,6 +27,10 @@ from .models import Entry, Kind
 log = get_logger(__name__)
 
 DEFAULT_DB = ".data/journal/journal.db"
+
+#: How many entries a listing shows before it stops being readable. A display
+#: ceiling, not a storage one — `read` honours whatever limit it is given, and
+#: this is the default the CLI reaches for.
 MAX_ROWS = 500
 
 SCHEMA = """
@@ -160,7 +164,20 @@ def read(
     hours: float | None = None,
     limit: int = 50,
 ) -> list[Entry]:
-    """Most recent first. Every filter is optional and they compose."""
+    """Most recent first. Every filter is optional and they compose.
+
+    `limit` is honoured as asked. It used to be silently clamped to `MAX_ROWS`,
+    which made the argument a suggestion: `facto.dataset` asked for 200,000 rows
+    to assemble its training examples, received the most recent 500, and found
+    ~167 usable outcomes in a journal holding 9,359 of them. Nothing reported a
+    truncation, so the shortfall read as a data problem — outcomes recorded
+    without their features — rather than as a window that was never opened.
+
+    `MAX_ROWS` remains what it always was in practice: the ceiling the CLI puts
+    on a listing so a long history cannot flood a terminal. That is a display
+    concern, and it belongs to the display. A caller that names a number is
+    stating what it can hold, and the callers here bound themselves.
+    """
     where: list[str] = []
     params: list[Any] = []
     if kind:
@@ -183,7 +200,7 @@ def read(
         params.append(since)
 
     clause = f" WHERE {' AND '.join(where)}" if where else ""
-    params.append(max(1, min(int(limit), MAX_ROWS)))
+    params.append(max(1, int(limit)))
     with read_only(path) as conn:
         rows = conn.execute(
             f"SELECT * FROM entries{clause} ORDER BY time DESC LIMIT ?",
