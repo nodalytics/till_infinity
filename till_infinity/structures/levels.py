@@ -79,7 +79,17 @@ RESOLVE_VOL = 1.5
 #: sampling rate — the finer the timeframe, the earlier some tick fails to
 #: extend, so the same structure gets a different origin on every timeframe and
 #: the multi-timeframe fusion then spends its precision reconciling an artefact.
-RUN_VOL = 0.5
+ARRIVAL_RUN_VOL = 0.5
+
+#: The same, for the leg *out*. A separate constant because the two are not the
+#: same question and only looked like one: the arrival threshold decides where
+#: the level *is*, and being wrong moves every statistic the level owns. The
+#: departure threshold decides how much of the move that followed counts as
+#: this reaction, and being wrong changes one feature. They are equal today
+#: because nothing yet says they should differ — but one shared constant also
+#: made the departure rule impossible to test in isolation, since disabling it
+#: disabled the arrival rule first.
+DEPARTURE_RUN_VOL = 0.5
 
 #: How far price must get from a level, in volatility units, before another
 #: interaction can begin. Leaving the *zone* is not enough: an edge crossed by a

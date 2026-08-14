@@ -50,8 +50,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from .levels import (
+    ARRIVAL_RUN_VOL,
     CONFIDENT_TOUCHES,
-    RUN_VOL,
+    DEPARTURE_RUN_VOL,
     TRAP_VOL,
     TRAP_WINDOW,
     Level,
@@ -672,7 +673,7 @@ class Tracker:
             # price has come back off its deepest point by a run's worth. Until
             # then a deeper print re-extends it and moves the origin with it.
             back = abs(level.distance_vol(price, vol) - level.distance_vol(touch.origin, vol))
-            if back >= RUN_VOL:
+            if back >= ARRIVAL_RUN_VOL:
                 touch.turned = True
         # The leg out is a run too: it grows while price keeps going, and ends
         # once price has given back a run's worth of it. What comes after
@@ -683,7 +684,7 @@ class Tracker:
             )
             if reached > touch.departure_vol:
                 touch.departure_vol = reached
-            elif touch.turned and touch.departure_vol - reached >= RUN_VOL:
+            elif touch.turned and touch.departure_vol - reached >= DEPARTURE_RUN_VOL:
                 touch.departure_done = True
 
         travelled = level.distance_vol(price, vol)

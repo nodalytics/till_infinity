@@ -31,11 +31,16 @@ than the hundreds.
 
 Detail: [levels.md](levels.md), "The live path is already fine".
 
-## 2. Split `RUN_VOL` into arrival and departure constants
+## ~~2. Split `RUN_VOL` into arrival and departure constants~~ — done
 
-One constant currently gates both legs. There is no strong reason they share a
-threshold, and while they do, the departure test cannot be sabotage-checked in
-isolation — disabling the mechanism fails the arrival assertion first.
+`ARRIVAL_RUN_VOL` and `DEPARTURE_RUN_VOL`, equal at 0.5 because nothing yet says
+they should differ. They answer different questions: the arrival threshold
+decides where the level *is*, and being wrong moves every statistic the level
+owns; the departure threshold decides how much of what followed counts as this
+reaction, and being wrong changes one feature.
+
+Each leg is now sabotage-checkable alone — disabling the departure rule fails
+only the departure test, and the arrival test still passes.
 
 ## 3. `fit(since=)` once 200 post-fix outcomes exist
 
