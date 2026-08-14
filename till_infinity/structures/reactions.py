@@ -186,6 +186,14 @@ class Touch:
     departure_vol: float = 0.0
     #: Set once price has turned, so the origin stops being updated.
     turned: bool = False
+    #: Set once the leg *out* has ended, so `departure_vol` stops growing.
+    #:
+    #: Symmetric with `turned`, and for the same reason. Without it the
+    #: departure is the largest excursion anywhere in the touch's life, which
+    #: can be a move that happened long after the reaction and had nothing to do
+    #: with it — "how hard price left" quietly becoming "the biggest thing that
+    #: happened while we were watching".
+    departure_done: bool = False
     outcome: Outcome = Outcome.OPEN
     push_vol: float = 0.0
     resolved: float = 0.0
@@ -666,10 +674,17 @@ class Tracker:
             back = abs(level.distance_vol(price, vol) - level.distance_vol(touch.origin, vol))
             if back >= RUN_VOL:
                 touch.turned = True
-        touch.departure_vol = max(
-            touch.departure_vol,
-            abs(level.distance_vol(price, vol) - level.distance_vol(touch.origin or price, vol)),
-        )
+        # The leg out is a run too: it grows while price keeps going, and ends
+        # once price has given back a run's worth of it. What comes after
+        # belongs to whatever happens next, not to this reaction.
+        if not touch.departure_done:
+            reached = abs(
+                level.distance_vol(price, vol) - level.distance_vol(touch.origin or price, vol)
+            )
+            if reached > touch.departure_vol:
+                touch.departure_vol = reached
+            elif touch.turned and touch.departure_vol - reached >= RUN_VOL:
+                touch.departure_done = True
 
         travelled = level.distance_vol(price, vol)
         away = travelled if side is Side.ABOVE else -travelled

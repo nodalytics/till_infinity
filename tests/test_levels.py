@@ -1450,3 +1450,32 @@ def test_the_leg_in_survives_a_pause_and_ends_on_a_run():
     # And it stays fixed even if price returns.
     engine.tracker.update(level, 2000.0 - 0.9 * unit, vol, 5.0)
     assert touch.origin == pytest.approx(settled)
+
+
+def test_the_leg_out_ends_when_the_run_does():
+    """`departure_vol` is how hard price left, not the biggest thing that
+    happened while the touch was open."""
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold", "5m")
+    for n in range(300):
+        vol.update(2000.0 + (n % 11) * 2.0)
+    unit = 2000.0 * vol.bps / 10_000.0
+
+    level = Level(feed="gold", interval="5m", filter=Kalman(mean=2000.0, variance=(3 * unit) ** 2))
+    engine._levels[("gold", "5m")] = [level]
+    features = reactions.features_for(level, Side.ABOVE, 2000.0, vol, approach_vol=1.0, when=0.0)
+    touch = engine.tracker.begin(level, 2000.0, features, 0.0)
+
+    engine.tracker.update(level, 2000.0 - 0.5 * unit, vol, 1.0)  # the low: the origin
+    engine.tracker.update(level, 2000.0 + 0.3 * unit, vol, 2.0)  # a run out, and it turns
+    assert touch.turned
+    left = touch.departure_vol
+    assert left > 0
+
+    # Price gives back a run's worth: the leg out is over.
+    engine.tracker.update(level, 2000.0 - 0.4 * unit, vol, 3.0)
+    assert touch.departure_done
+
+    # A later, larger move is not this reaction's departure.
+    engine.tracker.update(level, 2000.0 + 2.0 * unit, vol, 4.0)
+    assert touch.departure_vol == pytest.approx(left)
