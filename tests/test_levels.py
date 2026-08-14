@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 import random
 
 import pytest
@@ -1575,6 +1576,43 @@ def test_a_single_wide_print_does_not_disqualify_an_edge():
     # A median over the window: one print out of sixty-one cannot move it at
     # all, which is the property, not a tolerance chosen to pass.
     assert spiked == pytest.approx(settled)
+
+
+def test_state_from_an_older_build_restores_without_losing_new_fields():
+    """Unpickling never calls __init__, so new attributes are simply absent.
+
+    This took structures down in production: the deploy restored its models,
+    hit `AttributeError: 'Engine' object has no attribute '_touch_eras'` on the
+    first bar five seconds later, and stopped. Nothing then consumed the bus,
+    so it presented as dropped quotes and a silent journal — never as the
+    attribute error that caused it.
+
+    The property is that a state file missing *any* field still restores a
+    working engine, not that these two particular names are handled.
+    """
+    saved = Engine().__dict__.copy()
+    for added_since in ("_touch_eras", "charge_spread"):
+        saved.pop(added_since, None)
+
+    restored = Engine.__new__(Engine)
+    restored.__setstate__(saved)
+
+    # The two calls that ran on every bar and every quote respectively.
+    assert restored.touch_interval("gold", 1.0)
+    assert restored.cost_of("gold", None) == 0.0
+    assert restored.charge_spread is True
+
+
+def test_a_pickle_round_trip_keeps_what_was_learned():
+    """Restoring must not quietly reset the engine to a default one."""
+    engine = Engine(intervals=("5m",))
+    engine.series("gold", "5m")
+    engine.calls = 17
+
+    back = pickle.loads(pickle.dumps(engine))
+    assert back.calls == 17
+    assert ("gold", "5m") in back._series
+    assert back.intervals == ("5m",)
 
 
 def test_the_touch_source_gets_finer_as_history_allows():

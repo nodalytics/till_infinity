@@ -439,6 +439,26 @@ class Engine:
 
     # -------------------------------------------------------------- feeding
 
+    def __setstate__(self, state: dict) -> None:
+        """Restore a pickled engine, including one written by an older build.
+
+        Unpickling rebuilds `__dict__` directly and **never calls `__init__`**,
+        so every attribute added since a state file was written is simply
+        absent from the restored object. That is not theoretical: adding
+        `_touch_eras` took the whole structures service down on the next
+        deploy — restored models, then `AttributeError` on the first bar, five
+        seconds after start. Nothing consumed the bus afterwards, so the
+        symptom was dropped quotes and a silent journal rather than anything
+        naming the cause.
+
+        Filling the gaps from a default-constructed engine rather than from a
+        hand-written list of names, because the hand-written list is the part
+        that goes stale — it would need editing every time a field is added,
+        which is precisely the thing nobody remembers to do. Anything the state
+        carries wins; anything it lacks arrives at its default.
+        """
+        self.__dict__.update({**Engine().__dict__, **state})
+
     def touch_interval(self, feed: str = "", when: float | None = None) -> str:
         """Which interval's bars carry the touch check for all the others.
 
