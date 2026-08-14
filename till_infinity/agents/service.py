@@ -33,6 +33,7 @@ import contextlib
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 from ..bus import ALERTS, ARTICLES, BARS, EVENTS, QUOTES, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe
@@ -192,6 +193,96 @@ def interesting(
     return triggers
 
 
+@dataclass(slots=True)
+class Quiet:
+    """How close a window came, for a window that crossed nothing.
+
+    Exists because a gate that never fires and a gate that never runs look
+    identical from outside, and this one looked like the second for seven hours
+    — the whole log held a single `agents started` line. It was in fact the
+    first, declining correctly and saying so only at DEBUG, which production
+    does not print.
+
+    Reporting the *closest approach* rather than the fact of declining is what
+    makes it useful: "nothing crossed" is unfalsifiable, while "widest spread
+    1.9bps against 8.0 needed" is a threshold someone can judge.
+    """
+
+    messages: int = 0
+    quotes: int = 0
+    events: int = 0
+    #: The widest spread seen, and where — the near-miss on the quote gate.
+    widest_bps: float = 0.0
+    widest_at: str = ""
+    spread_threshold: float = 0.0
+    #: Self-calibrating gates compare against a venue's own history, so the
+    #: configured number is a ceiling rather than the line actually applied.
+    calibrated: bool = False
+    #: The strongest release that actually printed, against what was needed.
+    top_importance: int = 0
+    importance_threshold: int = 0
+    #: Calendar entries that have not printed yet. Counted separately because
+    #: a window full of high-importance events that are all still scheduled is
+    #: a different situation from a quiet calendar, and reads the same.
+    unreleased: int = 0
+
+    def __str__(self) -> str:
+        if not self.quotes and not self.events:
+            return f"{self.messages} message(s), none of them a quote or a release"
+        parts: list[str] = []
+        if self.quotes:
+            where = f" at {self.widest_at}" if self.widest_at else ""
+            gate = "its own recent range" if self.calibrated else f"{self.spread_threshold:.1f}bps"
+            parts.append(f"widest spread {self.widest_bps:.1f}bps{where} against {gate} needed")
+        if self.events:
+            parts.append(
+                f"strongest release importance {self.top_importance} "
+                f"against {self.importance_threshold} needed"
+            )
+        if self.unreleased:
+            parts.append(f"{self.unreleased} scheduled but not yet printed")
+        return (
+            f"{self.messages} message(s) ({self.quotes} quote(s), {self.events} event(s)) "
+            f"and nothing crossed: " + "; ".join(parts)
+        )
+
+
+def why_quiet(
+    messages: Sequence[Message], settings: Settings, spreads: object | None = None
+) -> Quiet:
+    """Summarise a window that woke nobody, so the silence can be read.
+
+    Deliberately a second pass rather than a richer return from `interesting`:
+    it runs only when nothing fired, and keeping the hot path returning a plain
+    list of triggers means the gate itself stays the cheap, blunt thing it is
+    described as being.
+    """
+    found = Quiet(
+        messages=len(messages),
+        spread_threshold=settings.spread_bps,
+        importance_threshold=settings.importance,
+        calibrated=spreads is not None,
+    )
+    for message in messages:
+        payload = message.payload
+        if message.topic == QUOTES:
+            bps = payload.get("spread_bps")
+            if not isinstance(bps, int | float):
+                continue
+            found.quotes += 1
+            if float(bps) > found.widest_bps:
+                found.widest_bps = float(bps)
+                found.widest_at = (f"{payload.get('venue', '')} {payload.get('feed', '')}").strip()
+        elif message.topic == EVENTS:
+            found.events += 1
+            importance = int(payload.get("importance") or 0)
+            if not payload.get("released"):
+                found.unreleased += 1
+            elif importance > found.top_importance:
+                found.top_importance = importance
+    return found
+
+
 def prompt_for(triggers: Sequence[Trigger], messages: Sequence[Message]) -> str:
     """Turn a window into a question.
 
@@ -321,7 +412,11 @@ class Watcher:
             return None
         triggers = interesting(window, self.settings, self.spreads)
         if not triggers:
-            log.debug("%d message(s), nothing above threshold", len(window))
+            # At INFO, and saying how close it came. This was DEBUG and said
+            # only that nothing crossed, which production never printed — so a
+            # gate declining correctly every thirty minutes was indistinguishable
+            # from an agent loop that had never run at all.
+            log.info("no wake: %s", why_quiet(window, self.settings, self.spreads))
             return None
 
         log.info("%d message(s) -> %s", len(window), "; ".join(t.reason for t in triggers))

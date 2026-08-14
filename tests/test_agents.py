@@ -159,6 +159,48 @@ def test_a_low_importance_release_is_ignored():
     assert service.interesting([_event(1, released=True)], ag.Settings(importance=3)) == []
 
 
+def test_a_declined_window_reports_how_close_it_came():
+    """A gate that never fires and one that never runs look identical otherwise.
+
+    The whole log held one `agents started` line for seven hours, which was a
+    gate declining correctly and saying so only at DEBUG. Reporting the closest
+    approach is the part that makes the silence readable: "nothing crossed" is
+    unfalsifiable, "1.9bps against 8.0 needed" is a number to judge.
+    """
+    settings = ag.Settings(spread_bps=8.0, importance=3)
+    window = [_quote(0.4), _quote(1.9), _quote(0.7), _event(1, released=True)]
+    assert service.interesting(window, settings) == []
+
+    quiet = service.why_quiet(window, settings)
+    assert quiet.widest_bps == 1.9
+    assert quiet.spread_threshold == 8.0
+    assert quiet.top_importance == 1
+    assert quiet.importance_threshold == 3
+    said = str(quiet)
+    assert "1.9bps" in said
+    assert "8.0bps" in said
+    assert "importance 1" in said
+    assert "3 needed" in said
+
+
+def test_a_calendar_full_of_pending_releases_is_not_a_quiet_calendar():
+    """Scheduled-but-unprinted reads exactly like nothing happening, and is not."""
+    settings = ag.Settings(importance=3)
+    window = [_event(3, released=False) for _ in range(4)]
+    assert service.interesting(window, settings) == []
+
+    quiet = service.why_quiet(window, settings)
+    assert quiet.unreleased == 4
+    assert quiet.top_importance == 0  # nothing printed, so nothing to score
+    assert "4 scheduled but not yet printed" in str(quiet)
+
+
+def test_a_window_with_nothing_to_judge_says_so():
+    settings = ag.Settings()
+    window = [Message(topic=ARTICLES, payload={"title": "something"})]
+    assert "none of them a quote or a release" in str(service.why_quiet(window, settings))
+
+
 def test_junk_in_a_payload_does_not_break_the_gate():
     settings = ag.Settings()
     junk = [
