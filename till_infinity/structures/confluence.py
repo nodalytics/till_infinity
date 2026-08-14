@@ -68,12 +68,21 @@ ORDER: tuple[str, ...] = (
 #: while the engine never built it, so it spent its life looking for a
 #: timeframe that did not exist.
 #:
-#: Finest first. Below 5m a "level" is mostly the noise of the session. The top
-#: end runs to 1w because that is where the levels people actually trade come
-#: from — and it only became usable once volatility and evidence decay were
-#: measured per timeframe, since a weekly level in 5m units is placed to the
-#: nearest dollar and forgets a touch before the next one arrives.
-TIMEFRAMES: tuple[str, ...] = ("3m", "5m", "15m", "1h", "4h", "1d", "1w")
+#: Finest first. The top end runs to 1w because that is where the levels people
+#: actually trade come from — and it only became usable once volatility and
+#: evidence decay were measured per timeframe, since a weekly level in 5m units
+#: is placed to the nearest dollar and forgets a touch before the next one
+#: arrives. The same per-timeframe machinery is what makes the bottom end
+#: tractable: 1m has its own volatility estimate and its own half-life, so it is
+#: not being measured in somebody else's units.
+#:
+#: This list said "below 5m a level is mostly the noise of the session" while
+#: already carrying 3m, which is the kind of comment that describes an intention
+#: rather than the code under it. The caution is still the right one to hold —
+#: the finer the timeframe the more a "level" is session noise wearing a price —
+#: so 1m is here to be *measured*, against the outcome machinery that already
+#: grades every other timeframe, and it earns its place or it does not.
+TIMEFRAMES: tuple[str, ...] = ("1m", "3m", "5m", "15m", "1h", "4h", "1d", "1w")
 
 #: Alias kept for readers who think of it as a span rather than a list.
 DEFAULT_SPAN: tuple[str, ...] = TIMEFRAMES

@@ -76,7 +76,7 @@ See [todo.md](todo.md) for the full list. The short version:
 
 ## What is deployed and working
 
-Levels form on 3m/5m/15m/1h/4h/1d/1w across six instruments, alert to Telegram
+Levels form on 1m/3m/5m/15m/1h/4h/1d/1w across six instruments, alert to Telegram
 with confluence, deduplicated per zone, charged the median spread before
 qualifying. Agents run on Groq with a Gemini fallback. 645 tests.
 
