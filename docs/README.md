@@ -13,6 +13,7 @@
 | [structures.md](structures.md) | online models over price — cross-venue anomaly, drift, persistence |
 | [score.md](score.md) | **planned** — one number per instrument in [−1, +1], smoothed three ways, thresholds it measures rather than assumes |
 | [levels.md](levels.md) | key price levels — PIP swings, Kalman tracking, per-side directional inference |
+| [behaviours.md](behaviours.md) | **planned** — what price does at a level, which of it we already model under another name, and the three gaps worth building |
 | [agents.md](agents.md) | LLM analysis over the stored data — roles, tools, read-only access, watching |
 | [journal.md](journal.md) | the decision journal — reasoning, outcomes, exporting for training |
 | [deployment.md](deployment.md) | running it — one process, compose, or CI to a server |
