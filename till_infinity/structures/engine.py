@@ -130,6 +130,47 @@ class Consensus:
         )
 
 
+#: A venue that has not quoted for this long is no longer part of the picture.
+#: Without it a venue that stops publishing holds its last mid in the median
+#: for ever, and on a fast move the consensus lags behind every live venue.
+QUOTE_STALE = 30.0
+
+
+@dataclass(slots=True)
+class Quotes:
+    """Median mid across venues, per instrument.
+
+    The same argument as `Consensus`, for the stream that needed it more. Bars
+    got a median across venues and quotes did not, so `check` was called with
+    whichever venue published last — and venues do not agree on the price.
+    Measured across a five second window: 6.12bps between venues on US500 and
+    5.74 on BTCUSD, which in each instrument's own volatility units is **3.46**
+    and **1.09**. `resolve_vol` is 1.5, so on spx500 two consecutive quotes
+    from different venues looked like a three-and-a-half unit move and opened
+    and closed a touch between them, having observed nothing but a change of
+    publisher.
+
+    That is why spx500 and btc led the instant-resolution table at 41% and 39%
+    while gold and the FX majors, whose venues agree to within a twentieth of a
+    unit, sat near zero.
+
+    Held per feed rather than per (feed, interval): a quote has no interval, and
+    the mid is the instrument's price whatever chart is being tested against it.
+    """
+
+    #: feed -> venue -> (when, mid)
+    _mids: dict[str, dict[str, tuple[float, float]]] = field(default_factory=dict)
+
+    def observe(self, feed: str, venue: str, when: float, mid: float) -> float:
+        """Fold one venue's quote in and answer with what the venues agree on."""
+        seen = self._mids.setdefault(feed, {})
+        seen[venue] = (when, mid)
+        fresh = [value for last, value in seen.values() if when - last <= QUOTE_STALE]
+        # One venue quoting is not a disagreement, and a median of nothing is an
+        # error — either way its own mid is the best answer available.
+        return statistics.median(fresh) if fresh else mid
+
+
 @dataclass(slots=True)
 class Series:
     """A rolling window of one instrument at one interval."""
@@ -306,6 +347,9 @@ class Engine:
         self.sessions = pivots.Sessions()
         #: Bars are per venue; levels are not. This makes them one series.
         self.consensus = Consensus()
+        #: And quotes are per venue for exactly the same reason, which they were
+        #: not given until the bar fix made the omission visible.
+        self.quotes = Quotes()
         #: Shapes seen before and what followed. Independent of levels: a level
         #: is a price, a shape is not, so a double top repeats across
         #: instruments and prices where a level cannot.
@@ -705,15 +749,22 @@ class Engine:
         spread = payload.get("spread_bps")
         if isinstance(spread, int | float) and spread > 0:
             self._spread.setdefault(feed, deque(maxlen=SPREAD_WINDOW)).append(float(spread))
+        # What the venues agree on, not whichever one published last. See
+        # `Quotes`: the raw mid made a change of publisher look like a move of
+        # three and a half volatility units on spx500, which is past the
+        # distance that resolves a touch.
+        agreed = self.quotes.observe(feed, str(payload.get("venue") or ""), when, float(mid))
         # Quotes feed the tick-level estimate, which is the common denominator
-        # every timeframe's levels are ranked against.
+        # every timeframe's levels are ranked against — so it takes the agreed
+        # price too, or the disagreement between venues is counted as movement
+        # and inflates the very denominator everything else is divided by.
         vol = self.vol.of(feed)
-        vol.update(float(mid))
+        vol.update(agreed)
         calls: list[Call] = []
         # Pivot levels live under their session name, so quotes must check
         # every interval this instrument has levels at, not just the bar ones.
         for interval in self.intervals_for(feed):
-            calls += self.check(feed, interval, float(mid), when)
+            calls += self.check(feed, interval, agreed, when)
         return calls
 
     # ------------------------------------------------------------- touching

@@ -2161,3 +2161,39 @@ def test_a_touch_that_expires_reaches_the_level_and_the_journal():
     assert resolved_level is level
     assert touch.outcome is Outcome.CHOP  # it went nowhere, which is what chop is
     assert level.touches > 0, "the level's own statistics never saw it"
+
+
+def test_a_change_of_quoting_venue_is_not_a_price_move():
+    """Bars got a cross-venue median; quotes did not, and needed it more.
+
+    `check` was called with whichever venue published last, and venues do not
+    agree on the price. Measured over a five second window: 6.12bps between
+    venues on US500 and 5.74 on BTCUSD, which in each instrument's own
+    volatility units is 3.46 and 1.09 against a `resolve_vol` of 1.5. So two
+    consecutive quotes from different venues looked like a three-and-a-half
+    unit move, opening and closing a touch between them.
+
+    It is why spx500 and btc led the instant-resolution table at 41% and 39%
+    while gold and the FX majors, whose venues agree to within a twentieth of a
+    unit, sat near zero — and why the rate stayed at 43% on production after
+    the bar path was fixed.
+    """
+    from till_infinity.structures.engine import QUOTE_STALE, Quotes
+
+    book = Quotes()
+    # Three venues on the same instrument, one of them a long way out.
+    assert book.observe("spx500", "a", 1_000.0, 7739.0) == 7739.0  # alone, so itself
+    assert book.observe("spx500", "b", 1_000.1, 7741.0) == pytest.approx(7740.0)
+    agreed = book.observe("spx500", "c", 1_000.2, 7739.5)
+    assert agreed == 7739.5, "the median should ignore the outlier, not average it in"
+
+    # The outlier quoting again does not move the agreed price.
+    assert book.observe("spx500", "b", 1_000.3, 7741.0) == 7739.5
+
+    # A venue that stops quoting drops out rather than anchoring the median for
+    # ever, which would make the consensus lag every live venue on a fast move.
+    later = 1_000.0 + QUOTE_STALE + 1
+    assert book.observe("spx500", "a", later, 7800.0) == 7800.0
+
+    # And instruments do not bleed into each other.
+    assert book.observe("btc", "a", 1_000.0, 63_000.0) == 63_000.0
