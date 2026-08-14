@@ -443,9 +443,13 @@ Cheapest useful first, and each step's output is the next step's input.
 
 1. **Near-duplicate detection by SimHash.** 7.6% of the corpus is already
    provably duplicated, and finding it needs no dependency, no checkpoint and no
-   labels. The restatement count is a feature on its own and immediately
-   gradeable against the journal. Nothing else here has that ratio of value to
-   cost.
+   labels. ~~The restatement count is a feature on its own~~ — **this half was
+   run and it failed**; see [news-dedup.md](news-dedup.md). Eighty-nine percent
+   of duplicated rows are one outlet counted twice by our own collection, and no
+   group in the corpus is two independent newsrooms judging one story important.
+   Build it, run it at distance zero, and treat it as hygiene rather than signal.
+   That demotes this item below §2 and §3 on value, though not on cost — it is
+   still the cheapest thing here.
 2. **Symbol normalisation, sharing the alias map with prices.** 579 strings onto
    the fourteen tracked instruments. Without it nothing routes, and it is a
    table.
@@ -468,6 +472,13 @@ Cheapest useful first, and each step's output is the next step's input.
    across 410 titles. That is a collection problem wearing a modelling costume.
 
 ## What would falsify the top recommendation
+
+> **Both of these were run on 2026-08-14. The second fired; the first turned out
+> not to be runnable — the ≥3 cell is empty at every window. The measurement,
+> the corrected keep-first rule, and what is still unobservable are in
+> [news-dedup.md](news-dedup.md). What follows is the test as it was specified,
+> kept because the design is still the right one to re-run once the corpus has
+> the outlets to support it.**
 
 The claim behind §1 of that list is: *stories restated across many wires in a
 short window precede larger moves than singletons do.* It is falsifiable now,
