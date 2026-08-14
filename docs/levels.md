@@ -1179,6 +1179,60 @@ is written down because the question keeps coming up, and the answer is not
 obvious from the code — nothing in `pips.py` says "this would not work on
 ticks", and it wouldn't.
 
+## Planned: a level spans periods too
+
+The origin work says the leg in and the leg out are *runs*. The same argument
+applies one level up, to how a level is found at all — and this is the larger
+claim, because it reaches the swing selection in §1 rather than the touch
+tracking in §5b.
+
+**Today a swing is a bar.** `pips.py` selects bar *indices* by vertical
+distance: the level is the high or low of the bar that was picked. That makes
+every level a property of the sampling grid. Move to a finer timeframe and the
+same turn is a different bar with a different extreme, so the same structure
+gets a different price — which is exactly the quantisation the origin work
+removed from touches, still present in formation.
+
+**A swing should be a run boundary.** Price does not turn at a bar; it turns
+where one run of volatility ends and the next begins. Segment the series into
+runs — the same volatility-unit threshold the origin uses — and the turning
+points *between* runs are the swings. A level is then defined by a period on
+each side of it, not by one bar's extreme.
+
+Three things follow, and the third is the reason to do it:
+
+**Levels stop moving when the timeframe changes.** A run intersection is the
+same price whether it is observed at 3m or 1d; the runs differ in length, the
+meeting point does not. Today the confluence view has to *fuse* slightly
+different prices from each timeframe and calls the result agreement. With
+run-based swings it would be measuring the same number three times, and the
+inverse-variance fusion in §11 would spend its precision on genuine
+disagreement rather than on sampling artefacts.
+
+**The zone follows from the runs rather than from the filter.** Zone width is
+currently the Kalman posterior variance plus recorded wick depth. If a level is
+a run boundary, the natural width is how tightly the runs on each side agree on
+where they met — which is a measurement rather than an inference, and it would
+make the zone narrow where price turned sharply and wide where it ground.
+
+**It makes the timeframe list an implementation detail.** Levels are currently
+built on seven fixed intervals, and adding 3m meant touching six places and
+finding two ordering bugs. Runs have no interval — the threshold is in
+volatility units — so a run-based formation would find every structure the data
+contains and let confluence report which resolutions can see it, rather than
+asking in advance which resolutions to look at.
+
+The honest counter-argument, which should be tested before any of this is
+built: **a bar is not only a sampling artefact.** Daily and weekly closes are
+prices that real participants act on, and session boundaries are real events, so
+some bar-quantised levels are levels *because* they are bar-quantised. A
+run-based pass would miss those, which suggests the two should coexist —
+`origin` already records how a level was found (`pip`, `pivot`), and run-formed
+levels would be a third kind rather than a replacement.
+
+The cheap first experiment: run both on the same history and compare which set
+price respects more often. The outcome machinery to answer that already exists.
+
 ## Honest status
 
 Everything above is validated on **synthetic mean-reverting data**, where the
