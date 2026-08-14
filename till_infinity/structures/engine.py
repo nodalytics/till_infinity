@@ -310,6 +310,10 @@ class Engine:
         #: taking any edge found here, measured all along and never charged.
         #: A window rather than a running value, so the cost can be a *median*.
         self._spread: dict[str, deque[float]] = {}
+        #: Which interval carries the touch check, as history advances. Set
+        #: only while replaying: `[(from_time, interval), ...]`, oldest first.
+        #: Empty means "the finest series seen so far", which is right live.
+        self._touch_eras: list[tuple[float, str]] = []
         self.calls = 0
         if not charge_spread:
             # Said out loud, once, because a disabled charge and an unarmed one
@@ -435,8 +439,78 @@ class Engine:
 
     # -------------------------------------------------------------- feeding
 
+    def touch_interval(self, feed: str = "", when: float | None = None) -> str:
+        """Which interval's bars carry the touch check for all the others.
+
+        The finest one available *at that moment*, which is not the same as the
+        finest one overall and is the whole subtlety here. Venues keep far less
+        fine history than coarse — Yahoo serves seven days of 1m against
+        decades of 1w — so a replay of a few hundred bars per interval covers
+        hours at 1m and years at 1w. Pinning the touch check to the globally
+        finest series therefore leaves every earlier era untouched: on gold,
+        1w and 4h opened *zero* touches across 20,159 replayed bars, and their
+        levels were then pruned for never having been visited. Twenty-one
+        levels became four.
+
+        So the touch source changes as history advances. Before 1m data begins,
+        the finest thing that exists carries the check; once it begins, it takes
+        over. Each era is touched at the best resolution that era actually has,
+        which is what "from the finest bars available" was always meant to say.
+        """
+        if self._touch_eras:
+            at = self._now if when is None else when
+            found = self._touch_eras[0][1]
+            for start, interval in self._touch_eras:
+                if start > at:
+                    break
+                found = interval
+            return found
+        seen = {interval for (this, interval) in self._series if not feed or this == feed}
+        candidates = seen or set(self.intervals)
+        return min(candidates, key=confluence.rank, default="")
+
+    @staticmethod
+    def _eras(rows: Sequence[dict]) -> list[tuple[float, str]]:
+        """When each finer series starts, so a replay can hand the check over.
+
+        The finest interval available only ever gets finer as time runs
+        forward, so this is one pass over the earliest timestamp per interval,
+        keeping the improvements.
+        """
+        first: dict[str, float] = {}
+        for row in rows:
+            interval = str(row.get("interval") or "")
+            when = float(row.get("time") or 0.0)
+            if interval and (interval not in first or when < first[interval]):
+                first[interval] = when
+
+        eras: list[tuple[float, str]] = []
+        best = ""
+        for interval, start in sorted(first.items(), key=lambda kv: kv[1]):
+            if not best or confluence.rank(interval) < confluence.rank(best):
+                best = interval
+                eras.append((start, best))
+        return eras
+
     def observe_bar(self, payload: dict) -> list[Call]:
-        """One `prices.bars` message. Returns any calls it produced."""
+        """One `prices.bars` message. Returns any calls it produced.
+
+        **Forming and touching are separate jobs**, and this used to do both at
+        one resolution. A daily level warmed from daily bars had its origins
+        quantised to the day — and since a cold start replays six-figure bar
+        counts, that was most of what any level knew about itself.
+
+        So: every bar forms levels for its own interval, and only the *finest*
+        interval's bars run the touch check, against every interval at once.
+        That is the replay equivalent of `observe_quote`, which has always
+        checked every interval on every quote and is why the live path never
+        had this problem.
+
+        The trap the doc warns about is running both — keeping the per-interval
+        check and adding a fine-grained pass on top, which would count every
+        interaction twice. The `return []` below is what avoids it: a coarse
+        bar forms and then stops, rather than also touching.
+        """
         feed = str(payload.get("feed") or "")
         interval = str(payload.get("interval") or "")
         if not feed or interval not in self.intervals:
@@ -471,7 +545,17 @@ class Engine:
             return []
         if series.due or not self._levels.get((feed, interval)):
             self.reform(series, when)
-        return self.check(feed, interval, float(close), when, low, high)
+
+        # Formed. Whether this bar also *touches* is a separate question, and
+        # the answer is no unless it is the finest series this instrument has —
+        # otherwise the same interaction would be counted once here and again
+        # when the fine bars arrive.
+        if interval != self.touch_interval(feed, when):
+            return []
+        calls: list[Call] = []
+        for other in self.intervals_for(feed):
+            calls += self.check(feed, other, float(close), when, low, high)
+        return calls
 
     def observe_quote(self, payload: dict) -> list[Call]:
         """A quote moves price against existing levels without re-forming them.
@@ -729,14 +813,23 @@ class Engine:
         if not rows:
             return 0
 
+        # Worked out from the whole replay before it starts, so the first bar is
+        # judged by the same rule as the last rather than by whichever series
+        # happened to have arrived.
+        eras = self._eras(rows)
         replayed = 0
-        for row in rows:
-            self.observe_bar(row)  # calls discarded on purpose
-            replayed += 1
+        self._touch_eras = eras
+        try:
+            for row in rows:
+                self.observe_bar(row)  # calls discarded on purpose
+                replayed += 1
+        finally:
+            self._touch_eras = []
         log.info(
-            "levels: warmed from %d stored bars across %s",
+            "levels: warmed from %d stored bars across %s, touching from %s",
             replayed,
             ", ".join(sorted({row["feed"] for row in rows})) or "nothing",
+            " then ".join(interval for _start, interval in eras) or "nothing",
         )
         return replayed
 

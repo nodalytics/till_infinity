@@ -1577,6 +1577,49 @@ def test_a_single_wide_print_does_not_disqualify_an_edge():
     assert spiked == pytest.approx(settled)
 
 
+def test_the_touch_source_gets_finer_as_history_allows():
+    """Venues keep years of 1w and days of 1m, so "finest" changes with time."""
+    rows = [
+        {"interval": "1d", "time": 0.0},
+        {"interval": "1w", "time": -500.0},
+        {"interval": "1d", "time": 900.0},
+        {"interval": "1m", "time": 800.0},
+    ]
+    assert Engine._eras(rows) == [(-500.0, "1w"), (0.0, "1d"), (800.0, "1m")]
+
+
+def test_early_history_is_touched_by_the_finest_thing_that_existed_then():
+    """The regression that pinning to the globally finest series caused.
+
+    A replay of a few hundred bars per interval covers hours at 1m and years
+    at 1w. Pinning the check to 1m left every earlier era untouched — 1w and 4h
+    opened zero touches across 20,159 gold bars, so their levels were pruned
+    for never having been visited and twenty-one levels became four.
+
+    The property is that no era goes untouched: every point in the replay has
+    some interval carrying the check, and before the fine series begins that
+    has to be a coarse one.
+    """
+    engine = Engine()
+    engine._touch_eras = [(0.0, "1w"), (1_000.0, "1m")]
+
+    # Before the 1m series starts, 1w carries it — this is what was broken.
+    assert engine.touch_interval("gold", 10.0) == "1w"
+    assert engine.touch_interval("gold", 999.0) == "1w"
+    # Once it starts, it takes over and the coarse bars stop touching.
+    assert engine.touch_interval("gold", 1_000.0) == "1m"
+    assert engine.touch_interval("gold", 50_000.0) == "1m"
+
+
+def test_live_the_touch_source_is_the_finest_series_seen():
+    """No eras outside a replay: live, every interval is streaming at once."""
+    engine = Engine(intervals=("5m", "1h"))
+    engine.series("gold", "1h")
+    assert engine.touch_interval("gold") == "1h"
+    engine.series("gold", "5m")
+    assert engine.touch_interval("gold") == "5m"
+
+
 def _quoted_engine(*, charge_spread: bool) -> tuple[Engine, object]:
     engine = Engine(intervals=("5m",), charge_spread=charge_spread)
     vol = engine.vol.of("gold", "5m")
