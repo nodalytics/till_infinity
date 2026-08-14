@@ -40,8 +40,26 @@ MIN_VOL_BPS = 0.05
 #: samples is not a minimum.
 TICK_WARMUP = 30
 
-#: Distinct multiples of the candidate tick that must be seen before it is
-#: believed to be a grid step.
+#: Where in the distribution of price changes the grid step is read off.
+#:
+#: Not the minimum, which is what this used to be. Both give the same answer on
+#: clean data — identical on all eight instruments tested — but the minimum is
+#: a one-observation estimator and behaves like one: a single spurious print a
+#: seventh the size of a real tick collapsed it on **every** instrument, 0.01
+#: to 0.0014, and that number widens a zone. The first percentile did not move
+#: on any of them.
+#:
+#: An approximate GCD was tried too, on the grounds that the tick divides every
+#: change. It matched on seven instruments, went degenerate on btc (0.000064,
+#: which trivially divides everything) and collapsed under the same outlier.
+TICK_QUANTILE = 0.01
+
+#: Changes remembered for that quantile. Enough to place a percentile, few
+#: enough to follow a re-tiering rather than the year.
+TICK_WINDOW = 500
+
+#: Distinct multiples of the smallest change that must be seen before the
+#: estimate is believed to be a grid step at all.
 #:
 #: This is the discriminator, and the obvious one does not work. "The smallest
 #: move must be small against a typical move" sounds right and rejects exactly
@@ -102,6 +120,11 @@ class Volatility:
     #: a series that happens to move in equal jumps. Bounded: past a handful
     #: the answer does not change.
     _steps: set[int] = field(default_factory=set)
+    #: The estimate itself: a low quantile of the changes rather than their
+    #: minimum, so one bad print cannot move it. See `TICK_QUANTILE`.
+    _grid: stats.RollingQuantile = field(
+        default_factory=lambda: stats.RollingQuantile(q=TICK_QUANTILE, window_size=TICK_WINDOW)
+    )
 
     @property
     def tick(self) -> float:
@@ -150,7 +173,11 @@ class Volatility:
             return 0.0
         if len(self._steps) < TICK_MULTIPLES:
             return 0.0
-        return self._tick
+        # The minimum decides *whether* there is a grid; the quantile decides
+        # how wide it is. Separating them is what makes one bad print harmless:
+        # it drags the minimum down, which only loosens the guard, while the
+        # quantile it would have to move is defended by every other change.
+        return float(self._grid.get() or self._tick)
 
     def update(self, price: float) -> float:
         """Take one price, return the current volatility estimate in bps."""
@@ -168,6 +195,7 @@ class Volatility:
                 self._steps = {1}
             elif len(self._steps) < 16:
                 self._steps.add(round(step / self._tick))
+            self._grid.update(step)
         move = step / self._last * 10_000
         self._last = price
         self._seen += 1

@@ -606,11 +606,38 @@ What separates them is the spread of multiples: a real grid produces moves of
 one step, then two, then five. A uniform jump produces only one. So the
 estimate is withheld until `TICK_MULTIPLES` distinct multiples have been seen.
 
-**And the ceiling still wins.** The tick is the smallest change that has
-*happened*, not the smallest possible, so an instrument that has not yet
-printed a single-step move reads as coarser than it is — the error is always
-upward. `MAX_ZONE_VOL` bounds what that can do; the estimate only ever shrinks,
-so it corrects itself with data.
+**The value is a low quantile, not the minimum**, and three estimators were
+scored against each other to settle that. A tick divides every change price
+makes, so a candidate can be checked without knowing the venue's tick table:
+what share of observed changes are integer multiples of it.
+
+| | clean data | after one spurious print |
+|---|---|---|
+| minimum | correct on 8/8 | **collapses on 8/8** — 0.01 to 0.0014 |
+| **1st percentile** | correct on 8/8 | **unmoved on 8/8** |
+| approximate GCD | degenerate on btc | collapses like the minimum |
+
+The minimum is a one-observation estimator and behaves like one: a single bad
+print a seventh the size of a real tick destroyed it everywhere, and this
+number *widens a zone*. The GCD was tried on the sound reasoning that the tick
+divides every change; it went degenerate on btc at 0.000064, which trivially
+divides everything — a warning that the consistency score has to be read next
+to the estimate rather than alone, since a small enough answer always scores
+perfectly.
+
+The two roles are now separate, which is what makes it robust: **the minimum
+decides whether there is a grid, the quantile decides how wide it is.** A bad
+print drags the minimum down, which only loosens the guard, while the quantile
+it would have to move is defended by every other change.
+
+It has a pleasing property. The quantile is *exact* on every instrument where
+the floor binds — on those, most changes really are one tick — and overshoots
+only on btc, where volatility dominates and the tick is never consulted. It is
+accurate precisely where it is used.
+
+**And the ceiling still wins.** The estimate is read off changes that have
+*happened*, so an instrument yet to print a single-step move reads coarser than
+it is, and the error is upward. `MAX_ZONE_VOL` bounds what that can do.
 
 Still a **candidate for the outcome rate specifically**: the granularity is
 measured and the causal link to sol's 2,430 outcomes is not. But it is now a
