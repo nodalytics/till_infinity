@@ -1444,12 +1444,26 @@ def test_riding_the_zone_edge_is_not_a_touch_each_time():
     """
     engine = Engine(intervals=("5m",))
     vol = engine.vol.of("gold", "5m")
-    for _ in range(120):
-        vol.update(2000.0)
+    # A moving price, because a still one estimates a volatility near zero and
+    # then every distance divided by it is enormous: fed 120 identical prices
+    # this read 0.05bps, a hundredth of gold's real 5m move, and the edge of
+    # the zone came out **three** volatility units from the level — past
+    # `resolve_vol`, so the consolidation this test is about resolved as a
+    # three-unit rejection on its first step. The fixture has to be realistic
+    # for the assertion to mean what it says.
+    rand = random.Random(4)
+    price = 2000.0
+    for _ in range(200):
+        price *= 1 + rand.gauss(0, 0.0005)
+        vol.update(price)
     level = _seed_level(engine, "gold", "5m", 2000.0)
     low, high = level.zone(vol)
     inside = (low + high) / 2
     just_outside = high * 1.0000001  # over the edge, nowhere near a unit away
+    assert abs(level.distance_vol(just_outside, vol)) < lv.REARM_VOL, (
+        "the fixture has to put the edge inside the re-arm distance, or the "
+        "test is about resolution rather than about riding the edge"
+    )
 
     for n in range(60):
         engine.check("gold", "5m", inside, 1_000.0 + n * 2)
@@ -2075,3 +2089,37 @@ def test_a_corrected_bar_does_not_count_as_a_second_observation():
     assert series.add(1_000_000, 11.0, 9.0, 10.5) is False, "a correction read as a new bar"
     assert series.add(1_000_300, 11.0, 9.0, 10.5) is True
     assert list(series.closes) == [10.5, 10.5]  # the correction replaced, not appended
+
+
+def test_a_touch_arriving_at_the_far_edge_is_not_born_resolved():
+    """The zone reaches MAX_ZONE_VOL; a rejection needs only resolve_vol.
+
+    Those two are independent numbers, and the first is twice the second, so
+    price clipping the far edge of a wide zone used to open a touch that was
+    *already* past the rejection threshold. The next observation closed it as
+    a REJECT having watched nothing happen — 17% of touches in a replay of the
+    stored bars, spread evenly across all six instruments, and on the
+    production journal 46% of outcomes resolved at or before the instant they
+    opened.
+
+    Measuring the leg out from the origin — where the leg in ended, which
+    `Level.zone` already calls the price the level is drawn at — makes the two
+    independent. A touch must now *move*, whatever width it arrived through.
+    """
+    vol = _vol()
+    tracker = reactions.Tracker(horizon=3600)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    edge = 4400.0 * (1 + 2.5 * vol.bps / 10_000)  # inside the zone, past resolve_vol
+    assert abs(level.distance_vol(edge, vol)) > tracker.resolve_vol, "fixture is not the case"
+
+    features = reactions.features_for(level, Side.ABOVE, edge, vol)
+    tracker.begin(level, edge, features, when=1_000_000)
+    # Price holds where it arrived. Nothing has happened, so nothing resolves.
+    assert tracker.update(level, edge, vol, when=1_000_060) is None
+    assert tracker.open_touch(level) is not None, "an arrival was recorded as a reaction"
+
+    # It resolves once it has actually travelled, measured from where it came in.
+    away = 4400.0 * (1 + (2.5 + tracker.resolve_vol + 0.1) * vol.bps / 10_000)
+    done = tracker.update(level, away, vol, when=1_000_120)
+    assert done is not None
+    assert done.outcome is Outcome.REJECT

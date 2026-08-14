@@ -663,6 +663,19 @@ class Engine:
         # when the fine bars arrive.
         if interval != self.touch_interval(feed, when):
             return []
+        if not fresh:
+            # ...and once per bar, for the same reason the volatility estimate
+            # is. `Consensus.observe` answers again on every venue row, and the
+            # median *moves* as venues arrive — on spx500, whose venues quote
+            # genuinely different absolute prices, it moves by more than four
+            # volatility units within a single bar. Checking touches on each
+            # row fed that jitter to the tracker as though it were price: a
+            # touch opened on one venue's row and resolved on the next one's,
+            # at the same timestamp, having observed nothing but the median
+            # rearranging itself. That is 45% of resolutions in this replay and
+            # 46% in the production journal, and it is why two runs of the same
+            # replay disagree — venue arrival order is not stable.
+            return []
         calls: list[Call] = []
         # A bar is stamped with its **open** time, but it is not knowable until
         # it closes — and quotes carry wall clock. Feeding both to one tracker

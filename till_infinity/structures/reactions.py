@@ -725,6 +725,14 @@ class Tracker:
             started=when,
             entry=price,
             extreme=price,
+            # First contact is already part of the leg in, so the origin starts
+            # there rather than at zero. Left falsy, the first `update` compared
+            # price against `touch.origin or price` — price against itself, so
+            # every first observation read as "deeper" and moved the origin to
+            # wherever price happened to be. Nothing downstream noticed while
+            # the leg out was measured from the level; measuring it from the
+            # origin makes that self-comparison a guarantee of zero.
+            origin=price,
         )
         self._open[self.key(level)] = touch
         return touch
@@ -790,6 +798,22 @@ class Tracker:
         travelled = level.distance_vol(price, vol)
         away = travelled if side is Side.ABOVE else -travelled
         beyond = -away
+        # A *rejection* is the one test measured from where the leg in ended
+        # rather than from the level's centre line. The zone reaches as far as
+        # MAX_ZONE_VOL from the centre while a rejection needs only
+        # resolve_vol, so price clipping the far edge of a wide zone arrived
+        # already past the threshold and closed on the next observation having
+        # reacted to nothing — 17% of touches, spread evenly across feeds.
+        #
+        # Only the rejection. A break is defined by the level, and the trap
+        # that follows one has to be measured from the level too: `origin`
+        # keeps tracking the deepest print while the leg in is still
+        # extending, so during a break it follows price *through* the level,
+        # and a trap judged against it fires on any small bounce. Measured:
+        # traps tripled when this was applied to both.
+        began = level.distance_vol(touch.origin or touch.entry, vol)
+        moved = travelled - began
+        left = moved if side is Side.ABOVE else -moved
 
         if touch.breaking:
             # A break is provisional. Coming back through the level means the
@@ -803,7 +827,7 @@ class Tracker:
                 return self._close(level, touch, Outcome.BREAK, travelled, side, when)
             return None
 
-        if away >= self.resolve_vol:
+        if left >= self.resolve_vol:
             # A retest of a recent break that holds is a back check, not a
             # plain rejection: the direction is already established, so this is
             # a continuation entry rather than a reversal one.
