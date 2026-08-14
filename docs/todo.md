@@ -54,10 +54,19 @@ five ticks where btc needs forty. Numbers and the proposed remedy in
 [levels.md](levels.md), "Price is not continuous, and the zone floor assumes it
 is".
 
-**It is a candidate, not a conclusion**: the granularity is measured, the
-causal link to the outcome count is not. The check that would settle it is a
-second sub-$100 instrument — if it behaves the same way, it is the price and
-not the coin.
+**Checked against a price gradient, and it is broader than sol.** Of eight
+instruments, six have a tick worth more than a third of a minimum-width zone
+and two — ADA and LTC — have a tick **larger than the whole zone**. The tidy
+law is wrong though: tick-in-volatility against price fits a log-log slope of
+−0.33, not the −1 that proportionality predicts, because exchanges set tick
+sizes in decade steps. ADA at $0.18 is worse than SOL at $75.
+
+So it cannot be predicted from price and has to be measured per instrument.
+**Before adding any cheap instrument, measure its tick in volatility units** —
+ADA today would be a sixth of the zone it is supposed to sit inside.
+
+Still a candidate for the *rate* specifically: the granularity is measured, the
+causal link to sol's 2,430 outcomes is not.
 
 The older examples remain unusable regardless: recorded under the inflated
 counts, and the pre-fix journal calls direction correctly 99.9% of the time

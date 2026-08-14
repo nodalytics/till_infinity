@@ -533,16 +533,49 @@ against — that arriving in a zone and leaving it are distinguishable events
 rather than consecutive quotes. That assumption degrades smoothly with price,
 and sol is the first instrument cheap enough to break it.
 
-It is the leading explanation for sol producing 2,430 of the last 5,000
-outcomes, and it is a **candidate rather than a conclusion**: the granularity is
-measured, the causal link to the outcome count is not. What would settle it is
-the same comparison on another cheap instrument — if a second sub-$100
-instrument behaves the same way, it is the price and not the coin.
+**Checked against a price gradient, and sol turns out to be unremarkable.**
+Eight instruments on one venue, same method:
 
-The remedy, if it is confirmed, is that the zone floor should be the larger of
-`MIN_ZONE_VOL` and a few ticks: a zone narrower than the price grid is not a
-zone, it is a rounding boundary. That is a change to `Level.zone`, and it wants
-the confirmation first.
+| ticker | price | volatility | tick | tick in v | % of a minimum zone |
+|---|---|---|---|---|---|
+| DOGE | 0.07 | 5.64bps | 0.00001 | 0.254v | 72% |
+| **ADA** | 0.18 | 8.84bps | 0.0001 | **0.628v** | **180%** |
+| XRP | 1.00 | 6.16bps | 0.0001 | 0.162v | 46% |
+| LINK | 8.85 | 9.37bps | 0.001 | 0.121v | 35% |
+| **LTC** | 43.92 | 5.68bps | 0.01 | **0.401v** | **114%** |
+| SOL | 75.49 | 5.36bps | 0.01 | 0.247v | 71% |
+| ETH | 1,885 | 5.89bps | 0.01 | 0.009v | 2.6% |
+| BTC | 63,158 | 4.94bps | 0.12 | 0.004v | 1.1% |
+
+**Six of the eight have a tick worth more than a third of a minimum-width zone,
+and two have a tick larger than the whole zone.** ADA's smallest possible price
+change is 1.8 zones wide. For those instruments a level cannot be approached
+gradually at all: price is either outside it or through it, and "arrived" and
+"left" are the same quote.
+
+**The obvious law is wrong, and worth recording as wrong.** If this were simply
+about price, tick-in-volatility would go as its reciprocal — a log-log slope of
+−1. Measured, the slope is **−0.33 with R² 0.71**. Exchanges set tick size in
+decade steps rather than proportionally, so the ratio jumps between decades
+instead of scaling within them: ADA at \$0.18 is worse than SOL at \$75, and LTC
+at \$44 is worse than DOGE at \$0.07.
+
+So the finding is broader and less tidy than "sol is cheap". **The continuity
+assumption is satisfied by btc and eth and violated by most of the crypto
+universe**, and which instruments violate it cannot be predicted from price
+alone — it has to be measured per instrument, because it is a property of the
+venue's tick table.
+
+The remedy stands and now has weight behind it: the zone floor should be the
+larger of `MIN_ZONE_VOL` and a few ticks. A zone narrower than the price grid
+is not a zone but a rounding boundary, and on ADA today it would be a sixth of
+one. That is a change to `Level.zone`, and it needs the tick size, which the
+engine does not currently carry — `prices` sees it and `structures` does not.
+
+Still a **candidate for the outcome rate specifically**: the granularity is
+measured and the causal link to sol's 2,430 outcomes is not. But it is now a
+measured property of six tracked-or-plausible instruments rather than a story
+about one.
 
 ## 6b. One visit is one touch
 
