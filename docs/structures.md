@@ -498,6 +498,46 @@ inform an earlier prediction. A shuffled split would leak badly here: two
 touches at the same level minutes apart are nearly the same observation, so
 splitting them across train and test measures memorisation.
 
+### Every feature it sees is bounded, and it was not
+
+An FM multiplies its features together, so its gradients are **quadratic** in
+magnitude: an unbounded input does not skew the fit, it diverges it. That is
+not a hypothetical — it happened, and quietly.
+
+`strength`, `regime`, `pivot` and `backcheck` live in [0, 1] and `experience`
+is log-compressed, but `approach_vol`, `depth_vol` and `run_vol` are ratios
+with a volatility estimate underneath. A touch arriving in a dead pocket
+divides by a small number and comes back arbitrarily large. Scaling one touch
+in thirty-seven by 5x took the latent factors non-finite within 55 examples; by
+20x, within 18. Production was diverged almost from the start.
+
+**Nothing appeared to be wrong**, which is the part worth remembering.
+`Model.predict` catches the resulting NaN and returns zero — "no opinion" —
+so the service stayed up, the numbers stayed plausible, and the model learned
+nothing while reporting nothing. A guard against a symptom will hide the cause
+if the cause is never looked for.
+
+`encode` now saturates the three through `x / (1 + x)` about a typical value of
+2, bounding them into [0, 1) while keeping the ordering. Saturating rather than
+clipping because a clip needs a maximum, and any maximum here is invented: it
+would call a 4v approach and a 40v one the same event, which is precisely the
+distinction a violent touch consists of. It survives 10,000x spikes now.
+
+The NaN guard stays. It was never the bug, and it is why a diverged model cost
+accuracy rather than uptime.
+
+### The dataset was starved by a silent clamp
+
+Also worth keeping, because the symptom pointed everywhere except the cause.
+`fit` reported 167 examples against a journal holding 9,359 outcomes, and the
+obvious reading — outcomes recorded without the features that produced them —
+was wrong. `journal.read` clamped every caller's limit to its 500-row display
+ceiling, so `dataset` asked for 200,000 rows and got the most recent 500.
+
+The tell was cheap and nobody looked for it: identical example counts at limits
+of 500, 5,000 and 200,000. Raising `JOURNAL_ROWS` twice changed nothing, which
+is what a silent clamp looks like from outside.
+
 ### Two baselines, always
 
 A score alone means nothing, so it is reported beside:

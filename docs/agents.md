@@ -83,6 +83,47 @@ Two gates stand between a quote and an API call:
    because a hundred ticks are one situation.
 2. **The analyst**, told plainly that returning no findings is correct.
 
+### The window is bounded, and this is where the memory went
+
+`_read` appended every message of every topic into a list drained only when the
+window elapsed. At `AGENTS_WINDOW_S=1800` over fourteen instruments that came to
+**101,297 messages — 199MB**, about half the resident size when the box was
+OOM-killed, held in order to derive fifteen triggers. One quote `Message`
+measures 1,970 bytes; the arithmetic is not subtle once anyone looks.
+
+`WINDOW_MESSAGES` caps it at 20,000, roughly 40MB, which is far more than the
+gate needs — it wants the widest spread and the loudest signal per instrument,
+not a complete record. A `deque` drops from the front, so an overflowing window
+keeps the *recent* end, and the number dropped is logged rather than leaving the
+message count in the prompt quietly wrong.
+
+The better fix is to fold each message into the running answer as it arrives and
+never hold the list at all, which `interesting()` already computes. The bound is
+the stopgap: small, obvious and reversible, where streaming aggregation changes
+what `prompt_for` can say.
+
+### One trigger per instrument, not one per venue
+
+The same reasoning as the hundred wide ticks, applied to signals — and it was
+missing there for longer.
+
+A dislocation on `nzdusd` seen at three venues arrived as three triggers, and
+`usdcnh` at four venues as four. The model investigates what it is handed, so
+tool calls scale with the trigger count, and the trigger count scaled with
+instruments times venues. The first window the agents ever completed died on
+`tool_calls_limit of 12 (tool_calls=14)`; raising the limit to 32 bought one
+window before the next died at 42. Raising it again would have been chasing.
+
+Signals are now deduplicated per instrument, keeping the loudest — one
+instrument dislocating seen from several places is one situation. On the shape
+of the window that broke, 84 raw signals become 10 triggers.
+
+`MAX_TRIGGERS` (10) is the backstop for a window where genuinely many
+instruments move at once, which is the window most worth analysing and the worst
+one to hand over whole. Sorted loudest first so the cap drops the least of them,
+and it **logs what it dropped** — a silent cap reads afterwards as "that is all
+there was".
+
 ### The first gate does not use a constant
 
 A `structures` signal is a trigger **on its own**. It has already cleared

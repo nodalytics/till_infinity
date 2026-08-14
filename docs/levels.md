@@ -303,10 +303,34 @@ does together:
    would then learn its origins at 3m resolution during warming, exactly as it
    does from quotes afterwards.
 
-The trap to avoid is running both: the current single pass already records
-touches at each interval's own resolution, so simply adding a fine-bar pass on
-top would count every interaction twice — the same double-counting that produced
-591 effective touches, arriving by a third route.
+The trap to avoid is running both: the single pass already recorded touches at
+each interval's own resolution, so simply adding a fine-bar pass on top would
+count every interaction twice — the same double-counting that produced 591
+effective touches, arriving by a third route.
+
+**Done on 2026-08-14, and the trap that actually bit was a different one.**
+`Engine.touch_interval` names the interval carrying the check and everything
+else forms only. What the plan above misses is that **"the finest bars
+available" is not a fixed series — it is whichever is finest *at that moment*.**
+
+Venues keep far less fine history than coarse: Yahoo serves seven days of 1m
+against decades of 1w, so a replay of a few hundred bars per interval covers
+hours at 1m and years at 1w. Pinning the check to the globally finest series
+therefore leaves every earlier era untouched. On gold, 1w and 4h opened **zero**
+touches across 20,159 replayed bars, and `prune` keeps a level only once
+`touches >= 1.0` — so their levels were dropped for never having been visited,
+and twenty-one levels became four.
+
+`Engine._eras` computes the handover from the replay before it starts: the
+earliest timestamp of each interval, keeping the improvements, so the check
+moves to 1d when 1d data begins and to 1m when 1m does. Each era is touched at
+the best resolution that era actually has, which is what the plan meant.
+
+Measured on the same history rather than argued: levels 20 → 21, touches median
+2.0 → 2.9, max 11.1 → 14.0, and none at or above 100 in either — the absence of
+inflation being what says the double-counting trap was avoided. Coarse levels
+register interactions they previously could not see: 1d median 1.5 → 3.3, 4h
+1.8 → 5.5, 15m 1.3 → 9.1.
 
 **Mostly implemented, and this paragraph has been behind the code twice.**
 
@@ -1645,8 +1669,9 @@ triples needed to answer that properly, which is also the precondition for
 | | |
 |---|---|
 | `structures/pips.py` | swing extraction, confirmation, `as_of` |
+| `structures/runs.py` | swings as run boundaries — the second formation |
 | `structures/volatility.py` | the unit everything is measured in |
-| `structures/levels.py` | Kalman state, zones, per-side stats, decay, clustering |
+| `structures/levels.py` | Kalman state, zones, per-side stats, decay, clustering, `agree` |
 | `structures/pivots.py` | sessions and the floor-trader set |
 | `structures/reactions.py` | touch tracking, kNN, inference, the guards |
 | `structures/engine.py` | bars and quotes in, calls out |
