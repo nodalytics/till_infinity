@@ -219,12 +219,50 @@ what it exposes but does not choose:
 | `AGENTS_SPREAD_BPS` | spread that wakes the model (8) |
 | `AGENTS_IMPORTANCE` | minimum calendar importance that wakes it (3) |
 | `AGENTS_MAX_TOKENS` | per response (2048) |
-| `AGENTS_TOOL_CALLS` | per run (12) |
+| `AGENTS_TOOL_CALLS` | per run (32) — scales with how many instruments one window can name; see below |
 | `AGENTS_THINKING` | `0` to turn thinking off |
 | `PRICES_DB`, `NEWS_DB` | which stores to read |
 
 A bad numeric value falls back to the default rather than crashing a
 long-running watcher.
+
+### Why agents appeared never to wake, and what actually stopped them
+
+Worth keeping, because three plausible explanations were wrong before the real
+one, and none of them was the gate.
+
+The log held a single `agents started` line across seven hours and roughly
+fourteen thirty-minute windows. It was not the throttle and not the
+credentials — a one-off `agents ask` worked on both providers — and the
+suspicion fell on `AGENTS_SPREAD_BPS` and `AGENTS_IMPORTANCE` being set where a
+real market never reaches.
+
+**It was the window, not the gate.** `AGENTS_WINDOW_S` is 1800 in production —
+widened deliberately so a free tier's daily quota survives past mid-morning —
+and *every deploy restarts that timer*. On a day with deploys landing more
+often than every thirty minutes, the window never closes and the gate never
+runs at all. The note under "watch rather than act" in [todo.md](todo.md) had
+predicted exactly this and nobody had connected it to the open item.
+
+Left alone for thirty minutes, the window closed on the first attempt and the
+gate fired immediately, on 94,311 messages:
+
+```
+94311 message(s) -> OANDA usdcnh: -0.54bps from consensus, outside anything
+this venue normally does; SAXO nzdusd: +1.62bps ...
+```
+
+**And then the analysis died on a limit that had gone stale.**
+`tool_calls_limit of 12 (tool_calls=14)`. The budget was set when six
+instruments were tracked and was not revisited when that became fourteen; a
+window naming four instruments across several venues needs more calls than that
+allows. The whole analysis is discarded when it trips, not truncated, so the
+cost of being one call short is the entire judgement.
+
+The sequence is worth remembering as a shape: a gate that never runs, a
+gate that declines, and a gate that fires into a failure downstream all present
+as an empty channel. The wake gate now says which of the first two it is; this
+section exists because the third needed a different fix.
 
 
 ## Free tiers, and what actually fits

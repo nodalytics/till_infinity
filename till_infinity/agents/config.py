@@ -33,7 +33,25 @@ DEFAULT_IMPORTANCE = 3
 
 DEFAULT_MAX_TOKENS = 2_048
 DEFAULT_TIMEOUT = 120.0
-DEFAULT_TOOL_CALLS = 12
+
+#: Tool calls one analysis may make before pydantic-ai stops it.
+#:
+#: A cost guard: every call is a round trip, and a model that has decided to
+#: check everything about everything is not analysing, it is grazing. But the
+#: budget has to fit the work, and the work scales with **how many instruments
+#: can appear in one window** — the analyst looks at the venues that moved, and
+#: a window that names five instruments needs more calls than one naming one.
+#:
+#: This sat at 12 while six instruments were tracked and was never revisited
+#: when that became fourteen. The first window the agents ever managed to
+#: close, on 2026-08-14, died on it: `tool_calls_limit of 12 (tool_calls=14)`,
+#: after a window naming usdcnh, nzdusd across three venues, and usdchf. The
+#: gate was never the problem and neither were the credentials.
+#:
+#: Raised to 32 rather than to 15, because the next instrument added should not
+#: cost another outage — the failure is a whole analysis discarded, not a
+#: truncated one. `AGENTS_TOOL_CALLS` tightens it where cost matters more.
+DEFAULT_TOOL_CALLS = 32
 
 
 def _float(name: str, fallback: float) -> float:

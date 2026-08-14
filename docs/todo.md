@@ -29,17 +29,23 @@ correctness one — the pre-fix journal calls direction correctly 99.9% of the
 time because a level's history and its next outcome were the same move counted
 twice. `fit(since=)` exists for exactly this boundary. Do not fit across it.
 
-**Agents have never woken** — *half done: the gate now says why.* It was
-declining every window and reporting it at DEBUG, which production does not
-print, so a gate that ran every time was indistinguishable from one that never
-ran. It now logs the closest approach at INFO: "widest spread 1.9bps at TVC gold
-against 8.0bps needed; strongest release importance 1 against 2 needed".
+**~~Agents have never woken~~** — done, and it was neither of the suspects. Not
+the thresholds: left alone for thirty minutes the gate fired on its first
+window, on 94,311 messages, naming usdcnh, nzdusd and usdchf. **It was the
+window never closing.** `AGENTS_WINDOW_S` is 1800 in production and every
+deploy restarts that timer, so on a day with deploys more often than every half
+hour the gate never runs at all — which the "watch rather than act" note below
+had predicted and nobody had connected to this item.
 
-What remains is the config question that was underneath it all along, and it is
-now answerable rather than guessable: read a few of those lines and see whether
-`AGENTS_SPREAD_BPS` and `AGENTS_IMPORTANCE` are set somewhere a real market
-never reaches. Do not change them before reading the near misses — that is how
-the thresholds got wherever they are.
+The analysis then died on `tool_calls_limit of 12 (tool_calls=14)`, a budget set
+when six instruments were tracked and never revisited at fourteen. Raised to 32,
+since the failure discards a whole judgement rather than truncating it. The
+wake gate also now reports its closest approach at INFO rather than DEBUG, so a
+gate that declines can be told from one that never ran.
+
+Full account in [agents.md](agents.md), "Why agents appeared never to wake".
+Still to confirm: that a window survives end to end now, which needs half an
+hour without a deploy.
 
 ## 0b. Three found on 2026-08-14 while tracing the silent channel
 
