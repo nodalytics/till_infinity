@@ -53,11 +53,19 @@ been invisible.
 
 **`0.08` was never derived from anything.** Not in the commit that introduced
 it, not in the docs. It is the number currently separating signal from silence,
-with the median call sitting five thousandths under it. Either derive it from
-the separation that is distinguishable from noise at a given observation count,
-or make it a rolling quantile of realised edges — the same instinct as
-[score.md](score.md)'s thresholds. Fixing item 1 first will move every edge in
-the table, so measure again before picking a number.
+with the median call sitting five thousandths under it. It sits near the 97.7th
+percentile of its own input — 2.3% of calls reach it — which is a defensible
+place for a gate to be and not a chosen one.
+
+Deriving it from the journal was **tried and does not work yet**: the pre-fix
+data calls direction correctly 99.9% of the time at every level of `|edge|`,
+against ~78% for independent series with those marginals, because inflated touch
+counts made a level's history and its next outcome the same move counted twice.
+Detail in [levels.md](levels.md), "The attempt to derive it, and why it failed".
+
+So this waits on post-fix data. Then make it a rolling quantile of realised
+edges rather than a constant — the same instinct as [score.md](score.md)'s
+thresholds — rather than picking a new number by hand.
 
 ## 1. Split `observe_bar`: form from own bars, touch from the finest
 

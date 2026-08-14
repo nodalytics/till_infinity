@@ -842,6 +842,45 @@ distinguishable from noise at a given number of observations, which is a
 question with an answer) or it should be a rolling quantile of realised edges
 rather than a constant. Until then, the honest description is: arbitrary.
 
+**Where it sits in the distribution.** Across the 9,359 journalled outcomes and
+the calls that predicted them:
+
+| p10 | p50 | p75 | p90 | p95 | p99 |
+|---|---|---|---|---|---|
+| 0.0014 | 0.0182 | 0.0449 | 0.0711 | 0.0763 | 0.3277 |
+
+Only **2.3%** of calls reach 0.08, so the gate sits near the 97.7th percentile
+of its own input and admits about one call in forty-three. That is a defensible
+place for a threshold to be — but nobody chose it to be there, and it is worth
+knowing that moving it by 0.005 changes which side of it the median call falls
+on.
+
+### The attempt to derive it, and why it failed
+
+The obvious move is to let the data set the number: bucket calls by `|edge|` and
+see where realised outcomes start separating. Doing that on the pre-2026-08-14
+journal produces a result that looks wonderful and means nothing.
+
+Direction was called correctly on **99.9%** of 9,353 paired outcomes, and at
+essentially every level of `|edge|` — 100.0% below the threshold, 98.6% above
+it. Predictions ran 8,200 down to 1,153 up and outcomes 8,196 down to 1,163 up.
+Two independent series with those marginals would agree about **78%** of the
+time. Ninety-nine point nine is not skill.
+
+The cause is the touch inflation described in
+[handoff.md](handoff.md): when one grinding episode is counted as 171 separate
+touches, the level's *history* and its *next outcome* are the same price action
+counted twice. The model predicts down because it just went down 148 times, and
+it goes down again because it is still the same move. Nothing leaked from the
+future; the past was double-counted until it became the present.
+
+**So the threshold cannot be derived from any data recorded before the touch
+counting was fixed**, and neither can anything else — this is the concrete form
+of the warning in [todo.md](todo.md) item 0 about examples recorded under
+inflated counts, and the reason `fit` takes a `since=`. A near-perfect direction
+column is a useful alarm to keep: it is what this class of contamination looks
+like from the outside, and it would otherwise read as a triumph.
+
 ### The base rate is what actually closed the gate
 
 The edges above were not small because the levels were uninformative. They were
