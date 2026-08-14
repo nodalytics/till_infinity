@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import random
+import warnings
 
 import pytest
 
@@ -23,7 +25,8 @@ def test_numbers_pass_through_and_names_are_one_hot():
     found = encode(
         {"approach_vol": 1.5, "regime": 0.9, "side": "above", "interval": "1h", "junk": "x"}
     )
-    assert found["approach_vol"] == 1.5
+    assert found["approach_vol"] == pytest.approx(facto.saturate(1.5))
+    assert found["regime"] == 0.9  # already bounded, so it passes straight through
     assert found["side_above"] == 1.0
     assert found["interval_1h"] == 1.0
     assert "junk" not in found
@@ -37,6 +40,41 @@ def test_a_missing_feature_is_absent_rather_than_zero():
 
 def test_nonsense_values_are_dropped():
     assert encode({"approach_vol": "wide", "regime": None}) == {}
+
+
+def test_volatility_unit_features_are_bounded_without_losing_their_order():
+    """A touch arriving in a dead pocket divides by a small number and explodes.
+
+    Bounded, because an FM multiplies its features together and an unbounded
+    one diverges it. Ordered, because a four-volatility approach and a forty-
+    volatility one are different events and a clip would call them the same.
+    """
+    seen = [encode({"approach_vol": v})["approach_vol"] for v in (0.0, 1.0, 4.0, 40.0, 4_000.0)]
+    assert all(0.0 <= value < 1.0 for value in seen)
+    assert seen == sorted(seen)
+    assert len(set(seen)) == len(seen)
+
+
+def test_a_violent_touch_does_not_diverge_the_model():
+    """The invariant: one low-volatility pocket must not take the factors out.
+
+    Raw, this diverged inside tens of examples and then answered zero forever —
+    `Model.predict` catching the NaN, so the service stayed up and the model
+    stopped learning without either of them saying so.
+    """
+    model = Model()
+    rows = []
+    for n in range(300):
+        approach = 5_000.0 if n % 37 == 0 else 1.5
+        rows.append((encode({"approach_vol": approach, "run_vol": approach, "regime": 0.5}), 1.0))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        for features, target in rows:
+            model.predict(features)
+            model.learn(features, target)
+
+    assert math.isfinite(model.predict(rows[-1][0]))
 
 
 # ------------------------------------------------------------- the guard

@@ -69,6 +69,13 @@ MIN_EXAMPLES = 200
 #: supposed to give. The real fix is to select outcomes and their parents in
 #: SQL; this is the honest interim, and it is bounded so a journal that has run
 #: for years cannot exhaust memory.
+#:
+#: Until 2026-08-14 this number did nothing at all: `journal.read` clamped every
+#: request to its 500-row display ceiling, so a fit saw the last 500 entries
+#: whatever was asked for, found ~167 outcomes among them, and looked like a
+#: journal recording outcomes without their features. Raising this was tried
+#: twice and changed nothing, which is what a silent clamp looks like from
+#: outside.
 JOURNAL_ROWS = 200_000
 
 #: How much better than a baseline counts as better at all. A model that edges
@@ -83,7 +90,9 @@ MARGIN = 0.05
 #: that is capacity to memorise.
 N_FACTORS = 4
 
-#: Features taken straight through. Everything here is already scale-free.
+#: The numeric features. All scale-free, which is what makes gold and EURUSD
+#: comparable — but scale-free is not the same as bounded, and the three named
+#: in `UNBOUNDED` are saturated before the model sees them.
 NUMERIC: tuple[str, ...] = (
     "approach_vol",
     "depth_vol",
@@ -97,6 +106,41 @@ NUMERIC: tuple[str, ...] = (
 
 #: Features that are names rather than numbers, one-hot encoded.
 CATEGORICAL: tuple[str, ...] = ("side", "interval")
+
+#: Features measured in volatility units, which are scale-free but not bounded.
+#: `strength`, `regime`, `pivot` and `backcheck` already live in [0, 1]; these
+#: three are ratios with a volatility estimate underneath, so a touch arriving
+#: in a dead pocket divides by a small number and arrives arbitrarily large.
+UNBOUNDED: tuple[str, ...] = ("approach_vol", "depth_vol", "run_vol")
+
+#: Where the saturating transform puts a typical value. Chosen from what the
+#: journal actually holds — median `approach_vol` sits near 1.7 — so ordinary
+#: touches land mid-range rather than bunched against either end.
+TYPICAL = 2.0
+
+
+def saturate(value: float, *, typical: float = TYPICAL) -> float:
+    """Map [0, inf) onto [0, 1), monotonically, with no cutoff to argue about.
+
+    A factorisation machine's gradients are *quadratic* in feature magnitude —
+    the interaction terms multiply two features together — so an unbounded
+    input does not merely skew the fit, it diverges it. Feeding the raw values
+    took the latent factors non-finite within tens of examples, after which
+    `Model.predict` returned zero forever and the model learned nothing while
+    reporting nothing wrong.
+
+    Saturating rather than clipping because a clip needs a maximum, and any
+    maximum here is a number someone made up: it would treat a four-volatility
+    approach and a forty-volatility one as the same event, which is exactly the
+    distinction a violent touch consists of. This keeps the ordering everywhere
+    and simply stops the tail from dominating — the same instinct as
+    `experience_of` log-compressing a touch count, held to a hard bound because
+    the FM needs one.
+    """
+    if not math.isfinite(value):
+        return 1.0
+    scaled = max(0.0, value) / typical
+    return scaled / (1.0 + scaled)
 
 
 @dataclass(slots=True)
@@ -122,12 +166,18 @@ def encode(context: dict[str, Any]) -> dict[str, float]:
     integer would tell the model that `1h` sits between `15m` and `4h` on some
     scale it should interpolate along, which is true of the durations and not
     of anything the model does with them.
+
+    Everything this returns is bounded, which is the property the FM needs —
+    see `saturate`. The volatility-unit features are saturated into [0, 1) on
+    the way past; the rest already hold themselves down, `strength`, `regime`,
+    `pivot` and `backcheck` in [0, 1] by construction and `experience` growing
+    like the log of a touch count, which no market reaches the far end of.
     """
     out: dict[str, float] = {}
     for name in NUMERIC:
         value = context.get(name)
         if isinstance(value, int | float):
-            out[name] = float(value)
+            out[name] = saturate(float(value)) if name in UNBOUNDED else float(value)
     for name in CATEGORICAL:
         value = context.get(name)
         if value:
