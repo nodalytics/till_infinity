@@ -70,6 +70,21 @@ SPREAD_QUANTILE = 0.99
 #: would wake a model. The multiple is what makes "wide" mean wide.
 SPREAD_MULTIPLE = 1.5
 
+#: Triggers handed to the analyst in one window.
+#:
+#: Not a cost control so much as a shape control: the model investigates what
+#: it is given, so the tool calls it makes scale with this number, and the
+#: number scales with how many instruments are tracked. Fourteen instruments
+#: across six venues produced forty-two tool calls against a limit of
+#: thirty-two, having produced fourteen against twelve a fortnight earlier —
+#: raising the limit each time is chasing rather than fixing.
+#:
+#: Deduplicating per instrument does most of the work: one dislocation seen at
+#: four venues is one instrument dislocating. This is the backstop for a window
+#: where genuinely many instruments move at once, which is exactly the window
+#: worth analysing and the worst one to hand over whole.
+MAX_TRIGGERS = 10
+
 
 class Spreads:
     """What each venue's spread normally looks like.
@@ -130,6 +145,10 @@ def interesting(
     """
     triggers: list[Trigger] = []
     widest: Message | None = None
+    #: The strongest signal per instrument. One dislocation seen at four venues
+    #: is one instrument dislocating, not four findings — the same reasoning the
+    #: quote gate below already applies to a hundred ticks.
+    loudest: dict[str, tuple[float, Trigger]] = {}
 
     for message in messages:
         payload = message.payload
@@ -138,16 +157,19 @@ def interesting(
             # it needs no second arithmetic gate here — it arrives *because*
             # something passed one. Re-filtering would discard the work that
             # made it worth sending.
-            triggers.append(
-                Trigger(
-                    reason=(
-                        f"{payload.get('venue', '')} {payload.get('feed', '')}: "
-                        f"{payload.get('detail') or payload.get('shape', 'signal')}"
-                    ).strip(),
-                    topic=SIGNALS,
-                    payload=dict(payload),
-                )
+            feed = str(payload.get("feed") or "")
+            score = abs(float(payload.get("score") or 0.0))
+            trigger = Trigger(
+                reason=(
+                    f"{payload.get('venue', '')} {payload.get('feed', '')}: "
+                    f"{payload.get('detail') or payload.get('shape', 'signal')}"
+                ).strip(),
+                topic=SIGNALS,
+                payload=dict(payload),
             )
+            known = loudest.get(feed)
+            if known is None or score > known[0]:
+                loudest[feed] = (score, trigger)
         elif message.topic == QUOTES:
             bps = payload.get("spread_bps")
             if not isinstance(bps, int | float):
@@ -177,6 +199,9 @@ def interesting(
                     )
                 )
 
+    # Loudest first, so anything the cap below drops is the least of them.
+    triggers += [trigger for _score, trigger in sorted(loudest.values(), key=lambda it: -it[0])]
+
     # One trigger for the worst spread in the window, not one per quote: the
     # whole point of the window is that a hundred ticks are one situation.
     if widest is not None:
@@ -190,6 +215,16 @@ def interesting(
                 payload=dict(widest.payload),
             )
         )
+
+    if len(triggers) > MAX_TRIGGERS:
+        # Said out loud rather than trimmed quietly. A cap that silently drops
+        # findings reads afterwards as "that is all there was".
+        log.info(
+            "agents: %d triggers in this window, analysing the strongest %d",
+            len(triggers),
+            MAX_TRIGGERS,
+        )
+        triggers = triggers[:MAX_TRIGGERS]
     return triggers
 
 

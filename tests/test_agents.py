@@ -487,6 +487,52 @@ def test_a_structures_signal_wakes_the_model_on_its_own():
     assert "4401" in triggers[0].reason
 
 
+def test_one_instrument_dislocating_at_four_venues_is_one_trigger():
+    """The same reasoning the quote gate applies to a hundred ticks.
+
+    This is what broke the analyst: nzdusd at three venues and usdcnh at four
+    arrived as seven triggers, the model investigated each, and the run died on
+    `tool_calls_limit of 32 (tool_calls=42)`. Raising the limit was chasing it.
+    """
+    window = [
+        _signal_message(venue="FX_IDC", score=0.4, detail="-2.38bps from consensus"),
+        _signal_message(venue="FOREXCOM", score=0.9, detail="-1.44bps from consensus"),
+        _signal_message(venue="PEPPERSTONE", score=0.2, detail="-1.61bps from consensus"),
+    ]
+    triggers = service.interesting(window, ag.Settings(spread_bps=1000.0))
+
+    assert len(triggers) == 1
+    # And it keeps the loudest, not the first one seen.
+    assert triggers[0].payload["venue"] == "FOREXCOM"
+
+
+def test_different_instruments_are_kept_apart():
+    """Deduplication is per instrument — collapsing across them would hide news."""
+    window = [
+        _signal_message(feed="gold", venue="OANDA"),
+        _signal_message(feed="btc", venue="BINANCE"),
+        _signal_message(feed="eurusd", venue="SAXO"),
+    ]
+    triggers = service.interesting(window, ag.Settings(spread_bps=1000.0))
+    assert {t.payload["feed"] for t in triggers} == {"gold", "btc", "eurusd"}
+
+
+def test_a_window_where_everything_moves_is_capped_loudest_first(caplog):
+    """The window most worth analysing is the worst one to hand over whole."""
+    window = [
+        _signal_message(feed=f"pair{n}", score=n / 100.0, detail=f"signal {n}")
+        for n in range(1, 26)
+    ]
+    with caplog.at_level("INFO"):
+        triggers = service.interesting(window, ag.Settings(spread_bps=1000.0))
+
+    assert len(triggers) == service.MAX_TRIGGERS
+    # Loudest kept, so what the cap drops is the least of them.
+    assert triggers[0].payload["feed"] == "pair25"
+    # And it says what it dropped, rather than reading afterwards as "that is all".
+    assert any("analysing the strongest" in record.message for record in caplog.records)
+
+
 def test_a_signal_names_the_instrument_and_what_was_found():
     trigger = service.interesting([_signal_message()], ag.Settings())[0]
     assert "gold" in trigger.reason
