@@ -4,7 +4,67 @@ Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
-## 0. Two things found on 2026-08-14, both ahead of everything below
+## 0. The outcome rate — **answered on 2026-08-14**, and it was the consensus
+
+*Read this before the rest of item 0, which is the trail that led here and is
+kept because two of its hypotheses were wrong in instructive ways.*
+
+The rate was not a level problem, a granularity problem or a re-arm problem. It
+was that **the touch check ran once per venue row rather than once per bar.**
+
+`Consensus.observe` answers again on every venue that reports a bar — by
+design, so the median improves within a sweep instead of waiting for a venue
+that may never arrive. `Engine.observe_bar` then ran the whole touch check on
+each of those answers, and the consensus median *moves* as venues arrive. On
+spx500, whose venues quote genuinely different absolute prices, it moves by
+more than four volatility units inside a single bar. The tracker was handed
+that jitter as though it were price, so a touch opened on one venue's row and
+resolved on the next one's — at the same timestamp, having observed nothing
+but the median rearranging itself.
+
+Measured on a replay of the stored 5m bars, before and after:
+
+| | resolutions | resolved at the instant they opened |
+|---|---|---|
+| before | 500 | 224 (44.8%) |
+| checking once per bar | 255 | **0** |
+| and resolving from the origin | 206 | 0 |
+
+**49% of all resolutions were manufactured**, and spx500 alone fell from 263 to
+39. The production journal agrees independently: 46% of its outcomes have
+`seconds <= 0`, and 97% of those were already past `resolve_vol` when they
+resolved, with a median `depth_vol` of 0.12 against 0.25 for touches that
+lasted — they clipped the zone edge and were recorded as rejections.
+
+It also explains why two runs of the same replay disagreed: venue arrival order
+is not stable.
+
+A second, independent cause survived that fix at 16.7% of touches, spread
+evenly across all six instruments: a zone reaches `MAX_ZONE_VOL` from the level
+while a rejection needs `resolve_vol`, which is half of it, so price clipping
+the far edge arrived already past the threshold. Rejections are now measured
+from the origin. Both in `ddc7aec`.
+
+**What this does not do is unblock `fit`.** The rate should fall by about half
+and the concentration by more, but neither has been re-measured on production —
+the replay is not the live system. Re-measure before lifting the gate, and note
+that three of the four counting bugs found this day were only visible *because*
+someone measured rather than reasoned.
+
+### The other three found the same day
+
+- **Volatility was estimated once per venue row too** (`18e95c0`), so it came
+  out divided by the venues past quorum — 4x on EURUSD and GBPUSD, 3x on
+  XAUUSD, 2x on BTCUSD. Every distance in volatility units read that much too
+  large. This invalidates measurements, not just numbers: see [levels.md](
+  levels.md) §10b and the agreement section, and [strength.md](strength.md).
+- **`expire`'s return value was discarded** (`04d24c0`), so touches that
+  resolved on the clock reached only the kNN memory — no `level.record`, no
+  journal, no `facto`. Breaks went 11 to 61 and back checks 3 to 29.
+- **The first-passage null was handed a MAD where it wanted a sigma**
+  (`e5dec8d`), understating every reach probability by a quarter of a distance.
+
+## 0z. Two things found on 2026-08-14, both ahead of everything below
 
 The two learning-path bugs from the same day are **fixed** — the silent
 `journal.read` clamp that starved `facto.dataset`, and the unscaled features
@@ -329,14 +389,39 @@ is a continuous score mixing touches, agreement, recency and breadth, and which
 is consumed nowhere as a decision. There is no point at which the system says
 "this one is worth less" and acts on it.
 
-Three sources of evidence for that judgement now exist or are close to:
+Three sources of evidence were proposed for that judgement. **All three have
+now been measured** ([strength.md](strength.md)), and only one of them earns
+its place:
 
-- **How it was found.** One formation or both, per 5a. Two methods that fail
-  differently agreeing is the cheapest strength signal available.
-- **How many timeframes see it.** [Confluence](levels.md) already computes
-  this and reports it in the alert text, but it does not weight anything.
-- **What it has done.** Touch count, hold rate and `strength` — measured, and
-  currently only reported.
+- **What it has done — yes, and by a wide margin.** A level's own same-side
+  record separates holds from fails by +32.8 points on corrected code, and the
+  separation *grows* with the gap since the last touch (+25.1 at 20 bars or
+  more), which answers the obvious objection that it is just measuring a
+  grind. Point-in-time safe, since `SideStats` at contact holds only resolved
+  interactions — but only trustworthy while touch counting is, so item 0 is a
+  prerequisite rather than a nicety.
+- **How it was found — no, and the earlier evidence was an artefact.** The
+  agreement result in [levels.md](levels.md) was measured on the broken
+  volatility denominator, and it **inverts** on the corrected one. Origin came
+  out of the design. Status is unresolved rather than reversed, and either way
+  it is not a validated input.
+- **How many timeframes see it — no.** Confluence breadth does not separate at
+  all: four runs, four orderings, AUC 0.45-0.51, bootstrap -2.2 [-6.3, +1.7].
+  The 15%-per-timeframe multiplier it used to earn has been removed from
+  `Zone.strength`, since that ordering decides what the agents are shown.
+
+A fourth finding matters more than any of them: **the existing `strength`
+composite loses to its own best term** in every run (AUC 0.548 against 0.648
+for the record alone). Mixing touches, agreement, recency and breadth into one
+number dilutes the one part that works with three that do not.
+
+[strength.md](strength.md) proposes a concrete `quality_l` built from the
+record and experience only, graded *within* `(feed, interval)` — the grading is
+load-bearing, since chart identity alone reaches AUC 0.586-0.608. It is
+unfitted and beats `Level.strength` on all four runs. The open risks are the
+quantile window, which leaks unless it is causal, and the trap classification:
+with 12 breaks against 933 traps, counting a trap as a hold makes everything
+read 99.8% and nothing separates.
 
 Two places it should show up:
 

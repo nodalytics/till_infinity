@@ -246,13 +246,24 @@ def test_touch_history_is_pooled_across_timeframes():
     assert zone.sides()[Side.ABOVE].touches > 8.0
 
 
-def test_confluence_lifts_strength_rather_than_averaging_it():
-    """Averaging would let a weak 15m level drag down a strong 4h one."""
+def test_a_zone_is_worth_its_best_member_and_not_more():
+    """Averaging would let a weak 15m level drag down a strong 4h one.
+
+    Depth used to lift it instead — 15% per extra timeframe, so a 4-deep zone
+    scored 45% above its best member. Measured against whether the level then
+    held, breadth does not separate at all: four replays produced four
+    different orderings, AUC 0.45-0.51, and a bootstrap over levels put the
+    spread at -2.2 points [-6.3, +1.7]. See docs/strength.md. It is reported
+    beside the strength now rather than folded into it, which matters because
+    this ordering decides which zones the agents are shown.
+    """
     vol = _vol()
     strong = _level(4400.0, "4h", 0.5, touches=10)
     weak = _level(4400.0, "15m", 0.5, touches=1)
     zone = confluence.combine([strong, weak], vol)[0]
-    assert zone.strength(1_000_100.0, vol) >= strong.strength(1_000_100.0, vol)
+
+    assert zone.strength(1_000_100.0, vol) == strong.strength(1_000_100.0, vol)
+    assert zone.depth == 2, "depth is still reported, just not scored"
 
 
 def test_significance_comes_from_the_highest_timeframe():

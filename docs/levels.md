@@ -1006,8 +1006,16 @@ not.
 
 ### How often it actually happens
 
-Rarely, on the history collected so far — and the honest numbers are more
-useful than a tuned threshold:
+> **These counts were of the survivors.** `Engine.check` discarded what
+> `Tracker.expire` returned, and expiry is where a break that got through and
+> then went quiet resolves — so most breaks never reached the level, the
+> journal or `facto` at all. Worse for this section specifically: `broke_at`
+> is what makes a retest detectable as a back check, and it was only ever set
+> on the path that already worked, so the back check count was measuring the
+> bug rather than the market. Fixed in `04d24c0`; on a replay of the stored 5m
+> bars, delivering these took breaks from 11 to 61 and back checks from 3 to
+> 29. The table below is left as it was recorded, because what it counted is
+> the point.
 
 | | |
 |---|---|
@@ -1015,14 +1023,15 @@ useful than a tuned threshold:
 | breaks ever revisited | **15** |
 | back checks | **1** |
 
-The ceiling is 15, not 43: most breaks are never retested at all, which is what
-a break is. The binding constraint on the rest is the 74% chop rate — a retest
-that drifts sideways rather than moving resolves as chop, which is correct,
-because a back check that produces no move is not a tradeable one.
+The reasoning still holds where it does not depend on the counts: most breaks
+are never retested at all, which is what a break is, and a retest that drifts
+sideways resolves as chop, which is correct, because a back check that produces
+no move is not a tradeable one.
 
-One occurrence is not evidence about anything. The mechanism is verified by
-construction in the tests; whether back checks pay is a question for the
-journal once there are enough of them to ask.
+One occurrence is not evidence about anything, and neither is twenty-nine. The
+mechanism is verified by construction in the tests; whether back checks pay is
+a question for the journal once there are enough of them to ask, and the count
+only started being collected honestly at the commit above.
 
 ## 7d. When price will get there
 
@@ -1301,6 +1310,20 @@ covered in lines nobody trades.
 The unit in §0 is *a typical move* — and a typical 4h move is not a typical 5m
 move. Measured on gold:
 
+> **The figures below are roughly half what they should be**, and by a factor
+> that differs per instrument. They were measured through `Engine.observe_bar`,
+> which updated the volatility estimate once per *venue row* rather than once
+> per bar: `Consensus.observe` answers again on every venue that reports a bar
+> so the median improves within a sweep, and each of those answers folded the
+> same close in again, so the estimator read a run of zero returns between
+> them. The estimate came out divided by the number of venues past quorum —
+> four on EURUSD and GBPUSD, three on XAUUSD, two on BTCUSD, and only US500 at
+> exactly quorum was right. Gold 1d measures 125.80bps per bar against the
+> 63.17bps below. Fixed in `18e95c0`; the *shape* of the table is unaffected,
+> since the error is a near-constant factor within an instrument, and the
+> argument this section makes is about the shape. Anything comparing one
+> instrument against another in volatility units is not safe to reuse.
+
 | timeframe | volatility | 1v at 4400 | evidence half-life |
 |---|---|---|---|
 | 5m | 1.70bps | $0.75 | 0.9 days |
@@ -1418,9 +1441,20 @@ timeframes agreeing is more evidence about where the price is than any one.
 
 **Confluence is carried separately.** A price that is a level on 15m, 1h *and*
 4h is a different object from one that appears only on 15m, and no
-per-timeframe statistic can express that, so `depth` is its own term and lifts
-strength as a multiplier. Averaging would let a weak 15m level drag down a
-strong 4h one it merely sits beside.
+per-timeframe statistic can express that, so `depth` is its own term.
+Averaging would let a weak 15m level drag down a strong 4h one it merely sits
+beside, so the zone is worth its best member.
+
+> **It no longer lifts strength as a multiplier.** `depth` used to add 15% per
+> extra timeframe, so a 4-deep zone was scored 45% above its best member.
+> Measured against whether the level then held, over four replays, breadth
+> does not separate at all: four runs produced four different orderings, AUC
+> 0.45-0.51, and a bootstrap over levels put the spread at -2.2 points
+> [-6.3, +1.7]. See [strength.md](strength.md). The multiplier is gone; `depth`
+> and `timeframes` are still reported, because the object really is different
+> even if the difference does not predict holding. This ordered what the agents
+> are shown and what the CLI prints, so it was a live decision rather than a
+> display detail.
 
 **Significance follows the highest timeframe, precision the lowest.** A 15m
 level breaking inside a 4h level that holds is an ordinary morning; letting the
@@ -1741,11 +1775,30 @@ enough pip-only levels survived the merge to report at all. So the ordering
 between "found by both" and "found by PIP" is unresolved, while the ordering
 between "found by both" and "found by runs alone" is not.
 
-So: **not adopted as a replacement, adopted as evidence.** `origin` now records
-every formation that found a level, which makes it the first validated input to
-the strength weight in [todo.md](todo.md) 5b — a level's origin predicts how it
-behaves, which is exactly what that weight needs and what `strength` currently
-lacks.
+So: **not adopted as a replacement, adopted as evidence.** `origin` records
+every formation that found a level.
+
+> **The last claim did not survive re-measurement, and the table above is under
+> the same doubt.** Both were measured while the volatility estimate was being
+> divided by the number of venues reporting each bar (see §10b), and every
+> threshold here — 1v, 2v, 4v — is in volatility units, so the *arms of the
+> comparison were not the distances they say they were*. Re-run on the
+> corrected denominator in [strength.md](strength.md), the ordering **inverts**:
+> run-only goes from weakest to strongest, and adding origin to a hold model
+> drops its held-out AUC below a chart-identity baseline. Origin came out of
+> that design.
+>
+> Two runs disagreeing is not a result either way, so the honest status is
+> **unresolved**, on a smaller corrected sample (800 bars) than the original.
+> What is settled is that origin is *not* a validated input to the strength
+> weight, and [todo.md](todo.md) 5b should not treat it as one. What predicted
+> holding on corrected data was the level's own same-side record, by a wide
+> margin.
+>
+> No code changed for this: `origin` is a label. It is written to `to_dict`,
+> merged by `agree`, and read to spot pivots, and it feeds no score, gate or
+> feature — so the cost of the inversion is this correction rather than a
+> behaviour change.
 
 ## Costs come off before anything is claimed
 

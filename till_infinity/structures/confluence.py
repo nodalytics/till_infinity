@@ -192,16 +192,25 @@ class Zone:
         return self.price - width, self.price + width
 
     def strength(self, when: float, vol: Volatility) -> float:
-        """Best member, lifted by how many timeframes agree.
+        """The best member. Depth is reported beside it, not folded into it.
 
-        Confluence is a multiplier rather than an average: three timeframes
-        agreeing is stronger than the best of them, whereas averaging would let
-        a weak 15m level drag down a strong 4h one it merely happens to sit
-        beside.
+        Averaging is still wrong for the reason it always was — it would let a
+        weak 15m level drag down a strong 4h one it merely happens to sit
+        beside — so the best member is what a zone is worth.
+
+        What is gone is the multiplier that used to lift that by 15% per extra
+        timeframe. Confluence breadth was measured against whether the level
+        went on to hold, over four replays, and it does not separate: four runs
+        produced four different orderings, AUC 0.45-0.51, and a bootstrap over
+        levels put the spread at -2.2 points [-6.3, +1.7]. A 4-deep zone was
+        being lifted 45% on that. See docs/strength.md.
+
+        This orders what the agents are shown (`agents/data.py`) and what the
+        CLI prints, so it is a live decision rather than a display detail.
+        `depth` and `timeframes` are still on the zone for anyone who wants to
+        judge for themselves.
         """
-        best = max((level.strength(when, vol) for level in self.members), default=0.0)
-        agreement = 1.0 + 0.15 * (self.depth - 1)
-        return round(min(1.0, best * agreement), 4)
+        return round(max((level.strength(when, vol) for level in self.members), default=0.0), 4)
 
     def to_dict(self, vol: Volatility, when: float) -> dict:
         low, high = self.band(vol)
