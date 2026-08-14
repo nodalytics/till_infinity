@@ -236,6 +236,24 @@ class WriteResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PruneResult:
+    """What retention removed, and whether the file was rebuilt afterwards.
+
+    `kept` is reported alongside `deleted` on purpose: a prune that deleted a
+    great many rows and a prune that emptied the table read the same from the
+    deletion count alone.
+    """
+
+    deleted: int = 0
+    kept: int = 0
+    vacuumed: bool = False
+
+    def __str__(self) -> str:
+        rebuilt = ", file rebuilt" if self.vacuumed else ", file not shrunk (pass --vacuum)"
+        return f"dropped {self.deleted:,} bars, kept {self.kept:,}{rebuilt}"
+
+
+@dataclass(frozen=True, slots=True)
 class SeriesInfo:
     """Summary of a stored series, for `prices info`."""
 

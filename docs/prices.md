@@ -191,6 +191,41 @@ SELECT venue, ts, spread_bps FROM quotes
 WHERE feed = 'gold' AND ts > ? ORDER BY ts;
 ```
 
+### Retention
+
+Nothing expires on its own. Bars accumulate for as long as the collector runs,
+and on a 6.7GB box that is the constraint which bites first — 1m candles across
+fourteen instruments and six venues are most of the growth.
+
+```bash
+till-infinity prices prune                 # keep 2,000 bars per series
+till-infinity prices prune --keep 500      # tighter
+till-infinity prices prune --vacuum        # ...and actually shrink the file
+```
+
+It reports what it would delete and asks before doing it. `--yes` skips the
+question, which is what a cron entry wants.
+
+**Per series, and by count.** The unit is `(source, feed, venue, ticker,
+interval)`, so a quiet weekly series is never pruned to make room for a busy
+1m one — a whole-table cap would do exactly that. A count rather than a cutoff
+date because the models consume a *window of bars*: the level engine seeds from
+the last 500 per instrument and timeframe, and 2,000 is four times that even
+before the several venues sharing a series are counted. One number also
+self-scales into roughly the horizon each timeframe's evidence survives anyway
+— 2,000 bars is about a day and a half of 1m and about forty years of 1w — so
+no table of per-interval durations is needed.
+
+**Deleting does not shrink the file.** SQLite frees the pages for reuse, so
+growth stops and the size does not fall. `--vacuum` rebuilds the file and does
+shrink it, measurably: 84.4MB → 15.9MB pruning a real database to 200 bars a
+series. It needs room for a second copy while it runs, which is precisely what
+is scarce when retention is being reached for, so it is off by default.
+
+**Quotes are left alone.** They are the raw material for the spread median that
+prices every level call, they are already bounded by the store's dedup, and
+they are not what grows.
+
 ## Library use
 
 ```python

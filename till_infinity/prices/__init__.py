@@ -14,6 +14,7 @@ async with SqliteStore(settings.database) as store:
 """
 
 from .config import (
+    DEFAULT_RETAIN_BARS,
     DEFAULT_SOURCES,
     DEFAULT_SYMBOLS,
     FEEDS,
@@ -30,6 +31,7 @@ from .models import (
     INTERVALS,
     Bar,
     Interval,
+    PruneResult,
     Quote,
     QuoteKey,
     SeriesInfo,
@@ -59,6 +61,7 @@ from .yahoo import YahooSource
 __all__ = [
     "DEFAULT_INTERVALS",
     "DEFAULT_QUOTE_SOURCES",
+    "DEFAULT_RETAIN_BARS",
     "DEFAULT_SOURCES",
     "DEFAULT_SYMBOLS",
     "FEEDS",
@@ -76,6 +79,7 @@ __all__ = [
     "JsonlStore",
     "MultiStore",
     "PermanentError",
+    "PruneResult",
     "Quote",
     "QuoteKey",
     "QuoteSource",

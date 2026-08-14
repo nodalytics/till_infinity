@@ -47,6 +47,51 @@ async def test_sqlite_series_summary(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_prune_keeps_the_newest_bars_of_every_series(tmp_path):
+    """Retention is per series, and it keeps the recent end.
+
+    Both halves matter and only one is obvious. Dropping the newest bars would
+    also satisfy "no series exceeds the cap".
+    """
+    other = SeriesKey("tradingview", "btc", Symbol("BINANCE", "BTCUSDT"), "1m")
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(*range(60, 60 * 21, 60)), MINUTE)  # 20 bars
+        await store.write(other, bars(*range(60, 60 * 6, 60)), MINUTE)  # 5 bars
+
+        result = await store.prune(keep=5)
+
+        assert result.deleted == 15  # only the long series loses anything
+        assert result.kept == 10
+        # The recent end survived, oldest first.
+        assert [b.time for b in await store.bars(KEY)] == [960, 1020, 1080, 1140, 1200]
+        # A series already under the cap is untouched.
+        assert len(await store.bars(other)) == 5
+
+
+@pytest.mark.asyncio
+async def test_prune_counts_series_separately_rather_than_the_table(tmp_path):
+    """A per-table cap would empty a quiet series to make room for a busy one."""
+    quiet = SeriesKey("tradingview", "gold", Symbol("SAXO", "XAUUSD"), "1w")
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(*range(60, 60 * 51, 60)), MINUTE)  # 50
+        await store.write(quiet, bars(60, 120), MINUTE)  # 2
+
+        await store.prune(keep=10)
+
+        assert len(await store.bars(KEY)) == 10
+        assert len(await store.bars(quiet)) == 2, "a quiet series was pruned to feed a busy one"
+
+
+@pytest.mark.asyncio
+async def test_prune_refuses_to_empty_the_table(tmp_path):
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60, 120), MINUTE)
+        with pytest.raises(ValueError, match="at least 1"):
+            await store.prune(keep=0)
+        assert len(await store.bars(KEY)) == 2
+
+
+@pytest.mark.asyncio
 async def test_jsonl_appends_forward_only(tmp_path):
     async with JsonlStore(tmp_path) as store:
         assert (await store.write(KEY, bars(60, 120), MINUTE)).inserted == 2

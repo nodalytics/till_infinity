@@ -22,6 +22,7 @@ from .config import FEEDS
 from .models import (
     Bar,
     Interval,
+    PruneResult,
     Quote,
     QuoteKey,
     SeriesInfo,
@@ -95,6 +96,24 @@ ON CONFLICT (source, feed, venue, ticker, interval, ts) DO UPDATE SET
     closed = excluded.closed,
     updated = excluded.updated
 WHERE bars.closed = 0
+"""
+
+#: Retention, per series. `bars` is WITHOUT ROWID, so rows are addressed by the
+#: primary key rather than by rowid — hence the row-value `IN`, which SQLite has
+#: supported since 3.15.
+_PRUNE_BARS = """
+DELETE FROM bars
+WHERE (source, feed, venue, ticker, interval, ts) IN (
+    SELECT source, feed, venue, ticker, interval, ts FROM (
+        SELECT source, feed, venue, ticker, interval, ts,
+               ROW_NUMBER() OVER (
+                   PARTITION BY source, feed, venue, ticker, interval
+                   ORDER BY ts DESC
+               ) AS rank
+        FROM bars
+    )
+    WHERE rank > ?
+)
 """
 
 
@@ -202,6 +221,44 @@ class SqliteStore(Store):
         touched = conn.total_changes - before
         inserted = sum(1 for bar in bars if bar.time not in existing)
         return WriteResult(inserted=inserted, updated=max(0, touched - inserted))
+
+    async def prune(self, keep: int, *, vacuum: bool = False) -> PruneResult:
+        """Keep the most recent `keep` bars of every series, drop the rest.
+
+        Per **series**, not per table and not per age. A count rather than a
+        cutoff date because the models consume a *window of bars* — the level
+        engine seeds from the last few hundred per instrument and timeframe —
+        so a count keeps exactly what can still be used. It also self-scales
+        across timeframes without a table of durations: 2,000 is about a day
+        and a half of 1m and about forty years of 1w, which is the right shape,
+        since that is also roughly how far back each one's evidence is worth
+        anything.
+
+        Quotes are left alone. They are the raw material for the spread median
+        and are already bounded by `dedupe_quotes`; bars are what grow without
+        limit, and 1m across fourteen instruments and six venues is most of it.
+
+        **Deleting does not shrink the file.** SQLite frees the pages for reuse,
+        so growth stops but the database stays its current size until it is
+        rebuilt. `vacuum=True` rebuilds it, and needs room for a second copy
+        while it runs — which is the one thing in short supply when this is
+        being reached for, so it is off by default and the caller decides.
+        """
+        async with self._lock:
+            return await asyncio.to_thread(self._prune, keep, vacuum)
+
+    def _prune(self, keep: int, vacuum: bool) -> PruneResult:
+        conn = self._require()
+        if keep < 1:
+            raise ValueError("keep must be at least 1 — prune does not empty the table")
+        before = conn.execute("SELECT COUNT(*) FROM bars").fetchone()[0]
+        with conn:
+            conn.execute(_PRUNE_BARS, (keep,))
+        after = conn.execute("SELECT COUNT(*) FROM bars").fetchone()[0]
+        if vacuum:
+            # Outside the transaction: VACUUM cannot run inside one.
+            conn.execute("VACUUM")
+        return PruneResult(deleted=before - after, kept=after, vacuumed=vacuum)
 
     async def series(self) -> list[SeriesInfo]:
         async with self._lock:

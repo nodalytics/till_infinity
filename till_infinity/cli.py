@@ -296,6 +296,60 @@ def bars_command(
 
 
 @prices.command()
+@click.option("--db", type=click.Path(path_type=Path))
+@click.option("--dir", "data_dir", type=click.Path(path_type=Path))
+@click.option(
+    "--keep",
+    type=int,
+    default=px.DEFAULT_RETAIN_BARS,
+    show_default=True,
+    help="Bars to keep per series — per source, feed, venue, ticker and interval.",
+)
+@click.option(
+    "--vacuum",
+    is_flag=True,
+    help="Rebuild the file afterwards to actually reclaim the space. Needs room for a second copy.",
+)
+@click.option("--yes", is_flag=True, help="Skip the confirmation.")
+def prune(db, data_dir, keep, vacuum, yes):
+    """Drop old bars, keeping the most recent `--keep` of every series.
+
+    Disk is the constraint that bites first here, and 1m candles across
+    fourteen instruments and six venues are most of what grows. A count per
+    series rather than a cutoff date, because the models consume a window of
+    bars, and one number self-scales: the default 2,000 is about a day and a
+    half of 1m and about forty years of 1w, which is roughly how far back each
+    one's evidence is worth anything anyway.
+
+    Deleting does not shrink the file — SQLite frees the pages for reuse, so
+    growth stops but the size does not fall until it is rebuilt. `--vacuum`
+    rebuilds it, and wants room for a second copy while it runs, which is
+    exactly what is scarce when this is being reached for.
+    """
+    settings = _settings(db, data_dir, include_partial=False)
+    target = settings.database
+
+    async def go() -> px.PruneResult:
+        store = px.open_store("sqlite", database=target, data_dir=settings.data_dir)
+        async with store:
+            rows = await store.series()
+            over = [s for s in rows if s.bars > keep]
+            doomed = sum(s.bars - keep for s in over)
+            console.print(
+                f"[bold]{target}[/]: {len(rows)} series, {sum(s.bars for s in rows):,} bars. "
+                f"{len(over)} series over {keep:,}, [yellow]{doomed:,} bars would go[/]."
+            )
+            if not doomed:
+                return px.PruneResult()
+            if not yes and not click.confirm("delete them?", default=False):
+                console.print("nothing deleted")
+                return px.PruneResult()
+            return await store.prune(keep, vacuum=vacuum)
+
+    console.print(str(run(go())))
+
+
+@prices.command()
 @click.option(
     "--store",
     "store_kind",

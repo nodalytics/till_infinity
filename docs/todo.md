@@ -193,8 +193,15 @@ rather than flag it. Deliberately deferred.
 
 ## Watch rather than act
 
-- **Disk** is the constraint that bites first: 69% used, 2.1GB free, prices
-  growing continuously. CPU sits at 8.5% and memory at 232MB of 640MB.
+- **Disk** is the constraint that bites first: 70% used, 2.1GB free, prices at
+  394MB and growing continuously. CPU sits at 13% and memory at 229MB of 640MB.
+  The instrument count went from six to fourteen on 2026-08-14 and 1m joined
+  the level set, so the *growth rate* is now roughly 2.3x what this note was
+  first written against, even though the free space has barely moved yet.
+  `till-infinity prices prune` exists for this and nothing runs it — see
+  [prices.md](prices.md), "Retention". A cron entry with `--yes` is the
+  intended shape; `--vacuum` occasionally, when there is room for a second
+  copy of the file.
 - **Agents** wake every 30 minutes, and every deploy restarts that timer. On a
   busy deploy day they may never reach a wake.
 - **Confluence text** in a delivered alert should match `structures zones` for

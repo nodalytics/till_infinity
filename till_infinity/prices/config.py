@@ -239,6 +239,21 @@ FEEDS: dict[str, Feed] = {
 
 DEFAULT_SOURCES: tuple[str, ...] = (TRADINGVIEW, YAHOO)
 
+#: Bars kept per series when retention runs. Four times the 500-bar window the
+#: level engine seeds from, so pruning to it cannot starve a cold start even
+#: after the several venues that share a series are counted.
+#:
+#: The coupling to `structures` is written down rather than imported: prices
+#: knows nothing about the models that read it, and should not start now for a
+#: constant. If that window changes, this is the other number to look at.
+#:
+#: A count rather than a duration, and the same count for every interval. That
+#: is not laziness — the models consume a window of *bars*, and one number
+#: self-scales into roughly the horizon each timeframe's evidence survives
+#: anyway: 2,000 bars is about a day and a half of 1m and about forty years
+#: of 1w.
+DEFAULT_RETAIN_BARS = 2_000
+
 #: Tracked unless the caller names something else.
 DEFAULT_SYMBOLS: tuple[str, ...] = (
     "eurusd",
