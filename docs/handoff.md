@@ -198,7 +198,7 @@ eth, sol, eurusd, gbpusd, usdjpy, audusd, usdcad, usdchf, nzdusd, usdcnh,
 us100, spx500 — alert to Telegram
 with confluence, deduplicated per zone, and charged the median spread before
 qualifying — which now records a non-zero cost, having charged nothing until
-`observe_bar` was split. Agents run on Groq with a Gemini fallback. 690 tests.
+`observe_bar` was split. Agents run on Groq with a Gemini fallback. 713 tests.
 
 Production: one container on the EC2 box named in `.secrets/samuel.md`, data
 under `/home/ubuntu/till-data`, config at `/home/ubuntu/till.env` (backed up to

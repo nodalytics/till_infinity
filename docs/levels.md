@@ -188,8 +188,13 @@ arithmetic — a level we are sure about is a thin band, one inferred from three
 scattered touches is a wide one:
 
 ```
-half-width = clamp(2σ, 0.35v, 3.0v)
+half-width = clamp(2σ, floor, 3.0v)      floor = max(0.35v, 6 ticks)
 ```
+
+The floor is the larger of a fraction of a typical move and a few of the
+smallest price changes the venue can quote — because on a coarsely quoted
+instrument the second is bigger, and a band narrower than the price grid is a
+rounding boundary rather than a zone. See §6b.
 
 Observation noise `R` scales with volatility, so in a violent market the price
 at which price turned says less about where the level is — and the filter

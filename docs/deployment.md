@@ -81,9 +81,30 @@ Measured on the running instance:
 till-infinity | Up (healthy) | 243.5 MiB / 640 MiB
 ```
 
-243 MB against a 640 MB cap on a 908 MB box. The container is capped rather
-than left open so that a leak takes the container down and the restart policy
-brings it back, instead of the kernel choosing what to kill.
+243 MB against a 640 MB cap on a 908 MB box — **and that reading is from six
+instruments.** At fourteen it sits nearer 260–280 MB and has peaked at 400 MB,
+which on this box is the edge.
+
+The cap exists so that a leak takes the container down and the restart policy
+brings it back, instead of the kernel choosing what to kill. **On 2026-08-14 the
+kernel chose anyway**, five times, and the way it presented is worth
+recognising: `docker inspect` reported `OOMKilled: false` while `dmesg` showed
+`Out of memory: Killed process … (till-infinity)` with `constraint=
+CONSTRAINT_NONE`. The container never reached its 640 MB cap. The *host* ran out
+— 908 MB total, ~150 MB free — so the cap was never the binding constraint and
+the container's own flag was truthful and useless.
+
+Two things follow for sizing:
+
+- **Watch resident size against the host, not the cap.** A container comfortably
+  inside its limit can still be the largest process on the box, which is all the
+  OOM killer is choosing on.
+- **There is no swap**, so an overshoot is a kill rather than a slowdown. That
+  does not improve on a larger machine; it just gets harder to reach.
+
+Nothing heavier than a read should run alongside it at this size. Both
+`till-infinity agents ask` and `till-infinity prices prune` — each a second
+Python process importing the whole application — killed the container outright.
 
 Databases and model state live on a mounted volume. Without one they go when
 the container does, and for online models that means starting cold — no learned
