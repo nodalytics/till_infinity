@@ -78,8 +78,9 @@ level make money".
 
 ```python
 engine = Engine(formation="both", run_threshold=2.0)
-engine.seed(DB, feeds=FEEDS, bars=BARS,
-            on_progress=lambda d, t: collected.extend(engine.drain_resolved()))
+engine.seed(
+    DB, feeds=FEEDS, bars=BARS, on_progress=lambda d, t: collected.extend(engine.drain_resolved())
+)
 ```
 
 Three details are load-bearing:

@@ -29,8 +29,9 @@ and truncates the rest without saying so:
 
 ```python
 engine = Engine()
-engine.seed(DB, feeds=FEEDS, bars=BARS,
-            on_progress=lambda done, total: collect(engine.drain_resolved()))
+engine.seed(
+    DB, feeds=FEEDS, bars=BARS, on_progress=lambda done, total: collect(engine.drain_resolved())
+)
 ```
 
 Draining is necessary but not sufficient, which is the first finding below:
