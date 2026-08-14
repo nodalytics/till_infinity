@@ -42,26 +42,52 @@ reaction, and being wrong changes one feature.
 Each leg is now sabotage-checkable alone — disabling the departure rule fails
 only the departure test, and the arrival test still passes.
 
-## 3. `fit(since=)` once 200 post-fix outcomes exist
+## 3. Wire the measured spread into `cost_vol`
+
+The netting exists — `net_push`, and both gates read it — but `cost_vol`
+defaults to zero, so nothing is yet deducted in production. The spread is
+already measured per venue in the anomaly features; what is missing is carrying
+it to the level call, in volatility units for that instrument and timeframe.
+
+Until that is done the channel still shows gross edges. Doing it will make some
+current signals stop qualifying, and that is the point.
+
+Three further steps stand between this and anything resembling a buy/sell
+decision, and they are listed so nobody mistakes a good model for a decision:
+
+- **Calibration.** MAE says predictions are close on average; it does not say
+  that when the model claims 80% it is right 80% of the time. Confidence is
+  what any sizing rule consumes, so it has to be checked directly — bucket the
+  predictions, compare claimed against realised.
+- **Sizing.** `risk_vol` and `reward_to_risk` describe how wrong a call can be.
+  Turning that into a position is a policy about capital, not a property of the
+  model, and it belongs to whoever owns the capital.
+- **Out-of-sample evidence.** Progressive validation gives this honestly by
+  construction; it needs the examples.
+
+`facto` sits *after* all three. It sharpens an estimate that first has to be
+measuring the right quantity.
+
+## 4. `fit(since=)` once 200 post-fix outcomes exist
 
 No code needed. The counter restarts from the 2026-08-13 fixes, because
 examples recorded under inflated touch counts and a pooled base rate describe a
 model that no longer exists. Detail: [structures.md](structures.md), "Examples
 have an expiry".
 
-## 4. Run-formed levels, as an experiment before a feature
+## 5. Run-formed levels, as an experiment before a feature
 
 Swings are currently bar extremes, which makes every level a property of the
 sampling grid. Run boundaries would not be. Run both over the same history and
 compare which set price respects more often — the outcome machinery already
 answers that. Detail: [levels.md](levels.md), "A level spans periods too".
 
-## 5. Build the score
+## 6. Build the score
 
 Designed in [score.md](score.md), not built: one number per instrument in
 [-1, +1], three EWMAs, thresholds as rolling quantiles, transitions only.
 
-## 6. BOCPD
+## 7. BOCPD
 
 Documented in [structures.md](structures.md) as a way to *grade* a regime change
 rather than flag it. Deliberately deferred.

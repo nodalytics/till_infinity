@@ -1479,3 +1479,60 @@ def test_the_leg_out_ends_when_the_run_does():
     # A later, larger move is not this reaction's departure.
     engine.tracker.update(level, 2000.0 + 2.0 * unit, vol, 4.0)
     assert touch.departure_vol == pytest.approx(left)
+
+
+def test_an_edge_smaller_than_the_cost_is_not_a_trade():
+    """Every push in this system is gross. A +0.5v edge against a 0.3v spread
+    is a rounding error with a direction attached."""
+    from till_infinity.structures.reactions import Inference
+
+    shared = {
+        "side": Side.BELOW,
+        "probability_up": 0.72,
+        "push_sigma": 0.5,
+        "base_rate_up": 0.5,
+        "own_touches": 9.0,
+        "neighbours": 12,
+    }
+    free = Inference(expected_push=0.6, **shared)
+    assert free.actionable
+    assert free.net_push == pytest.approx(0.6)
+
+    costly = Inference(expected_push=0.6, cost_vol=0.3, **shared)
+    assert costly.net_push == pytest.approx(0.3)
+    assert not costly.actionable, "an edge inside the spread reached the channel"
+
+
+def test_a_cost_bigger_than_the_edge_flips_it_through_zero():
+    """Not a weak trade — the wrong side of one."""
+    from till_infinity.structures.reactions import Inference
+
+    call = Inference(
+        side=Side.BELOW,
+        probability_up=0.72,
+        expected_push=0.4,
+        push_sigma=0.5,
+        base_rate_up=0.5,
+        own_touches=9.0,
+        neighbours=12,
+        cost_vol=0.9,
+    )
+    assert call.net_push < 0
+    assert not call.actionable
+
+
+def test_reward_to_risk_is_measured_after_the_cost():
+    from till_infinity.structures.reactions import Inference
+
+    call = Inference(
+        side=Side.BELOW,
+        probability_up=0.72,
+        expected_push=1.0,
+        push_sigma=0.5,
+        base_rate_up=0.5,
+        own_touches=9.0,
+        neighbours=12,
+        risk_vol=0.5,
+        cost_vol=0.25,
+    )
+    assert call.reward_to_risk == pytest.approx(1.5)  # (1.0 - 0.25) / 0.5

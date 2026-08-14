@@ -1233,6 +1233,34 @@ levels would be a third kind rather than a replacement.
 The cheap first experiment: run both on the same history and compare which set
 price respects more often. The outcome machinery to answer that already exists.
 
+## Costs come off before anything is claimed
+
+Every push this model produces is **gross**, and for a long time nothing
+subtracted the cost of taking it. That is the largest single gap between a
+number and a decision: a `+0.5v` edge on an instrument whose spread is `0.3v`
+is not an edge, it is a rounding error with a direction attached, and gross
+figures cannot tell those apart.
+
+```
+net_push = expected_push - sign(expected_push) x cost_vol
+```
+
+Signed toward the push, so cost always shrinks the claim and can carry it
+through zero. Both gates now read the net figure: the size test in
+`actionable`, and `reward_to_risk`.
+
+A cost **larger** than the edge is the case worth stating, because it nearly
+went wrong here. It produces a net push with the *opposite* sign, and a large
+enough one clears an `abs(net_push) >= 0.5` test comfortably — so the naive
+version would have promoted a fully-consumed edge into a confident call in the
+wrong direction. `actionable` therefore also requires the net push to still
+point the way the gross push did. A consumed edge is not a trade in reverse; it
+is no trade.
+
+`cost_vol` defaults to zero, which leaves every existing call unchanged rather
+than silently re-gating history against a cost nobody measured. **Wiring the
+measured spread into it is the outstanding half** — see [todo.md](todo.md).
+
 ## Honest status
 
 Everything above is validated on **synthetic mean-reverting data**, where the

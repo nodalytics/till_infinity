@@ -263,6 +263,11 @@ class Inference:
     #: Distance to a stop beyond the flipped level, in volatility units. What
     #: being wrong costs, which an expected push means nothing without.
     risk_vol: float = 0.0
+    #: What taking this costs, in volatility units — spread, and eventually
+    #: slippage. Zero until a caller supplies it, which keeps every existing
+    #: call unchanged rather than silently re-gating history against a cost
+    #: nobody measured.
+    cost_vol: float = 0.0
 
     @property
     def direction(self) -> str:
@@ -290,6 +295,27 @@ class Inference:
         """
         leans_up = self.probability_up >= 0.5
         return leans_up != (self.expected_push > 0) and self.expected_push != 0
+
+    @property
+    def net_push(self) -> float:
+        """Expected push after the cost of taking it, in volatility units.
+
+        Every push in this system is **gross**, and that is the single largest
+        gap between what it produces and something worth acting on. A `+0.5v`
+        edge on an instrument whose spread is `0.3v` is not an edge; it is a
+        rounding error with a direction attached, and gross numbers cannot tell
+        the two apart. The project measures spread — it is one of the signal
+        shapes — and until now never subtracted it from anything.
+
+        Signed toward the same direction as the push, so cost always makes the
+        claim smaller and can flip it through zero. A cost larger than the edge
+        should produce a *negative* net push rather than a small positive one:
+        that is not a weak trade, it is the wrong side of one.
+        """
+        if self.expected_push == 0.0:
+            return 0.0
+        direction = 1.0 if self.expected_push > 0 else -1.0
+        return self.expected_push - direction * self.cost_vol
 
     @property
     def probability_down(self) -> float:
@@ -354,7 +380,7 @@ class Inference:
         worth half what it risks is a losing trade; a 55% call worth three
         times it is not.
         """
-        return abs(self.expected_push) / self.risk_vol if self.risk_vol else 0.0
+        return abs(self.net_push) / self.risk_vol if self.risk_vol else 0.0
 
     @property
     def actionable(self) -> bool:
@@ -367,7 +393,14 @@ class Inference:
         return (
             self.own_touches + self.neighbours >= 8
             and abs(self.edge) >= 0.08
-            and abs(self.expected_push) >= 0.5
+            # Net, not gross: the cost of taking it comes off before the size
+            # test, so an edge smaller than the spread cannot qualify.
+            and abs(self.net_push) >= 0.5
+            # And the cost must not have flipped it. A net push pointing the
+            # other way is not a trade in the other direction — it means the
+            # edge was eaten, and a large enough cost would otherwise sail back
+            # through the size test above wearing the opposite sign.
+            and self.net_push * self.expected_push > 0
             # A win rate and an expected move pointing opposite ways is a real
             # shape, but it is not a call — whichever one you act on, the other
             # says you are wrong.
@@ -393,6 +426,8 @@ class Inference:
             "own_touches": round(self.own_touches, 2),
             "backcheck": self.backcheck,
             "risk_vol": round(self.risk_vol, 3),
+            "cost_vol": round(self.cost_vol, 4),
+            "net_push_vol": round(self.net_push, 4),
             "reward_to_risk": round(self.reward_to_risk, 3),
             "neighbours": self.neighbours,
             "actionable": self.actionable,
