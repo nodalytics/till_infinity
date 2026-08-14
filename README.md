@@ -22,6 +22,12 @@
   Live alerts: <a href="https://t.me/till_infinity_signals"><b>t.me/till_infinity_signals</b></a>
 </p>
 
+<p align="center">
+  <a href="https://t.me/till_infinity_signals">
+    <img src="docs/telegram-qr.png" alt="Scan to join t.me/till_infinity_signals" width="140">
+  </a>
+</p>
+
 ## The idea
 
 A directional call is only worth making when the price structure and the
