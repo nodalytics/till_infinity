@@ -1066,6 +1066,47 @@ they cannot be ranked against each other. That is the **reference** estimate:
 the tick-level one fed by quotes, falling back to the finest timeframe with
 data when no quotes have arrived, which is the case when warming from bars.
 
+### Risk is per timeframe, and therefore not comparable across them
+
+`risk_vol` — the distance from price to the stop beyond the flipped level — is
+measured in the volatility of the timeframe the level belongs to. That is
+correct, and it has a consequence sharp enough to be worth its own heading,
+because the number *looks* comparable and is not. Measured on gold:
+
+| timeframe | volatility | `risk_vol` | what that is in money |
+|---|---|---|---|
+| 1m | 0.35bps | 1.38 | **$0.21** |
+| 5m | 0.72bps | 1.15 | $0.36 |
+| 15m | 1.94bps | 0.90 | **$0.77** |
+| 1h | 4.52bps | 1.17 | $2.15 |
+| 4h | 21.37bps | 2.09 | $18.00 |
+| 1d | 63.05bps | 0.90 | **$24.76** |
+| 1w | 118.38bps | 1.08 | $23.18 |
+
+The `risk_vol` column is nearly flat — between 0.9 and 2.1 across a hundredfold
+range of volatility — because the stop sits a fixed number of volatility units
+beyond the level by construction. The money column spans **a hundred and
+twenty times**. Two levels both reading 0.90 are seventy-seven cents on the 15m
+and twenty-five dollars on the daily.
+
+So:
+
+- **Never rank or threshold on `risk_vol` across timeframes.** It is a
+  within-timeframe quantity. Doing so would repeat the fixed-tolerance mistake
+  this whole section exists to correct, one layer up.
+- **`reward_to_risk` is the quantity that travels.** Expected push and risk are
+  both in that timeframe's units, so the ratio divides them out and is
+  dimensionless. A 2:1 call is a 2:1 call on the 1m and on the 1w. That is why
+  `actionable` gates on the ratio and not on the risk — see §8.
+- **To compare risk across timeframes, convert to money or to reference units
+  first.** `vol.price_units(price, risk_vol)` is the conversion, and it is what
+  produced the table above.
+
+Nothing consumes `risk_vol` cross-timeframe today. It is written down because
+the next thing that wants to — a sizing rule, a ranking of open calls, a
+portfolio view — will reach for it, and the number will look like it means one
+thing while meaning seven.
+
 ## 11. Multi-timeframe confluence
 
 A level on the 4h chart and one on the 15m chart at the same price are one

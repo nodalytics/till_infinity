@@ -58,32 +58,61 @@ event. Survives 10,000x spikes now, and predicts real numbers instead of zero.
 The NaN guard stays. It was never the bug, and it is the reason a diverged
 model cost accuracy rather than uptime.
 
-## Why the channel is silent, traced 2026-08-14
+## The channel speaks again, 2026-08-14
 
-Worth reading before touching anything above, because it is one chain and the
-obvious suspect is innocent.
+Three alerts delivered within minutes of the fixes below landing — SPX500, ETH
+and SOL, all `1/1 channels`:
 
-**It is not the spread cost.** That gate charges `cost_vol` of exactly 0.0 on
-every call recorded so far, so it has never suppressed a signal in production.
+```
+alert 'SPX500 3m — up' [level 7801.5 · this timeframe only]
+alert 'ETH 3m — up'    [level 1875.1 · this timeframe only]
+alert 'SOL 3m — up'    [level 75.413 · this timeframe only]
+```
+
+The journalled decision behind the last one, which is the whole chain working:
+
+```
+sol: up from above at 75.413 — p=51% vs 24% base, push +1.43
+    edge 0.265   expected_push +1.428   risk_vol 0.641   → r:r 2.23
+```
+
+`own_touches` on production fell from 171 to single figures once `observe_bar`
+was split, which is what unlocked it: the base rate stopped being dragged
+lopsided by one grind counted a hundred and seventy times, so an ordinary call
+could clear `|edge| >= 0.08` again. `risk_vol` is populated, and that call
+passed the new reward-to-risk gate on its merits rather than by default.
+
+The account below is kept because the reasoning is what matters, not the
+symptom.
+
+## Why the channel was silent, traced 2026-08-14
+
+Worth reading because it is one chain and the obvious suspect was innocent —
+the same shape of mistake will be made again, on something else.
+
+**It was not the spread cost.** That gate charged `cost_vol` of exactly 0.0 on
+every call recorded up to then, so it had never suppressed a signal at all.
 The window it charges from is filled by `observe_quote` alone, and the recorded
 calls all come off the **bar** path in a burst after start-up, before a quote
 has landed. Not a rounding artefact: the smallest real charge on any instrument
 is btc at 0.0031 against a journal that rounds to four decimals.
 
-**It is the edge gate, and underneath it the touch counts.** Every recorded call
-but one failed `|edge| >= 0.08`, median `0.0748`. The edges are small because a
-single 3m level took a touch every two seconds until it held 171 of them,
-dragging the base rate to 92.6% down — against which even a 99.7% call earns
-only seven points. Inflated touches, lopsided base rate, eaten edge, closed
-gate, silent channel. Four steps, each reasonable alone.
+**It was the edge gate, and underneath it the touch counts.** Every recorded
+call but one failed `|edge| >= 0.08`, median `0.0748`. The edges were small
+because a single 3m level took a touch every two seconds until it held 171 of
+them, dragging the base rate to 92.6% down — against which even a 99.7% call
+earns only seven points. Inflated touches, lopsided base rate, eaten edge,
+closed gate, silent channel. Four steps, each reasonable alone.
 
-So **item 2 below is the fix for this**, not a tidiness exercise. Detail and the
-measured numbers are in [levels.md](levels.md), "The base rate is what actually
-closed the gate" and "It charges zero on the replay path".
+Splitting `observe_bar` fixed it, and the channel spoke within minutes. Detail
+and the measured numbers are in [levels.md](levels.md), "The base rate is what
+actually closed the gate" and "It charges zero on the replay path".
 
-Two smaller things found alongside, both live: `risk_vol` is 0.0 on every
-recorded call, so `reward_to_risk` is meaningless; and `0.08` itself was never
-derived from anything — see "0.08 is not derived from anything".
+Two smaller things found alongside, both now fixed: `risk_vol` was 0.0 on every
+recorded call, so `reward_to_risk` was meaningless — `vol` was optional on
+`infer` and every caller forgot it. And `0.08` itself was never derived from
+anything, which is still true and still open: see "0.08 is not derived from
+anything" for the attempt to derive it and why the pre-fix journal cannot.
 
 ## Then, in order
 
