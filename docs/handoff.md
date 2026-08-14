@@ -58,6 +58,33 @@ event. Survives 10,000x spikes now, and predicts real numbers instead of zero.
 The NaN guard stays. It was never the bug, and it is the reason a diverged
 model cost accuracy rather than uptime.
 
+## Why the channel is silent, traced 2026-08-14
+
+Worth reading before touching anything above, because it is one chain and the
+obvious suspect is innocent.
+
+**It is not the spread cost.** That gate charges `cost_vol` of exactly 0.0 on
+every call recorded so far, so it has never suppressed a signal in production.
+The window it charges from is filled by `observe_quote` alone, and the recorded
+calls all come off the **bar** path in a burst after start-up, before a quote
+has landed. Not a rounding artefact: the smallest real charge on any instrument
+is btc at 0.0031 against a journal that rounds to four decimals.
+
+**It is the edge gate, and underneath it the touch counts.** Every recorded call
+but one failed `|edge| >= 0.08`, median `0.0748`. The edges are small because a
+single 3m level took a touch every two seconds until it held 171 of them,
+dragging the base rate to 92.6% down — against which even a 99.7% call earns
+only seven points. Inflated touches, lopsided base rate, eaten edge, closed
+gate, silent channel. Four steps, each reasonable alone.
+
+So **item 2 below is the fix for this**, not a tidiness exercise. Detail and the
+measured numbers are in [levels.md](levels.md), "The base rate is what actually
+closed the gate" and "It charges zero on the replay path".
+
+Two smaller things found alongside, both live: `risk_vol` is 0.0 on every
+recorded call, so `reward_to_risk` is meaningless; and `0.08` itself was never
+derived from anything — see "0.08 is not derived from anything".
+
 ## Then, in order
 
 See [todo.md](todo.md) for the full list. The short version:
@@ -77,8 +104,9 @@ See [todo.md](todo.md) for the full list. The short version:
 ## What is deployed and working
 
 Levels form on 1m/3m/5m/15m/1h/4h/1d/1w across six instruments, alert to Telegram
-with confluence, deduplicated per zone, charged the median spread before
-qualifying. Agents run on Groq with a Gemini fallback. 645 tests.
+with confluence, deduplicated per zone. The median spread is charged before
+qualifying — *wired, but charging zero on every call recorded so far*, for the
+reason given above. Agents run on Groq with a Gemini fallback. 648 tests.
 
 Production: one container on the EC2 box named in `.secrets/samuel.md`, data
 under `/home/ubuntu/till-data`, config at `/home/ubuntu/till.env` (backed up to

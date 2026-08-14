@@ -30,7 +30,40 @@ providers. That leaves the wake gate, `AGENTS_SPREAD_BPS` and
 question before it is a code one, and the gate should probably report *why* it
 declined to wake rather than staying silent.
 
+## 0b. Three found on 2026-08-14 while tracing the silent channel
+
+Ordered by what is holding back the most. All three are documented with their
+measurements in [levels.md](levels.md).
+
+**The spread cost charges zero on every call so far.** `cost_of` reads a window
+filled by `observe_quote` only, and the recorded calls come off the bar path
+before any quote lands, so the window is empty and the charge is a true zero —
+not a rounding artefact. The feature is wired correctly and has never yet
+suppressed a signal. Either the window should survive across the replay
+boundary, or a call made with no spread evidence should say so rather than
+silently costing nothing. The measured charges are worth seeing before choosing:
+0.003v on btc against 2.5v on gbpusd 3m, so this gate is nearly free on crypto
+and close to absolute on FX intraday.
+
+**`risk_vol` is 0.0 on every recorded call**, which makes `reward_to_risk`
+identically zero — "expected push against what being wrong costs" is documented
+as the number that decides whether an edge is worth taking, and it is currently
+not being computed. Nothing gates on it yet, which is the only reason this has
+been invisible.
+
+**`0.08` was never derived from anything.** Not in the commit that introduced
+it, not in the docs. It is the number currently separating signal from silence,
+with the median call sitting five thousandths under it. Either derive it from
+the separation that is distinguishable from noise at a given observation count,
+or make it a rolling quantile of realised edges — the same instinct as
+[score.md](score.md)'s thresholds. Fixing item 1 first will move every edge in
+the table, so measure again before picking a number.
+
 ## 1. Split `observe_bar`: form from own bars, touch from the finest
+
+This is now the fix for the silent channel, not only a correctness tidy-up: the
+touch counts it inflates are what drag the base rate lopsided and close the
+edge gate. See [handoff.md](handoff.md), "Why the channel is silent".
 
 `Engine.seed` replays stored bars through `observe_bar`, which both **forms**
 levels for that row's interval and **runs the touch check** at that interval's

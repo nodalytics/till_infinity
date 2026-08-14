@@ -826,6 +826,43 @@ looks.
 | \|edge\| ≥ 0.08 | a large sample at the base rate is nothing |
 | \|push\| ≥ 0.5v | a confident call worth a tenth of a volatility unit does not pay |
 
+### 0.08 is not derived from anything
+
+Stated because it is currently the number deciding whether the channel speaks.
+The guard is sound — a conditional equal to its base rate has said nothing —
+but the *threshold* has never been justified anywhere: not in the commit that
+introduced it, not here, not beside the code. It is a made-up tolerance of
+exactly the kind this project otherwise refuses, and it is load-bearing.
+
+On 2026-08-14 every recorded call but one failed this gate, with a median
+`|edge|` of **0.0748** — five thousandths under the line. A threshold nobody
+chose deliberately is separating signal from silence at the third decimal
+place. Either it should be derived from something (what separation is
+distinguishable from noise at a given number of observations, which is a
+question with an answer) or it should be a rolling quantile of realised edges
+rather than a constant. Until then, the honest description is: arbitrary.
+
+### The base rate is what actually closed the gate
+
+The edges above were not small because the levels were uninformative. They were
+small because the base rate had drifted to 92.6% down, and a conditional of
+99.7% can only earn seven points against it. Watch one 3m level over
+thirty-six seconds:
+
+```
+06:32:09  edge=-0.0799  touches=148.3
+06:32:29  edge=-0.0748  touches=161.2
+06:32:45  edge=-0.0712  touches=171.2
+```
+
+One touch every two seconds on a single level, and `edge` climbing in lockstep
+as the count inflates. Touch counts in the hundreds are the double-counting
+described in [todo.md](todo.md) item 1 — `structures levels` should read in the
+tens — and this is what they cost: an inflated count feeds a lopsided base
+rate, the base rate eats the edge, and the edge gate closes. The chain from a
+miscounted touch to a silent channel is four steps long and every step looks
+reasonable on its own.
+
 `chop` is kept as an outcome alongside reject and break. A model never shown
 "nothing happened" will predict a move every time.
 
@@ -1277,6 +1314,63 @@ filter working perfectly and a service quietly broken both present as a channel
 that went quiet. If it goes *silent* rather than quieter, check
 `structures levels` — levels still forming with calls still logged means the
 cost gate is doing its job; no levels at all means something else broke.
+
+### What the cost actually comes to, measured
+
+Taken from production on 2026-08-14: median quoted spread per instrument
+against a typical move on each timeframe, both in basis points, so the ratio is
+the charge in volatility units.
+
+| instrument | median spread | 3m | 15m | 1h | 1d |
+|---|---|---|---|---|---|
+| btc | 0.016bps | 0.003 | 0.003 | 0.003 | 0.005 |
+| us100 | 0.599bps | 0.154 | 0.054 | 0.071 | 0.054 |
+| spx500 | 0.513bps | 0.103 | 0.058 | 0.059 | 0.070 |
+| gold | 0.786bps | **2.07** | **1.10** | **1.03** | 0.407 |
+| gbpusd | 0.741bps | **2.50** | **2.25** | **1.99** | 0.407 |
+| eurusd | 0.433bps | **2.50** | **1.23** | **1.17** | 0.322 |
+
+Two things fall out of this, and neither was visible before it was measured.
+
+**The instruments are in different regimes entirely.** A charge of 0.003v on
+btc is a rounding error; the same gate on gbpusd at fine resolution charges
+**2.5 volatility units**, which is larger than almost any push the model
+predicts. Once the cost engages, FX below the daily should stop producing
+signals more or less completely — not because the filter is broken but because
+crossing that spread genuinely costs more than the move being predicted. The
+crypto and index feeds are barely touched by the same gate.
+
+**So `abs(net_push) >= 0.5` is not one threshold.** It is a near-free pass on
+btc and an almost total block on FX intraday, and the difference comes from the
+market rather than from anything chosen here. That is the gate working as
+designed; it is stated because a per-instrument outcome from a global constant
+is the kind of thing that later reads as a bug.
+
+### It charges zero on the replay path, which is where it was measured
+
+Also found on 2026-08-14, and the reason the table above had to be computed
+rather than read off the journal: **every level call recorded so far carries
+`cost_vol` of exactly 0.0**.
+
+Not a rounding artefact — the journal rounds to four decimals, and the smallest
+real charge in the table is btc at 0.0031, sixty times the rounding floor. It
+is a true zero, and `cost_of` returns exactly that when its spread window is
+empty:
+
+```python
+seen = self._spread.get(feed)
+if not seen or vol is None or not vol.bps:
+    return 0.0
+```
+
+`_spread` is filled by `observe_quote` alone. The recorded calls all arrived in
+a burst shortly after start-up, off the **bar** path, before any quote had
+landed — so the window was empty and every one of them was charged nothing. The
+gate is not wrong, it is simply not yet armed at the moment those calls are
+made, which is precisely when a cold start makes the most of them.
+
+Worth stating plainly: the spread cost has therefore never yet suppressed a
+single signal in production. The quiet channel is not this feature working.
 
 ## Honest status
 
