@@ -25,7 +25,7 @@ import sqlite3
 import statistics
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -809,6 +809,7 @@ class Engine:
         feeds: Sequence[str] = (),
         intervals: Sequence[str] = (),
         bars: int = SEED_BARS,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> int:
         """Warm the windows from stored history. Returns bars replayed.
 
@@ -838,11 +839,29 @@ class Engine:
         # happened to have arrived.
         eras = self._eras(rows)
         replayed = 0
+        total = len(rows)
+        # A cold start replays six-figure bar counts and says nothing until it
+        # finishes, which is minutes of a service that looks hung — and the one
+        # thing this project keeps relearning is that silence has to say which
+        # kind it is. `on_progress` lets a terminal draw a bar; without one the
+        # log carries it, because that is where a running service is read from.
+        beat = max(1, total // 100)
+        spoken = max(1, total // 10)
         self._touch_eras = eras
         try:
             for row in rows:
                 self.observe_bar(row)  # calls discarded on purpose
                 replayed += 1
+                if on_progress is not None:
+                    if replayed % beat == 0 or replayed == total:
+                        on_progress(replayed, total)
+                elif replayed % spoken == 0 and replayed != total:
+                    log.info(
+                        "levels: warming, %d%% (%s of %s bars)",
+                        round(100 * replayed / total),
+                        f"{replayed:,}",
+                        f"{total:,}",
+                    )
         finally:
             self._touch_eras = []
         log.info(

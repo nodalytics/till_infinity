@@ -13,37 +13,50 @@ touches the two items below, and the first of them now matters *more*: a fit
 can finally see the whole journal, so nothing but the warning below stops it
 drawing 9,000 examples from one afternoon.
 
-**The outcome rate needs explaining before any fit.** The journal recorded 976
-outcomes in one hour and 8,411 in six, against a total of 76 the previous day.
-The re-arm fixes should have made resolutions *rarer*. Either the cold start and
-warm replay generate them en masse, or there is a fourth route to over-counting
-that the three touch fixes did not close. It matters beyond tidiness: at
-~1,000/hour, `MIN_EXAMPLES` is reached from a few minutes of one afternoon
-rather than from a spread of market conditions, which is not the dataset the
-walk-forward validation assumes. Do not run `fit` until this is understood.
+**The outcome rate needs explaining before any fit** — *the fourth route was
+found; the rate itself still needs re-measuring.* The journal recorded 976
+outcomes in one hour and 8,411 in six, against 76 the previous day, and the
+guess was right: there was a fourth route to over-counting that the three touch
+fixes did not close. It was `observe_bar` running the touch check at its own
+interval during replay, which item 1 has now split out. On production
+`own_touches` fell from 171 to 0.0.
 
-**Agents have never woken.** The whole log contains one line — `agents started`
-— across roughly seven hours and ~14 thirty-minute windows. It is not the
-throttle and not the credentials: a one-off `agents ask` works on both
-providers. That leaves the wake gate, `AGENTS_SPREAD_BPS` and
-`AGENTS_IMPORTANCE`, whose thresholds are apparently never met. A config
-question before it is a code one, and the gate should probably report *why* it
-declined to wake rather than staying silent.
+Two things still stand between here and a fit. **Re-measure the rate** over a
+few post-fix hours — it should be far lower, and if it is not, the fourth route
+was not the last one. And the older examples remain unusable regardless: they
+were recorded under the inflated counts, which is not a tidiness problem but a
+correctness one — the pre-fix journal calls direction correctly 99.9% of the
+time because a level's history and its next outcome were the same move counted
+twice. `fit(since=)` exists for exactly this boundary. Do not fit across it.
+
+**Agents have never woken** — *half done: the gate now says why.* It was
+declining every window and reporting it at DEBUG, which production does not
+print, so a gate that ran every time was indistinguishable from one that never
+ran. It now logs the closest approach at INFO: "widest spread 1.9bps at TVC gold
+against 8.0bps needed; strongest release importance 1 against 2 needed".
+
+What remains is the config question that was underneath it all along, and it is
+now answerable rather than guessable: read a few of those lines and see whether
+`AGENTS_SPREAD_BPS` and `AGENTS_IMPORTANCE` are set somewhere a real market
+never reaches. Do not change them before reading the near misses — that is how
+the thresholds got wherever they are.
 
 ## 0b. Three found on 2026-08-14 while tracing the silent channel
 
 Ordered by what is holding back the most. All three are documented with their
 measurements in [levels.md](levels.md).
 
-**The spread cost charges zero on every call so far.** `cost_of` reads a window
-filled by `observe_quote` only, and the recorded calls come off the bar path
-before any quote lands, so the window is empty and the charge is a true zero —
-not a rounding artefact. The feature is wired correctly and has never yet
-suppressed a signal. Either the window should survive across the replay
-boundary, or a call made with no spread evidence should say so rather than
-silently costing nothing. The measured charges are worth seeing before choosing:
-0.003v on btc against 2.5v on gbpusd 3m, so this gate is nearly free on crypto
-and close to absolute on FX intraday.
+**~~The spread cost charges zero on every call~~** — *resolved by item 1, watch
+it.* `cost_of` reads a window filled by `observe_quote` only, and every recorded
+call used to come off the bar path before any quote had landed, so the window
+was empty and the charge a true zero — not a rounding artefact. Splitting
+`observe_bar` moved when calls happen, and production now records a non-zero
+`cost_vol`. Worth confirming over a longer run than the half hour it has had.
+
+The measured charges are worth carrying in your head, because this gate is not
+one threshold: 0.003v on btc against 2.5v on gbpusd 3m, so it is nearly free on
+crypto and close to absolute on FX intraday. `STRUCTURES_CHARGE_SPREAD=0` turns
+it off for comparison, and says so in the log while it is off.
 
 **`risk_vol` is 0.0 on every recorded call**, which makes `reward_to_risk`
 identically zero — "expected push against what being wrong costs" is documented
@@ -67,34 +80,33 @@ So this waits on post-fix data. Then make it a rolling quantile of realised
 edges rather than a constant — the same instinct as [score.md](score.md)'s
 thresholds — rather than picking a new number by hand.
 
-## 1. Split `observe_bar`: form from own bars, touch from the finest
+## ~~1. Split `observe_bar`: form from own bars, touch from the finest~~ — done
 
-This is now the fix for the silent channel, not only a correctness tidy-up: the
-touch counts it inflates are what drag the base rate lopsided and close the
-edge gate. See [handoff.md](handoff.md), "Why the channel is silent".
+Every bar forms levels for its own interval; only the finest interval touches,
+against every interval at once — the replay equivalent of `observe_quote`.
 
-`Engine.seed` replays stored bars through `observe_bar`, which both **forms**
-levels for that row's interval and **runs the touch check** at that interval's
-resolution. So a daily level warmed from daily bars gets daily-quantised
-origins — and a cold start warms from six-figure bar counts, so that is most of
-what any level knows. The live path does not have this problem:
-`observe_quote` already checks every interval on every quote.
+The documented trap was the wrong one to worry about. What actually bit is that
+**"finest available" is not the globally finest series, it is the finest one
+available *at that moment*.** Venues keep years of 1w and days of 1m, so a few
+hundred bars per interval covers hours at 1m and years at 1w; pinning the check
+to 1m left every earlier era untouched, 1w and 4h opened *zero* touches across
+20,159 replayed gold bars, and their levels were pruned for never having been
+visited. Twenty-one levels became four. The touch source now hands over as finer
+history begins.
 
-The fix is a **split, not an addition**:
+Measured rather than argued, on the same history: levels 20 → 21, touches median
+2.0 → 2.9, max 11.1 → 14.0, none at or above 100 in either. Coarse levels
+register interactions they previously could not see — 1d median 1.5 → 3.3, 4h
+1.8 → 5.5, 15m 1.3 → 9.1 — and the absence of inflation is what says the trap
+was avoided.
 
-1. **Form** levels for each interval from *its own* bars. Unchanged — PIP needs
-   confirmed swings on the timeframe the level belongs to, and a daily swing is
-   not visible in 3m data.
-2. **Touch** every interval from the *finest* bars available, once, in time
-   order — the replay equivalent of what `observe_quote` does live.
+**On production the effect is what it was meant to be:** `own_touches` fell from
+171 to 0.0, and the spread cost started charging for the first time. Alerts are
+still gated by `0.08` above.
 
-**The trap:** the current single pass already records touches at each interval's
-own resolution. Adding a fine-bar pass *on top* would count every interaction
-twice — the 591-effective-touches bug arriving by a third route, after two
-other routes to it were closed on 2026-08-13. Doing it correctly means changing
-what `observe_bar` is responsible for, and then proving touch counts stayed
-sane: cold start, warm, and check `structures levels` reads in the tens rather
-than the hundreds.
+One casualty worth remembering: adding `_touch_eras` to `Engine` took structures
+down on deploy, because state is a pickle and unpickling never calls `__init__`.
+See [structures.md](structures.md) on persistence.
 
 Detail: [levels.md](levels.md), "The live path is already fine".
 

@@ -199,18 +199,22 @@ class Watcher:
         """
         return not any(self.engine._levels.values())
 
-    def warm(self) -> int:
+    def warm(self, on_progress: Callable[[int, int], None] | None = None) -> int:
         """Fill the level windows from stored price history.
 
         The bus carries a notice per sweep, not a series — roughly one bar per
         venue per minute — so an engine that only learned from it would take
         days to see enough bars to place a level. The store already holds the
         history, read-only.
+
+        `on_progress(done, total)` is for a caller with a terminal to draw into.
+        Without one the replay reports itself to the log instead, which is the
+        only place a running service can be watched from.
         """
         if not self.settings.warm:
             return 0
         try:
-            return self.engine.seed(self.settings.prices_db)
+            return self.engine.seed(self.settings.prices_db, on_progress=on_progress)
         except Exception as exc:  # warming is an optimisation, not a requirement
             log.warning("structures: could not warm from %s: %s", self.settings.prices_db, exc)
             return 0

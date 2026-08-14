@@ -286,6 +286,25 @@ Measured on synthetic six-venue data, 1800 quotes of a calm market:
 An online model that resets on restart has learned nothing, so state is saved
 to `.data/structures/models.pkl` and restored on start.
 
+**The replay does not run again once there is state.** Start-up restores the
+models first and only warms from stored bars `if cold` — and `cold` means *the
+engine holds no levels*, not *the restore failed*. That distinction is load
+bearing: a state file saved before any history existed restores an empty engine
+perfectly happily, and keying the warm-up off a successful load once made that
+emptiness permanent, every restart restoring nothing and skipping the warm
+because the restore had worked. So a normal restart costs nothing; only a
+genuinely empty engine pays for the replay. `STRUCTURES_WARM=0` skips it
+entirely.
+
+**When it does run, it says so as it goes.** A cold start replays six-figure bar
+counts and used to print one line, at the end. Minutes of a service whose only
+honest reading was "possibly hung" — the same failure as a gate that declines
+silently. The replay now reports progress every ten per cent to the log, which
+is where a running service is read from, and `seed(on_progress=...)` hands the
+counts to a caller with a terminal instead: `structures watch` draws a bar.
+The total is not known until the rows are read, so the bar starts indeterminate
+and gains its length on the first update rather than guessing.
+
 Pickle, because river models are ordinary Python objects with no serialisation
 format of their own. The consequence is stated rather than hidden: a state file
 records the river and Python versions it was written with and **refuses to load
@@ -294,6 +313,32 @@ would give scores that look fine and mean nothing.
 
 Writes are atomic — temp file, then rename — so a process killed mid-save
 leaves the previous state intact.
+
+### Unpickling does not call `__init__`, and that took the service down
+
+The version check above guards the *library* versions. It does not guard our own
+classes, and on 2026-08-14 that gap stopped structures completely.
+
+`_touch_eras` was added to `Engine`. Unpickling rebuilds `__dict__` directly and
+never runs `__init__`, so a state file written an hour earlier restored an
+engine without that attribute. The deploy logged `restored models`, hit
+`AttributeError: 'Engine' object has no attribute '_touch_eras'` on the first
+bar five seconds later, and the service stopped.
+
+**What it looked like from outside is the part worth keeping.** Nothing consumed
+the bus afterwards, so the visible symptoms were 1,400 dropped quotes a minute
+and a journal that had not moved in forty minutes. CPU sat at 13% throughout.
+Every one of those points away from the cause; none of them names it. A dead
+consumer and a quiet market are the same picture, which is this project's
+recurring shape.
+
+`Engine.__setstate__` now fills anything missing from a default-constructed
+engine — not from a hand-written list of field names, because that list is the
+part that goes stale, needing an edit on every field added. Anything the state
+carries wins; anything it lacks arrives at its default.
+
+The rule this leaves behind: **adding a field to a persisted class is a
+migration**, however much it looks like a one-line change.
 
 ## What it records
 

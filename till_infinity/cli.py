@@ -12,6 +12,7 @@ from typing import Any, TypeVar
 
 import click
 from rich.markup import escape
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 from rich.table import Table
 
 from . import agents as ag
@@ -1184,6 +1185,28 @@ def structures() -> None:
     """Online models over the price data — what is unusual, what has changed."""
 
 
+def _warm_with_progress(watcher) -> int:
+    """Replay stored bars with a bar to watch, because it is not quick.
+
+    A cold start reads six-figure bar counts and, until this, printed nothing
+    until it had finished — minutes in which the only honest reading of the
+    terminal was "possibly hung". The count is not known until the rows have
+    been read, so the bar starts indeterminate and gains its length on the
+    first update rather than guessing at a total.
+    """
+    with Progress(
+        TextColumn("[bold]warming[/]"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("[dim]{task.completed:,} bars[/]"),
+        TimeRemainingColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("warming", total=None)
+        return watcher.warm(lambda done, total: progress.update(task, completed=done, total=total))
+
+
 @structures.command("watch")
 @click.option("--redis", "redis_url", metavar="URL", help="Redis. Default: TILL_REDIS_URL.")
 @click.option("--dir", "state_dir", type=click.Path(path_type=Path), help="Where models persist.")
@@ -1262,8 +1285,16 @@ def structures_watch(
             if book is not None:
                 await book.open()
             restored = watcher.load()
-            seeded = 0 if restored else watcher.warm()
-            how = "restored" if restored else (f"warmed from {seeded:,} bars" if seeded else "cold")
+            # `cold` rather than `restored`: a state file saved before any
+            # history existed restores an empty engine perfectly happily, and
+            # keying the warm-up off the load made that emptiness permanent.
+            # The service already does it this way; this is the same rule.
+            seeded = 0 if not watcher.cold else _warm_with_progress(watcher)
+            how = (
+                "restored"
+                if restored and not seeded
+                else (f"warmed from {seeded:,} bars" if seeded else "cold")
+            )
             console.print(
                 f"[bold]{how}[/] on {bus.backend}, models in "
                 f"{escape(str(settings.state_dir))}, Ctrl-C to stop"

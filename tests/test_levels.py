@@ -1578,6 +1578,40 @@ def test_a_single_wide_print_does_not_disqualify_an_edge():
     assert spiked == pytest.approx(settled)
 
 
+def test_warming_reports_progress_rather_than_going_quiet(tmp_path):
+    """A cold start replays six-figure bar counts and used to say nothing.
+
+    Minutes of a service whose only honest reading was "possibly hung", which
+    is the same failure as a gate that declines silently: the work being
+    correct and the work being dead look identical from outside.
+    """
+    import sqlite3
+
+    db = tmp_path / "prices.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE bars (feed TEXT, venue TEXT, interval TEXT, ts REAL,"
+        " high REAL, low REAL, close REAL)"
+    )
+    rows = [
+        ("gold", venue, "5m", float(n * 300), 2001.0, 1999.0, 2000.0 + (n % 7))
+        for n in range(120)
+        for venue in ("OANDA", "SAXO", "FOREXCOM")
+    ]
+    conn.executemany("INSERT INTO bars VALUES (?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    seen: list[tuple[int, int]] = []
+    replayed = Engine().seed(db, on_progress=lambda done, total: seen.append((done, total)))
+
+    assert replayed == len(rows)
+    assert seen, "warming reported nothing at all"
+    # Monotonic, and it finishes at the total rather than stopping short.
+    assert [d for d, _t in seen] == sorted(d for d, _t in seen)
+    assert seen[-1] == (replayed, replayed)
+
+
 def test_state_from_an_older_build_restores_without_losing_new_fields():
     """Unpickling never calls __init__, so new attributes are simply absent.
 
