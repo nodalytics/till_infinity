@@ -202,9 +202,16 @@ def dataset(
     except FileNotFoundError:
         return []
 
+    # Indexed **before** the boundary filter, because a parent is not an
+    # example — it is what an example points back at. Filtering first made a
+    # call recorded before `since` unreachable from an outcome recorded after
+    # it, so a touch that straddled the boundary silently lost what the levels
+    # model had predicted. Here that costs only the comparison; for anything
+    # scoring `probability_up`, the claim lives on the parent and the whole
+    # example goes. A loss that is one-sided and looks like missing data.
+    by_id = {entry.id: entry for entry in rows}
     if since:
         rows = [entry for entry in rows if entry.time >= since]
-    by_id = {entry.id: entry for entry in rows}
     found: list[Example] = []
     for entry in rows:
         if str(entry.kind) != "outcome":

@@ -17,6 +17,7 @@
 | [behaviours.md](behaviours.md) | **planned** — what price does at a level, which of it we already model under another name, and the three gaps worth building |
 | [agents.md](agents.md) | LLM analysis over the stored data — roles, tools, read-only access, watching |
 | [journal.md](journal.md) | the decision journal — reasoning, outcomes, exporting for training |
+| [calibration.md](calibration.md) | **planned** — does 80% mean 80%; what to measure, what falsifies it, and why the obvious fix makes the model worse |
 | [deployment.md](deployment.md) | running it — one process, compose, or CI to a server |
 | [logging.md](logging.md) | project logging: levels, JSON log files, adding a logger to a module |
 

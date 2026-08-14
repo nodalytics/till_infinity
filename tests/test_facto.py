@@ -233,3 +233,83 @@ def test_a_non_finite_prediction_is_no_opinion_rather_than_a_nan():
     model._fm = Diverged()
     assert model.predict({"a": 1.0, "b": 2.0}) == 0.0
     assert not math.isnan(model.predict({"a": 1.0, "b": 2.0}))
+
+
+def test_a_touch_straddling_the_boundary_keeps_its_parent(tmp_path):
+    """`since` selects examples, not the calls they point back at.
+
+    The index was built after the filter, so a call recorded before the
+    boundary was unreachable from an outcome recorded after it. For `facto`
+    that costs only the levels-model comparison — the features come from the
+    outcome, so the example survives — but for anything scoring
+    `probability_up` the claim lives on the parent and the whole example goes.
+    A one-sided loss that presents as missing data rather than as a filter.
+    """
+    import json
+    import sqlite3
+
+    from till_infinity import journal as jr
+
+    db = tmp_path / "j.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE entries (id TEXT PRIMARY KEY, time REAL, kind TEXT, actor TEXT,"
+        " title TEXT, rationale TEXT, context TEXT, tags TEXT, confidence REAL,"
+        " parent TEXT, written REAL);"
+    )
+    conn.execute(
+        "insert into entries values (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "x",
+            100.0,
+            "decision",
+            "s",
+            "call",
+            "",
+            json.dumps({"expected_push_vol": 1.23}),
+            "[]",
+            None,
+            "",
+            100.0,
+        ),
+    )
+    conn.commit()
+    # Ids are content-addressed, so the parent has to be the one the journal
+    # assigns rather than the one written into the row.
+    call_id = jr.read(db, limit=10)[0].id
+    conn.execute(
+        "insert into entries values (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "y",
+            200.0,
+            "outcome",
+            "s",
+            "outcome",
+            "",
+            json.dumps(
+                {
+                    "push_vol": 1.1,
+                    "approach_vol": 1.0,
+                    "depth_vol": 0.2,
+                    "strength": 0.5,
+                    "run_vol": 0.0,
+                    "experience": 0.5,
+                    "pivot": 0.0,
+                    "backcheck": 0.0,
+                    "regime": 0.5,
+                    "side": "above",
+                    "interval": "5m",
+                }
+            ),
+            "[]",
+            None,
+            call_id,
+            200.0,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    (example,) = facto.dataset(db, since=150.0)
+
+    assert example.predicted == 1.23, "the parent fell outside the boundary filter"
