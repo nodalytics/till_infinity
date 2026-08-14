@@ -42,15 +42,16 @@ reaction, and being wrong changes one feature.
 Each leg is now sabotage-checkable alone — disabling the departure rule fails
 only the departure test, and the arrival test still passes.
 
-## 3. Wire the measured spread into `cost_vol`
+## ~~3. Wire the measured spread into `cost_vol`~~ — done
 
-The netting exists — `net_push`, and both gates read it — but `cost_vol`
-defaults to zero, so nothing is yet deducted in production. The spread is
-already measured per venue in the anomaly features; what is missing is carrying
-it to the level call, in volatility units for that instrument and timeframe.
+Quotes carry `spread_bps`; the engine keeps a window of them per instrument and
+charges the **median**, in volatility units, to every level call. A median for
+the reason the consensus is one — a mean is dragged by the outlier it exists to
+ignore. An exponential average was tried first and failed its own test: at a 0.1
+weight a single hundred-fold print moved the charged cost tenfold, which would
+have silenced a whole instrument until it decayed.
 
-Until that is done the channel still shows gross edges. Doing it will make some
-current signals stop qualifying, and that is the point.
+Some signals will now stop qualifying. That is the point of it.
 
 Three further steps stand between this and anything resembling a buy/sell
 decision, and they are listed so nobody mistakes a good model for a decision:

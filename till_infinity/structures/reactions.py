@@ -583,6 +583,7 @@ def infer(
     memory: Memory,
     vol: Volatility | None = None,
     price: float = 0.0,
+    cost_vol: float = 0.0,
 ) -> Inference:
     """Combine the level's own record with its neighbours' into one answer.
 
@@ -614,6 +615,7 @@ def infer(
         expected_push=push,
         push_sigma=own.push_sigma,
         base_rate_up=memory.base_rate_for(level.feed, level.interval),
+        cost_vol=cost_vol,
         own_touches=own.touches,
         neighbours=neighbours,
         detail=detail,

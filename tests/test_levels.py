@@ -1536,3 +1536,42 @@ def test_reward_to_risk_is_measured_after_the_cost():
         cost_vol=0.25,
     )
     assert call.reward_to_risk == pytest.approx(1.5)  # (1.0 - 0.25) / 0.5
+
+
+def test_the_quoted_spread_reaches_the_call_as_a_cost():
+    """The netting was inert until something measured filled cost_vol."""
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold", "5m")
+    for n in range(300):
+        vol.update(2000.0 + (n % 11) * 2.0)
+
+    assert engine.cost_of("gold", vol) == 0.0  # nothing quoted yet
+
+    for _ in range(60):
+        engine.observe_quote(
+            {"feed": "gold", "venue": "OANDA", "mid": 2000.0, "spread_bps": 4.0, "time": 1.0}
+        )
+    cost = engine.cost_of("gold", vol)
+    assert cost == pytest.approx(4.0 / vol.bps, rel=0.05)
+    assert cost > 0
+
+
+def test_a_single_wide_print_does_not_disqualify_an_edge():
+    """Smoothed on purpose: the cost that matters is what this normally costs."""
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold", "5m")
+    for n in range(300):
+        vol.update(2000.0 + (n % 11) * 2.0)
+
+    for _ in range(60):
+        engine.observe_quote(
+            {"feed": "gold", "venue": "OANDA", "mid": 2000.0, "spread_bps": 2.0, "time": 1.0}
+        )
+    settled = engine.cost_of("gold", vol)
+    engine.observe_quote(
+        {"feed": "gold", "venue": "OANDA", "mid": 2000.0, "spread_bps": 200.0, "time": 2.0}
+    )
+    spiked = engine.cost_of("gold", vol)
+    # A median over the window: one print out of sixty-one cannot move it at
+    # all, which is the property, not a tolerance chosen to pass.
+    assert spiked == pytest.approx(settled)

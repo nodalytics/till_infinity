@@ -65,6 +65,9 @@ LEVEL_INTERVALS: tuple[str, ...] = confluence.TIMEFRAMES
 #: this the "median" is one venue's opinion wearing a median's clothes.
 MIN_VENUES = 3
 
+#: Quotes kept per instrument for the spread median.
+SPREAD_WINDOW = 128
+
 #: Bars read per (instrument, interval) when warming from the store. One window
 #: is all the engine can hold; more would be read and immediately discarded.
 SEED_BARS = WINDOW
@@ -293,6 +296,10 @@ class Engine:
         #: no journal and should not grow one — a resolution is a fact about
         #: price, and who wants to record it is not the engine's business.
         self._resolved: list[tuple[lv.Level, reactions.Touch]] = []
+        #: Recent quoted spreads per instrument, in basis points — the cost of
+        #: taking any edge found here, measured all along and never charged.
+        #: A window rather than a running value, so the cost can be a *median*.
+        self._spread: dict[str, deque[float]] = {}
         self.calls = 0
 
     # --------------------------------------------------------------- levels
@@ -457,6 +464,9 @@ class Engine:
         if not feed or not isinstance(mid, int | float) or not mid:
             return []
         when = float(payload.get("time") or time.time())
+        spread = payload.get("spread_bps")
+        if isinstance(spread, int | float) and spread > 0:
+            self._spread.setdefault(feed, deque(maxlen=SPREAD_WINDOW)).append(float(spread))
         # Quotes feed the tick-level estimate, which is the common denominator
         # every timeframe's levels are ranked against.
         vol = self.vol.of(feed)
@@ -469,6 +479,30 @@ class Engine:
         return calls
 
     # ------------------------------------------------------------- touching
+
+    def cost_of(self, feed: str, vol: Volatility | None = None) -> float:
+        """What crossing the spread costs here, in volatility units.
+
+        The same quantity on every instrument and timeframe, which is the only
+        way it can be compared against an expected push measured the same way.
+        A spread of 3bps is nothing on a violent daily chart and most of the
+        move on a quiet 3m one — in units, that difference is the answer rather
+        than something a reader has to hold in their head.
+
+        A **median** over a recent window, for the reason the consensus is also
+        a median: a mean is dragged by the outlier it exists to ignore. The cost
+        that matters is what this instrument normally costs to trade, not
+        whatever the spread happened to be in the microsecond a level was
+        touched — one wide print during a release must not disqualify an edge
+        that is ordinarily takeable. An exponential average was tried first and
+        is not good enough here: at a 0.1 weight a single hundred-fold print
+        moved the charged cost tenfold, which would silence a whole instrument
+        for as long as it took to decay.
+        """
+        seen = self._spread.get(feed)
+        if not seen or vol is None or not vol.bps:
+            return 0.0
+        return statistics.median(seen) / vol.bps
 
     def intervals_for(self, feed: str) -> list[str]:
         """Every interval this instrument has levels at, pivots included."""
@@ -541,7 +575,9 @@ class Engine:
                 level, side, price, vol, approach_vol=self._speed(feed, interval, vol), when=when
             )
             self.tracker.begin(level, price, features, when)
-            inference = reactions.infer(level, side, features, self.tracker.memory)
+            inference = reactions.infer(
+                level, side, features, self.tracker.memory, cost_vol=self.cost_of(feed, vol)
+            )
             calls.append(
                 Call(
                     feed=feed,
