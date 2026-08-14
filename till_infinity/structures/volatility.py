@@ -36,6 +36,25 @@ HALF_LIFE = 60.0
 #: hundred-sigma event — division by something approaching zero.
 MIN_VOL_BPS = 0.05
 
+#: Observations before the tick estimate is trusted. The minimum of three
+#: samples is not a minimum.
+TICK_WARMUP = 30
+
+#: Distinct multiples of the candidate tick that must be seen before it is
+#: believed to be a grid step.
+#:
+#: This is the discriminator, and the obvious one does not work. "The smallest
+#: move must be small against a typical move" sounds right and rejects exactly
+#: the instruments that need this most: on ADA the tick genuinely *is* most of
+#: a typical move, which is the whole problem, so that test throws away the
+#: worst case as if it were the degenerate one.
+#:
+#: What separates them is the spread of multiples. Price on a real grid moves
+#: one step, then two, then five — many distinct multiples of the same base.
+#: A series that only ever moves by one identical amount has not resolved a
+#: grid at all; it has jumped, and its jump is not a tick.
+TICK_MULTIPLES = 3
+
 #: Readings kept for the regime percentile. Roughly a day of 1m bars: long
 #: enough that "high for this instrument" means something, short enough that it
 #: still describes the market you are in rather than the one from last month.
@@ -76,6 +95,62 @@ class Volatility:
         default_factory=lambda: stats.RollingQuantile(q=REGIME_HIGH, window_size=REGIME_WINDOW)
     )
     _history: list[float] = field(default_factory=list)
+    #: The smallest non-zero price change seen — the venue's tick, measured
+    #: rather than configured. See `tick`.
+    _tick: float = 0.0
+    #: Distinct multiples of `_tick` observed, which is what tells a grid from
+    #: a series that happens to move in equal jumps. Bounded: past a handful
+    #: the answer does not change.
+    _steps: set[int] = field(default_factory=set)
+
+    @property
+    def tick(self) -> float:
+        """The smallest price change this instrument has been seen to make.
+
+        Every price on a venue sits on a grid and every change is a multiple of
+        its step, so the smallest non-zero change observed *is* the step — once
+        enough have gone past for the smallest to be a single step rather than
+        the smallest jump that happened to occur. Measured rather than
+        configured, because the tick table belongs to the venue and changes
+        without notice, and because `structures` has no other route to it:
+        `prices` sees the quotes and does not pass this on.
+
+        **Zero unless the series has actually demonstrated a grid**, and the
+        two guards matter more than the estimate.
+
+        A series that only ever moves by one identical amount says nothing
+        about the step: "the tick is that size" and "the tick is tiny and price
+        is jumping" fit the data equally well, and taking the first would widen
+        every zone on the instrument by that jump. So the estimate is withheld
+        until price has been seen to move by several *different* multiples of
+        it — one step, then two, then five — which is what a grid being
+        resolved looks like and what a uniform jump never produces. See
+        `TICK_MULTIPLES`, and note that the tempting test — "the tick should be
+        small against a typical move" — rejects ADA, the instrument this exists
+        for.
+
+        It is also withheld until `TICK_WARMUP` observations, because the
+        minimum of three samples is not a minimum.
+
+        **The estimate is only ever an upper bound.** It is the smallest change
+        that has *happened*, not the smallest that is possible, so an
+        instrument whose prints are all several steps apart reads as coarser
+        than it is. The error is always in that direction and it shrinks with
+        data, never growing — but a consumer should bound what it does with the
+        number rather than trust it early. `Level.zone` clamps it at
+        `MAX_ZONE_VOL` for exactly this reason.
+
+        Both failures return zero, so anything built on this falls back rather
+        than inventing a number, and the estimate can only shrink with more
+        data — biasing it towards the old behaviour rather than towards a
+        spuriously wide band. That is the safe direction for a value whose job
+        is to widen one.
+        """
+        if not self._tick or self._seen < TICK_WARMUP:
+            return 0.0
+        if len(self._steps) < TICK_MULTIPLES:
+            return 0.0
+        return self._tick
 
     def update(self, price: float) -> float:
         """Take one price, return the current volatility estimate in bps."""
@@ -84,7 +159,16 @@ class Volatility:
         if not self._last:
             self._last = price
             return self.bps
-        move = abs(price - self._last) / self._last * 10_000
+        step = abs(price - self._last)
+        if step:
+            if not self._tick or step < self._tick:
+                # A smaller step rewrites the base, so what was counted as a
+                # multiple of the old one says nothing about the new.
+                self._tick = step
+                self._steps = {1}
+            elif len(self._steps) < 16:
+                self._steps.add(round(step / self._tick))
+        move = step / self._last * 10_000
         self._last = price
         self._seen += 1
         alpha = _alpha(self.half_life)

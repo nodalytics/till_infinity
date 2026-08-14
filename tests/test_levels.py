@@ -1878,3 +1878,97 @@ def test_disabling_the_charge_says_so_rather_than_going_quiet(caplog):
     with caplog.at_level("WARNING"):
         Engine(intervals=("5m",))
     assert not any("spread costs disabled" in record.message for record in caplog.records)
+
+
+# ------------------------------------------------------------ the price grid
+
+
+def test_the_tick_is_measured_from_the_series():
+    """`structures` has no other route to it — `prices` sees quotes and stops."""
+    vol = Volatility()
+    price = 0.18
+    for step in [3, -2, 1, -1, 5, -3, 2, -1, 1, 4] * 6:
+        price = round(price + step * 0.0001, 6)
+        vol.update(price)
+    assert vol.tick == pytest.approx(0.0001)
+
+
+def test_a_series_that_only_jumps_teaches_nothing_about_the_grid():
+    """The degenerate case, and the reason the obvious test is wrong.
+
+    If every change is the same size, "the tick is that size" and "the tick is
+    tiny and price is jumping" fit equally. Taking the first would widen every
+    zone on the instrument by that jump.
+    """
+    vol = Volatility()
+    price = 4400.0
+    for _ in range(200):
+        price *= 1 + 5 / 10_000  # every change identical
+        vol.update(price)
+    assert vol.tick == 0.0
+
+
+def test_a_coarse_grid_is_still_believed():
+    """The case the tempting guard threw away.
+
+    On ADA the tick genuinely *is* most of a typical move — that is the whole
+    problem — so "the tick must be small against a typical move" rejects the
+    instrument this exists for. Distinct multiples separate them instead.
+    """
+    vol = Volatility()
+    price = 0.18
+    for step in [1, -1, 2, -1, 3, -2, 1, 1, -1, 2] * 6:
+        price = round(price + step * 0.0001, 6)
+        vol.update(price)
+    assert vol.tick == pytest.approx(0.0001)
+    # And it is a large fraction of a typical move, which is the point.
+    assert vol.tick / (vol.bps / 10_000 * price) > 0.3
+
+
+def test_a_coarse_grid_widens_the_zone_beyond_the_volatility_floor():
+    """A band tighter than the price grid is a rounding boundary, not a zone.
+
+    The widening is bounded by `MAX_ZONE_VOL` rather than granted outright,
+    because the tick is an *observed* minimum and errs large. What the test
+    pins is that the grid raises the floor at all — without it the zone would
+    sit at the volatility floor, narrower than the prices that can be quoted.
+    """
+    vol = Volatility()
+    price = 75.0
+    for step in [1, -1, 2, -1, 3, -2, 1, 1, -1, 2] * 6:
+        price = round(price + step * 0.01, 6)
+        vol.update(price)
+
+    level = Level(feed="sol", interval="3m", filter=Kalman(mean=price, variance=1e-18))
+    low, high = level.zone(vol)
+
+    assert vol.tick == pytest.approx(0.01)
+    # The grid floor is the binding one here, so the zone is wider than
+    # volatility alone would have made it.
+    assert vol.tick * lv.MIN_ZONE_TICKS > vol.price_units(price, lv.MIN_ZONE_VOL)
+    assert (high - low) > 2 * vol.price_units(price, lv.MIN_ZONE_VOL)
+
+
+def test_an_instrument_quoted_finely_is_left_alone():
+    """btc's tick is 1% of a minimum zone, so the volatility floor still binds.
+
+    The moves have to be realistic for the price or the test proves nothing:
+    steps of one tick on a 63,000 instrument put volatility on its own floor,
+    at which point the grid binds for a reason that has nothing to do with the
+    grid. Real btc measures 4.94bps, which is a few hundred ticks.
+    """
+    vol = Volatility()
+    price = 63_000.0
+    # Large moves with the occasional single-tick print, which is what a real
+    # series looks like — and what lets the tick be resolved at all.
+    for step in [250, -200, 1, 300, -150, -1, 400, -260, 1, 180, 220, -190] * 5:
+        price = round(price + step * 0.12, 6)
+        vol.update(price)
+
+    level = Level(feed="btc", interval="3m", filter=Kalman(mean=price, variance=1e-18))
+    low, high = level.zone(vol)
+
+    assert vol.tick == pytest.approx(0.12)
+    # A tick this fine cannot reach the volatility floor, so nothing changes.
+    assert vol.tick * lv.MIN_ZONE_TICKS < vol.price_units(price, lv.MIN_ZONE_VOL)
+    assert (high - low) == pytest.approx(2 * vol.price_units(price, lv.MIN_ZONE_VOL))

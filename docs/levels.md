@@ -566,11 +566,51 @@ universe**, and which instruments violate it cannot be predicted from price
 alone — it has to be measured per instrument, because it is a property of the
 venue's tick table.
 
-The remedy stands and now has weight behind it: the zone floor should be the
-larger of `MIN_ZONE_VOL` and a few ticks. A zone narrower than the price grid
-is not a zone but a rounding boundary, and on ADA today it would be a sixth of
-one. That is a change to `Level.zone`, and it needs the tick size, which the
-engine does not currently carry — `prices` sees it and `structures` does not.
+### The fix: a zone floor that knows about the grid
+
+`Level.zone` now takes its floor as the larger of `MIN_ZONE_VOL` and
+`MIN_ZONE_TICKS` (six) ticks either side, so a zone spans a dozen quotable
+prices and an approach, a touch and a departure can be different quotes.
+
+**The tick is measured, not configured.** `structures` has no route to the
+venue's tick table — `prices` sees the quotes and does not pass it on — and a
+configured number would go stale silently when an exchange re-tiers. Every
+price sits on a grid and every change is a multiple of its step, so the
+smallest non-zero change observed *is* the step, once enough have gone past.
+
+Measured effect, on 300 3m bars per instrument:
+
+| ticker | tick | zone before | zone after | |
+|---|---|---|---|---|
+| ADA | 0.0001 | 0.000111 | 0.000955 | **8.6x** |
+| LTC | 0.01 | 0.017 | 0.120 | **6.9x** |
+| DOGE | 0.00001 | 0.000028 | 0.000120 | 4.4x |
+| SOL | 0.01 | 0.028 | 0.120 | 4.2x |
+| XRP | 0.0001 | 0.000432 | 0.001200 | 2.8x |
+| LINK | 0.001 | 0.0058 | 0.0120 | 2.1x |
+| ETH | 0.01 | 0.777 | 0.777 | 1.0x |
+| BTC | 0.12 | 21.84 | 21.84 | 1.0x |
+
+It does nothing where price is already continuous relative to its zones and
+widens only where the grid binds, which is the shape it should have.
+
+**Two guards, and the first one I wrote was wrong.** A series that only ever
+moves by one identical amount says nothing about the grid: "the tick is that
+size" and "the tick is tiny and price is jumping" fit equally. My first guard
+was "the tick must be small against a typical move" — which sounds right and
+**rejects ADA**, the instrument this exists for, because there the tick
+genuinely *is* most of a typical move. That is the whole problem, not evidence
+against it.
+
+What separates them is the spread of multiples: a real grid produces moves of
+one step, then two, then five. A uniform jump produces only one. So the
+estimate is withheld until `TICK_MULTIPLES` distinct multiples have been seen.
+
+**And the ceiling still wins.** The tick is the smallest change that has
+*happened*, not the smallest possible, so an instrument that has not yet
+printed a single-step move reads as coarser than it is — the error is always
+upward. `MAX_ZONE_VOL` bounds what that can do; the estimate only ever shrinks,
+so it corrects itself with data.
 
 Still a **candidate for the outcome rate specifically**: the granularity is
 measured and the causal link to sol's 2,430 outcomes is not. But it is now a

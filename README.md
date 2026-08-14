@@ -13,19 +13,22 @@
   <a href="https://github.com/nodalytics/till_infinity/actions/workflows/ci.yml">
     <img src="https://github.com/nodalytics/till_infinity/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
+  <a href="https://github.com/nodalytics/till_infinity/actions/workflows/deploy.yml">
+    <img src="https://github.com/nodalytics/till_infinity/actions/workflows/deploy.yml/badge.svg" alt="Deploy">
+  </a>
   <a href="https://t.me/till_infinity_signals">
     <img src="https://img.shields.io/badge/telegram-signals-2CA5E0?logo=telegram&logoColor=white" alt="Telegram">
   </a>
 </p>
 
 <p align="center">
-  Live alerts: <a href="https://t.me/till_infinity_signals"><b>t.me/till_infinity_signals</b></a>
-</p>
-
-<p align="center">
   <a href="https://t.me/till_infinity_signals">
     <img src="docs/telegram-qr.png" alt="Scan to join t.me/till_infinity_signals" width="140">
   </a>
+</p>
+
+<p align="center">
+  <b>Live alerts</b> — scan, or <a href="https://t.me/till_infinity_signals">t.me/till_infinity_signals</a>
 </p>
 
 ## The idea
@@ -113,9 +116,10 @@ uv run till-infinity prices quotes        # stream live bid/ask, forever
 uv run till-infinity prices info          # what is stored
 ```
 
-Six instruments by default — **EURUSD, GBPUSD, gold, BTC, US100** (Nasdaq 100)
-and **SPX500** — each from five to seven venues, on intervals from 1m to 1w.
-Indices answer to whatever you call them (`-s nasdaq`, `-s sp500`, `-s ndx`),
+Fourteen instruments by default — the **seven FX majors**, **gold**, **BTC**,
+**ETH**, **SOL**, **USDCNH**, **US100** (Nasdaq 100) and **SPX500** — each from
+five to seven venues, on intervals from 1m to 1w. They answer to whatever you
+call them (`-s nasdaq`, `-s sp500`, `-s kiwi`, `-s solana`),
 and `-s` also takes `VENUE:TICKER` or a bare Yahoo ticker. Full guide:
 **[docs/prices.md](docs/prices.md)**.
 
@@ -169,7 +173,7 @@ that worked:
 | **false breakout** | through, then given back |
 | **back check** | broke, pulled back, held, carried on — risk defined by the flipped level |
 
-Built on **5m through 1w**, each timeframe with its own volatility and its own
+Built on **1m through 1w**, each timeframe with its own volatility and its own
 rate of forgetting — one volatility unit on gold is $0.75 on 5m and $52.23 on
 1w, seventy times end to end. Levels at one price across timeframes combine,
 the higher carrying significance and the lower placement.

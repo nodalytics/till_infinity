@@ -66,6 +66,26 @@ MIN_ZONE_VOL = 0.35
 #: "level" is a region, and a region that wide predicts nothing.
 MAX_ZONE_VOL = 3.0
 
+#: A zone is also never narrower than this many **ticks** — the smallest price
+#: change the venue can quote.
+#:
+#: `MIN_ZONE_VOL` assumes price is continuous relative to the zone, so that
+#: arriving in one and leaving it are separate events. Measured across eight
+#: instruments, that holds for btc (a tick is 1% of a minimum zone) and eth
+#: (3%) and fails for most of the rest: SOL 71%, DOGE 72%, LTC 114%, ADA 180%.
+#: On ADA the smallest possible price change is nearly twice the whole zone, so
+#: "inside" is one quotable price and the level cannot be approached at all.
+#:
+#: Six either side, so a zone spans a dozen quotable prices and there is room
+#: for an approach, a touch and a departure to be distinguishable. Below a
+#: handful of ticks a zone is not a band, it is a rounding boundary.
+#:
+#: It cannot be inferred from price: exchanges set tick sizes in decade steps,
+#: so the ratio jumps between decades rather than scaling within them, and ADA
+#: at $0.18 is worse than SOL at $75. It has to be measured per instrument,
+#: which `Volatility.tick` does from the series itself.
+MIN_ZONE_TICKS = 6.0
+
 #: How far price must travel away from a level, in volatility units, before the
 #: interaction counts as resolved rather than still in progress.
 RESOLVE_VOL = 1.5
@@ -470,7 +490,19 @@ class Level:
         edges are clamped in volatility units to stay meaningful in any regime.
         """
         half = self.filter.sigma * ZONE_SIGMA
-        floor = vol.price_units(self.price, MIN_ZONE_VOL)
+        # The floor is whichever binds: a typical move, or enough ticks that
+        # the band is wider than the grid price is quoted on. See
+        # MIN_ZONE_TICKS — on a coarsely quoted instrument the second is the
+        # larger by an order of magnitude.
+        floor = max(vol.price_units(self.price, MIN_ZONE_VOL), vol.tick * MIN_ZONE_TICKS)
+        # The ceiling still wins if the two cross, and that is deliberate. The
+        # tick is *observed* — the smallest change that has actually happened —
+        # so an instrument that has not yet printed a single-step move reads as
+        # coarser than it is, and the error is always upward. Letting the grid
+        # floor override the ceiling would turn that transient
+        # over-estimate into a zone many times too wide; clamping bounds it at
+        # a number already defined as "so wide the level predicts nothing".
+        # The estimate only ever shrinks, so this corrects itself with data.
         ceiling = vol.price_units(self.price, MAX_ZONE_VOL)
         half = min(max(half, floor), ceiling)
 
