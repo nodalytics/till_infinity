@@ -142,16 +142,22 @@ class Series:
     lows: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
     since_reform: int = 0
 
-    def add(self, when: int, high: float, low: float, close: float) -> None:
+    def add(self, when: int, high: float, low: float, close: float) -> bool:
+        """Fold a bar in. True if it is a new one rather than a correction.
+
+        The answer matters to anything *accumulating* rather than storing: see
+        the volatility update in `observe_bar`.
+        """
         # A bar arriving for a time already held is a correction, not a new bar.
         if self.times and when == self.times[-1]:
             self.highs[-1], self.lows[-1], self.closes[-1] = high, low, close
-            return
+            return False
         self.times.append(when)
         self.highs.append(high)
         self.lows.append(low)
         self.closes.append(close)
         self.since_reform += 1
+        return True
 
     @property
     def ready(self) -> bool:
@@ -619,12 +625,28 @@ class Engine:
 
         self._now = max(self._now, when)
         series = self.series(feed, interval)
-        series.add(when, high, low, float(close))
+        fresh = series.add(when, high, low, float(close))
         # This timeframe's own volatility: a typical 4h move is not a typical
         # 5m move, and one estimate for both makes every threshold expressed in
         # volatility units wrong for all but whichever series updates most.
         vol = self.vol.of(feed, interval)
-        vol.update(float(close))
+        # Once per *bar*, not once per venue row. `Consensus.observe`
+        # deliberately answers again on every venue that reports a bar, so the
+        # median improves within a sweep rather than waiting; `Series.add`
+        # handles the repeat by overwriting. A volatility estimate has no such
+        # handling — folding the same close in once per venue fed it a run of
+        # zero returns and dragged the estimate down by however many venues
+        # report past quorum. Measured on the live feeds: six venues on EURUSD
+        # and GBPUSD divided it by four, five on XAUUSD by three, four on
+        # BTCUSD by two, and US500 at exactly quorum was the only one correct.
+        #
+        # Everything this project expresses in volatility units divides by that
+        # number, so distances read two to four times larger than they were:
+        # zone width, resolve distance, KEEP_VOL, the edge gate. The cost of
+        # taking the first quorum's median rather than the last venue's is a
+        # rounding error beside it.
+        if fresh:
+            vol.update(float(close))
         # Pivots are session structures priced at today's scale, so they use the
         # reference estimate rather than the bar interval that happened to
         # deliver them — a 4h bar completing a day does not make it a 4h level.
@@ -642,8 +664,18 @@ class Engine:
         if interval != self.touch_interval(feed, when):
             return []
         calls: list[Call] = []
+        # A bar is stamped with its **open** time, but it is not knowable until
+        # it closes — and quotes carry wall clock. Feeding both to one tracker
+        # mixed two clocks a bar apart: a touch opened by a quote and resolved
+        # by the bar that closed after it recorded a *negative* duration, which
+        # is 10% of resolved touches in the journal, every one of them 5m and
+        # every one about 300 seconds. The number itself is the small harm. The
+        # large one is that `horizon`, `trap_window` and the GAP_FACTOR weekend
+        # guard all test `when - touch.started`, and a negative elapsed trips
+        # none of them.
+        observed = when + lv.SECONDS.get(interval, 0.0)
         for other in self.intervals_for(feed):
-            calls += self.check(feed, other, float(close), when, low, high)
+            calls += self.check(feed, other, float(close), observed, low, high)
         return calls
 
     def observe_quote(self, payload: dict) -> list[Call]:

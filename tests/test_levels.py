@@ -1972,3 +1972,106 @@ def test_an_instrument_quoted_finely_is_left_alone():
     # A tick this fine cannot reach the volatility floor, so nothing changes.
     assert vol.tick * lv.MIN_ZONE_TICKS < vol.price_units(price, lv.MIN_ZONE_VOL)
     assert (high - low) == pytest.approx(2 * vol.price_units(price, lv.MIN_ZONE_VOL))
+
+
+def test_a_bar_is_observed_at_its_close_not_its_open():
+    """Bars are stamped with the open; quotes carry wall clock. One tracker.
+
+    A touch opened by a quote and resolved by the bar that closed *after* it
+    recorded a negative duration — 10% of resolved touches in the journal,
+    every one 5m, every one about 300 seconds, which is exactly one bar. The
+    duration itself is cosmetic. What is not is that `horizon`, `trap_window`
+    and the `GAP_FACTOR` weekend guard all test `when - touch.started`, and a
+    negative elapsed satisfies none of them: a touch that should have chopped
+    out, converted to a break, or been discarded as a gap instead stays open.
+    """
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+
+    seen: list[float] = []
+    original = engine.check
+    engine.check = lambda *a, **k: (seen.append(a[3]), original(*a, **k))[1]
+
+    opened = 2_000_000
+    for bar in _bar("gold", "5m", opened, 4425.0):
+        engine.observe_bar(bar)
+
+    assert seen, "the bar never reached a touch check"
+    assert all(when == opened + 300 for when in seen), (
+        "a 5m bar was observed at its open time, which is 300 seconds before "
+        "anyone could have known it"
+    )
+
+
+def test_a_quote_and_the_bar_that_follows_it_agree_on_which_came_first():
+    """The invariant the two clocks broke: elapsed time is never negative."""
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+
+    level = engine.levels("gold", "5m")[0]
+    vol = engine.vol.of("gold", "5m")
+    features = reactions.features_for(level, Side.ABOVE, level.price, vol)
+
+    # A quote opens the touch partway through the bar, at wall clock.
+    started = 2_000_000 + 250
+    engine.tracker.begin(level, level.price, features, started)
+    # The bar covering that quote opens at 2_000_000 and closes at +300.
+    for bar in _bar("gold", "5m", 2_000_000, level.price * 1.02):
+        engine.observe_bar(bar)
+
+    touch = engine.tracker.open_touch(level)
+    resolved = [t for _, t in engine._resolved if t.started == started]
+    for done in resolved:
+        assert done.resolved >= done.started, "a touch resolved before it began"
+    assert touch is None or touch.started == started
+
+
+@pytest.mark.parametrize("venues", [3, 4, 5, 6])
+def test_volatility_does_not_depend_on_how_many_venues_report(venues):
+    """The estimate is per bar. It was per venue row, and that divided it.
+
+    `Consensus.observe` answers again on every venue that reports a bar, on
+    purpose, so the median improves within a sweep instead of waiting for a
+    venue that may never arrive. `Series.add` handles the repeat by
+    overwriting. The volatility estimate had no such handling: it folded the
+    same close in once per venue and read a run of zero returns.
+
+    Measured on the live feeds, that divided the estimate by the venue count
+    past quorum — four on EURUSD and GBPUSD, three on XAUUSD, two on BTCUSD —
+    and since every threshold here is expressed in volatility units, and a
+    distance in those units *divides* by this number, every distance read two
+    to four times larger than it was. A level 0.4 volatility units away
+    presented as 1.6, which is past `resolve_vol`: an arrival recorded as a
+    rejection having observed nothing.
+    """
+    names = ("a", "b", "c", "d", "e", "f")[:venues]
+    engine = Engine(intervals=("5m",))
+    rand = random.Random(11)
+    price, when = 4425.0, 1_000_000
+    for i in range(700):
+        price *= 1 + rand.gauss(0, 0.0012)
+        for venue in names:
+            engine.observe_bar(
+                {
+                    "feed": "gold",
+                    "venue": venue,
+                    "interval": "5m",
+                    "time": when + i * 300,
+                    "high": price * 1.001,
+                    "low": price * 0.999,
+                    "close": price,
+                }
+            )
+
+    assert engine.vol.of("gold", "5m").bps == pytest.approx(9.31, abs=0.05)
+
+
+def test_a_corrected_bar_does_not_count_as_a_second_observation():
+    """The narrow version of the same invariant, without the venue machinery."""
+    series = Engine(intervals=("5m",)).series("gold", "5m")
+    assert series.add(1_000_000, 10.0, 9.0, 9.5) is True
+    assert series.add(1_000_000, 11.0, 9.0, 10.5) is False, "a correction read as a new bar"
+    assert series.add(1_000_300, 11.0, 9.0, 10.5) is True
+    assert list(series.closes) == [10.5, 10.5]  # the correction replaced, not appended
