@@ -38,11 +38,26 @@ for 2,430, and 3m and 5m for 4,305 between them, against 10 on 4h and none on
 the daily or weekly. So a fit would learn one instrument on two fine
 timeframes over one afternoon and report it as a model of everything.
 
-**So `fit` stays gated, and the fourth route was not the last one.** What to
-look for next: the rate is dominated by fine timeframes on one instrument, so
-the question is what makes a 3m sol level resolve so often — re-arm, zone
-width, or a touch check that runs on every quote against a level that price is
-sitting inside.
+**So `fit` stays gated, and the fourth route was not the last one.**
+
+**Investigated, with one hypothesis refuted and one candidate measured.** The
+re-arm hole is *not* it: `check` sets `waiting = contains(price)` after a
+resolution, which looked like it bypassed `REARM_VOL`, but a reproduction
+oscillating across a zone edge produced one resolution rather than dozens — a
+small oscillation never resolves at all, it times out.
+
+The candidate is **price granularity**. sol carries the same volatility as btc
+and eth on one eight-hundredth of the price, so its smallest quotable step is
+0.0726v against btc's 0.0083v — nine times larger as a fraction of a typical
+move, and a fifth of a minimum-width zone. Price steps across a sol zone in
+five ticks where btc needs forty. Numbers and the proposed remedy in
+[levels.md](levels.md), "Price is not continuous, and the zone floor assumes it
+is".
+
+**It is a candidate, not a conclusion**: the granularity is measured, the
+causal link to the outcome count is not. The check that would settle it is a
+second sub-$100 instrument — if it behaves the same way, it is the price and
+not the coin.
 
 The older examples remain unusable regardless: recorded under the inflated
 counts, and the pre-fix journal calls direction correctly 99.9% of the time

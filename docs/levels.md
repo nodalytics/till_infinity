@@ -505,6 +505,45 @@ States: `fresh → tested → broken → flipped`. **Flipped** — broken, then
 respected from the other side — has its own state because it is a *repeating
 structure*, which is the thing this package exists to notice.
 
+### Price is not continuous, and the zone floor assumes it is
+
+`MIN_ZONE_VOL` puts a floor of 0.35v under a zone's half-width, which stops a
+confident level becoming a line. It says nothing about the **smallest step
+price can actually take**, and on a cheap instrument that turns out to matter.
+
+Measured over 1,794 3m bars per feed, where "tick" is the smallest non-zero
+change actually observed:
+
+| feed | price | volatility | tick | tick in volatility units |
+|---|---|---|---|---|
+| btc | 63,138 | 9.70bps | 0.51 | 0.0083v |
+| eth | 1,885 | 9.17bps | 0.005 | 0.0029v |
+| gold | 4,387 | 1.04bps | 0.002 | 0.0044v |
+| **sol** | **75.56** | 9.12bps | 0.005 | **0.0726v** |
+
+sol carries the same volatility as btc and eth and **one eight-hundredth of the
+price**, so its smallest quotable step is nine times btc's and twenty-five
+times eth's as a fraction of a typical move. Against the 0.35v floor, one sol
+tick is a fifth of a minimum-width zone: price steps across in five ticks where
+btc needs forty.
+
+**The consequence is more interactions, not different ones.** Every model here
+assumes price is effectively continuous relative to the zones it is measured
+against — that arriving in a zone and leaving it are distinguishable events
+rather than consecutive quotes. That assumption degrades smoothly with price,
+and sol is the first instrument cheap enough to break it.
+
+It is the leading explanation for sol producing 2,430 of the last 5,000
+outcomes, and it is a **candidate rather than a conclusion**: the granularity is
+measured, the causal link to the outcome count is not. What would settle it is
+the same comparison on another cheap instrument — if a second sub-$100
+instrument behaves the same way, it is the price and not the coin.
+
+The remedy, if it is confirmed, is that the zone floor should be the larger of
+`MIN_ZONE_VOL` and a few ticks: a zone narrower than the price grid is not a
+zone, it is a rounding boundary. That is a change to `Level.zone`, and it wants
+the confirmation first.
+
 ## 6b. One visit is one touch
 
 A touch counter must measure how many times price *turned* at a level, not how
