@@ -4,6 +4,25 @@ Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
+## 0. Two things found on 2026-08-14, both ahead of everything below
+
+**The outcome rate needs explaining before any fit.** The journal recorded 976
+outcomes in one hour and 8,411 in six, against a total of 76 the previous day.
+The re-arm fixes should have made resolutions *rarer*. Either the cold start and
+warm replay generate them en masse, or there is a fourth route to over-counting
+that the three touch fixes did not close. It matters beyond tidiness: at
+~1,000/hour, `MIN_EXAMPLES` is reached from a few minutes of one afternoon
+rather than from a spread of market conditions, which is not the dataset the
+walk-forward validation assumes. Do not run `fit` until this is understood.
+
+**Agents have never woken.** The whole log contains one line — `agents started`
+— across roughly seven hours and ~14 thirty-minute windows. It is not the
+throttle and not the credentials: a one-off `agents ask` works on both
+providers. That leaves the wake gate, `AGENTS_SPREAD_BPS` and
+`AGENTS_IMPORTANCE`, whose thresholds are apparently never met. A config
+question before it is a code one, and the gate should probably report *why* it
+declined to wake rather than staying silent.
+
 ## 1. Split `observe_bar`: form from own bars, touch from the finest
 
 `Engine.seed` replays stored bars through `observe_bar`, which both **forms**

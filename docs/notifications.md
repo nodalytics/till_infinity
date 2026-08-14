@@ -148,6 +148,24 @@ pair is not a comparison. And the fields the filter routes on (`shape`,
 the headline, so `instrument: gold` under a line containing "GOLD" is the
 machine talking to itself.
 
+## Why a quiet channel may be a working one
+
+Two changes deliberately reduce volume, and both look identical to a fault from
+the outside.
+
+**Costs.** An expected push is charged the median quoted spread before it is
+allowed to qualify ([levels.md](levels.md#costs-come-off-before-anything-is-claimed)),
+so edges that sit inside the spread no longer arrive. They were never takeable;
+they only looked it.
+
+**Confluence.** Three timeframes agreeing on one price now send **one** message
+rather than three. Volume drops without a single finding being lost.
+
+The check when a quiet channel worries you is `structures levels` and
+`structures zones`: levels forming and calls logged means the gates are working.
+The log line for each delivered alert also carries the first body line, so what
+was *sent* can be compared against what was computed.
+
 ## Filtering: what a channel accepts
 
 A channel people actually read is quiet most of the time. The detectors are not

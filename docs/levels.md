@@ -1257,9 +1257,26 @@ wrong direction. `actionable` therefore also requires the net push to still
 point the way the gross push did. A consumed edge is not a trade in reverse; it
 is no trade.
 
-`cost_vol` defaults to zero, which leaves every existing call unchanged rather
-than silently re-gating history against a cost nobody measured. **Wiring the
-measured spread into it is the outstanding half** — see [todo.md](todo.md).
+Quotes carry `spread_bps`, so the engine keeps a window of them per instrument
+and charges the **median** — a median for the reason the consensus is one: a
+mean is dragged by the outlier it exists to ignore. An exponential average went
+in first and failed its own test, moving the charged cost tenfold on a single
+hundred-fold print, which would have silenced a whole instrument until it
+decayed.
+
+### Expect the channel to go quieter, and read that as the change working
+
+Every edge is now charged the cost of taking it, so any signal whose expected
+push sits inside the spread stops qualifying. Some of what was being sent before
+was gross — an edge that looked takeable because nothing had deducted what
+taking it costs.
+
+**A drop in volume is the success case here, not a regression.** This is worth
+knowing in advance, because the two are indistinguishable from the outside: a
+filter working perfectly and a service quietly broken both present as a channel
+that went quiet. If it goes *silent* rather than quieter, check
+`structures levels` — levels still forming with calls still logged means the
+cost gate is doing its job; no levels at all means something else broke.
 
 ## Honest status
 
