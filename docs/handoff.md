@@ -137,18 +137,20 @@ statistics and into `facto`'s targets as that level's reaction. On EURUSD one
 weekend resolved as a 27-volatility-unit rejection.
 
 ```bash
-# Any outcome with a lifetime past four horizons is the guard having failed.
-sudo docker exec -i till-infinity python -c "
-import json, sqlite3
-c = sqlite3.connect('file:/app/.data/journal/journal.db?mode=ro', uri=True)
-rows = [json.loads(x) for (x,) in c.execute(\"select context from entries where kind='outcome'\")]
-long = [r for r in rows if (r.get('seconds') or 0) > 14400]
-print(len(long), 'outcomes over four hours'); print(long[:3])"
+sudo docker exec till-infinity till-infinity structures gaps --hours 72
 ```
 
-Expected: **zero**. A handful of large `push_vol` values on Monday morning that
-are genuine gap trades will still appear as *new* touches, which is correct —
-the guard drops interactions that span the gap, not the reopening itself.
+Expected: **`none — the gap guard held`**, and exit 0. Anything listed is the
+guard having failed, and the command exits 1 so a cron can act on it.
+
+It splits by whether the instrument closes, because that is the control.
+**Crypto never stops**, so a gap on btc, eth or sol means the *collector*
+stopped rather than the market — the same guard firing for a different reason,
+and the difference is only visible with both classes side by side.
+
+A handful of large `push_vol` values on Monday morning that are genuine gap
+trades will still appear as *new* touches, which is correct: the guard drops
+interactions that span the close, not the reopening itself.
 
 ## Then, in order
 

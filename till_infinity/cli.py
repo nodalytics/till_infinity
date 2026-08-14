@@ -1647,6 +1647,81 @@ def structures_fit(db, factors):
     console.print(f"[{colour}]{escape(report.verdict)}[/]")
 
 
+#: The tracked feeds, for picking the instrument out of an entry's tags.
+FEED_TAGS: frozenset[str] = frozenset(px.DEFAULT_SYMBOLS)
+
+#: Instruments that never close. The rest halt at the weekend, which makes the
+#: pair a free controlled experiment: same code, same guard, one class stops.
+ALWAYS_OPEN: frozenset[str] = frozenset({"btc", "eth", "sol"})
+
+
+@structures.command("gaps")
+@click.option("--db", type=click.Path(path_type=Path), help="Journal SQLite file.")
+@click.option(
+    "--hours",
+    type=float,
+    default=72.0,
+    show_default=True,
+    help="How far back to look. A weekend needs at least 72.",
+)
+def structures_gaps(db, hours):
+    """Did any interaction span a period nobody was watching?
+
+    The check after a market close. A touch open at the Friday close used to
+    resolve on the Sunday reopen, and the recorded push was the *gap* — written
+    into the level's own statistics and into `facto`'s targets as that level's
+    reaction. `GAP_FACTOR` discards those now, so the expected answer here is
+    **none**, and anything listed is the guard having failed.
+
+    Split by whether the instrument trades through the weekend, because that is
+    the control: crypto never closes, so a gap there means the collector
+    stopped rather than the market. Same guard, different cause, and the
+    difference is only visible side by side.
+    """
+    from till_infinity.structures import reactions as rx
+
+    path = _journal_db(db)
+    ceiling = rx.Tracker().horizon * rx.GAP_FACTOR
+    try:
+        entries = jr.read(path, kind="outcome", hours=hours, limit=jr.MAX_ROWS * 200)
+    except FileNotFoundError:
+        console.print(f"[yellow]no journal at {escape(str(path))}[/]")
+        raise SystemExit(1) from None
+
+    rows = []
+    for entry in entries:
+        seconds = entry.context.get("seconds")
+        if isinstance(seconds, int | float) and seconds > ceiling:
+            feed = next((tag for tag in entry.tags if tag in FEED_TAGS), "?")
+            rows.append((feed, float(seconds), entry.context.get("push_vol"), entry.title))
+
+    console.print(
+        f"{len(entries):,} outcome(s) in the last {hours:g}h, "
+        f"anything past {ceiling:.0f}s spans an unobserved period"
+    )
+    if not rows:
+        console.print("[green]none — the gap guard held[/]")
+        return
+
+    table = Table(title=f"{len(rows)} outcome(s) the guard did not catch")
+    for column in ("feed", "open for", "push", "closes?", "entry"):
+        table.add_column(column, justify="right" if column in ("open for", "push") else "left")
+    for feed, seconds, push, title in sorted(rows, key=lambda r: -r[1])[:25]:
+        table.add_row(
+            feed,
+            f"{seconds / 3600:.1f}h",
+            f"{push:+.2f}v" if isinstance(push, int | float) else "-",
+            "no" if feed in ALWAYS_OPEN else "yes",
+            escape(title[:60]),
+        )
+    console.print(table)
+    console.print(
+        "[yellow]A crypto feed here means the collector stopped, not the market — "
+        "those never close.[/]"
+    )
+    raise SystemExit(1)
+
+
 @main.group()
 def journal() -> None:
     """The decision journal: what was decided, and why at that moment."""
