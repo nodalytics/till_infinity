@@ -135,7 +135,9 @@ def encode(context: dict[str, Any]) -> dict[str, float]:
     return out
 
 
-def dataset(journal_db: Path | str, *, limit: int = JOURNAL_ROWS, since: float = 0.0) -> list[Example]:
+def dataset(
+    journal_db: Path | str, *, limit: int = JOURNAL_ROWS, since: float = 0.0
+) -> list[Example]:
     """Assemble `(features, outcome)` pairs from the journal, oldest first.
 
     The outcome entry carries both, which is not an accident: it was written
