@@ -126,6 +126,31 @@ class Volatility:
         default_factory=lambda: stats.RollingQuantile(q=TICK_QUANTILE, window_size=TICK_WINDOW)
     )
 
+    def __setstate__(self, state: object) -> None:
+        """Restore, filling in fields that did not exist when this was saved.
+
+        Production saves these models and restores them on every start, so a
+        new field is a **restart-time crash** rather than a migration to do
+        later. A `slots=True` dataclass has no `__dict__` to fall back on, so
+        an absent field is not defaulted, it is missing: every read of it
+        raises `AttributeError`.
+
+        That is exactly what happened when `_tick`, `_steps` and `_grid` were
+        added. The service came up, reported "restored models", and then threw
+        on the first quote — inside the structures consumer, so the process
+        stayed healthy and simply stopped producing. Four hours of silence with
+        the container at 11% CPU and no error the health check could see.
+
+        `Engine` already carries this for the same reason. Doing it here rather
+        than only there matters because `Book` holds one of these per
+        instrument *and* timeframe, so a single missing field takes out every
+        estimate at once.
+        """
+        values = state[1] if isinstance(state, tuple) else state
+        blank = Volatility()
+        for slot in self.__slots__:
+            setattr(self, slot, values.get(slot, getattr(blank, slot)))
+
     @property
     def tick(self) -> float:
         """The smallest price change this instrument has been seen to make.
@@ -279,6 +304,13 @@ class Book:
 
     half_life: float = HALF_LIFE
     _by_key: dict[tuple[str, str], Volatility] = field(default_factory=dict)
+
+    def __setstate__(self, state: object) -> None:
+        """Same reason as `Volatility.__setstate__`, and this one holds them all."""
+        values = state[1] if isinstance(state, tuple) else state
+        blank = Book()
+        for slot in self.__slots__:
+            setattr(self, slot, values.get(slot, getattr(blank, slot)))
 
     def of(self, feed: str, interval: str = "") -> Volatility:
         key = (feed, interval)

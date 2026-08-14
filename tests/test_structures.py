@@ -778,3 +778,43 @@ def test_counting_bars_in_a_store_that_does_not_exist(tmp_path):
     from till_infinity import stack as st
 
     assert st._stored_bars(tmp_path / "nothing.db") == 0
+
+
+def test_a_volatility_saved_before_a_field_existed_still_loads():
+    """The failure mode is a silent stop, not a crash, which is why it ran for hours.
+
+    Production saves these models and restores them on every start. A
+    `slots=True` dataclass has no `__dict__`, so a field added after the save
+    is missing rather than defaulted and every read raises. When `_tick`,
+    `_steps` and `_grid` were added the service came up, logged "restored
+    models", then threw on the first quote inside the structures consumer — so
+    the container stayed healthy at 11% CPU and simply produced nothing for
+    four hours.
+    """
+    import pickle
+
+    from till_infinity.structures.volatility import Book, Volatility
+
+    vol = Volatility()
+    price = 100.0
+    for n in range(60):
+        price += 0.01 if n % 2 else -0.005
+        vol.update(price)
+
+    state = vol.__getstate__()
+    slots = state[1] if isinstance(state, tuple) else state
+    # Exactly what an older save looks like: the newer fields are simply absent.
+    for gone in ("_tick", "_steps", "_grid"):
+        slots.pop(gone, None)
+
+    restored = Volatility.__new__(Volatility)
+    restored.__setstate__(state)
+
+    assert restored.tick == 0.0  # no grid known yet, rather than an AttributeError
+    restored.update(price + 0.01)  # the call that used to take the consumer down
+    assert restored.bps > 0, "the fields that did survive were dropped too"
+
+    # And through a real pickle round trip, including inside the Book that holds them.
+    book = Book()
+    book.of("gold", "5m").update(100.0)
+    assert pickle.loads(pickle.dumps(book)).of("gold", "5m").tick == 0.0
