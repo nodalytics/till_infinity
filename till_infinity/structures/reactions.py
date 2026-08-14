@@ -912,6 +912,14 @@ class Tracker:
                 continue  # a gap, not an outcome — see GAP_FACTOR
             touch.outcome = Outcome.BREAK if touch.breaking else Outcome.CHOP
             touch.resolved = when
+            # No price arrived to close this out, so the push is whatever the
+            # touch had already reached: the excursion for a break that got
+            # through and went quiet, and nothing at all for chop, which is
+            # what chop means. Signed like `_close`'s — positive is up — so a
+            # break away from a level approached from above reads negative.
+            if touch.outcome is Outcome.BREAK:
+                sign = -1.0 if touch.features.side is Side.ABOVE else 1.0
+                touch.push_vol = sign * touch.excursion_vol
             self.memory.add(touch)
             dropped.append(touch)
         return dropped

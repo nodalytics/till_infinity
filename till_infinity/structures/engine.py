@@ -748,6 +748,67 @@ class Engine:
         """Every interval this instrument has levels at, pivots included."""
         return sorted({interval for (this, interval) in self._levels if this == feed})
 
+    def _deliver(
+        self, level: lv.Level, done: reactions.Touch, vol: Volatility, when: float
+    ) -> None:
+        """Everything downstream of a resolved touch, wherever it resolved.
+
+        Both ways a touch can end have to arrive here. `update` closing one on
+        a price and `expire` closing one on the clock are the same event to a
+        level, to the journal and to `facto`, and only the first was being
+        delivered.
+        """
+        # The origin, not the extreme. The extreme is a wick — liquidity taken
+        # a fraction beyond the level at a price nobody traded around — while
+        # the origin is where the leg in ended and the leg out began, which is
+        # the price the level is actually drawn at.
+        level.observe_touch(done.origin or done.extreme, vol, when)
+        # The wick is the zone's far edge, not noise to discard.
+        level.observe_wick(done.features.side, done.origin or done.extreme, done.extreme, vol)
+        log.debug("level %s %.5g resolved %s", level.feed, level.price, done.outcome)
+        self._resolved.append((level, done))
+        # Bounded: a consumer that stops draining must not become a slow memory
+        # leak in a service designed to run for months.
+        if len(self._resolved) > MAX_RESOLVED:
+            del self._resolved[: len(self._resolved) - MAX_RESOLVED]
+
+    def _drain_expired(self, when: float) -> None:
+        """Deliver the touches `expire` closed on the clock rather than a price.
+
+        `Tracker.expire` closes them, sets an outcome and folds them into the
+        kNN memory — and its return value was discarded, so that memory was the
+        only place they reached. No `level.record`, no Kalman update, nothing in
+        `_resolved`, so nothing in the journal and nothing in `facto`. Measured
+        on a replay of the stored bars: 26.7% of all resolutions, and because
+        it is where a break that got through and went quiet resolves, 97.5% of
+        breaks. The break rate downstream read 0.3% against a real 8.2%.
+
+        Touches are keyed by (feed, price) and `expire` hands back only the
+        touch, but a `Touch` carries its feed, interval and level price, so the
+        level can be found again without the tracker holding a reference to it
+        — which matters, because the engine is pickled and a new field would
+        have to be migrated.
+        """
+        expired = self.tracker.expire(when)
+        if not expired:
+            return
+        known = {
+            (level.feed, level.interval, round(level.price, 8)): level
+            for levels in self._levels.values()
+            for level in levels
+        }
+        for touch in expired:
+            level = known.get((touch.feed, touch.interval, round(touch.level_price, 8)))
+            if level is None:
+                # The level was re-formed or pruned while the touch was open.
+                # Nothing to credit it to; the kNN memory already has it.
+                continue
+            # `expire` cannot do this itself — it has the touch, not the level.
+            level.record(touch.features.side, touch.outcome, touch.push_vol, when)
+            if touch.outcome is lv.Outcome.BREAK and touch.broke_at:
+                level.broke_at = touch.broke_at
+            self._deliver(level, touch, self.vol.of(touch.feed, touch.interval), when)
+
     def check(
         self,
         feed: str,
@@ -779,17 +840,7 @@ class Engine:
                     # nobody traded around — while the origin is where the leg
                     # in ended and the leg out began, which is the price the
                     # level is actually drawn at.
-                    level.observe_touch(done.origin or done.extreme, vol, when)
-                    # The wick is the zone's far edge, not noise to discard.
-                    level.observe_wick(
-                        done.features.side, done.origin or done.extreme, done.extreme, vol
-                    )
-                    log.debug("level %s %.5g resolved %s", feed, level.price, done.outcome)
-                    self._resolved.append((level, done))
-                    # Bounded: a consumer that stops draining must not become a
-                    # slow memory leak in a service designed to run for months.
-                    if len(self._resolved) > MAX_RESOLVED:
-                        del self._resolved[: len(self._resolved) - MAX_RESOLVED]
+                    self._deliver(level, done, vol, when)
                     # Only hold the level back if price is *still* in the zone.
                     # An interaction that resolved by price leaving has already
                     # done the leaving, and making it wait for a second exit
@@ -835,7 +886,7 @@ class Engine:
                 )
             )
             self.calls += 1
-        self.tracker.expire(when)
+        self._drain_expired(when)
         return calls
 
     def _roll_sessions(

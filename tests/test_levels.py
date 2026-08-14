@@ -2123,3 +2123,41 @@ def test_a_touch_arriving_at_the_far_edge_is_not_born_resolved():
     done = tracker.update(level, away, vol, when=1_000_120)
     assert done is not None
     assert done.outcome is Outcome.REJECT
+
+
+def test_a_touch_that_expires_reaches_the_level_and_the_journal():
+    """A touch ends two ways, and only one of them was being delivered.
+
+    `Tracker.expire` closes a touch on the clock, gives it an outcome and folds
+    it into the kNN memory — and `Engine.check` discarded what it returned, so
+    that memory was the only place it ever reached. No `level.record`, no
+    Kalman update, nothing appended to `_resolved`, so nothing in the journal
+    and nothing in `facto`.
+
+    It matters far past the count, because expiry is where a break that got
+    through and then went quiet resolves. On a replay of the stored bars,
+    delivering these took breaks from 11 to 61 and back checks from 3 to 29 —
+    the second because `level.broke_at` is what makes a retest detectable, and
+    it was only ever set on the path that already worked.
+    """
+    engine = Engine(intervals=("5m",))
+    vol = engine.vol.of("gold", "5m")
+    rand = random.Random(7)
+    price = 2000.0
+    for _ in range(200):
+        price *= 1 + rand.gauss(0, 0.0005)
+        vol.update(price)
+    level = _seed_level(engine, "gold", "5m", 2000.0)
+    features = reactions.features_for(level, Side.ABOVE, 2000.0, vol)
+    engine.tracker.begin(level, 2000.0, features, when=1_000_000)
+
+    before = len(engine._resolved)
+    # Well past horizon * 2, and short of the gap factor that would discard it.
+    engine.check("gold", "5m", 2000.0, 1_000_000 + engine.tracker.horizon * 3)
+
+    assert engine.tracker.open_touch(level) is None, "the touch never closed"
+    assert len(engine._resolved) == before + 1, "an expired touch reached nothing downstream"
+    resolved_level, touch = engine._resolved[-1]
+    assert resolved_level is level
+    assert touch.outcome is Outcome.CHOP  # it went nowhere, which is what chop is
+    assert level.touches > 0, "the level's own statistics never saw it"
