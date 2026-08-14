@@ -211,7 +211,7 @@ and on a 6.7GB box that is the constraint which bites first — 1m candles acros
 fourteen instruments and six venues are most of the growth.
 
 ```bash
-till-infinity prices prune                 # keep 2,000 bars per series
+till-infinity prices prune                 # keep 1,000 bars per series
 till-infinity prices prune --keep 500      # tighter
 till-infinity prices prune --vacuum        # ...and actually shrink the file
 ```
@@ -222,12 +222,18 @@ question, which is what a cron entry wants.
 **Per series, and by count.** The unit is `(source, feed, venue, ticker,
 interval)`, so a quiet weekly series is never pruned to make room for a busy
 1m one — a whole-table cap would do exactly that. A count rather than a cutoff
-date because the models consume a *window of bars*: the level engine seeds from
-the last 500 per instrument and timeframe, and 2,000 is four times that even
-before the several venues sharing a series are counted. One number also
-self-scales into roughly the horizon each timeframe's evidence survives anyway
-— 2,000 bars is about a day and a half of 1m and about forty years of 1w — so
-no table of per-interval durations is needed.
+date because the models consume a *window of bars*. `Engine.seed` reads
+`bars * 8` rows per `(feed, interval)` — 4,000 — shared across the dozen
+venue-and-source series making up one instrument's timeframe, so each needs
+around 333; 1,000 is three times that. One number also self-scales into roughly
+the horizon each timeframe's evidence survives anyway — 1,000 bars is about
+seventeen hours of 1m and about nineteen years of 1w — so no table of
+per-interval durations is needed.
+
+**Size it against the data, not a formula.** The first version took four times
+the engine's window and landed on 2,000, which was above every series that
+existed: the largest on production held 1,733 bars and the average 602, so it
+would have deleted nothing while reporting success.
 
 **Deleting does not shrink the file.** SQLite frees the pages for reuse, so
 growth stops and the size does not fall. `--vacuum` rebuilds the file and does
@@ -235,9 +241,13 @@ shrink it, measurably: 84.4MB → 15.9MB pruning a real database to 200 bars a
 series. It needs room for a second copy while it runs, which is precisely what
 is scarce when retention is being reached for, so it is off by default.
 
-**Quotes are left alone.** They are the raw material for the spread median that
-prices every level call, they are already bounded by the store's dedup, and
-they are not what grows.
+**Quotes are left alone, and that is now questionable.** The reasoning was that
+they feed the spread median which prices every level call, and that the store's
+dedup bounds them. The dedup only drops *unchanged* top-of-book, which on a
+moving market bounds very little: production holds **1,775,491 quote rows
+against 536,827 bars**, so quotes are three times the thing retention actually
+prunes. Worth revisiting — the spread median reads a window of the recent ones
+and has no use for last month's.
 
 ## Library use
 

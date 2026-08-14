@@ -239,20 +239,30 @@ FEEDS: dict[str, Feed] = {
 
 DEFAULT_SOURCES: tuple[str, ...] = (TRADINGVIEW, YAHOO)
 
-#: Bars kept per series when retention runs. Four times the 500-bar window the
-#: level engine seeds from, so pruning to it cannot starve a cold start even
-#: after the several venues that share a series are counted.
+#: Bars kept per series when retention runs.
+#:
+#: **Sized against the data rather than against a formula**, which the first
+#: version was not: it took four times the level engine's 500-bar window and
+#: landed on 2,000, comfortably above every series that actually exists. The
+#: largest on production held 1,733 bars and the average 602, so retention as
+#: first shipped would have deleted precisely nothing while reporting success.
+#:
+#: 1,000 is what the seed needs with room to spare. `Engine.seed` reads
+#: `bars * 8` rows per `(feed, interval)` — 4,000 — and those are shared across
+#: the dozen venue-and-source series that make up one instrument's timeframe,
+#: so each needs on the order of 333. Three times that is margin enough for a
+#: feed whose venues report unevenly, and it removes about a fifth of the table
+#: today, rising as history accumulates.
 #:
 #: The coupling to `structures` is written down rather than imported: prices
 #: knows nothing about the models that read it, and should not start now for a
 #: constant. If that window changes, this is the other number to look at.
 #:
-#: A count rather than a duration, and the same count for every interval. That
-#: is not laziness — the models consume a window of *bars*, and one number
-#: self-scales into roughly the horizon each timeframe's evidence survives
-#: anyway: 2,000 bars is about a day and a half of 1m and about forty years
-#: of 1w.
-DEFAULT_RETAIN_BARS = 2_000
+#: A count rather than a duration, and the same count for every interval — the
+#: models consume a window of *bars*, and one number self-scales into roughly
+#: the horizon each timeframe's evidence survives anyway: 1,000 bars is about
+#: seventeen hours of 1m and about nineteen years of 1w.
+DEFAULT_RETAIN_BARS = 1_000
 
 #: Tracked unless the caller names something else.
 DEFAULT_SYMBOLS: tuple[str, ...] = (

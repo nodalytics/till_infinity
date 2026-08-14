@@ -308,15 +308,35 @@ touches at each interval's own resolution, so simply adding a fine-bar pass on
 top would count every interaction twice — the same double-counting that produced
 591 effective touches, arriving by a third route.
 
-**Partly implemented.** The leg in now ends when price has come back off its
-deepest point by `RUN_VOL` (0.5 units) rather than on the first observation that
-fails to extend — a single non-extending tick is a pause, not a departure, and
-treating it as one made the origin a property of the sampling rate. What is
-*not* yet done is segmenting the departure the same way, or locating an origin
-that falls inside a coarse bar from evidence on a finer one.
+**Mostly implemented, and this paragraph has been behind the code twice.**
 
-The paragraph below describes what the original implementation did, and remains
-the shape of what is left.
+**Both legs are run-segmented.** The leg in ends when price has come back off
+its deepest point by `ARRIVAL_RUN_VOL`, and the leg out when it has come back
+off *its* extreme by `DEPARTURE_RUN_VOL` — rather than either ending on the
+first observation that fails to extend, which made the origin a property of the
+sampling rate. A single non-extending tick is a pause, not a departure. The two
+constants are separate because they answer different questions: the arrival
+threshold decides where the level *is*, and the departure threshold decides how
+much of what followed counts as this reaction.
+
+**Origins are now located from the finest evidence available**, which was the
+other half. Splitting `observe_bar` on 2026-08-14 means the touch check runs
+from the finest series of each era against every interval at once, so a daily
+level's origin is placed at minute resolution during a replay and at tick
+resolution live, instead of being quantised to the timeframe that happened to
+reveal the level. The measured effect is in the split's own entry:
+1d levels went from a median 1.5 touches to 3.3, because interactions they
+could not previously see now register.
+
+**What is genuinely left** is the level *formation* side rather than the touch
+side: swings are still bar extremes, so a level's price is still a property of
+the sampling grid even though its origin is no longer. That is
+[todo.md](todo.md) item 5, and it is written there as an experiment rather than
+a feature because the outcome machinery can settle it.
+
+The paragraph below describes what the original implementation did. It is kept
+because the reasoning for the run intersection is the part worth having, not
+because the bar-boundary behaviour survives.
 
 The implementation located the origin at a **bar boundary** — the close of the
 last bar in against the open of the first bar out. That is a convenient

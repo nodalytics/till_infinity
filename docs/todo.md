@@ -229,6 +229,14 @@ rather than flag it. Deliberately deferred.
 
 ## Watch rather than act
 
+- **Nothing heavier than a read can run on this box.** Established the hard way
+  on 2026-08-14: `agents ask` and `prices prune` each OOM-killed the container,
+  three restarts between them. Kills land at ~260MB resident against 908MB
+  total with ~148MB available, so *any* second process is enough. The database
+  survived every one — `pragma quick_check` clean, no rows lost, which is
+  SQLite's transactionality doing its job — but the agent window timer resets
+  on each restart, so the diagnostics kept destroying the test they were run
+  for. **Retention has therefore never actually run.** Do it on the new box.
 - **Memory bit before disk did.** The note below was written when this said
   disk was the constraint that bites first; on 2026-08-14 it was memory, five
   times. The box is **908MB total with no swap**, the container is capped at
