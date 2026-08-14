@@ -367,6 +367,63 @@ main reason to want BOCPD — at a fraction of the cost and with no distribution
 assumption. BOCPD after, once it is clear whether regime *age* changes any
 decision, rather than writing a detector that can be subtly wrong to find out.
 
+### 3. Hidden Markov models, and why they are not an alternative to `facto`
+
+Asked often enough to be worth answering here: an HMM and a factorisation
+machine are not competing for the same job, and comparing them directly is a
+category error.
+
+| | asks | needs | returns |
+|---|---|---|---|
+| **`facto`** | given *this* touch, how far does price push | labels | a number, in volatility units |
+| **HMM** | which world are we in, and how do worlds succeed each other | a sequence | a state, or a posterior over states |
+
+An HMM cannot predict a push, so it cannot replace the FM. What it can do is
+**fill the `regime` slot** — the feature that exists so a touch is compared with
+touches from a market that felt the same. Today that is planned as a rolling
+quantile of volatility; an HMM would put a discrete state there instead. The
+two then compose rather than compete, and cleanly: `encode` already one-hots
+categoricals, so a state label arrives as `regime_state_violent` alongside
+`side_above` and is exactly the kind of thing an FM is built to cross with
+everything else.
+
+**Against BOCPD, which is the comparison that matters**, they split on one
+axis:
+
+- **BOCPD gives regime _age_.** The run-length posterior answers "how long
+  since the last change", which is the quantity the decay actually wants.
+- **HMM gives regime _identity_.** "This is the quiet regime we were in last
+  month." BOCPD structurally cannot say that — it knows only time since the
+  break, never that the current stretch resembles an earlier one.
+
+So the question that decides whether an HMM is worth building is empirical and
+already answerable: **do touches cluster by recurring regime identity, or just
+by volatility level?** If a rolling percentile captures it, identity buys
+nothing. The outcome machinery grades that the same way it grades run-formed
+levels, and doing so costs nothing but a comparison.
+
+**Three cautions, and the third is the serious one.**
+
+1. The fat-tail trap is the same as BOCPD's. Gaussian emissions on financial
+   returns change state on kurtosis alone, so Student-t emissions are not
+   optional here either.
+2. river ships neither, so either is an implementation rather than a
+   dependency.
+3. **An HMM invites look-ahead by default.** Standard fitting is Baum-Welch
+   over a whole sequence, and the standard state estimate is *smoothed* —
+   forward-backward, which uses the future to label the past. Only the
+   **filtered**, forward-only estimate is admissible under
+   [levels.md](levels.md) §2. An HMM fitted in batch over all history and then
+   used to label historical touches would leak thoroughly and backtest
+   beautifully, which is the worst combination available and the specific
+   failure this project designs out rather than tests for.
+
+**Order, therefore: unchanged.** Percentiles first — same slot, a fraction of
+the cost, no distributional assumption, no look-ahead hazard. An HMM is worth
+revisiting only after the recurrence question above has been asked of real
+outcomes, and it sits behind BOCPD rather than ahead of it, because regime age
+has a decision waiting on it and regime identity does not yet.
+
 ## `facto.py` — the interaction model
 
 Factorisation machines model how features *combine*. The levels model treats
