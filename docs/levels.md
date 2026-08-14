@@ -272,6 +272,42 @@ look like two levels a wick apart.
 
 ### Planned: an origin spans periods, not bars
 
+### The live path is already fine; the warm path is not
+
+Worth stating because it inverts the obvious assumption. `Engine.observe_quote`
+runs the touch check on **every** interval the instrument has levels at:
+
+```python
+for interval in self.intervals_for(feed):
+    calls += self.check(feed, interval, float(mid), when)
+```
+
+So a daily level's touch is advanced by every quote, at tick resolution. Live,
+origins are already located from the finest evidence there is — the
+bar-boundary problem does not exist there.
+
+`Engine.seed` is where it does. Warming replays stored bars through
+`observe_bar`, which both **forms** levels for that row's interval and **runs
+the touch check** at that interval's own resolution. So a daily level warmed
+from daily bars gets daily-quantised origins — and since a cold start warms from
+six-figure bar counts, that is most of what any level knows.
+
+The fix is to split those two responsibilities, which `observe_bar` currently
+does together:
+
+1. **Form** levels for each interval from *its own* bars. Unchanged: PIP needs
+   confirmed swings on the timeframe the level belongs to, and a daily swing is
+   not visible in 3m data.
+2. **Touch** every interval from the *finest* bars available, once, in time
+   order — the replay equivalent of what `observe_quote` does live. A 1d level
+   would then learn its origins at 3m resolution during warming, exactly as it
+   does from quotes afterwards.
+
+The trap to avoid is running both: the current single pass already records
+touches at each interval's own resolution, so simply adding a fine-bar pass on
+top would count every interaction twice — the same double-counting that produced
+591 effective touches, arriving by a third route.
+
 **Partly implemented.** The leg in now ends when price has come back off its
 deepest point by `RUN_VOL` (0.5 units) rather than on the first observation that
 fails to extend — a single non-extending tick is a pause, not a departure, and
