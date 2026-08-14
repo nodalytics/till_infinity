@@ -118,25 +118,24 @@ anything" for the attempt to derive it and why the pre-fix journal cannot.
 
 See [todo.md](todo.md) for the full list. The short version:
 
-1. **Agents have never woken.** One `agents started` line across seven hours and
-   ~14 thirty-minute windows. Not the throttle, not the credentials — a one-off
-   `agents ask` works on both providers. That leaves the wake gate
-   (`AGENTS_SPREAD_BPS`, `AGENTS_IMPORTANCE`). Make it log *why* it declined;
-   a gate that never fires and a gate that never runs look identical in an empty
-   log.
-2. **Split `observe_bar`** — form levels from each interval's own bars, touch
-   every interval from the finest. Carries a double-counting trap; read
-   [levels.md](levels.md) before starting.
+1. **Memory, and 1m back with it.** The box is 908MB with no swap and was
+   OOM-killed five times on 2026-08-14 after the instrument count went from six
+   to fourteen. 1m was dropped from the level set to buy the headroom back —
+   the cheapest factor to give up and the only one that removes no instrument.
+   It should return; `confluence.TIMEFRAMES` says what it is waiting for.
+2. **Re-measure the outcome rate** before any `fit`, now that touch counting is
+   fixed. Then `0.08`, which is still the one gate nobody chose.
 3. **Run-formed levels** as an experiment, not a feature.
 4. **Build the score** ([score.md](score.md)).
 
 ## What is deployed and working
 
-Levels form on 1m/3m/5m/15m/1h/4h/1d/1w across eight instruments — gold, btc,
-eth, sol, eurusd, gbpusd, us100, spx500 — alert to Telegram
-with confluence, deduplicated per zone. The median spread is charged before
-qualifying — *wired, but charging zero on every call recorded so far*, for the
-reason given above. Agents run on Groq with a Gemini fallback. 648 tests.
+Levels form on 3m/5m/15m/1h/4h/1d/1w across fourteen instruments — gold, btc,
+eth, sol, eurusd, gbpusd, usdjpy, audusd, usdcad, usdchf, nzdusd, usdcnh,
+us100, spx500 — alert to Telegram
+with confluence, deduplicated per zone, and charged the median spread before
+qualifying — which now records a non-zero cost, having charged nothing until
+`observe_bar` was split. Agents run on Groq with a Gemini fallback. 690 tests.
 
 Production: one container on the EC2 box named in `.secrets/samuel.md`, data
 under `/home/ubuntu/till-data`, config at `/home/ubuntu/till.env` (backed up to

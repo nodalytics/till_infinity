@@ -47,6 +47,39 @@ Full account in [agents.md](agents.md), "Why agents appeared never to wake".
 Still to confirm: that a window survives end to end now, which needs half an
 hour without a deploy.
 
+## 0a. Put 1m back on the level set, once there is memory for it
+
+Removed on 2026-08-14, hours after being added, and **for memory rather than
+for merit**. Worth stating in that order, because a line removed without a
+reason recorded is a line nobody dares restore.
+
+The engine holds a window per `(instrument, interval)`, so its memory is the
+product of the two. Fourteen instruments and eight timeframes is 112 series
+against the 42 there were that morning; resident memory went from the ~232MB
+recorded below to ~400MB, and a **908MB box with no swap** met the OOM killer
+five times. Dropping 1m gives back 112 series → 98. It is the cheapest of the
+three factors and the only one that removes no instrument.
+
+**Nothing else was undone.** `prices` still collects 1m bars for all fourteen
+feeds, so restoring it is one word in `confluence.TIMEFRAMES` and needs no
+backfill. What it waits on is headroom, and there are three ways to get it,
+cheapest first:
+
+1. **Swap.** There is none at all, which is why an overshoot is instant death
+   rather than a slowdown. A 1–2GB swapfile is the cheapest insurance on the
+   box, though disk is at 70% and that is the other constraint.
+2. **A smaller `WINDOW`.** 500 bars per series is the single largest per-series
+   cost; halving it roughly halves that memory, at the price of cold-start
+   depth and PIP swing quality. Measure the levels formed before and after
+   rather than assuming the swings survive.
+3. **A bigger box.** 908MB is genuinely small for fourteen instruments across
+   eight timeframes, and this is the honest answer if 1m matters.
+
+And when it does go back, the open question goes back with it: 1m was added to
+be *measured* against the outcome machinery and never got the chance. The
+caution the old comment carried still stands — the finer the timeframe, the
+more a "level" is session noise wearing a price.
+
 ## 0b. Three found on 2026-08-14 while tracing the silent channel
 
 Ordered by what is holding back the most. All three are documented with their
@@ -199,8 +232,15 @@ rather than flag it. Deliberately deferred.
 
 ## Watch rather than act
 
-- **Disk** is the constraint that bites first: 70% used, 2.1GB free, prices at
-  394MB and growing continuously. CPU sits at 13% and memory at 229MB of 640MB.
+- **Memory bit before disk did.** The note below was written when this said
+  disk was the constraint that bites first; on 2026-08-14 it was memory, five
+  times. The box is **908MB total with no swap**, the container is capped at
+  640MB but the kill came from the *host* running out — `oomkilled=false` on
+  the container with `global_oom` in `dmesg`, which is a confusing pair to read
+  and worth recognising. Watch the resident size against 908MB, not against the
+  container's cap. See item 0a.
+- **Disk** is next: 70% used, 2.1GB free, prices at 394MB and growing
+  continuously. CPU sits at 13%.
   The instrument count went from six to fourteen on 2026-08-14 and 1m joined
   the level set, so the *growth rate* is now roughly 2.3x what this note was
   first written against, even though the free space has barely moved yet.

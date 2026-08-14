@@ -72,17 +72,25 @@ ORDER: tuple[str, ...] = (
 #: actually trade come from — and it only became usable once volatility and
 #: evidence decay were measured per timeframe, since a weekly level in 5m units
 #: is placed to the nearest dollar and forgets a touch before the next one
-#: arrives. The same per-timeframe machinery is what makes the bottom end
-#: tractable: 1m has its own volatility estimate and its own half-life, so it is
-#: not being measured in somebody else's units.
+#: arrives.
 #:
-#: This list said "below 5m a level is mostly the noise of the session" while
-#: already carrying 3m, which is the kind of comment that describes an intention
-#: rather than the code under it. The caution is still the right one to hold —
-#: the finer the timeframe the more a "level" is session noise wearing a price —
-#: so 1m is here to be *measured*, against the outcome machinery that already
-#: grades every other timeframe, and it earns its place or it does not.
-TIMEFRAMES: tuple[str, ...] = ("1m", "3m", "5m", "15m", "1h", "4h", "1d", "1w")
+#: **1m is deliberately absent, and should come back.** It was added on
+#: 2026-08-14 and removed the same day, for memory rather than for merit. The
+#: engine holds a window per `(instrument, interval)`, so what it costs is the
+#: product: going from six instruments to fourteen and adding 1m took that from
+#: 42 series to 112, resident memory from ~232MB to ~400MB, and a 908MB box
+#: with no swap into the OOM killer five times. Dropping 1m is the cheapest of
+#: those factors to give back — 112 series to 98 — and the only one that
+#: removes no instrument.
+#:
+#: Nothing else was undone: `prices` still collects 1m bars for every feed, so
+#: restoring this line is a one-word change and needs no backfill. Do it once
+#: there is memory headroom — see [todo.md] — and read the caution the old
+#: comment carried while it is out: the finer the timeframe, the more a "level"
+#: is session noise wearing a price. 1m was put here to be measured against the
+#: outcome machinery and never got the chance, so it is still an open question
+#: rather than a settled one.
+TIMEFRAMES: tuple[str, ...] = ("3m", "5m", "15m", "1h", "4h", "1d", "1w")
 
 #: Alias kept for readers who think of it as a span rather than a list.
 DEFAULT_SPAN: tuple[str, ...] = TIMEFRAMES
