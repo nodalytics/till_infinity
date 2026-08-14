@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| [todo.md](todo.md) | what is outstanding, ordered by what would change the numbers most |
 | [idea.md](idea.md) | what the project is for, and the reasoning behind each part — the long version of the README's opening |
 | [getting-started.md](getting-started.md) | how to use Till Infinity — install, first pull, keeping it current, reading the data back |
 | [news.md](news.md) | headlines and the economic calendar — sources, two clocks, storage |
