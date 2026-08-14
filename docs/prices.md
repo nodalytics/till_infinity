@@ -63,24 +63,37 @@ to before you commit to a long run.
 
 ## Instruments
 
-Eight tracked by default, each quoted by several venues — the disagreement
+Fourteen tracked by default, each quoted by several venues — the disagreement
 between them is the point, so a one-venue instrument would not earn its place.
 
 | feed | what it is | venues |
 |---|---|---|
 | `gold` | spot gold | 6 TradingView + Yahoo `GC=F` |
-| `btc` | bitcoin | 6 exchanges + Yahoo |
+| `btc` | bitcoin | 6 exchanges + Yahoo `BTC-USD` |
 | `eth` | ether | 6 exchanges + Yahoo `ETH-USD` |
 | `sol` | solana | 6 exchanges + Yahoo `SOL-USD` |
 | `eurusd`, `gbpusd` | major FX | 6 each + Yahoo |
+| `usdjpy`, `audusd`, `usdcad`, `usdchf`, `nzdusd` | the rest of the majors | 6 each + Yahoo |
+| `usdcnh` | offshore yuan | 6 + Yahoo `CNH=X` |
 | `us100` | Nasdaq 100 | 5 + Yahoo `^NDX`, `NQ=F` |
 | `spx500` | S&P 500 | 6 + Yahoo `^GSPC`, `ES=F` |
 
-**Indices answer to whatever you call them.** `us100`, `nas100`, `nasdaq`,
+**The seven majors are tracked together because they are one basket priced
+against one currency.** A dollar move shows up in all of them at once, and
+holding only two of them meant reading a dollar story as a euro story.
+
+**`usdcny` is an alias onto `usdcnh`, not a feed.** Onshore CNY is carried by
+exactly one of our venues, which is below the three-venue quorum a consensus
+bar needs — so a `usdcny` feed would form no levels and would do it silently,
+the failure that looks exactly like a quiet market. CNH is the rate that trades
+outside the mainland's daily band and all six venues quote it.
+
+**Instruments answer to whatever you call them.** `us100`, `nas100`, `nasdaq`,
 `ndx`, `nq` all reach the same feed; so do `spx500`, `spx`, `us500`, `sp500`,
 `s&p500`, `es`. There is no canonical name for an index in practice, so the
-aliases are the interface. The same applies to crypto: `eth`, `ether`,
-`ethereum`, `ethusdt` are one feed, as are `sol`, `solana`, `solusdt`.
+aliases are the interface. The same holds for crypto — `eth`, `ether`,
+`ethereum`, `ethusdt` are one feed, as are `sol`, `solana`, `solusdt` — and for
+the majors under their desk names: `yen`, `aussie`, `loonie`, `swissy`, `kiwi`.
 
 **Every venue on a feed was checked against the live socket before it was
 listed**, rather than assumed from a sibling. The three crypto feeds share

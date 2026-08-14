@@ -173,7 +173,8 @@ positive one.
 not a feature.
 
 **This is a lookup table, not a model.** The measured shape of the problem is
-579 symbol strings collapsing onto eight instruments, plus 866 untagged RSS
+579 symbol strings collapsing onto the fourteen tracked instruments, plus 866
+untagged RSS
 rows. The first half is a normalisation map — strip the venue prefix, alias
 `XAUUSD`/`GOLD` to `gold`, `BTCUSD` to `btc`, and drop what is not tracked. The
 pattern already exists: [prices/config.py](../till_infinity/prices/config.py)
@@ -446,7 +447,8 @@ Cheapest useful first, and each step's output is the next step's input.
    gradeable against the journal. Nothing else here has that ratio of value to
    cost.
 2. **Symbol normalisation, sharing the alias map with prices.** 579 strings onto
-   eight instruments. Without it nothing routes, and it is a table.
+   the fourteen tracked instruments. Without it nothing routes, and it is a
+   table.
 3. **Keyword matching for the 866 untagged rows**, validated against
    TradingView's 1,147 tagged ones — a free labelled set that will not exist
    again once we start relying on the matcher.

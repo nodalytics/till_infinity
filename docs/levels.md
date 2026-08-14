@@ -852,6 +852,10 @@ threshold on `risk_vol` would therefore mean something different on every
 timeframe, which is the mistake §10b exists to prevent. The ratio divides the
 units out and is the only part of this geometry that travels.
 
+Those readings were taken while 1m was briefly a level timeframe; it is not
+one today (see [todo.md](todo.md) item 0a), and the row is kept because the
+hundredfold spread between the ends is the whole point.
+
 **It is not free.** Measured across gold, btc and eurusd, the gate suppressed
 **13 of 35** otherwise-actionable calls — 37%. What it removes is mostly large
 moves sitting behind larger stops: a `+2.05v` push against a `3.50v` stop reads

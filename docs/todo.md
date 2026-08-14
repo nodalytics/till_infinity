@@ -62,18 +62,35 @@ three factors and the only one that removes no instrument.
 
 **Nothing else was undone.** `prices` still collects 1m bars for all fourteen
 feeds, so restoring it is one word in `confluence.TIMEFRAMES` and needs no
-backfill. What it waits on is headroom, and there are three ways to get it,
-cheapest first:
+backfill.
 
-1. **Swap.** There is none at all, which is why an overshoot is instant death
-   rather than a slowdown. A 1–2GB swapfile is the cheapest insurance on the
-   box, though disk is at 70% and that is the other constraint.
-2. **A smaller `WINDOW`.** 500 bars per series is the single largest per-series
-   cost; halving it roughly halves that memory, at the price of cold-start
-   depth and PIP swing quality. Measure the levels formed before and after
-   rather than assuming the swings survive.
-3. **A bigger box.** 908MB is genuinely small for fourteen instruments across
-   eight timeframes, and this is the honest answer if 1m matters.
+**A bigger box is the chosen route** (decided 2026-08-14), which makes this the
+easy case: once it lands, put `"1m"` back at the front of `TIMEFRAMES`, watch
+resident memory settle, and the whole item closes. Two things worth doing at
+the same time, because neither is free on any box:
+
+- **Add swap.** There is none at all, which is why an overshoot today was
+  instant death rather than a slowdown. That property does not improve by
+  itself on a larger machine — it just gets harder to reach.
+- **Re-read the arithmetic before adding more.** Memory is
+  `instruments × intervals`, about **2.4MB per series plus ~131MB fixed**,
+  fitted from the two points measured today (42 series ≈ 232MB, 112 ≈ 400MB)
+  and accurate enough to have predicted the failure. Fourteen instruments with
+  1m is 112 series ≈ 400MB. Use it before the next instrument or timeframe goes
+  in, rather than after.
+
+The lever *not* taken, kept because it is the one that survives any box: a
+smaller `WINDOW`. 500 bars per series is the largest per-series cost, and
+halving it roughly halves that memory at the price of cold-start depth and PIP
+swing quality. Measure the levels formed before and after rather than assuming
+the swings survive.
+
+**Removing an instrument is a poor trade and the arithmetic says why.** Asked
+on 2026-08-14 whether dropping solana would pay for 1m: it does not. 1m adds an
+interval across *every* instrument (+14 series) while one instrument saves an
+interval-count (−8), so the pair lands at 104 series — *more* than the 98 in
+place now, and only 5% under the level that was killed five times. Two
+instruments roughly break even. One instrument buys about half a timeframe.
 
 And when it does go back, the open question goes back with it: 1m was added to
 be *measured* against the outcome machinery and never got the chance. The
