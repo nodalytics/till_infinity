@@ -152,6 +152,31 @@ A handful of large `push_vol` values on Monday morning that are genuine gap
 trades will still appear as *new* touches, which is correct: the guard drops
 interactions that span the close, not the reopening itself.
 
+### And the outcome rate, which the weekend measures for free
+
+The second thing to read on Monday, and the weekend makes it a better
+experiment than a weekday would.
+
+The zone floor shipped on Friday evening to explain why sol produced half of
+all outcomes. Its effect on the *rate* was never verified — the last reading
+before the box was left alone showed the rate falling from ~2,280/hour to ~500
+and sol dropping out of the top feeds entirely, which is the shape the fix
+predicts and is also what a Friday evening looks like on its own. Restarts from
+four deploys sat in the middle of the same window. Three explanations, one
+observation.
+
+**Crypto separates them.** btc, eth and sol trade through the weekend while FX
+and the indices do not, so a weekend reading of crypto alone has no
+Friday-evening confound and no market-hours effect at all — only the fix. If
+sol's share among crypto has fallen, it is the zones. If it has not, the cause
+is still unfound, and that would be the third hypothesis to fail on this item
+after the re-arm hole and the `observe_bar` split.
+
+Read it beside the hold rate rather than alone. Widening a zone reduces touch
+counts mechanically, so a lower rate is necessary evidence and not sufficient —
+the question is whether what remains is *better*, and only the outcomes say
+that.
+
 ## Then, in order
 
 See [todo.md](todo.md) for the full list. The short version:
