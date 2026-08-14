@@ -2,51 +2,61 @@
 
 Written 2026-08-14. What is true, what is broken, and what to do first.
 
-## Start here: two open bugs, both in the learning path
+## Both fixed on 2026-08-14. What they actually were
 
-Neither is what I predicted, and each time the evidence corrected the guess
-within one query. Do the same — read the data before reasoning about it.
+Neither was what I predicted, and the third guess was wrong too. Reading the
+data settled the first inside one query; the second needed the magnitudes.
 
-### 1. ~98% of journalled outcomes are unusable as examples
+### 1. ~98% of outcomes unusable — it was the read window, not the data
 
-`structures fit` reports **167 examples out of 9,359 outcomes**. In
-`facto.dataset`, an outcome becomes an example only if its context carries
-`push_vol` **and** `encode()` returns a non-empty feature dict. Almost none do.
-The outcome is being recorded without the inputs that produced it.
+Not missing features. `journal.read` silently clamped **every** caller's limit
+to `MAX_ROWS = 500`:
 
-Raising the journal read limit did *not* help (that was my second wrong guess —
-the first was orphaned warm-replay outcomes; all 9,359 have parents). The count
-even fell from 170 to 167 as the window slid, so qualifying examples age out
-faster than new ones qualify.
-
-**First step, and it settles it:** print one outcome entry's `context` in full
-and see which keys are present.
-
-```bash
-sudo docker exec -i till-infinity python -c "
-import sqlite3, json
-c = sqlite3.connect('file:/app/.data/journal/journal.db?mode=ro', uri=True)
-row = c.execute(\"select context from entries where kind='outcome' order by time desc limit 1\").fetchone()
-print(json.dumps(json.loads(row[0]), indent=2))"
+```python
+params.append(max(1, min(int(limit), MAX_ROWS)))
 ```
 
-Compare against `facto.NUMERIC` and `facto.CATEGORICAL`, then look at where
-outcomes are written (`structures/service.py`, `record_outcomes`) versus where
-calls are journalled with their features (`_watch_calls`).
+`facto.dataset` asked for its 200,000 rows and got the most recent 500, which
+held ~167 outcomes. Every symptom follows from that one line: raising
+`JOURNAL_ROWS` did nothing because the clamp ate it, and 170 → 167 was the
+500-row window sliding forward, not examples ageing out of qualification.
 
-### 2. The factorisation machine overflows
+The premise was checkable and false. Every outcome context carries `push_vol`
+and the full feature set — `record_outcomes` is the only place outcomes are
+written and it always spreads `touch.features.to_dict()` in. Reproduced by
+inflating a journal copy to 9,408 rows: 3,264 outcomes → 185 examples, and
+identical at limits of 500, 5,000 and 200,000. That last equality is the tell,
+and it costs one command to look for.
 
-```
-RuntimeWarning: overflow encountered in dot   (river/facto/fm.py:70)
-RuntimeWarning: invalid value encountered in scalar add
-```
+`read` now honours the limit it is given. `MAX_ROWS` stays as what it always
+was in practice — the ceiling the CLI puts on a listing.
 
-The latent factors are diverging, not occasionally misbehaving. The NaN guard in
-`Model.predict` catches the symptom and returns "no opinion", so nothing crashes
-and nothing lies — but the model is not learning. Likely unscaled features:
-`run_vol` and `approach_vol` are unbounded in volatility units. Check their
-magnitudes first, then consider scaling or a lower learning rate. Answering (1)
-gives you the magnitudes for free.
+The old test could not have caught this: it wrote ten entries and asserted the
+result was under five hundred. True whatever the clamp did. Replaced with one
+that writes past `MAX_ROWS`.
+
+### 2. The factorisation machine overflowed — unscaled features, confirmed
+
+The guess was right and the magnitudes prove it. `strength`, `regime`, `pivot`
+and `backcheck` are already in [0, 1] and `experience` is log-compressed, but
+`approach_vol`, `depth_vol` and `run_vol` are ratios with a volatility estimate
+underneath — a touch arriving in a dead pocket divides by a small number and
+comes back arbitrarily large.
+
+An FM multiplies its features together, so its gradients are *quadratic* in
+magnitude and an unbounded input does not skew the fit, it diverges it. Scaling
+one touch in 37 by 5x diverged the model within 55 examples; by 20x, within 18.
+So on production it was diverged almost from the start, and `Model.predict`'s
+NaN guard had been returning "no opinion" ever since — up, honest, and learning
+nothing.
+
+`encode` now saturates the three through `x/(1+x)` about a typical value of 2,
+which bounds them into [0, 1) while keeping the ordering — a clip would need a
+maximum, and any maximum here would call a 4v approach and a 40v one the same
+event. Survives 10,000x spikes now, and predicts real numbers instead of zero.
+
+The NaN guard stays. It was never the bug, and it is the reason a diverged
+model cost accuracy rather than uptime.
 
 ## Then, in order
 

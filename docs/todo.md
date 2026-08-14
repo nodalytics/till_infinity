@@ -6,6 +6,13 @@ duplicated here.
 
 ## 0. Two things found on 2026-08-14, both ahead of everything below
 
+The two learning-path bugs from the same day are **fixed** — the silent
+`journal.read` clamp that starved `facto.dataset`, and the unscaled features
+that diverged the FM. Both accounted for in [handoff.md](handoff.md). Neither
+touches the two items below, and the first of them now matters *more*: a fit
+can finally see the whole journal, so nothing but the warning below stops it
+drawing 9,000 examples from one afternoon.
+
 **The outcome rate needs explaining before any fit.** The journal recorded 976
 outcomes in one hour and 8,411 in six, against a total of 76 the previous day.
 The re-arm fixes should have made resolutions *rarer*. Either the cold start and
