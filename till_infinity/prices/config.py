@@ -56,14 +56,48 @@ FEEDS: dict[str, Feed] = {
         ),
         _feed(
             "btc",
+            # Bybit is quoted on the USDT pair for all three of BTC, ETH and
+            # SOL. It carries BYBIT:BTCUSD and BYBIT:ETHUSD as well, but not
+            # BYBIT:SOLUSD — checked, it returns symbol_error — so the USDT
+            # form is the one that is uniform across the crypto feeds.
             tradingview=(
                 "BINANCE:BTCUSDT",
+                "BYBIT:BTCUSDT",
                 "COINBASE:BTCUSD",
                 "BITSTAMP:BTCUSD",
                 "KRAKEN:BTCUSD",
                 "DERIV:BTCUSD",
             ),
             yahoo=("BTC-USD",),
+        ),
+        # ETH and SOL take the same venue list as BTC, and every one of the ten
+        # was checked against the live socket before being added rather than
+        # assumed from the BTC set — the cost of guessing wrong here is a
+        # symbol_error every sweep, forever, exactly as noted under us100.
+        # DERIV was the doubtful one and does carry both.
+        _feed(
+            "eth",
+            tradingview=(
+                "BINANCE:ETHUSDT",
+                "BYBIT:ETHUSDT",
+                "COINBASE:ETHUSD",
+                "BITSTAMP:ETHUSD",
+                "KRAKEN:ETHUSD",
+                "DERIV:ETHUSD",
+            ),
+            yahoo=("ETH-USD",),
+        ),
+        _feed(
+            "sol",
+            tradingview=(
+                "BINANCE:SOLUSDT",
+                "BYBIT:SOLUSDT",
+                "COINBASE:SOLUSD",
+                "BITSTAMP:SOLUSD",
+                "KRAKEN:SOLUSD",
+                "DERIV:SOLUSD",
+            ),
+            yahoo=("SOL-USD",),
         ),
         _feed(
             "eurusd",
@@ -125,7 +159,16 @@ FEEDS: dict[str, Feed] = {
 DEFAULT_SOURCES: tuple[str, ...] = (TRADINGVIEW, YAHOO)
 
 #: Tracked unless the caller names something else.
-DEFAULT_SYMBOLS: tuple[str, ...] = ("eurusd", "gbpusd", "gold", "btc", "us100", "spx500")
+DEFAULT_SYMBOLS: tuple[str, ...] = (
+    "eurusd",
+    "gbpusd",
+    "gold",
+    "btc",
+    "eth",
+    "sol",
+    "us100",
+    "spx500",
+)
 
 #: What people actually type, mapped to the feed it means.
 SYMBOL_ALIASES: dict[str, str] = {
@@ -152,6 +195,15 @@ SYMBOL_ALIASES: dict[str, str] = {
     "btcusd": "btc",
     "btcusdt": "btc",
     "bitcoin": "btc",
+    "eth": "eth",
+    "ethusd": "eth",
+    "ethusdt": "eth",
+    "ether": "eth",
+    "ethereum": "eth",
+    "sol": "sol",
+    "solusd": "sol",
+    "solusdt": "sol",
+    "solana": "sol",
     "eur": "eurusd",
     "eurusd": "eurusd",
     "gbp": "gbpusd",
@@ -180,7 +232,7 @@ def resolve_symbols(values: Sequence[str] | None) -> tuple[Feed, ...]:
     * a bare ticker (``AAPL``, ``BTC-USD``), which goes to Yahoo — TradingView
       needs the venue to resolve a symbol.
 
-    With nothing passed, the defaults are EURUSD, GBPUSD, gold and BTC.
+    With nothing passed, every feed in `DEFAULT_SYMBOLS` is tracked.
     """
     if not values:
         return resolve_feeds(None)

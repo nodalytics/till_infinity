@@ -63,13 +63,15 @@ to before you commit to a long run.
 
 ## Instruments
 
-Six tracked by default, each quoted by several venues — the disagreement
+Eight tracked by default, each quoted by several venues — the disagreement
 between them is the point, so a one-venue instrument would not earn its place.
 
 | feed | what it is | venues |
 |---|---|---|
 | `gold` | spot gold | 6 TradingView + Yahoo `GC=F` |
-| `btc` | bitcoin | 5 exchanges + Yahoo |
+| `btc` | bitcoin | 6 exchanges + Yahoo |
+| `eth` | ether | 6 exchanges + Yahoo `ETH-USD` |
+| `sol` | solana | 6 exchanges + Yahoo `SOL-USD` |
 | `eurusd`, `gbpusd` | major FX | 6 each + Yahoo |
 | `us100` | Nasdaq 100 | 5 + Yahoo `^NDX`, `NQ=F` |
 | `spx500` | S&P 500 | 6 + Yahoo `^GSPC`, `ES=F` |
@@ -77,7 +79,16 @@ between them is the point, so a one-venue instrument would not earn its place.
 **Indices answer to whatever you call them.** `us100`, `nas100`, `nasdaq`,
 `ndx`, `nq` all reach the same feed; so do `spx500`, `spx`, `us500`, `sp500`,
 `s&p500`, `es`. There is no canonical name for an index in practice, so the
-aliases are the interface.
+aliases are the interface. The same applies to crypto: `eth`, `ether`,
+`ethereum`, `ethusdt` are one feed, as are `sol`, `solana`, `solusdt`.
+
+**Every venue on a feed was checked against the live socket before it was
+listed**, rather than assumed from a sibling. The three crypto feeds share
+Binance, Bybit, Coinbase, Bitstamp, Kraken and Deriv — but Bybit quotes BTC and
+ETH in both USD and USDT while carrying SOL only in USDT, so the USDT pair is
+what all three have in common. Guessing the other way costs a `symbol_error`
+on every sweep, forever, which is the same reason SAXO and DERIV are absent
+from `us100`.
 
 The venue lists for the indices are shorter and less uniform than for FX, and
 that is checked rather than assumed: brokers quote the Nasdaq CFD under

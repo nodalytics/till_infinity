@@ -103,7 +103,8 @@ See [todo.md](todo.md) for the full list. The short version:
 
 ## What is deployed and working
 
-Levels form on 1m/3m/5m/15m/1h/4h/1d/1w across six instruments, alert to Telegram
+Levels form on 1m/3m/5m/15m/1h/4h/1d/1w across eight instruments — gold, btc,
+eth, sol, eurusd, gbpusd, us100, spx500 — alert to Telegram
 with confluence, deduplicated per zone. The median spread is charged before
 qualifying — *wired, but charging zero on every call recorded so far*, for the
 reason given above. Agents run on Groq with a Gemini fallback. 648 tests.

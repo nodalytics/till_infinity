@@ -103,9 +103,9 @@ def _common(quotes: bool = False):
             multiple=True,
             metavar="SYMBOL",
             help=(
-                "Instrument (gold, btc, eurusd, gbpusd), VENUE:TICKER "
+                "Instrument (gold, btc, eth, sol, eurusd, gbpusd), VENUE:TICKER "
                 "(OANDA:XAUUSD) or a bare Yahoo ticker (AAPL); repeatable. "
-                "Default: eurusd, gbpusd, gold, btc."
+                f"Default: {', '.join(px.DEFAULT_SYMBOLS)}."
             ),
         ),
         *([] if quotes else bar_options[:1]),

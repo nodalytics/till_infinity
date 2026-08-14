@@ -11,7 +11,7 @@ from till_infinity.prices import (
 
 
 def test_the_defaults_are_the_tracked_instruments():
-    tracked = {"eurusd", "gbpusd", "gold", "btc", "us100", "spx500"}
+    tracked = {"eurusd", "gbpusd", "gold", "btc", "eth", "sol", "us100", "spx500"}
     assert {feed.name for feed in resolve_symbols(None)} == tracked
     assert set(DEFAULT_SYMBOLS) == tracked
 
@@ -63,6 +63,42 @@ def test_an_instrument_alias_brings_every_broker(name):
 @pytest.mark.parametrize("name", ["btc", "bitcoin", "btcusdt"])
 def test_btc_aliases(name):
     assert resolve_symbols([name])[0].name == "btc"
+
+
+@pytest.mark.parametrize(
+    ("typed", "feed"),
+    [
+        ("eth", "eth"),
+        ("ETH", "eth"),
+        ("ether", "eth"),
+        ("ethereum", "eth"),
+        ("ethusdt", "eth"),
+        ("sol", "sol"),
+        ("SOL", "sol"),
+        ("solana", "sol"),
+        ("solusdt", "sol"),
+    ],
+)
+def test_eth_and_sol_answer_to_what_people_call_them(typed, feed):
+    assert resolve_symbols([typed])[0].name == feed
+
+
+def test_the_crypto_feeds_carry_the_same_venues():
+    """One venue would defeat the cross-venue consensus the whole model rests on.
+
+    Every symbol here was checked against the live socket before being listed,
+    including Bybit — which quotes BTC and ETH in both USD and USDT but SOL
+    only in USDT, so USDT is what all three share.
+    """
+    for name in ("btc", "eth", "sol"):
+        (feed,) = resolve_symbols([name])
+        venues = {symbol.venue for symbol in feed.for_source(TRADINGVIEW)}
+        assert {"BINANCE", "BYBIT", "COINBASE", "BITSTAMP", "KRAKEN", "DERIV"} <= venues
+        assert len(feed.for_source(YAHOO)) >= 1
+
+    (sol,) = resolve_symbols(["sol"])
+    assert Symbol("BYBIT", "SOLUSDT") in sol.for_source(TRADINGVIEW)
+    assert Symbol("BYBIT", "SOLUSD") not in sol.for_source(TRADINGVIEW)
 
 
 def test_venue_ticker_targets_one_tradingview_series():
