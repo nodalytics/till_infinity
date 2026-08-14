@@ -293,6 +293,7 @@ def test_a_real_call_passes_all_three():
         base_rate_up=0.5,
         own_touches=10,
         neighbours=12,
+        risk_vol=0.5,
     )
     assert found.actionable
     assert found.direction == "up"
@@ -802,6 +803,7 @@ def test_agreement_between_the_two_is_not_mixed():
         base_rate_up=0.5,
         own_touches=20,
         neighbours=12,
+        risk_vol=0.5,
     )
     assert not found.mixed
     assert found.direction == "up"
@@ -1209,7 +1211,13 @@ def test_the_edge_is_the_same_size_whichever_way_it_points():
     """(1-p) - (1-b) = -(p - b). The gates use abs(edge) for this reason."""
     from till_infinity.structures.reactions import Inference
 
-    kwargs = {"push_sigma": 0.5, "base_rate_up": 0.5, "own_touches": 9.0, "neighbours": 12}
+    kwargs = {
+        "push_sigma": 0.5,
+        "base_rate_up": 0.5,
+        "own_touches": 9.0,
+        "neighbours": 12,
+        "risk_vol": 0.5,
+    }
     up = Inference(side=Side.BELOW, probability_up=0.7, expected_push=1.0, **kwargs)
     down = Inference(side=Side.ABOVE, probability_up=0.3, expected_push=-1.0, **kwargs)
     assert up.edge == pytest.approx(-down.edge)
@@ -1494,6 +1502,8 @@ def test_an_edge_smaller_than_the_cost_is_not_a_trade():
         "base_rate_up": 0.5,
         "own_touches": 9.0,
         "neighbours": 12,
+        # Well inside the move, so the risk gate is not what these assert.
+        "risk_vol": 0.4,
     }
     free = Inference(expected_push=0.6, **shared)
     assert free.actionable
@@ -1600,6 +1610,58 @@ def test_a_call_knows_what_being_wrong_costs():
     # ratio is what the expected move is worth against it.
     assert found.risk_vol == pytest.approx(level.risk_vol(Side.ABOVE, 4400.0, vol))
     assert found.reward_to_risk == pytest.approx(abs(found.net_push) / found.risk_vol)
+
+
+def test_a_call_worth_less_than_its_stop_is_not_actionable():
+    """Break-even, not taste: below 1.0 it loses more when wrong than it makes.
+
+    And before `risk_vol` was computed this gate could not have existed —
+    `reward_to_risk` was identically zero, so every call would have failed it.
+    """
+    shared = {
+        "side": Side.BELOW,
+        "probability_up": 0.72,
+        "push_sigma": 0.5,
+        "base_rate_up": 0.5,
+        "own_touches": 9.0,
+        "neighbours": 12,
+        "expected_push": 1.0,
+    }
+    worth_it = reactions.Inference(risk_vol=0.5, **shared)
+    not_worth_it = reactions.Inference(risk_vol=2.0, **shared)
+
+    assert worth_it.reward_to_risk == pytest.approx(2.0)
+    assert worth_it.actionable
+    assert not_worth_it.reward_to_risk == pytest.approx(0.5)
+    assert not not_worth_it.actionable
+    # Everything else about the two calls is identical, so the gate is the only
+    # thing that can have separated them.
+    assert worth_it.edge == not_worth_it.edge
+    assert worth_it.net_push == not_worth_it.net_push
+
+
+def test_the_risk_gate_is_a_ratio_so_it_travels_across_timeframes():
+    """`risk_vol` is in each timeframe's own units and must not be compared.
+
+    0.90 volatility units is $0.77 on 15m gold and $24.76 on the daily. The
+    ratio divides those units out, which is why the gate is on the ratio and
+    not on the risk.
+    """
+    shared = {
+        "side": Side.BELOW,
+        "probability_up": 0.72,
+        "push_sigma": 0.5,
+        "base_rate_up": 0.5,
+        "own_touches": 9.0,
+        "neighbours": 12,
+    }
+    # A small move against a small stop, and a large move against a large one.
+    fine = reactions.Inference(expected_push=0.8, risk_vol=0.4, **shared)
+    coarse = reactions.Inference(expected_push=8.0, risk_vol=4.0, **shared)
+
+    assert fine.reward_to_risk == pytest.approx(coarse.reward_to_risk)
+    assert fine.actionable
+    assert coarse.actionable
 
 
 def test_the_risk_geometry_cannot_be_forgotten():

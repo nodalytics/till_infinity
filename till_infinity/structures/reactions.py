@@ -78,6 +78,25 @@ BASE_WEIGHT = 20.0
 #: evidence is worth this much of the level's own.
 PRIOR_WEIGHT = 4.0
 
+#: The least a call may be worth against what being wrong costs.
+#:
+#: One, and that is a break-even rather than a preference: below it the move
+#: being predicted is smaller than the distance to the stop, so the trade loses
+#: more when it is wrong than it makes when it is right — before any question
+#: of how often it is right. It is the one number in `actionable` that is not
+#: somebody's taste, which is why it is here rather than at 1.5 or 2.
+#:
+#: **A ratio on purpose.** `risk_vol` is in each timeframe's own volatility
+#: units, so it must never be compared across them — 0.90 is $0.77 on 15m gold
+#: and $24.76 on the daily. The ratio divides those units out and is the only
+#: part of this geometry that means the same thing on the 1m and the 1w.
+#:
+#: Raising it is a policy about capital rather than a property of the model, and
+#: belongs to whoever owns the capital. Anything above one is a preference for
+#: fewer, better calls, and should be argued for with outcomes rather than set
+#: because the number sounds professional.
+MIN_REWARD_TO_RISK = 1.0
+
 
 @dataclass(frozen=True, slots=True)
 class Features:
@@ -384,11 +403,19 @@ class Inference:
 
     @property
     def actionable(self) -> bool:
-        """Enough evidence, enough separation from the base rate, enough size.
+        """Enough evidence, enough separation, enough size, and worth the risk.
 
-        All three, because any one alone is how a backtest lies: a big edge on
-        four touches is noise, a large sample at the base rate is nothing, and
-        a confident call worth 0.1 volatility units does not pay for itself.
+        Every one of them, because any single one alone is how a backtest lies:
+        a big edge on four touches is noise, a large sample at the base rate is
+        nothing, a confident call worth 0.1 volatility units does not pay for
+        itself, and a call worth less than the stop it sits behind loses more
+        when it is wrong than it makes when it is right.
+
+        The last of those was measured and ignored for as long as it existed.
+        `reward_to_risk` was identically zero — `risk_vol` was never computed —
+        so the gate could not have been written before it was fixed, and it is
+        worth knowing that it changed what qualifies rather than merely
+        restating what already did.
         """
         return (
             self.own_touches + self.neighbours >= 8
@@ -405,6 +432,10 @@ class Inference:
             # shape, but it is not a call — whichever one you act on, the other
             # says you are wrong.
             and not self.mixed
+            # And it has to be worth more than it risks. See MIN_REWARD_TO_RISK:
+            # a ratio rather than a size, because a ratio is the only part of
+            # this that means the same thing on the 1m and the 1w.
+            and self.reward_to_risk >= MIN_REWARD_TO_RISK
         )
 
     def to_dict(self) -> dict:

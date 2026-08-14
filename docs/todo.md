@@ -70,11 +70,18 @@ number rather than as an omission.
 cannot repeat the omission quietly. Both numbers are real: over a gold warm,
 `risk_vol` on 16 of 16 calls and `reward_to_risk` spanning 0.45 to 3.12.
 
-**It is measured and still ungated, deliberately.** `actionable` does not test
-it, so calls with a reward-to-risk below 1 still qualify today. Whether a
-minimum belongs in the gate is a policy about capital rather than a property of
-the model — the same argument as sizing in item 3 — and it should be decided by
-whoever owns the capital, now that there is a real number to decide against.
+**And now gated.** `actionable` requires reward-to-risk ≥ 1.0 — a break-even
+rather than a preference, since below it the predicted move is shorter than the
+stop behind it. On the ratio and never on `risk_vol`, because risk is in each
+timeframe's own units and 0.90 is $0.77 on 15m gold against $24.76 on the
+daily; only the ratio travels. Measured cost: **13 of 35** otherwise-actionable
+calls suppressed across gold, btc and eurusd, mostly large moves sitting behind
+larger stops. Detail in [levels.md](levels.md), "The risk gate, and why it is a
+ratio".
+
+Raising it above 1.0 is the part that is a policy about capital rather than a
+property of the model — the same argument as sizing in item 3 — and wants
+outcomes behind it rather than a number that sounds professional.
 
 **`0.08` was never derived from anything.** Not in the commit that introduced
 it, not in the docs. It is the number currently separating signal from silence,

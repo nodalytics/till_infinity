@@ -825,6 +825,41 @@ looks.
 | ≥ 8 observations | a big edge on three touches is noise |
 | \|edge\| ≥ 0.08 | a large sample at the base rate is nothing |
 | \|push\| ≥ 0.5v | a confident call worth a tenth of a volatility unit does not pay |
+| reward-to-risk ≥ 1.0 | a move smaller than the stop behind it loses more when wrong than it makes when right |
+
+### The risk gate, and why it is a ratio
+
+`MIN_REWARD_TO_RISK` is **1.0**, and that is a break-even rather than a
+preference: below it the predicted move is shorter than the distance to the
+stop, so the trade loses more when it is wrong than it makes when it is right —
+before any question of how often it is right. It is the one number in
+`actionable` that is not somebody's taste, which is why it sits there rather
+than at 1.5 or 2.
+
+**It gates on the ratio, never on `risk_vol`.** Risk is measured in each
+timeframe's own volatility units, so the same figure means completely different
+money depending on where it came from:
+
+| timeframe | vol | `risk_vol` | in dollars |
+|---|---|---|---|
+| 1m | 0.35bps | 1.38 | $0.21 |
+| 15m | 1.94bps | 0.90 | $0.77 |
+| 1d | 63.05bps | 0.90 | $24.76 |
+| 1w | 118.38bps | 1.08 | $23.18 |
+
+0.90 is seventy cents on the 15m and twenty-five dollars on the daily. A
+threshold on `risk_vol` would therefore mean something different on every
+timeframe, which is the mistake §10b exists to prevent. The ratio divides the
+units out and is the only part of this geometry that travels.
+
+**It is not free.** Measured across gold, btc and eurusd, the gate suppressed
+**13 of 35** otherwise-actionable calls — 37%. What it removes is mostly large
+moves sitting behind larger stops: a `+2.05v` push against a `3.50v` stop reads
+as a strong call and is a losing one. One call was dropped at 0.969, which is
+the boundary doing exactly what it says.
+
+This gate could not have been written before `risk_vol` was fixed. Until then
+`reward_to_risk` was identically zero, so it would have rejected everything.
 
 ### 0.08 is not derived from anything
 
