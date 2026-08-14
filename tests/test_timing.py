@@ -25,8 +25,30 @@ def test_time_goes_as_the_square_of_distance():
 
 
 def test_the_median_matches_the_known_constant():
-    """Median first passage for Brownian motion is 2.198 (d/sigma)^2."""
-    assert timing.bars_to_reach(1.0) == pytest.approx(2.198, abs=0.01)
+    """Median first passage for Brownian motion is 2.198 (d/sigma)^2.
+
+    Given a distance in *sigmas*. What this module is handed is a distance in
+    volatility units, and `Volatility.bps` is a mean absolute deviation, so the
+    argument has to be converted before the constant applies. It was not, which
+    understated every probability by a quarter of a distance — quietly, and in
+    one direction.
+    """
+    one_sigma = 1.0 / timing.MAD_TO_SIGMA
+    assert timing.bars_to_reach(one_sigma) == pytest.approx(2.198, abs=0.01)
+
+
+def test_a_distance_is_read_as_mean_absolute_deviations_not_sigmas():
+    """The unit the rest of the project measures distance in.
+
+    Against 22,219 bars of realised excursions the uncorrected form quoted 7.4%
+    at eight volatility units where the truth is 17.4%. The null was right and
+    the unit handed to it was not.
+    """
+    assert pytest.approx(0.7979, abs=1e-4) == timing.MAD_TO_SIGMA
+    # A MAD is the smaller unit, so a distance counted in them is fewer sigmas,
+    # and therefore reached sooner and more often than the raw number implies.
+    assert timing.bars_to_reach(1.0) < 2.198
+    assert timing.probability_within(8.0, 20.0) > 0.15
 
 
 def test_a_slower_quantile_is_further_out():

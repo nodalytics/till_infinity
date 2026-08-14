@@ -15,7 +15,10 @@
 | [structures.md](structures.md) | online models over price — cross-venue anomaly, drift, persistence |
 | [score.md](score.md) | **planned** — one number per instrument in [−1, +1], smoothed three ways, thresholds it measures rather than assumes |
 | [levels.md](levels.md) | key price levels — PIP swings, Kalman tracking, per-side directional inference |
+| [strength.md](strength.md) | **measured** — a level's own record predicts holding, confluence breadth does not, and the composite loses to its own best term |
 | [behaviours.md](behaviours.md) | **planned** — what price does at a level, which of it we already model under another name, and the three gaps worth building |
+| [absorption.md](absorption.md) | **measured** — absorption and compression both fail to separate; three defects found on the way that matter more than the nulls |
+| [magnet.md](magnet.md) | **measured** — levels do not attract price; 44 of 45 estimates negative, and the negative is selection rather than repulsion |
 | [agents.md](agents.md) | LLM analysis over the stored data — roles, tools, read-only access, watching |
 | [journal.md](journal.md) | the decision journal — reasoning, outcomes, exporting for training |
 | [calibration.md](calibration.md) | **planned** — does 80% mean 80%; what to measure, what falsifies it, and why the obvious fix makes the model worse |
