@@ -310,7 +310,7 @@ def level_at(state_dir: Path, feed: str, price: float, limit: int = 5) -> list[d
     for level in found[: _clamp(limit)]:
         side = level.side_of(price)
         features = reactions.features_for(level, side, price, vol)
-        inference = reactions.infer(level, side, features, engine.tracker.memory)
+        inference = reactions.infer(level, side, features, engine.tracker.memory, vol, price=price)
         stats = level.stats(side)
         out.append(
             {

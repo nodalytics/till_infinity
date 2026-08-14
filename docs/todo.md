@@ -58,11 +58,23 @@ one threshold: 0.003v on btc against 2.5v on gbpusd 3m, so it is nearly free on
 crypto and close to absolute on FX intraday. `STRUCTURES_CHARGE_SPREAD=0` turns
 it off for comparison, and says so in the log while it is off.
 
-**`risk_vol` is 0.0 on every recorded call**, which makes `reward_to_risk`
-identically zero — "expected push against what being wrong costs" is documented
-as the number that decides whether an edge is worth taking, and it is currently
-not being computed. Nothing gates on it yet, which is the only reason this has
-been invisible.
+**~~`risk_vol` is 0.0 on every recorded call~~** — done. `vol` was an optional
+argument to `infer` with a zero fallback, so the risk geometry was something a
+caller could forget, and all three callers did — each with `vol` right there in
+scope. `reward_to_risk`, documented as the number that decides whether an edge
+is worth taking, was therefore identically zero on every call ever journalled.
+It stayed invisible because nothing gates on it and because zero reads as a
+number rather than as an omission.
+
+`vol` is now required rather than more carefully defaulted, so the next caller
+cannot repeat the omission quietly. Both numbers are real: over a gold warm,
+`risk_vol` on 16 of 16 calls and `reward_to_risk` spanning 0.45 to 3.12.
+
+**It is measured and still ungated, deliberately.** `actionable` does not test
+it, so calls with a reward-to-risk below 1 still qualify today. Whether a
+minimum belongs in the gate is a policy about capital rather than a property of
+the model — the same argument as sizing in item 3 — and it should be decided by
+whoever owns the capital, now that there is a real number to decide against.
 
 **`0.08` was never derived from anything.** Not in the commit that introduced
 it, not in the docs. It is the number currently separating signal from silence,

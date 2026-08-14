@@ -1534,7 +1534,7 @@ def _judge_at(engine, feed: str | None, price: float) -> None:
         for level in near:
             side = level.side_of(price)
             features = reactions.features_for(level, side, price, vol)
-            found = reactions.infer(level, side, features, engine.tracker.memory)
+            found = reactions.infer(level, side, features, engine.tracker.memory, vol, price=price)
             mark = "[bold green]![/]" if found.actionable else "[dim]·[/]"
             arrow = "↑" if found.direction == "up" else "↓"
             when = sx.timing.to_level(level, price, vol)

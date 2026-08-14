@@ -702,7 +702,13 @@ class Engine:
             )
             self.tracker.begin(level, price, features, when)
             inference = reactions.infer(
-                level, side, features, self.tracker.memory, cost_vol=self.cost_of(feed, vol)
+                level,
+                side,
+                features,
+                self.tracker.memory,
+                vol,
+                price=price,
+                cost_vol=self.cost_of(feed, vol),
             )
             calls.append(
                 Call(

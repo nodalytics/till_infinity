@@ -581,16 +581,27 @@ def infer(
     side: Side,
     features: Features,
     memory: Memory,
-    vol: Volatility | None = None,
+    vol: Volatility,
     price: float = 0.0,
     cost_vol: float = 0.0,
 ) -> Inference:
     """Combine the level's own record with its neighbours' into one answer.
 
-    With `vol` and `price` the risk geometry is filled in too — where a stop
-    would sit beyond the flipped level, and what the expected push is worth
-    against it. An expected move without the cost of being wrong is only half
-    a decision.
+    `vol` is **required**, and used to be optional with a zero fallback. That
+    made the risk geometry something a caller could forget, and every caller
+    did: `risk_vol` was 0.0 on every level call ever journalled, which made
+    `reward_to_risk` identically zero — the number documented as deciding
+    whether an edge is worth taking, never once computed. It went unnoticed
+    because nothing gates on it yet and because zero is a plausible-looking
+    number rather than an obviously missing one.
+
+    Every caller already had `vol` in scope. The fix is not to default it more
+    carefully; it is to stop it being optional, so the next caller cannot make
+    the same omission quietly.
+
+    `price` stays optional and falls back to the level's own price, which is
+    the honest answer when no arrival price is known: the stop sits a fixed
+    distance beyond the level either way.
     """
     own = level.stats(side)
     prior_up, prior_push, neighbours = memory.prior(features)
@@ -620,7 +631,7 @@ def infer(
         neighbours=neighbours,
         detail=detail,
         backcheck=bool(features.backcheck),
-        risk_vol=level.risk_vol(side, price or level.price, vol) if vol is not None else 0.0,
+        risk_vol=level.risk_vol(side, price or level.price, vol),
     )
 
 

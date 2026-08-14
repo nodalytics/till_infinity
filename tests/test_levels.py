@@ -241,7 +241,7 @@ def test_a_fresh_level_borrows_from_similar_ones():
 
     fresh = Level(feed="new", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     features = reactions.features_for(fresh, Side.ABOVE, 4400.0, vol, approach_vol=1.0)
-    found = reactions.infer(fresh, Side.ABOVE, features, tracker.memory)
+    found = reactions.infer(fresh, Side.ABOVE, features, tracker.memory, vol)
 
     assert found.own_touches == 0
     assert found.neighbours > 0
@@ -757,7 +757,7 @@ def test_neighbours_agreeing_is_evidence_not_proof():
 
     fresh = Level(feed="new", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     features = reactions.features_for(fresh, Side.ABOVE, 4400.0, vol)
-    found = reactions.infer(fresh, Side.ABOVE, features, tracker.memory)
+    found = reactions.infer(fresh, Side.ABOVE, features, tracker.memory, vol)
 
     assert found.own_touches == 0
     assert found.neighbours >= 8
@@ -1576,6 +1576,41 @@ def test_a_single_wide_print_does_not_disqualify_an_edge():
     # A median over the window: one print out of sixty-one cannot move it at
     # all, which is the property, not a tolerance chosen to pass.
     assert spiked == pytest.approx(settled)
+
+
+def test_a_call_knows_what_being_wrong_costs():
+    """`risk_vol` was 0.0 on every level call ever journalled.
+
+    `vol` was an optional argument to `infer` with a zero fallback, so the risk
+    geometry was something a caller could forget — and every caller did, though
+    each had `vol` right there in scope. `reward_to_risk` is documented as the
+    number that decides whether an edge is worth taking, and it was identically
+    zero. Nothing gates on it, which is the only reason it stayed invisible:
+    zero looks like a number, not like an omission.
+    """
+    vol = _vol()
+    tracker = reactions.Tracker()
+    level = Level(feed="gold", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    features = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
+
+    found = reactions.infer(level, Side.ABOVE, features, tracker.memory, vol, price=4400.0)
+
+    assert found.risk_vol > 0.0
+    # The definition, not a tolerance: distance from here to the stop, and the
+    # ratio is what the expected move is worth against it.
+    assert found.risk_vol == pytest.approx(level.risk_vol(Side.ABOVE, 4400.0, vol))
+    assert found.reward_to_risk == pytest.approx(abs(found.net_push) / found.risk_vol)
+
+
+def test_the_risk_geometry_cannot_be_forgotten():
+    """Requiring `vol` is the fix; a default would let the omission return."""
+    vol = _vol()
+    tracker = reactions.Tracker()
+    level = Level(feed="gold", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    features = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
+
+    with pytest.raises(TypeError):
+        reactions.infer(level, Side.ABOVE, features, tracker.memory)
 
 
 def test_warming_reports_progress_rather_than_going_quiet(tmp_path):
