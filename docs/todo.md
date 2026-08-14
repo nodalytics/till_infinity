@@ -68,6 +68,30 @@ ADA today would be a sixth of the zone it is supposed to sit inside.
 Still a candidate for the *rate* specifically: the granularity is measured, the
 causal link to sol's 2,430 outcomes is not.
 
+**The fix is shipped and unverified**, which is the open loop. `Level.zone` now
+takes its floor as the larger of `MIN_ZONE_VOL` and six ticks, with the tick
+read off a low quantile of observed changes — measured effect ADA 8.6x, LTC
+6.9x, SOL 4.2x, btc and eth untouched. All of that measures *zone width*.
+**None of it measures the outcome rate**, which is what the change was for.
+
+So the next step is the same measurement that opened this item, run again after
+the fix has been live long enough to matter:
+
+```bash
+sudo docker exec -i till-infinity python -c "..."   # outcomes per hour, by feed
+```
+
+What would confirm it: sol's share of outcomes falling from its half of the
+total, and the per-hour rate dropping from ~895. What would refute it: the rate
+unchanged, which would mean the zones were never the reason and the cause is
+still unfound — the third time that has happened on this item, after the
+re-arm hypothesis and the `observe_bar` split.
+
+Do not treat wider zones as the answer until the rate says so. Widening a zone
+also *reduces* touch counts mechanically, so a fall in the rate is necessary
+evidence rather than sufficient — the question is whether the remaining touches
+are better, and that needs the hold rate beside the count.
+
 The older examples remain unusable regardless: recorded under the inflated
 counts, and the pre-fix journal calls direction correctly 99.9% of the time
 because a level's history and its next outcome were the same move counted
