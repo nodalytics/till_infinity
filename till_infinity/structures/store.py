@@ -50,24 +50,53 @@ STATE_FILE = "models.pkl"
 def _schema() -> str:
     """A hash of the shape of everything we persist.
 
+    Found by walking the package, because the hand-written list this replaces
+    *was* the bug. It named seven classes and `Volatility` was not among them,
+    so adding `_tick`, `_steps` and `_grid` to it left the hash unchanged. The
+    old state was therefore accepted as compatible, and the service then
+    crashed reading a field the save predated — `AttributeError` on a
+    `slots=True` dataclass, which has no `__dict__` to fall back on, so an
+    absent field is missing rather than defaulted.
+
+    The throw landed inside the structures consumer, so nothing crashed
+    outright: the container stayed healthy at 11% CPU and simply stopped
+    producing for four hours, across twelve deploys, each one restoring the
+    same stale state and dying the same way.
+
+    A list is the wrong shape for this. Anyone adding a field to a persisted
+    class would have to know the list exists, and the person who added those
+    three did not. Walking means the guard covers classes nobody thought to
+    register — including ones added later.
+
+    The cost of a change here is a cold start, which is the policy `load`
+    already states: slow but correct. That is the trade this hash exists to
+    make, and it is a far better one than a silent stop.
+
     Imported lazily: `store` is imported by the modules these classes live in,
     and asking for them at module scope would be a cycle.
     """
-    from . import levels, patterns, reactions
+    import importlib
+    import pkgutil
+    from dataclasses import is_dataclass
 
-    classes = (
-        levels.Level,
-        levels.Kalman,
-        levels.SideStats,
-        reactions.Features,
-        reactions.Touch,
-        patterns.Shape,
-        patterns.Instance,
-    )
-    shape = ";".join(
-        f"{cls.__name__}:{','.join(getattr(cls, '__slots__', ()) or ())}" for cls in classes
-    )
-    return hashlib.sha256(shape.encode()).hexdigest()[:16]
+    from . import __path__ as package_path
+
+    shapes: list[str] = []
+    for found in sorted(module.name for module in pkgutil.iter_modules(package_path)):
+        module = importlib.import_module(f"{__package__}.{found}")
+        for name in sorted(dir(module)):
+            cls = getattr(module, name)
+            # Defined here rather than imported into here, or a class would be
+            # hashed once per module that mentions it and the order would
+            # depend on import bookkeeping.
+            if (
+                isinstance(cls, type)
+                and is_dataclass(cls)
+                and cls.__module__ == module.__name__
+                and getattr(cls, "__slots__", None) is not None
+            ):
+                shapes.append(f"{found}.{name}:{','.join(cls.__slots__)}")
+    return hashlib.sha256(";".join(shapes).encode()).hexdigest()[:16]
 
 
 def _fingerprint() -> dict[str, Any]:

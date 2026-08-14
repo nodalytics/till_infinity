@@ -685,17 +685,51 @@ def test_adding_a_field_invalidates_old_state(tmp_path, monkeypatch):
     assert store.load(tmp_path) is None
 
 
-def test_the_schema_follows_the_fields_rather_than_a_constant():
-    """Nobody remembers to bump a version, and the failure is silent until it is not."""
-    from till_infinity.structures import reactions
+def test_the_schema_follows_the_fields_of_every_persisted_class():
+    """Nobody remembers to bump a version, and the failure is silent until it is not.
+
+    This used to check one class — `reactions.Features` — which was on the
+    hand-written list the hash was built from, so it passed while the guard was
+    blind to everything not on that list. `Volatility` was not on it. Adding
+    `_tick`, `_steps` and `_grid` therefore left the hash unchanged, stale
+    state was accepted as compatible, and the service crashed reading a field
+    the save predated: four hours of silence across twelve deploys.
+
+    So the test walks the package too. Picking a class it happens to cover can
+    no longer make it pass.
+    """
+    import dataclasses
+    import importlib
+    import pkgutil
+
+    import till_infinity.structures as package
+
+    persisted = []
+    for found in pkgutil.iter_modules(package.__path__):
+        module = importlib.import_module(f"till_infinity.structures.{found.name}")
+        for name in dir(module):
+            cls = getattr(module, name)
+            if (
+                isinstance(cls, type)
+                and dataclasses.is_dataclass(cls)
+                and cls.__module__ == module.__name__
+                and getattr(cls, "__slots__", None) is not None
+            ):
+                persisted.append(cls)
+
+    assert len(persisted) > 20, "the walk found almost nothing, so it is not walking"
 
     before = store._schema()
-    real = reactions.Features.__slots__
-    try:
-        reactions.Features.__slots__ = (*real, "something_new")
-        assert store._schema() != before
-    finally:
-        reactions.Features.__slots__ = real
+    for cls in persisted:
+        real = cls.__slots__
+        try:
+            cls.__slots__ = (*real, "something_new")
+            assert store._schema() != before, (
+                f"a new field on {cls.__module__}.{cls.__name__} would not invalidate "
+                "saved state, so a restore would crash on it instead of starting cold"
+            )
+        finally:
+            cls.__slots__ = real
     assert store._schema() == before
 
 
