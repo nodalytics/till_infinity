@@ -1409,6 +1409,46 @@ levels would be a third kind rather than a replacement.
 The cheap first experiment: run both on the same history and compare which set
 price respects more often. The outcome machinery to answer that already exists.
 
+### Built and run, 2026-08-14 — and it did not settle it
+
+[`runs.py`](../till_infinity/structures/runs.py) segments a series into runs
+and emits the boundaries as ordinary `Point`s, so `form`, `as_of` and the whole
+outcome machinery cannot tell which formation produced them.
+`Engine(formation="run")` switches between them, which is what makes the
+comparison possible rather than arguable.
+
+**The resolution claim holds.** One synthetic path observed on two sampling
+grids, with a single volatility so the threshold is the same *price* move at
+each: **26 of 27** coarse run boundaries have a counterpart in the fine set,
+against **5 of 7** for bar extremes. That is the property the idea was for, and
+it is now a test.
+
+**The outcome comparison did not.** Judged on how often price respected each
+set:
+
+| | levels | resolved | respected |
+|---|---|---|---|
+| gold only — pip | 22 | 93 | **83.3%** |
+| gold only — run @4v | 20 | 82 | 59.7% |
+| gold, btc, eurusd — pip | 69 | 457 | 79.5% |
+| gold, btc, eurusd — run @4v | 73 | 353 | **82.2%** |
+
+Thresholds chosen to match level counts, since more levels means more marginal
+ones and an unmatched comparison measures selectivity rather than quality.
+**The single-instrument result reversed on three instruments**, which is the
+whole finding: a 24-point gap that looked decisive was sample noise, and the
+honest reading is that the two are indistinguishable on this evidence.
+
+Two flaws in the experiment worth fixing before it is rerun. `MAX_RESOLVED`
+caps the resolution queue at 500, so any row hitting exactly 500 is censored
+and not comparable — two rows did. And the decisive samples are small: 36
+interactions for gold's headline 83.3%.
+
+So: **not adopted, not rejected.** The code stays because the experiment should
+be repeated on more history, and because run boundaries may earn their place as
+a *third* kind of level beside `pip` and `pivot` rather than as a replacement —
+which is what the counter-argument above predicted.
+
 ## Costs come off before anything is claimed
 
 Every push this model produces is **gross**, and for a long time nothing

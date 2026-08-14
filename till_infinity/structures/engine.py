@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..logging import get_logger
-from . import confluence, patterns, pips, pivots, reactions
+from . import confluence, patterns, pips, pivots, reactions, runs
 from . import levels as lv
 from .models import Shape, Signal
 from .volatility import Book as VolBook
@@ -269,7 +269,17 @@ class Engine:
         horizon: float = 3600.0,
         shape_horizon: int = SHAPE_HORIZON,
         charge_spread: bool = True,
+        formation: str = "pip",
+        run_threshold: float = runs.RUN_SWING_VOL,
     ) -> None:
+        #: How swings are found: `pip` selects bar extremes, `run` takes the
+        #: boundaries between runs of volatility. An experiment, not a setting
+        #: to tune in production — the point is to run both over one history
+        #: and let the outcome machinery say which price respects more.
+        if formation not in ("pip", "run"):
+            raise ValueError(f"unknown formation {formation!r} — use 'pip' or 'run'")
+        self.formation = formation
+        self.run_threshold = run_threshold
         #: Whether the quoted spread is charged against every level call. On by
         #: default, because an uncharged edge is a gross number and acting on
         #: one is the mistake the cost exists to prevent.
@@ -345,10 +355,24 @@ class Engine:
             for level in found
         ]
 
+    def swings(self, series: Series, vol: Volatility) -> list[pips.Point]:
+        """The turning points levels are drawn at — by whichever formation.
+
+        Pluggable so the two can be *compared* rather than argued about. Both
+        return the same `Point`, carrying `confirmed`, so everything downstream
+        — `as_of`, `form`, the whole outcome machinery — is indifferent to
+        which produced them. See [levels.md], "A level spans periods too".
+        """
+        if self.formation == "run":
+            return runs.points(
+                list(series.times), list(series.closes), vol, threshold=self.run_threshold
+            )
+        return pips.points(list(series.times), list(series.closes), self.pip_count)
+
     def reform(self, series: Series, when: float) -> list[lv.Level]:
         """Re-derive levels from the confirmed swings in the window."""
         vol = self.vol.of(series.feed, series.interval)
-        found = pips.points(list(series.times), list(series.closes), self.pip_count)
+        found = self.swings(series, vol)
         visible = pips.as_of(found, when)
         candidates = lv.form(series.feed, series.interval, pips.turns(visible), vol)
         key = (series.feed, series.interval)

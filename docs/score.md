@@ -59,6 +59,43 @@ have more levels.
 the base rate mapped into the same space, the same discipline §7 already applies
 to `P(up)`.
 
+### The missing weight: how strong the level is
+
+`w_l` currently asks two questions — *is it near* and *has it been touched
+often* — and neither of them asks whether the level is any **good**. A level
+found by one method, seen on one timeframe, that has held twice out of nine
+counts exactly as much as one found by two methods, agreed on by four
+timeframes, that has held nineteen times in twenty. That is the largest hole in
+this design and it is worth naming before the thing is built, because it is
+much harder to retrofit a weight than to include one.
+
+Three pieces of evidence exist or are nearly there, and they fail differently
+from each other, which is what makes combining them worth anything:
+
+| | what it says | where it is |
+|---|---|---|
+| **how it was found** | one formation or both — a bar extreme that is also a run boundary has been confirmed by two methods | [todo.md](todo.md) 5a |
+| **how many timeframes see it** | a price four resolutions agree on is not the same object as one only 3m can see | confluence, computed and reported, weighting nothing |
+| **what it has done** | touches, hold rate, `strength` | measured, reported, consumed nowhere |
+
+The shape that fits what is already here is a third factor:
+
+```
+w_l = proximity_l · confidence_l · quality_l
+```
+
+`quality_l` in `(0, 1]`, so a weak level is discounted rather than excluded —
+the same instinct as shrinking a conditional toward its prior rather than
+throwing it away. **Graded against what quality has looked like recently**, as
+a rolling quantile, for exactly the reason §3 gives for the thresholds: a
+constant here would be another number nobody chose.
+
+**And the same trap as everywhere else.** Grading a level by what it has done
+and then measuring how well the graded levels do is circular. `quality_l` has
+to be built from evidence available *before* the interaction being scored,
+which `as_of` and the journal's copied-in context already exist to enforce. The
+arithmetic looks harmless, which is precisely why it gets skipped.
+
 ## 2. Three speeds, and why
 
 The chart that prompted this has three moving averages. The reason they help is
@@ -131,8 +168,13 @@ notifier that cannot send a picture should send the words, not fail.
    thresholds, the state machine. Publishes on transition only.
 2. Wire into `structures/service.py` and the `structures.signals` topic; give it
    the shape name `score`.
-3. `sendPhoto` in the Telegram transport plus the renderer, behind an extra.
-4. **Evaluation, and not before there is data.** Score at the time against the
+3. `quality_l`, the strength weight in §1. Deliberately third rather than
+   first: the aggregation should be working and gradeable before a factor is
+   added that makes it harder to say which change moved the number. But before
+   step 4, because evaluating a score whose weights are known to be missing a
+   term teaches the evaluation to accept a shape that is about to change.
+4. `sendPhoto` in the Telegram transport plus the renderer, behind an extra.
+5. **Evaluation, and not before there is data.** Score at the time against the
    push that followed, from the journal — the same progressive-validation
    discipline `facto.py` uses, against the same two baselines. Until that runs,
    the score is a summary of the model's opinion and is documented as one.

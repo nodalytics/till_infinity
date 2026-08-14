@@ -210,12 +210,83 @@ examples recorded under inflated touch counts and a pooled base rate describe a
 model that no longer exists. Detail: [structures.md](structures.md), "Examples
 have an expiry".
 
-## 5. Run-formed levels, as an experiment before a feature
+## 5. Run-formed levels — built, run, and inconclusive
 
-Swings are currently bar extremes, which makes every level a property of the
-sampling grid. Run boundaries would not be. Run both over the same history and
-compare which set price respects more often — the outcome machinery already
-answers that. Detail: [levels.md](levels.md), "A level spans periods too".
+`runs.py` and `Engine(formation="run")` exist; the comparison has been run.
+Detail and the numbers in [levels.md](levels.md), "Built and run, 2026-08-14".
+
+**The resolution claim holds** — 26 of 27 coarse run boundaries appear in the
+fine set against 5 of 7 bar extremes, and that is now a test. **The outcome
+comparison did not settle anything**: run formation lost 83.3% to 59.7% on gold
+alone and won 82.2% to 79.5% across three instruments. A 24-point gap that
+looked decisive was sample noise.
+
+Three things before rerunning it, in order:
+
+1. **Fix the censoring.** `MAX_RESOLVED` caps the queue at 500 and two rows hit
+   exactly that, so they were truncated rather than compared. Drain during the
+   replay rather than after it.
+2. **More history**, since gold's headline rested on 36 decisive interactions.
+3. **Merge rather than choose** — the next item.
+
+## 5a. Merge the two formations rather than picking one
+
+The counter-argument in [levels.md](levels.md) predicted the inconclusive
+result and says what to do about it: **a bar is not only a sampling artefact.**
+Daily and weekly closes are prices participants act on and session boundaries
+are real events, so some bar-quantised levels are levels *because* they are
+bar-quantised — while run boundaries are the same price at every resolution,
+which bar extremes are not. Each is right about something the other is not.
+
+`Level.origin` already records how a level was found (`pip`, `pivot`), so a
+run-formed level is a third kind rather than a replacement, and `lv.merge`
+already folds a rediscovered level into the existing one with its history
+intact. The merge is therefore mostly wiring: form both, merge into one set,
+and let the origin say which pass found it.
+
+**What makes it worth more than either alone is agreement.** A level both
+passes find independently — a bar extreme that is also a run boundary — has
+been confirmed by two methods that fail differently, and that is a stronger
+claim than either makes. A level only one pass finds is weaker. Which leads
+directly to the next item.
+
+## 5b. Weak and strong, as a first-class notion
+
+Nothing in the model currently says a level is *weak* except `strength`, which
+is a continuous score mixing touches, agreement, recency and breadth, and which
+is consumed nowhere as a decision. There is no point at which the system says
+"this one is worth less" and acts on it.
+
+Three sources of evidence for that judgement now exist or are close to:
+
+- **How it was found.** One formation or both, per 5a. Two methods that fail
+  differently agreeing is the cheapest strength signal available.
+- **How many timeframes see it.** [Confluence](levels.md) already computes
+  this and reports it in the alert text, but it does not weight anything.
+- **What it has done.** Touch count, hold rate and `strength` — measured, and
+  currently only reported.
+
+Two places it should show up:
+
+**In levels**, as a grade rather than a hidden float. The zone width, the
+`|edge|` gate and the reward-to-risk floor could all reasonably move with it: a
+strong level deserves a tighter zone and a lower bar, a weak one the reverse.
+Today every level is gated identically no matter what is behind it.
+
+**In the [score](score.md)**, which is where it matters more. The score is one
+number per instrument and a level call is its main input, so a call from a weak
+level and one from a strong level currently contribute the same. They should
+not. The score's own thresholds are already designed as rolling quantiles
+rather than constants, and level strength wants the same treatment — graded
+against what strength has looked like recently, not against a number somebody
+picked.
+
+**The trap, and it is the same one as everywhere else here.** Grading levels by
+what they have done and then measuring how well the graded levels do is
+circular. The grade has to be formed from evidence available *before* the
+interaction being judged, which is exactly what `as_of` and the journal's
+copied-in context already exist to enforce. Do not skip it because the
+arithmetic looks harmless.
 
 ## 6. Build the score
 
