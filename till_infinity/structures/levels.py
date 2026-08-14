@@ -677,6 +677,7 @@ def form(
     *,
     tolerance_vol: float = 1.0,
     min_swings: int = 3,
+    origin: str = "pip",
 ) -> list[Level]:
     """Cluster swing points into levels.
 
@@ -724,7 +725,7 @@ def form(
                 feed=feed,
                 interval=interval,
                 filter=Kalman(mean=centre, variance=max(spread, floor), updated=newest),
-                origin="pip",
+                origin=origin,
                 created=newest,
                 swings=len(cluster),
             )
@@ -736,6 +737,23 @@ def _variance(values: Sequence[float], mean: float) -> float:
     if len(values) < 2:
         return 0.0
     return sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+
+
+def agree(left: str, right: str) -> str:
+    """Combine two origins into one, keeping the fact that both found it.
+
+    The point of forming levels two ways is not to pick a winner but to notice
+    where they **agree**: a bar extreme that is also a run boundary has been
+    confirmed by two methods that fail differently, which is a stronger claim
+    than either makes alone. A level only one pass found is weaker, and the
+    difference is invisible unless it is recorded here.
+
+    Sorted and joined so `pip+run` and `run+pip` are the same string — an
+    origin that depends on the order the passes happened to run in would be a
+    fact about the code rather than about the level.
+    """
+    parts = {part for side in (left, right) for part in side.split("+") if part}
+    return "+".join(sorted(parts))
 
 
 def merge(existing: Sequence[Level], found: Sequence[Level], vol: Volatility) -> list[Level]:
@@ -758,6 +776,7 @@ def merge(existing: Sequence[Level], found: Sequence[Level], vol: Volatility) ->
                 candidate.price, vol.price_units(candidate.price, 0.5) ** 2, candidate.created
             )
             near.swings += candidate.swings
+            near.origin = agree(near.origin, candidate.origin)
         else:
             kept.append(candidate)
     return dedupe(kept, vol)

@@ -1444,10 +1444,58 @@ caps the resolution queue at 500, so any row hitting exactly 500 is censored
 and not comparable — two rows did. And the decisive samples are small: 36
 interactions for gold's headline 83.3%.
 
-So: **not adopted, not rejected.** The code stays because the experiment should
-be repeated on more history, and because run boundaries may earn their place as
-a *third* kind of level beside `pip` and `pivot` rather than as a replacement —
-which is what the counter-argument above predicted.
+### Rerun with both flaws fixed, and the answer changed shape
+
+Draining resolutions *during* the replay removed the censoring; four
+instruments at 400 bars raised the decisive samples from 36 to between 624 and
+1,133. `Engine(formation="both")` was added at the same time, forming each way
+and merging, so agreement could be measured rather than assumed.
+
+| formation | levels | decisive | respected |
+|---|---|---|---|
+| pip | 90 | 624 | **81.6%** |
+| run @2v | 178 | 1,020 | 77.9% |
+| run @4v | 126 | 662 | 77.9% |
+| both @2v | 188 | 1,133 | 79.3% |
+| both @4v | 142 | 819 | 79.6% |
+
+**On hold rate alone, PIP still wins narrowly and run formation does not
+justify itself.** Two to four points, but now on samples large enough to mean
+something rather than on 36 interactions.
+
+**What justifies the merge is coverage, not accuracy.** `both` finds roughly
+twice the levels — 188 against 90 — and produces 1,133 decisive interactions
+against 624, at a hold rate two points lower. Double the opportunities for two
+points of quality is a trade worth having, and it is a different claim from the
+one the original design made.
+
+### Agreement between the formations is a real strength signal
+
+The measurement that pays for all of this. Splitting outcomes by how the level
+was found, under `both`:
+
+| run threshold | found by both | run only | pip only |
+|---|---|---|---|
+| 1v | **80.3%** (707) | 77.4% (455) | — |
+| 2v | **81.7%** (726) | 77.1% (415) | — |
+| 4v | **82.7%** (538) | 75.2% (210) | 88.0% (n=50) |
+
+A level both passes find holds more often than one only the run pass finds, at
+**every** threshold — +3.0, +4.6 and +7.5 points, on samples in the hundreds.
+Two methods that fail differently agreeing is worth something, and it is now
+measured rather than asserted.
+
+The honest limit: agreement does **not** clearly beat PIP alone. Pip-only reads
+88.0% at 4v, but on fifty interactions, and it is the only threshold where
+enough pip-only levels survived the merge to report at all. So the ordering
+between "found by both" and "found by PIP" is unresolved, while the ordering
+between "found by both" and "found by runs alone" is not.
+
+So: **not adopted as a replacement, adopted as evidence.** `origin` now records
+every formation that found a level, which makes it the first validated input to
+the strength weight in [todo.md](todo.md) 5b — a level's origin predicts how it
+behaves, which is exactly what that weight needs and what `strength` currently
+lacks.
 
 ## Costs come off before anything is claimed
 

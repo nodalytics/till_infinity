@@ -145,6 +145,41 @@ def test_the_two_formations_are_interchangeable_downstream():
     assert pips.as_of(found, found[0].confirmed) == [found[0]]
 
 
+def test_an_origin_records_every_formation_that_found_it():
+    """Agreement is the reason to merge rather than choose, so it must survive.
+
+    A level both passes find has been confirmed by two methods that fail
+    differently, and that is measurably stronger — 81.7% against 77.1% for
+    run-only over 726 decisive interactions. None of that is visible unless the
+    origin keeps both names.
+    """
+    from till_infinity.structures import levels as lv
+
+    assert lv.agree("pip", "run") == "pip+run"
+    # Order-independent: an origin that depended on which pass ran first would
+    # be a fact about the code rather than about the level.
+    assert lv.agree("run", "pip") == lv.agree("pip", "run")
+    assert lv.agree("pip", "pip") == "pip"
+    # And it accumulates rather than replacing.
+    assert lv.agree(lv.agree("pip", "run"), "pivot:PP") == "pip+pivot:PP+run"
+
+
+def test_merging_a_rediscovery_records_both_origins():
+    from till_infinity.structures import levels as lv
+    from till_infinity.structures.levels import Kalman, Level
+
+    vol = _vol()
+    found_by_pip = Level(feed="gold", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    found_by_run = Level(
+        feed="gold", interval="5m", filter=Kalman(mean=4400.05, variance=0.5), origin="run"
+    )
+
+    (merged,) = lv.merge([found_by_pip], [found_by_run], vol)
+
+    assert merged.origin == "pip+run"
+    assert merged is found_by_pip, "the rediscovery should fold in, not replace"
+
+
 def test_it_refuses_a_series_too_short_to_have_a_run():
     vol = _vol()
     assert runs.points([1, 2], [100.0, 101.0], vol) == []

@@ -276,8 +276,8 @@ class Engine:
         #: boundaries between runs of volatility. An experiment, not a setting
         #: to tune in production — the point is to run both over one history
         #: and let the outcome machinery say which price respects more.
-        if formation not in ("pip", "run"):
-            raise ValueError(f"unknown formation {formation!r} — use 'pip' or 'run'")
+        if formation not in ("pip", "run", "both"):
+            raise ValueError(f"unknown formation {formation!r} — use 'pip', 'run' or 'both'")
         self.formation = formation
         self.run_threshold = run_threshold
         #: Whether the quoted spread is charged against every level call. On by
@@ -369,12 +369,57 @@ class Engine:
             )
         return pips.points(list(series.times), list(series.closes), self.pip_count)
 
+    def _form(self, series: Series, visible: Sequence[pips.Point], vol: Volatility):
+        """Cluster the visible swings into candidate levels.
+
+        Under `both` the two formations are run as separate passes and merged,
+        rather than pooled into one clustering. Pooling would let a bar extreme
+        and a run boundary a hair apart form a level *between* them and lose
+        which pass found it; merging keeps each pass's own clusters and folds
+        them only where one falls inside the other's zone — the same test a
+        rediscovered level already passes. `agree` then records that both found
+        it, which is the whole reason for doing this rather than choosing.
+        """
+        if self.formation != "both":
+            return lv.form(
+                series.feed, series.interval, pips.turns(visible), vol, origin=self.formation
+            )
+        by_pip = lv.form(
+            series.feed,
+            series.interval,
+            pips.turns(
+                pips.as_of(
+                    pips.points(list(series.times), list(series.closes), self.pip_count), self._now
+                )
+            ),
+            vol,
+            origin="pip",
+        )
+        by_run = lv.form(
+            series.feed,
+            series.interval,
+            pips.turns(
+                pips.as_of(
+                    runs.points(
+                        list(series.times),
+                        list(series.closes),
+                        vol,
+                        threshold=self.run_threshold,
+                    ),
+                    self._now,
+                )
+            ),
+            vol,
+            origin="run",
+        )
+        return lv.merge(by_pip, by_run, vol)
+
     def reform(self, series: Series, when: float) -> list[lv.Level]:
         """Re-derive levels from the confirmed swings in the window."""
         vol = self.vol.of(series.feed, series.interval)
         found = self.swings(series, vol)
         visible = pips.as_of(found, when)
-        candidates = lv.form(series.feed, series.interval, pips.turns(visible), vol)
+        candidates = self._form(series, visible, vol)
         key = (series.feed, series.interval)
         merged = lv.merge(self._levels.get(key, []), candidates, vol)
         self._levels[key] = self.prune(merged, series.closes[-1], vol, when)

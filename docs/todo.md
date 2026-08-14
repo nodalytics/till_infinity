@@ -210,7 +210,7 @@ examples recorded under inflated touch counts and a pooled base rate describe a
 model that no longer exists. Detail: [structures.md](structures.md), "Examples
 have an expiry".
 
-## 5. Run-formed levels — built, run, and inconclusive
+## ~~5. Run-formed levels — built, run, and answered~~ — done
 
 `runs.py` and `Engine(formation="run")` exist; the comparison has been run.
 Detail and the numbers in [levels.md](levels.md), "Built and run, 2026-08-14".
@@ -221,34 +221,35 @@ comparison did not settle anything**: run formation lost 83.3% to 59.7% on gold
 alone and won 82.2% to 79.5% across three instruments. A 24-point gap that
 looked decisive was sample noise.
 
-Three things before rerunning it, in order:
+Both flaws are fixed: resolutions are drained *during* the replay through the
+progress callback, so nothing is censored, and four instruments at 400 bars
+raised the decisive samples from 36 to between 624 and 1,133.
 
-1. **Fix the censoring.** `MAX_RESOLVED` caps the queue at 500 and two rows hit
-   exactly that, so they were truncated rather than compared. Drain during the
-   replay rather than after it.
-2. **More history**, since gold's headline rested on 36 decisive interactions.
-3. **Merge rather than choose** — the next item.
+**On hold rate, PIP still wins narrowly** — 81.6% against 77.9% — but now on
+samples that mean something. **The merge is what earned its place**, and not
+for accuracy: it finds twice the levels at a hold rate two points lower, and
+agreement between the formations turns out to predict holding. See 5a.
 
-## 5a. Merge the two formations rather than picking one
+Left open: `both` is not the default, and the pip-versus-agreement ordering is
+unresolved on 50 interactions. More history would settle it.
 
-The counter-argument in [levels.md](levels.md) predicted the inconclusive
-result and says what to do about it: **a bar is not only a sampling artefact.**
-Daily and weekly closes are prices participants act on and session boundaries
-are real events, so some bar-quantised levels are levels *because* they are
-bar-quantised — while run boundaries are the same price at every resolution,
-which bar extremes are not. Each is right about something the other is not.
+## ~~5a. Merge the two formations rather than picking one~~ — done
 
-`Level.origin` already records how a level was found (`pip`, `pivot`), so a
-run-formed level is a third kind rather than a replacement, and `lv.merge`
-already folds a rediscovered level into the existing one with its history
-intact. The merge is therefore mostly wiring: form both, merge into one set,
-and let the origin say which pass found it.
+`Engine(formation="both")` forms each way and merges; `lv.agree` keeps every
+formation that found a level, so `origin` reads `pip+run` where they concur.
+Merging rather than pooling the swings, so a bar extreme and a run boundary a
+hair apart cannot form a level *between* them and lose which pass found it.
 
-**What makes it worth more than either alone is agreement.** A level both
-passes find independently — a bar extreme that is also a run boundary — has
-been confirmed by two methods that fail differently, and that is a stronger
-claim than either makes. A level only one pass finds is weaker. Which leads
-directly to the next item.
+**Agreement predicts holding**, which is what the merge was for: a level both
+passes find holds 80–83% against 75–77% for run-only, at every threshold
+tested, on samples in the hundreds. It does not clearly beat PIP alone — that
+comparison is unresolved on 50 interactions. Numbers in
+[levels.md](levels.md), "Agreement between the formations is a real strength
+signal".
+
+Left deliberately: `both` is not the default. It roughly doubles the level
+count for a hold rate two points lower, which is a coverage-for-quality trade
+somebody should choose knowingly rather than inherit.
 
 ## 5b. Weak and strong, as a first-class notion
 
