@@ -118,11 +118,11 @@ anything" for the attempt to derive it and why the pre-fix journal cannot.
 
 See [todo.md](todo.md) for the full list. The short version:
 
-1. **Memory, and 1m back with it.** The box is 908MB with no swap and was
-   OOM-killed five times on 2026-08-14 after the instrument count went from six
-   to fourteen. 1m was dropped from the level set to buy the headroom back —
-   the cheapest factor to give up and the only one that removes no instrument.
-   It should return; `confluence.TIMEFRAMES` says what it is waiting for.
+1. **Re-measure memory now the window is bounded.** The box is 908MB with no
+   swap and was OOM-killed five times on 2026-08-14. The cause was not the
+   level set — it was the agents watcher holding 101,297 messages, 199MB, to
+   derive fifteen triggers. Bounded at 20,000 now, and 1m went back on the
+   level set once the real cause was measured. Swap still does not exist.
 2. **Re-measure the outcome rate** before any `fit`, now that touch counting is
    fixed. Then `0.08`, which is still the one gate nobody chose.
 3. **Run-formed levels** as an experiment, not a feature.
@@ -130,7 +130,7 @@ See [todo.md](todo.md) for the full list. The short version:
 
 ## What is deployed and working
 
-Levels form on 3m/5m/15m/1h/4h/1d/1w across fourteen instruments — gold, btc,
+Levels form on 1m/3m/5m/15m/1h/4h/1d/1w across fourteen instruments — gold, btc,
 eth, sol, eurusd, gbpusd, usdjpy, audusd, usdcad, usdchf, nzdusd, usdcnh,
 us100, spx500 — alert to Telegram
 with confluence, deduplicated per zone, and charged the median spread before

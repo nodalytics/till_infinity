@@ -47,55 +47,35 @@ Full account in [agents.md](agents.md), "Why agents appeared never to wake".
 Still to confirm: that a window survives end to end now, which needs half an
 hour without a deploy.
 
-## 0a. Put 1m back on the level set, once there is memory for it
+## ~~0a. Put 1m back on the level set~~ — done, and the detour is the lesson
 
-Removed on 2026-08-14, hours after being added, and **for memory rather than
-for merit**. Worth stating in that order, because a line removed without a
-reason recorded is a line nobody dares restore.
+1m was removed on 2026-08-14 to buy memory, and put back the same day once the
+memory was actually measured. Keeping the whole shape because the mistake is a
+better guide than the fix.
 
-The engine holds a window per `(instrument, interval)`, so its memory is the
-product of the two. Fourteen instruments and eight timeframes is 112 series
-against the 42 there were that morning; resident memory went from the ~232MB
-recorded below to ~400MB, and a **908MB box with no swap** met the OOM killer
-five times. Dropping 1m gives back 112 series → 98. It is the cheapest of the
-three factors and the only one that removes no instrument.
+**The reasoning for removing it was wrong, and it was wrong in a way that
+looked rigorous.** Two measured points — 42 series at ~232MB, 112 at ~400MB —
+fitted a tidy 2.4MB per series, and that line predicted the failure. It was
+still attribution by correlation: more instruments means more quotes per
+second, which is what actually grew. Profiling the engine directly put its
+retained structures at **0.15MB per series**, sixteen times smaller, so
+dropping 1m from fourteen instruments saved about **2MB of a 400MB process**.
+It changed no bus traffic at all, since `prices` collects 1m regardless.
 
-**Nothing else was undone.** `prices` still collects 1m bars for all fourteen
-feeds, so restoring it is one word in `confluence.TIMEFRAMES` and needs no
-backfill.
+**The memory was in the agents watcher.** It held every message of a
+thirty-minute window — **101,297 messages, 199MB**, about half the resident
+size at the moment of the kill — in order to derive fifteen triggers. The
+window is bounded now at 20,000 messages (~40MB) and reports what it dropped.
 
-**A bigger box is the chosen route** (decided 2026-08-14), which makes this the
-easy case: once it lands, put `"1m"` back at the front of `TIMEFRAMES`, watch
-resident memory settle, and the whole item closes. Two things worth doing at
-the same time, because neither is free on any box:
+Worth carrying forward: a curve fit through two points will happily predict the
+thing you already saw while pointing at the wrong cause. The profiler took five
+minutes and disagreed with it immediately.
 
-- **Add swap.** There is none at all, which is why an overshoot today was
-  instant death rather than a slowdown. That property does not improve by
-  itself on a larger machine — it just gets harder to reach.
-- **Re-read the arithmetic before adding more.** Memory is
-  `instruments × intervals`, about **2.4MB per series plus ~131MB fixed**,
-  fitted from the two points measured today (42 series ≈ 232MB, 112 ≈ 400MB)
-  and accurate enough to have predicted the failure. Fourteen instruments with
-  1m is 112 series ≈ 400MB. Use it before the next instrument or timeframe goes
-  in, rather than after.
-
-The lever *not* taken, kept because it is the one that survives any box: a
-smaller `WINDOW`. 500 bars per series is the largest per-series cost, and
-halving it roughly halves that memory at the price of cold-start depth and PIP
-swing quality. Measure the levels formed before and after rather than assuming
-the swings survive.
-
-**Removing an instrument is a poor trade and the arithmetic says why.** Asked
-on 2026-08-14 whether dropping solana would pay for 1m: it does not. 1m adds an
-interval across *every* instrument (+14 series) while one instrument saves an
-interval-count (−8), so the pair lands at 104 series — *more* than the 98 in
-place now, and only 5% under the level that was killed five times. Two
-instruments roughly break even. One instrument buys about half a timeframe.
-
-And when it does go back, the open question goes back with it: 1m was added to
-be *measured* against the outcome machinery and never got the chance. The
-caution the old comment carried still stands — the finer the timeframe, the
-more a "level" is session noise wearing a price.
+**Still open, and cheap:** the better fix is to fold each message into the
+running answer as it arrives and never hold the list — `interesting()` already
+computes exactly that. And **swap still does not exist**, which is why an
+overshoot is a kill rather than a slowdown; that does not improve on a bigger
+box, it just gets harder to reach.
 
 ## 0b. Three found on 2026-08-14 while tracing the silent channel
 

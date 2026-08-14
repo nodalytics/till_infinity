@@ -8,6 +8,7 @@ and what survives on the way to an alert.
 from __future__ import annotations
 
 import sqlite3
+from collections import deque
 
 import pytest
 
@@ -485,6 +486,35 @@ def test_a_structures_signal_wakes_the_model_on_its_own():
     triggers = service.interesting([_signal_message()], ag.Settings(spread_bps=1000.0))
     assert len(triggers) == 1
     assert "4401" in triggers[0].reason
+
+
+@pytest.mark.asyncio
+async def test_the_window_is_bounded_and_says_what_it_dropped():
+    """The window was where the memory went, and nobody looked there first.
+
+    Thirty minutes over fourteen instruments held 101,297 messages — 199MB,
+    about half the resident size when the box was OOM-killed — to derive
+    fifteen triggers from. It is bounded now, keeping the recent end, and it
+    reports the loss rather than leaving the count quietly wrong.
+    """
+    bus = Bus()
+    watcher = service.Watcher(bus, settings=ag.Settings())
+    watcher._window = deque(maxlen=5)
+
+    for n in range(12):
+        if len(watcher._window) == watcher._window.maxlen:
+            watcher._dropped += 1
+        watcher._window.append(_quote(float(n)))
+
+    assert len(watcher._window) == 5
+    assert watcher._dropped == 7
+    # The recent end survives: dropping the newest would also bound it.
+    assert [m.payload["spread_bps"] for m in watcher._window] == [7.0, 8.0, 9.0, 10.0, 11.0]
+
+
+def test_the_window_bound_is_large_enough_for_the_gate():
+    """It has to hold more than the gate needs, or the cap is doing the deciding."""
+    assert service.WINDOW_MESSAGES >= 10_000
 
 
 def test_one_instrument_dislocating_at_four_venues_is_one_trigger():

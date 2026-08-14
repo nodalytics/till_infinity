@@ -31,7 +31,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -69,6 +69,27 @@ SPREAD_QUANTILE = 0.99
 #: then the 99th percentile is 20bps and 20.1 clears it, so a hair above normal
 #: would wake a model. The multiple is what makes "wide" mean wide.
 SPREAD_MULTIPLE = 1.5
+
+#: Messages held for one judgement.
+#:
+#: This is where the memory went, and it was not where anyone looked first. A
+#: thirty-minute window over fourteen instruments held **101,297 messages,
+#: 199MB** — about half the resident size when the box was OOM-killed — and all
+#: of it to derive fifteen triggers. Quotes dominate: fourteen instruments times
+#: six venues at a fifteen-second poll is a message every few hundredths of a
+#: second, and the window keeps every one until it elapses.
+#:
+#: 20,000 is roughly 40MB, which is affordable, and comfortably more than the
+#: gate needs — it wants the widest spread and the loudest signal per
+#: instrument, not a complete record. The cost of overflowing is that the
+#: *oldest* messages go, so a spread spike early in a very busy window can be
+#: missed. That is a real loss and it is logged rather than hidden.
+#:
+#: The better fix is to fold each message into the running answer as it arrives
+#: and never hold the list at all — the gate already computes exactly that. Left
+#: as the next step because a bounded list is small, obvious and reversible,
+#: while streaming aggregation changes what `prompt_for` can say.
+WINDOW_MESSAGES = 20_000
 
 #: Triggers handed to the analyst in one window.
 #:
@@ -367,7 +388,15 @@ class Watcher:
         self.memory = memory
         self.journal = journal
         self._sent: OrderedDict[tuple[str, str], float] = OrderedDict()
-        self._window: list[Message] = []
+        #: Bounded, because this is where the memory went. A thirty-minute
+        #: window over fourteen instruments held **101,297 messages — 199MB**,
+        #: about half the resident size at the moment the box was OOM-killed,
+        #: to derive fifteen triggers from. `deque` drops from the front, so a
+        #: window that overflows keeps the recent end.
+        self._window: deque[Message] = deque(maxlen=WINDOW_MESSAGES)
+        #: How many were dropped, so the truncation can be reported rather than
+        #: leaving the count in the prompt quietly wrong.
+        self._dropped = 0
         #: What each venue's spread normally is, so the fallback gate does not
         #: need a constant. `structures` answers this better when it is running.
         self.spreads = Spreads()
@@ -497,7 +526,17 @@ class Watcher:
             try:
                 while windows is None or count < windows:
                     await asyncio.sleep(self.settings.window_seconds)
-                    window, self._window = self._window, []
+                    window = list(self._window)
+                    if self._dropped:
+                        log.info(
+                            "agents: window held %d of %d message(s); the oldest %d "
+                            "were dropped to keep it bounded",
+                            len(window),
+                            len(window) + self._dropped,
+                            self._dropped,
+                        )
+                    self._window.clear()
+                    self._dropped = 0
                     count += 1
                     run = await self.consider(window)
                     made += run is not None
@@ -511,6 +550,8 @@ class Watcher:
     async def _read(self, topic: str) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             async for message in self.bus.subscribe(topic, group=self.group):
+                if len(self._window) == self._window.maxlen:
+                    self._dropped += 1
                 self._window.append(message)
 
 

@@ -74,23 +74,26 @@ ORDER: tuple[str, ...] = (
 #: is placed to the nearest dollar and forgets a touch before the next one
 #: arrives.
 #:
-#: **1m is deliberately absent, and should come back.** It was added on
-#: 2026-08-14 and removed the same day, for memory rather than for merit. The
-#: engine holds a window per `(instrument, interval)`, so what it costs is the
-#: product: going from six instruments to fourteen and adding 1m took that from
-#: 42 series to 112, resident memory from ~232MB to ~400MB, and a 908MB box
-#: with no swap into the OOM killer five times. Dropping 1m is the cheapest of
-#: those factors to give back — 112 series to 98 — and the only one that
-#: removes no instrument.
+#: **1m left and came back on 2026-08-14, and the detour is the useful part.**
+#: It was removed to buy memory after the box was OOM-killed five times, on the
+#: reasoning that the engine holds a window per `(instrument, interval)` so
+#: dropping a timeframe gives series back. That was measured afterwards and was
+#: very nearly worthless: the engine's retained structures come to **0.15MB per
+#: series**, so removing 1m from fourteen instruments saved about 2MB of a
+#: 400MB process. It changed no bus traffic either — `prices` collects 1m
+#: whether or not levels are built on it.
 #:
-#: Nothing else was undone: `prices` still collects 1m bars for every feed, so
-#: restoring this line is a one-word change and needs no backfill. Do it once
-#: there is memory headroom — see [todo.md] — and read the caution the old
-#: comment carried while it is out: the finer the timeframe, the more a "level"
-#: is session noise wearing a price. 1m was put here to be measured against the
-#: outcome machinery and never got the chance, so it is still an open question
-#: rather than a settled one.
-TIMEFRAMES: tuple[str, ...] = ("3m", "5m", "15m", "1h", "4h", "1d", "1w")
+#: The memory was somewhere else entirely. The agents watcher held every
+#: message of a thirty-minute window — 101,297 of them, **199MB** — to derive
+#: fifteen triggers from. Bounding that is what actually fixed it, and this
+#: line went back.
+#:
+#: The caution the first version of this comment carried still stands, and is
+#: the reason to keep watching rather than to celebrate: the finer the
+#: timeframe, the more a "level" is session noise wearing a price. 1m is here
+#: to be *measured* against the outcome machinery that grades every other
+#: timeframe, and it earns its place or it does not.
+TIMEFRAMES: tuple[str, ...] = ("1m", "3m", "5m", "15m", "1h", "4h", "1d", "1w")
 
 #: Alias kept for readers who think of it as a span rather than a list.
 DEFAULT_SPAN: tuple[str, ...] = TIMEFRAMES
