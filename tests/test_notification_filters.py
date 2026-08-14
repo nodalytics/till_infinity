@@ -275,7 +275,8 @@ def test_a_level_alert_leads_with_the_instrument_and_the_direction():
         },
     )
     text = from_message(alert_payload(signal)).as_text()
-    assert text.startswith("📉 GOLD 4h — down")
+    # Direction, then the instrument's own symbol: what happened, and to what.
+    assert text.startswith("📉 🥇 GOLD 4h — down")
     # The claimed direction's probability, not P(up).
     assert "down 77%" in text
     assert "53% base rate" in text

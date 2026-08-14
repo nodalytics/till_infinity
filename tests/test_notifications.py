@@ -58,6 +58,58 @@ def test_level_parsing():
         Level.parse("shouty")
 
 
+def test_an_alert_carries_the_instrument_symbol_beside_the_shape():
+    """Two questions, two marks: what happened, and to what.
+
+    A phone notification is read at a glance, and "📈 ₿" separates from "📈 €"
+    before a single word of the title has been.
+    """
+    from till_infinity.notifications.models import Notification
+
+    up_btc = Notification(
+        title="BTC 3m — up", fields={"shape": "level", "instrument": "btc", "direction": "up"}
+    )
+    down_gold = Notification(
+        title="GOLD 3m — down", fields={"shape": "level", "instrument": "gold", "direction": "down"}
+    )
+    assert up_btc.mark == "📈 ₿"
+    assert down_gold.mark == "📉 🥇"
+    assert up_btc.as_text().startswith("📈 ₿ BTC")
+
+
+def test_the_symbol_shows_on_findings_that_have_no_direction():
+    """A stale feed is still about an instrument."""
+    from till_infinity.notifications.models import Notification
+
+    stale = Notification(
+        title="OANDA gold feed stale", fields={"shape": "stale", "instrument": "gold"}
+    )
+    assert stale.mark == "💤 🥇"
+
+
+def test_an_instrument_without_a_symbol_keeps_the_plain_icon():
+    """No placeholder standing in for an answer we do not have."""
+    from till_infinity.notifications.models import Notification
+
+    odd = Notification(title="something", fields={"shape": "level", "instrument": "platinum"})
+    assert odd.mark == "📊"
+
+
+def test_every_tracked_instrument_has_a_symbol():
+    """The map has to keep up with the feeds, or new instruments go unmarked."""
+    from till_infinity.notifications.models import INSTRUMENTS
+    from till_infinity.prices import DEFAULT_SYMBOLS
+
+    assert not set(DEFAULT_SYMBOLS) - set(INSTRUMENTS)
+
+
+def test_symbols_tell_the_instruments_apart():
+    """A shared sign is worse than none — ¥ on both yen and yuan reads as one."""
+    from till_infinity.notifications.models import INSTRUMENTS
+
+    assert len(set(INSTRUMENTS.values())) == len(INSTRUMENTS)
+
+
 def test_text_rendering_escapes_html():
     """A symbol like EUR<USD or an & in a headline must not break the parse."""
     text = alert(title="EUR<USD & gold", body="a > b").as_text(escape=True)

@@ -128,11 +128,34 @@ which before reading a word. Direction wins over shape when a signal claims one.
 | 🤖 | an agent finding |
 | • ▲ ■ | nothing claimed — falls back to severity |
 
+**The instrument's own symbol follows it**, because the two answer different
+questions — *what happened*, and *to what* — and a phone notification is read
+at a glance, where `📈 ₿` separates from `📈 €` before a word of the title has
+been:
+
+| | | | |
+|---|---|---|---|
+| 🥇 gold | ₿ btc | Ξ eth | ◎ sol |
+| € eurusd | £ gbpusd | ¥ usdjpy | ₣ usdchf |
+| A$ audusd | C$ usdcad | NZ$ nzdusd | 元 usdcnh |
+| NDX us100 | SPX spx500 | | |
+
+Currency signs where one exists, since that is what the instrument is called in
+print. The dollar pairs carry their prefix — `A$`, `C$`, `NZ$` — because a bare
+`$` would say nothing at the moment the distinction matters. **`元` for
+offshore yuan rather than `¥`**, which would collide with the yen at exactly
+the glance this exists for; a test pins that no two instruments share a symbol.
+The indices take their tickers instead, because there is no symbol for an index
+and a flag would say only "American", twice.
+
+An instrument with no symbol keeps the plain icon rather than a placeholder
+standing in for an answer we do not have.
+
 Then the instrument, timeframe and direction lead the headline, and the
 evidence sits underneath, one claim per line:
 
 ```
-📉 GOLD 4h — down
+📉 🥇 GOLD 4h — down
 level 3421.5
 
 down 77% — against a 53% base rate

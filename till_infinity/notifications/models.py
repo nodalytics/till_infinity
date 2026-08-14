@@ -59,6 +59,38 @@ SHAPES: dict[str, str] = {
 #: point of the message.
 DIRECTIONS: dict[str, str] = {"up": "📈", "down": "📉"}
 
+#: The instrument's own symbol, shown next to the shape icon rather than
+#: instead of it. The two answer different questions — *what happened* and *to
+#: what* — and a phone notification is read at a glance, where "📈 ₿" separates
+#: from "📈 €" before a single word has been read.
+#:
+#: Currency signs where one exists, because that is what the instrument is
+#: actually called in print, and the crypto marks are equally canonical. The
+#: dollar pairs are prefixed rather than left as a bare `$`: `A$` and `C$` are
+#: how those currencies are written when the distinction matters, which here it
+#: always does. `元` for offshore yuan rather than `¥`, which would collide
+#: with the yen at exactly the glance this exists for.
+#:
+#: The indices get their tickers instead. There is no symbol for an index, and
+#: `NDX` and `SPX` are what they are called — a flag would say only "American"
+#: and would say it twice.
+INSTRUMENTS: dict[str, str] = {
+    "gold": "🥇",
+    "btc": "₿",
+    "eth": "Ξ",
+    "sol": "◎",
+    "eurusd": "€",
+    "gbpusd": "£",
+    "usdjpy": "¥",
+    "audusd": "A$",
+    "usdcad": "C$",
+    "usdchf": "₣",
+    "nzdusd": "NZ$",
+    "usdcnh": "元",
+    "us100": "NDX",
+    "spx500": "SPX",
+}
+
 #: Keys the notification filter routes on. Rendered nowhere: every publisher
 #: that sets them already names them in the title, so printing `instrument:
 #: gold` under a headline containing "gold" is the machine talking to itself.
@@ -118,12 +150,20 @@ class Notification:
 
     @property
     def mark(self) -> str:
-        """The leading icon: direction if claimed, else shape, else severity."""
-        return (
+        """The leading icons: what happened, and what it happened to.
+
+        Direction if claimed, else shape, else severity — then the instrument's
+        own symbol where there is one. An instrument nobody has a symbol for
+        simply gets the first icon, rather than a placeholder standing in for
+        an answer.
+        """
+        icon = (
             DIRECTIONS.get(self.fields.get("direction", ""))
             or SHAPES.get(self.fields.get("shape", ""))
             or MARKS[self.level]
         )
+        symbol = INSTRUMENTS.get(str(self.fields.get("instrument", "")).lower(), "")
+        return f"{icon} {symbol}" if symbol else icon
 
     def as_text(self, *, escape: bool = False, limit: int | None = None) -> str:
         """Flatten to plain text — the shape Telegram and logs both want."""
