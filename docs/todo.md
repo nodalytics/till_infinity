@@ -266,6 +266,73 @@ So this waits on post-fix data. Then make it a rolling quantile of realised
 edges rather than a constant — the same instinct as [score.md](score.md)'s
 thresholds — rather than picking a new number by hand.
 
+## 0c. Left open by the 2026-08-14 fixes, in the order they would bite
+
+**Guard every pickled slots dataclass, not the three that have burned us.**
+Seventeen of them in `structures` are pickled and `Engine`, `Volatility` and
+`Book` carry a `__setstate__`. The other fourteen are one added field away from
+the same outage, and it has now happened twice in one day — `_touch_eras` in
+the morning, `_tick` in the afternoon, the second added hours after the first
+was fixed. A `slots=True` dataclass has no `__dict__`, so a field added after a
+save is *missing* rather than defaulted and every read raises; production
+restores these on every start, so it is a restart-time crash, not a migration.
+It fails silently besides: the throw lands inside a consumer, the container
+stays healthy, and the pipeline just stops. Four hours at 11% CPU with nothing
+in the log. One shared mixin, applied at the class level, and a test that walks
+every pickled dataclass in the package rather than naming three.
+
+**Confirm the four engine fixes on production.** They are measured on a replay
+of the stored bars and on the journal *before* the fixes; neither is the live
+system. The numbers to beat are the ones this file's item 0 records: 887
+outcomes an hour, 47.8% of them resolving at or before the instant they opened,
+1.7% with a negative duration. Instant near zero confirms it. Until that is
+read, item 4's gate stays shut.
+
+**Replace `Level.strength`, do not merely stop multiplying it.** Removing
+confluence breadth from `Zone.strength` was the cheap half.
+[strength.md](strength.md) finds the composite loses to its own best term in
+every run — AUC 0.548 against 0.648 for the level's own same-side record — and
+this number is not only reported: `reactions.py` passes it into the model as a
+feature. Mixing one signal that works with three that do not is diluting the
+feature the model is given. The proposed `quality_l` is unfitted and beats it on
+all four runs. Prerequisite is touch counting being trustworthy, which is item 0.
+
+**One horizon serves every timeframe.** `Tracker.horizon` is 3,600 seconds
+whatever the interval, so 1,054 of 1,270 chops in the absorption replay are 4h,
+1d and 1w touches labelled by the clock rather than by price. A daily level
+cannot resolve at all inside an hour. Make it a multiple of the interval, the
+same argument as evidence half-life in [levels.md](levels.md) §10b.
+
+**`Touch.energy` divides by `approach_vol` with no floor** and reaches 4.6e10
+in a replay. Nothing consumes it yet, which is the only reason it has not
+already poisoned something — the same shape as the unbounded features that
+diverged the FM.
+
+**Record press depth on every touch.** [absorption.md](absorption.md) measures
+it non-zero on 68.8% of real interactions against `excursion_vol`'s 25.2%; the
+quantity [behaviours.md](behaviours.md) nominates is zero on 82.7% of touches,
+so the thing being modelled is mostly absent. Cheap, and it is a measurement
+input rather than a feature.
+
+**`0.08` is now derivable.** It waited on post-fix data (item 0b) and the
+blocker was inflated touch counts making a level's history and its next outcome
+the same move twice. That is fixed. Make it a rolling quantile of realised
+edges rather than a constant.
+
+**Two smaller ones.** `yahoo.to_bars` converts an entire frame and then keeps
+only the last `bars` of it; slicing first is much faster but changes the count
+when rows are dropped as NaN, so it needs a decision rather than a patch. And
+the agents' spread finding reports a reading as being "at the historical
+maximum" while computing that maximum over a window *containing* the reading —
+true by construction, and it belongs in the tool's framing rather than the
+prompt.
+
+**A deploy is an outage.** Every push restarts the container, including
+docs-only ones, and four this afternoon each cost a backfill. `e4b0f3f` stops a
+backfill starving the consumer, which shortens it, but does not make a restart
+free. Batching pushes is the cheap discipline; not rebuilding on a docs-only
+change is the real fix.
+
 ## ~~1. Split `observe_bar`: form from own bars, touch from the finest~~ — done
 
 Every bar forms levels for its own interval; only the finest interval touches,
@@ -336,10 +403,16 @@ measuring the right quantity.
 
 ## 4. `fit(since=)` once 200 post-fix outcomes exist
 
-No code needed. The counter restarts from the 2026-08-13 fixes, because
-examples recorded under inflated touch counts and a pooled base rate describe a
-model that no longer exists. Detail: [structures.md](structures.md), "Examples
-have an expiry".
+No code needed. The counter restarts from the **2026-08-14** fixes, not the
+13th's: examples recorded under inflated touch counts and a pooled base rate
+describe a model that no longer exists, and half of everything recorded before
+the 14th was a touch resolving at the instant it opened. Detail:
+[structures.md](structures.md), "Examples have an expiry".
+
+The count therefore starts from zero again as of `ddc7aec`, and at the corrected
+rate — roughly half the old one, with the concentration on `sol` 3m and 5m
+unmeasured since — 200 outcomes is a longer wait than the 4.9 minutes item 0
+recorded. That is the point of the gate rather than a problem with it.
 
 ## ~~5. Run-formed levels — built, run, and answered~~ — done
 
