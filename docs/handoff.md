@@ -114,6 +114,42 @@ recorded call, so `reward_to_risk` was meaningless — `vol` was optional on
 anything, which is still true and still open: see "0.08 is not derived from
 anything" for the attempt to derive it and why the pre-fix journal cannot.
 
+## The first weekend, 2026-08-15/16 — what to look at on Monday
+
+Deployed on the Friday afternoon, untested against a real close. FX and the
+indices stop trading; crypto does not, which makes the weekend a free
+controlled experiment — the same code over two instrument classes where only
+one of them halts.
+
+**Alerts should stay quiet on FX and keep working on crypto.** Nothing knows
+about market hours; the protection is structural and worth confirming rather
+than trusting. `staleness_ratio` divides a venue's stillness by the group's, so
+a market that freezes together stays near 1 and fires nothing, and a new level
+call needs a *new* touch, which a frozen price does not open. If FX stale
+alerts arrive anyway, the venues are freezing at different times and that
+assumption is wrong.
+
+**No outcome should span the close.** `GAP_FACTOR` discards a touch open more
+than four horizons rather than resolving it, because `_close` records
+`push_vol` as the distance at the moment of closing — so before this, a touch
+open at the Friday close wrote the Sunday reopening gap into the level's
+statistics and into `facto`'s targets as that level's reaction. On EURUSD one
+weekend resolved as a 27-volatility-unit rejection.
+
+```bash
+# Any outcome with a lifetime past four horizons is the guard having failed.
+sudo docker exec -i till-infinity python -c "
+import json, sqlite3
+c = sqlite3.connect('file:/app/.data/journal/journal.db?mode=ro', uri=True)
+rows = [json.loads(x) for (x,) in c.execute(\"select context from entries where kind='outcome'\")]
+long = [r for r in rows if (r.get('seconds') or 0) > 14400]
+print(len(long), 'outcomes over four hours'); print(long[:3])"
+```
+
+Expected: **zero**. A handful of large `push_vol` values on Monday morning that
+are genuine gap trades will still appear as *new* touches, which is correct —
+the guard drops interactions that span the gap, not the reopening itself.
+
 ## Then, in order
 
 See [todo.md](todo.md) for the full list. The short version:
