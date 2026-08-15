@@ -88,7 +88,14 @@ times as often as `btc` and none of the three structural explanations held —
 zone width, level density and a lagging volatility estimate were all ruled out
 by measurement. The first recorder row an hour later had **btc ahead of eth**.
 So the ratio is not structural, and any explanation built on that hour would
-have been a story. Check whether it swings like that all week.
+have been a story.
+
+**Six hours of it now say: mild, persistent, and nothing like five.** Across
+twelve windows, 128 eth against 96 btc — a ratio of **1.3**, with eth ahead in
+eight windows and btc in three. The 5x was one hour of noise, and an hour is
+apparently enough to produce a factor of five in a rate this size. Worth
+remembering the next time a single reading looks structural. Still crypto-only
+and still a weekend; check it against a weekday.
 
 **1. The outcome rate, properly this time.** Item 0 was answered but never
 re-measured on a comparable population: 887/hour was a weekday across fourteen
@@ -118,10 +125,27 @@ per thousand bars and `btc 3m` at 179 are the closest thing to a control, and
 both were measured over a weekend too. Nothing here knows what the right number
 looks like, which makes every other rate hard to judge.
 
-**6. The outcome mix.** Currently almost all rejects, because chop needs the
-full horizon to elapse and a break needs the trap window, and the box has been
-restarted repeatedly. The mix is the part that says whether the model sees
-anything other than bounces, and it is not yet measurable.
+**~~6. The outcome mix.~~ — answered on 2026-08-15.** It was almost all
+rejects because the box kept restarting before a horizon could elapse. Six
+uninterrupted hours give 233 outcomes at 39/hour:
+
+| outcome | share |
+|---|---|
+| reject | 62% |
+| trap | 23% |
+| break | 11% |
+| backcheck | 5% |
+
+**38% of resolutions are not a bounce**, which is what this item was asking.
+The model sees breaks and traps in quantity, so the pipeline is not degenerate
+— and traps at 23% are a large enough class to be worth their own accuracy
+number rather than being folded into "not a reject".
+
+Two caveats. This is crypto on a Saturday, so it says nothing about the eleven
+instruments that were shut, and the mix under a session open may differ. And a
+62% reject share sits close to the "assume the level holds" base rate that
+already beats the model ([features.md](../research/features.md) §3) — the mix
+being healthy is not evidence the *predictions* are.
 
 ## 0z. Two things found on 2026-08-14, both ahead of everything below
 
