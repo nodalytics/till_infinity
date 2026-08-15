@@ -62,11 +62,25 @@ docker pull "$IMAGE:$TAG"
 # previous version running rather than nothing at all.
 docker rm -f "$NAME" 2>/dev/null || true
 
+# Sized from the host rather than pinned, because the pin was wrong on both
+# boxes it ever ran on. 640m was chosen for a 908MB instance — about 70%, which
+# left the host itself enough to breathe. Hard-coding it means a bigger machine
+# runs the service in a 640MB box and wastes the rest, while a smaller one
+# would be over-committed on the first deploy and nobody would notice until the
+# kills started.
+#
+# 70% of total, floored at 512m so a tiny instance still starts and can say why
+# it is unhappy.
+TOTAL_MB="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)"
+LIMIT_MB="$(( TOTAL_MB * 70 / 100 ))"
+[[ "$LIMIT_MB" -lt 512 ]] && LIMIT_MB=512
+echo "host has ${TOTAL_MB}MB, giving the container ${LIMIT_MB}MB"
+
 docker run -d \
   --name "$NAME" \
   --restart unless-stopped \
-  --memory 640m \
-  --memory-swap 640m \
+  --memory "${LIMIT_MB}m" \
+  --memory-swap "${LIMIT_MB}m" \
   --cpus 1.5 \
   -e TZ=UTC \
   --env-file /home/ubuntu/till.env \

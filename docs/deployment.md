@@ -207,18 +207,30 @@ rsync -avz -e "ssh -i key.pem" ubuntu@OLD_HOST:/home/ubuntu/till-data/journal/ \
       ubuntu@NEW_HOST:/home/ubuntu/till-data/journal/
 ```
 
-### 5. Raise the limits, deliberately
+### 5. The limits size themselves; swap does not
 
-`run.sh` pins `--memory 640m --memory-swap 640m --cpus 1.5`, chosen for a
-908MB two-core instance. They are not a safety margin to keep out of habit:
+`run.sh` no longer pins the memory limit. It takes **70% of the host's total**,
+floored at 512m — which is 635MB on the old 908MB instance, near enough the 640m
+it used to hard-code, and 2,676MB on a 3.8GB one. The pin was wrong on both
+boxes it ran on: too small to use a bigger machine, and silently
+over-committed on a smaller one.
 
-- `--memory-swap` equal to `--memory` means **no swap at all**, which is why
-  every overrun on the old box was a kill rather than a slowdown.
-- 640m of 908MB left the host itself short, and the kills that mattered were
-  `global_oom` on the host with `oomkilled=false` on the container — a
-  confusing pair to read, and the reason to give the host real headroom.
+What is still worth setting by hand is **swap**, because there is none:
 
-On a larger instance raise both and give the box swap. Then revisit
+- `--memory-swap` equal to `--memory` means **no swap for the container**, and
+  neither instance has host swap either, which is why every overrun was a kill
+  rather than a slowdown.
+- The kills that mattered were `global_oom` on the *host* with
+  `oomkilled=false` on the container — a confusing pair to read, and the reason
+  the host needs headroom of its own rather than just a generous cgroup.
+
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+Then revisit
 [todo.md](todo.md)'s standing note that nothing heavier than a read can run
 alongside the service; it was true of the old hardware and is the reason
 several diagnostics this project needs have never been run.
