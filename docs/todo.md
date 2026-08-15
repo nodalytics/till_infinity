@@ -268,25 +268,45 @@ thresholds — rather than picking a new number by hand.
 
 ## 0c. Left open by the 2026-08-14 fixes, in the order they would bite
 
-**Guard every pickled slots dataclass, not the three that have burned us.**
-Seventeen of them in `structures` are pickled and `Engine`, `Volatility` and
-`Book` carry a `__setstate__`. The other fourteen are one added field away from
-the same outage, and it has now happened twice in one day — `_touch_eras` in
-the morning, `_tick` in the afternoon, the second added hours after the first
-was fixed. A `slots=True` dataclass has no `__dict__`, so a field added after a
-save is *missing* rather than defaulted and every read raises; production
-restores these on every start, so it is a restart-time crash, not a migration.
-It fails silently besides: the throw lands inside a consumer, the container
-stays healthy, and the pipeline just stops. Four hours at 11% CPU with nothing
-in the log. One shared mixin, applied at the class level, and a test that walks
-every pickled dataclass in the package rather than naming three.
+**~~Guard every pickled slots dataclass~~ — the important half is done, the
+cheap half is not.** `_schema` now derives the fingerprint by walking the
+package rather than from a hand-written list of seven, so a field added to any
+of the twenty-seven persisted dataclasses invalidates the saved state and the
+service starts cold instead of crashing on it (`98e45be`). That was the root
+cause: the list existed, `Volatility` was not on it, and using it correctly
+required knowing it was there. It fired correctly on its first real test —
+`schema 25296b265b0805a0, this is c6229bdc019bc469 — starting cold`.
 
-**Confirm the four engine fixes on production.** They are measured on a replay
-of the stored bars and on the journal *before* the fixes; neither is the live
-system. The numbers to beat are the ones this file's item 0 records: 887
-outcomes an hour, 47.8% of them resolving at or before the instant they opened,
-1.7% with a negative duration. Instant near zero confirms it. Until that is
-read, item 4's gate stays shut.
+What is left is belt-and-braces: fourteen of those classes still have no
+`__setstate__`, so if state is ever loaded that the schema did *not* catch, the
+read still raises. The schema stops bad state being loaded; a `__setstate__`
+stops a crash if it ever is. Lower priority now, and it wants one shared mixin
+rather than a fourth hand-written method.
+
+**Confirm the engine fixes on production — mostly done, one number left.**
+Measured over 87 outcomes on 2026-08-14:
+
+| | before | after |
+|---|---|---|
+| instant | 47.8% (n=18,709) | **9.2%** |
+| back checks | 1, all history | **30** |
+| breaks | 43, all history | 3 in two hours |
+| bus drops | 372/min | 0 |
+
+The back check number is the one to notice: it was not low because back checks
+are rare, it was low because `expire`'s resolutions were discarded and
+`broke_at` is what makes a retest detectable.
+
+**Still unread: whether negatives went to zero.** They went the wrong way first
+— 1.7% before the clock fix, 5.7% after it, because stamping a bar at its close
+puts the *forming* bar in the future. `e02e7d7` clamps to now and has no sample
+yet, because it deployed into the cold start above. Read it next sitting.
+Until then item 4's gate stays shut.
+
+**The box is re-learning from cold.** The schema change was correct and cost the
+accumulated touch history and kNN memory. Levels re-form from stored bars, but
+the per-level statistics that `quality_l` depends on start from nothing, so the
+strength work below has no history behind it for a while.
 
 **Replace `Level.strength`, do not merely stop multiplying it.** Removing
 confluence breadth from `Zone.strength` was the cheap half.
