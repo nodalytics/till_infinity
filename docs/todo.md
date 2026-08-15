@@ -334,10 +334,33 @@ quantity [behaviours.md](behaviours.md) nominates is zero on 82.7% of touches,
 so the thing being modelled is mostly absent. Cheap, and it is a measurement
 input rather than a feature.
 
-**`0.08` is now derivable.** It waited on post-fix data (item 0b) and the
-blocker was inflated touch counts making a level's history and its next outcome
-the same move twice. That is fixed. Make it a rolling quantile of realised
-edges rather than a constant.
+**~~`0.08` is now derivable~~ — derived. See [edge.md](edge.md).** The blocker
+was inflated touch counts making a level's history and its next outcome the
+same move twice, which showed as the direction being called correctly 99.9% of
+the time at every level of |edge|. Fixed, and it now reads 71.1%, so the
+measurement means something.
+
+Two results, one of them against what this file used to say:
+
+- **0.08 sits inside a flat region and should be 0.11.** Below roughly 0.11,
+  direction runs 54-61% — a coin flip with a push near zero — and at 0.11 it
+  steps to 75%. Six instruments out of six show the same step. The gate also
+  is not where it was believed to be: on corrected data the median |edge| is
+  0.1373, so 0.08 is *below* the median and passes 69.6% of calls, against the
+  2.3% recorded in [levels.md](levels.md).
+- **Keep it a constant. Do not build the rolling quantile this item used to
+  ask for.** Against the constant that passes exactly the same number of
+  calls, the rolling rule is four to ten points worse on direction at every
+  selectivity tried, and 9 of 24 cells never reach the 50 calls it needs.
+  `edge` is a difference of two probabilities and so already means the same
+  thing on every instrument; normalising it per cell destroys that. The
+  instinct is right for anything in volatility units and wrong here, which is
+  the distinction worth keeping.
+
+Not yet done, and deliberately: the constant is unchanged in code. The
+measurement is a bars-only replay, and today established twice that the quote
+path behaves differently enough to overturn a replay result. Re-derive on
+production once there are enough post-fix outcomes, then move it.
 
 **Two smaller ones.** `yahoo.to_bars` converts an entire frame and then keeps
 only the last `bars` of it; slicing first is much faster but changes the count
