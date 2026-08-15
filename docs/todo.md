@@ -357,6 +357,23 @@ Two results, one of them against what this file used to say:
   instinct is right for anything in volatility units and wrong here, which is
   the distinction worth keeping.
 
+**Can it be computed rather than chosen? Yes, and it buys maintenance rather
+than accuracy.** Accuracy-targeting — the lowest |edge| whose *realised*
+accuracy clears a target, re-estimated from outcomes and kept global — looked
+like a clear win over the whole replay, +3.6 to +5.1 points. Scored on the
+second half alone at matched volume it is **equal to a constant three times out
+of three**. The earlier margin was the rule riding the warm-up drift; its own
+threshold fell from 0.26 to 0.06 across the replay.
+
+So it is worth building, for a different reason than the one this item
+originally gave. `0.08` was defensible when set — 97.7th percentile, passing
+2.3% — and today passes 69.6% without anyone touching it. A constant is as good
+as the adaptive rule *provided somebody keeps re-deriving it*, and nobody did.
+The evidence-scaled form `z * sqrt(p(1-p)/n)` is the more principled shape and
+has nothing to work with: `infer` borrows a fixed twelve neighbours, so the
+effective count runs 12.5 to 15.3 across the quartiles. Revisit if `k` ever
+varies.
+
 Not yet done, and deliberately: the constant is unchanged in code. The
 measurement is a bars-only replay, and today established twice that the quote
 path behaves differently enough to overturn a replay result. Re-derive on

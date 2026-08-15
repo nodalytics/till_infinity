@@ -133,15 +133,99 @@ Also unmeasured: whether any of this survives the quote path, what it does to
 alert volume after `actionable`'s other gates, and whether the reward-to-risk
 gate already removes most of what moving the threshold would remove.
 
+## 4. Computing it instead of choosing it
+
+The rolling quantile failing is an argument against *that* dynamic rule, not
+against every one. Three others were tried, each scored against the constant
+that passes exactly the same number of calls.
+
+**Evidence-scaled: `|edge| >= z * sqrt(p(1-p)/n)`.** The principled form — a
+difference of two probabilities is only meaningful against the uncertainty of
+the estimate, so require the conditional to sit a given number of standard
+errors from the base rate. It needs no threshold at all, only a confidence
+level.
+
+| rule | passed | direction | matched constant |
+|---|---|---|---|
+| z >= 1.0 | 53.4% | 81.9% | 81.6% |
+| z >= 1.5 | 35.3% | 85.9% | 85.0% |
+| z >= 2.0 | 22.1% | 88.9% | 87.3% |
+| z >= 2.5 | 13.6% | 90.0% | 90.8% |
+
+It edges the constant three times out of four and by under two points. The
+reason it cannot do more is worth recording, because it is a fact about the
+model rather than about the idea: **the effective evidence count barely
+varies.** Across 2,003 calls it runs p25 12.5, median 13.8, p75 15.3. `infer`
+borrows a fixed `DEFAULT_K = 12` neighbours, so almost every call has the same
+denominator and there is nothing for the scaling to bite on. The idea would
+matter if `k` varied with how much similar history actually existed.
+
+**Accuracy-targeting.** Rather than a quantile of edges, take the lowest
+|edge| whose *realised* accuracy above it has been clearing a target,
+re-estimated from outcomes as they arrive, and — this is the part the rolling
+quantile got wrong — kept **global** rather than per instrument.
+
+Over the whole replay this looked like a clear win: +4.4, +5.1 and +3.6 points
+over the matched constant at targets of 70%, 75% and 80%.
+
+**It is not a win.** Scored on the second half alone, where the warm-up is
+mostly done, against a constant matched to its own volume:
+
+| rule | passed | direction | push |
+|---|---|---|---|
+| adaptive, target 70% | 831 | 87.9% | 1.39 |
+| constant 0.07, same volume | 832 | 87.9% | 1.35 |
+| adaptive, target 75% | 673 | 90.3% | 1.47 |
+| constant 0.13, same volume | 674 | 90.2% | 1.47 |
+| adaptive, target 80% | 516 | 91.0% | 1.56 |
+| constant 0.18, same volume | 517 | 90.7% | 1.51 |
+
+Equal, three times. The earlier advantage was the rule riding the warm-up
+drift that §3 describes: its chosen threshold fell from **0.26 to 0.06** across
+the replay as the engine's accuracy rose. A constant cannot do that, so over a
+period containing a trend the adaptive rule looks better while being no better
+per call.
+
+### So what is it actually worth
+
+Not accuracy. **Maintenance.**
+
+A constant is exactly as good as the adaptive rule *provided somebody keeps
+re-deriving it*, and the evidence that nobody does is this document. `0.08` was
+presumably defensible when it was set — [levels.md](levels.md) records it at the
+97.7th percentile of its input, passing 2.3% of calls. Today it passes 69.6%
+and sits below the median. Nothing changed it; the distribution moved underneath
+it when the counting bugs were fixed, and it went stale silently.
+
+An accuracy-targeting rule would have moved with it. That is the argument for
+building one, and it is a different argument from the one this file started
+with — it is about the threshold not needing an owner, rather than about it
+being sharper.
+
+The cost is honest too: it needs outcomes before it can say anything (200 calls
+here), it will track a drift whether the drift is real or an artefact, and a
+target accuracy is still a number somebody picks — but it is a number with a
+meaning, which `0.08` never was.
+
 ## What to do
 
-1. **Move the constant from 0.08 to 0.11**, and keep it a constant. It is the
-   one change the evidence supports directly: the band being admitted today
-   performs like noise on every instrument tested.
-2. **Do not build the rolling quantile.** Record why, because the instinct will
-   recur — and it is right for anything measured in volatility units, which is
-   most of this project. It is wrong here precisely because `edge` is not.
-3. **Re-derive on production once there are enough post-fix outcomes**, on the
-   quote path rather than a bars-only replay, before treating 0.11 as settled.
-   The counter for that restarts from the 2026-08-14 fixes, same as
-   [todo.md](todo.md) item 4.
+1. **Move the constant from 0.08 to 0.11 now.** It is the change the evidence
+   supports most directly and it needs nothing built: the band admitted today
+   performs like a coin flip on every one of six instruments.
+2. **Then build the accuracy-targeting rule, and expect no accuracy from it.**
+   It matched the constant three times out of three at matched volume, so it is
+   not an improvement in what gets said — it is an improvement in the threshold
+   not going stale, which this document is the evidence for. Global, never per
+   instrument, and parameterised by a target accuracy rather than a quantile.
+3. **Do not build the rolling quantile**, and record why, because the instinct
+   will recur. It is right for anything in volatility units, which is most of
+   this project, and wrong here precisely because `edge` is already a
+   probability.
+4. **Leave the evidence-scaled form alone until `k` varies.** `z * sqrt(p(1-p)/n)`
+   is the principled shape and it has nothing to work with while `infer` borrows
+   a fixed twelve neighbours: the effective count runs 12.5 to 15.3 across the
+   quartiles. Worth revisiting if the kNN ever takes as many neighbours as it
+   genuinely has, not before.
+5. **Re-derive on production before treating any of this as settled.** Bars-only
+   replay, and today twice established that the quote path can overturn one. The
+   counter restarts from the 2026-08-14 fixes, same as [todo.md](todo.md) item 4.
