@@ -234,9 +234,27 @@ class SqliteStore(Store):
         since that is also roughly how far back each one's evidence is worth
         anything.
 
-        Quotes are left alone. They are the raw material for the spread median
-        and are already bounded by `dedupe_quotes`; bars are what grow without
-        limit, and 1m across fourteen instruments and six venues is most of it.
+        **Quotes are left alone, and that is a gap rather than a decision.**
+        The claim that used to sit here — that they are bounded by
+        `dedupe_quotes`, and that bars are what grow without limit — is wrong
+        in both halves, and measuring the file says so plainly:
+
+            quotes             333.2 MB
+            quotes_series_ts   212.3 MB   index
+            quotes_feed_ts     191.3 MB   index
+            bars                51.7 MB
+            bars_series_ts      36.2 MB   index
+
+        Quotes are 76% of it and their two indexes cost more than the rows.
+        `dedupe_quotes` skips a quote whose price is *unchanged*, which lowers
+        the write rate in a quiet market and removes nothing — every price
+        change is kept for ever. On the instance they spanned 39.3 hours,
+        which was the entire age of the database: not one had ever been
+        deleted, at roughly 64,000 rows an hour.
+
+        So this prunes the smaller, slower half. See todo.md — quote retention
+        is its own item, and the answer there is probably not "keep them
+        longer" but "record what a touch needed at the moment it happened".
 
         **Deleting does not shrink the file.** SQLite frees the pages for reuse,
         so growth stops but the database stays its current size until it is

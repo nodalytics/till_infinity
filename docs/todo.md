@@ -478,6 +478,42 @@ nothing currently collected predicts direction beyond the side, and no amount
 of modelling fixes that. Until then, `facto.Report` should carry "assume the
 level holds" as a baseline alongside the two it already compares against.
 
+**Quotes have no retention, and they are three quarters of the prices file.**
+`prices prune` covers bars only, and the reason written into `store.prune` was
+wrong in both halves: quotes are not bounded by `dedupe_quotes`, and bars are
+not what grows. Measured on the instance:
+
+| object | size |
+|---|---|
+| quotes | 333.2 MB |
+| quotes_series_ts | 212.3 MB *(index)* |
+| quotes_feed_ts | 191.3 MB *(index)* |
+| bars | 51.7 MB |
+| bars_series_ts | 36.2 MB *(index)* |
+
+Quotes are 76% of the file and their two indexes cost more than the rows.
+`dedupe_quotes` skips a quote whose price is *unchanged* — it lowers the write
+rate in a quiet market and deletes nothing. On the instance quotes spanned
+39.3 hours, which was the **entire age of the database**: not one had ever been
+removed, at roughly 64,000 rows an hour, about 450MB a day.
+
+The first prune ever run dropped 27,004 bars and a VACUUM took the file from
+787MB to 567MB, so the bar half is now handled. The quote half is not.
+
+Two things to decide together, because they pull in opposite directions:
+
+- **Retention** would cap the growth. 450MB a day is nothing against 242GB, so
+  this is no longer urgent — but unbounded is still unbounded, and the indexes
+  make each row cost triple.
+- **The item below wants the opposite**: microstructure at a touch is
+  unanswerable precisely because quote *history* does not survive. Cutting
+  retention harder makes that worse.
+
+The resolution is probably that they are not in tension at all. Snapshotting
+what a touch needed — spread, dispersion, staleness — into the touch itself
+makes the raw quotes disposable, which is what allows a short retention rather
+than what argues against it. Do that one first.
+
 **Snapshot the microstructure state into a touch when it opens.** The
 question "what should we measure at a touch" is answered in
 [research/features.md](../research/features.md) for everything derivable from
