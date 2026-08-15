@@ -478,8 +478,8 @@ nothing currently collected predicts direction beyond the side, and no amount
 of modelling fixes that. Until then, `facto.Report` should carry "assume the
 level holds" as a baseline alongside the two it already compares against.
 
-**Decline the instrument and timeframe pairs that cannot support a level,
-and adding instruments becomes safe by construction.** Asked whether more
+**~~Decline the instrument and timeframe pairs that cannot support a level~~
+— built, `ef7fa71`, with one thing to re-check.** Asked whether more
 instruments can be added, especially crypto and indices. Resources say yes;
 the model says *it depends on the pair*, and that is measurable before adding
 anything.
@@ -523,8 +523,27 @@ Then the answer to "can we add more" becomes mechanical:
   measured with a tick larger than the whole zone, which is worse than sol.
   With the gate they would simply carry fewer timeframes rather than poison
   the sample.
-- **Measure before adding, not after.** The check is one query against a warm
-  volatility estimate.
+- **Measure before adding, not after.** `Engine.supports(feed, interval)` is
+  the check and it now runs itself: `reform` forms nothing for a pair below
+  `MIN_TICKS_PER_ZONE = 4`, drops whatever was already formed on that geometry,
+  and logs it once.
+
+**What it declines today, and the one thing to re-check.** Eight of fifteen
+sampled pairs: sol at 1m, 3m and 5m, and audusd, nzdusd, eurusd, usdcad and
+usdchf at 1m. sol keeps 15m and coarser, so the instrument is not lost, only
+the resolutions it cannot carry.
+
+More than the observed widths suggested, because `supports` judges the **floor**
+zone rather than the widened one — wicks make an established level roomier, but
+a new level gets the floor and the question is whether to form one at all.
+
+**The FX pairs were assessed over a weekend, with those markets shut.** Their
+measured rates say nothing — eurusd produced 4 outcomes in 24 hours, which is a
+closed market rather than a quiet one. Re-check those five on a weekday: if
+they behave, the floor is too high for FX and should come down. Erring toward
+declining in the meantime, because losing a good pair costs alerts visibly
+while keeping a bad one poisons the sample invisibly — sol alone was half of
+every outcome in the journal.
 
 Resource headroom, so the other half of the question is answered too: memory
 257MB of a 2.6GB cap, disk 235GB free at about 461MB a day of quotes, no bus
