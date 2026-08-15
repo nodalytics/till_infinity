@@ -975,9 +975,20 @@ candidates, weight them by recent loss, and let the weights move. `river` has
 
 So:
 
-- **`HALF_LIFE`** — run 7, 10, 20 and 60 in parallel and weight by realised
-  loss. The weights then *are* the regime signal, which is a second thing worth
-  having: a market whose short half-life suddenly dominates has changed.
+- **`HALF_LIFE`** — the obvious first candidate, and **measuring it produced
+  the most important correction to this whole section.** Weighting several
+  half-lives by realised *forecast* loss would optimise the wrong thing:
+  [volatility.md](../research/volatility.md) found the forecast optimum at 7 to
+  10 bars, and running the edge machinery at each half-life found the calls do
+  not improve — h=7 and h=10 are worse on direction than the current 60, and
+  the spread across all four is 3.1 points against a standard error of 1.1.
+
+  So **whatever adapts must be scored on outcomes, not on the quantity it
+  predicts.** That is harder: a forecast is scored every bar, an outcome takes
+  hours, and the loop that closes in hours cannot use the per-bar aggregation
+  that makes this cheap. Any scheme here has to confront that gap rather than
+  quietly optimise the convenient metric — which is exactly the mistake the
+  measurement caught before it was made.
 - **`resolve_vol`, `MIN_ZONE_VOL`, `GRID_ZONE_VOL`** — harder, because their
   loss is not observable per bar. These feed touch outcomes, so the loop closes
   in hours rather than bars, and the honest form is periodic re-derivation
