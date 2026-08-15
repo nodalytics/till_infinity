@@ -53,6 +53,11 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Experiments, not library code. They are written to be read alongside their
+# results and thrown away when the question is answered, so the repo's style
+# gates should not block CI on them — and a lint failure there would stop a
+# deploy over a scratch script.
+extend-exclude = ["research/harness"]
 
 [tool.ruff.lint]
 # Ruff covers pylint (the PL rules) alongside everything else, so there is one

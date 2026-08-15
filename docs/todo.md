@@ -421,6 +421,33 @@ Pick the cutoff by measuring, not by choosing: the distance distribution of
 neighbours that did and did not predict correctly will say where similarity
 stops carrying information.
 
+**Make the agents service better: faster, more accurate, and pointed at
+meaning rather than at numbers.** Today the roles read prices and structures
+and describe what changed. The more valuable half is the news — what a headline
+*means* and what intent sits behind it — with the technicals brought in as
+corroboration rather than as the subject.
+
+Concretely, in the order the groundwork exists:
+
+- **Intent and meaning from the news, not keywords.** [news-models.md](
+  news-models.md) ranks what fits on this box, and [news-dedup.md](news-dedup.md)
+  settled the first question on it: deduplication is hygiene, not signal, so
+  the restatement count is not the feature. Symbol normalisation (§2 there) is
+  the real prerequisite, because nothing routes without it and half the corpus
+  is untagged.
+- **Then join the technicals to it.** A headline that means something about
+  the dollar is worth more when EURUSD is sitting at a level with a record —
+  which is exactly what `agents/data.py` already exposes. The join is the
+  product; either half alone is what we have now.
+- **Faster.** The window is the scarcest resource in the system. See
+  [bandits.md](../research/bandits.md): choosing which instruments deserve the
+  ten trigger slots is the one genuinely bandit-shaped problem here, and the
+  incumbent policy is "first ten past the gate".
+- **More accurate.** The spread finding on 2026-08-14 reported a reading "at
+  the historical maximum" against a maximum computed over a window containing
+  it. That class of error is a tool-framing problem, fixed in `05a0abf` for
+  spreads; the other tools in `agents/tools.py` want the same read-through.
+
 **Two smaller ones.** `yahoo.to_bars` converts an entire frame and then keeps
 only the last `bars` of it; slicing first is much faster but changes the count
 when rows are dropped as NaN, so it needs a decision rather than a patch. And

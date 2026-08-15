@@ -9,6 +9,19 @@ name: Deploy
 on:
   push:
     branches: [main]
+    # Prose and experiments change nothing the instance runs, and every deploy
+    # is a restart. On 2026-08-14 four deploys in an afternoon each cost a
+    # backfill, and one of them was a docs-only commit; the level pipeline was
+    # down for four hours across them. A push that cannot alter the image
+    # should not restart the service.
+    #
+    # `paths-ignore` skips the run only when *every* changed file matches, so a
+    # commit touching code and docs together still deploys.
+    paths-ignore:
+      - "docs/**"
+      - "research/**"
+      - "**/*.md"
+      - "LICENSE"
   workflow_dispatch:
 
 concurrency:
