@@ -730,7 +730,21 @@ class Engine:
         # large one is that `horizon`, `trap_window` and the GAP_FACTOR weekend
         # guard all test `when - touch.started`, and a negative elapsed trips
         # none of them.
-        observed = when + lv.SECONDS.get(interval, 0.0)
+        # ...but never later than now, because the bar being delivered is
+        # usually the one still forming. Stamping that one at its close puts it
+        # up to a whole interval in the *future*, and a quote arriving in the
+        # meantime then resolves a touch before it started — the same negative
+        # duration this line was written to remove, in the other direction.
+        # Measured on production: it took negatives from 1.7% of outcomes to
+        # 5.7%, at -98, -98, -98, -7 and -1 seconds rather than the clean one
+        # bar of before, which is the shape of a partly-formed bar rather than
+        # a closed one.
+        #
+        # `min` is right for both cases without knowing which this is. A bar
+        # that has closed was knowable at its close and that is earlier than
+        # now; one still forming is knowable now. During a seed every bar is
+        # long closed, so this leaves the replay alone.
+        observed = min(when + lv.SECONDS.get(interval, 0.0), time.time())
         for other in self.intervals_for(feed):
             calls += self.check(feed, other, float(close), observed, low, high)
         return calls

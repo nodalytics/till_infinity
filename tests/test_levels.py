@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 import random
+import time
 
 import pytest
 
@@ -2197,3 +2198,43 @@ def test_a_change_of_quoting_venue_is_not_a_price_move():
 
     # And instruments do not bleed into each other.
     assert book.observe("btc", "a", 1_000.0, 63_000.0) == 63_000.0
+
+
+def test_a_bar_still_forming_is_not_observed_in_the_future():
+    """The other half of the clock fix, and the half that made things worse.
+
+    Stamping a bar at its close is right for a bar that has closed. The bar
+    being delivered is usually the one still forming, and stamping *that* one
+    at its close puts it up to a whole interval ahead of now — so a quote
+    arriving in the meantime resolves a touch before it began, which is the
+    negative duration the close-time stamp was introduced to remove.
+
+    Production took negatives from 1.7% of outcomes to 5.7% on that change,
+    and at -98, -98, -98, -7 and -1 seconds across 3m, 5m and 15m: partial
+    intervals, which is a partly-formed bar rather than the clean one-bar skew
+    that came before.
+    """
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+
+    seen: list[float] = []
+    original = engine.check
+    engine.check = lambda *a, **k: (seen.append(a[3]), original(*a, **k))[1]
+
+    now = time.time()
+    # A 5m bar that opened one minute ago: four minutes of it have not happened.
+    opened = int(now) - 60
+    for bar in _bar("gold", "5m", opened, 4425.0):
+        engine.observe_bar(bar)
+
+    assert seen, "the bar never reached a touch check"
+    assert all(when <= now + 1 for when in seen), (
+        "a forming bar was observed at its close, which has not happened yet"
+    )
+    # And it is still the close that is used once the bar really has closed.
+    seen.clear()
+    old = int(now) - 86_400
+    for bar in _bar("gold", "5m", old, 4425.0):
+        engine.observe_bar(bar)
+    assert all(when == old + 300 for when in seen), "a closed bar lost its close time"
