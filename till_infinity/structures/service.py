@@ -214,7 +214,12 @@ class Watcher:
         if not self.settings.warm:
             return 0
         try:
-            return self.engine.seed(self.settings.prices_db, on_progress=on_progress)
+            replayed = self.engine.seed(self.settings.prices_db, on_progress=on_progress)
+            # Warming forms levels for every pair it has bars for, including
+            # the ones whose grid cannot carry one. Decline them here rather
+            # than waiting for each series to come due for a reform.
+            self._decline_unsupported()
+            return replayed
         except Exception as exc:  # warming is an optimisation, not a requirement
             log.warning("structures: could not warm from %s: %s", self.settings.prices_db, exc)
             return 0
@@ -228,7 +233,16 @@ class Watcher:
         self.drift = state.get("drift", self.drift)
         self.engine = state.get("engine", self.engine)
         log.info("structures: restored models (%s)", self.detector.seen())
+        # Restored levels were formed under whatever geometry was current when
+        # the state was saved, which is not necessarily this one.
+        self._decline_unsupported()
         return True
+
+    def _decline_unsupported(self) -> None:
+        """Drop pairs whose grid is too coarse to carry a level, and say so."""
+        dropped = self.engine.drop_unsupported()
+        if dropped:
+            log.info("structures: %d instrument/timeframe pair(s) declined", dropped)
 
     def save(self) -> None:
         try:

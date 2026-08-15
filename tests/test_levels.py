@@ -2480,3 +2480,53 @@ def test_an_instrument_with_no_evidence_yet_is_not_declined():
     for bar in _range_bound(bars=40):
         engine.observe_bar(bar)
     assert engine.supports("gold", "5m"), "a cold volatility estimate"
+
+
+def test_an_unsupported_pair_is_declined_at_startup_not_at_the_next_reform():
+    """`reform` applies the rule; it just does not apply it soon enough.
+
+    A series comes due every `REFORM_EVERY` bars, which is twenty — so a 15m
+    series restored from disk carries levels it should not have for five hours,
+    opening touches and publishing calls from them the whole time. A restart is
+    exactly when that matters, because state on disk was formed under whatever
+    geometry was current when it was saved.
+    """
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+    assert engine.levels("gold", "5m"), "the fixture should have formed levels"
+
+    vol = engine.vol.of("gold", "5m")
+
+    class Coarse(Volatility):
+        @property
+        def tick(self) -> float:
+            return self.price_units(4425.0, 0.38)
+
+    coarse = Coarse()
+    for _ in range(200):
+        coarse.update(4425.0 * (1 + vol.bps / 10_000))
+    engine.vol._by_key[("gold", "5m")] = coarse
+
+    # Not due for a reform, so the existing rule would leave these standing.
+    engine.series("gold", "5m").since_reform = 0
+    assert engine.levels("gold", "5m"), "still holding levels before the sweep"
+
+    assert engine.drop_unsupported() == 1
+    assert engine.levels("gold", "5m") == []
+    assert ("gold", "5m") in engine._declined
+
+    # And it is idempotent — a second sweep has nothing left to say.
+    assert engine.drop_unsupported() == 0
+
+
+def test_the_startup_sweep_leaves_healthy_pairs_alone():
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+    before = len(engine.levels("gold", "5m"))
+    assert before
+
+    assert engine.drop_unsupported() == 0
+    assert len(engine.levels("gold", "5m")) == before
+    assert not engine._declined

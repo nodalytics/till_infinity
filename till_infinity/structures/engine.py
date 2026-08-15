@@ -576,6 +576,33 @@ class Engine:
         zone_vol = max(lv.MIN_ZONE_VOL, min(tick_vol * lv.MIN_ZONE_TICKS, lv.GRID_ZONE_VOL))
         return zone_vol / tick_vol >= MIN_TICKS_PER_ZONE
 
+    def drop_unsupported(self) -> int:
+        """Decline every pair whose grid is too coarse, now rather than later.
+
+        `reform` applies the same rule, but only when a series comes due —
+        `REFORM_EVERY` is twenty bars, so a 15m series carries levels it should
+        not have for five hours after a restart, producing touches and calls
+        from them the whole time. The gate was correct and slow, and a restart
+        is exactly when it needs to be fast: state restored from disk was
+        formed under whatever geometry was current when it was saved.
+
+        Returns how many pairs were dropped, so a caller can say so.
+        """
+        dropped = 0
+        for feed, interval in sorted(self._levels):
+            if self.supports(feed, interval):
+                continue
+            self._levels.pop((feed, interval), None)
+            self._declined.add((feed, interval))
+            dropped += 1
+            log.info(
+                "levels: %s %s declines a level — the grid is too coarse for a "
+                "zone to be entered rather than crossed",
+                feed,
+                interval,
+            )
+        return dropped
+
     def reform(self, series: Series, when: float) -> list[lv.Level]:
         """Re-derive levels from the confirmed swings in the window."""
         key = (series.feed, series.interval)
