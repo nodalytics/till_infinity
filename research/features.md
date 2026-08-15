@@ -114,26 +114,15 @@ of three things it produces; magnitude (`expected_push`) and risk (`risk_vol`,
 only wired up on 2026-08-14.
 
 What it does mean is narrower and still serious: **the per-side base rate is
-the model, and `edge` is not adding directional skill on top of it.** `edge` is
+the model, and `edge` is not adding directional skill on top of it.** That
+comparison — "assume the level holds" — is free, and belongs in `facto.Report`
+beside the two baselines it already carries.
+
+ `edge` is
 defined as `probability_up - base_rate_up`, so this is close to saying the
 conditional estimate is not beating its own unconditional — which is precisely
 the comparison [reactions.py](../till_infinity/structures/reactions.py) says
 every probability here should be reported against, and now has been.
-
-## What to do
-
-1. **Score every future directional claim against "the level holds."** It is
-   free, it is 77.7%, and nothing has beaten it. It belongs in `facto.Report`
-   next to the baseline and levels-model comparisons already there.
-2. **Do not spend effort on the distance metric or on feature generation.**
-   Both were measured and neither is where the problem is.
-3. **The open question is feature content**: what would predict direction
-   *beyond* the side. Nothing currently collected does. That is a question
-   about what to measure at a touch, not about how to model what is already
-   measured — and it should be answered before any more modelling work.
-4. **Re-run on production once the quote path is included.** Bars-only replay,
-   1,995 touches, six instruments. The direction of these results is stark
-   enough to act on; the exact figures are not settled.
 
 ## 4. So what *should* be measured at a touch
 
