@@ -12,6 +12,7 @@ rather than believed.
 |---|---|
 | [models.md](models.md) | **measured** — would trees, forests, cosine similarity or an MLP help; a 1KB logistic regression beats all of them, and `side` carries most of the signal |
 | [features.md](features.md) | **measured** — `side` alone beats all nine features together, generated features make it worse, and the trivial "level holds" rule beats our own directional call |
+| [volatility.md](volatility.md) | **measured** — the estimate is well calibrated and its half-life is well past the optimum; a flat 20-bar mean beats it at every interval |
 | [bandits.md](bandits.md) | design note — where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
 
 Findings that changed the code, or that belong next to it, are written up in
@@ -30,6 +31,7 @@ python research/harness/edge_gate.py  # the |edge| gate, thresholds and quantile
 python research/harness/similarity.py # does feature distance predict agreement
 python research/harness/features.py   # feature importance, and generated features
 python research/harness/holds.py      # the edge against "assume the level holds"
+python research/harness/vol.py        # does the volatility estimate predict the next move
 ```
 
 `touches.py` writes `touches.pkl` beside itself and the others read it, so the

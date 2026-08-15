@@ -944,6 +944,66 @@ arithmetic looks harmless.
 Designed in [score.md](score.md), not built: one number per instrument in
 [-1, +1], three EWMAs, thresholds as rolling quantiles, transitions only.
 
+## 6b. Let the constants adjust themselves
+
+The pattern this project keeps rediscovering is not that a particular number
+was wrong. It is that **hand-set numbers go stale and nothing notices**:
+
+| constant | set to | what measuring found |
+|---|---|---|
+| `0.08` edge gate | a judgement | passed 2.3% of calls when set, 69.6% by 2026-08-15 — below the median |
+| `HALF_LIFE` | 60 bars | optimum is 7-10 at every interval ([volatility.md](../research/volatility.md)) |
+| `MIN_ZONE_TICKS` | 6 | opened a 2.27v zone on sol, wider than `resolve_vol` |
+| `MAX_ZONE_VOL` | 3.0 | twice `resolve_vol`, so a touch could be born resolved |
+| `DEFAULT_K` | 12 | a fixed count, so the neighbour count carries no information |
+
+Five for five, and each was found by measuring rather than by anything in the
+system complaining. That is the argument for adaptation, and it is structural
+rather than a list of numbers to re-pick.
+
+### The mechanism is expert aggregation, not a bandit — mostly
+
+The instinct to reach for a bandit is close but not quite right, and the
+distinction is the same one [bandits.md](../research/bandits.md) draws for the
+alert gate. A bandit exists to handle **partial feedback**: it sees the reward
+of the arm it pulled and never the others. For a parameter like `HALF_LIFE`
+there is no such limitation — several estimators can run side by side and every
+one of them is scored against the same realised move, every bar. That is full
+feedback, and with full feedback **expert aggregation beats a bandit**: run the
+candidates, weight them by recent loss, and let the weights move. `river` has
+`EWARegressor` and the `ensemble` module for exactly this shape.
+
+So:
+
+- **`HALF_LIFE`** — run 7, 10, 20 and 60 in parallel and weight by realised
+  loss. The weights then *are* the regime signal, which is a second thing worth
+  having: a market whose short half-life suddenly dominates has changed.
+- **`resolve_vol`, `MIN_ZONE_VOL`, `GRID_ZONE_VOL`** — harder, because their
+  loss is not observable per bar. These feed touch outcomes, so the loop closes
+  in hours rather than bars, and the honest form is periodic re-derivation
+  against realised outcomes rather than online weighting.
+- **The edge gate** — already designed in [edge.md](edge.md) §4 as accuracy
+  targeting, and already measured: **equal to a well-chosen constant at matched
+  volume, three times out of three.** Its value is maintenance, not accuracy,
+  which is precisely the argument of this section rather than an exception to
+  it.
+- **The agents' attention budget** — genuinely a bandit, for the reason the
+  others are not: analysing gold tells you nothing about what analysing btc
+  would have found. See [bandits.md](../research/bandits.md).
+
+### The trap to design against
+
+Adaptation makes a system that *looks* responsive while being harder to reason
+about, and this project has already been bitten by drift-following once:
+edge.md §4's accuracy-targeting rule looked like a +3.6 to +5.1 point win until
+it was scored on a homogeneous window, where the margin vanished entirely. It
+had been riding the replay's warm-up trend.
+
+So any adaptive rule here needs the same discipline the constants now get:
+**scored against the fixed value it replaces, at matched selectivity, on a
+window without a trend running through it.** An adaptive parameter that merely
+tracks a drift is not better, it is only harder to audit.
+
 ## 6a. Model the next major turn, not just the next touch
 
 Everything built so far answers a question measured in minutes: price has
