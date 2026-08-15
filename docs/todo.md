@@ -478,6 +478,39 @@ nothing currently collected predicts direction beyond the side, and no amount
 of modelling fixes that. Until then, `facto.Report` should carry "assume the
 level holds" as a baseline alongside the two it already compares against.
 
+**Snapshot the microstructure state into a touch when it opens.** The
+question "what should we measure at a touch" is answered in
+[research/features.md](../research/features.md) for everything derivable from
+bars: nothing predicts direction beyond `side` except the level's own record,
+now added as `up_rate`. The candidates that remain are microstructure, and they
+cannot be tested — not because they were tried and failed, but because there is
+no history to try them on.
+
+`quotes` holds **8.6 hours** against years of bars. It is a rolling recent
+window, so a quote-driven replay yields a handful of touches where the bar
+replay yields two thousand. That is also the concrete reason every result in
+`research/` is bars-only, and why a replay has twice disagreed with production.
+
+Retaining every quote is the wrong fix — expensive, and mostly noise. Write the
+state into the touch instead, at `Tracker.begin`, exactly as `up_rate` now
+records the level's record:
+
+- spread in volatility units at the moment of contact, not the windowed median
+  `cost_of` already keeps
+- cross-venue dispersion, which `features.Book` computes for the anomaly
+  detector and never shares
+- staleness of the freshest venue, and how old the quote driving the touch is
+
+All three are already computed somewhere in the process and thrown away. Then
+the question is answerable from the journal in a few weeks rather than never,
+and the two weak candidates already measured — venue dispersion at +3.1pp
+within cell over 11 of 13 cells, volume at +2.3pp over 9 of 13 — get a sample
+large enough to settle them.
+
+Order flow proper stays out of reach: there is no book, which is the same wall
+[absorption.md](absorption.md) hit. That one is a data-source question, not a
+retention question.
+
 **Two smaller ones.** `yahoo.to_bars` converts an entire frame and then keeps
 only the last `bars` of it; slicing first is much faster but changes the count
 when rows are dropped as NaN, so it needs a decision rather than a patch. And
