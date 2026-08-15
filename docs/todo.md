@@ -511,6 +511,45 @@ Order flow proper stays out of reach: there is no book, which is the same wall
 [absorption.md](absorption.md) hit. That one is a data-source question, not a
 retention question.
 
+**Form levels at momentum turns, not only at price turns.** Asked directly:
+are we already doing this? **No.** `momentum`, `velocity` and `acceleration`
+appear nowhere in the package. The two formations that exist both segment on
+*price*:
+
+- `pips.points` picks bar extremes and waits `confirm` bars to call one a turn.
+- `runs.points` ends a run when price has retraced from its extreme by
+  `RUN_SWING_VOL` volatility units — displacement, not rate.
+
+The nearest thing to momentum is `Engine._speed`, one bar's change over the
+previous in volatility units per bar. It is computed only at the instant a
+touch opens, becomes `Features.approach_vol`, and is used nowhere else.
+
+The proposal is a third formation and it is well posed: segment the series by
+where the **rate of change** turns rather than where price does, and take the
+last bar before that turn as the *momentum origin* — the same role
+`touch.origin` plays for a reaction, the point where the leg stopped
+extending. Momentum turns lead price turns, so a level drawn there sits where
+the move began losing its push rather than where it finally stopped, and those
+are different prices.
+
+It is cheap to test and the machinery is already built for exactly this
+comparison. `Engine(formation=...)` takes `pip`, `run` or `both` and
+`levels.form` consumes whatever `Point` objects it is handed, so a
+`momentum.points` producing the same shape drops in beside the other two. Then
+`research/harness/` replays all three over one history and the outcome
+machinery says which set price respects — the same question
+[levels.md](levels.md) leaves unresolved for pip against run, and which
+[strength.md](../research/strength.md) showed was measured on a broken
+volatility denominator anyway and needs redoing regardless.
+
+One caution from what is already measured, and it cuts both ways.
+[research/features.md](../research/features.md) found `approach_vol` predicts
+nothing about direction once side is known — so momentum *at a touch* is not
+informative. That is not evidence against momentum-derived *levels*: the claim
+here is about where a level should be drawn, not about what predicts once
+price arrives. But it is a reason to test the formation on outcomes rather than
+assume the idea transfers.
+
 **Two smaller ones.** `yahoo.to_bars` converts an entire frame and then keeps
 only the last `bars` of it; slicing first is much faster but changes the count
 when rows are dropped as NaN, so it needs a decision rather than a patch. And
