@@ -61,6 +61,7 @@ from dataclasses import dataclass
 from statistics import NormalDist
 
 from .levels import SECONDS, Level, Side
+from .state import Restorable
 from .volatility import Volatility
 
 _NORMAL = NormalDist()
@@ -137,7 +138,7 @@ def _humanise(seconds: float) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class Approach:
+class Approach(Restorable):
     """When price is likely to reach a level, and how sure that is."""
 
     distance_vol: float

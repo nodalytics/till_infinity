@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .state import Restorable
+
 DEFAULT_STATE_DIR = ".data/structures"
 DEFAULT_JOURNAL_DB = ".data/journal/journal.db"
 DEFAULT_PRICES_DB = ".data/prices/prices.db"
@@ -53,7 +55,7 @@ def _int(name: str, fallback: int) -> int:
 
 
 @dataclass(slots=True)
-class Settings:
+class Settings(Restorable):
     """How the models are tuned, where their state lives."""
 
     state_dir: Path = field(default_factory=lambda: Path(DEFAULT_STATE_DIR))

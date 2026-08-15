@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from .state import Restorable
+
 #: Bound once at import: a dataclass field called `time` shadows the module
 #: inside the class body, so the second default would resolve against a Field.
 _now = time.time
@@ -41,7 +43,7 @@ class Shape(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class Consensus:
+class Consensus(Restorable):
     """Where the venues agree, at one instant, for one instrument.
 
     The median rather than the mean, because the whole point is to be robust to
@@ -57,7 +59,7 @@ class Consensus:
 
 
 @dataclass(frozen=True, slots=True)
-class Signal:
+class Signal(Restorable):
     """One detection: what, where, how unusual, and the numbers behind it."""
 
     shape: Shape

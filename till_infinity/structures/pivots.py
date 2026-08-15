@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from .levels import Kalman, Level
+from .state import Restorable
 from .volatility import Volatility
 
 #: Sessions a pivot set is computed for. Daily is what most desks watch;
@@ -42,7 +43,7 @@ NAMES: tuple[str, ...] = ("PP", "R1", "S1", "R2", "S2", "R3", "S3", "PH", "PL", 
 
 
 @dataclass(frozen=True, slots=True)
-class Session:
+class Session(Restorable):
     """One completed period's range. The whole input to a pivot set."""
 
     start: int

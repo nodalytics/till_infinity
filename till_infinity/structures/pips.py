@@ -34,6 +34,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
+from .state import Restorable
+
 #: A swing needs this many bars after it before it is treated as established.
 #: Fewer and every wiggle is a turning point; more and levels arrive too late
 #: to be useful. Three is the smallest number that survives a single outlier.
@@ -51,7 +53,7 @@ class Swing(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class Point:
+class Point(Restorable):
     """One perceptually important point."""
 
     index: int

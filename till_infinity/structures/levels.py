@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from .pips import Point
+from .state import Restorable
 from .volatility import Volatility
 
 #: How wide a level's zone is, as a multiple of its own uncertainty. Two
@@ -260,7 +261,7 @@ class State(StrEnum):
 
 
 @dataclass(slots=True)
-class Kalman:
+class Kalman(Restorable):
     """One-dimensional Kalman filter over a slowly drifting price.
 
     `mean` is where the level is, `variance` how unsure we are. Both are in
@@ -300,7 +301,7 @@ class Kalman:
 
 
 @dataclass(slots=True)
-class SideStats:
+class SideStats(Restorable):
     """What the level has done to price arriving from one particular side.
 
     Push is signed and in volatility units: positive is upward. Summing the
@@ -428,7 +429,7 @@ class SideStats:
 
 
 @dataclass(slots=True)
-class Level:
+class Level(Restorable):
     """One key price level, and what it has done to price."""
 
     feed: str

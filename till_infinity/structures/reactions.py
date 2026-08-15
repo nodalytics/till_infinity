@@ -59,6 +59,7 @@ from .levels import (
     Outcome,
     Side,
 )
+from .state import Restorable
 from .volatility import Volatility
 
 #: Neighbours consulted for the cold-start prior.
@@ -120,7 +121,7 @@ MIN_REWARD_TO_RISK = 1.0
 
 
 @dataclass(frozen=True, slots=True)
-class Features:
+class Features(Restorable):
     """What makes two touches comparable.
 
     Deliberately small, and every entry scale-free. A feature in price units or
@@ -194,7 +195,7 @@ def experience_of(touches: float) -> float:
 
 
 @dataclass(slots=True)
-class Touch:
+class Touch(Restorable):
     """One interaction, from first contact to resolution."""
 
     feed: str
@@ -284,7 +285,7 @@ class Touch:
 
 
 @dataclass(frozen=True, slots=True)
-class Inference:
+class Inference(Restorable):
     """What the history says about the direction from here."""
 
     side: Side
@@ -691,7 +692,7 @@ def infer(
 
 
 @dataclass(slots=True)
-class Tracker:
+class Tracker(Restorable):
     """Follows interactions from first contact to resolution.
 
     Resolution is what makes the record a training example rather than an

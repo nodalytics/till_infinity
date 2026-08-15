@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 
 from ..logging import get_logger
 from .pips import Point
+from .state import Restorable
 
 log = get_logger(__name__)
 
@@ -118,7 +119,7 @@ def dtw(left: Sequence[float], right: Sequence[float], band: float = BAND) -> fl
 
 
 @dataclass(frozen=True, slots=True)
-class Shape:
+class Shape(Restorable):
     """One normalised sequence, with where it came from."""
 
     values: tuple[float, ...]
@@ -150,7 +151,7 @@ class Shape:
 
 
 @dataclass(slots=True)
-class Instance:
+class Instance(Restorable):
     """One occurrence of a shape, and what followed it."""
 
     shape: Shape
@@ -164,7 +165,7 @@ class Instance:
 
 
 @dataclass(frozen=True, slots=True)
-class Match:
+class Match(Restorable):
     """What the library says about a shape that has just formed."""
 
     instances: int

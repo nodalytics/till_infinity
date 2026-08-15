@@ -852,3 +852,67 @@ def test_a_volatility_saved_before_a_field_existed_still_loads():
     book = Book()
     book.of("gold", "5m").update(100.0)
     assert pickle.loads(pickle.dumps(book)).of("gold", "5m").tick == 0.0
+
+
+def test_every_persisted_class_restores_a_field_it_predates():
+    """The companion guard to the schema hash, and the one that walks.
+
+    `store._schema` stops state being *loaded* once a shape has changed.
+    `Restorable` stops a *crash* if any ever is — a pickle arriving by another
+    path, a schema that is itself wrong, a class the walk cannot see. Neither
+    subsumes the other, and this one is cheap.
+
+    Written as a walk for the same reason the schema is: the version of the
+    schema test that named one class passed while the guard was blind to
+    twenty others.
+    """
+    import dataclasses
+    import importlib
+    import pkgutil
+
+    import till_infinity.structures as package
+    from till_infinity.structures.state import Restorable
+
+    checked = 0
+    for found in pkgutil.iter_modules(package.__path__):
+        module = importlib.import_module(f"till_infinity.structures.{found.name}")
+        for name in dir(module):
+            cls = getattr(module, name)
+            if not (
+                isinstance(cls, type)
+                and dataclasses.is_dataclass(cls)
+                and cls.__module__ == module.__name__
+                and getattr(cls, "__slots__", None) is not None
+            ):
+                continue
+            assert issubclass(cls, Restorable), (
+                f"{found.name}.{name} is persisted and does not default a field "
+                "added after a save, so a restore raises instead of starting cold"
+            )
+            checked += 1
+
+            optional = [
+                f
+                for f in dataclasses.fields(cls)
+                if f.default is not dataclasses.MISSING
+                or f.default_factory is not dataclasses.MISSING
+            ]
+            if not optional:
+                continue
+
+            # A state that predates the last optional field: every other field
+            # present, that one simply absent. `__setstate__` accepts a plain
+            # mapping, so this needs no assumption about pickle's tuple shape.
+            missing = optional[-1]
+            state = {f.name: None for f in dataclasses.fields(cls) if f.name != missing.name}
+
+            restored = cls.__new__(cls)
+            restored.__setstate__(state)
+
+            # The read that used to raise AttributeError, and it comes back as
+            # the default rather than as anything invented.
+            value = getattr(restored, missing.name)
+            if missing.default is not dataclasses.MISSING:
+                assert value == missing.default, f"{name}.{missing.name} restored wrong"
+
+    assert checked > 20, "the walk found almost nothing, so it is not walking"

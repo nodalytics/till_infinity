@@ -30,6 +30,7 @@ import time
 from dataclasses import dataclass, field
 
 from .models import Consensus
+from .state import Restorable
 
 #: Bound once at import: a dataclass field called `time` shadows the module
 #: inside the class body, so the second default would resolve against a Field.
@@ -48,7 +49,7 @@ STILL_FLOOR = 1.0
 
 
 @dataclass(slots=True)
-class Reading:
+class Reading(Restorable):
     """The last thing one venue said."""
 
     venue: str

@@ -52,6 +52,7 @@ from typing import Any
 from river import facto, metrics
 
 from ..logging import get_logger
+from .state import Restorable
 
 log = get_logger(__name__)
 
@@ -144,7 +145,7 @@ def saturate(value: float, *, typical: float = TYPICAL) -> float:
 
 
 @dataclass(slots=True)
-class Example:
+class Example(Restorable):
     """One resolved interaction: what we saw, and what followed."""
 
     features: dict[str, float]
@@ -236,7 +237,7 @@ def dataset(
 
 
 @dataclass(slots=True)
-class Report:
+class Report(Restorable):
     """How the fit went, next to the things it has to beat."""
 
     examples: int
@@ -307,7 +308,7 @@ class Report:
 
 
 @dataclass(slots=True)
-class Model:
+class Model(Restorable):
     """A factorisation machine over touch features, fitted progressively."""
 
     n_factors: int = N_FACTORS

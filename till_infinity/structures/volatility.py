@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 
 from river import stats
 
+from .state import Restorable
+
 #: Bars of history before the estimate is trusted. Below this the variance of
 #: the variance is larger than anything it would be used to decide.
 WARMUP = 20
@@ -88,7 +90,7 @@ def _alpha(half_life: float) -> float:
 
 
 @dataclass(slots=True)
-class Volatility:
+class Volatility(Restorable):
     """Exponentially weighted volatility of returns, in basis points.
 
     Tracks the mean absolute return rather than the standard deviation: the
@@ -126,30 +128,11 @@ class Volatility:
         default_factory=lambda: stats.RollingQuantile(q=TICK_QUANTILE, window_size=TICK_WINDOW)
     )
 
-    def __setstate__(self, state: object) -> None:
-        """Restore, filling in fields that did not exist when this was saved.
-
-        Production saves these models and restores them on every start, so a
-        new field is a **restart-time crash** rather than a migration to do
-        later. A `slots=True` dataclass has no `__dict__` to fall back on, so
-        an absent field is not defaulted, it is missing: every read of it
-        raises `AttributeError`.
-
-        That is exactly what happened when `_tick`, `_steps` and `_grid` were
-        added. The service came up, reported "restored models", and then threw
-        on the first quote — inside the structures consumer, so the process
-        stayed healthy and simply stopped producing. Four hours of silence with
-        the container at 11% CPU and no error the health check could see.
-
-        `Engine` already carries this for the same reason. Doing it here rather
-        than only there matters because `Book` holds one of these per
-        instrument *and* timeframe, so a single missing field takes out every
-        estimate at once.
-        """
-        values = state[1] if isinstance(state, tuple) else state
-        blank = Volatility()
-        for slot in self.__slots__:
-            setattr(self, slot, values.get(slot, getattr(blank, slot)))
+    # `__setstate__` comes from `Restorable`, which fills in fields a saved
+    # state predates. This class is why that exists: `_tick`, `_steps` and
+    # `_grid` were added, the restore raised on the first quote, and the
+    # throw landed inside the structures consumer — so the container stayed
+    # healthy and simply stopped producing for four hours. See state.py.
 
     @property
     def tick(self) -> float:
@@ -283,7 +266,7 @@ class Volatility:
 
 
 @dataclass(slots=True)
-class Book:
+class Book(Restorable):
     """One volatility estimate per instrument **and timeframe**.
 
     Per timeframe, not merely per instrument, and that distinction is
@@ -305,12 +288,9 @@ class Book:
     half_life: float = HALF_LIFE
     _by_key: dict[tuple[str, str], Volatility] = field(default_factory=dict)
 
-    def __setstate__(self, state: object) -> None:
-        """Same reason as `Volatility.__setstate__`, and this one holds them all."""
-        values = state[1] if isinstance(state, tuple) else state
-        blank = Book()
-        for slot in self.__slots__:
-            setattr(self, slot, values.get(slot, getattr(blank, slot)))
+    # `__setstate__` from `Restorable` too, and it matters more here: this
+    # holds one estimate per instrument *and* timeframe, so one missing
+    # field takes out every one of them at once.
 
     def of(self, feed: str, interval: str = "") -> Volatility:
         key = (feed, interval)

@@ -34,6 +34,7 @@ from ..logging import get_logger
 from . import confluence, patterns, pips, pivots, reactions, runs
 from . import levels as lv
 from .models import Shape, Signal
+from .state import Restorable
 from .volatility import Book as VolBook
 from .volatility import Volatility
 
@@ -90,7 +91,7 @@ MAX_LEVELS = 15
 
 
 @dataclass(slots=True)
-class Consensus:
+class Consensus(Restorable):
     """Median bar across venues, per instrument and interval.
 
     Bars arrive one venue at a time and several venues report the same bar.
@@ -137,7 +138,7 @@ QUOTE_STALE = 30.0
 
 
 @dataclass(slots=True)
-class Quotes:
+class Quotes(Restorable):
     """Median mid across venues, per instrument.
 
     The same argument as `Consensus`, for the stream that needed it more. Bars
@@ -172,7 +173,7 @@ class Quotes:
 
 
 @dataclass(slots=True)
-class Series:
+class Series(Restorable):
     """A rolling window of one instrument at one interval."""
 
     feed: str
@@ -210,7 +211,7 @@ class Series:
 
 
 @dataclass(slots=True)
-class Call:
+class Call(Restorable):
     """A directional call at a level, with everything behind it."""
 
     feed: str

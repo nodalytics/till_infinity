@@ -43,6 +43,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from .levels import Level, Side, SideStats, State
+from .state import Restorable
 from .volatility import Volatility
 
 #: Timeframes from finest to coarsest. Rank is what "higher" and "lower" mean,
@@ -108,7 +109,7 @@ def rank(interval: str) -> int:
 
 
 @dataclass(slots=True)
-class Zone:
+class Zone(Restorable):
     """One price agreed on by levels from several timeframes."""
 
     feed: str
