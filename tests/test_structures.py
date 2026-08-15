@@ -868,6 +868,7 @@ def test_every_persisted_class_restores_a_field_it_predates():
     """
     import dataclasses
     import importlib
+    import pickle
     import pkgutil
 
     import till_infinity.structures as package
@@ -900,9 +901,33 @@ def test_every_persisted_class_restores_a_field_it_predates():
             if not optional:
                 continue
 
-            # A state that predates the last optional field: every other field
-            # present, that one simply absent. `__setstate__` accepts a plain
-            # mapping, so this needs no assumption about pickle's tuple shape.
+            # **A real pickle round trip first.** The version of this test that
+            # only called `__setstate__` with a hand-built dict is what let an
+            # outage through: a `frozen=True, slots=True` dataclass pickles as a
+            # *list* of values in field order, not a mapping, and the handler
+            # silently produced objects with every required field missing.
+            # Production restored its models and `Features` had no `side`.
+            built = cls(
+                **{
+                    f.name: (
+                        f.default
+                        if f.default is not dataclasses.MISSING
+                        else f.default_factory()
+                        if f.default_factory is not dataclasses.MISSING
+                        else None
+                    )
+                    for f in dataclasses.fields(cls)
+                }
+            )
+            revived = pickle.loads(pickle.dumps(built))
+            for f in dataclasses.fields(cls):
+                assert hasattr(revived, f.name), (
+                    f"{found.name}.{name} lost {f.name} through pickle — "
+                    "its state shape is not being read correctly"
+                )
+
+            # Then a state that predates the last optional field: every other
+            # field present, that one simply absent.
             missing = optional[-1]
             state = {f.name: None for f in dataclasses.fields(cls) if f.name != missing.name}
 

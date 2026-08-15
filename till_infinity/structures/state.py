@@ -76,15 +76,30 @@ class Restorable:
         # Pickle hands a slots class `(None, {slot: value})`; a class with both
         # a dict and slots gets both halves populated. Older or hand-rolled
         # states may be a plain mapping.
+        fields = dataclasses.fields(self)
         values: dict[str, Any] = {}
-        if isinstance(state, tuple):
+        if isinstance(state, list):
+            # A `frozen=True, slots=True` dataclass pickles as a **list of
+            # values in field order** — that is what `_dataclass_getstate`
+            # produces — not as a mapping. Missing this took production down:
+            # every frozen value object restored with an empty mapping, so
+            # optional fields silently took defaults and required ones were
+            # skipped entirely, leaving `Features` with no `side` at all.
+            #
+            # Zipping is also exactly the migration wanted. A state written
+            # before a field existed is shorter, `zip` stops at the shorter,
+            # and the fields beyond it fall through to their defaults below.
+            values = dict(zip((f.name for f in fields), state, strict=False))
+        elif isinstance(state, tuple):
+            # Slots without frozen: `(None, {slot: value})`. A class with both
+            # a dict and slots fills in both halves.
             for part in state:
                 if isinstance(part, dict):
                     values.update(part)
         elif isinstance(state, dict):
             values = state
 
-        for field in dataclasses.fields(self):
+        for field in fields:
             if field.name in values:
                 value = values[field.name]
             elif field.default is not dataclasses.MISSING:
