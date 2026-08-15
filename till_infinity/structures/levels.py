@@ -67,6 +67,23 @@ MIN_ZONE_VOL = 0.35
 #: "level" is a region, and a region that wide predicts nothing.
 MAX_ZONE_VOL = 3.0
 
+#: How wide the **grid floor** alone may make a zone, in volatility units.
+#:
+#: `MIN_ZONE_TICKS` is a sensible floor while a tick is small, and a disaster
+#: when it is not. On `sol` a tick is 0.378 volatility units, so six of them is
+#: 2.27 — wider than `reactions.resolve_vol`, which is the distance that counts
+#: as a rejection. A zone that wide catches everything: measured over 24 hours,
+#: sol 3m produced **582 outcomes per thousand bars against btc 3m's 62.8**, a
+#: touch resolving every 1.7 bars, and sol alone was half of every outcome the
+#: journal held. That is the concentration that gates `fit` in todo.md item 4,
+#: and it is geometry rather than a sampling problem.
+#:
+#: Half of `resolve_vol`, so a zone from the grid alone can never reach the
+#: distance a touch has to travel to resolve. The filter's own uncertainty and
+#: the observed wicks may still push a zone past this — they are evidence about
+#: *this* level. The grid is not; it is a fact about the venue's price ladder.
+GRID_ZONE_VOL = 0.75
+
 #: A zone is also never narrower than this many **ticks** — the smallest price
 #: change the venue can quote.
 #:
@@ -495,7 +512,12 @@ class Level(Restorable):
         # the band is wider than the grid price is quoted on. See
         # MIN_ZONE_TICKS — on a coarsely quoted instrument the second is the
         # larger by an order of magnitude.
-        floor = max(vol.price_units(self.price, MIN_ZONE_VOL), vol.tick * MIN_ZONE_TICKS)
+        # The grid part is bounded on its own, before the two are compared: see
+        # GRID_ZONE_VOL. Unbounded it made a coarsely quoted instrument's zone
+        # wider than the distance that resolves a touch, and every arrival
+        # inside it became an outcome.
+        grid = min(vol.tick * MIN_ZONE_TICKS, vol.price_units(self.price, GRID_ZONE_VOL))
+        floor = max(vol.price_units(self.price, MIN_ZONE_VOL), grid)
         # The ceiling still wins if the two cross, and that is deliberate. The
         # tick is *observed* — the smallest change that has actually happened —
         # so an instrument that has not yet printed a single-step move reads as

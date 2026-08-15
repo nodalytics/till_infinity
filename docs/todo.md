@@ -632,6 +632,46 @@ decision, and they are listed so nobody mistakes a good model for a decision:
 `facto` sits *after* all three. It sharpens an estimate that first has to be
 measuring the right quantity.
 
+## 4a. The concentration gating `fit` was geometry, and is fixed
+
+`sol` was 4,940 of the last 24 hours' 9,863 outcomes — half of everything —
+which is what item 4 means by a fit learning one instrument and reporting it as
+a model of everything. Measured per bar, so "more bars means more outcomes" is
+removed:
+
+| cell | outcomes per 1,000 bars |
+|---|---|
+| **sol 3m** | **582.0** |
+| sol 5m | 429.9 |
+| eth 3m | 159.2 |
+| btc 3m | 62.8 |
+
+A resolution every 1.7 bars on sol against one every sixteen on btc. That is
+not a sampling problem and no stratification fixes it; it is the zone.
+
+`MIN_ZONE_TICKS = 6` is a sensible floor while a tick is a small part of a
+typical move. **On sol a tick is 0.378 volatility units**, so six of them is
+2.27 — wider than `resolve_vol`, the distance a touch must travel to resolve at
+all. sol's zone measured 2.268v against btc's 0.484v, 4.7 times wider in the
+only units that compare, so it caught 4.7 times the price action.
+
+The floor added on 2026-08-14 to stop price crossing a zone in a few ticks
+over-corrected: it made the zone enormous instead. `GRID_ZONE_VOL = 0.75`
+bounds the grid-derived part at half of `resolve_vol`, so the ladder alone can
+never open a zone wide enough to resolve a touch. The filter's own uncertainty
+and observed wicks may still exceed it — those are evidence about this level,
+where the grid is a fact about the venue.
+
+**Prediction, so this one is falsifiable unlike the last zone change.** sol's
+zone half falls from 2.268v to 0.75v, three times narrower, so sol 3m should
+drop from 582 per thousand bars towards roughly 200 — closer to eth's 159 than
+to btc's 63, because sol's grid is still coarse, just no longer unbounded. If
+it does not move, the tick is not the cause and this document is wrong.
+
+Not verified on the replay: the local prices database holds no `sol`, so the
+instrument this is about cannot be measured there. It has to be read off
+production.
+
 ## 4. `fit(since=)` once 200 post-fix outcomes exist
 
 No code needed. The counter restarts from the **2026-08-14** fixes, not the

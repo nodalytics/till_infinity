@@ -2375,3 +2375,47 @@ def test_similar_records_are_nearer_than_opposite_ones():
     assert holds.distance(also_holds) < holds.distance(breaks)
     # And side is still a hard constraint rather than another dimension.
     assert holds.distance(reactions.Features(side=Side.BELOW, up_rate=0.9, **base)) == math.inf
+
+
+def test_a_coarse_grid_cannot_make_a_zone_wider_than_a_resolution():
+    """The floor that stopped price crossing a zone in a few ticks overshot.
+
+    `MIN_ZONE_TICKS` is six, which is sensible while a tick is a small part of
+    a typical move. On sol a tick is 0.378 volatility units, so six of them is
+    2.27 — wider than `resolve_vol`, the distance a touch must travel to count
+    as a rejection. The zone then catches everything: sol 3m produced 582
+    outcomes per thousand bars against btc 3m's 62.8, a resolution every 1.7
+    bars, and sol alone was half of every outcome in the journal.
+
+    That is the concentration gating `fit`, and it is geometry rather than a
+    sampling problem, so it is fixed here rather than worked around there.
+    """
+
+    class Coarse(Volatility):
+        """sol's grid: a tick worth a third of a typical move."""
+
+        @property
+        def tick(self) -> float:
+            return self.price_units(75.0, 0.378)
+
+    coarse = Coarse()
+    for _ in range(200):
+        coarse.update(75.0 * (1 + _vol().bps / 10_000))
+
+    level = Level(feed="sol", interval="3m", filter=Kalman(mean=75.0, variance=1e-9))
+    _low, high = level.zone(coarse)
+    half_vol = abs(level.distance_vol(high, coarse))
+
+    assert half_vol <= lv.GRID_ZONE_VOL + 0.01, (
+        f"the grid alone opened a {half_vol:.2f}v zone; six ticks is "
+        f"{6 * 0.378:.2f}v and nothing bounded it"
+    )
+    # And it stays under the distance that resolves a touch, which is the point.
+    assert half_vol < reactions.Tracker().resolve_vol
+
+    # A finely quoted instrument is untouched: its grid never reaches the bound.
+    fine = _vol()
+    btc = Level(feed="btc", interval="3m", filter=Kalman(mean=63000.0, variance=1e-6))
+    assert abs(btc.distance_vol(btc.zone(fine)[1], fine)) == pytest.approx(
+        lv.MIN_ZONE_VOL, abs=0.05
+    ), "the floor moved for an instrument whose grid was never the problem"
