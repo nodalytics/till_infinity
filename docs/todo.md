@@ -377,11 +377,29 @@ measurement is a bars-only replay, and today established twice that the quote
 path behaves differently enough to overturn a replay result. Re-derive on
 production once there are enough post-fix outcomes, then move it.
 
-**Let `k` reflect how much similar history there actually is.**
-`Memory.neighbours` returns `scored[:k]` — the k nearest touches *regardless of
-how far away they are* — so a level with no genuinely similar history still
-gets twelve neighbours, merely distant ones. The count is therefore always
-about twelve and carries no information, which has three consequences:
+**~~Let `k` reflect how much similar history there actually is~~ — measured
+first, and the radius must not be built.** The plan was a similarity cutoff so
+the neighbour count would mean something. The cutoff was measured before being
+built and the measurement killed it: **the nearest twelve neighbours predict no
+better than twelve at random** (72.9% against 72.7%), and pairwise agreement
+*rises* with distance across every control — within a cell, across cells, and
+restricted to pairs more than a day apart. `Features.distance` does not order
+neighbours by relevance. Full numbers in [edge.md](edge.md) §6.
+
+The kNN prior still works — twelve neighbours call the direction correctly 73%
+against a 51% base rate — but the similarity is not what does it. A pooled vote
+of recent touches captures the market's prevailing direction, which is the same
+dependence that makes any two touches agree 57-62% a day apart.
+
+So the open item is the **metric**, not the cutoff: which features belong in
+`Features.distance` and with what weights is an empirical question nobody has
+asked, and until it is asked a radius would only restrict the pool to
+neighbours carrying no advantage. Two smaller consequences stand on their own:
+the `1/(1+d)` weighting in `prior` gains 0.9 points over unweighted and still
+loses to the farthest twelve, and the alert's "+12 similar" is decorative
+wording for a count that is always twelve.
+
+Original reasoning, kept because the three consequences are still true:
 
 - **`Inference.neighbours` is not an evidence count**, though it reads as one
   and is printed in the alert as "+12 similar".

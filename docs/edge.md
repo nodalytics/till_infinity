@@ -229,3 +229,113 @@ meaning, which `0.08` never was.
 5. **Re-derive on production before treating any of this as settled.** Bars-only
    replay, and today twice established that the quote path can overturn one. The
    counter restarts from the 2026-08-14 fixes, same as [todo.md](todo.md) item 4.
+
+## 5. Evidence scaling, in full
+
+The gate asks whether an edge is big enough to act on. `edge` is
+`probability_up - base_rate_up`: the gap between what this level does when
+touched from this side and what price does anyway. A gap of 0.11 means the
+level shifts the odds by eleven points.
+
+**A gap is only meaningful against how confidently it was measured.** Take a
+base rate of 50%. A level touched four times went up three: p = 0.75, edge =
++0.25, a huge number — and three-of-four from a fair coin happens 31% of the
+time, so nothing has been measured. A level touched four hundred times went up
+240: p = 0.60, edge = +0.10, less than half the size, and essentially
+impossible by chance.
+
+A fixed threshold gets this backwards. `|edge| >= 0.11` passes the meaningless
+0.25 and rejects the solid 0.10. It is worse than neutral, because small
+samples *produce* extreme edges: the noisiest estimates are the ones most
+likely to clear a fixed bar.
+
+Evidence scaling asks instead how far the gap is in units of its own noise:
+
+    standard error = sqrt( p(1-p) / n )
+    gate:            |edge| >= z * standard error
+
+`sqrt(p(1-p)/n)` is how much a proportion estimated from `n` observations
+wobbles by chance, so dividing by it turns "eleven points" into "this many
+standard errors from the base rate" — the question a significance test asks.
+`z` is then a confidence level with a meaning rather than a number somebody
+picked.
+
+The effect is a threshold that **moves per call**: at n = 4 it demands an
+enormous edge, at n = 400 a small one. Measured here, `z = 1.5` ranged from
+**0.072 to 0.750** across calls — the same rule asking for a ten-fold different
+edge depending on the evidence behind it.
+
+Two honest caveats. `prior` already shrinks `p` toward the kNN estimate with
+`PRIOR_WEIGHT`, so some of this protection exists, which is part of why raw
+|edge| does as well as it does. And the standard-error formula assumes
+independent observations, which touches at one level are not.
+
+## 6. Why it has nothing to work with, which turned out to be the real finding
+
+§4 recorded that the effective evidence count barely varies — 12.5 / 13.8 /
+15.3 across the quartiles — because `Memory.neighbours` returns `scored[:k]`,
+the k nearest touches *regardless of distance*. The obvious repair is a
+similarity radius: take neighbours within a cutoff, so the count means "how
+much comparable history exists".
+
+**The cutoff was measured before being built, and the measurement says do not
+build it.**
+
+For every resolved touch, every earlier resolved touch is a candidate
+neighbour; agreement is whether the two went the same way. If `Features.distance`
+ordered neighbours by relevance, near pairs would agree more than far ones.
+
+| distance | pairs | agreement |
+|---|---|---|
+| 0.0 - 0.5 | 34,814 | 62.5% |
+| 0.5 - 1.0 | 188,319 | 63.5% |
+| 1.0 - 1.5 | 259,165 | 64.7% |
+| 1.5 - 2.0 | 180,828 | 66.1% |
+| 2.0 - 3.0 | 188,021 | 65.1% |
+| 3.0 + | 144,890 | 68.8% |
+
+Agreement **rises** with distance, and it survives every control — within one
+(feed, interval), across cells, and restricted to pairs more than a day apart,
+which removes the market-direction dependence that makes any two nearby touches
+agree. Four cuts, same direction each time.
+
+The starkest form, taking twelve neighbours four different ways and voting:
+
+| neighbours used | direction called right |
+|---|---|
+| nearest 12 | 72.9% |
+| nearest 12, `1/(1+d)` weighted — what `prior` does | 73.8% |
+| **random 12** | **72.7%** |
+| farthest 12 | 75.4% |
+
+**The nearest twelve are no better than twelve at random.** The 0.2 points
+between them is the robust part; "farthest is best" is a weaker claim on
+overlapping samples and probably the same subpopulation effect seen above.
+
+### What this means, and what it does not
+
+It does *not* mean the kNN prior is useless. Twelve neighbours vote the
+direction correctly 73% of the time against a 51% base rate, which is a large
+effect. It means **the similarity is not what is doing the work.** A pooled
+vote of recent touches captures the market's prevailing direction — the same
+dependence that makes any two touches agree 57-62% even a day apart — and
+`Features.distance` adds nothing on top of it.
+
+So three things follow:
+
+1. **Do not build the similarity radius.** It would restrict the pool to
+   neighbours carrying no advantage, and the resulting count would measure
+   proximity in a metric that does not predict — which is not the evidence
+   count §5 needs.
+2. **The `1/(1+d)` weighting in `prior` is not earning its place.** It gains
+   0.9 points over unweighted-nearest and still loses to farthest. It is not
+   harmful enough to rush a change, but it should not be described as
+   borrowing from *similar* touches.
+3. **`Inference.neighbours` is not an evidence count** and the alert's
+   "+12 similar" is decorative. Whatever is fixed, that wording should go.
+
+The repair is the metric, not the cutoff: which features belong in
+`Features.distance`, and with what weights, is an empirical question nobody has
+asked. [strength.md](strength.md) reached the same shape of conclusion from a
+different direction — the level's own record predicts, and the derived
+quantities layered on top of it mostly do not.
