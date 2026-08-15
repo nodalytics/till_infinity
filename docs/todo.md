@@ -754,6 +754,76 @@ arithmetic looks harmless.
 Designed in [score.md](score.md), not built: one number per instrument in
 [-1, +1], three EWMAs, thresholds as rolling quantiles, transitions only.
 
+## 6a. Model the next major turn, not just the next touch
+
+Everything built so far answers a question measured in minutes: price has
+arrived at a level, which way does it go and how far. A **major turn** — the
+end of a trend, the reversal that matters over weeks — is a different object,
+and nothing here models it.
+
+What exists to build on, and what each is not:
+
+- **`drift.py`** already answers "has what counts as usual moved?" with ADWIN
+  across timeframes, and a drift *invalidates* accumulated history rather than
+  predicting anything. It says the regime changed; it does not say a turn is
+  coming, and it says so after the fact.
+- **BOCPD** (item 7) would *grade* a change rather than flag it. Closer, still
+  retrospective.
+- **`score.md`** (item 6) is one number per instrument in [-1, +1] with
+  transitions. That is the shape a turn signal would have to take, and it is
+  the natural home for this rather than a new subsystem.
+- **The momentum-turn formation** in §0c is the same idea two scales down —
+  where a leg loses its push rather than where a trend does. If it works at the
+  swing scale it is evidence the framing transfers; if it does not, that is
+  worth knowing before attempting the harder version.
+
+### The problem that makes this hard, stated first
+
+**Major turns are rare, and the sample is the whole difficulty.** Fourteen
+instruments with a handful of genuine reversals each a year is *tens* of
+examples, not thousands. Every guard this project has built assumes otherwise:
+`MIN_EXAMPLES`, progressive validation, the kNN prior, the beta-binomial
+shrinkage. None of them work on tens.
+
+Three of today's research documents ran into exactly this shape and it is worth
+reading them before starting rather than rediscovering it:
+
+- [news-dedup.md](news-dedup.md) — the falsification could not be run because
+  the cell was empty, and the honest answer was to say so.
+- [magnet.md](magnet.md) — 45 point estimates, and the one positive had an
+  interval five times its own width.
+- [features.md](../research/features.md) — an effect that looked like +22.9
+  points pooled collapsed to +3.1 within cells.
+
+A turn model will produce a confident-looking number from a dozen observations
+unless it is built to refuse. **Design the refusal first.**
+
+### What would make it worth building
+
+Write the falsification before the model, as [edge.md](edge.md) §3 did:
+
+> Label the major turns in the stored history — by a rule, not by eye, or the
+> labels encode hindsight. Then ask whether any signal available *before* each
+> one separates it from the far more numerous moments that looked similar and
+> continued. If the separation does not survive a walk-forward split by time
+> **and** hold across instruments, there is no model here, only a fitted story.
+
+The rule for labelling is itself the first piece of work and probably the
+hardest: "a major turn" has no definition in this codebase, and one chosen
+loosely will make everything downstream look excellent.
+
+### What not to do
+
+Do not start from the news. [news-dedup.md](news-dedup.md) established that
+the corpus contains no observation of independent outlets converging on a
+story, and [news-models.md](news-models.md) §1 was demoted on the strength of
+it. Sentiment or crowding as a turn signal is the same claim in a longer coat,
+and the data to test it does not exist yet.
+
+Do not start from levels either. [magnet.md](magnet.md) found levels do not
+attract price, and a level is a price rather than a regime — the wrong object
+at the wrong scale for this question.
+
 ## 7. BOCPD
 
 Documented in [structures.md](structures.md) as a way to *grade* a regime change
