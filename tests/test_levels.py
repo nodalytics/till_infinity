@@ -2419,3 +2419,64 @@ def test_a_coarse_grid_cannot_make_a_zone_wider_than_a_resolution():
     assert abs(btc.distance_vol(btc.zone(fine)[1], fine)) == pytest.approx(
         lv.MIN_ZONE_VOL, abs=0.05
     ), "the floor moved for an instrument whose grid was never the problem"
+
+
+def test_a_grid_too_coarse_for_a_zone_forms_no_levels():
+    """Some instrument and timeframe pairs cannot carry a level at all.
+
+    A level is a band price is meant to enter, react inside and leave. When the
+    venue's tick is a large fraction of a typical move, price cannot be inside
+    it — it jumps across, and every crossing is a touch. On the instance
+    `sol 3m` fits 2.5 ticks in a zone and `audusd 1m` fits 2.7, against
+    `btc 5m`'s 170, and sol alone was half of every outcome in the journal.
+
+    Both ends of this are bad and `GRID_ZONE_VOL` only fixes one: it stops a
+    coarse grid opening an absurdly wide zone. What is left is a zone two or
+    three ticks across, which is the failure `MIN_ZONE_TICKS` was added for.
+    No width works, so the pair is declined.
+    """
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+    assert engine.levels("gold", "5m"), "the fixture instrument should be fine"
+    assert engine.supports("gold", "5m")
+
+    vol = engine.vol.of("gold", "5m")
+
+    class Coarse(Volatility):
+        """A tick worth a third of a typical move, which is sol's grid."""
+
+        @property
+        def tick(self) -> float:
+            return self.price_units(4425.0, 0.38)
+
+    coarse = Coarse()
+    for _ in range(200):
+        coarse.update(4425.0 * (1 + vol.bps / 10_000))
+    engine.vol._by_key[("gold", "5m")] = coarse
+
+    assert not engine.supports("gold", "5m"), "a two-tick zone should be declined"
+
+    # Reforming drops what was formed on the bad geometry rather than leaving
+    # it to age out, because it was never a level.
+    series = engine.series("gold", "5m")
+    assert engine.reform(series, when=series.times[-1]) == []
+    assert engine.levels("gold", "5m") == []
+    assert ("gold", "5m") in engine._declined
+
+
+def test_an_instrument_with_no_evidence_yet_is_not_declined():
+    """Missing evidence is not evidence of a problem.
+
+    `tick` is measured rather than configured and only shrinks as data arrives,
+    so an instrument that has not yet printed a single-step move reads coarser
+    than it is. Declining on that would refuse every instrument for its first
+    hour and then never revisit, since a declined pair forms nothing to learn
+    from.
+    """
+    engine = Engine(intervals=("5m",))
+    assert engine.supports("gold", "5m"), "no series at all"
+
+    for bar in _range_bound(bars=40):
+        engine.observe_bar(bar)
+    assert engine.supports("gold", "5m"), "a cold volatility estimate"

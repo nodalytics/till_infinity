@@ -90,6 +90,45 @@ MAX_RESOLVED = 500
 #: Friday's price all weekend, which is what let a shut market alert.
 STALE_BARS = 4.0
 
+#: The fewest price steps that must fit inside a level's zone before the pair
+#: is modelled at all.
+#:
+#: A level is a band price is meant to **enter**, react inside, and leave. That
+#: only means something if price can be *inside* it. When the venue's tick is a
+#: large fraction of a typical move, price cannot enter — it jumps across — and
+#: every crossing becomes a touch. Measured on the instance: `sol 3m` fits 2.5
+#: ticks in a zone and `audusd 1m` fits 2.7, against `btc 5m`'s 170. It is not
+#: a crypto problem; coarse pip quoting does the same thing a cheap coin does.
+#:
+#: Four, because `depth_vol` — how far into the zone price pushed — is a
+#: feature, and a feature with two distinguishable values is not one. Four
+#: steps is the least that gives it any resolution, and it is also where the
+#: measurement separates: 2.5, 2.7, 2.7 and 3.5 on one side, 4.1 and up on the
+#: other.
+#:
+#: Judged on the **floor** zone rather than the observed one, which is the
+#: conservative direction and deliberate. Wicks widen a real zone as touches
+#: accumulate, so an established level is roomier than this — but a *new* level
+#: gets the floor, and the question here is whether to form one at all.
+#:
+#: It declines eight of fifteen sampled pairs, which is more than the observed
+#: widths alone would suggest: sol at 1m, 3m and 5m, and audusd, nzdusd,
+#: eurusd, usdcad and usdchf at 1m. sol keeps 15m and coarser. The FX ones were
+#: assessed over a weekend, when those markets are shut and their measured
+#: behaviour says nothing, so they want re-checking on a weekday — see todo.md.
+#:
+#: Erring toward declining is the right direction here even so. Losing a good
+#: pair costs some alerts, visibly. Keeping a bad one poisons the sample: sol
+#: alone was half of every outcome in the journal, which is what gates `fit`.
+#:
+#: Both ends of this are bad and only one is fixed by `GRID_ZONE_VOL`. That
+#: bounds a zone from becoming absurdly *wide* on a coarse grid, which was
+#: making everything a touch. What remains is a zone two or three ticks
+#: *across*, which is the failure `MIN_ZONE_TICKS` was added for. There is no
+#: width that works, so the pair is declined instead — the same shape as
+#: `trading()`: refuse rather than produce something meaningless.
+MIN_TICKS_PER_ZONE = 4.0
+
 #: Ceiling per (instrument, interval), strongest kept. Without one a long
 #: history accrues a level every few basis points, and at that density every
 #: price is "at a level" and the model predicts nothing. Fifteen is roughly
@@ -401,6 +440,10 @@ class Engine:
         #: Open shape instances, waiting for the horizon to say what followed.
         self._pending: dict[tuple[str, str], tuple[int, float, int]] = {}
         self._series: dict[tuple[str, str], Series] = {}
+        #: Pairs already told about, so `supports` says so once rather than on
+        #: every reform. Not persisted: it is a log-noise guard, and saying it
+        #: again after a restart is correct.
+        self._declined: set[tuple[str, str]] = set()
         self._levels: dict[tuple[str, str], list[lv.Level]] = {}
         #: The timestamp of the bar being processed. Held so that "what was
         #: knowable" is answerable at any point, including from a test.
@@ -508,13 +551,55 @@ class Engine:
         )
         return lv.merge(by_pip, by_run, vol)
 
+    def supports(self, feed: str, interval: str) -> bool:
+        """Can this instrument carry a level at this resolution?
+
+        Judged on how many ticks fit inside a zone — see `MIN_TICKS_PER_ZONE`.
+        Silent about what it cannot judge: an estimate that is not warm, or an
+        instrument that has not yet printed a single-step move, is missing
+        evidence rather than evidence of a problem, and suppressing on that
+        would decline every instrument for its first hour.
+        """
+        vol = self.vol.of(feed, interval)
+        series = self._series.get((feed, interval))
+        if not vol.warm or series is None or not series.closes or not vol.tick:
+            return True
+        price = series.closes[-1]
+        if not price or not vol.bps:
+            return True
+        tick_vol = (vol.tick / price * 10_000) / vol.bps
+        if tick_vol <= 0:
+            return True
+        # The zone this pair would actually get, by the same rule `Level.zone`
+        # uses, so the answer tracks the geometry rather than a second copy of
+        # it. Wicks can widen a real zone further, which only helps.
+        zone_vol = max(lv.MIN_ZONE_VOL, min(tick_vol * lv.MIN_ZONE_TICKS, lv.GRID_ZONE_VOL))
+        return zone_vol / tick_vol >= MIN_TICKS_PER_ZONE
+
     def reform(self, series: Series, when: float) -> list[lv.Level]:
         """Re-derive levels from the confirmed swings in the window."""
+        key = (series.feed, series.interval)
+        if not self.supports(series.feed, series.interval):
+            # Said once per pair, because it is a property of the instrument
+            # and the venue rather than an event, and repeating it every reform
+            # would bury everything else.
+            if key not in self._declined:
+                self._declined.add(key)
+                log.info(
+                    "levels: %s %s declines a level — the grid is too coarse "
+                    "for a zone to be entered rather than crossed",
+                    series.feed,
+                    series.interval,
+                )
+            # Anything already formed here was formed on the same bad geometry.
+            self._levels.pop(key, None)
+            series.since_reform = 0
+            return []
+        self._declined.discard(key)
         vol = self.vol.of(series.feed, series.interval)
         found = self.swings(series, vol)
         visible = pips.as_of(found, when)
         candidates = self._form(series, visible, vol)
-        key = (series.feed, series.interval)
         merged = lv.merge(self._levels.get(key, []), candidates, vol)
         self._levels[key] = self.prune(merged, series.closes[-1], vol, when)
         series.since_reform = 0
