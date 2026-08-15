@@ -1152,7 +1152,42 @@ Do not start from levels either. [magnet.md](magnet.md) found levels do not
 attract price, and a level is a price rather than a regime — the wrong object
 at the wrong scale for this question.
 
-## 6c. Cyclical context — where a level sits in the larger move
+## ~~6c. Cyclical context — where a level sits in the larger move~~ — measured on 2026-08-15, and the answer is no
+
+**Built, run and written up in [cycles.md](../research/cycles.md).** Nothing
+separates: under a self-calibrating labeller every cycle cell's interval
+contains the pooled up-rate, no threshold from 0.10 to 0.40 changes that, and a
+model given the cycle gains a thousandth of AUC while losing accuracy. The
+trivial "assume the level holds" rule still beats everything at 75.2%.
+
+The more useful half of the answer is that **the data cannot really be asked
+yet**. 1,862 touches span 26 cycles, two index feeds carry 19 of them, and the
+other four instruments have 14–18 days of fine-grained history each — less than
+one 60-day window, so they cannot vary in cycle state at all and four of six
+have zero uptrend touches. The cross-instrument gate could not be run. Re-test
+when the 1m/5m history reaches a few months; the harness is written and cached.
+
+Two findings worth carrying to §6a, which needs the same labelling:
+
+- **Cross-venue consensus is wrong at cycle scale.** Venues sit at slightly
+  different levels and do not all report every day, so a median switches
+  between them and adds steps to the path the instrument never took. The
+  efficiency ratio is a ratio *to* that path — it read 0.081 through the median
+  against 0.121 through one venue's own series.
+- **A symmetric threshold cannot label a downtrend.** Markets fall faster and
+  messier than they rise, so a decline rarely sustains directionality over a
+  quarter: 0.0% of us100 days and 0.1% of spx500 days over twelve years. The
+  turns §6a cares about most are the ones down, and a fixed threshold will
+  never see them. Terciles of the feed's own distribution do.
+
+The labeller itself is worth keeping — point-in-time, self-calibrating, checked
+against a stated null (observed median efficiency ratio 0.131 against a
+random-walk prediction of 0.129). §6a named labelling as its hardest part and
+this is most of it.
+
+The original statement of the question follows.
+
+### Why it was worth asking
 
 Every feature the model has is **local to the touch**. `approach_vol`,
 `depth_vol`, `run_vol`, `pivot`, `backcheck`, and the six candidates tested in
