@@ -478,6 +478,60 @@ nothing currently collected predicts direction beyond the side, and no amount
 of modelling fixes that. Until then, `facto.Report` should carry "assume the
 level holds" as a baseline alongside the two it already compares against.
 
+**Decline the instrument and timeframe pairs that cannot support a level,
+and adding instruments becomes safe by construction.** Asked whether more
+instruments can be added, especially crypto and indices. Resources say yes;
+the model says *it depends on the pair*, and that is measurable before adding
+anything.
+
+The number that decides it is **ticks per zone** — how many price steps fit
+inside a level's band. Price is supposed to enter a band, react, and leave. If
+the venue's tick is a large fraction of a typical move, price cannot enter it,
+only jump across, and every crossing becomes a touch. Measured on the
+instance:
+
+| pair | ticks per zone | |
+|---|---|---|
+| sol 3m | 2.5 | unusable |
+| sol 1m | 2.7 | unusable |
+| **audusd 1m** | **2.7** | unusable |
+| sol 5m | 3.5 | unusable |
+| nzdusd 1m | 4.1 | marginal |
+| eurusd 1m | 5.9 | marginal |
+| spx500 3m | 6.7 | marginal |
+| btc 5m | 170.2 | fine |
+| gold 15m | 109.7 | fine |
+
+**It is not a crypto problem.** `audusd 1m` is as bad as sol, and six FX pairs
+are marginal at 1m — coarse pip quoting does what a cheap coin does. It is also
+not fixed by the zone floor: `GRID_ZONE_VOL` stopped the zone being absurdly
+*wide*, which was making everything a touch; what remains is a zone only two or
+three ticks across, which is the opposite failure and the one
+`MIN_ZONE_TICKS` was originally added for. Both ends are bad, and the honest
+answer is that the pair cannot be modelled at that resolution.
+
+So: **form no levels where ticks-per-zone falls below a floor**, log it once,
+and let the coarser timeframes for that instrument carry it. sol is fine at
+15m and up; it is noise at 1m and 3m. This is the same shape as `trading()` —
+refusing to produce rather than producing something meaningless.
+
+Then the answer to "can we add more" becomes mechanical:
+
+- **Indices are safe.** spx500 and us100 sit between 6.7 and 36 ticks per zone.
+  More of them should behave.
+- **Cheap crypto is not**, at fine timeframes. ADA at about \$0.18 was already
+  measured with a tick larger than the whole zone, which is worse than sol.
+  With the gate they would simply carry fewer timeframes rather than poison
+  the sample.
+- **Measure before adding, not after.** The check is one query against a warm
+  volatility estimate.
+
+Resource headroom, so the other half of the question is answered too: memory
+257MB of a 2.6GB cap, disk 235GB free at about 461MB a day of quotes, no bus
+drops. **CPU is the binding constraint**, at 76.4% of a 150% allowance —
+doubling the instrument count would reach the `--cpus 1.5` ceiling before
+anything else complained.
+
 **Quotes have no retention, and they are three quarters of the prices file.**
 `prices prune` covers bars only, and the reason written into `store.prune` was
 wrong in both halves: quotes are not bounded by `dedupe_quotes`, and bars are
