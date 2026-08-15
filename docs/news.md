@@ -104,6 +104,44 @@ async with SqliteStore(Settings.from_env().database) as store:
         print(event.title, event.forecast, event.surprise)
 ```
 
+## Which instrument a headline is about
+
+Publishers tag articles `VENUE:TICKER` — 641 distinct strings across 3,058
+articles, and none of them the feed names the rest of this project uses.
+[`news/symbols.py`](../till_infinity/news/symbols.py) maps them onto feeds,
+building its table from the symbols `prices` already collects rather than from
+a second hand-written list: `prices.config` already knows `BTCUSD` on Bitstamp
+and `BTC-USD` on Yahoo are both `btc`, because it had to in order to collect
+them, and a second copy would go stale the first time a venue was added.
+
+The venue half is noise. `BITSTAMP:BTCUSD`, `BINANCE:BTCUSDT` and
+`COINBASE:BTC-USD` are one instrument; matching on the prefix would need every
+venue any publisher might name. Three passes, narrowing: the ticker as given,
+the ticker stripped to bare alphanumerics (which turns `EURUSD_TOD`,
+`EURUSDTDTM` and `EURUSD.SIM` into `EURUSD`), then the longest known ticker it
+starts with, at six characters or more. Six is the length of a currency pair
+and below it a prefix stops being evidence — `SPX` would claim anything.
+
+44% of articles carry tags at all; 60% of those name a tracked instrument:
+
+| feed | articles | | feed | articles |
+|---|---|---|---|---|
+| btc | 336 | | usdcad | 82 |
+| eurusd | 275 | | nzdusd | 77 |
+| gbpusd | 230 | | eth | 69 |
+| usdjpy | 209 | | gold | 65 |
+| audusd | 107 | | usdcnh | 45 |
+
+The remaining 40% of tagged articles map to nothing — `XRPUSD`, `DXY`,
+`POLYMARKET`, `HYPEUSD`, `USDINR`, `COIN`, `BNBUSD`, `USDKRW` — and that is the
+correct answer rather than a gap. They are instruments this project does not
+price, so a headline about one cannot be joined to anything. Mapping `USDINR`
+to `usdjpy` because both are dollar pairs would invent a relationship, and
+`EURJPY` is not `eurusd` however much of the alphabet they share.
+
+This is what lets a headline **wake an agent** rather than merely be readable
+once one is awake. See [agents.md](agents.md), "News can wake the analyst".
+
 ## Environment
 
 `NEWS_DIR`, `NEWS_DB`, `NEWS_POLL`, `NEWS_CAL_POLL`, `NEWS_CAL_BACK_DAYS`,

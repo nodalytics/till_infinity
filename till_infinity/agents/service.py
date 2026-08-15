@@ -23,6 +23,11 @@ and it is self-calibrating: a running quantile of the spreads actually seen at
 each venue, so "wide" means wide for that venue rather than wide against a
 number somebody picked.
 
+Headlines are gated the same way and for the same reason. A headline is worth
+waking a model for when there is more news about an instrument than usual, and
+"usual" is per instrument — three hundred btc headlines a week against five for
+usdchf. See `Headlines`.
+
 What survives both is published to `alerts`, which `notify listen` delivers.
 """
 
@@ -30,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import time
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Sequence
@@ -38,6 +44,8 @@ from dataclasses import dataclass, field
 from ..bus import ALERTS, ARTICLES, BARS, EVENTS, QUOTES, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe
 from ..logging import get_logger
+from ..news.symbols import feeds_for
+from . import data
 from .analyst import analyse
 from .config import Settings
 from .models import Finding, Run, Trigger
@@ -85,6 +93,60 @@ SPREAD_MULTIPLE = 1.5
 #: worth analysing and the worst one to hand over whole.
 MAX_TRIGGERS = 10
 
+#: How long a headline counts as recent when judging whether the flow about an
+#: instrument has picked up.
+NEWS_WINDOW = 600.0
+
+#: How improbable that many headlines must be, against the feed's own rate,
+#: before one is worth waking a model for. Replaying the last seven days of the
+#: corpus through the real gate, this wakes the analyst **12.0 times a day**
+#: across every tracked instrument; 0.02 gives 20.1 and 0.005 gives 7.6.
+NEWS_ALPHA = 0.01
+
+#: How long a feed's arrival rate remembers. Three days, which is short for a
+#: rate estimate and deliberate: the thing being estimated moves. Adding the
+#: crypto sources multiplied btc's headline volume roughly tenfold inside a
+#: week, and a rate still carrying the old number read that as news — **34.9
+#: windows a day** on the same replay that a three-day constant answers with
+#: 12.0. Seven days gets 18.3 of the way there.
+#:
+#: The system keeps gaining instruments and sources, so this is not a one-off
+#: to be waited out. It is the normal condition.
+NEWS_TAU = 3 * 86400.0
+
+#: How much a feed's rate is pulled toward the average feed's, as a fraction of
+#: its own evidence. A quarter is weak — a feed with any history of its own
+#: barely moves — and it exists to give a feed with *no* history something
+#: better than zero, which would make its first headline infinitely surprising.
+#:
+#: This replaces a per-feed warmup count, which was the same idea done badly:
+#: it left exactly the feeds worth hearing about deaf, since usdchf runs at five
+#: headlines a week and needed eleven days to clear it. Shrinking has no cliff.
+#:
+#: It changes nothing on the replay — every feed there has history of its own —
+#: and that is the point. It exists for the feed that does not: an instrument
+#: added yesterday, or the first run after the news store is lost.
+NEWS_PRIOR = 0.25
+
+#: Arrivals *across all feeds* before the rates are trusted at all. Below this
+#: the gate asks for two headlines in the window rather than reasoning from a
+#: rate it cannot yet estimate.
+#:
+#: Pooled rather than per feed on purpose. The cold start this guards is the
+#: whole gate having no history — a missing news store, a first run — and that
+#: clears in hours at the rate headlines actually arrive. A per-feed version
+#: would take weeks to clear for the quiet feeds and would be silently gating
+#: the ones it is least safe to gate.
+NEWS_WARMUP = 30
+
+#: Arrivals kept per feed for the count. Only those inside `NEWS_WINDOW` are
+#: counted, so this is a memory bound rather than a parameter.
+NEWS_MEMORY = 64
+
+#: Days of headline history read at startup to prime the rates. Comfortably
+#: more than `NEWS_TAU`, past which an arrival counts for almost nothing.
+NEWS_HISTORY = 14
+
 
 class Spreads:
     """What each venue's spread normally looks like.
@@ -131,6 +193,136 @@ class Spreads:
         return bps >= cut and bps >= typical * self.multiple
 
 
+class Headlines:
+    """How much is normally written about an instrument, and when that changes.
+
+    A headline is worth waking a model for when there is more of it than usual
+    — and "usual" differs by two orders of magnitude across the instruments
+    tracked. Over seven days: **300 headlines about btc and five about usdchf**.
+    A gate that fired on every routed headline would be 90 model calls a day,
+    almost half of them btc doing nothing but being btc; one that demanded a
+    burst would never hear about usdchf at all, which is the instrument a
+    headline is most informative about precisely because it is so rarely
+    mentioned.
+
+    So the comparison is per feed, against that feed's own arrival rate — the
+    same argument the spread gate makes about venues. Treating arrivals as
+    Poisson, the question is how unlikely this many headlines in ten minutes
+    would be at the rate this feed normally runs at. A lone usdchf headline
+    sits right at the threshold and clears it whenever the feed has been
+    quieter than its average — three times over the replay week — while btc
+    needs a cluster before it means anything.
+
+    ## The rate has to move
+
+    An average over all of history was the first attempt and it was wrong in a
+    way worth recording. Adding the crypto sources multiplied btc's headline
+    volume roughly tenfold inside a week; the all-time rate still carried the
+    old number, so the gate read the collection change as news and fired on
+    **34.9 windows a day**, most of them btc. The rate is therefore a decaying
+    count with a three-day constant — recent arrivals count fully, a week-old
+    one barely — which brings the same replay to 10.3/day.
+
+    Rates are also shrunk toward the average feed's, weakly. A feed with no
+    history of its own would otherwise have a rate of zero, under which its
+    first headline is infinitely surprising. Toward the *median* feed rather
+    than the mean, which btc's volume alone would otherwise define.
+
+    ## What this cannot see
+
+    Nothing about the *time of day*: Asian hours are quieter than the New York
+    open, and the gate will be a little eager in a busy session and a little
+    deaf in a dead one. Modelling that is a bigger change than the size of the
+    effect justifies at ten wakes a day.
+
+    Nor anything about what a headline *says*. This measures how much is being
+    written, not whether it matters, which is deliberate — judging the content
+    is the analyst's job, and it is the thing being woken.
+    """
+
+    def __init__(
+        self,
+        window: float = NEWS_WINDOW,
+        alpha: float = NEWS_ALPHA,
+        tau: float = NEWS_TAU,
+        prior: float = NEWS_PRIOR,
+        warmup: int = NEWS_WARMUP,
+        memory: int = NEWS_MEMORY,
+    ) -> None:
+        self.window = window
+        self.alpha = alpha
+        self.tau = tau
+        self.prior = prior
+        self.warmup = warmup
+        self.memory = memory
+        #: Arrival times inside `window`, for the count.
+        self._seen: dict[str, list[float]] = {}
+        #: The decaying arrival count per feed, and when it was last decayed.
+        #: Kept apart from `_seen` because it spans days rather than minutes.
+        self._rate: dict[str, float] = {}
+        self._last: dict[str, float] = {}
+
+    def observe(self, feed: str, when: float) -> None:
+        seen = self._seen.setdefault(feed, [])
+        seen.append(when)
+        if len(seen) > self.memory:
+            del seen[: len(seen) - self.memory]
+        # Decay to now, then count this arrival. `max(..., 0.0)` because
+        # `published` is the publisher's clock and runs backwards between
+        # sources; a negative gap would turn the decay into growth.
+        elapsed = max(when - self._last.get(feed, when), 0.0)
+        self._rate[feed] = self._rate.get(feed, 0.0) * math.exp(-elapsed / self.tau) + 1.0
+        self._last[feed] = max(when, self._last.get(feed, when))
+
+    def unusual(self, feed: str, when: float) -> bool:
+        """Whether the flow about this feed has picked up, for this feed."""
+        return self._surprise(feed, when) <= self.alpha
+
+    def _surprise(self, feed: str, when: float) -> float:
+        """How unlikely this much news about this feed is. Lower is stranger.
+
+        Separate from `unusual` so the threshold can be seen rather than only
+        its verdict — the interesting cases here sit within a factor of two of
+        it, and a bare True/False hides that.
+        """
+        recent = sum(1 for at in self._seen.get(feed, ()) if when - at < self.window)
+        if not recent:
+            return 1.0
+        if sum(self._rate.values()) < self.warmup:
+            # Two in ten minutes. Conservative, and deliberately so: the
+            # alternative while nothing is known is to treat a first-ever
+            # headline as a surprise, which it is not — it is a cold start.
+            return 0.0 if recent >= 2 else 1.0
+        # Shrunk toward the typical feed, so one with no history of its own is
+        # treated as ordinary rather than as silent.
+        #
+        # The **median**, not the mean. btc carries sixty times usdchf's volume,
+        # and a mean is that one feed's rate wearing everyone else's name — it
+        # pulled usdchf's estimate up by a factor of seven, which is exactly the
+        # feed the shrinkage exists to protect.
+        ordered = sorted(self._rate.values())
+        pooled = ordered[len(ordered) // 2]
+        shrunk = (self._rate.get(feed, 0.0) + self.prior * pooled) / (1.0 + self.prior)
+        expected = (shrunk / self.tau) * self.window
+        return _poisson_tail(recent, expected)
+
+
+def _poisson_tail(count: int, expected: float) -> float:
+    """P(X >= count) for X ~ Poisson(expected).
+
+    Summed from the bottom rather than evaluated term by term, so it holds up
+    at the small rates most feeds run at without ever computing a factorial.
+    """
+    if count <= 0:
+        return 1.0
+    term = math.exp(-expected)
+    below = term
+    for k in range(1, count):
+        term *= expected / k
+        below += term
+    return max(0.0, 1.0 - below)
+
+
 @dataclass(slots=True)
 class Window:
     """What a window of bus traffic amounts to, folded in as it arrives.
@@ -154,16 +346,25 @@ class Window:
 
     settings: Settings
     spreads: Spreads | None = None
+    headlines: Headlines | None = None
     messages: int = 0
     quotes: int = 0
     events: int = 0
     unreleased: int = 0
+    articles: int = 0
+    #: Headlines that named an instrument we actually price. The rest cannot be
+    #: joined to anything, so they are counted and dropped.
+    routed: int = 0
     topics: Counter = field(default_factory=Counter)
     #: The strongest signal per instrument. One dislocation seen at four venues
     #: is one instrument dislocating, not four findings.
     loudest: dict[str, tuple[float, Trigger]] = field(default_factory=dict)
     #: Releases that actually printed and cleared the importance floor.
     releases: list[Trigger] = field(default_factory=list)
+    #: One headline per instrument, for the instruments whose news flow picked
+    #: up. Per feed for the same reason `loudest` is: four outlets writing about
+    #: one instrument is one story, not four.
+    stories: dict[str, Trigger] = field(default_factory=dict)
     #: The widest spread that was unusual *for its venue*, and the widest seen
     #: at all — the second is for explaining a decline, not for triggering.
     widest: Message | None = None
@@ -182,6 +383,8 @@ class Window:
             self._quote(payload)
         elif message.topic == EVENTS:
             self._event(payload)
+        elif message.topic == ARTICLES:
+            self._article(payload)
 
     def _signal(self, payload: dict) -> None:
         # A signal has already cleared the numeric layer's own guards, so it
@@ -219,6 +422,38 @@ class Window:
             wide = bps >= self.settings.spread_bps
         if wide and (self.widest is None or bps > (self.widest.payload.get("spread_bps") or 0)):
             self.widest = Message(topic=QUOTES, payload=dict(payload))
+
+    def _article(self, payload: dict) -> None:
+        """A headline, kept only if it names something we price and is unusual.
+
+        Publishers tag articles `VENUE:TICKER`; `news.symbols` maps that onto a
+        feed using the symbols `prices` already collects. Of 3,058 articles 44%
+        carry tags at all and 60% of those name a tracked instrument, so most
+        of what arrives is counted here and goes no further — correctly, since
+        a headline about `XRPUSD` or `DXY` cannot be joined to anything we hold.
+        """
+        self.articles += 1
+        feeds = feeds_for(payload.get("symbols"))
+        if not feeds:
+            return
+        self.routed += 1
+        if self.headlines is None:
+            return
+        # `published` is when the publisher says it ran, which for a backfilled
+        # feed can be days old; arrival is what the gate is about.
+        when = float(payload.get("published") or 0.0) or time.time()
+        for feed in feeds:
+            self.headlines.observe(feed, when)
+        for feed in feeds:
+            if not self.headlines.unusual(feed, when):
+                continue
+            title = str(payload.get("title") or "").strip()
+            provider = str(payload.get("provider") or payload.get("source") or "").strip()
+            self.stories[feed] = Trigger(
+                reason=f"{feed}: news flow picked up — {provider} “{title}”".strip(),
+                topic=ARTICLES,
+                payload={**payload, "feed": feed},
+            )
 
     def _event(self, payload: dict) -> None:
         self.events += 1
@@ -262,6 +497,12 @@ class Window:
                     payload=dict(self.widest.payload),
                 )
             )
+        # Last, so the cap sheds a headline before it sheds a measurement. A
+        # story is the softest evidence here — prose about an instrument rather
+        # than the instrument doing something — and its value is in waking the
+        # analyst when nothing else would, not in competing with a dislocation
+        # for a place in a crowded window.
+        found += [self.stories[feed] for feed in sorted(self.stories)]
         if len(found) > MAX_TRIGGERS:
             # Said out loud rather than trimmed quietly. A cap that silently
             # drops findings reads afterwards as "that is all there was".
@@ -286,6 +527,8 @@ class Window:
             top_importance=self.top_importance,
             importance_threshold=self.settings.importance,
             unreleased=self.unreleased,
+            articles=self.articles,
+            routed=self.routed,
         )
 
     def seen(self) -> str:
@@ -294,7 +537,10 @@ class Window:
 
 
 def interesting(
-    messages: Sequence[Message], settings: Settings, spreads: Spreads | None = None
+    messages: Sequence[Message],
+    settings: Settings,
+    spreads: Spreads | None = None,
+    headlines: Headlines | None = None,
 ) -> list[Trigger]:
     """Decide, without a model, whether this window is worth analysing.
 
@@ -310,18 +556,26 @@ def interesting(
     threshold is used, which is the old behaviour and is only right for
     whichever instrument it was chosen on.
     """
-    return _fold(messages, settings, spreads).triggers()
+    return _fold(messages, settings, spreads, headlines).triggers()
 
 
 def why_quiet(
-    messages: Sequence[Message], settings: Settings, spreads: object | None = None
+    messages: Sequence[Message],
+    settings: Settings,
+    spreads: Spreads | None = None,
+    headlines: Headlines | None = None,
 ) -> Quiet:
     """Summarise a window that woke nobody, so the silence can be read."""
-    return _fold(messages, settings, spreads).quiet()
+    return _fold(messages, settings, spreads, headlines).quiet()
 
 
-def _fold(messages: Sequence[Message], settings: Settings, spreads: object | None = None) -> Window:
-    window = Window(settings=settings, spreads=spreads)
+def _fold(
+    messages: Sequence[Message],
+    settings: Settings,
+    spreads: Spreads | None = None,
+    headlines: Headlines | None = None,
+) -> Window:
+    window = Window(settings=settings, spreads=spreads, headlines=headlines)
     for message in messages:
         window.add(message)
     return window
@@ -359,10 +613,15 @@ class Quiet:
     #: a window full of high-importance events that are all still scheduled is
     #: a different situation from a quiet calendar, and reads the same.
     unreleased: int = 0
+    #: Headlines seen, and how many named an instrument we price. Both, because
+    #: "forty headlines and none of them about anything we hold" is a different
+    #: silence from "no news at all", and they read the same otherwise.
+    articles: int = 0
+    routed: int = 0
 
     def __str__(self) -> str:
-        if not self.quotes and not self.events:
-            return f"{self.messages} message(s), none of them a quote or a release"
+        if not self.quotes and not self.events and not self.articles:
+            return f"{self.messages} message(s), none of them a quote, a release or a headline"
         parts: list[str] = []
         if self.quotes:
             where = f" at {self.widest_at}" if self.widest_at else ""
@@ -375,9 +634,16 @@ class Quiet:
             )
         if self.unreleased:
             parts.append(f"{self.unreleased} scheduled but not yet printed")
+        if self.articles:
+            parts.append(
+                f"{self.articles} headline(s), {self.routed} about a tracked instrument "
+                "and none of them unusual for it"
+                if self.routed
+                else f"{self.articles} headline(s), none about a tracked instrument"
+            )
         return (
-            f"{self.messages} message(s) ({self.quotes} quote(s), {self.events} event(s)) "
-            f"and nothing crossed: " + "; ".join(parts)
+            f"{self.messages} message(s) ({self.quotes} quote(s), {self.events} event(s), "
+            f"{self.articles} headline(s)) and nothing crossed: " + "; ".join(parts)
         )
 
 
@@ -439,12 +705,42 @@ class Watcher:
         #: What each venue's spread normally is, so the fallback gate does not
         #: need a constant. `structures` answers this better when it is running.
         self.spreads = Spreads()
+        #: How much is normally written about each instrument. Held on the
+        #: watcher rather than the window, because it takes days of arrivals to
+        #: mean anything and a window is minutes long.
+        self.headlines = Headlines()
+        self._warm_headlines()
         #: Folded in as messages arrive rather than kept. This is where the
         #: memory went: a thirty-minute window over fourteen instruments held
         #: **101,297 messages — 199MB**, about half the resident size when the
         #: box was OOM-killed, to derive fifteen triggers from. Nothing
         #: downstream wanted the messages, so none are kept.
-        self._window = Window(settings=self.settings, spreads=self.spreads)
+        self._window = Window(
+            settings=self.settings, spreads=self.spreads, headlines=self.headlines
+        )
+
+    def _warm_headlines(self, days: int = NEWS_HISTORY) -> None:
+        """Start knowing how much is normally written about each instrument.
+
+        Without this the gate relearns every feed's rate from nothing after
+        every restart, and the deploy cadence is measured in hours.
+
+        Best effort. A missing or unreadable news store means the gate starts
+        cold, which is the behaviour without this and is not worth refusing to
+        start over.
+        """
+        try:
+            arrivals = data.arrivals(self.settings.news_db, days=days)
+        except Exception as error:
+            log.debug("agents: no headline history to warm from (%s)", error)
+            return
+        warmed = 0
+        for when, symbols in arrivals:
+            for feed in feeds_for(symbols):
+                self.headlines.observe(feed, when)
+                warmed += 1
+        if warmed:
+            log.info("agents: headline rates warmed from %d arrival(s)", warmed)
 
     # ------------------------------------------------------------- alerting
 
@@ -580,7 +876,11 @@ class Watcher:
                     await asyncio.sleep(self.settings.window_seconds)
                     window, self._window = (
                         self._window,
-                        Window(settings=self.settings, spreads=self.spreads),
+                        Window(
+                            settings=self.settings,
+                            spreads=self.spreads,
+                            headlines=self.headlines,
+                        ),
                     )
                     count += 1
                     run = await self.consider(window)

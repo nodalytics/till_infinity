@@ -14,6 +14,7 @@ than the row-level accessors the collectors use.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from collections.abc import Iterator
@@ -282,6 +283,42 @@ def headlines(
     for row in rows:
         row["published"] = stamp(row["published"])
     return rows
+
+
+def arrivals(news_db: Path, days: int = 30) -> list[tuple[float, list[str]]]:
+    """When each recent headline landed and what it was tagged with.
+
+    Not a tool — nothing here is meant for a model to read. It exists so the
+    headline gate can start knowing how much is normally written about each
+    instrument, instead of learning it again from nothing after every restart.
+
+    That matters more than it sounds. The gate needs a handful of arrivals per
+    feed before its rate means anything, and the feeds worth hearing about are
+    exactly the ones slowest to get there: usdchf runs at five headlines a week,
+    so it would spend eleven days deaf, and the service restarts on every
+    deploy. Thirty days of history clears the warmup for every tracked feed at
+    once.
+
+    Deliberately unbounded by `MAX_ROWS`: this is a startup read of two columns,
+    not a query whose result reaches a prompt.
+    """
+    since = time.time() - days * 86400
+    with read_only(news_db) as conn:
+        rows = conn.execute(
+            "SELECT COALESCE(published, fetched) AS at, symbols FROM articles"
+            " WHERE COALESCE(published, fetched) >= ? AND symbols IS NOT NULL"
+            " ORDER BY at",
+            (since,),
+        ).fetchall()
+    found: list[tuple[float, list[str]]] = []
+    for row in rows:
+        try:
+            symbols = json.loads(row["symbols"] or "[]")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(symbols, list) and row["at"]:
+            found.append((float(row["at"]), [str(s) for s in symbols]))
+    return found
 
 
 # ----------------------------------------------------------------- levels

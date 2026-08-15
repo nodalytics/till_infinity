@@ -1128,6 +1128,99 @@ Do not start from levels either. [magnet.md](magnet.md) found levels do not
 attract price, and a level is a price rather than a regime — the wrong object
 at the wrong scale for this question.
 
+## 6c. Cyclical context — where a level sits in the larger move
+
+Every feature the model has is **local to the touch**. `approach_vol`,
+`depth_vol`, `run_vol`, `pivot`, `backcheck`, and the six candidates tested in
+[features.md](../research/features.md) §4 all describe the last few bars before
+price arrived. None of them describes *where that arrival sits in anything
+larger* — whether the instrument has been climbing for a month, falling for a
+month, or oscillating in a range, and if in a range, whether this level is near
+its floor or near its ceiling.
+
+That is a real gap and it is a different gap from the one already recorded.
+features.md concluded "the missing information is probably not another function
+of price" and named order flow as the absent class. Order flow is absent
+*downward* — finer than a bar, and uncollected. This is absent **upward**: the
+same stored bars, read at a scale nothing currently reads them at. The two are
+not alternatives and the second is far cheaper to test, because the data is
+already on disk.
+
+The intuition: a support level in the third month of a downtrend and the same
+support in the second week of a recovery are not the same object, and the model
+cannot currently tell them apart. Nor can it tell the bottom of a range — where
+the next move is up because there is nowhere else — from the top of one.
+
+### Why this is not obviously a good idea
+
+Three findings point the other way and should be read first:
+
+- [magnet.md](magnet.md) found levels **do not attract price**. A cycle claim is
+  a bigger version of the same kind of claim, and the smaller one failed.
+- [features.md](../research/features.md) §1 found `side` carries essentially all
+  of the signal and eight other features carry none. The prior on any tenth
+  feature mattering should be low.
+- The pooled-to-within-cell collapse: +22.9 points became +3.1. Anything
+  measured across instruments and regimes without conditioning will look good.
+
+And a fourth, structural: **regime labels are the easiest thing in this field to
+fit backwards.** "We were in an uptrend" is trivially true in hindsight and
+nearly useless in advance, which is the same trap §6a names for major turns.
+The label must be computable from data strictly before the touch — a rule, not
+an eye — or the whole thing is hindsight wearing a feature's clothes.
+
+### The shape it would take
+
+Two values, both point-in-time, both from bars already stored:
+
+1. **Direction at scale** — up, down, or ranging, over a window much longer than
+   the touch horizon. `drift.py` already tracks whether what counts as usual has
+   moved, but a drift says the regime *changed*, not which way it is pointing;
+   this is the missing sign. A slope with a band around it is the crude version
+   and is the right first attempt.
+2. **Position within the range** — where price sits between the range floor and
+   ceiling, as a fraction, when direction is "ranging". Undefined, and correctly
+   so, when it is trending: a trend has no ceiling to be near.
+
+Both are one number per instrument per timeframe, recomputed as bars arrive, and
+both fit `Features` without touching the touch pipeline.
+
+### The falsification, written first
+
+The interaction is the whole claim, so test the interaction and not the main
+effect. Position-in-range on its own will correlate with `side` — near the range
+floor most touches are from above — and would score as a discovery while adding
+nothing to what `side` already says.
+
+> Split resolved touches by cycle state. Within each state, does the up-rate for
+> a given `side` differ from the pooled up-rate by more than the cell interval?
+> If a support touch in an uptrend and a support touch in a downtrend resolve at
+> the same rate, there is nothing here.
+
+Then the standard gates: walk-forward by time, hold across instruments, AUC
+beside accuracy, and scored against "assume the level holds" — which currently
+beats the model at 74.8% against 71.1%, and is the baseline any new feature has
+to move.
+
+Sample is the binding constraint again. A month-scale cycle gives *tens* of
+independent observations per instrument, not thousands, however many touches sit
+inside them — the touches within one uptrend are not independent draws on the
+question "does an uptrend matter". Count cycles, not touches, when sizing the
+claim.
+
+### Where it connects
+
+- **§6a (major turns)** is the same question one scale up and asked as an event
+  rather than a state. A cycle label is most of the labelling work that item
+  says is its hardest part, so doing this first is the cheaper order.
+- **§5b (weak and strong)** would gain the obvious conditioning: a level is
+  probably strong or weak *relative to the prevailing direction*, not absolutely.
+- **§6 (the score)** is where a cycle state belongs if it survives, as context
+  on the number rather than a term in it.
+- **`regime`** already exists in `Features` and is a **volatility** percentile,
+  not a direction. Not the same thing, and the name collision will mislead
+  someone — whatever this ends up called, it should not be called regime.
+
 ## 7. BOCPD
 
 Documented in [structures.md](structures.md) as a way to *grade* a regime change

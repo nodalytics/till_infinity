@@ -159,6 +159,79 @@ observations would be worse than the constant it replaced.
 A release only triggers when it *prints* — being on the calendar is not news,
 the `actual` landing away from forecast is.
 
+### News can wake the analyst, and could not before
+
+`ARTICLES` was on the topic list and subscribed to for months with **no branch
+to handle it**. A headline was readable once the analyst was awake and was
+never the reason it woke, which makes subscribing to news decorative.
+
+Two things had to exist first.
+
+**Which instrument a headline is about.** Publishers tag articles
+`VENUE:TICKER` — 641 distinct strings across 3,058 articles, none of them the
+feed names this project uses. [`news/symbols.py`](../till_infinity/news/symbols.py)
+maps them, building the table from the symbols `prices` already collects rather
+than from a second hand-written list that would go stale the first time a venue
+was added. The venue half is noise: `BITSTAMP:BTCUSD`, `COINBASE:BTC-USD` and
+`BINANCE:BTCUSDT` are one instrument, and matching on the prefix would need
+every venue any publisher might name.
+
+44% of articles carry tags at all, and 60% of those name a tracked instrument.
+The rest — `XRPUSD`, `DXY`, `POLYMARKET`, `USDINR`, `COIN` — map to nothing,
+which is the correct answer rather than a gap. Mapping `USDINR` to `usdjpy`
+because both are dollar pairs would invent a relationship.
+
+**How much news is normal for that instrument.** The rates differ by two orders
+of magnitude: over seven days, **300 headlines about btc and five about
+usdchf**. A gate firing on every routed headline would be 90 model calls a day,
+most of them btc being btc; one demanding a burst would never hear about usdchf
+at all, though it is the instrument a headline says most about.
+
+So the comparison is per feed, against that feed's own arrival rate — the same
+argument the spread gate makes about venues. Treating arrivals as Poisson, the
+question is how unlikely this many headlines in ten minutes would be at the
+rate this feed normally runs at. Replayed over the last seven days of the
+corpus, that wakes the analyst **12.0 times a day**:
+
+| | btc | usdchf |
+|---|---|---|
+| headlines per week | 300 | 5 |
+| lone headline | ignore | **at the threshold** |
+| two in ten minutes | ignore | wake |
+| cluster | wake | wake |
+
+**The rate has to be able to move.** An all-time average was the first attempt.
+Adding the crypto sources multiplied btc's headline volume roughly tenfold
+inside a week; the average still carried the old number, so the gate read a
+*collection change* as news and fired 34.9 times a day. The rate is now a
+decaying count with a three-day constant, which brings the same replay to 12.0.
+This project keeps gaining instruments and sources, so that is the normal
+condition rather than a one-off to wait out.
+
+Rates are shrunk weakly toward the **median** feed's, not the mean — btc alone
+would otherwise define what "typical" means and pull usdchf's estimate up
+sevenfold. That shrinkage changes nothing on the replay, where every feed has
+history of its own, and it exists for the feed that does not: an instrument
+added yesterday, or the first run after the news store is lost.
+
+Rates are read from the news store at startup, 14 days of it. Without that the
+gate relearns from nothing after every deploy, and deploys are measured in
+hours.
+
+A story is the **softest** evidence in a window, so it is added last and the
+`MAX_TRIGGERS` cap sheds a headline before it sheds a measurement. Its value is
+waking the analyst when nothing else would, not competing with a dislocation
+for a place in a crowded window. One trigger per instrument, for the same
+reason signals are deduplicated: four outlets writing about one instrument is
+one story.
+
+What this deliberately does not do is judge what a headline *says*. It measures
+how much is being written; whether it matters is the analyst's job, and the
+analyst is the thing being woken. Outlet agreement is not used either —
+[news-dedup.md](news-dedup.md) established that the corpus contains no
+observation of independent outlets converging on a story, so a gate keyed on
+that would be keyed on nothing.
+
 What survives both gates is published to `alerts`:
 
 ```bash

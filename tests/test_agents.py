@@ -8,6 +8,7 @@ and what survives on the way to an alert.
 from __future__ import annotations
 
 import sqlite3
+import time
 
 import pytest
 
@@ -197,8 +198,152 @@ def test_a_calendar_full_of_pending_releases_is_not_a_quiet_calendar():
 
 def test_a_window_with_nothing_to_judge_says_so():
     settings = ag.Settings()
-    window = [Message(topic=ARTICLES, payload={"title": "something"})]
-    assert "none of them a quote or a release" in str(service.why_quiet(window, settings))
+    window = [Message(topic=service.BARS, payload={"feed": "btc"})]
+    said = str(service.why_quiet(window, settings))
+    assert "none of them a quote, a release or a headline" in said
+
+
+def test_headlines_about_nothing_we_price_are_a_different_silence():
+    """ "Forty headlines, none about anything we hold" reads as "no news" otherwise."""
+    settings = ag.Settings()
+    window = [
+        Message(topic=ARTICLES, payload={"title": "XRP rallies", "symbols": ["BITSTAMP:XRPUSD"]}),
+        Message(topic=ARTICLES, payload={"title": "DXY firms", "symbols": ["ICEUS:DXY"]}),
+    ]
+    quiet = service.why_quiet(window, settings, headlines=service.Headlines())
+    assert quiet.articles == 2
+    assert quiet.routed == 0
+    assert "none about a tracked instrument" in str(quiet)
+
+
+# ------------------------------------------------------- the headline gate
+
+
+def _article(symbols, title="something happened", provider="reuters"):
+    return Message(
+        topic=ARTICLES,
+        payload={"title": title, "provider": provider, "symbols": list(symbols)},
+    )
+
+
+def test_a_headline_can_wake_the_agent_on_its_own():
+    """The point of subscribing to news.
+
+    `ARTICLES` was on the topic list and in `TOPICS` for months with no branch
+    to handle it, so a headline was readable once the analyst was awake and was
+    never the reason it woke.
+    """
+    settings = ag.Settings()
+    gate = service.Headlines()
+    window = [_article(["BITSTAMP:BTCUSD"]), _article(["COINBASE:BTC-USD"])]
+    triggers = service.interesting(window, settings, headlines=gate)
+    assert [t.topic for t in triggers] == [ARTICLES]
+    assert triggers[0].payload["feed"] == "btc"
+
+
+def test_one_story_at_four_outlets_is_one_story():
+    """The same dedup argument `loudest` makes about venues."""
+    settings = ag.Settings()
+    gate = service.Headlines()
+    window = [
+        _article(["FX:EURUSD"], provider="reuters"),
+        _article(["FX_IDC:EURUSD"], provider="bloomberg"),
+        _article(["BITSTAMP:EURUSD"], provider="fxstreet"),
+    ]
+    triggers = service.interesting(window, settings, headlines=gate)
+    assert len(triggers) == 1
+
+
+def test_a_lone_headline_is_not_news_while_the_rate_is_unknown():
+    """A first-ever headline is a cold start, not a surprise."""
+    settings = ag.Settings()
+    assert (
+        service.interesting([_article(["FX:EURUSD"])], settings, headlines=service.Headlines())
+        == []
+    )
+
+
+def test_what_counts_as_unusual_is_per_instrument():
+    """Three hundred btc headlines a week against five for usdchf.
+
+    A single threshold cannot serve both: fire on every routed headline and btc
+    alone is ninety model calls a day; demand a burst and usdchf never gets
+    through, though it is the instrument a headline says most about.
+
+    Rates as `NEWS_HISTORY` days of warming would leave them, which is the
+    state the gate actually runs in.
+    """
+    gate = service.Headlines()
+    now = 1_700_000_000.0
+    days = service.NEWS_HISTORY
+
+    # Every tracked feed at the rate the corpus actually runs at, over the
+    # history the gate is seeded with. All of them, because the rate a lone
+    # feed is compared against is the *typical* feed's, and two feeds sixty
+    # times apart do not have a typical one.
+    weekly = {
+        "btc": 300,
+        "eth": 63,
+        "usdjpy": 53,
+        "eurusd": 35,
+        "gbpusd": 32,
+        "audusd": 30,
+        "nzdusd": 26,
+        "usdcad": 25,
+        "sol": 24,
+        "usdcnh": 16,
+        "spx500": 12,
+        "gold": 9,
+        "usdchf": 5,
+    }
+    for feed, rate in weekly.items():
+        for i in range(rate * days // 7):
+            gate.observe(feed, now + i * (7 * 86400 / rate))
+    later = now + days * 86400
+
+    # One of each, arriving now. A lone usdchf headline sits right at the
+    # threshold — it clears whenever the feed has been quieter than its
+    # average, which over the replay week happened three times — while a lone
+    # btc headline is nowhere near it.
+    gate.observe("usdchf", later)
+    gate.observe("btc", later)
+    quiet = gate._surprise("usdchf", later)
+    loud = gate._surprise("btc", later)
+    assert quiet < loud
+    assert quiet == pytest.approx(gate.alpha, rel=0.5)
+    assert loud > 20 * gate.alpha
+
+    # A second usdchf headline in the window is unambiguous. btc still is not.
+    gate.observe("usdchf", later + 60.0)
+    gate.observe("btc", later + 60.0)
+    assert gate.unusual("usdchf", later + 60.0) is True
+    assert gate.unusual("btc", later + 60.0) is False
+
+
+def test_a_headline_yields_to_a_measurement_when_the_window_is_crowded():
+    """A story is the softest evidence here, so the cap sheds it first."""
+    settings = ag.Settings(spread_bps=8.0)
+    gate = service.Headlines()
+    window = [_quote(30.0), _article(["BITSTAMP:BTCUSD"]), _article(["COINBASE:BTC-USD"])]
+    triggers = service.interesting(window, settings, headlines=gate)
+    assert [t.topic for t in triggers] == [QUOTES, ARTICLES]
+
+
+def test_without_the_gate_a_headline_is_still_counted():
+    """`interesting` is called without one in places; it must not blow up."""
+    settings = ag.Settings()
+    assert service.interesting([_article(["BITSTAMP:BTCUSD"])] * 5, settings) == []
+    assert service.why_quiet([_article(["BITSTAMP:BTCUSD"])], settings).routed == 1
+
+
+def test_the_poisson_tail_is_a_probability():
+    assert service._poisson_tail(0, 1.0) == 1.0
+    assert service._poisson_tail(1, 0.0) == pytest.approx(0.0, abs=1e-12)
+    # P(X >= 1) = 1 - e^-1
+    assert service._poisson_tail(1, 1.0) == pytest.approx(0.6321, abs=1e-4)
+    # Monotone in the count, for a fixed rate.
+    tails = [service._poisson_tail(k, 2.0) for k in range(1, 8)]
+    assert tails == sorted(tails, reverse=True)
 
 
 def test_junk_in_a_payload_does_not_break_the_gate():
@@ -826,3 +971,73 @@ def test_an_evidence_line_that_is_only_a_tool_call_is_dropped():
         title="t", evidence=["default_api.quotes(feed='eth')", "spread 1.2bps"]
     )
     assert finding.evidence == ["spread 1.2bps"]
+
+
+def test_a_collection_change_is_not_news(tmp_path):
+    """The failure that set the decay constant.
+
+    Adding the crypto sources multiplied btc's headline volume tenfold inside
+    a week. An all-time rate still carrying the old number read that as news
+    and fired on 34.9 windows a day. The rate has to be able to move.
+    """
+    gate = service.Headlines()
+    now = 1_700_000_000.0
+    # Two weeks at the old rate: one headline every six hours.
+    step = 6 * 3600.0
+    for i in range(56):
+        gate.observe("btc", now + i * step)
+    settled = now + 56 * step
+
+    # Then the new sources arrive and it runs ten times faster for a week.
+    for i in range(560):
+        gate.observe("btc", settled + i * (step / 10))
+    after = settled + 560 * (step / 10)
+
+    # Two in ten minutes is ordinary at the new rate. It was extraordinary at
+    # the old one, and an average that could not move would still say so.
+    gate.observe("btc", after)
+    gate.observe("btc", after + 60.0)
+    assert gate.unusual("btc", after + 120.0) is False
+
+    stale = service.Headlines()
+    for i in range(56):
+        stale.observe("btc", now + i * step)
+    stale.observe("btc", settled)
+    stale.observe("btc", settled + 60.0)
+    # Enough pooled evidence to be past the cold start, and still fooled.
+    stale._rate["filler"] = float(service.NEWS_WARMUP)
+    assert stale.unusual("btc", settled + 120.0) is True
+
+
+def test_the_gate_starts_knowing_what_is_normal(tmp_path):
+    """Relearning every feed's rate after each deploy leaves the quiet ones deaf.
+
+    usdchf runs at five headlines a week, so it needs eleven days to clear
+    warmup, against a deploy cadence measured in hours. Thirty days of history
+    is read at startup so it never spends them.
+    """
+    import json as _json
+
+    path = tmp_path / "news.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE articles (source TEXT, id TEXT, title TEXT, url TEXT,"
+        " published REAL, fetched REAL, provider TEXT, summary TEXT,"
+        " symbols TEXT, urgency INTEGER);"
+    )
+    now = time.time()
+    rows = [
+        ("tv", str(i), "t", "", now - i * 3600, now, "p", "", _json.dumps(["BITSTAMP:BTCUSD"]), 2)
+        for i in range(40)
+    ]
+    conn.executemany("INSERT INTO articles VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    watcher = service.Watcher(Bus(), settings=ag.Settings(news_db=path))
+    assert watcher.headlines._rate["btc"] > 0.0
+    assert sum(watcher.headlines._rate.values()) >= service.NEWS_WARMUP
+
+    # And an unreadable store is a cold gate, not a refusal to start.
+    cold = service.Watcher(Bus(), settings=ag.Settings(news_db=tmp_path / "gone.db"))
+    assert cold.headlines._rate == {}
