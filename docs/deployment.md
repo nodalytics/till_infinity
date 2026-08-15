@@ -119,3 +119,106 @@ file, so a deployment is never overridden by a stray `.env`.
 Agents are **off** unless `AGENTS_ENABLED=1`. They are the only part needing a
 paid credential, and the collectors and levels model should not be hostage to
 one.
+
+## Moving to another instance
+
+Three GitHub secrets point the deploy at a box, and they are the *easy* part.
+Do the first item before touching anything else.
+
+### 1. `till.env` exists nowhere but the instance
+
+`/home/ubuntu/till.env` holds every live credential — the Telegram bot token
+and chat ids, the Gemini and Groq keys, the model and fallback list, the notify
+cooldown and rate. It is not in git, not in GitHub secrets, and not in the
+image. `run.sh` writes defaults only when the file is **absent** and never
+overwrites it, which is what keeps a deploy from silently reverting a
+configured box — and also what means nothing recreates it if the instance goes
+away.
+
+Copy it off before the old instance is stopped, and keep it somewhere that
+survives:
+
+```bash
+scp -i key.pem ubuntu@OLD_HOST:/home/ubuntu/till.env ./till.env.backup
+```
+
+Everything else on this page can be rebuilt from the repository. This cannot.
+
+### 2. The three secrets
+
+| secret | what it is |
+|---|---|
+| `EC2_HOST` | the new hostname or address |
+| `EC2_USER` | the SSH user, `ubuntu` — see the path note below |
+| `EC2_SSH_KEY` | the **private** key, whole file including the header and footer lines |
+
+```bash
+gh secret set EC2_HOST  --body "ec2-…compute.amazonaws.com"
+gh secret set EC2_USER  --body "ubuntu"
+gh secret set EC2_SSH_KEY < ~/.ssh/new-instance.pem
+```
+
+`GITHUB_TOKEN` is issued per run by Actions and is not migrated.
+
+Set all three before the next push to `main`, or the deploy runs against the
+old host — `paths-ignore` skips prose, but any code change deploys.
+
+### 3. What the instance has to provide
+
+- **The user must be `ubuntu`**, or `deploy/run.sh` needs editing:
+  `/home/ubuntu/till-data` and `/home/ubuntu/till.env` are written into it.
+  Setting `EC2_USER` to anything else changes who SSHes in but not those paths,
+  and the mismatch shows up as a container with an empty data directory rather
+  than as an error.
+- **Docker, usable without `sudo`** by that user. `run.sh` calls `docker`
+  directly.
+- **The public key** matching `EC2_SSH_KEY` in that user's
+  `~/.ssh/authorized_keys`.
+- **Disk.** Images run near 973MB and the old box reached 99% of 6.7GB with
+  five of them, which is why `run.sh` prunes *before* it pulls. Give the new
+  one room and the pruning stops being load-bearing.
+- **No registry credential is needed** while the package is public: `run.sh`
+  contains no `docker login` and the old instance has no
+  `~/.docker/config.json`. If the package is ever made private, deploys break
+  at the pull with an error that does not mention permissions — add a
+  `docker login ghcr.io` with a read-only PAT at that point, not before.
+
+### 4. Data worth carrying over
+
+```
+journal    40M   the decision journal — irreplaceable, this is the learning history
+news      9.7M   headlines and the calendar, re-fetchable but slow
+prices    960M   candles and quotes, fully re-backfillable
+structures 14M   model state — do not bother, see below
+```
+
+`journal` is the one to move. `prices` can be re-backfilled and is most of the
+bulk; copying it is a convenience, not a requirement, and a fresh box with a
+smaller prices database is a *faster* cold start.
+
+Do **not** carry `structures/models.pkl`. `store._schema` fingerprints every
+persisted class, so any field added since it was written makes the service
+start cold anyway; moving it buys a warm start only if the code is byte-for-byte
+the same shape, and finding out otherwise costs a restart.
+
+```bash
+rsync -avz -e "ssh -i key.pem" ubuntu@OLD_HOST:/home/ubuntu/till-data/journal/ \
+      /tmp/journal/ && rsync -avz -e "ssh -i new-key.pem" /tmp/journal/ \
+      ubuntu@NEW_HOST:/home/ubuntu/till-data/journal/
+```
+
+### 5. Raise the limits, deliberately
+
+`run.sh` pins `--memory 640m --memory-swap 640m --cpus 1.5`, chosen for a
+908MB two-core instance. They are not a safety margin to keep out of habit:
+
+- `--memory-swap` equal to `--memory` means **no swap at all**, which is why
+  every overrun on the old box was a kill rather than a slowdown.
+- 640m of 908MB left the host itself short, and the kills that mattered were
+  `global_oom` on the host with `oomkilled=false` on the container — a
+  confusing pair to read, and the reason to give the host real headroom.
+
+On a larger instance raise both and give the box swap. Then revisit
+[todo.md](todo.md)'s standing note that nothing heavier than a read can run
+alongside the service; it was true of the old hardware and is the reason
+several diagnostics this project needs have never been run.
