@@ -64,6 +64,47 @@ someone measured rather than reasoned.
 - **The first-passage null was handed a MAD where it wanted a sigma**
   (`e5dec8d`), understating every reach probability by a quarter of a distance.
 
+## 0y. What the weekend could not answer — read these first on a weekday
+
+Everything measured on 2026-08-15 was measured on a Saturday, with FX and the
+indices shut. Crypto was the only thing trading, so any number involving the
+other eleven instruments is describing a closed market rather than a quiet one.
+Several conclusions are provisional on that and are gathered here rather than
+left scattered.
+
+**1. The outcome rate, properly this time.** Item 0 was answered but never
+re-measured on a comparable population: 887/hour was a weekday across fourteen
+instruments, and 40/hour was a Saturday across three. Measure a full weekday,
+on a box that has not restarted for hours, and compare *per bar within the same
+window* — not against all-time bars, which is a mistake this file made once
+already and which turned 11,037 per thousand into "582".
+
+**2. Whether the five FX pairs the gate declines deserve it.** `audusd`,
+`eurusd`, `usdcad`, `usdchf` and `nzdusd` at 1m fail `MIN_TICKS_PER_ZONE` on
+tick estimates taken while those markets were shut. `eurusd` produced four
+outcomes in twenty-four hours, which says nothing. If they behave on a weekday
+the floor is too high for FX and should come down.
+
+**3. Whether the tick estimates for FX are real at all.** `audusd 3m` and
+`eurusd 3m` report a tick of 0.00000-0.00001, which passes the gate for the
+right reason only if the estimate has been exercised. It has not been since
+Friday.
+
+**4. The instant-resolution residual.** Crypto sits at 2.5% post-fix against
+47.8% before, which is the headline result of the day. The session instruments
+read 82.8% — but on twenty-nine outcomes from shut markets, which is not a
+measurement. Re-read it when they trade.
+
+**5. A trustworthy baseline for what a healthy rate even is.** `btc 1m` at 59
+per thousand bars and `btc 3m` at 179 are the closest thing to a control, and
+both were measured over a weekend too. Nothing here knows what the right number
+looks like, which makes every other rate hard to judge.
+
+**6. The outcome mix.** Currently almost all rejects, because chop needs the
+full horizon to elapse and a break needs the trap window, and the box has been
+restarted repeatedly. The mix is the part that says whether the model sees
+anything other than bounces, and it is not yet measurable.
+
 ## 0z. Two things found on 2026-08-14, both ahead of everything below
 
 The two learning-path bugs from the same day are **fixed** — the silent
