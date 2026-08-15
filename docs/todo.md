@@ -781,6 +781,48 @@ backfill starving the consumer, which shortens it, but does not make a restart
 free. Batching pushes is the cheap discipline; not rebuilding on a docs-only
 change is the real fix.
 
+## 0d. Eight instruments have no daily bars, and two research questions want them
+
+Found on 2026-08-15 while running §6a. `1d` bars exist for **six** feeds — btc,
+eurusd, gbpusd, gold, spx500, us100 — and for none of the eight added during
+the instrument expansion on 2026-08-14: `audusd`, `eth`, `nzdusd`, `sol`,
+`usdcad`, `usdchf`, `usdcnh`, `usdjpy`. The deep pull was simply never re-run
+after the config grew, and nothing surfaces the gap because the live collector
+is working fine at the intervals the pipeline actually consumes.
+
+It is one command per interval, and the providers hold the history:
+
+```bash
+till-infinity prices backfill --interval 1d --symbol audusd --symbol eth \
+  --symbol nzdusd --symbol sol --symbol usdcad --symbol usdchf \
+  --symbol usdcnh --symbol usdjpy
+```
+
+**Why it is worth doing rather than noting.** Two research questions closed as
+"not answerable on this data" this week, and both were sample-limited in the
+same direction:
+
+- [turns.md](../research/turns.md) needs several hundred out-of-sample turns
+  and has 94. Fourteen instruments instead of six roughly doubles them.
+- [cycles.md](../research/cycles.md) failed because four of six instruments had
+  14–18 days of usable span — less than one 60-day window — so they could not
+  vary in cycle state at all.
+
+Neither becomes answerable on this alone. Both move, and this is the only lever
+that costs a collection run rather than waiting a year.
+
+Two things to check while doing it, because both have bitten before:
+
+- **Disk.** `prices` was 961MB before the instrument expansion and daily bars
+  are cheap per row, but a 5,000-bar deep pull across eight feeds and seven
+  venues is 280k rows. The box has 242GB now, so this is a note rather than a
+  risk.
+- **Whether the daily series is worth consensus.** [cycles.md](../research/cycles.md)
+  §2 found a cross-venue median *destroys* a path-dependent measure, because
+  venues sit at different levels and do not all report every day. Anything
+  reading these bars at cycle scale should take one venue's series, not a
+  median.
+
 ## ~~1. Split `observe_bar`: form from own bars, touch from the finest~~ — done
 
 Every bar forms levels for its own interval; only the finest interval touches,
@@ -1082,7 +1124,48 @@ So any adaptive rule here needs the same discipline the constants now get:
 window without a trend running through it.** An adaptive parameter that merely
 tracks a drift is not better, it is only harder to audit.
 
-## 6a. Model the next major turn, not just the next touch
+## ~~6a. Model the next major turn, not just the next touch~~ — measured on 2026-08-15, and the answer is do not build it
+
+**Built, run and written up in [turns.md](../research/turns.md).** The
+falsification was written first, as this item asked, and it fails.
+
+Four signals do separate turns from non-turns in sample, consistently and in
+the same direction over twenty years: **old, extended, volatile trends turn**
+(`since_low` 0.616, `vol` 0.606, `extension` 0.593, `vol_ratio` 0.583 AUC).
+None survives a purged walk-forward — every interval contains 0.5, and
+`since_low` falls from 0.616 to **0.503**. Leave-one-instrument-out is five of
+six above chance with one below and intervals a quarter wide.
+
+That is a different verdict from [cycles.md](../research/cycles.md), where
+nothing pointed anywhere. Here something does and it is still not enough.
+
+Four things worth keeping from it:
+
+- **The sample was better than this item assumed** — 131 turns, not "tens",
+  because the daily history runs 12–20 years rather than the six months the
+  touch data covers. It is still too small: the interval needs *several
+  hundred* out-of-sample turns against the 94 available, and it narrows more
+  slowly than the square-root law because episodes are correlated.
+- **Overlapping windows are the trap.** Two days a week apart share 53 of their
+  60 forward days. Resampling days rather than episodes would have made every
+  result above look significant. Any future work on this shape needs the same
+  guard.
+- **The sign is stable, the magnitude is not.** Across four eras every signal
+  stays on the same side of 0.5, but swings by up to 0.27 — larger than the
+  effect. And the base rate halved over twenty years, from 12.9% of days to
+  5.4%.
+- **Momentum deceleration measures at chance**, and so does the efficiency
+  ratio. Those are the two things anyone picking this up would try first.
+
+**The one cheap lever is a collection run.** Eight tracked feeds have no daily
+bars at all — audusd, eth, nzdusd, sol, usdcad, usdchf, usdcnh, usdjpy — so the
+cross-section is six instruments where it could be fourteen. That roughly
+doubles the turns, and [cycles.md](../research/cycles.md) failed for want of
+exactly the same span. It is not enough on its own.
+
+The original statement of the question follows.
+
+### Why it was worth asking
 
 Everything built so far answers a question measured in minutes: price has
 arrived at a level, which way does it go and how far. A **major turn** — the
