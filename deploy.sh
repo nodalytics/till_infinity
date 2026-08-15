@@ -4,10 +4,15 @@
 #
 #   IMAGE=ghcr.io/owner/repo TAG=<sha> bash deploy.sh
 #
-# One container, not the compose split. The box has 908 MB of RAM and six
-# separate services need about 861 MB before Redis, data or the OS — measured,
-# not estimated. `till-infinity run` is one process with an in-process bus,
-# which is the shape this hardware can actually hold.
+# One container, not the compose split. Six separate services need about 861 MB
+# before Redis, data or the OS — measured, not estimated — against the 908 MB
+# this started on. `till-infinity run` is one process with an in-process bus,
+# which is the shape that hardware could hold.
+#
+# The instance is larger now and the split would fit, but one process is also
+# what makes the in-process bus possible, so this is no longer only a memory
+# decision. The memory limit below is derived from the host rather than pinned,
+# so the same script is correct on either.
 set -euo pipefail
 
 IMAGE="${IMAGE:?set IMAGE}"
