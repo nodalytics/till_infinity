@@ -1191,6 +1191,26 @@ The single most useful thing here, because it is not what intuition offers:
 
 **Twice as far is four times as long, not twice.**
 
+**The table above is corrected, and the correction is the interesting part.**
+The reflection principle wants distances in **standard deviations**, and a
+distance in volatility units is a distance in **mean absolute deviations** —
+that is what `Volatility.bps` returns, chosen there because it is the more
+stable estimator on financial returns (§0, §4). For a normal walk
+MAD = σ·√(2/π), so every distance arrived a quarter too large and every
+probability came out too low.
+
+`timing.MAD_TO_SIGMA` is the conversion, and it was missing. The null was
+right; the unit handed to it was not — which is the harder version to notice,
+because it fails quietly and only in one direction. Measured against 22,219
+bars of realised excursions, the old form quoted **7.4% at eight volatility
+units where the truth is 17.4%**; corrected it tracks the realised curve across
+the range, and the realised median excursion implies a per-bar σ of 1.24
+against the factor's 1.253.
+
+The test that guarded this asserted the 2.198 first-passage constant, which was
+correct about the constant and silent about the unit, so it passed throughout.
+It now converts explicitly and a second test pins the conversion itself.
+
 ### There is no average, and that is not pedantry
 
 The expected first-passage time of a driftless walk is **infinite** — the tail
