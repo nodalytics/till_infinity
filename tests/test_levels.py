@@ -212,7 +212,7 @@ def _touch(tracker, level, side, exit_bps, when, vol):
 def test_a_level_answers_differently_from_each_side():
     """The asymmetry the whole design exists for."""
     vol = _vol()
-    tracker = reactions.Tracker(horizon=3600)
+    tracker = reactions.Tracker(horizon_bars=12)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     for i in range(6):
         _touch(tracker, level, Side.ABOVE, +40.0, 1_000_000 + i * 100_000, vol)
@@ -235,7 +235,7 @@ def test_three_touches_the_same_way_is_not_certainty():
 
 def test_a_fresh_level_borrows_from_similar_ones():
     vol = _vol()
-    tracker = reactions.Tracker(horizon=3600)
+    tracker = reactions.Tracker(horizon_bars=12)
     for n in range(6):
         neighbour = Level(feed=f"f{n}", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
         for i in range(4):
@@ -303,7 +303,7 @@ def test_a_real_call_passes_all_three():
 
 def test_a_touch_resolves_into_a_labelled_example():
     vol = _vol()
-    tracker = reactions.Tracker(horizon=3600)
+    tracker = reactions.Tracker(horizon_bars=12)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     done = _touch(tracker, level, Side.ABOVE, +40.0, 1_000_000, vol)
 
@@ -316,7 +316,7 @@ def test_a_touch_resolves_into_a_labelled_example():
 def test_an_interaction_that_goes_nowhere_is_kept_as_chop():
     """A model never shown 'nothing happened' will predict a move every time."""
     vol = _vol()
-    tracker = reactions.Tracker(horizon=120)
+    tracker = reactions.Tracker(horizon_bars=0.4)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     features = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
     tracker.begin(level, 4400.0, features, 1_000_000)
@@ -336,7 +336,7 @@ def test_a_touch_spanning_a_closed_market_is_discarded_rather_than_resolved():
     reaction to being touched. It is not a reaction to anything.
     """
     vol = _vol()
-    tracker = reactions.Tracker(horizon=3600)
+    tracker = reactions.Tracker(horizon_bars=12)
     level = Level(feed="eurusd", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     features = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
     tracker.begin(level, 4400.0, features, 1_000_000)
@@ -356,7 +356,7 @@ def test_a_slow_session_still_resolves_as_chop():
     and chop is the outcome a model most needs to be shown.
     """
     vol = _vol()
-    tracker = reactions.Tracker(horizon=120)
+    tracker = reactions.Tracker(horizon_bars=0.4)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     features = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
     tracker.begin(level, 4400.0, features, 1_000_000)
@@ -748,7 +748,7 @@ def test_a_pivot_uses_only_the_completed_session_range():
 
 def test_a_touch_is_only_resolved_by_prices_after_it_began():
     vol = _vol()
-    tracker = reactions.Tracker(horizon=3600)
+    tracker = reactions.Tracker(horizon_bars=12)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     features = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
     tracker.begin(level, 4400.0, features, when=1_000_000)
@@ -793,7 +793,7 @@ def test_an_unknown_timeframe_falls_back_rather_than_crashing():
 def test_neighbours_agreeing_is_evidence_not_proof():
     """Twelve neighbours all going one way must not produce a claim of 0% or 100%."""
     vol = _vol()
-    tracker = reactions.Tracker(horizon=3600)
+    tracker = reactions.Tracker(horizon_bars=12)
     when = 1_000_000.0
     for n in range(12):
         level = Level(feed=f"f{n}", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
@@ -879,7 +879,7 @@ def _walk(tracker, level, side, path, vol, start=1_000_000.0, wick_bps=0.0):
 def test_a_break_that_comes_straight_back_is_a_trap_not_a_break():
     """The obvious trade lost. Recording it as a clean break teaches the opposite."""
     vol = _vol()
-    tracker = reactions.Tracker(horizon=7200, trap_window=3600)
+    tracker = reactions.Tracker(horizon_bars=24, trap_bars=12)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
 
     # up through the level, then all the way back down through it
@@ -892,7 +892,7 @@ def test_a_break_that_comes_straight_back_is_a_trap_not_a_break():
 
 def test_a_break_that_holds_is_still_a_break():
     vol = _vol()
-    tracker = reactions.Tracker(horizon=7200, trap_window=300)
+    tracker = reactions.Tracker(horizon_bars=24, trap_bars=1)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
 
     done = _walk(tracker, level, Side.BELOW, [10, 20, 30, 35, 40, 45, 50, 55, 60], vol)
@@ -904,7 +904,7 @@ def test_a_break_that_holds_is_still_a_break():
 def test_a_break_is_provisional_until_it_survives():
     """It is not a break until it holds, which is how anyone trading one treats it."""
     vol = _vol()
-    tracker = reactions.Tracker(horizon=7200, trap_window=3600)
+    tracker = reactions.Tracker(horizon_bars=24, trap_bars=12)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     features = reactions.features_for(level, Side.BELOW, 4400.0, vol)
     tracker.begin(level, 4400.0, features, 1_000_000.0)
@@ -919,7 +919,7 @@ def test_a_break_is_provisional_until_it_survives():
 def test_a_trap_leaves_the_level_intact():
     """It held — violently, after letting price through. That is not failing."""
     vol = _vol()
-    tracker = reactions.Tracker(horizon=7200, trap_window=3600)
+    tracker = reactions.Tracker(horizon_bars=24, trap_bars=12)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     _walk(tracker, level, Side.BELOW, [10, 20, 30, 20, 5, -10, -20], vol)
 
@@ -945,7 +945,7 @@ def test_a_level_never_broken_has_no_trap_rate():
 def test_a_trap_is_pushed_the_way_it_ended_not_the_way_it_broke():
     """A breakout entry loses; the push has to reflect that, not the excursion."""
     vol = _vol()
-    tracker = reactions.Tracker(horizon=7200, trap_window=3600)
+    tracker = reactions.Tracker(horizon_bars=24, trap_bars=12)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     done = _walk(tracker, level, Side.BELOW, [10, 20, 30, 20, 5, -10, -20], vol)
     assert done.push_vol < 0  # ended below, despite having broken up
@@ -999,7 +999,7 @@ def test_a_level_never_broken_has_no_back_check():
 
 def test_a_held_retest_is_recorded_as_a_back_check():
     vol = _vol()
-    tracker = reactions.Tracker(horizon=7200, trap_window=300)
+    tracker = reactions.Tracker(horizon_bars=24, trap_bars=1)
     level = _broken(when=1_000_000.0)
 
     # price comes back down to it and bounces
@@ -1013,7 +1013,7 @@ def test_a_held_retest_is_recorded_as_a_back_check():
 
 def test_a_first_touch_is_not_counted_as_a_back_check():
     vol = _vol()
-    tracker = reactions.Tracker(horizon=7200)
+    tracker = reactions.Tracker(horizon_bars=24)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     _walk(tracker, level, Side.ABOVE, [-2, 5, 15, 25, 35], vol)
     assert level.stats(Side.ABOVE).backchecks == 0
@@ -1075,7 +1075,7 @@ def test_back_checks_learn_from_other_back_checks():
 def test_the_origin_is_where_the_move_turned_not_the_wick():
     """The extreme is liquidity taken beyond the level at a price nobody traded."""
     vol = _vol()
-    tracker = reactions.Tracker(horizon=7200)
+    tracker = reactions.Tracker(horizon_bars=24)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
 
     # closes reach -6bps, but each bar wicks 3bps further than it closes
@@ -1099,7 +1099,7 @@ def test_the_level_learns_from_the_origin_rather_than_the_extreme():
 def test_a_hard_rejection_leaves_faster_than_it_arrived():
     """Weak in, strong out. The number that says the level did something."""
     vol = _vol()
-    tracker = reactions.Tracker(horizon=7200)
+    tracker = reactions.Tracker(horizon_bars=24)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     done = _walk(tracker, level, Side.ABOVE, [-1, -2, 10, 25, 45], vol)
 
@@ -2109,7 +2109,7 @@ def test_a_touch_arriving_at_the_far_edge_is_not_born_resolved():
     independent. A touch must now *move*, whatever width it arrived through.
     """
     vol = _vol()
-    tracker = reactions.Tracker(horizon=3600)
+    tracker = reactions.Tracker(horizon_bars=12)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     edge = 4400.0 * (1 + 2.5 * vol.bps / 10_000)  # inside the zone, past resolve_vol
     assert abs(level.distance_vol(edge, vol)) > tracker.resolve_vol, "fixture is not the case"

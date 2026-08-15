@@ -1038,6 +1038,58 @@ one thing bars do not: a venue that has stopped publishing must drop out.
 mid in the median for ever, and on a fast move the consensus lags every venue
 that is still live — the opposite of the problem the median exists to solve.
 
+### The horizon was one number for eight timeframes
+
+A touch that has not travelled `resolve_vol` within the horizon is chop. The
+horizon was **3,600 seconds for every timeframe**, which is not one rule but
+eight, because what it grants depends entirely on the chart:
+
+| | bars allowed | | bars allowed |
+|---|---|---|---|
+| 1m | 60 | 1h | 1 |
+| 3m | 20 | 4h | **0.25** |
+| 5m | 12 | 1d | **0.04** |
+| 15m | 4 | 1w | **0.01** |
+
+**On 4h and coarser a touch expired before a single bar of its own timeframe
+closed.** It could not resolve by price at all; only the clock could end it. A
+daily level tested at noon had not failed to react by one o'clock — it had
+barely been observed.
+
+The chop rate follows the horizon exactly and not the market:
+
+| interval | chop before | chop after |
+|---|---|---|
+| 1m | 0.2% | 4.0% |
+| 5m | 2.1% | 2.1% |
+| 15m | 13.7% | 2.4% |
+| 1h | **73.4%** | 3.6% |
+
+Overall chop fell from **27.9% to 3.3%** of outcomes, and the share of chops
+coming from 1h or coarser fell from **91% to 27%**. On 1h the mix stopped being
+a timer: 485 chops became 17, while rejects went 84 to 252, breaks 70 to 113
+and back checks 17 to 47. Those outcomes existed all along and were being
+labelled "price did nothing" because nobody had waited.
+
+`HORIZON_BARS` is **twelve bars of the touch's own timeframe**, and `TRAP_BARS`
+is six — the same numbers 5m already had at 3,600 and 1,800 seconds, so the
+timeframe carrying most of the outcomes is unchanged and every other one is
+corrected. Twelve is also where the first-passage arithmetic (§7d) puts roughly
+73% of touches resolving by price, which is a defensible place to call the rest
+chop.
+
+The knob is `horizon_bars`, not `horizon`. `horizon` survives only as the
+fallback for a touch whose interval is not a known timeframe, and passing it
+expecting to shorten a 5m touch does nothing — which is worth stating because
+four tests were doing exactly that and still passing.
+
+**And the calls improved.** Direction went from 69.2% to 71.1%, and the deficit
+against "assume the level holds" — the trivial rule that has beaten this model
+everywhere ([features.md](../research/features.md) §3) — roughly halved, from
+−7.1 points to −3.7. On about 1,850 calls against a standard error near 1.1
+that is suggestive rather than settled, and the outcome population changed by
+construction, so it is not a paired comparison.
+
 ## 7b. False breakouts
 
 A trap is price getting through a level convincingly enough to invite the

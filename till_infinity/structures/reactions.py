@@ -53,6 +53,7 @@ from .levels import (
     ARRIVAL_RUN_VOL,
     CONFIDENT_TOUCHES,
     DEPARTURE_RUN_VOL,
+    SECONDS,
     TRAP_VOL,
     TRAP_WINDOW,
     Level,
@@ -119,6 +120,37 @@ GAP_FACTOR = 4.0
 #: fewer, better calls, and should be argued for with outcomes rather than set
 #: because the number sounds professional.
 MIN_REWARD_TO_RISK = 1.0
+
+#: How many bars of its **own timeframe** a touch gets before it is chop.
+#:
+#: `horizon` was 3,600 seconds for every timeframe, which is not one rule but
+#: eight different ones. In bars of the chart the touch is on, it granted:
+#:
+#:     1m  60 bars    15m   4 bars    1d  0.04 bars
+#:     5m  12         1h    1         1w  0.01
+#:     3m  20         4h    0.25
+#:
+#: On 4h and coarser a touch expired **before a single bar of its own
+#: timeframe closed**, so it could not resolve by price at all — only by the
+#: clock. Measured over a replay, the chop rate follows the horizon exactly and
+#: not the market: 0.2% on 1m, 2.1% on 5m, 13.7% on 15m and **73.4% on 1h**,
+#: with 91% of every chop recorded coming from 1h or coarser. Those are not
+#: observations of price sitting still; they are the timer running out.
+#:
+#: Twelve, for two reasons that agree. It is what 5m already had — the
+#: timeframe carrying most of the outcomes, so it is the value the system has
+#: actually been exercised at — and the first-passage arithmetic in
+#: `timing.py` puts the median resolution at about 3.2 bars and 12 bars at
+#: roughly 73% of touches resolving by price, which is a defensible place to
+#: call the rest chop.
+HORIZON_BARS = 12.0
+
+#: How many bars a break stays provisional before it counts as having held.
+#: Six, which is what 5m already had at `TRAP_WINDOW` of 1,800 seconds, and
+#: half the horizon as before. It had the same defect: 1,800 seconds is 2% of a
+#: daily bar, so a break on the daily was confirmed before the bar it broke on
+#: had finished printing.
+TRAP_BARS = 6.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -741,13 +773,35 @@ class Tracker(Restorable):
 
     resolve_vol: float = 1.5
     break_vol: float = 0.75
+    #: **The fallback only**, for a touch whose interval is not a known
+    #: timeframe. Every real touch is scaled by `horizon_for` instead, so
+    #: passing this expecting to shorten a 5m touch does nothing — set
+    #: `horizon_bars`, which is the knob that survives the scaling.
     horizon: float = 3600.0
+    #: Bars of the touch's own timeframe. See `HORIZON_BARS`.
+    horizon_bars: float = HORIZON_BARS
+    #: Bars a break stays provisional. See `TRAP_BARS`.
+    trap_bars: float = TRAP_BARS
     #: How far back through the level counts as the break being taken back.
     trap_vol: float = TRAP_VOL
     #: How long a break stays provisional before it counts as having held.
     trap_window: float = TRAP_WINDOW
     memory: Memory = field(default_factory=Memory)
     _open: dict[tuple[str, float], Touch] = field(default_factory=dict)
+
+    def horizon_for(self, touch: Touch) -> float:
+        """How long this touch gets, in seconds, for its own timeframe.
+
+        A daily level tested at noon has not failed to react by one o'clock; it
+        has barely been observed. See `HORIZON_BARS`.
+        """
+        seconds = SECONDS.get(touch.interval, 0.0)
+        return seconds * self.horizon_bars if seconds else self.horizon
+
+    def trap_window_for(self, touch: Touch) -> float:
+        """How long a break on this touch's timeframe stays provisional."""
+        seconds = SECONDS.get(touch.interval, 0.0)
+        return seconds * self.trap_bars if seconds else self.trap_window
 
     def key(self, level: Level) -> tuple[str, float]:
         return (level.feed, round(level.price, 8))
@@ -861,7 +915,7 @@ class Tracker(Restorable):
             touch.excursion_vol = max(touch.excursion_vol, beyond)
             if away >= self.trap_vol:
                 return self._close(level, touch, Outcome.TRAP, travelled, side, when)
-            if when - touch.broke_at >= self.trap_window:
+            if when - touch.broke_at >= self.trap_window_for(touch):
                 return self._close(level, touch, Outcome.BREAK, travelled, side, when)
             return None
 
@@ -877,7 +931,7 @@ class Tracker(Restorable):
             touch.broke_at = when
             touch.excursion_vol = beyond
             return None
-        if when - touch.started >= self.horizon:
+        if when - touch.started >= self.horizon_for(touch):
             return self._close(level, touch, Outcome.CHOP, travelled, side, when)
         return None
 
@@ -893,7 +947,7 @@ class Tracker(Restorable):
         without an outcome; see GAP_FACTOR.
         """
         touch = self._open.get(self.key(level))
-        if touch is not None and when - touch.started >= self.horizon * GAP_FACTOR:
+        if touch is not None and when - touch.started >= self.horizon_for(touch) * GAP_FACTOR:
             self._open.pop(self.key(level), None)
             return None
         return touch
@@ -940,13 +994,13 @@ class Tracker(Restorable):
         stale = [
             key
             for key, touch in self._open.items()
-            if when - touch.started >= self.horizon * 2
-            or (touch.breaking and when - touch.broke_at >= self.trap_window)
+            if when - touch.started >= self.horizon_for(touch) * 2
+            or (touch.breaking and when - touch.broke_at >= self.trap_window_for(touch))
         ]
         dropped = []
         for key in stale:
             touch = self._open.pop(key)
-            if when - touch.started >= self.horizon * GAP_FACTOR:
+            if when - touch.started >= self.horizon_for(touch) * GAP_FACTOR:
                 continue  # a gap, not an outcome — see GAP_FACTOR
             touch.outcome = Outcome.BREAK if touch.breaking else Outcome.CHOP
             touch.resolved = when
