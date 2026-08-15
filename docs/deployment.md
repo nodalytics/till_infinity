@@ -130,7 +130,7 @@ Do the first item before touching anything else.
 `/home/ubuntu/till.env` holds every live credential — the Telegram bot token
 and chat ids, the Gemini and Groq keys, the model and fallback list, the notify
 cooldown and rate. It is not in git, not in GitHub secrets, and not in the
-image. `run.sh` writes defaults only when the file is **absent** and never
+image. `deploy.sh` writes defaults only when the file is **absent** and never
 overwrites it, which is what keeps a deploy from silently reverting a
 configured box — and also what means nothing recreates it if the instance goes
 away.
@@ -165,19 +165,19 @@ old host — `paths-ignore` skips prose, but any code change deploys.
 
 ### 3. What the instance has to provide
 
-- **The user must be `ubuntu`**, or `deploy/run.sh` needs editing:
+- **The user must be `ubuntu`**, or `deploy.sh` needs editing:
   `/home/ubuntu/till-data` and `/home/ubuntu/till.env` are written into it.
   Setting `EC2_USER` to anything else changes who SSHes in but not those paths,
   and the mismatch shows up as a container with an empty data directory rather
   than as an error.
-- **Docker, usable without `sudo`** by that user. `run.sh` calls `docker`
+- **Docker, usable without `sudo`** by that user. `deploy.sh` calls `docker`
   directly.
 - **The public key** matching `EC2_SSH_KEY` in that user's
   `~/.ssh/authorized_keys`.
 - **Disk.** Images run near 973MB and the old box reached 99% of 6.7GB with
-  five of them, which is why `run.sh` prunes *before* it pulls. Give the new
+  five of them, which is why `deploy.sh` prunes *before* it pulls. Give the new
   one room and the pruning stops being load-bearing.
-- **No registry credential is needed** while the package is public: `run.sh`
+- **No registry credential is needed** while the package is public: `deploy.sh`
   contains no `docker login` and the old instance has no
   `~/.docker/config.json`. If the package is ever made private, deploys break
   at the pull with an error that does not mention permissions — add a
@@ -209,7 +209,7 @@ rsync -avz -e "ssh -i key.pem" ubuntu@OLD_HOST:/home/ubuntu/till-data/journal/ \
 
 ### 5. The limits size themselves; swap does not
 
-`run.sh` no longer pins the memory limit. It takes **70% of the host's total**,
+`deploy.sh` no longer pins the memory limit. It takes **70% of the host's total**,
 floored at 512m — which is 635MB on the old 908MB instance, near enough the 640m
 it used to hard-code, and 2,676MB on a 3.8GB one. The pin was wrong on both
 boxes it ran on: too small to use a bigger machine, and silently

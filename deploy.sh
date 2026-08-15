@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Replace the running container with a new image. Run on the instance.
+# Replace the running container with a new image. **Runs on the instance**,
+# not here — the deploy workflow copies it across and executes it there.
 #
-#   IMAGE=ghcr.io/owner/repo TAG=<sha> bash run.sh
+#   IMAGE=ghcr.io/owner/repo TAG=<sha> bash deploy.sh
 #
 # One container, not the compose split. The box has 908 MB of RAM and six
 # separate services need about 861 MB before Redis, data or the OS — measured,
