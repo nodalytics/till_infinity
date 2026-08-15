@@ -761,30 +761,49 @@ rather than flag it. Deliberately deferred.
 
 ## Watch rather than act
 
-- **Nothing heavier than a read can run on this box.** Established the hard way
-  on 2026-08-14: `agents ask` and `prices prune` each OOM-killed the container,
-  three restarts between them. Kills land at ~260MB resident against 908MB
-  total with ~148MB available, so *any* second process is enough. The database
-  survived every one — `pragma quick_check` clean, no rows lost, which is
-  SQLite's transactionality doing its job — but the agent window timer resets
-  on each restart, so the diagnostics kept destroying the test they were run
-  for. **Retention has therefore never actually run.** Do it on the new box.
-- **Memory bit before disk did.** The note below was written when this said
-  disk was the constraint that bites first; on 2026-08-14 it was memory, five
-  times. The box is **908MB total with no swap**, the container is capped at
-  640MB but the kill came from the *host* running out — `oomkilled=false` on
-  the container with `global_oom` in `dmesg`, which is a confusing pair to read
-  and worth recognising. Watch the resident size against 908MB, not against the
-  container's cap. See item 0a.
-- **Disk** is next: 70% used, 2.1GB free, prices at 394MB and growing
-  continuously. CPU sits at 13%.
-  The instrument count went from six to fourteen on 2026-08-14 and 1m joined
-  the level set, so the *growth rate* is now roughly 2.3x what this note was
-  first written against, even though the free space has barely moved yet.
-  `till-infinity prices prune` exists for this and nothing runs it — see
-  [prices.md](prices.md), "Retention". A cron entry with `--yes` is the
-  intended shape; `--vacuum` occasionally, when there is room for a second
-  copy of the file.
+> **Migrated on 2026-08-15.** The three notes that follow describe the
+> 908MB instance this ran on until then and are kept because the reasoning
+> is still how to read a kill — but the numbers are not the current box, and
+> several of them were the *reason* a diagnostic was deferred. Those reasons
+> are gone.
+>
+> | | old | new |
+> |---|---|---|
+> | RAM | 908MB | 3,823MB |
+> | swap | none | 2GB |
+> | disk | 6.7GB, 79% used | 242GB, 3% used |
+> | container cap | 640MB, pinned | 70% of host, derived |
+> | architecture | amd64 | **arm64** — the image is now built for both |
+>
+> **So do the deferred work.** `prices prune` has never actually run, `VACUUM`
+> was waiting on room for a second copy of the file, and the outcome-rate
+> re-measure and `structures gaps` were both put off because a second process
+> was enough to OOM the box. None of that is true now. What has *not* changed
+> is that a cold start is still the expensive moment — see item 0c — though it
+> costs 36MB rather than 410MB since the warm was streamed.
+
+- **~~Nothing heavier than a read can run on this box.~~** Established the hard
+  way on 2026-08-14: `agents ask` and `prices prune` each OOM-killed the
+  container, three restarts between them. Kills landed at ~260MB resident
+  against 908MB total with ~148MB available, so *any* second process was
+  enough. The database survived every one — `pragma quick_check` clean, no rows
+  lost, which is SQLite's transactionality doing its job — but the agent window
+  timer resets on each restart, so the diagnostics kept destroying the test they
+  were run for.
+- **Memory bit before disk did**, and the shape of the kill is worth keeping
+  even on a bigger box. The container was capped at 640MB but the kill came
+  from the *host* running out — `oomkilled=false` on the container with
+  `global_oom` in `dmesg`, which is a confusing pair to read and reads as "not
+  a memory problem" if taken at face value. Watch resident size against the
+  host's total, not against the container's cap.
+- **Disk** was next at 79% of 6.7GB, and is now 3% of 242GB. `prices` is 961MB
+  and grows continuously; the instrument count went from six to fourteen on
+  2026-08-14 and 1m joined the level set, so the growth *rate* is roughly 2.3x
+  what the original note was written against. `till-infinity prices prune`
+  exists for this and still nothing runs it — see [prices.md](prices.md),
+  "Retention". A cron entry with `--yes` is the intended shape, and `--vacuum`
+  is now affordable whenever, since a second copy of the file is 0.4% of the
+  disk rather than most of it.
 - **Agents** wake every 30 minutes, and every deploy restarts that timer. On a
   busy deploy day they may never reach a wake.
 - **Confluence text** in a delivered alert should match `structures zones` for
