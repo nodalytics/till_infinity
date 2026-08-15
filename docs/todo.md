@@ -72,6 +72,24 @@ other eleven instruments is describing a closed market rather than a quiet one.
 Several conclusions are provisional on that and are gathered here rather than
 left scattered.
 
+**0. There is a recorder running — read it first.** A cron entry on the
+instance appends one measurement every thirty minutes to
+`/home/ubuntu/rate-watch.log`, from `/home/ubuntu/rate-watch.sh`. It survives
+deploys (the script lives on the host and copies itself into the container) and
+logs "container down" rather than skipping, so a gap in the series reads as a
+gap rather than as quiet.
+
+Each row is one thirty-minute window: total outcomes, the outcome mix, and the
+busiest cells as `feed/interval=count@per-1k-bars`. Two days of that is the
+sample every question below has been waiting for.
+
+It already settled one thing. On Saturday afternoon `eth` was resolving five
+times as often as `btc` and none of the three structural explanations held —
+zone width, level density and a lagging volatility estimate were all ruled out
+by measurement. The first recorder row an hour later had **btc ahead of eth**.
+So the ratio is not structural, and any explanation built on that hour would
+have been a story. Check whether it swings like that all week.
+
 **1. The outcome rate, properly this time.** Item 0 was answered but never
 re-measured on a comparable population: 887/hour was a weekday across fourteen
 instruments, and 40/hour was a Saturday across three. Measure a full weekday,
