@@ -82,6 +82,14 @@ KEEP_VOL = 8.0
 #: Resolutions held for a consumer that may not be draining them.
 MAX_RESOLVED = 500
 
+#: Bars of its own timeframe an instrument may go without printing before it is
+#: treated as closed rather than quiet. Four, matching `GAP_FACTOR`, which makes
+#: the same judgement about a touch that spans a closure: long enough that an
+#: ordinary thin session still counts as trading, short enough that a weekend
+#: does not. Quotes are no use for this — venues keep answering polls with
+#: Friday's price all weekend, which is what let a shut market alert.
+STALE_BARS = 4.0
+
 #: Ceiling per (instrument, interval), strongest kept. Without one a long
 #: history accrues a level every few basis points, and at that density every
 #: price is "at a level" and the model predicts nothing. Fifteen is roughly
@@ -838,6 +846,34 @@ class Engine:
         if len(self._resolved) > MAX_RESOLVED:
             del self._resolved[: len(self._resolved) - MAX_RESOLVED]
 
+    def trading(self, feed: str, when: float) -> bool:
+        """Is this instrument's market open, or have its bars simply stopped?
+
+        Judged on **bars**, because quotes keep arriving after a market shuts.
+        On a Saturday morning the FX venues were still answering every poll —
+        quotes sixteen minutes old — while the last 3m bar was nine hours old.
+        Those quotes carry Friday's closing price, and price that cannot move
+        is not price arriving at a level.
+
+        Without this, an instrument that had closed still opened touches on its
+        frozen price and published directional calls for them: USDCNH and
+        AUDUSD both alerted on a Saturday, with a `down 97%` on a market where
+        nothing could go anywhere.
+
+        `GAP_FACTOR` is the same judgement applied at the other end — it throws
+        away a touch that *spans* a closure, because the reopening gap is not a
+        reaction. This stops one being opened inside a closure at all.
+
+        Silent about instruments it cannot judge: no series, or none yet, means
+        no evidence of a closure rather than evidence of one, and crypto — which
+        genuinely trades all weekend — keeps printing bars and passes.
+        """
+        interval = self.touch_interval(feed, when)
+        series = self._series.get((feed, interval))
+        if series is None or not series.times:
+            return True
+        return (when - series.times[-1]) <= lv.SECONDS.get(interval, 60.0) * STALE_BARS
+
     def _drain_expired(self, when: float) -> None:
         """Deliver the touches `expire` closed on the clock rather than a price.
 
@@ -873,6 +909,21 @@ class Engine:
             level.record(touch.features.side, touch.outcome, touch.push_vol, when)
             if touch.outcome is lv.Outcome.BREAK and touch.broke_at:
                 level.broke_at = touch.broke_at
+            # Held back, which the resolving path does and this one did not.
+            # A touch that expired did so because price sat at the level and
+            # never went anywhere, so price is still there — and leaving the
+            # level re-armed opened another touch against the same visit on the
+            # very next observation, which produced another call and another
+            # alert. On a market that has closed, where the price is frozen and
+            # nothing can ever resolve, that is a loop: it fired repeatedly on
+            # USDCNH and AUDUSD at the same levels on a Saturday morning.
+            #
+            # `True` rather than `contains(price)` because there is no current
+            # price here — expiry is a clock event. It is also the right answer:
+            # the visit is not over, only this observation of it. `check`
+            # re-arms it once price is REARM_VOL away, which is what "over"
+            # means.
+            level.waiting = True
             self._deliver(level, touch, self.vol.of(touch.feed, touch.interval), when)
 
     def check(
@@ -926,6 +977,13 @@ class Engine:
 
             # Inside the zone, but this is the same visit that just resolved.
             if level.waiting:
+                continue
+            # ...or the market is shut and this is Friday's price, still being
+            # answered to every poll. Checked here rather than at the top of
+            # `check` on purpose: an open touch must still be advanced, so that
+            # GAP_FACTOR can discard it, and levels must still be formed. It is
+            # only *opening* one that a closed market makes meaningless.
+            if not self.trading(feed, when):
                 continue
             side = self._approach(level, price)
             features = reactions.features_for(

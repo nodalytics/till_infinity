@@ -103,17 +103,47 @@ def quotes(prices_db: Path, feed: str, limit: int = 20) -> list[dict[str, Any]]:
 
 
 def spreads(prices_db: Path, feed: str, hours: int = 24) -> list[dict[str, Any]]:
-    """Spread statistics per venue — who is consistently tightest, and who blew out."""
+    """Spread statistics per venue — who is consistently tightest, and who blew out.
+
+    The window **excludes the latest quote**, which is returned beside it as
+    `latest_bps`. That is not a detail: the question anyone asks here is "is
+    what I am looking at now unusual", and answering it against a window
+    containing that same reading is circular. It produced exactly that — an
+    alert reporting a venue "at the historical maximum" on a maximum of 8.49
+    against a current 8.5, which is the current reading having been folded into
+    its own comparison. True by construction and worth nothing.
+
+    `latest_pctile` is the honest version: what share of the *prior* samples
+    were at or below the latest one. 100 means genuinely wider than anything
+    else in the window, and it can now say so without tautology.
+    """
     since = (time.time() - hours * 3600) * 1000
     with read_only(prices_db) as conn:
         return _rows(
             conn,
-            "SELECT venue, COUNT(*) AS samples,"
-            " ROUND(AVG(spread_bps), 3) AS avg_bps,"
-            " ROUND(MIN(spread_bps), 3) AS min_bps,"
-            " ROUND(MAX(spread_bps), 3) AS max_bps"
-            " FROM quotes WHERE feed = ? AND ts >= ? AND spread_bps IS NOT NULL"
-            " GROUP BY venue ORDER BY avg_bps",
+            "WITH ranked AS ("
+            "  SELECT venue, spread_bps,"
+            "         ROW_NUMBER() OVER (PARTITION BY venue ORDER BY ts DESC) AS rn"
+            "  FROM quotes WHERE feed = ? AND ts >= ? AND spread_bps IS NOT NULL"
+            "),"
+            " latest AS (SELECT venue, spread_bps AS latest_bps FROM ranked WHERE rn = 1),"
+            " prior AS ("
+            "  SELECT venue, COUNT(*) AS samples, AVG(spread_bps) AS avg_bps,"
+            "         MIN(spread_bps) AS min_bps, MAX(spread_bps) AS max_bps"
+            "  FROM ranked WHERE rn > 1 GROUP BY venue"
+            ")"
+            " SELECT l.venue,"
+            "        COALESCE(p.samples, 0) AS samples,"
+            "        ROUND(p.avg_bps, 3) AS avg_bps,"
+            "        ROUND(p.min_bps, 3) AS min_bps,"
+            "        ROUND(p.max_bps, 3) AS max_bps,"
+            "        ROUND(l.latest_bps, 3) AS latest_bps,"
+            "        ROUND(100.0 * (SELECT COUNT(*) FROM ranked r"
+            "                        WHERE r.venue = l.venue AND r.rn > 1"
+            "                          AND r.spread_bps <= l.latest_bps)"
+            "              / NULLIF(p.samples, 0), 1) AS latest_pctile"
+            " FROM latest l LEFT JOIN prior p ON p.venue = l.venue"
+            " ORDER BY COALESCE(p.avg_bps, l.latest_bps)",
             (feed, since),
         )
 

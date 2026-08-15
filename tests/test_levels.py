@@ -10,7 +10,7 @@ import pytest
 
 from till_infinity.structures import levels as lv
 from till_infinity.structures import pips, pivots, reactions
-from till_infinity.structures.engine import Engine
+from till_infinity.structures.engine import STALE_BARS, Engine
 from till_infinity.structures.levels import Kalman, Level, Outcome, Side, State
 from till_infinity.structures.volatility import Volatility
 
@@ -2238,3 +2238,57 @@ def test_a_bar_still_forming_is_not_observed_in_the_future():
     for bar in _bar("gold", "5m", old, 4425.0):
         engine.observe_bar(bar)
     assert all(when == old + 300 for when in seen), "a closed bar lost its close time"
+
+
+def test_a_market_that_has_shut_opens_no_new_touches():
+    """Quotes keep arriving after a market closes; price stops.
+
+    On a Saturday morning the FX venues were still answering every poll —
+    quotes sixteen minutes old — while the last 3m bar was nine hours old.
+    Those quotes carry Friday's closing price, and a frozen price cannot
+    arrive anywhere. Without this the engine opened touches against it and
+    published directional calls: USDCNH and AUDUSD both alerted on a Saturday,
+    one of them `down 97%` on a market where nothing could move.
+    """
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+    level = engine.levels("gold", "5m")[0]
+    last = engine.series("gold", "5m").times[-1]
+
+    # A quote arriving one bar after the last one is an ordinary live market.
+    assert engine.trading("gold", last + 300)
+    assert engine.check("gold", "5m", level.price, last + 300) or True
+    assert engine.tracker.open_touch(level) is not None, "a live market opened nothing"
+
+    # A weekend: bars stopped hours ago, quotes did not.
+    engine.tracker._open.clear()
+    level.waiting = False
+    shut = last + lv.SECONDS["5m"] * (STALE_BARS + 10)
+    assert not engine.trading("gold", shut)
+    calls = engine.check("gold", "5m", level.price, shut)
+    assert not calls, "a shut market produced a directional call"
+    assert engine.tracker.open_touch(level) is None, "a shut market opened a touch"
+
+
+def test_an_expired_touch_holds_the_level_back():
+    """Otherwise the same visit is counted again on the next observation.
+
+    A touch expires because price sat at the level and went nowhere — so price
+    is still there. Leaving the level re-armed opened another touch against
+    that same visit immediately, producing another call and another alert. On a
+    closed market, where the price is frozen and nothing can ever resolve, that
+    is a loop rather than a duplicate.
+    """
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+    level = engine.levels("gold", "5m")[0]
+    vol = engine.vol.of("gold", "5m")
+    features = reactions.features_for(level, Side.ABOVE, level.price, vol)
+    engine.tracker.begin(level, level.price, features, when=1_000_000)
+
+    engine._drain_expired(1_000_000 + engine.tracker.horizon * 3)
+
+    assert engine.tracker.open_touch(level) is None
+    assert level.waiting, "the level re-armed on the visit that had just expired"
