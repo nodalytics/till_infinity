@@ -78,12 +78,23 @@ def quotes(ctx: RunContext[Deps], feed: str, limit: int = 20) -> Any:
 
 
 def spreads(ctx: RunContext[Deps], feed: str, hours: int = 24) -> Any:
-    """Spread statistics per venue over the last `hours`: samples, average,
-    minimum and maximum basis points.
+    """Spread statistics per venue over the last `hours`, and the latest reading.
 
-    Use this to judge whether a spread you just read from `quotes` is actually
-    unusual. A venue whose average is 3bps sitting at 9bps is news; a venue
-    whose average is 9bps sitting at 9bps is not.
+    Use this to judge whether a spread is unusual. A venue whose average is
+    3bps sitting at 9bps is news; a venue whose average is 9bps sitting at 9bps
+    is not.
+
+    `latest_bps` is the most recent reading. `samples`, `avg_bps`, `min_bps`
+    and `max_bps` describe the window **before** it, and `latest_pctile` is the
+    share of those earlier samples at or below it.
+
+    Compare against `latest_pctile`, not against `max_bps`. The two used to be
+    the same number whenever the latest reading was the widest — the reading
+    counted in its own history — so "this is at the maximum" was true by
+    construction and said nothing. 100 now means genuinely wider than anything
+    else in the window. `latest_pctile` is null when the venue has quoted only
+    once, which means there is no history to judge it against, not that it is
+    ordinary.
     """
     return _guard(lambda: data.spreads(ctx.deps.prices_db, feed, hours), "spreads")
 

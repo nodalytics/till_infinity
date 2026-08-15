@@ -699,3 +699,89 @@ async def test_a_run_reports_what_it_cost(monkeypatch):
     assert run.input_tokens == 1200
     assert run.output_tokens == 300
     assert run.tokens == 1500
+
+
+def test_a_spread_is_judged_against_history_that_excludes_it(tmp_path):
+    """The question is whether *this* reading is unusual, so it cannot be in the window.
+
+    An alert reported a venue "at the historical maximum" on a maximum of 8.49
+    against a current 8.5 — the current reading having been folded into its own
+    comparison, which makes the claim true by construction and worth nothing.
+    """
+    import sqlite3
+    import time
+
+    path = tmp_path / "prices.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE quotes (feed TEXT, venue TEXT, ticker TEXT, bid REAL, ask REAL,"
+        " mid REAL, spread REAL, spread_bps REAL, ts INTEGER);"
+    )
+    now = time.time() * 1000
+    # Twenty calm readings, then one genuinely wide one as the latest.
+    for n in range(20):
+        conn.execute(
+            "INSERT INTO quotes VALUES ('eurusd','FX_IDC','EURUSD',1,1,1,1,?,?)",
+            (1.0, now - (30 - n) * 1000),
+        )
+    conn.execute("INSERT INTO quotes VALUES ('eurusd','FX_IDC','EURUSD',1,1,1,1,?,?)", (8.5, now))
+    conn.commit()
+    conn.close()
+
+    (row,) = data.spreads(path, "eurusd", hours=24)
+
+    assert row["latest_bps"] == 8.5
+    assert row["samples"] == 20, "the latest reading is counted in its own history"
+    assert row["max_bps"] == 1.0, "the maximum is the latest reading again"
+    assert row["avg_bps"] == 1.0
+    # Wider than everything before it, and now able to say so without circularity.
+    assert row["latest_pctile"] == 100.0
+
+
+def test_a_spread_no_wider_than_usual_does_not_read_as_extreme(tmp_path):
+    import sqlite3
+    import time
+
+    path = tmp_path / "prices.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE quotes (feed TEXT, venue TEXT, ticker TEXT, bid REAL, ask REAL,"
+        " mid REAL, spread REAL, spread_bps REAL, ts INTEGER);"
+    )
+    now = time.time() * 1000
+    for n in range(20):
+        conn.execute(
+            "INSERT INTO quotes VALUES ('eurusd','FX_IDC','EURUSD',1,1,1,1,?,?)",
+            (1.0 + n * 0.1, now - (30 - n) * 1000),
+        )
+    conn.execute("INSERT INTO quotes VALUES ('eurusd','FX_IDC','EURUSD',1,1,1,1,?,?)", (1.5, now))
+    conn.commit()
+    conn.close()
+
+    (row,) = data.spreads(path, "eurusd", hours=24)
+    assert row["latest_bps"] == 1.5
+    assert 0.0 < row["latest_pctile"] < 100.0, "an ordinary reading read as an extreme"
+
+
+def test_a_venue_with_only_one_quote_has_no_history_to_judge_it_by(tmp_path):
+    """A percentile over nothing must be absent rather than a number."""
+    import sqlite3
+    import time
+
+    path = tmp_path / "prices.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE quotes (feed TEXT, venue TEXT, ticker TEXT, bid REAL, ask REAL,"
+        " mid REAL, spread REAL, spread_bps REAL, ts INTEGER);"
+    )
+    conn.execute(
+        "INSERT INTO quotes VALUES ('eurusd','FX_IDC','EURUSD',1,1,1,1,?,?)",
+        (3.0, time.time() * 1000),
+    )
+    conn.commit()
+    conn.close()
+
+    (row,) = data.spreads(path, "eurusd", hours=24)
+    assert row["latest_bps"] == 3.0
+    assert row["samples"] == 0
+    assert row["latest_pctile"] is None
