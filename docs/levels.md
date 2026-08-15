@@ -644,6 +644,67 @@ accurate precisely where it is used.
 *happened*, so an instrument yet to print a single-step move reads coarser than
 it is, and the error is upward. `MAX_ZONE_VOL` bounds what that can do.
 
+### That fix over-corrected, and the bound that stops it
+
+The floor above is right in shape and was unbounded in size, which turned out
+to matter more than the problem it solved. `MIN_ZONE_TICKS` is six, so a zone
+is six ticks either side — sensible while a tick is a small part of a typical
+move, and a disaster when it is not.
+
+**On `sol` a tick is 0.378 volatility units**, so six of them is **2.27** —
+wider than `resolve_vol`, the distance a touch must travel before it counts as
+a rejection. A zone that wide catches everything. Measured over twenty-four
+hours with bars counted over the same window, `sol 3m` produced **11,037
+resolutions per thousand bars**: eleven per bar. sol alone was **half of every
+outcome in the journal**, which is what gates `fit` in [todo.md](todo.md).
+
+`GRID_ZONE_VOL` bounds the grid-derived part of the floor at **0.75**, half of
+`resolve_vol`, so the venue's ladder alone can never open a zone wide enough to
+resolve a touch inside it. The filter's own uncertainty and the observed wicks
+may still push a zone past that — they are evidence about *this* level. The
+grid is not; it is a fact about where the venue lets price sit.
+
+Effect on `sol 3m`: **11,037 to 359 per thousand bars**, about thirty times.
+
+### Some pairs cannot carry a level at any width
+
+Bounding the floor fixed one end and exposed the other. A zone capped at 0.75
+volatility units on an instrument whose tick is 0.378 is **two ticks across** —
+which is the failure `MIN_ZONE_TICKS` was added for in the first place. Wide
+catches everything; narrow is jumped over. There is no width in between.
+
+So the pair is declined rather than tuned. `MIN_TICKS_PER_ZONE` is **four**,
+and `Engine.supports(feed, interval)` refuses to form levels below it:
+
+| pair | ticks per zone | |
+|---|---|---|
+| sol 3m | 2.5 | declined |
+| **audusd 1m** | 2.7 | declined |
+| eurusd 1m | 3.3 | declined |
+| spx500 3m | 6.7 | kept |
+| eth 3m | 14.0 | kept |
+| btc 5m | 58.3 | kept |
+
+Four because `depth_vol` — how far into the zone price pushed — is a feature,
+and a feature with two distinguishable values is not one. It is also where the
+measurement separates.
+
+**It is not a crypto problem.** Five of the eight pairs declined on the
+instance are FX: coarse pip quoting does what a cheap coin does. No instrument
+is lost, only the resolutions it cannot carry — sol keeps 15m and coarser.
+
+Applied at **startup**, not just at the next re-form. `reform` enforces the
+same rule but a series only comes due every `REFORM_EVERY` bars, so a restored
+15m series would carry levels it should not have for five hours. State read
+from disk was formed under whatever geometry was current when it was saved,
+which is exactly when this needs to be fast.
+
+Judged on the **floor** zone rather than the observed one, which declines more:
+wicks widen an established level, but a new level gets the floor and the
+question is whether to form one at all. And silent about what it cannot judge —
+a cold volatility estimate, or an instrument that has not yet printed a
+single-step move, is missing evidence rather than evidence of a problem.
+
 ### Why the finely-quoted instruments do not need a better estimate
 
 btc's estimate is 0.32 against a real tick nearer 0.12, because in 300 bars of
@@ -940,6 +1001,42 @@ a period nobody observed has no outcome, and inventing one is worse than losing
 it. Chop is deliberately kept — price arriving, sitting and doing nothing is a
 real result, and a model never shown it predicts a move every time. Only the
 absence of observation is thrown away.
+
+**And "a frozen price opens nothing" turned out to be wrong.** The paragraph
+above says a new call needs a new touch and a still price opens none, which is
+true of the price and false of the system: the venues keep answering polls all
+weekend. At 06:03 on a Saturday the FX quotes were sixteen minutes old while
+the last 3m bar was **nine hours** old, and USDCNH and AUDUSD both published
+directional calls — one of them `down 97%` on a market where nothing could go
+anywhere.
+
+`Engine.trading(feed, when)` judges on **bars**, because bars stop when a
+market does and quotes do not. An instrument whose finest series has not
+printed for `STALE_BARS` (four) of its own intervals is treated as closed, and
+only the *opening* of a touch is gated: an open one must still be advanced so
+`GAP_FACTOR` can discard it, and levels must still form. Crypto prints all
+weekend and passes. An instrument with no series is not judged, because no
+evidence of a closure is not evidence of one.
+
+Four to match `GAP_FACTOR`, which makes the same judgement at the other end —
+long enough that an ordinary thin session still counts as trading, short enough
+that a weekend does not.
+
+**A second cause of the same alerts was ours.** `_drain_expired` did not set
+`level.waiting`, which the resolving path does. A touch expires precisely
+because price sat at the level and went nowhere, so price is still there — and
+a re-armed level opened another touch against the same visit on the very next
+observation, with another call behind it. On a frozen price, where nothing can
+ever resolve, that is a loop rather than a duplicate, which is why USDCNH
+arrived twice at the same level with the same numbers.
+
+### Venues that stop quoting, and the mid that must not follow them
+
+Quotes get a cross-venue median for the same reason bars do (§11), and it needs
+one thing bars do not: a venue that has stopped publishing must drop out.
+`QUOTE_STALE` is **thirty seconds**. Without it a silent venue holds its last
+mid in the median for ever, and on a fast move the consensus lags every venue
+that is still live — the opposite of the problem the median exists to solve.
 
 ## 7b. False breakouts
 
