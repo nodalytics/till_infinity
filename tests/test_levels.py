@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import pickle
 import random
 import time
@@ -2292,3 +2293,85 @@ def test_an_expired_touch_holds_the_level_back():
 
     assert engine.tracker.open_touch(level) is None
     assert level.waiting, "the level re-armed on the visit that had just expired"
+
+
+def test_a_levels_own_record_reaches_the_features():
+    """The one measured addition, and the one thing that was never handed over.
+
+    research/features.md found that none of the other eight features predicts
+    direction once `side` is known, while the level's own same-side record —
+    which was not among them — is worth +0.024 AUC on levels with three or
+    more prior touches. It was hiding inside `strength`, diluted with terms
+    that separate nothing, and behind `experience`, which counts touches
+    without saying what they did.
+    """
+    vol = _vol()
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+
+    # No history reads as 0.5 — not knowing rather than an even split. The pair
+    # with `experience` is what tells them apart.
+    fresh = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
+    assert fresh.up_rate == 0.5
+    assert fresh.experience == 0.0
+
+    # Three touches from above that all pushed up.
+    for _ in range(3):
+        level.record(Side.ABOVE, Outcome.REJECT, 1.2, 1_000_000)
+    assert reactions.features_for(level, Side.ABOVE, 4400.0, vol).up_rate == 1.0
+
+    # The other side is untouched and says so, which is the whole point of
+    # keeping the record per side.
+    assert reactions.features_for(level, Side.BELOW, 4400.0, vol).up_rate == 0.5
+
+    # One down among four.
+    level.record(Side.ABOVE, Outcome.BREAK, -1.5, 1_000_000)
+    assert reactions.features_for(level, Side.ABOVE, 4400.0, vol).up_rate == pytest.approx(0.75)
+
+
+def test_the_record_is_read_before_this_touch_is_added_to_it():
+    """Otherwise the feature contains its own answer.
+
+    `features_for` runs before `Tracker.begin`, and `record` is only called by
+    `_close`, so a touch is never in its own denominator. This pins that
+    ordering, because it is the sort of thing a refactor breaks silently and
+    the symptom would be a model that looks excellent and predicts nothing.
+    """
+    vol = _vol()
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound():
+        engine.observe_bar(bar)
+    level = engine.levels("gold", "5m")[0]
+
+    for _ in range(4):
+        level.record(Side.ABOVE, Outcome.REJECT, 1.0, 1_000_000)
+    before = reactions.features_for(level, Side.ABOVE, level.price, vol).up_rate
+
+    features = reactions.features_for(level, Side.ABOVE, level.price, vol)
+    touch = engine.tracker.begin(level, level.price, features, when=1_000_000)
+
+    assert touch.features.up_rate == before, "the touch saw a record it had already changed"
+
+
+def test_similar_records_are_nearer_than_opposite_ones():
+    """`up_rate` earns its place in the distance as well as in the model.
+
+    Measured over a replay of the stored bars, adding it takes the neighbour
+    vote's AUC from 0.797 to 0.813. Unweighted, like every other dimension.
+    """
+    base = {
+        "approach_vol": 1.0,
+        "depth_vol": 0.2,
+        "strength": 0.5,
+        "run_vol": 1.0,
+        "experience": 0.5,
+        "pivot": 0.0,
+        "backcheck": 0.0,
+        "regime": 0.5,
+    }
+    holds = reactions.Features(side=Side.ABOVE, up_rate=0.9, **base)
+    also_holds = reactions.Features(side=Side.ABOVE, up_rate=0.85, **base)
+    breaks = reactions.Features(side=Side.ABOVE, up_rate=0.1, **base)
+
+    assert holds.distance(also_holds) < holds.distance(breaks)
+    # And side is still a hard constraint rather than another dimension.
+    assert holds.distance(reactions.Features(side=Side.BELOW, up_rate=0.9, **base)) == math.inf

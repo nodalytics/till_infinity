@@ -820,14 +820,45 @@ features plus a pivot flag:
 | `pivot` | 1.0 for a pivot, 0.0 for a swing level |
 | `backcheck` | 1.0 when this is a retest of a recent break |
 | `regime` | where volatility sat in its own recent range, in [0, 1] |
+| `up_rate` | **the share of this side's previous touches that pushed up**, [0, 1] |
 
-Distance is plain Euclidean over those six, with side as a gate rather than a
+`up_rate` is the only one of these that has been measured to earn its place,
+and it was added late. [research/features.md](../research/features.md) dropped
+each feature in turn and found that **none of the other eight predicts
+direction once `side` is known** — while the level's own same-side record,
+which was not among them, is worth +0.024 AUC on levels with three or more
+prior touches. It had been hiding inside `strength`, diluted with three terms
+[research/strength.md](../research/strength.md) shows separate nothing, and
+behind `experience`, which counts touches without saying what they did.
+
+0.5 means *no history*, not an even split. Those are different things and the
+number cannot tell them apart on its own, which is why `experience` sits beside
+it: the pair reads correctly together where either alone would mislead.
+
+It is point-in-time by construction — `features_for` runs before
+`Tracker.begin`, and the record is only written by `_close`, so a touch is
+never in its own denominator. There is a test pinning that ordering, because a
+refactor would break it silently and the symptom would be a model that looks
+excellent and predicts nothing.
+
+Distance is plain Euclidean over those nine, with side as a gate rather than a
 term:
 
 ```
 d(a, b) = inf                             if side(a) != side(b)
         = sqrt( sum_k (a_k - b_k)^2 )     otherwise
 ```
+
+Adding `up_rate` there as well as to the model was a separate question, and was
+measured separately: being worth predicting with and being worth comparing on
+are different claims. Over a replay of the stored bars it takes the neighbour
+vote's AUC from 0.797 to 0.813. Unweighted, like every other dimension —
+weighting it two or four times over reached 0.816 and 0.819, which is not
+enough to justify fitting a constant to two thousand touches.
+
+The other eight stay despite predicting nothing, because they are cheap,
+removing them is its own change with its own risk, and "does not predict
+direction" is not the same as "does not identify a comparable touch".
 
 `regime` is there because everything else is *scaled* by volatility, which
 makes sizes comparable and deliberately erases what the market felt like. A

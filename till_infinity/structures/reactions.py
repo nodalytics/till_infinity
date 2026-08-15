@@ -58,6 +58,7 @@ from .levels import (
     Level,
     Outcome,
     Side,
+    SideStats,
 )
 from .state import Restorable
 from .volatility import Volatility
@@ -156,12 +157,44 @@ class Features(Restorable):
     #: normalised numbers suggest. This puts that back as a dimension, so a
     #: touch is compared with touches from a market that felt the same.
     regime: float = 0.5
+    #: The share of this side's previous touches that pushed **up**, in [0, 1],
+    #: as it stood the instant this touch opened.
+    #:
+    #: The one measured addition to this set. Everything else here describes
+    #: the level or the approach, and research/features.md found that none of
+    #: it predicts direction once `side` is known — while the level's own
+    #: record, which was never among the features, is worth +0.024 AUC on
+    #: levels with three or more prior same-side touches.
+    #:
+    #: It was hiding inside `strength`, diluted with three terms that do not
+    #: separate anything (research/strength.md), and behind `experience`, which
+    #: counts touches without saying what they did.
+    #:
+    #: 0.5 means no history rather than an even split, which are different
+    #: things the model cannot distinguish — `experience` carries how much
+    #: evidence there is, so the pair reads correctly together.
+    #:
+    #: Point in time by construction: `features_for` runs before
+    #: `Tracker.begin`, so this touch is not yet in its own denominator.
+    up_rate: float = 0.5
 
     def distance(self, other: Features) -> float:
         """Similarity for kNN. Side is a hard constraint, not a dimension.
 
         Mixing sides would let a floor's history vote on a ceiling's future,
         which is precisely the asymmetry the whole design exists to respect.
+
+        Being worth *predicting* with and worth *comparing* on are separate
+        claims, so `up_rate` was measured on both before being added here:
+        over a replay of the stored bars it takes the neighbour vote's AUC from
+        0.797 to 0.813. Unweighted, like every other dimension — weighting it
+        two or four times over reached 0.816 and 0.819, which is not enough to
+        justify fitting a constant to two thousand touches.
+
+        The other eight are kept despite research/features.md finding that none
+        of them predicts direction once side is known. They are cheap, removing
+        them is a separate change with its own risk, and "does not predict
+        direction" is not "does not identify a comparable touch".
         """
         if self.side is not other.side:
             return math.inf
@@ -174,6 +207,7 @@ class Features(Restorable):
             + (self.pivot - other.pivot) ** 2
             + (self.backcheck - other.backcheck) ** 2
             + (self.regime - other.regime) ** 2
+            + (self.up_rate - other.up_rate) ** 2
         )
 
     def to_dict(self) -> dict[str, float | str]:
@@ -187,6 +221,9 @@ class Features(Restorable):
             "pivot": self.pivot,
             "backcheck": self.backcheck,
             "regime": round(self.regime, 4),
+            # Journalled, so `facto.dataset` can read it back off an outcome
+            # and the feature is learnable from history rather than only live.
+            "up_rate": round(self.up_rate, 4),
         }
 
 
@@ -948,7 +985,19 @@ def features_for(
         pivot=1.0 if level.origin.startswith("pivot") else 0.0,
         backcheck=1.0 if level.is_backcheck(side, when) else 0.0,
         regime=vol.regime,
+        up_rate=up_rate_of(level.stats(side)),
     )
+
+
+def up_rate_of(stats: SideStats) -> float:
+    """What share of this side's touches pushed up, or 0.5 for no history.
+
+    Counts are decayed, so this is already an age-weighted rate rather than a
+    lifetime average — a level that held ten times last year and broke twice
+    this week reads closer to the recent behaviour, which is the one worth
+    knowing.
+    """
+    return stats.ups / stats.touches if stats.touches else 0.5
 
 
 def rank(inferences: Sequence[Inference]) -> list[Inference]:

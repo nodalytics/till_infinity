@@ -103,6 +103,9 @@ NUMERIC: tuple[str, ...] = (
     "pivot",
     "backcheck",
     "regime",
+    # Already in [0, 1], so it needs no saturation. The one feature here
+    # measured to add anything once `side` is known — see research/features.md.
+    "up_rate",
 )
 
 #: Features that are names rather than numbers, one-hot encoded.
