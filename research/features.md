@@ -134,3 +134,105 @@ every probability here should be reported against, and now has been.
 4. **Re-run on production once the quote path is included.** Bars-only replay,
    1,995 touches, six instruments. The direction of these results is stark
    enough to act on; the exact figures are not settled.
+
+## 4. So what *should* be measured at a touch
+
+Everything below was tested after §3, because "the feature set is the problem"
+is only useful if it says what would fix it. Scored on **AUC as well as
+accuracy**, which corrects a mistake in §1-§3: the base rate is 78%, and
+accuracy at a 0.5 threshold is nearly blind to a better ranking at that mix. A
+model can order every touch correctly and never cross the boundary. This system
+*gates* — it consumes ranking, not accuracy — so AUC is the measure that
+matters, and §1's "nothing beyond side" was partly an artefact of asking the
+wrong one.
+
+### The level's own record — yes, where there is enough of it
+
+`strength.md` found a level's same-side record separates holds from fails by
++32.8 points, which looked flatly incompatible with §1. It is not: the record
+is **not among the features**. `Features` carries `strength`, the composite
+that loses to its own best term, and `experience`, a bare count. The record
+itself is never handed to the model.
+
+Snapshotted at the moment the touch opens, before its own outcome is folded in:
+
+| features | accuracy | AUC |
+|---|---|---|
+| side alone | 78.5% | 0.847 |
+| side + up-rate only | 78.2% | **0.851** |
+| side + the full record | 77.2% | 0.844 |
+| the record alone | 72.9% | 0.817 |
+
+and restricted to levels with **three or more** prior same-side touches — 541
+of 1,609:
+
+| features | accuracy | AUC |
+|---|---|---|
+| side alone | 87.0% | 0.874 |
+| side + the record | 86.2% | **0.898** |
+
+**+0.024 AUC where the history exists**, and nothing where it does not. Note
+also that one summary beats six: adding `up_rate` alone (0.851) beats adding
+all six record features (0.844), which is what correlated features do to a
+small sample.
+
+### Four things collected and never used — all weak, all in the same direction
+
+| candidate | AUC with side | held-rate change, within cell | cells positive |
+|---|---|---|---|
+| side alone | 0.852 | — | — |
+| + volume, against the series' own average | 0.851 | +2.3pp | 9/13 |
+| + momentum, 20 bars in volatility units | 0.850 | +3.5pp | 9/13 |
+| + cross-venue disagreement at the touch | 0.849 | +3.1pp | 11/13 |
+| + headroom to the next level | 0.850 | +0.0pp | 7/13 |
+| + session (Asia/London/overlap/US) | 0.853 | — | — |
+| + all four | 0.850 | — | — |
+
+**Not one of them moves AUC.** Three of them move the held rate by two to three
+points within a cell, consistently in sign — 9, 9 and 11 cells out of 13 — but
+that is far too small for a linear model to exploit on 150 touches per cell.
+
+The within-cell control matters and is why the pooled numbers are not quoted:
+cross-venue disagreement looked like a **+22.9 point** effect pooled (66.4% →
+89.3% across terciles) and collapses to +3.1pp within cells. The pooled version
+was measuring which instrument it was — venue gaps run 3.46 volatility units on
+spx500 against 0.05 on gold — not what the venues were doing.
+
+### What that leaves
+
+**The missing information is probably not another function of price.** Six
+candidates were tested and every one is derived from OHLC and the level's own
+history; they all say the same small thing, which is what you would expect if
+they are all views of one weak signal.
+
+The class of information genuinely absent is **order flow** — the book, and
+what was absorbed at the level rather than what price did afterwards.
+[absorption.md](../docs/absorption.md) already named it: its null is "on the
+proxy only", because there is no book to measure against. That is a collection
+problem, not a modelling one, and it is the honest answer to what should be
+measured at a touch.
+
+Two caveats worth keeping, because they cut the other way:
+
+- **2,000 touches is small.** A three-point effect needs on the order of a
+  thousand per arm to establish; there are about 150 per cell. Consistency of
+  sign across 9-11 of 13 cells is suggestive on its own, and these candidates
+  deserve re-testing on production volume rather than dismissal.
+- **Only direction was tested.** Magnitude and risk are separate claims. A
+  feature that says nothing about which way price goes may still say how far,
+  and `expected_push` is what the reward-to-risk gate actually consumes.
+
+## Recommendations, in order
+
+1. **Add the level's own same-side up-rate to `Features`.** One number, already
+   computed, already point-in-time safe, +0.024 AUC where history exists. It is
+   the only tested change with a positive result.
+2. **Score every directional claim against "assume the level holds"** (§3), and
+   report AUC beside accuracy. `facto.Report` compares against two baselines
+   already; these are the two it is missing.
+3. **Do not add volume, session, momentum or headroom yet** — measured, and
+   none of them moves the ranking. Re-test on production volume before closing
+   the question.
+4. **Treat order flow as a collection question.** It is the one thing not
+   derivable from what is already stored, and three separate documents have now
+   arrived at it from different directions.

@@ -28,8 +28,8 @@ def _bars():
                 owner[(sym.venue.upper(), sym.ticker.upper())] = name
     conn = sqlite3.connect("file:.data/prices/prices.db?mode=ro", uri=True)
     marks = ",".join("?" * len(INTERVALS))
-    for ts, ticker, venue, interval, high, low, close in conn.execute(
-        f"select ts, ticker, venue, interval, high, low, close from bars"
+    for ts, ticker, venue, interval, high, low, close, volume in conn.execute(
+        f"select ts, ticker, venue, interval, high, low, close, volume from bars"
         f" where interval in ({marks}) order by ts",
         INTERVALS,
     ):
@@ -43,6 +43,9 @@ def _bars():
                 "high": float(high),
                 "low": float(low),
                 "close": float(close),
+                # Not consumed by the engine, which ignores it — carried so
+                # experiments can ask whether volume at a touch says anything.
+                "volume": float(volume) if volume is not None else 0.0,
             }
 
 
