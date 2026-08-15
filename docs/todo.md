@@ -481,7 +481,32 @@ neighbours that did and did not predict correctly will say where similarity
 stops carrying information.
 
 **Make the agents service better: faster, more accurate, and pointed at
-meaning rather than at numbers.** Today the roles read prices and structures
+meaning rather than at numbers.** *Found on 2026-08-15 while reading the
+alerts: **news can never wake the agent**, and the news specialist never runs.*
+
+`Window.observe` dispatches on `SIGNALS`, `QUOTES` and `EVENTS`. `ARTICLES` is
+in `TOPICS` and subscribed to, and there is no branch for it — so a headline is
+readable once the agent is awake and is never the reason it wakes. `BARS` is
+subscribed and unhandled too. Every trigger is therefore a price trigger: the
+loudest structures signal per feed, the worst spread, and calendar releases
+that printed.
+
+And only one role runs, `DEFAULT_ROLE = RISK`. `MACRO` — the role whose whole
+lens is the calendar and "several independent outlets converging on the same
+story" — is never instantiated in production. That is why every alert in the
+channel is a spread, a stale quote or a divergence.
+
+**Wiring `ARTICLES` to a trigger on its own would produce noise**, and today's
+research says why: [news-dedup.md](news-dedup.md) found the corpus contains no
+observation of independent outlets converging — 94 of 105 duplicate groups are
+one outlet counted twice by our own collection — so `MACRO`'s headline lens is
+looking for something the data does not contain. And symbol normalisation is
+unbuilt, so half the corpus cannot be routed to an instrument at all.
+
+So the order is the one [news-models.md](news-models.md) §2 already gives:
+symbol normalisation, then keyword matching against TradingView's tagged rows,
+then a headline trigger, then the join with price. Wiring the trigger first
+inverts it. Today the roles read prices and structures
 and describe what changed. The more valuable half is the news — what a headline
 *means* and what intent sits behind it — with the technicals brought in as
 corroboration rather than as the subject.

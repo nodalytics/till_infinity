@@ -12,7 +12,7 @@ import sqlite3
 import pytest
 
 from till_infinity import agents as ag
-from till_infinity.agents import analyst, data, providers, roles, service, tools
+from till_infinity.agents import analyst, data, models, providers, roles, service, tools
 from till_infinity.agents.models import Analysis, Finding, Run
 from till_infinity.bus import ALERTS, ARTICLES, EVENTS, QUOTES, SIGNALS, Bus, Message
 
@@ -785,3 +785,44 @@ def test_a_venue_with_only_one_quote_has_no_history_to_judge_it_by(tmp_path):
     assert row["latest_bps"] == 3.0
     assert row["samples"] == 0
     assert row["latest_pctile"] is None
+
+
+def test_evidence_does_not_carry_tool_calls_to_the_channel():
+    """A model asked to show its working cites the call it made.
+
+    Published to Telegram as `(from default_api.spreads(feed='btc'))` — and
+    `default_api` is not even ours, it is the namespace the provider wraps our
+    tools in. It means nothing to someone reading a notification, who cannot
+    run it.
+
+    The prompt asks for figures rather than calls, which is a request. This is
+    the guarantee, and it sits on the model rather than at the alert so the
+    journal gets it too: an evidence string is read back by `facto` and by a
+    person reviewing a call months later.
+    """
+    finding = models.Finding(
+        title="BYBIT btc quote is stale",
+        evidence=[
+            "BYBIT BTC spread: latest_bps=0.016, latest_pctile=54.3 "
+            "(from default_api.spreads(feed='btc'))",
+            "BTC market divergence: divergence_bps=11.796 "
+            "(from default_api.divergence(feed='btc'))",
+            "BYBIT last quoted 20s ago",
+        ],
+    )
+
+    joined = " ".join(finding.evidence)
+    assert "default_api" not in joined
+    assert "(" not in joined, "a call survived in some other shape"
+    # The figures are the point, and they are all still there.
+    assert "latest_bps=0.016" in joined
+    assert "divergence_bps=11.796" in joined
+    assert "BYBIT last quoted 20s ago" in joined
+
+
+def test_an_evidence_line_that_is_only_a_tool_call_is_dropped():
+    """Stripping it would otherwise leave an empty bullet in the alert."""
+    finding = models.Finding(
+        title="t", evidence=["default_api.quotes(feed='eth')", "spread 1.2bps"]
+    )
+    assert finding.evidence == ["spread 1.2bps"]

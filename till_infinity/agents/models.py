@@ -7,9 +7,14 @@ floor. Free text would make all three guesswork.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+#: Tool-call syntax, which a model quotes when asked to show its working and
+#: which means nothing to the person a notification reaches.
+TOOL_CALL = re.compile(r"\s*\(?\bfrom\s+[\w.]+\([^)]*\)\)?|\b[\w]+\.[\w]+\([^)]*\)")
 
 
 class Finding(BaseModel):
@@ -33,8 +38,37 @@ class Finding(BaseModel):
     instrument: str = Field(default="", description="feed name, e.g. gold, btc, eurusd")
     evidence: list[str] = Field(
         default_factory=list,
-        description="The specific figures you relied on, so a human can check them.",
+        description=(
+            "The specific figures and what they mean, in plain words. Not the"
+            " tool calls that produced them — the reader gets a notification"
+            " and cannot run them."
+        ),
     )
+
+    @field_validator("evidence", mode="after")
+    @classmethod
+    def _strip_calls(cls, values: list[str]) -> list[str]:
+        """Take the plumbing out of the evidence.
+
+        The prompt asks for figures and says not to cite the call, which the
+        model mostly honours and did not here: it published
+        `(from default_api.spreads(feed='btc'))` to the channel — a namespace
+        belonging to how the model is wired to its tools, not to anything about
+        the market. `default_api` is not even ours.
+
+        A prompt is a request. This is the guarantee, and it lives on the model
+        rather than at the alert so the journal gets the same treatment: an
+        evidence string is read back by `facto` and by a person reviewing a
+        call months later, and neither is helped by a function signature.
+        """
+        cleaned = []
+        for value in values:
+            text = TOOL_CALL.sub("", value).strip(" ;,")
+            # Collapse the double spaces removing a clause leaves behind.
+            text = re.sub(r"\s{2,}", " ", text)
+            if text:
+                cleaned.append(text)
+        return cleaned
 
     @property
     def key(self) -> tuple[str, str]:
