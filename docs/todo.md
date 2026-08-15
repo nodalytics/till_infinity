@@ -370,14 +370,38 @@ originally gave. `0.08` was defensible when set — 97.7th percentile, passing
 2.3% — and today passes 69.6% without anyone touching it. A constant is as good
 as the adaptive rule *provided somebody keeps re-deriving it*, and nobody did.
 The evidence-scaled form `z * sqrt(p(1-p)/n)` is the more principled shape and
-has nothing to work with: `infer` borrows a fixed twelve neighbours, so the
-effective count runs 12.5 to 15.3 across the quartiles. Revisit if `k` ever
-varies.
+has nothing to work with today — see the item below, which is its prerequisite.
 
 Not yet done, and deliberately: the constant is unchanged in code. The
 measurement is a bars-only replay, and today established twice that the quote
 path behaves differently enough to overturn a replay result. Re-derive on
 production once there are enough post-fix outcomes, then move it.
+
+**Let `k` reflect how much similar history there actually is.**
+`Memory.neighbours` returns `scored[:k]` — the k nearest touches *regardless of
+how far away they are* — so a level with no genuinely similar history still
+gets twelve neighbours, merely distant ones. The count is therefore always
+about twelve and carries no information, which has three consequences:
+
+- **`Inference.neighbours` is not an evidence count**, though it reads as one
+  and is printed in the alert as "+12 similar".
+- **The shrinkage cannot weaken when it should.** `prior` shrinks toward the
+  base rate with `weight = len(found) / (len(found) + PRIOR_WEIGHT)`, so twelve
+  distant strangers are trusted exactly as much as twelve close matches.
+- **The evidence-scaled gate has nothing to bite on.** Measured over 2,003
+  calls, the effective count runs 12.5 / 13.8 / 15.3 across the quartiles, and
+  a rule of the form `|edge| >= z * sqrt(p(1-p)/n)` is therefore almost a
+  constant in disguise. See [edge.md](edge.md) §4.
+
+The change is a similarity radius: take neighbours within a distance cutoff, up
+to `k`, rather than the nearest `k` unconditionally. `Features.distance` is
+already scale-free, so a cutoff means the same thing on every instrument. Then
+the count means "how much genuinely comparable history exists", the shrinkage
+follows it honestly, and the evidence-scaled gate becomes testable.
+
+Pick the cutoff by measuring, not by choosing: the distance distribution of
+neighbours that did and did not predict correctly will say where similarity
+stops carrying information.
 
 **Two smaller ones.** `yahoo.to_bars` converts an entire frame and then keeps
 only the last `bars` of it; slicing first is much faster but changes the count
