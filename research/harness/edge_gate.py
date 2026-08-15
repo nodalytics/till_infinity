@@ -88,6 +88,9 @@ def collect():
                 "base_rate_up": call.inference.base_rate_up,
                 "feed": call.feed,
                 "interval": call.interval,
+                # The side price arrived from, which `features.py` found is the
+                # only feature that predicts direction at all.
+                "above": touch.features.side.name == "ABOVE",
                 "when": touch.started,
             }
         # Drain as we go, so `_resolved` never hits its cap and drops pairs.

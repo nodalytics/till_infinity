@@ -448,6 +448,36 @@ Concretely, in the order the groundwork exists:
   it. That class of error is a tool-framing problem, fixed in `05a0abf` for
   spreads; the other tools in `agents/tools.py` want the same read-through.
 
+**The directional call does not beat "assume the level holds", and the feature
+set is why.** Measured in [features.md](../research/features.md), and it is the
+most serious finding of 2026-08-14 because it is about the premise rather than
+the plumbing.
+
+- **`side` alone predicts direction at 78.8%; all nine features together
+  manage 77.8%.** Dropping side costs 26.6 points and drops the model to
+  chance. Dropping any other feature costs nothing, and three of them are worth
+  negative accuracy.
+- **The trivial rule beats us at every gate.** A touch from above pushes back
+  up: 77.7% against the edge sign's 71.1%, and still ahead at 0.08, 0.11, 0.14,
+  0.20 and 0.30. The two converge as the gate tightens — 97.8% agreement above
+  0.20 — so a high-edge call is nearly always just restating the trivial rule,
+  and the disagreements are where it loses.
+- **Generated features do not rescue it.** Pairwise products are 3.3 points
+  worse, a random Fourier basis 1.3 worse, target encoding neutral.
+
+This explains the kNN result above rather than sitting beside it:
+`Features.distance` is a metric over eight features with no directional signal,
+so of course it could not order neighbours by relevance.
+
+What it does *not* say: the gate still selects larger moves — mean realised
+push rises from 0.73 to 1.83 across the same thresholds — and magnitude and
+risk are untested. So the gate earns its place and the direction does not.
+
+The next step is not a model. It is **what to measure at a touch**, because
+nothing currently collected predicts direction beyond the side, and no amount
+of modelling fixes that. Until then, `facto.Report` should carry "assume the
+level holds" as a baseline alongside the two it already compares against.
+
 **Two smaller ones.** `yahoo.to_bars` converts an entire frame and then keeps
 only the last `bars` of it; slicing first is much faster but changes the count
 when rows are dropped as NaN, so it needs a decision rather than a patch. And
