@@ -103,3 +103,48 @@ async def test_shaping_a_frame_does_not_block_the_event_loop():
     assert bars, "the shaping produced nothing, so the test proves nothing"
     assert len(bars) <= 50
     assert ticks > 1, "the loop never ran while the frame was being shaped"
+
+
+def _shape_the_old_way(frame, source_name, interval_name, bars):
+    """What `_shape` used to do: convert everything, then discard most of it."""
+    if source_name != interval_name:
+        frame = resample(frame, interval_name)
+    return to_bars(frame)[-bars:]
+
+
+@pytest.mark.parametrize("holes", [0, 1, 40])
+def test_only_the_bars_that_are_kept_are_converted(holes):
+    """Converting ten thousand rows to keep five hundred, on the startup path.
+
+    The slice cannot be taken first without care: `to_bars` drops rows with a
+    NaN open, so the last N rows are not the last N bars and the count comes up
+    short. Dropping those in pandas first makes the two equivalent, and the
+    test is the equivalence rather than the speed.
+    """
+    import numpy as np
+
+    source = YahooSource.__new__(YahooSource)
+    big = frame(3_000, freq="1min")
+    if holes:
+        # Gaps scattered through the tail, which is where the slice lands.
+        big.iloc[-holes * 2 :: 2, big.columns.get_loc("Open")] = np.nan
+
+    new = source._shape(big.copy(), "1m", "1m", 500)
+    old = _shape_the_old_way(big.copy(), "1m", "1m", 500)
+
+    assert [(b.time, b.open, b.close) for b in new] == [(b.time, b.open, b.close) for b in old], (
+        "the fast path and the old path disagree"
+    )
+    assert len(new) == 500
+
+
+def test_a_frame_shorter_than_asked_for_returns_what_there_is():
+    source = YahooSource.__new__(YahooSource)
+    assert len(source._shape(frame(20, freq="1min"), "1m", "1m", 500)) == 20
+
+
+def test_a_frame_with_no_open_column_is_not_an_error():
+    import pandas as pd
+
+    source = YahooSource.__new__(YahooSource)
+    assert source._shape(pd.DataFrame({"Close": [1.0]}), "1m", "1m", 5) == []
