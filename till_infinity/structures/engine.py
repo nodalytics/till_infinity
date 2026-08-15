@@ -25,7 +25,7 @@ import sqlite3
 import statistics
 import time
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -264,53 +264,88 @@ class Call(Restorable):
         )
 
 
-def _read_bars(
-    database: Path | str,
-    feeds: Sequence[str],
-    intervals: Sequence[str],
-    bars: int,
-) -> list[dict]:
-    """Stored bars as bus-shaped payloads, oldest first.
-
-    Shaped like a `prices.bars` message so the replay goes through exactly the
-    same code the live path does. A separate warm-up path would be a second
-    implementation of level formation, and the two would drift.
-    """
-    path = Path(database)
-    if not path.exists():
-        return []
-    if not intervals:
-        return []
-
+def _bar_query(feeds: Sequence[str], intervals: Sequence[str]) -> tuple[str, list[object]]:
+    """The window-function query both readers share, and its parameters."""
     marks = ",".join("?" * len(intervals))
     where = f"interval IN ({marks})"
     params: list[object] = list(intervals)
     if feeds:
         where += f" AND feed IN ({','.join('?' * len(feeds))})"
         params.extend(feeds)
+    return where, params
 
-    rows: list[dict] = []
+
+def _bar_span(
+    database: Path | str,
+    feeds: Sequence[str],
+    intervals: Sequence[str],
+    bars: int,
+) -> tuple[int, dict[str, float]]:
+    """How many bars the warm will replay, and the earliest time per interval.
+
+    Both are aggregates, so they come from SQLite rather than from a list of
+    rows in this process. `_eras` only ever needed the earliest timestamp per
+    interval — reading three hundred thousand rows to find six numbers was the
+    expensive half of a cold start.
+    """
+    where, params = _bar_query(feeds, intervals)
+    with closing(sqlite3.connect(f"file:{Path(database)}?mode=ro", uri=True, timeout=10.0)) as conn:
+        rows = conn.execute(
+            "SELECT interval, COUNT(*), MIN(ts) FROM ("
+            "  SELECT interval, ts,"
+            "         ROW_NUMBER() OVER (PARTITION BY feed, interval ORDER BY ts DESC) AS rn"
+            f"  FROM bars WHERE {where}"
+            ") WHERE rn <= ? GROUP BY interval",
+            (*params, bars * 8),
+        ).fetchall()
+    total = sum(int(n) for _, n, _ in rows)
+    first = {str(interval): float(start) for interval, _, start in rows if interval}
+    return total, first
+
+
+def _read_bars(
+    database: Path | str,
+    feeds: Sequence[str],
+    intervals: Sequence[str],
+    bars: int,
+) -> Iterator[dict]:
+    """Stored bars as bus-shaped payloads, oldest first, **streamed**.
+
+    Shaped like a `prices.bars` message so the replay goes through exactly the
+    same code the live path does. A separate warm-up path would be a second
+    implementation of level formation, and the two would drift.
+
+    A generator rather than a list, and the ordering is SQLite's rather than
+    Python's. Materialising the whole warm cost over 330,000 dicts on fourteen
+    instruments — 410MB resident against a host with 908MB and no swap — and
+    OOM-killed the container on every cold start it attempted. Sixteen kills,
+    never finishing. SQLite sorts in its own temp space and hands rows over one
+    at a time; the engine only ever needed one at a time.
+    """
+    path = Path(database)
+    if not path.exists() or not intervals:
+        return
+
+    where, params = _bar_query(feeds, intervals)
     try:
         with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10.0)) as conn:
             conn.row_factory = sqlite3.Row
-            for feed, interval in conn.execute(
-                f"SELECT DISTINCT feed, interval FROM bars WHERE {where}",
-                tuple(params),
-            ).fetchall():
-                found = conn.execute(
-                    "SELECT feed, venue, interval, ts, high, low, close FROM bars"
-                    " WHERE feed = ? AND interval = ? ORDER BY ts DESC LIMIT ?",
-                    (feed, interval, bars * 8),  # several venues per bar
-                ).fetchall()
-                rows.extend(dict(row) for row in found)
+            # Oldest first, and grouped so every venue on one bar arrives
+            # together — the consensus needs them adjacent to reach a quorum on
+            # that timestamp. `bars * 8` because several venues report each one.
+            found = conn.execute(
+                "SELECT feed, venue, interval, ts, high, low, close FROM ("
+                "  SELECT feed, venue, interval, ts, high, low, close,"
+                "         ROW_NUMBER() OVER (PARTITION BY feed, interval ORDER BY ts DESC) AS rn"
+                f"  FROM bars WHERE {where}"
+                ") WHERE rn <= ? ORDER BY ts, feed, interval",
+                (*params, bars * 8),
+            )
+            for row in found:
+                yield {**row, "time": row["ts"]}
     except sqlite3.Error as exc:
         log.warning("levels: could not warm from %s: %s", path, exc)
-        return []
-
-    # Oldest first, and grouped so every venue on one bar arrives together —
-    # the consensus needs them adjacent to reach a quorum on that timestamp.
-    rows.sort(key=lambda row: (row["ts"], row["feed"], row["interval"]))
-    return [{**row, "time": row["ts"]} for row in rows]
+        return
 
 
 class Engine:
@@ -618,6 +653,23 @@ class Engine:
         return min(candidates, key=confluence.rank, default="")
 
     @staticmethod
+    def _eras_from(first: dict[str, float]) -> list[tuple[float, str]]:
+        """Era boundaries from the earliest time per interval.
+
+        The half of `_eras` that does the work. Split out because the other
+        half — finding those earliest times — was reading three hundred
+        thousand rows to produce six numbers, and SQLite can answer it with a
+        GROUP BY.
+        """
+        eras: list[tuple[float, str]] = []
+        best = ""
+        for interval, start in sorted(first.items(), key=lambda kv: kv[1]):
+            if not best or confluence.rank(interval) < confluence.rank(best):
+                best = interval
+                eras.append((start, best))
+        return eras
+
+    @staticmethod
     def _eras(rows: Sequence[dict]) -> list[tuple[float, str]]:
         """When each finer series starts, so a replay can hand the check over.
 
@@ -632,13 +684,7 @@ class Engine:
             if interval and (interval not in first or when < first[interval]):
                 first[interval] = when
 
-        eras: list[tuple[float, str]] = []
-        best = ""
-        for interval, start in sorted(first.items(), key=lambda kv: kv[1]):
-            if not best or confluence.rank(interval) < confluence.rank(best):
-                best = interval
-                eras.append((start, best))
-        return eras
+        return Engine._eras_from(first)
 
     def observe_bar(self, payload: dict) -> list[Call]:
         """One `prices.bars` message. Returns any calls it produced.
@@ -1125,16 +1171,22 @@ class Engine:
         alert on history.
         """
         wanted = tuple(intervals) or self.intervals
-        rows = _read_bars(database, feeds, wanted, bars)
-        if not rows:
+        if not Path(database).exists():
+            return 0
+        # Both are aggregates, so the count and the era boundaries come from
+        # SQLite rather than from a list of rows held in this process. The rows
+        # themselves are then streamed: materialising them cost 410MB on a
+        # 908MB host and OOM-killed every cold start it attempted.
+        total, first_seen = _bar_span(database, feeds, wanted, bars)
+        if not total:
             return 0
 
-        # Worked out from the whole replay before it starts, so the first bar is
-        # judged by the same rule as the last rather than by whichever series
-        # happened to have arrived.
-        eras = self._eras(rows)
+        # Worked out before the replay starts, so the first bar is judged by the
+        # same rule as the last rather than by whichever series happened to have
+        # arrived.
+        eras = self._eras_from(first_seen)
         replayed = 0
-        total = len(rows)
+        feeds_seen: set[str] = set()
         # A cold start replays six-figure bar counts and says nothing until it
         # finishes, which is minutes of a service that looks hung — and the one
         # thing this project keeps relearning is that silence has to say which
@@ -1144,9 +1196,10 @@ class Engine:
         spoken = max(1, total // 10)
         self._touch_eras = eras
         try:
-            for row in rows:
+            for row in _read_bars(database, feeds, wanted, bars):
                 self.observe_bar(row)  # calls discarded on purpose
                 replayed += 1
+                feeds_seen.add(str(row["feed"]))
                 if on_progress is not None:
                     if replayed % beat == 0 or replayed == total:
                         on_progress(replayed, total)
@@ -1162,7 +1215,7 @@ class Engine:
         log.info(
             "levels: warmed from %d stored bars across %s, touching from %s",
             replayed,
-            ", ".join(sorted({row["feed"] for row in rows})) or "nothing",
+            ", ".join(sorted(feeds_seen)) or "nothing",
             " then ".join(interval for _start, interval in eras) or "nothing",
         )
         return replayed
