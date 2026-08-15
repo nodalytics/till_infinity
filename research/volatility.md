@@ -90,11 +90,61 @@ because `half_life` is a dataclass field default captured at class definition
 and setting the module global afterwards does nothing. It is set through
 `Book(half_life=…)` now, with an assertion that it took.
 
+## The calls do not improve, and that is the answer
+
+Run: `python research/harness/halflife.py`
+
+The forecast is not what the estimate is for, so the edge machinery was run at
+each half-life — every call paired with the outcome of the touch it opened,
+scored on the things a gate consumes.
+
+| half_life | calls | direction | holds | push | separation |
+|---|---|---|---|---|---|
+| **60** *(current)* | 1,899 | 69.2% | 76.3% | 0.58 | 27.1pp |
+| 20 | 1,900 | **70.2%** | 74.8% | **0.69** | 28.7pp |
+| 10 | 1,966 | 68.5% | 74.9% | 0.59 | 27.2pp |
+| 7 | 1,945 | 67.1% | 74.2% | 0.65 | **29.7pp** |
+
+**The forecasting optimum does not carry over.** h=7 and h=10 won the forecast
+clearly and monotonically; on direction they are *worse* than the current 60,
+and the ordering across the four is not monotone at all — which is what noise
+looks like rather than signal.
+
+The spread across all four is **3.1 points on about 1,900 calls, against a
+standard error of 1.1**. The confidence intervals overlap heavily:
+
+    h=20   68.1% to 72.3%
+    h=60   67.1% to 71.3%
+    h=7    65.0% to 69.2%
+
+So **no half-life is measurably better for calls**, and the honest reading is
+that the volatility estimate is not the bottleneck. `holds` — the trivial rule
+from [features.md](features.md) — beats the model at every half-life, by 4 to 7
+points, which is the same result that section reached and is untouched by any
+of this.
+
+### Why this was worth running anyway
+
+It is the loop the previous section deliberately left open, and it closed the
+other way. Had `HALF_LIFE` been changed to 10 on the forecast evidence — which
+was strong, consistent across five intervals, and improved calibration as well
+— the result would have been a better forecast and slightly worse calls, with
+nothing in the system to say so.
+
+**Optimising a component against its own metric is not optimising the system.**
+That is the general lesson, and it applies directly to the adaptive scheme in
+[todo.md](../docs/todo.md) 6b: an expert aggregation over half-lives would
+weight them by *forecast* loss, which this measurement says is the wrong
+objective. Whatever adapts has to be scored on outcomes, not on the quantity it
+happens to predict.
+
 ## What to do
 
-1. **Do not change `HALF_LIFE` on this evidence alone.** The forecast improves
-   and the downstream effect is unmeasured in the only terms that matter. Run
-   the edge machinery at h=10 against h=60 first.
-2. **Then consider not choosing at all** — see todo.md on self-adjustment. A
-   constant that is measurably wrong five years after being set is an argument
-   about the *form*, not about the number.
+1. **Leave `HALF_LIFE` at 60.** Not because it is right — the forecast says it
+   is not — but because nothing that depends on it gets better when it changes,
+   and a change with no measured benefit is churn.
+2. **Score the adaptive scheme on outcomes, not forecast loss.** See above; this
+   is the correction to todo.md 6b that this measurement produced.
+3. **Revisit if the bottleneck moves.** The estimate being adequate is a
+   statement about the current model, which loses to "assume the level holds".
+   If that gap ever closes, the denominator may start to matter.
