@@ -89,11 +89,16 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
 
+      # The filename is the digest with `sha256:` stripped, for two reasons that
+      # both bite: `upload-artifact@v4` rejects a colon in a path, and the merge
+      # below re-adds the prefix itself, so leaving it here would produce
+      # `sha256:sha256:…`.
       - name: Hand the digest to the merge
         run: |
           mkdir -p /tmp/digests
-          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
-          echo "built ${{ matrix.platform }} as ${{ steps.build.outputs.digest }}"
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
+          echo "built ${{ matrix.platform }} as ${digest}"
 
       - uses: actions/upload-artifact@v4
         with:
