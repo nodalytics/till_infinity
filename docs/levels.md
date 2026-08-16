@@ -827,7 +827,7 @@ talks itself into a trade it has no evidence for.
 pooled rate over the whole kNN memory served every call on every instrument and
 timeframe, so GBPUSD on the daily and BTC on 15m were both reported against the
 same 72%. That is wrong in a way that does real damage, because `edge` is
-`conditional − base` and `actionable` gates on `|edge| ≥ 0.08` — a pool sitting
+`conditional − base` and `actionable` gates on `|edge| ≥ 0.10` — a pool sitting
 at 72% down hands every down call a twenty-point apparent edge and handicaps
 every up call, on series that had nothing to do with the samples that set it.
 
@@ -1302,7 +1302,7 @@ looks.
 | guard | without it |
 |---|---|
 | ≥ 8 observations | a big edge on three touches is noise |
-| \|edge\| ≥ 0.08 | a large sample at the base rate is nothing |
+| \|edge\| ≥ 0.10 | a large sample at the base rate is nothing |
 | \|push\| ≥ 0.5v | a confident call worth a tenth of a volatility unit does not pay |
 | reward-to-risk ≥ 1.0 | a move smaller than the stop behind it loses more when wrong than it makes when right |
 
@@ -1344,13 +1344,30 @@ the boundary doing exactly what it says.
 This gate could not have been written before `risk_vol` was fixed. Until then
 `reward_to_risk` was identically zero, so it would have rejected everything.
 
-### 0.08 is not derived from anything
+### ~~0.08 is not derived from anything~~ — it is now, and it moved to 0.10
 
-Stated because it is currently the number deciding whether the channel speaks.
+**Resolved on 2026-08-16.** The gate is `MIN_EDGE = 0.10`, derived in
+[edge.md](edge.md) §1 from a step in realised outcomes: replaying every call
+against the outcome of the touch it opened, the three lowest deciles of `|edge|`
+run **54.8% to 61.5% direction with a mean realised push of zero**, and the
+fourth — starting at **0.0968** — jumps to 69.3% and a push of 0.49. Nothing
+after the step goes back.
+
+Measured twice: 0.11 on six bands over 1,990 calls, then 0.0968 on ten deciles
+over 10,483 calls across fourteen instruments. Both readings agree that 0.08
+sat *inside the flat region*, so roughly a quarter of everything said out loud
+was a coin flip.
+
+The rest of this section is the record of why it was arbitrary, kept because
+the reasoning is what led to the measurement.
+
+---
+
+Stated because it was the number deciding whether the channel speaks.
 The guard is sound — a conditional equal to its base rate has said nothing —
-but the *threshold* has never been justified anywhere: not in the commit that
-introduced it, not here, not beside the code. It is a made-up tolerance of
-exactly the kind this project otherwise refuses, and it is load-bearing.
+but the *threshold* had never been justified anywhere: not in the commit that
+introduced it, not here, not beside the code. It was a made-up tolerance of
+exactly the kind this project otherwise refuses, and it was load-bearing.
 
 On 2026-08-14 every recorded call but one failed this gate, with a median
 `|edge|` of **0.0748** — five thousandths under the line. A threshold nobody

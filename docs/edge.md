@@ -1,4 +1,4 @@
-# The 0.08 gate, measured
+# The |edge| gate, measured
 
 `|edge| >= 0.08` decides whether a level call is said out loud. `edge` is
 `probability_up - base_rate_up`: how far the conditional sits from the
@@ -236,13 +236,19 @@ meaning, which `0.08` never was.
 
 ## What to do
 
-1. **Move the constant from 0.08 to about 0.10 now.** It is the change the
-   evidence supports most directly and it needs nothing built: the band
-   admitted today performs like a coin flip. The first reading put the step at
-   0.11 on six bands over 1,990 calls; ten deciles over 10,483 put it at
-   **0.0968**, and everything below it runs 54.8% to 61.5% with a mean push of
-   zero. Either number is a defensible place to put it and 0.10 is the round
-   one between them.
+1. ~~**Move the constant from 0.08 to about 0.10.**~~ **Done on 2026-08-16**,
+   as `reactions.MIN_EDGE`. It was the change the evidence supported most
+   directly and it needed nothing built. The first reading put the step at 0.11
+   on six bands over 1,990 calls; ten deciles over 10,483 put it at **0.0968**,
+   and everything below runs 54.8% to 61.5% with a mean push of zero. 0.10 is
+   the round number between them, and both readings agree on the only load-
+   bearing point — that 0.08 was below the step.
+
+   Two things changed besides the value. It is a **named constant** rather than
+   a bare literal inside `actionable`, which is how it went unexamined for
+   months; and `research/harness/edge_gate.py` now **imports** it rather than
+   carrying its own copy, so the harness cannot quietly measure a threshold the
+   service has stopped using.
 2. **Then build the accuracy-targeting rule, and expect no accuracy from it.**
    It matched the constant three times out of three at matched volume, so it is
    not an improvement in what gets said — it is an improvement in the threshold

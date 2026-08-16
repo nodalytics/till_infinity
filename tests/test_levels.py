@@ -286,6 +286,53 @@ def test_all_three_guards_are_needed(touches, neighbours, edge_from, push):
     assert not found.actionable
 
 
+def _call(edge: float) -> reactions.Inference:
+    """A call that clears every guard except, possibly, the edge one."""
+    return reactions.Inference(
+        side=Side.ABOVE,
+        probability_up=0.5 + edge,
+        expected_push=1.5,
+        push_sigma=0.4,
+        base_rate_up=0.5,
+        own_touches=10,
+        neighbours=12,
+        risk_vol=0.5,
+    )
+
+
+def test_the_edge_gate_sits_above_the_measured_step():
+    """The step is at 0.0968; anything below it is a coin flip.
+
+    `edge.md` §1 replayed 10,483 calls against the outcome of the touch each
+    opened. The three lowest deciles of |edge| run 54.8% to 61.5% direction
+    with a mean realised push of *zero*; the fourth, starting at 0.0968, jumps
+    to 69.3% and a push of 0.49.
+
+    This guards the number rather than the behaviour, which is unusual and
+    deliberate: it was a bare literal for months at 0.08 — inside the flat
+    region, publishing a quarter of its calls at a coin flip — precisely
+    because nothing pointed at it.
+    """
+    assert reactions.MIN_EDGE >= 0.0968
+
+
+def test_a_call_inside_the_flat_region_is_not_published():
+    """0.08 was the old gate and admits the band that behaves like noise."""
+    assert not _call(0.08).actionable
+    assert not _call(0.0967).actionable
+
+
+def test_a_call_above_the_step_is_published():
+    """Clear of the boundary, not on it.
+
+    `_call(0.10)` would land on `MIN_EDGE` exactly and fail: `0.5 + 0.10 - 0.5`
+    is `0.09999999999999998`. That is float layout rather than the gate, and a
+    boundary test that sits on the boundary measures the wrong thing.
+    """
+    assert _call(0.11).actionable
+    assert _call(0.20).actionable
+
+
 def test_a_real_call_passes_all_three():
     found = reactions.Inference(
         side=Side.ABOVE,

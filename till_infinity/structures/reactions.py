@@ -121,6 +121,38 @@ GAP_FACTOR = 4.0
 #: because the number sounds professional.
 MIN_REWARD_TO_RISK = 1.0
 
+#: The least separation from the base rate a call may claim.
+#:
+#: **Measured, twice.** [edge.md](../../docs/edge.md) §1 replayed every call
+#: against the outcome of the touch it opened and found a step: below it the
+#: calls are a coin flip with a mean realised push of zero, above it they are
+#: not, and nothing after the step goes back.
+#:
+#: | \|edge\| decile | from | direction | mean push |
+#: |---|---|---|---|
+#: | 1-3 | 0.0000 | 54.8% - 61.5% | ~0.00 |
+#: | 4 | **0.0968** | **69.3%** | **0.49** |
+#: | 5-10 | 0.1262+ | 68.8% - 77.9% | 0.37 - 1.11 |
+#:
+#: This was **0.08**, which was never derived from anything — not in the commit
+#: that introduced it, not in the docs — and which sat inside the flat region.
+#: Three deciles of calls, a quarter of everything said out loud, were being
+#: published at a coin flip.
+#:
+#: The first measurement put the step at 0.11 on six bands over 1,990 calls; the
+#: second put it at 0.0968 on ten deciles over 10,483 calls across fourteen
+#: instruments. Ten is the round number between them, and both readings agree on
+#: the only thing that matters here — that 0.08 is below the step.
+#:
+#: **What this does not claim.** The step's *location* is well established; the
+#: accuracy either side of it is not a number to quote, because it does not
+#: transport across a time split (edge.md §3). And a bigger edge is not a better
+#: model: "assume the level holds" still beats the published direction at every
+#: gate except the highest, where they tie ([features.md](../../research/features.md)
+#: §3). This threshold selects larger, cleaner moves. It does not make the
+#: direction right.
+MIN_EDGE = 0.10
+
 #: How many bars of its **own timeframe** a touch gets before it is chop.
 #:
 #: `horizon` was 3,600 seconds for every timeframe, which is not one rule but
@@ -510,7 +542,9 @@ class Inference(Restorable):
         """
         return (
             self.own_touches + self.neighbours >= 8
-            and abs(self.edge) >= 0.08
+            # See MIN_EDGE: below the step, calls are a coin flip with a mean
+            # realised push of zero.
+            and abs(self.edge) >= MIN_EDGE
             # Net, not gross: the cost of taking it comes off before the size
             # test, so an edge smaller than the spread cannot qualify.
             and abs(self.net_push) >= 0.5

@@ -1,6 +1,6 @@
-"""Is 0.08 the right place to put the gate, and should it be a constant at all?
+"""Where does the |edge| gate belong, and should it be a constant at all?
 
-`|edge| >= 0.08` decides whether a level call is said out loud. `edge` is
+`|edge| >= MIN_EDGE` decides whether a level call is said out loud. `edge` is
 `probability_up - base_rate_up`: how far the conditional sits from the
 unconditional, in probability. The number was never derived from anything.
 
@@ -28,10 +28,14 @@ from collections import defaultdict
 
 from till_infinity.prices.config import FEEDS
 from till_infinity.structures.engine import Engine
+from till_infinity.structures.reactions import MIN_EDGE
 
 DB = ".data/prices/prices.db"  # run from the repository root
 INTERVALS = ("1m", "5m", "15m", "1h")
-GATE = 0.08
+#: Read from the code rather than copied, so this harness cannot quietly test a
+#: threshold the service is no longer using — which is exactly what happened
+#: while the constant was a bare literal in `actionable`.
+GATE = MIN_EDGE
 
 
 def bars(intervals):
