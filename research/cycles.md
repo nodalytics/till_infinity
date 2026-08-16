@@ -10,11 +10,19 @@ quarter, falling for one, or oscillating; nor, if oscillating, whether this
 level is near the floor or the ceiling. [todo.md](../docs/todo.md) §6c asks
 whether that missing context carries anything.
 
-**It does not, on this data — and the more useful half of the answer is that
-this data cannot really be asked.** 1,862 touches sound like a sample and are
-not: they span **26 cycles**, and four of the six instruments contribute one or
-two apiece with *zero* touches in an uptrend, so the cross-instrument gate
-cannot be run at all.
+**Still no, but it is now a close no rather than an empty one.**
+
+> **Re-measured on 2026-08-15** after the backfill in [todo.md](../docs/todo.md)
+> §0d took the sample from 1,862 touches over 26 cycles to **10,483 touches
+> over 73 cycles across all 14 instruments**. The first reading of this document
+> said "nothing separates at any threshold". That is no longer true, and the
+> sections below are the second reading. The original numbers are kept in git
+> rather than here, because a stale number that looks current is worse than no
+> number.
+
+One cell now separates, the direction is consistent, and it still fails the
+test that matters: adding cycle state to the model is worth **+0.0041 AUC with
+a 95% interval of −0.0008 to +0.0085**, which includes zero.
 
 ## 1. The label is a rule, because otherwise it is hindsight
 
@@ -57,30 +65,28 @@ third decimal and agree about the direction.
 
 ### A fixed threshold cannot label a downtrend
 
-Under `TREND = 0.30`, the touch period contained **no downtrend days at all**.
-That is not a quirk of six months. Over the full daily history:
-
-| feed | days | uptrend | range | downtrend |
-|---|---|---|---|---|
-| us100 | 2,945 | 12.5% | 87.5% | **0.0%** |
-| spx500 | 2,942 | 9.0% | 90.9% | **0.1%** |
-| gold | 4,942 | 7.4% | 90.7% | 1.9% |
-| btc | 4,941 | 13.5% | 84.0% | 2.5% |
-| eurusd | 4,941 | 2.0% | 95.1% | 2.9% |
-| gbpusd | 4,941 | 0.8% | 95.1% | 4.1% |
+Under `TREND = 0.30` the first reading of this document found **no downtrend
+days at all**. Over the full daily history, downtrends are 0.0% of us100 days
+and 0.1% of spx500 days against 12.5% and 9.0% uptrend.
 
 Markets fall faster and messier than they rise, so a decline rarely sustains a
 high efficiency ratio over a quarter. **A symmetric threshold on an asymmetric
 process labels one tail and never the other**, which leaves half the question
 unasked rather than answered.
 
+**The backfill confirmed this rather than fixing it.** With fourteen
+instruments over 200–300 days each, `TREND = 0.30` still calls only **1.6%** of
+touches a downtrend against 3.7% an uptrend — better than zero and nowhere near
+balanced. More data does not repair a measure that is asymmetric by
+construction.
+
 The fix is the one this project reaches for everywhere else: stop using a
 constant. Terciles of *the feed's own* prior ratio distribution are symmetric
 by construction and self-calibrating, since btc's ordinary directionality is
-not eurusd's. That gives a usable split — 60% range, 33% downtrend, 7% uptrend
-— and it is the labeller the real test runs under.
+not eurusd's. That gives a usable split — **43.5% range, 34.6% downtrend, 21.9%
+uptrend** — and it is the labeller the real test runs under.
 
-## 3. The falsification, and it fails
+## 3. The falsification, and what it says now
 
 The question is not "does cycle state predict direction". Position-in-range
 alone will correlate with `side` — near a range floor most touches come from
@@ -89,97 +95,144 @@ already say. The question is whether cycle state **changes what `side`
 means**: within each state, does the up-rate for a given side differ from that
 side's pooled rate by more than the interval on the cell?
 
-Under the self-calibrating labeller:
+Under the self-calibrating labeller, which now has enough downtrends to be
+worth reading — 34.6% of touches against 0.0% before the backfill:
 
 | side | cycle | n | up-rate | 95% interval | vs pooled |
 |---|---|---|---|---|---|
-| above | *(pooled)* | 1,013 | 74.6% | 71.9% – 77.2% | |
-| | uptrend | 62 | 83.9% | 72.8% – 91.0% | +9.2pp |
-| | range | 661 | 74.6% | 71.1% – 77.8% | −0.0pp |
-| | downtrend | 290 | 72.8% | 67.4% – 77.6% | −1.9pp |
-| below | *(pooled)* | 849 | 24.9% | 22.1% – 27.9% | |
-| | uptrend | 60 | 31.7% | 21.3% – 44.2% | +6.8pp |
-| | range | 464 | 22.6% | 19.1% – 26.7% | −2.2pp |
-| | downtrend | 325 | 26.8% | 22.2% – 31.8% | +1.9pp |
+| above | *(pooled)* | 5,290 | 73.4% | 72.2% – 74.5% | |
+| | **uptrend** | 1,188 | **76.8%** | **74.3% – 79.1%** | **+3.4pp** |
+| | range | 2,360 | 72.1% | 70.2% – 73.8% | −1.3pp |
+| | downtrend | 1,742 | 72.8% | 70.7% – 74.8% | −0.6pp |
+| below | *(pooled)* | 5,193 | 27.3% | 26.1% – 28.5% | |
+| | uptrend | 1,103 | 29.6% | 26.9% – 32.3% | +2.3pp |
+| | range | 2,205 | 25.9% | 24.1% – 27.8% | −1.4pp |
+| | downtrend | 1,885 | 27.5% | 25.6% – 29.6% | +0.3pp |
 
-**Every cell's interval contains the pooled rate.** Nothing separates.
+**One cell separates**, and the direction is coherent: in an uptrend a touch
+resolves upward more often *whichever side it arrived from*, +3.4pp from above
+and +2.3pp from below. That is a main effect of trend on direction rather than
+the interaction that was predicted, but it is not nothing.
 
-Nor is that an artifact of where the threshold was put. Sweeping the fixed
-threshold from 0.10 to 0.40 — which moves the uptrend share from 19.7% to 0.0%
-— produces **no separating cell at any value**.
+### It survives correcting for six tests, by nothing at all
 
-## 4. It does not help a model either
+Six cells are being tested at 95%, so about one separation in three is expected
+from chance alone. Holding the family-wise error at 5% needs a per-cell
+interval of 99.15% (Šidák), which is z = 2.631 rather than 1.96:
 
-Walk-forward over 1,712 touches, every touch predicted before it is learned:
+| cell | 95% | corrected | pooled | separates |
+|---|---|---|---|---|
+| above / uptrend | 74.3% – 79.1% | **73.4% – 79.8%** | **73.4%** | *exactly on the line* |
+
+The corrected lower bound and the pooled rate agree to the decimal shown. This
+is the weakest form a positive result can take while still being one.
+
+### And the threshold sweep is not consistent
+
+Sweeping the fixed threshold, which the tercile labeller replaced:
+
+| TREND | up | range | down | cells that separate |
+|---|---|---|---|---|
+| 0.100 | 24.0% | 51.6% | 24.4% | above/uptrend |
+| 0.129 | 19.3% | 60.1% | 20.6% | none |
+| 0.150 | 15.8% | 66.0% | 18.2% | none |
+| 0.200 | 9.4% | 79.1% | 11.5% | below/uptrend |
+| 0.250 | 6.6% | 88.6% | 4.8% | none |
+| 0.300 | 3.7% | 94.7% | 1.6% | none |
+
+A real effect should not appear at 0.10, vanish at 0.129 and 0.15, reappear on
+the *other side* at 0.20, and vanish again. That pattern is what a marginal
+effect looks like when the labelling moves under it.
+
+## 4. It buys nothing a model can use
+
+Walk-forward over 10,333 touches:
 
 | features | accuracy | AUC |
 |---|---|---|
-| assume the level holds *(no model)* | **75.2%** | — |
-| side only | 75.2% | 0.739 |
-| all nine features | 74.9% | 0.741 |
-| all nine + cycle | 74.5% | 0.742 |
-| side + cycle | 74.7% | 0.739 |
+| assume the level holds *(no model)* | 73.0% | — |
+| side only | 73.0% | 0.736 |
+| all nine features | 73.0% | 0.735 |
+| all nine + cycle | 73.0% | **0.742** |
+| side + cycle | 73.0% | 0.742 |
 
-A thousandth of AUC, and accuracy moves the wrong way. The trivial rule still
-beats everything, which is [features.md](features.md) §3 holding for the fifth
-document running.
+The AUC gain is real-looking and the accuracy gain is exactly zero — every
+configuration ties the trivial rule to the tenth of a point. A model that ranks
+slightly better while deciding identically has not changed any decision.
 
-## 5. The one thing pointing anywhere, and why not to build on it
+**And the gain does not survive being resampled by instrument.** Measured
+directly, +0.0041 with a 95% interval of **−0.0008 to +0.0085**. It includes
+zero.
 
-Both sides shift *up* in an uptrend: +9.2pp for touches from above, +6.8pp for
-touches from below. That is directionally coherent — in an uptrend price is
-likelier to go up whichever side it arrived from — but it is a **main effect**,
-not the interaction that was predicted, and it does not survive any gate:
+| | AUC |
+|---|---|
+| side + eight features | 0.7352 |
+| plus cycle | 0.7393 |
+| gain | **+0.0041** (95%: −0.0008 to +0.0085) |
 
-- **Significance.** z = +1.73 (above) and +1.27 (below). Neither reaches 1.96.
-- **Across instruments.** Only spx500 and us100 have any uptrend touches at
-  all. Of the four testable cells, three are positive and one is negative.
-- **Independence.** Those 122 uptrend touches sit inside a handful of cycles.
-  Touches within one uptrend are not independent draws on "does an uptrend
-  matter".
+## 5. Where it helps and where it hurts
 
-This is precisely the shape [features.md](features.md) documented when +22.9
-points pooled became +3.1 within cells, and [magnet.md](../docs/magnet.md)
-documented when one positive estimate had an interval five times its own width.
+| feed | base | + cycle | gain | | feed | base | + cycle | gain |
+|---|---|---|---|---|---|---|---|---|
+| audusd | 0.747 | 0.764 | +0.017 | | nzdusd | 0.734 | 0.738 | +0.003 |
+| eth | 0.749 | 0.763 | +0.014 | | eurusd | 0.718 | 0.722 | +0.003 |
+| gbpusd | 0.742 | 0.753 | +0.012 | | btc | 0.753 | 0.755 | +0.002 |
+| usdcad | 0.741 | 0.752 | +0.012 | | sol | 0.763 | 0.764 | +0.001 |
+| usdjpy | 0.725 | 0.734 | +0.009 | | gold | 0.713 | 0.713 | −0.000 |
+| usdchf | 0.732 | 0.735 | +0.003 | | us100 | 0.697 | 0.691 | −0.006 |
+| | | | | | usdcnh | 0.715 | 0.707 | −0.008 |
+| | | | | | **spx500** | 0.743 | 0.726 | **−0.017** |
+
+Ten of fourteen improve, which is more consistent than chance would give. But
+**the largest loss is spx500, and spx500 and us100 have the most cycles of any
+instrument** — 9 and 11 against a median of 5. The two feeds with the most
+opportunity to show the effect are the two it hurts most, and that is the
+wrong way round for a real one.
 
 ## 6. What the sample actually is
 
-The number that sizes every claim above is not 1,862.
+The number that sizes every claim above is not 10,483.
 
-| feed | touches | cycles | span |
-|---|---|---|---|
-| spx500 | 390 | 11 | 184d |
-| us100 | 383 | 8 | 184d |
-| btc | 349 | 2 | 14d |
-| gbpusd | 306 | 2 | 18d |
-| eurusd | 223 | 2 | 18d |
-| gold | 211 | 1 | 18d |
-| **total** | **1,862** | **26** | |
+| feed | touches | cycles | span | | feed | touches | cycles | span |
+|---|---|---|---|---|---|---|---|---|
+| gbpusd | 1,030 | 1 | 291d | | audusd | 733 | 7 | 290d |
+| btc | 980 | 5 | 205d | | usdchf | 698 | 1 | 291d |
+| spx500 | 894 | 9 | 308d | | nzdusd | 693 | 7 | 291d |
+| us100 | 894 | 11 | 309d | | eth | 648 | 9 | 205d |
+| eurusd | 864 | 3 | 290d | | sol | 626 | 3 | 206d |
+| gold | 839 | 4 | 303d | | usdjpy | 559 | 3 | 291d |
+| | | | | | usdcad | 532 | 5 | 290d |
+| | | | | | usdcnh | 493 | 5 | 290d |
+| **total** | **10,483** | **73** | | | | | | |
 
-Two index feeds carry 19 of the 26 cycles. The other four have 14–18 days of
-fine-grained history each, which is a fraction of one 60-day window — they
-cannot vary in cycle state, so they contribute touches and no information.
+Better than the 26 this started with, and still the binding constraint. Two
+feeds have a *single* cycle across 290 days — gbpusd and usdchf simply did not
+change state — so they contribute a thousand touches and no information about
+whether state matters.
 
-This is the constraint §6c predicted and it binds harder than expected: **count
-cycles, not touches.**
+**Count cycles, not touches.** 10,483 is the number that makes a 3.4-point
+effect look decisive; 73 is the number that makes it marginal.
 
 ## Recommendations, in order
 
-1. **Do not add cycle state to `Features`.** Nothing separates, the model gains
-   a thousandth of AUC, and the one positive is insignificant in two of six
-   instruments.
-2. **Re-test when the fine-grained history reaches a few months.** The four
-   short feeds need span, not more touches. At 60 days per window, a year of
-   1m/5m history across all instruments is roughly when this becomes askable —
-   and the harness is written and cached, so re-running it is one command.
-3. **Keep the labeller.** It is point-in-time, self-calibrating and cheap, and
-   [todo.md](../docs/todo.md) §6a needs exactly this to label major turns — it
-   named that labelling as its hardest part. This is most of it, already built
-   and already checked against a stated null.
-4. **Do not reach for a longer window to manufacture cycles.** Shortening it
+1. **Do not add cycle state to `Features` yet.** The deciding number is the
+   AUC gain's interval, −0.0008 to +0.0085, which includes zero. Accuracy is
+   flat to the tenth of a point across every configuration, so nothing decides
+   differently even if the effect is real. Adding a feature on this would be
+   adding noise with a plausible story attached.
+2. **It is worth re-testing, which it was not before.** The honest change
+   between the two readings of this document: one cell separates, both uptrend
+   cells move the same way, ten of fourteen instruments improve. That is a
+   direction rather than a result, and the thing that would settle it is more
+   cycles — 73 is what makes a 3.4-point effect marginal.
+3. **Keep the labeller.** Point-in-time, self-calibrating, cheap, and checked
+   against a stated null. [turns.md](turns.md) reuses the same machinery.
+4. **Do not reach for a shorter window to manufacture cycles.** Shortening it
    until the data shows variety is fitting the measure to the sample, which is
-   the failure mode §6c was written to avoid.
+   the failure mode §6c was written to avoid — and the threshold sweep in §3
+   shows how quickly that manufactures a separating cell.
 5. **Two findings to carry elsewhere.** Cross-venue consensus is wrong at
    cycle scale, for a reason that will recur in any path-dependent measure. And
-   a symmetric threshold cannot label a market's downside — worth remembering
-   for §6a, where the turns that matter most are the ones down.
+   a symmetric threshold cannot label a market's downside — which the backfill
+   confirmed rather than fixed: downtrends went from 0.0% of touches to 1.6% at
+   `TREND = 0.30`, still far below the 34.6% the tercile labeller finds.

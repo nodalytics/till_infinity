@@ -10,11 +10,11 @@ rather than believed.
 
 | | |
 |---|---|
-| [models.md](models.md) | **measured** — would trees, forests, cosine similarity or an MLP help; a 1KB logistic regression beats all of them, and `side` carries most of the signal |
-| [features.md](features.md) | **measured** — `side` alone beats all nine features together, generated features make it worse, and the trivial "level holds" rule beats our own directional call |
+| [models.md](models.md) | **measured** — would trees, forests, cosine similarity or an MLP help; a 1KB logistic regression beats all of them, and five times the data did not change that |
+| [features.md](features.md) | **measured** — `side` alone matches all nine features together, generated features make it worse, and the trivial "level holds" rule still beats our directional call everywhere but the top decile |
 | [volatility.md](volatility.md) | **measured** — the estimate is well calibrated and its half-life is well past the optimum; a flat 20-bar mean beats it at every interval |
-| [turns.md](turns.md) | **measured** — can a major turn be seen coming; four signals separate in sample and none survives a purged split, and the sample needed is several times what exists |
-| [cycles.md](cycles.md) | **measured** — does a level's place in the larger move matter; nothing separates, and the sample is 26 cycles rather than the 1,862 touches it looks like |
+| [turns.md](turns.md) | **measured** — can a major turn be seen coming; yes, weakly. AUC 0.595 purged over 310 turns, and `vol` alone carries it |
+| [cycles.md](cycles.md) | **measured** — does a level's place in the larger move matter; one cell separates by nothing at all, and the AUC gain's interval includes zero |
 | [bandits.md](bandits.md) | design note — where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
 
 Findings that changed the code, or that belong next to it, are written up in
@@ -40,6 +40,23 @@ python research/harness/turns.py      # can a major turn be seen before it happe
 
 `touches.py` writes `touches.pkl` beside itself and the others read it, so the
 replay runs once rather than four times.
+
+## Which data these were measured on
+
+Everything dated **2026-08-16** was re-run on 10,484 touches across fourteen
+instruments, after the backfill in [todo.md](../docs/todo.md) §0d took the
+store from 455k bars to 1.56M. The earlier readings used 1,995 touches across
+six instruments over days rather than months, and are in git.
+
+Two of the six documents changed their answer. [turns.md](turns.md) went from
+"does not separate from chance" to AUC 0.595; [cycles.md](cycles.md) went from
+"nothing separates anywhere" to one marginal cell. The other four reproduced,
+with absolute accuracies about five points lower on the harder sample and the
+rankings intact.
+
+**Re-run the harness after any backfill.** Every document here reads
+`touches.pkl`, which regenerates from whatever is in the store, so a collection
+run silently invalidates all of them.
 
 ## What every result here shares, and its limits
 

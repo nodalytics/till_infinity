@@ -62,6 +62,8 @@ import sys
 import time
 from pathlib import Path
 
+import numpy
+
 sys.path.insert(0, str(Path(__file__).parent))
 from cycles import daily
 
@@ -184,21 +186,37 @@ def build() -> list[dict]:
 
 def auc(scored: list[tuple[float, bool]]) -> float:
     """Rank AUC, ties sharing the average rank."""
-    ranked = sorted(scored, key=lambda it: it[0])
-    positives = sum(1 for _, y in ranked if y)
-    negatives = len(ranked) - positives
+    if not scored:
+        return 0.5
+    values = numpy.fromiter((s for s, _ in scored), dtype=float, count=len(scored))
+    labels = numpy.fromiter((y for _, y in scored), dtype=bool, count=len(scored))
+    return _auc(values, labels)
+
+
+def _auc(values, labels) -> float:
+    """The same, on arrays. Called a few million times by the bootstrap.
+
+    In pure Python this was the whole runtime: thirty bootstrap calls, two
+    thousand resamples each, a sort of fifteen thousand rows every time. The
+    arithmetic is identical — average ranks for ties, Mann-Whitney — and it is
+    two orders of magnitude faster, which is the difference between running
+    this and not.
+    """
+    positives = int(labels.sum())
+    negatives = labels.size - positives
     if not positives or not negatives:
         return 0.5
-    total = 0.0
-    i = 0
-    while i < len(ranked):
-        j = i
-        while j < len(ranked) and ranked[j][0] == ranked[i][0]:
-            j += 1
-        average = (i + j - 1) / 2 + 1
-        total += sum(average for k in range(i, j) if ranked[k][1])
-        i = j
-    return (total - positives * (positives + 1) / 2) / (positives * negatives)
+    order = numpy.argsort(values, kind="stable")
+    ordered = values[order]
+    # Average rank within each run of equal scores, or a model that outputs one
+    # constant scores something other than 0.5.
+    ranks = numpy.empty(ordered.size, dtype=float)
+    starts = numpy.flatnonzero(numpy.concatenate(([True], ordered[1:] != ordered[:-1])))
+    ends = numpy.append(starts[1:], ordered.size)
+    for start, end in zip(starts, ends, strict=True):
+        ranks[start:end] = (start + end - 1) / 2 + 1
+    total = ranks[labels[order]].sum()
+    return float((total - positives * (positives + 1) / 2) / (positives * negatives))
 
 
 def bootstrap(
@@ -211,21 +229,28 @@ def bootstrap(
     several times too narrow. What is resampled has to be what is independent,
     and here that is at best the turn.
     """
-    blocks: dict[str, list[tuple[float, bool]]] = {}
+    grouped: dict[str, list[tuple[float, bool]]] = {}
     for score, label, block in scored:
-        blocks.setdefault(block, []).append((score, label))
-    keys = list(blocks)
-    rng = random.Random(7)
+        grouped.setdefault(block, []).append((score, label))
+    keys = list(grouped)
+    values = [
+        numpy.fromiter((s for s, _ in grouped[k]), dtype=float, count=len(grouped[k])) for k in keys
+    ]
+    labels = [
+        numpy.fromiter((y for _, y in grouped[k]), dtype=bool, count=len(grouped[k])) for k in keys
+    ]
+    rng = numpy.random.default_rng(7)
     seen = []
     for _ in range(resamples):
-        drawn: list[tuple[float, bool]] = []
-        for _ in range(len(keys)):
-            drawn.extend(blocks[keys[rng.randrange(len(keys))]])
-        if any(y for _, y in drawn) and not all(y for _, y in drawn):
-            seen.append(auc(drawn))
-    seen.sort()
+        drawn = rng.integers(0, len(keys), len(keys))
+        picked_labels = numpy.concatenate([labels[i] for i in drawn])
+        hits = int(picked_labels.sum())
+        if not hits or hits == picked_labels.size:
+            continue
+        seen.append(_auc(numpy.concatenate([values[i] for i in drawn]), picked_labels))
     if not seen:
         return 0.0, 1.0
+    seen.sort()
     return seen[int(0.025 * len(seen))], seen[int(0.975 * len(seen))]
 
 

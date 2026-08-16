@@ -781,47 +781,57 @@ backfill starving the consumer, which shortens it, but does not make a restart
 free. Batching pushes is the cheap discipline; not rebuilding on a docs-only
 change is the real fix.
 
-## 0d. Eight instruments have no daily bars, and two research questions want them
+## ~~0d. The backfill nobody had run~~ — done on 2026-08-15
 
-Found on 2026-08-15 while running §6a. `1d` bars exist for **six** feeds — btc,
-eurusd, gbpusd, gold, spx500, us100 — and for none of the eight added during
-the instrument expansion on 2026-08-14: `audusd`, `eth`, `nzdusd`, `sol`,
-`usdcad`, `usdchf`, `usdcnh`, `usdjpy`. The deep pull was simply never re-run
-after the config grew, and nothing surfaces the gap because the live collector
-is working fine at the intervals the pipeline actually consumes.
-
-It is one command per interval, and the providers hold the history:
+Found while running §6a. `1d` bars existed for **six** feeds and for none of
+the eight added during the instrument expansion on 2026-08-14. The deep pull
+was simply never re-run after the config grew.
 
 ```bash
-till-infinity prices backfill --interval 1d --symbol audusd --symbol eth \
-  --symbol nzdusd --symbol sol --symbol usdcad --symbol usdchf \
-  --symbol usdcnh --symbol usdjpy
+till-infinity prices backfill --interval 1d   # then --interval 1h, --interval 15m
 ```
 
-**Why it is worth doing rather than noting.** Two research questions closed as
-"not answerable on this data" this week, and both were sample-limited in the
-same direction:
+**Done on 2026-08-15, and it changed an answer.** [turns.md](../research/turns.md)
+went from 131 turns to 310 and from "does not separate from chance" to **AUC
+0.595, interval 0.540–0.654**. The method did not change at all; only the
+sample did.
 
-- [turns.md](../research/turns.md) needs several hundred out-of-sample turns
-  and has 94. Fourteen instruments instead of six roughly doubles them.
-- [cycles.md](../research/cycles.md) failed because four of six instruments had
-  14–18 days of usable span — less than one 60-day window — so they could not
-  vary in cycle state at all.
+**A correction, because the first version of this item was wrong.** It claimed
+the daily backfill would also give [cycles.md](../research/cycles.md) the span
+it lacked. It does not: cycles is limited by *fine-grained* history, because
+the touch replay reads 1m/5m/15m/1h and never touches a daily bar. Daily bars
+feed the cycle *label*, not the touches being labelled.
 
-Neither becomes answerable on this alone. Both move, and this is the only lever
-that costs a collection run rather than waiting a year.
+What actually helped cycles was noticing, while checking that claim, that
+**spx500 and us100 had 632 days of hourly data where every other feed had
+15–21**. Backfilling 1h and 15m across all fourteen took the touch sample from
+1,862 to **10,483** and the cycle count from 26 to 73:
 
-Two things to check while doing it, because both have bitten before:
+| interval | before | after |
+|---|---|---|
+| 1d | 6 feeds | 14 feeds, 6–20 years |
+| 1h | 15–21 days, 632d for two indices | **208–1,045 days**, all 14 |
+| 15m | 6–7 days | **52–273 days**, all 14 |
 
-- **Disk.** `prices` was 961MB before the instrument expansion and daily bars
-  are cheap per row, but a 5,000-bar deep pull across eight feeds and seven
-  venues is 280k rows. The box has 242GB now, so this is a note rather than a
-  risk.
-- **Whether the daily series is worth consensus.** [cycles.md](../research/cycles.md)
-  §2 found a cross-venue median *destroys* a path-dependent measure, because
-  venues sit at different levels and do not all report every day. Anything
-  reading these bars at cycle scale should take one venue's series, not a
-  median.
+455k bars to **1.56M**. The lesson worth keeping is that the gap was invisible
+because live collection was working perfectly at the intervals the pipeline
+consumes — nothing was broken, so nothing complained.
+
+Three things worth keeping:
+
+- **Re-run the harness after any backfill.** Every research document was
+  measured off `touches.pkl`, which regenerates from whatever is in the store.
+  The numbers in [features.md](../research/features.md),
+  [models.md](../research/models.md) and [edge.md](edge.md) all moved.
+- **A gap in collection depth is invisible from the outside.** Nothing alerted,
+  nothing failed, and the live pipeline was healthy throughout — because the
+  intervals it consumes were being collected. Only a research question that
+  needed *history* rather than *freshness* surfaced it. Worth a periodic check
+  of span per feed per interval rather than waiting for the next one.
+- **Do not take a cross-venue median at cycle scale.**
+  [cycles.md](../research/cycles.md) §2 found it destroys a path-dependent
+  measure: venues sit at different levels and do not all report every day, so
+  the median adds steps the instrument never took.
 
 ## ~~1. Split `observe_bar`: form from own bars, touch from the finest~~ — done
 

@@ -7,8 +7,15 @@ neighbours by relevance and left open which features belong in it. This asks
 that directly, and the answer turned out to be about the model rather than the
 metric.
 
+> **Re-measured on 2026-08-16** on **10,484 resolved touches across 14
+> instruments**, after the backfill in [todo.md](../docs/todo.md) §0d took the
+> store from 455k bars to 1.56M. The original run used 1,995 touches from six
+> instruments over days rather than months. **Every headline below reproduced.**
+> The absolute accuracies fell by about five points, which is what a harder,
+> broader sample should do; the ranking did not move at all.
+
 Baseline throughout is logistic regression over the raw features, walk-forward,
-on 1,995 resolved touches — the best model in [models.md](models.md).
+on 10,484 resolved touches — the best model in [models.md](models.md).
 
 ## 1. One feature does everything
 
@@ -16,37 +23,39 @@ Dropping each feature in turn and measuring what is lost:
 
 | feature dropped | accuracy without it | cost |
 |---|---|---|
-| **above** (which side price came from) | 51.3% | **+26.6pp** |
-| strength | 77.8% | +0.1pp |
-| run_vol | 77.8% | +0.0pp |
-| regime | 77.8% | +0.0pp |
-| pivot | 77.8% | +0.0pp |
-| backcheck | 77.8% | +0.0pp |
-| experience | 77.9% | −0.1pp |
-| depth_vol | 77.9% | −0.1pp |
-| approach_vol | 77.9% | −0.1pp |
+| **above** (which side price came from) | 51.9% | **+21.1pp** |
+| approach_vol | 73.0% | +0.0pp |
+| backcheck | 73.0% | +0.0pp |
+| strength | 73.1% | +0.0pp |
+| run_vol | 73.1% | +0.0pp |
+| regime | 73.1% | +0.0pp |
+| pivot | 73.1% | +0.0pp |
+| depth_vol | 73.1% | +0.0pp |
+| experience | 73.1% | −0.0pp |
 
-All nine features together score 77.8%. Remove `side` and the model falls to
-chance. Remove anything else and nothing happens — three of them are worth
-*negative* accuracy.
+All nine features together score 73.1%. Remove `side` and the model falls to
+chance. Remove anything else and **nothing happens at all** — on 10,484 touches
+every one of the eight costs 0.0 points to the decimal.
 
 Each feature alone:
 
 | feature | alone |
 |---|---|
-| **above** | **78.8%** |
-| depth_vol | 52.3% |
-| regime | 52.1% |
-| strength | 51.7% |
-| approach_vol | 51.3% |
-| backcheck | 50.8% |
-| run_vol | 50.6% |
-| pivot | 50.6% |
-| experience | 50.4% |
+| **above** | **73.0%** |
+| regime | 51.2% |
+| experience | 51.1% |
+| backcheck | 51.1% |
+| approach_vol | 51.1% |
+| depth_vol | 51.0% |
+| strength | 50.8% |
+| run_vol | 50.8% |
+| pivot | 50.8% |
 
-**Side alone beats all nine features together**, 78.8% against 77.8%. The other
-eight are not weak; they are indistinguishable from noise, and adding them to
-side makes the model slightly worse.
+**Side alone matches all nine features together**, 73.0% against 73.1%. The
+other eight are not weak; they are indistinguishable from noise, and on five
+times the data they have converged to *exactly* noise — every one of them lands
+between 50.8% and 51.2%, where the first reading had them spread from 50.4% to
+52.3%. That spread was itself noise, and more data collapsed it.
 
 This explains [edge.md](../docs/edge.md) §6 completely. `Features.distance` is a
 Euclidean distance over eight features that carry no directional signal plus a
@@ -59,13 +68,13 @@ set.**
 
 | pipeline | accuracy |
 |---|---|
-| raw (baseline) | 77.8% |
-| + pairwise products, degree 2 | 74.5% |
-| + random Fourier basis, 50 components | 76.5% |
-| + target mean per feed and interval | 77.7% |
+| raw (baseline) | 73.1% |
+| + pairwise products, degree 2 | 71.3% |
+| + random Fourier basis, 50 components | 68.4% |
+| + target mean per feed and interval | 73.1% |
 
-Nothing generated beats the raw features, and the interaction terms are 3.3
-points worse. That is what feature generation does to a set with no signal in
+Nothing generated beats the raw features, and the interaction terms are 1.8
+points worse — the random Fourier basis 4.7. That is what feature generation does to a set with no signal in
 it: it manufactures more ways to overfit. Feature *generation* is not the
 missing piece while feature *content* is the problem.
 
@@ -74,31 +83,42 @@ missing piece while feature *content* is the problem.
 If side is doing all the work, then the trivial rule deserves scoring: a touch
 from above pushes back up, a touch from below pushes down — **the level holds.**
 
-On identical rows, 2,006 calls paired with the outcome of the touch each one
+On identical rows, 10,485 calls paired with the outcome of the touch each one
 opened:
 
 | rule | direction right |
 |---|---|
-| **assume the level holds** | **77.7%** |
-| the edge sign — what we publish | 71.1% |
-| assume it breaks | 22.3% |
+| **assume the level holds** | **73.1%** |
+| the edge sign — what we publish | 68.8% |
+| assume it breaks | 26.9% |
 
 And at every gate:
 
 | \|edge\| at least | n | edge sign | level holds | edge better by |
 |---|---|---|---|---|
-| 0.00 | 1,993 | 71.1% | 77.7% | −6.6pp |
-| 0.08 *(current gate)* | 1,391 | 77.9% | 80.9% | −3.0pp |
-| 0.11 | 1,179 | 81.0% | 83.1% | −2.1pp |
-| 0.14 | 988 | 82.2% | 84.1% | −1.9pp |
-| 0.20 | 595 | 86.7% | 88.2% | −1.5pp |
-| 0.30 | 181 | 92.3% | 92.8% | −0.6pp |
+| 0.00 | 10,483 | 68.8% | 73.1% | −4.3pp |
+| 0.08 *(current gate)* | 7,949 | 72.0% | 73.9% | −1.9pp |
+| 0.11 | 6,834 | 73.5% | 74.5% | −1.0pp |
+| 0.14 | 5,795 | 74.0% | 75.0% | −0.9pp |
+| 0.20 | 3,616 | 76.5% | 76.8% | −0.3pp |
+| 0.30 | 982 | 77.7% | 77.7% | **+0.0pp** |
 
-**The directional inference never beats the trivial rule, at any threshold.**
-It converges toward it as the gate tightens — the two agree on 81.9% of all
-calls, 93.2% above 0.11 and 97.8% above 0.20 — so a high-edge call is nearly
-always just saying "the level holds", and the residual disagreement is where it
-loses.
+**The gap narrows and closes.** On the first reading the trivial rule beat the
+edge at every gate including the highest. On five times the data they *tie* at
+`|edge| >= 0.30` — 77.7% each on 982 calls. That is the first sign anywhere
+that the model has something the trivial rule does not, and it is confined to
+the most confident tenth of calls.
+
+It is a tie, not a win, and 982 calls is not many. But it moved in the right
+direction with more data, where most things here moved toward noise.
+
+**The directional inference does not beat the trivial rule at any threshold,
+and only reaches it at the last one.** It converges toward it as the gate
+tightens — the two agree on **89.7%** of all calls and **97.5%** above 0.11 —
+so a high-edge call is nearly always just saying "the level holds", and the
+residual disagreement is where it loses. Note the agreement itself rose with
+more data, from 81.9% to 89.7%: the model has become *more* like the trivial
+rule, not less.
 
 ### What this does and does not mean
 
@@ -118,17 +138,17 @@ the model, and `edge` is not adding directional skill on top of it.** That
 comparison — "assume the level holds" — is free, and belongs in `facto.Report`
 beside the two baselines it already carries.
 
- `edge` is
-defined as `probability_up - base_rate_up`, so this is close to saying the
-conditional estimate is not beating its own unconditional — which is precisely
-the comparison [reactions.py](../till_infinity/structures/reactions.py) says
-every probability here should be reported against, and now has been.
+`edge` is defined as `probability_up - base_rate_up`, so this is close to
+saying the conditional estimate is not beating its own unconditional — which is
+precisely the comparison
+[reactions.py](../till_infinity/structures/reactions.py) says every probability
+here should be reported against, and now has been.
 
 ## 4. So what *should* be measured at a touch
 
 Everything below was tested after §3, because "the feature set is the problem"
 is only useful if it says what would fix it. Scored on **AUC as well as
-accuracy**, which corrects a mistake in §1-§3: the base rate is 78%, and
+accuracy**, which corrects a mistake in §1-§3: the base rate is 73%, and
 accuracy at a 0.5 threshold is nearly blind to a better ranking at that mix. A
 model can order every touch correctly and never cross the boundary. This system
 *gates* — it consumes ranking, not accuracy — so AUC is the measure that
@@ -147,23 +167,31 @@ Snapshotted at the moment the touch opens, before its own outcome is folded in:
 
 | features | accuracy | AUC |
 |---|---|---|
-| side alone | 78.5% | 0.847 |
-| side + up-rate only | 78.2% | **0.851** |
-| side + the full record | 77.2% | 0.844 |
-| the record alone | 72.9% | 0.817 |
+| side alone | 73.0% | 0.731 |
+| **side + the full record** | 73.1% | **0.735** |
+| side + up-rate only | 73.0% | 0.734 |
+| side + does the record agree | 73.0% | 0.731 |
+| the record alone | 65.1% | 0.688 |
 
-and restricted to levels with **three or more** prior same-side touches — 541
-of 1,609:
+and restricted to levels with **three or more** prior same-side touches — 1,942
+of 10,335:
 
 | features | accuracy | AUC |
 |---|---|---|
-| side alone | 87.0% | 0.874 |
-| side + the record | 86.2% | **0.898** |
+| side alone | 76.2% | 0.756 |
+| side + the record | 76.1% | **0.760** |
 
-**+0.024 AUC where the history exists**, and nothing where it does not. Note
-also that one summary beats six: adding `up_rate` alone (0.851) beats adding
-all six record features (0.844), which is what correlated features do to a
-small sample.
+**+0.004 AUC**, where the first reading found +0.024. This is the result that
+shrank most on re-measurement, and it is worth being blunt about: the record
+was the single positive finding of the original harness, recommendation #1 of
+this document, and the reason `up_rate` was added to `Features`. On five times
+the data it is a quarter of the size and inside the noise.
+
+The ordering also inverted. On 1,995 touches, adding `up_rate` alone (0.851)
+beat adding the full record (0.844), and this document concluded that one
+summary beats six. On 10,335 the full record (0.735) edges `up_rate` alone
+(0.734). Both differences are a thousandth of AUC — which is the real lesson.
+Neither ordering ever meant anything.
 
 ### Four things collected and never used — all weak, all in the same direction
 

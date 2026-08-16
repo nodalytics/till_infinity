@@ -9,32 +9,40 @@ past touches through `Memory.neighbours`, and
 [edge.md](../docs/edge.md) §6 established that the similarity metric does not
 order neighbours by relevance. So: what does?
 
+> **Re-measured on 2026-08-16** on **10,484 resolved touches across 14
+> instruments** after the backfill in [todo.md](../docs/todo.md) §0d. The
+> original run used 1,994 touches from six. **The winner did not change and
+> neither did the argument.** Absolute accuracies fell about five points on the
+> harder sample; the ordering is nearly identical and the size and speed
+> columns are unchanged in what they say.
+
 Every model below is **walk-forward**. Each touch is predicted before it is
-learned and never from itself. 1,994 resolved touches from a replay of the
-stored 1m, 5m, 15m and 1h bars across six instruments.
+learned and never from itself. 10,484 resolved touches from a replay of the
+stored 1m, 5m, 15m and 1h bars across fourteen instruments.
 
 ## The table
 
 | model | right | vs random | size | µs/call | labels used |
 |---|---|---|---|---|---|
-| **logistic regression** | **77.9%** | +27.2pp | **1KB** | **193** | 100% |
-| entropy sampler (logistic) | 77.6% | +27.0pp | 5KB | 176 | **69%** |
-| leveraging bagging | 76.2% | +25.6pp | 5,044KB | 9,068 | 100% |
-| adaptive random forest | 76.0% | +25.3pp | 3,341KB | 3,330 | 100% |
-| MLP (16 hidden, thresholded) | 75.8% | +25.1pp | 3KB | 3,198 | 100% |
-| hoeffding adaptive tree | 75.1% | +24.4pp | 146KB | 342 | 100% |
-| adwin bagging | 75.1% | +24.4pp | 1,453KB | 2,625 | 100% |
-| gaussian naive bayes | 74.6% | +23.9pp | 68KB | 834 | 100% |
-| hoeffding tree | 74.0% | +23.4pp | 138KB | 286 | 100% |
-| extremely fast tree | 73.8% | +23.1pp | 615KB | 1,239 | 100% |
-| manhattan, 12 neighbours | 72.9% | +22.3pp | — | — | — |
-| euclidean, 12 neighbours *(current)* | 72.8% | +22.2pp | — | — | — |
-| **cosine, 12 neighbours** | **72.6%** | +21.9pp | — | — | — |
-| mondrian forest | 70.5% | +19.8pp | 5,440KB | 1,647 | 100% |
-| SRP | 53.1% | +2.5pp | 2,776KB | 8,214 | 100% |
-| *always up* (majority class) | 51.2% | +0.5pp | — | — | — |
-| *random 12 neighbours* | 50.7% | 0.0pp | — | — | — |
-| farthest 12 neighbours | 47.0% | −3.7pp | — | — | — |
+| **logistic regression** | **73.1%** | +23.2pp | **1KB** | 280 | 100% |
+| entropy sampler (logistic) | 73.0% | +23.2pp | 5KB | **257** | **63%** |
+| adwin bagging | 72.9% | +23.1pp | 4,429KB | 4,477 | 100% |
+| hoeffding tree | 72.6% | +22.8pp | 479KB | 488 | 100% |
+| extremely fast tree | 72.6% | +22.8pp | 1,297KB | 2,358 | 100% |
+| gaussian naive bayes | 72.6% | +22.8pp | 68KB | 1,236 | 100% |
+| leveraging bagging | 72.6% | +22.8pp | 25,678KB | 18,056 | 100% |
+| hoeffding adaptive tree | 72.5% | +22.7pp | 571KB | 709 | 100% |
+| adaptive random forest | 72.3% | +22.5pp | 29,053KB | 6,144 | 100% |
+| MLP (16 hidden, thresholded) | 71.4% | +21.6pp | 3KB | 4,920 | 100% |
+| mondrian forest | 70.9% | +21.1pp | 25,721KB | 3,395 | 100% |
+| manhattan, 12 neighbours | 70.5% | +20.7pp | — | — | — |
+| **cosine, 12 neighbours** | **70.3%** | +20.5pp | — | — | — |
+| euclidean, 12 neighbours *(current)* | 70.3% | +20.5pp | — | — | — |
+| facto (ours, push sign) | 64.3% | +14.5pp | 7KB | 2,032 | 100% |
+| SRP | 63.8% | +14.0pp | 13,508KB | 16,002 | 100% |
+| *always up* (majority class) | 50.5% | +0.7pp | — | — | — |
+| *random 12 neighbours* | 49.8% | 0.0pp | — | — | — |
+| farthest 12 neighbours | 49.2% | −0.6pp | — | — | — |
 
 ## 1. Trees and forests do not help. A linear model beats all of them.
 
@@ -52,12 +60,24 @@ plausible here rather than treating it as a surprise. Trees earn their keep on
 non-linear thresholds and high-order interactions. There are nine features,
 most of them already scale-free and monotone in their effect, and one of them
 (`side`) does nearly all the work. There is not much for a tree to find, and
-with 1,994 examples there is plenty of room to overfit looking for it.
+plenty of room to overfit looking for it.
 
-**SRP at 53.1% is not a finding about SRP**, which is a strong algorithm
-elsewhere — it is a warning that these ensembles have hyperparameters this
-experiment did not tune. Read the table as "the expensive models did not win
-out of the box", not as "the expensive models cannot win".
+**And more data did not rescue them.** Five times the sample was the obvious
+thing that might have — trees are supposed to be data-hungry — and the gap to
+logistic regression is unchanged: 0.5 points to the best tree then, 0.5 points
+now. The forests remain 25,000KB against 1KB.
+
+**SRP moved from 53.1% to 63.8%**, which is the largest change in the table and
+still last but one among real models. That confirms the original reading: it
+was never a finding about SRP but a warning that these ensembles have
+hyperparameters this experiment did not tune, and a tenfold sample fixed some
+of it. Read the table as "the expensive models did not win out of the box", not
+as "the expensive models cannot win".
+
+**`facto` at 64.3% is ours**, scored on the sign of the push it regresses
+rather than on a direction it was built to predict, so it is at a disadvantage
+here by construction — but it is 8.8 points behind a 1KB logistic regression
+and it is the model `structures fit` produces.
 
 ## 2. Cosine similarity does not help either, and no metric does
 
@@ -108,9 +128,11 @@ since both arms shared the same pool.
 worth learning from — high prediction entropy means the model is uncertain,
 which means the label is informative.
 
-It scored **77.6% while learning from 69% of the touches**, against 77.9% for
-the same classifier learning from all of them. Three tenths of a point for
-nearly a third fewer updates.
+It scored **73.0% while learning from 63% of the touches**, against 73.1% for
+the same classifier learning from all of them. **One tenth of a point for 37%
+fewer updates** — and on the larger sample it declines *more* labels than
+before (63% against 69%) for a smaller loss. That is the right direction on
+both axes.
 
 That is the wrong shape for the alert gate — the gate wants calls the model is
 *confident* about, and this selects the ones it is unsure of — but it is the
@@ -139,7 +161,8 @@ right shape for two things this project actually has:
 4. **Do try `EntropySampler` around whatever is fitted**, for the memory and
    compute rather than the accuracy.
 5. **Remember what the binding constraint is.** All of this is measured on
-   1,994 replayed touches from six instruments on bars only. Production
-   outcomes became trustworthy on 2026-08-14 and the `fit` gate is still shut.
-   A better model class on data we have only just stopped mismeasuring is not
-   the top of the list — [todo.md](../docs/todo.md) §0c is.
+   10,484 replayed touches from fourteen instruments **on bars only** — no book,
+   no order flow. That is now a decent sample and it did not change the answer,
+   which strengthens rather than weakens the conclusion: the ceiling here is
+   not the model class and it is not the sample size. It is what a bar can say.
+   [features.md](features.md) §4 reaches the same place from the feature side.
