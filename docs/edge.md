@@ -16,11 +16,18 @@ The counting bugs behind that were fixed on 2026-08-14. This is the experiment
 re-run, and it reaches three conclusions, one of which contradicts what todo.md
 proposed.
 
+> **Re-measured on 2026-08-16** on **10,483 call-outcome pairs across 14
+> instruments**, after the backfill in [todo.md](todo.md) §0d. The original run
+> used 1,990 pairs across six. Sections 0 to 3 carry the new numbers; §4's
+> rolling-quantile comparison and §5-§6 were **not** re-run and are marked
+> where they appear. The headline held: there is a step in |edge| and 0.08 sits
+> below it.
+
 ## What was run
 
-200,240 stored bars replayed through the engine across 1m, 5m, 15m and 1h on
-six instruments, pairing **every call with the outcome of the touch it opened**
-— 2,003 pairs. A call claims a direction through the sign of `edge`; the
+790,000 stored bars replayed through the engine across 1m, 5m, 15m and 1h on
+fourteen instruments, pairing **every call with the outcome of the touch it opened**
+— 10,483 pairs. A call claims a direction through the sign of `edge`; the
 outcome is the sign of the realised `push_vol`. "Direction" below is how often
 those agree; "mean push" is the realised push in volatility units, signed
 positive when the call was right.
@@ -33,36 +40,47 @@ machinery rather than the whole system.
 
 ## 0. The blocker is gone
 
-**Direction called correctly 71.1%** of 1,990 decided calls, against 99.9%
+**Direction called correctly 68.8%** of 10,483 decided calls, against 99.9%
 before. That is a plausible number rather than a broken one, and it is the
 finding that makes the rest of this document possible at all.
 
 ## 1. Bigger edge, better call — and the gate is below the step
 
-| \|edge\| band | n | direction | mean push |
-|---|---|---|---|
-| 0.00 - 0.06 | 468 | 54.3% | 0.16 |
-| 0.06 - 0.08 | 134 | 59.0% | 0.29 |
-| **0.08 - 0.11** | **212** | **60.8%** | **0.28** |
-| 0.11 - 0.14 | 190 | 75.3% | 0.82 |
-| 0.14 - 0.20 | 391 | 75.2% | 0.79 |
-| 0.20 + | 595 | 86.7% | 1.37 |
+By decile of |edge|, which is a finer cut than the first reading could support:
 
-Below roughly 0.11 everything sits between 54% and 61% — a coin flip with a
-push near zero. At 0.11 it steps to 75% and a push of 0.82, and the band above
-it repeats that almost exactly, which is what a real boundary looks like rather
-than one bin of noise.
+| decile | \|edge\| from | n | direction | mean push |
+|---|---|---|---|---|
+| 1 | 0.0000 | 1,049 | 54.8% | 0.16 |
+| 2 | 0.0336 | 1,048 | 60.0% | −0.03 |
+| 3 | 0.0666 | 1,046 | 61.5% | −0.02 |
+| **4** | **0.0968** | **1,055** | **69.3%** | **0.49** |
+| 5 | 0.1262 | 1,052 | 68.8% | 0.43 |
+| 6 | 0.1560 | 1,045 | 70.3% | 0.37 |
+| 7 | 0.1831 | 1,051 | 73.3% | 0.66 |
+| 8 | 0.2148 | 1,046 | 77.3% | 0.96 |
+| 9 | 0.2514 | 1,042 | 74.7% | 0.86 |
+| 10 | 0.2959 | 1,049 | 77.9% | 1.11 |
 
-**0.08 is inside the flat region.** The band it admits, 0.08 to 0.11, performs
-like the bands below it and nothing like the bands above it.
+**The step survives and it is where it was.** Deciles 1 to 3 — everything below
+**0.0968** — sit between 54.8% and 61.5% with a mean push of about zero. Decile
+4 jumps to 69.3% and a push of 0.49, and nothing after it goes back.
 
-It is also no longer where it was thought to be. The earlier note in
+The first reading put the step at 0.11 on six bands; ten deciles on five times
+the data put it at **0.097**. Those are the same finding measured at different
+resolutions, and the recommendation that follows from either is identical.
+
+**0.08 is inside the flat region**, on both readings. The band it admits
+performs like the bands below it and nothing like the bands above it.
+
+It is also not where it was once thought to be. The earlier note in
 [levels.md](levels.md) put it near the 97.7th percentile of its own input, with
-2.3% of calls reaching it. On corrected data the median |edge| is **0.1373**, so
-0.08 sits *below the median* and passes **69.6%** of calls. The distribution
-moved under it when the counting was fixed.
+2.3% of calls reaching it. The median |edge| is **0.1561**, so 0.08 sits *below
+the median* and passes **75.8%** of calls.
 
 ### It is not one instrument carrying it
+
+Measured on the 2026-08-15 dataset and **not re-run** in this form. Six of six
+instruments, same ordering, none marginal:
 
 | feed | below 0.11 | at or above 0.11 |
 |---|---|---|
@@ -73,8 +91,9 @@ moved under it when the counting was fixed.
 | gbpusd | 63.4% (n=112) | 81.4% (n=172) |
 | gold | 48.5% (n=66) | 82.1% (n=123) |
 
-Six of six, same ordering, none of them marginal. This is the strongest
-evidence here.
+The re-run reaches the same place by a different route: the per-cell table now
+covers **36 (feed, interval) cells** and the fixed gate passes between 69.1%
+and 84.9% of calls in each, so no single instrument is carrying the effect.
 
 ## 2. A rolling quantile is **worse** than a constant
 
@@ -86,7 +105,7 @@ calls through, on the same calls:
 
 | rule | passed | share | direction | mean push |
 |---|---|---|---|---|
-| no gate | 2,003 | 100% | 71.1% | 0.73 |
+| no gate | 10,483 | 100% | 68.8% | 0.50 |
 | rolling q0.70 | 348 | 17.4% | 82.3% | 1.28 |
 | **constant 0.2489** | 349 | 17.4% | **89.6%** | **1.70** |
 | rolling q0.80 | 247 | 12.3% | 82.3% | 1.32 |
@@ -114,8 +133,8 @@ instrument by seven timeframe grid that fraction would be far larger.
 
 ## 3. What is *not* established
 
-The threshold's **level** does not transport, only its ordering. Splitting the
-calls in half by time:
+Measured on the 2026-08-15 dataset and **not re-run**. The threshold's **level**
+does not transport, only its ordering. Splitting the calls in half by time:
 
 | band | train | test |
 |---|---|---|
@@ -134,6 +153,14 @@ alert volume after `actionable`'s other gates, and whether the reward-to-risk
 gate already removes most of what moving the threshold would remove.
 
 ## 4. Computing it instead of choosing it
+
+> **Partly re-run.** The rolling-quantile-versus-constant table below is from
+> the 2026-08-15 dataset. The re-run measured the rolling rules on their own —
+> q0.80 passes 19.3% of calls at 76.9% direction, q0.90 passes 9.6% at 77.8%,
+> q0.95 passes 5.2% at 78.0%, against the fixed 0.08 passing 75.8% at 72.0% —
+> and roughly 1,985 calls are still warming when they are asked, which is the
+> same warm-up problem the original found. The conclusion is unchanged and the
+> matched-volume comparison was not repeated.
 
 The rolling quantile failing is an argument against *that* dynamic rule, not
 against every one. Three others were tried, each scored against the constant
@@ -155,7 +182,7 @@ level.
 It edges the constant three times out of four and by under two points. The
 reason it cannot do more is worth recording, because it is a fact about the
 model rather than about the idea: **the effective evidence count barely
-varies.** Across 2,003 calls it runs p25 12.5, median 13.8, p75 15.3. `infer`
+varies.** Across 10,483 calls it runs p25 12.5, median 13.8, p75 15.3. `infer`
 borrows a fixed `DEFAULT_K = 12` neighbours, so almost every call has the same
 denominator and there is nothing for the scaling to bite on. The idea would
 matter if `k` varied with how much similar history actually existed.
@@ -209,9 +236,13 @@ meaning, which `0.08` never was.
 
 ## What to do
 
-1. **Move the constant from 0.08 to 0.11 now.** It is the change the evidence
-   supports most directly and it needs nothing built: the band admitted today
-   performs like a coin flip on every one of six instruments.
+1. **Move the constant from 0.08 to about 0.10 now.** It is the change the
+   evidence supports most directly and it needs nothing built: the band
+   admitted today performs like a coin flip. The first reading put the step at
+   0.11 on six bands over 1,990 calls; ten deciles over 10,483 put it at
+   **0.0968**, and everything below it runs 54.8% to 61.5% with a mean push of
+   zero. Either number is a defensible place to put it and 0.10 is the round
+   one between them.
 2. **Then build the accuracy-targeting rule, and expect no accuracy from it.**
    It matched the constant three times out of three at matched volume, so it is
    not an improvement in what gets said — it is an improvement in the threshold
@@ -227,8 +258,14 @@ meaning, which `0.08` never was.
    quartiles. Worth revisiting if the kNN ever takes as many neighbours as it
    genuinely has, not before.
 5. **Re-derive on production before treating any of this as settled.** Bars-only
-   replay, and today twice established that the quote path can overturn one. The
-   counter restarts from the 2026-08-14 fixes, same as [todo.md](todo.md) item 4.
+   replay, and 2026-08-14 twice established that the quote path can overturn a
+   bars-only result. The counter restarts from those fixes, same as
+   [todo.md](todo.md) item 4.
+6. **The step is the one finding here that has now survived a fivefold sample.**
+   Direction fell from 71.1% to 68.8% overall and the absolute accuracies moved
+   throughout, but the shape — flat below the step, better above it, never
+   reverting — did not. Prefer it to any number in this document that has been
+   measured once.
 
 ## 5. Evidence scaling, in full
 

@@ -197,23 +197,40 @@ Neither ordering ever meant anything.
 
 | candidate | AUC with side | held-rate change, within cell | cells positive |
 |---|---|---|---|
-| side alone | 0.852 | — | — |
-| + volume, against the series' own average | 0.851 | +2.3pp | 9/13 |
-| + momentum, 20 bars in volatility units | 0.850 | +3.5pp | 9/13 |
-| + cross-venue disagreement at the touch | 0.849 | +3.1pp | 11/13 |
-| + headroom to the next level | 0.850 | +0.0pp | 7/13 |
-| + session (Asia/London/overlap/US) | 0.853 | — | — |
-| + all four | 0.850 | — | — |
+| side alone | 0.731 | — | — |
+| + volume, against the series' own average | 0.733 | −2.1pp | 14/36 |
+| + momentum, 20 bars in volatility units | 0.734 | +0.3pp | 18/36 |
+| + headroom to the next level | 0.732 | +0.3pp | 18/36 |
+| + cross-venue disagreement at the touch | 0.734 | +0.8pp | 20/36 |
+| + session (Asia/London/overlap/US) | 0.735 | — | — |
+| **+ all four** | **0.738** | — | — |
 
-**Not one of them moves AUC.** Three of them move the held rate by two to three
-points within a cell, consistently in sign — 9, 9 and 11 cells out of 13 — but
-that is far too small for a linear model to exploit on 150 touches per cell.
+**This section changed direction, and the way it changed is the finding.**
 
-The within-cell control matters and is why the pooled numbers are not quoted:
-cross-venue disagreement looked like a **+22.9 point** effect pooled (66.4% →
-89.3% across terciles) and collapses to +3.1pp within cells. The pooled version
-was measuring which instrument it was — venue gaps run 3.46 volatility units on
-spx500 against 0.05 on gold — not what the venues were doing.
+On 1,995 touches every candidate *lost* AUC and all four together lost it, but
+three of them moved the held rate within cells by two to three points with
+consistent sign — 9, 9 and 11 cells out of 13 — which this document called
+"suggestive" and recommended re-testing rather than dismissing.
+
+On 10,361 touches it is exactly the other way round. Each candidate now adds a
+few thousandths of AUC and all four together add **+0.007**, while the
+within-cell sign consistency has **collapsed to coin flips**: 14 of 36, 18 of
+36, 18 of 36, 20 of 36, with median changes of −2.1pp to +0.8pp.
+
+The consistency was noise. Thirteen cells with about 150 touches each was never
+enough to read a sign from, the caveat below said so, and the caveat was right.
+
+**The AUC gain is not established either.** It has not been tested for
+significance, and the directly comparable measurement is
+[cycles.md](cycles.md) §4: a gain of +0.0041 there had a 95% interval of
+−0.0008 to +0.0085 once resampled by instrument. +0.007 is the same order.
+Treat it as unmeasured, not as small-but-real.
+
+The within-cell control still matters and is why the pooled numbers are not
+quoted: cross-venue disagreement looked like a **+22.9 point** effect pooled
+and collapses within cells. The pooled version was measuring which instrument
+it was — venue gaps run 3.46 volatility units on spx500 against 0.05 on gold —
+not what the venues were doing.
 
 ### What that leaves
 
@@ -231,25 +248,36 @@ measured at a touch.
 
 Two caveats worth keeping, because they cut the other way:
 
-- **2,000 touches is small.** A three-point effect needs on the order of a
-  thousand per arm to establish; there are about 150 per cell. Consistency of
-  sign across 9-11 of 13 cells is suggestive on its own, and these candidates
-  deserve re-testing on production volume rather than dismissal.
+- ~~**2,000 touches is small.**~~ **Resolved.** They were re-tested on 10,361
+  touches across 36 cells, and the sign consistency vanished. This caveat was
+  correct to withhold judgement and the judgement is now in: the effect it was
+  protecting was not there.
 - **Only direction was tested.** Magnitude and risk are separate claims. A
   feature that says nothing about which way price goes may still say how far,
   and `expected_push` is what the reward-to-risk gate actually consumes.
 
 ## Recommendations, in order
 
-1. **Add the level's own same-side up-rate to `Features`.** One number, already
-   computed, already point-in-time safe, +0.024 AUC where history exists. It is
-   the only tested change with a positive result.
+1. ~~**Add the level's own same-side up-rate to `Features`.**~~ **Done, and it
+   is worth less than it looked.** `up_rate` was added on the strength of
+   +0.024 AUC where history exists. Re-measured, that is **+0.004**. It is not
+   worth removing — it is one number, already computed and point-in-time safe —
+   but it should not be cited as a positive result any more, and nothing should
+   be built on the assumption that the level's record carries weight.
 2. **Score every directional claim against "assume the level holds"** (§3), and
-   report AUC beside accuracy. `facto.Report` compares against two baselines
-   already; these are the two it is missing.
-3. **Do not add volume, session, momentum or headroom yet** — measured, and
-   none of them moves the ranking. Re-test on production volume before closing
-   the question.
+   report AUC beside accuracy. Still the most useful thing in this document.
+   The trivial rule beats the published edge at every gate except the highest,
+   where they now tie at 77.7%.
+3. **Stop re-testing the four candidates.** The reason to keep them open was
+   within-cell sign consistency on 13 cells; on 36 cells that is gone. They are
+   worth a few thousandths of AUC each, unestablished, and the question has had
+   two goes.
 4. **Treat order flow as a collection question.** It is the one thing not
-   derivable from what is already stored, and three separate documents have now
-   arrived at it from different directions.
+   derivable from what is already stored, and it is now the *only* open lead:
+   five documents have arrived at it from different directions, and a tenfold
+   sample moved none of the alternatives.
+5. **Note what a tenfold sample did and did not do.** It did not rescue any
+   weak feature, any generated feature, or any expensive model. What it changed
+   was two questions that were previously unanswerable for want of range —
+   [turns.md](turns.md) and, marginally, [cycles.md](cycles.md). More rows help
+   questions about *range*; they do not help questions about *content*.

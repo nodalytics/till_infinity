@@ -14,26 +14,37 @@ is judged on.
 
 ## It is well calibrated, and mistuned
 
+> **Re-measured on 2026-08-16** on 1.46M forecasts across 14 instruments, up
+> from 355k across six. The finding held and one detail flipped.
+
 | interval | forecast | n | ratio | correlation |
 |---|---|---|---|---|
-| 1m | model | 96,345 | 1.00 | 0.587 |
-| 1m | flat 20 | 96,345 | 1.00 | **0.588** |
-| 5m | model | 34,354 | 0.96 | 0.481 |
-| 5m | flat 20 | 34,354 | 1.00 | **0.527** |
-| 15m | model | 18,954 | 0.95 | 0.474 |
-| 15m | flat 20 | 18,954 | 0.99 | **0.481** |
-| 1h | model | 50,647 | 0.98 | 0.381 |
-| 1h | flat 20 | 50,647 | 1.00 | **0.397** |
-| 1d | model | 155,506 | 0.99 | 0.513 |
-| 1d | flat 20 | 155,506 | 1.00 | **0.534** |
+| 1m | model | 99,571 | 1.00 | 0.586 |
+| 1m | flat 20 | 99,571 | 1.00 | **0.587** |
+| 5m | model | 35,002 | 0.96 | 0.480 |
+| 5m | flat 20 | 35,002 | 1.00 | **0.525** |
+| 15m | model | 474,273 | 0.98 | 0.489 |
+| 15m | flat 20 | 474,273 | 1.00 | **0.492** |
+| 1h | model | 487,705 | 1.00 | 0.475 |
+| 1h | flat 20 | 487,705 | 1.00 | 0.475 |
+| 1d | **model** | 363,390 | 0.98 | **0.446** |
+| 1d | flat 20 | 363,390 | 1.00 | 0.443 |
 
-**The level is right**: a ratio of 0.95–1.00 means the estimate really is the
-size of a typical move, which is what it claims. Both beat naive persistence —
-using the last bar's move scores 0.27–0.35.
+**The level is right**: a ratio of 0.96–1.00 means the estimate really is the
+size of a typical move, which is what it claims. Both beat naive persistence by
+a wide margin — using the last bar's move scores 0.199 to 0.340, and the gap
+*widened* on more data.
 
-**But a flat twenty-bar mean beats it at every interval.** An exponentially
-weighted estimator that cannot beat an unweighted window is not earning its
-form, and the reason is the half-life.
+**A flat twenty-bar mean still matches or beats it at every interval except
+one.** The margins narrowed almost to nothing at 1m (0.587 vs 0.586) and 15m
+(0.492 vs 0.489), they tie exactly at 1h, and at **1d the model now wins**
+(0.446 vs 0.443) where it lost before.
+
+That is a weaker version of the original finding rather than a reversal. An
+exponentially weighted estimator that merely *ties* an unweighted window is
+still not earning its form — but "beaten everywhere" has become "beaten at 5m,
+level elsewhere", and the honest summary is that the two are hard to tell
+apart outside 5m, where the flat window is clearly better by 0.045.
 
 ## `HALF_LIFE = 60` is well past the optimum
 
@@ -69,6 +80,11 @@ h=7 for the same accuracy.
 Correlation is the metric that improved. Levels and touches are what the
 estimate is *for*, so the replay was run at each half-life:
 
+**Measured on the 2026-08-15 dataset and not re-run**, unlike the rest of this
+document — the counts below are from six instruments over days. They are kept
+because the conclusion drawn from them is "counts cannot answer this", which
+does not depend on the counts.
+
 | half_life | touches | levels | reject | chop | break | trap |
 |---|---|---|---|---|---|---|
 | 60 | 1,912 | 204 | 876 | 533 | 242 | 179 |
@@ -100,28 +116,29 @@ scored on the things a gate consumes.
 
 | half_life | calls | direction | holds | push | separation |
 |---|---|---|---|---|---|
-| **60** *(current)* | 1,899 | 69.2% | 76.3% | 0.58 | 27.1pp |
-| 20 | 1,900 | **70.2%** | 74.8% | **0.69** | 28.7pp |
-| 10 | 1,966 | 68.5% | 74.9% | 0.59 | 27.2pp |
-| 7 | 1,945 | 67.1% | 74.2% | 0.65 | **29.7pp** |
+| **60** *(current)* | 10,509 | 68.8% | 73.1% | 0.50 | **16.5pp** |
+| 20 | 10,708 | 69.5% | 73.3% | 0.51 | 13.7pp |
+| 10 | 11,052 | **69.6%** | 73.5% | 0.51 | 14.5pp |
+| 7 | 11,012 | **69.6%** | 73.5% | **0.52** | 16.2pp |
 
-**The forecasting optimum does not carry over.** h=7 and h=10 won the forecast
-clearly and monotonically; on direction they are *worse* than the current 60,
-and the ordering across the four is not monotone at all — which is what noise
-looks like rather than signal.
+**The forecasting optimum still does not carry over, and on more data the
+picture is cleaner rather than different.** The first reading found h=7 and
+h=10 *worse* than 60 on direction, in a non-monotone ordering that looked like
+noise. It was noise: on 10,509 calls the four are within **0.8 points** of each
+other, with h=7 and h=10 now fractionally ahead rather than behind.
 
-The spread across all four is **3.1 points on about 1,900 calls, against a
-standard error of 1.1**. The confidence intervals overlap heavily:
+The spread across all four was 3.1 points on 1,900 calls; it is 0.8 points on
+10,500. An effect that shrinks by four as the sample grows by five is an effect
+that was never there.
 
-    h=20   68.1% to 72.3%
-    h=60   67.1% to 71.3%
-    h=7    65.0% to 69.2%
+`separation` — what a gate actually consumes — still favours the current 60
+(16.5pp against 13.7 to 16.2), which is the one column that has not flattened.
 
-So **no half-life is measurably better for calls**, and the honest reading is
-that the volatility estimate is not the bottleneck. `holds` — the trivial rule
-from [features.md](features.md) — beats the model at every half-life, by 4 to 7
-points, which is the same result that section reached and is untouched by any
-of this.
+So **no half-life is measurably better for calls**, more firmly than before,
+and the honest reading is that the volatility estimate is not the bottleneck.
+`holds` — the trivial rule from [features.md](features.md) — beats the model at
+every half-life, by 3.8 to 4.3 points, which is the same result that section
+reached and is untouched by any of this.
 
 ### Why this was worth running anyway
 
@@ -142,7 +159,9 @@ happens to predict.
 
 1. **Leave `HALF_LIFE` at 60.** Not because it is right — the forecast says it
    is not — but because nothing that depends on it gets better when it changes,
-   and a change with no measured benefit is churn.
+   and a change with no measured benefit is churn. Re-measured on five times
+   the calls, the four half-lives are within 0.8 points on direction and 60
+   still leads on separation. This is now a well-tested "leave it alone".
 2. **Score the adaptive scheme on outcomes, not forecast loss.** See above; this
    is the correction to todo.md 6b that this measurement produced.
 3. **Revisit if the bottleneck moves.** The estimate being adequate is a
