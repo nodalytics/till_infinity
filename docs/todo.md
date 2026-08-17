@@ -177,6 +177,50 @@ What follows if the honest version is adopted:
   for *how far* while having nothing to say about *which way*, and nobody has
   measured that. It is now the most valuable open question in the project.
 
+## 0f. The `reward_to_risk` gate is losing money — remove it
+
+**Measured on 2026-08-17, in [magnitude.md](../research/magnitude.md).** Ahead
+of everything else in this file, because it is a live gate that is actively
+harmful rather than merely useless.
+
+`actionable` requires `reward_to_risk >= MIN_REWARD_TO_RISK`. On 11,113 calls:
+
+| | mean realised push |
+|---|---|
+| every call, no gate | **+0.496** |
+| gated at RR >= 1.0 *(live)* | **−0.268** |
+| gated at RR >= 2.0 | −0.614 |
+
+And end to end: the 9.9% of calls that pass every gate return **−0.151**, while
+everything the gate **rejects** returns **+0.569**. It selects a losing tenth
+out of a winning population.
+
+**The mechanism.** `reward_to_risk` is `|net_push| / risk_vol` and correlates
++0.571 with its numerator but **−0.359 with its denominator**. A high ratio is
+substantially a *small* `risk_vol` — a tight zone, so a close stop. Top-decile
+RR calls carry `risk_vol` 0.968 against 2.279 in the bottom decile and are
+**stopped out 44.8% of the time against 29.1%**.
+
+`Level.stop_for` already states the principle being violated: *"a stop inside
+it is a stop inside the noise — it gets hit by the level working."* The ratio
+rewards precisely that.
+
+**Order of operations matters here.** `expected_push` is also miscalibrated —
+it understates by **3x**, 1.023 against a realised 2.992 — so the ratio is
+understated by the same factor. Fixing the calibration *first* would triple the
+number of calls passing a gate that loses money. Remove the gate, then fix the
+number.
+
+**What to keep.** `expected_push` orders realised profit **7.5x** from bottom
+decile to top and beats its null on rank correlation (+0.072 against +0.029) —
+the first component in this project to beat the cheap alternative. It is
+currently used mainly as an input to the ratio doing the damage.
+
+**What to rebuild.** `risk_vol` has a measured correlation of **+0.006** with
+realised adverse excursion. It is placed by zone geometry and that geometry
+knows nothing about how far price goes against the trade. `excursion_vol` is
+already recorded on every touch, so the data to derive a real stop exists.
+
 ## 0z. Two things found on 2026-08-14, both ahead of everything below
 
 The two learning-path bugs from the same day are **fixed** — the silent
