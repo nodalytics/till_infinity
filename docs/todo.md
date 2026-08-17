@@ -64,88 +64,80 @@ someone measured rather than reasoned.
 - **The first-passage null was handed a MAD where it wanted a sigma**
   (`e5dec8d`), understating every reach probability by a quarter of a distance.
 
-## 0y. What the weekend could not answer — read these first on a weekday
+## ~~0y. What the weekend could not answer~~ — answered on Monday 2026-08-17
 
-Everything measured on 2026-08-15 was measured on a Saturday, with FX and the
-indices shut. Crypto was the only thing trading, so any number involving the
-other eleven instruments is describing a closed market rather than a quiet one.
-Several conclusions are provisional on that and are gathered here rather than
-left scattered.
+Everything in the original version of this item was measured on a Saturday with
+FX and the indices shut, so any number involving the other eleven instruments
+was describing a closed market rather than a quiet one. The recorder ran
+without a gap through to Monday and settled most of it.
 
-**0. There is a recorder running — read it first.** A cron entry on the
-instance appends one measurement every thirty minutes to
-`/home/ubuntu/rate-watch.log`, from `/home/ubuntu/rate-watch.sh`. It survives
-deploys (the script lives on the host and copies itself into the container) and
-logs "container down" rather than skipping, so a gap in the series reads as a
-gap rather than as quiet.
+**The weekday multiplier is 6.5x.** Outcomes per hour, from 88 uninterrupted
+windows:
 
-Each row is one thirty-minute window: total outcomes, the outcome mix, and the
-busiest cells as `feed/interval=count@per-1k-bars`. Two days of that is the
-sample every question below has been waiting for.
+| day | windows | outcomes | per hour |
+|---|---|---|---|
+| Sat 15 Aug | 24 | 377 | 31 |
+| Sun 16 Aug | 48 | 1,025 | 43 |
+| **Mon 17 Aug** | 16 | 1,602 | **200** |
 
-It already settled one thing. On Saturday afternoon `eth` was resolving five
-times as often as `btc` and none of the three structural explanations held —
-zone width, level density and a lagging volatility estimate were all ruled out
-by measurement. The first recorder row an hour later had **btc ahead of eth**.
-So the ratio is not structural, and any explanation built on that hour would
-have been a story.
+So the weekend readings were not a quiet market, they were a shut one, and
+every conclusion this item was protecting was right to wait.
 
-**Six hours of it now say: mild, persistent, and nothing like five.** Across
-twelve windows, 128 eth against 96 btc — a ratio of **1.3**, with eth ahead in
-eight windows and btc in three. The 5x was one hour of noise, and an hour is
-apparently enough to produce a factor of five in a rate this size. Worth
-remembering the next time a single reading looks structural. Still crypto-only
-and still a weekend; check it against a weekday.
+**The outcome mix is stable across sessions**, which is the more interesting
+half:
 
-**1. The outcome rate, properly this time.** Item 0 was answered but never
-re-measured on a comparable population: 887/hour was a weekday across fourteen
-instruments, and 40/hour was a Saturday across three. Measure a full weekday,
-on a box that has not restarted for hours, and compare *per bar within the same
-window* — not against all-time bars, which is a mistake this file made once
-already and which turned 11,037 per thousand into "582".
+| day | reject | trap | break | backcheck |
+|---|---|---|---|---|
+| Sat | 54% | 31% | 9% | 6% |
+| Sun | 61% | 24% | 6% | 10% |
+| Mon | 62% | 14% | 9% | 16% |
 
-**2. Whether the five FX pairs the gate declines deserve it.** `audusd`,
-`eurusd`, `usdcad`, `usdchf` and `nzdusd` at 1m fail `MIN_TICKS_PER_ZONE` on
-tick estimates taken while those markets were shut. `eurusd` produced four
-outcomes in twenty-four hours, which says nothing. If they behave on a weekday
-the floor is too high for FX and should come down.
+Roughly **38% of resolutions are not a bounce** on every one of the three days.
+The mix moves within that — Monday trades backcheck for trap — but the
+headline share does not, so the pipeline is not degenerate and was not
+degenerate on the weekend either.
 
-**3. Whether the tick estimates for FX are real at all.** `audusd 3m` and
-`eurusd 3m` report a tick of 0.00000-0.00001, which passes the gate for the
-right reason only if the estimate has been exercised. It has not been since
-Friday.
+**The decline gate corrected itself.** `audusd`, `eurusd`, `usdcad`, `usdchf`
+and `nzdusd` at 1m were declined on `MIN_TICKS_PER_ZONE` using tick estimates
+taken while those markets were shut. On Monday **only `sol/1m` is declined**,
+and four of the five are resolving at 1m: eurusd 40, usdchf 21, usdcad 20,
+nzdusd 13. Nothing had to be changed. The floor is not too high for FX; the
+estimate it reads was simply meaningless on a closed market and became
+meaningful when the market opened.
 
-**4. The instant-resolution residual.** Crypto sits at 2.5% post-fix against
-47.8% before, which is the headline result of the day. The session instruments
-read 82.8% — but on twenty-nine outcomes from shut markets, which is not a
-measurement. Re-read it when they trade.
+That also answers the tick-estimate question underneath it. The estimates were
+not real on Saturday and are now — the gate is the thing that tells you.
 
-**5. A trustworthy baseline for what a healthy rate even is.** `btc 1m` at 59
-per thousand bars and `btc 3m` at 179 are the closest thing to a control, and
-both were measured over a weekend too. Nothing here knows what the right number
-looks like, which makes every other rate hard to judge.
+### Still open: us100 is nearly silent and spx500 is not
 
-**~~6. The outcome mix.~~ — answered on 2026-08-15.** It was almost all
-rejects because the box kept restarting before a horizon could elapse. Six
-uninterrupted hours give 233 outcomes at 39/hour:
+The one thing Monday raised rather than settled. On the same windows,
+**spx500 resolved 355 outcomes and us100 five**, for two instruments that move
+together. Three explanations are ruled out by measurement:
 
-| outcome | share |
-|---|---|
-| reject | 62% |
-| trap | 23% |
-| break | 11% |
-| backcheck | 5% |
+- **Bar flow.** Both are collecting normally, newest bar 2 minutes old across
+  every venue and interval.
+- **Level count.** us100 holds 35 levels against spx500's 41.
+- **Venue floor.** us100/3m has four fresh venues and us100/1m five, both above
+  `MIN_VENUES = 3`. This was the leading hypothesis and it is wrong.
 
-**38% of resolutions are not a bounce**, which is what this item was asking.
-The model sees breaks and traps in quantity, so the pipeline is not degenerate
-— and traps at 23% are a large enough class to be worth their own accuracy
-number rather than being folded into "not a reject".
+What has *not* been ruled out is the simplest thing: the recorder's Monday rows
+stop at 07:00 UTC, which is before the US cash open, and 231 of spx500's 355
+came from its 3m cell. This may be nothing more than two instruments being
+looked at pre-market.
 
-Two caveats. This is crypto on a Saturday, so it says nothing about the eleven
-instruments that were shut, and the mix under a session open may differ. And a
-62% reject share sits close to the "assume the level holds" base rate that
-already beats the model ([features.md](../research/features.md) §3) — the mix
-being healthy is not evidence the *predictions* are.
+**Do not spend a day on this before the evidence is in.** The eth-versus-btc
+investigation on 2026-08-15 ruled out three structural explanations, found
+nothing, and the ratio flipped inside an hour — it was market, not structure,
+and the 5x turned out to be 1.3x over six hours. This has the same shape. Read
+the recorder across a full US session first.
+
+### What a healthy rate looks like — still not established
+
+The one question here with no answer. 200/hour on a weekday across fourteen
+instruments is a number, not a baseline, because nothing says what it should
+be. The closest thing to a control remains a per-cell rate: `spx500/3m` runs
+1,750 per thousand bars where `nzdusd/1m` runs 148, and neither is known to be
+right. This needs a definition before it needs a measurement.
 
 ## 0z. Two things found on 2026-08-14, both ahead of everything below
 
