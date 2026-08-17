@@ -1041,3 +1041,94 @@ def test_the_gate_starts_knowing_what_is_normal(tmp_path):
     # And an unreadable store is a cold gate, not a refusal to start.
     cold = service.Watcher(Bus(), settings=ag.Settings(news_db=tmp_path / "gone.db"))
     assert cold.headlines._rate == {}
+
+
+# ------------------------------------------------- the tool-call budget
+
+
+def test_the_budget_follows_how_much_was_asked():
+    """A constant here failed twice, at 14 calls and again at 37.
+
+    The model investigates what it is handed, so the calls it makes scale with
+    the instruments in the window, and that count keeps growing. A fixed limit
+    turns each new instrument into an outage — which is what happened on
+    2026-08-14 and again on 2026-08-17.
+    """
+    from till_infinity.agents.analyst import budget
+
+    settings = ag.Settings(tool_calls=48)
+    one = budget(1, settings)
+    few = budget(3, settings)
+    many = budget(10, settings)
+    assert one < few < many
+
+
+def test_a_full_window_gets_more_than_the_run_that_failed():
+    """Ten triggers produced 37 calls against a limit of 32."""
+    from till_infinity.agents.analyst import budget
+
+    assert budget(service.MAX_TRIGGERS, ag.Settings()) > 37
+
+
+def test_a_small_window_costs_less_than_the_old_constant():
+    """The ceiling rose to 48 and the expected cost still fell.
+
+    Most windows name one instrument, and one instrument now asks for 12 calls
+    where the flat limit allowed 32.
+    """
+    from till_infinity.agents.analyst import budget
+
+    assert budget(1, ag.Settings()) < 32
+
+
+def test_the_ceiling_still_binds():
+    """`AGENTS_TOOL_CALLS` has to keep bounding cost absolutely."""
+    from till_infinity.agents.analyst import budget
+
+    assert budget(1000, ag.Settings(tool_calls=20)) == 20
+
+
+def test_a_question_about_nothing_in_particular_keeps_the_flat_limit():
+    """`agents ask` passes no subjects and should behave as it always did."""
+    from till_infinity.agents.analyst import budget
+
+    assert budget(0, ag.Settings(tool_calls=48)) == 48
+
+
+# ------------------------------------------------- legible failures
+
+
+def test_a_failed_fallback_says_which_models_failed_and_why():
+    """`str()` on an ExceptionGroup is a sentence with no information in it.
+
+    Production logged "All models from FallbackModel failed (2 sub-exceptions)"
+    twenty-six times in a day while both models answered a direct call
+    perfectly. Finding out why meant reproducing it by hand on the box.
+    """
+    error = ExceptionGroup(
+        "All models from FallbackModel failed",
+        [ValueError("429 rate limit exceeded"), RuntimeError("model decommissioned")],
+    )
+    said = service.because(error)
+    assert "429 rate limit exceeded" in said
+    assert "model decommissioned" in said
+
+
+def test_the_cause_chain_is_followed():
+    """The useful line is usually the innermost one."""
+    try:
+        try:
+            raise ConnectionError("connection reset by peer")
+        except ConnectionError as inner:
+            raise RuntimeError("model call failed") from inner
+    except RuntimeError as outer:
+        said = service.because(outer)
+    assert "connection reset by peer" in said
+
+
+def test_an_ordinary_error_still_reads_plainly():
+    assert service.because(ValueError("no api key")) == "ValueError: no api key"
+
+
+def test_an_empty_message_falls_back_to_the_type():
+    assert "TimeoutError" in service.because(TimeoutError())

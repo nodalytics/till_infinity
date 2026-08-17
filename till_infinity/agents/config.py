@@ -42,16 +42,26 @@ DEFAULT_TIMEOUT = 120.0
 #: can appear in one window** — the analyst looks at the venues that moved, and
 #: a window that names five instruments needs more calls than one naming one.
 #:
-#: This sat at 12 while six instruments were tracked and was never revisited
-#: when that became fourteen. The first window the agents ever managed to
-#: close, on 2026-08-14, died on it: `tool_calls_limit of 12 (tool_calls=14)`,
-#: after a window naming usdcnh, nzdusd across three venues, and usdchf. The
-#: gate was never the problem and neither were the credentials.
+#: **A ceiling now, not the budget.** `analyst.budget` sizes each analysis by
+#: how many instruments it was asked about; this caps the result, so
+#: `AGENTS_TOOL_CALLS` still bounds cost absolutely.
 #:
-#: Raised to 32 rather than to 15, because the next instrument added should not
-#: cost another outage — the failure is a whole analysis discarded, not a
-#: truncated one. `AGENTS_TOOL_CALLS` tightens it where cost matters more.
-DEFAULT_TOOL_CALLS = 32
+#: The history is why it works this way. It sat at 12 while six instruments
+#: were tracked and was never revisited when that became fourteen; the first
+#: window the agents ever closed, on 2026-08-14, died on it —
+#: `tool_calls_limit of 12 (tool_calls=14)`. It was raised to 32 with the note
+#: that "the next instrument added should not cost another outage". On
+#: **2026-08-17 it died again at 37**, and 26 analyses were lost in a day.
+#:
+#: Twice is a pattern, and the comment beside `MAX_TRIGGERS` had already named
+#: it: *raising the limit each time is chasing rather than fixing.* So the
+#: budget scales with the work and this number only stops it running away.
+#:
+#: 48 covers `MAX_TRIGGERS` (10) at the per-subject rate with room to spare.
+#: **The expected cost falls even though the ceiling rises**, because a window
+#: naming one instrument now asks for 12 calls rather than 32 — and most
+#: windows name one.
+DEFAULT_TOOL_CALLS = 48
 
 
 def _float(name: str, fallback: float) -> float:

@@ -23,6 +23,15 @@ from .config import Settings
 from .models import Analysis, Run
 from .roles import Role, resolve
 
+#: Tool calls an analysis gets before it has looked at any particular
+#: instrument — orienting, and composing the answer.
+TOOL_CALLS_BASE = 8
+
+#: ...and per instrument it was asked about. Four is what the observed traffic
+#: needs: the window that failed at 37 calls carried ten triggers, so 8 + 4x10
+#: covers it with room, and a one-instrument window costs 12 rather than 32.
+TOOL_CALLS_PER_SUBJECT = 4
+
 log = get_logger(__name__)
 
 
@@ -107,14 +116,44 @@ def build(
     )
 
 
+def budget(subjects: int, settings: Settings) -> int:
+    """How many tool calls this question is allowed, given how much it asks.
+
+    A constant here has now failed twice, and both times for the same reason:
+    the model investigates what it is handed, so the calls it makes scale with
+    the number of instruments in the window, and that number keeps growing.
+    Twelve died at fourteen calls when the sixth instrument was added; thirty-two
+    died at **thirty-seven** on 2026-08-17 with fourteen instruments tracked.
+
+    The comment beside the constant already said what was wrong with the fix
+    applied to it — *"raising the limit each time is chasing rather than
+    fixing"* — and then it was raised, and the chase continued. So the budget
+    is a function of the work now: a fixed overhead for orienting and answering,
+    plus an allowance per subject.
+
+    `settings.tool_calls` stays as the **ceiling**, so `AGENTS_TOOL_CALLS` still
+    caps cost absolutely and a question about nothing in particular is bounded
+    the way it always was.
+    """
+    if subjects <= 0:
+        return settings.tool_calls
+    return min(TOOL_CALLS_BASE + TOOL_CALLS_PER_SUBJECT * subjects, settings.tool_calls)
+
+
 async def analyse(
     question: str,
     *,
     role: Role | str | None = None,
     settings: Settings | None = None,
     agent: Agent[tools.Deps, Analysis] | None = None,
+    subjects: int = 0,
 ) -> Run:
-    """Ask one analyst one question and get a validated answer back."""
+    """Ask one analyst one question and get a validated answer back.
+
+    `subjects` is how many distinct things the question asks about — triggers,
+    in the watcher's case. It sets the tool-call budget, because that is what
+    the budget is actually a function of. See `budget`.
+    """
     settings = settings or Settings.from_env()
     chosen = role if isinstance(role, Role) else resolve(role)
     agent = agent or build(chosen, settings)
@@ -130,7 +169,7 @@ async def analyse(
         deps=deps,
         # A tool-call ceiling, not a token one: the failure mode worth bounding
         # is a model that keeps re-reading the same table looking for a story.
-        usage_limits=UsageLimits(tool_calls_limit=settings.tool_calls),
+        usage_limits=UsageLimits(tool_calls_limit=budget(subjects, settings)),
     )
     # A property, not a method. Calling it raised "'RunUsage' object is not
     # callable" *after* a successful analysis, so a working run was thrown away

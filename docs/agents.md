@@ -125,6 +125,30 @@ Signals are now deduplicated per instrument, keeping the loudest — one
 instrument dislocating seen from several places is one situation. On the shape
 of the window that broke, 84 raw signals become 10 triggers.
 
+### The tool-call budget follows the work
+
+A flat `tool_calls_limit` failed twice for the same reason. It sat at 12 while
+six instruments were tracked, and the first window the agents ever closed died
+on `tool_calls_limit of 12 (tool_calls=14)`. It was raised to 32 with the note
+that the next instrument added should not cost another outage. On **2026-08-17
+it died again at 37**, and 26 analyses were lost in a day.
+
+The comment beside `MAX_TRIGGERS` had already named the mistake — *raising the
+limit each time is chasing rather than fixing* — so the budget now scales with
+what the question asks:
+
+    8 + 4 x (instruments in the window), capped at AGENTS_TOOL_CALLS
+
+| window | old limit | now |
+|---|---|---|
+| one instrument | 32 | **12** |
+| three | 32 | 20 |
+| ten (`MAX_TRIGGERS`) | 32 — *failed at 37* | **48** |
+
+**The expected cost falls even though the ceiling rises**, because most windows
+name one instrument. `AGENTS_TOOL_CALLS` still bounds cost absolutely; it is a
+ceiling on the computed budget rather than the budget itself.
+
 `MAX_TRIGGERS` (10) is the backstop for a window where genuinely many
 instruments move at once, which is the window most worth analysing and the worst
 one to hand over whole. Sorted loudest first so the cap drops the least of them,
@@ -241,6 +265,20 @@ uv run till-infinity notify listen --redis redis://localhost:6379 &
 
 An alert is sent once. A spread that stays wide for an hour is reported the
 first time and then suppressed for an hour — being told is only useful once.
+
+### When an analysis fails, the log says why
+
+`log.error("analysis failed: %s", exc)` was accurate and useless. A fallback
+model raises an `ExceptionGroup`, and `str()` on one of those is **"All models
+from FallbackModel failed (2 sub-exceptions)"** — a sentence containing no
+information at all.
+
+Production printed exactly that 26 times in a day. Both configured models
+answered a direct call perfectly, `agents ask` worked, and the keys were
+present; the cause was only found by reproducing the failure by hand on the
+box. `service.because()` now unwraps the group and the `__cause__` chain
+underneath it, because the useful line is usually the one furthest in — a rate
+limit, a token ceiling, a decommissioned model name.
 
 ## From code
 

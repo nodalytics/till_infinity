@@ -307,6 +307,30 @@ class Headlines:
         return _poisson_tail(recent, expected)
 
 
+def because(error: BaseException, depth: int = 0) -> str:
+    """Why it actually failed, rather than how many ways it did.
+
+    A fallback model raises an `ExceptionGroup`, and `str()` on one of those is
+    **"All models from FallbackModel failed (2 sub-exceptions)"** — a sentence
+    with no information in it. Production logged exactly that twenty-six times
+    in a day while both models answered a direct call perfectly, and finding
+    out why meant reproducing it by hand on the box.
+
+    So the group is unwrapped, and so is the `__cause__` chain underneath it,
+    because the useful line is usually the one furthest in: a rate limit, a
+    token ceiling, a decommissioned model name.
+    """
+    label = type(error).__name__
+    inner = getattr(error, "exceptions", ())
+    if inner and depth < 3:
+        return f"{label}[" + "; ".join(because(sub, depth + 1) for sub in inner) + "]"
+    text = str(error).strip() or label
+    cause = error.__cause__
+    if cause is not None and depth < 3:
+        return f"{label}: {text} <- {because(cause, depth + 1)}"
+    return f"{label}: {text}"
+
+
 def _poisson_tail(count: int, expected: float) -> float:
     """P(X >= count) for X ~ Poisson(expected).
 
@@ -834,10 +858,16 @@ class Watcher:
         log.info("%d message(s) -> %s", window.messages, "; ".join(t.reason for t in triggers))
         try:
             run = await analyse(
-                prompt_for(triggers, window.seen()), role=self.role, settings=self.settings
+                prompt_for(triggers, window.seen()),
+                role=self.role,
+                settings=self.settings,
+                # The budget follows the work: the model investigates what it
+                # is handed, so the calls it makes scale with the instruments
+                # in the window. See `analyst.budget`.
+                subjects=len(triggers),
             )
         except Exception as exc:  # a bad run must not end the watch
-            log.error("analysis failed: %s", exc)
+            log.error("analysis failed: %s", because(exc))
             return None
         context = {
             "triggers": [t.reason for t in triggers],
