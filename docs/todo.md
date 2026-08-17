@@ -139,6 +139,44 @@ be. The closest thing to a control remains a per-cell rate: `spx500/3m` runs
 1,750 per thousand bars where `nzdusd/1m` runs 148, and neither is known to be
 right. This needs a definition before it needs a measurement.
 
+## 0e. `edge` is measuring `side`, and the honest version is a coin flip
+
+**Measured on 2026-08-17, in [prior.md](../research/prior.md).** The most
+consequential finding so far and the one that needs a decision rather than more
+work.
+
+`Memory.neighbours()` filters by side, so the kNN prior is side-conditioned.
+`Memory.base_rate_for(feed, interval)` is not. So `edge` subtracts a side-blind
+baseline from a side-aware estimate, and most of what survives is *which side
+price arrived from* — which is why the published edge agrees with "assume the
+level holds" **89.8%** of the time.
+
+Give the baseline the same side conditioning and the remainder predicts
+direction at **51.8%, AUC 0.520**. The level's own record and its twelve
+nearest neighbours, together, are a coin flip.
+
+Meanwhile a per-(feed, interval, side) base rate — counting, nothing else —
+ranks **best of everything at AUC 0.741**, ahead of the composite that costs a
+kNN scan over every stored touch.
+
+**The decision this forces.** Redefining `edge` honestly is four lines and
+would nearly silence the channel: at `MIN_EDGE = 0.10` the honest edge passes
+43% of calls at 51.2% direction. A system that correctly says nothing is not
+obviously better than one that says something slightly wrong, and which of
+those this project wants is a judgement about the product rather than a
+measurement. **Make it deliberately.**
+
+What follows if the honest version is adopted:
+
+- `Memory`, `Features.distance` and the kNN can be deleted, on this plus
+  [similarity.md](../research/similarity.md) finding the distance orders
+  neighbours no better than random over 13.5M pairs.
+- The published directional estimate becomes the side-conditioned base rate.
+- **Magnitude and risk are untouched and untested.** `expected_push`,
+  `risk_vol` and `reward_to_risk` are separate claims. The system may be useful
+  for *how far* while having nothing to say about *which way*, and nobody has
+  measured that. It is now the most valuable open question in the project.
+
 ## 0z. Two things found on 2026-08-14, both ahead of everything below
 
 The two learning-path bugs from the same day are **fixed** — the silent

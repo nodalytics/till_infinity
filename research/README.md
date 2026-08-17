@@ -13,6 +13,7 @@ rather than believed.
 | [models.md](models.md) | **measured** — would trees, forests, cosine similarity or an MLP help; a 1KB logistic regression beats all of them, and five times the data did not change that |
 | [features.md](features.md) | **measured** — `side` alone matches all nine features together, generated features make it worse, and the trivial "level holds" rule still beats our directional call everywhere but the top decile |
 | [volatility.md](volatility.md) | **measured** — the estimate is well calibrated and its half-life is well past the optimum; a flat 20-bar mean beats it at every interval |
+| [prior.md](prior.md) | **measured** — what `edge` is actually measuring; subtract a side-aware baseline and the level's record plus its neighbours predict at 51.8%, AUC 0.520 |
 | [turns.md](turns.md) | **measured** — can a major turn be seen coming; yes, weakly. AUC 0.595 purged over 310 turns, and `vol` alone carries it |
 | [cycles.md](cycles.md) | **measured** — does a level's place in the larger move matter; one cell separates by nothing at all, and the AUC gain's interval includes zero |
 | [bandits.md](bandits.md) | design note — where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
@@ -36,6 +37,7 @@ python research/harness/holds.py      # the edge against "assume the level holds
 python research/harness/vol.py        # does the volatility estimate predict the next move
 python research/harness/cycles.py     # does cyclical context change what a touch means
 python research/harness/turns.py      # can a major turn be seen before it happens
+python research/harness/prior.py      # what edge measures, and whether the kNN earns its place
 ```
 
 `touches.py` writes `touches.pkl` beside itself and the others read it, so the
