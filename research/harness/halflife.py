@@ -49,8 +49,13 @@ def bars():
         feed = owner.get((venue.upper(), ticker.upper()))
         if feed:
             yield {
-                "feed": feed, "venue": venue, "interval": interval, "time": int(ts),
-                "high": float(high), "low": float(low), "close": float(close),
+                "feed": feed,
+                "venue": venue,
+                "interval": interval,
+                "time": int(ts),
+                "high": float(high),
+                "low": float(low),
+                "close": float(close),
             }
 
 
@@ -66,9 +71,7 @@ def collect(half_life: float) -> list[dict]:
             touch = engine.tracker.open_touch(call.level)
             if touch is None or touch.started != call.time:
                 continue
-            open_calls[
-                (call.feed, call.interval, round(touch.level_price, 8), touch.started)
-            ] = {
+            open_calls[(call.feed, call.interval, round(touch.level_price, 8), touch.started)] = {
                 "edge": call.inference.edge,
                 "above": touch.features.side.name == "ABOVE",
             }
@@ -91,15 +94,16 @@ def score(rows, lo=0.0):
     right = sum(1 for r in decided if (r["edge"] > 0) == (r["push_vol"] > 0))
     holds = sum(1 for r in kept if r["above"] == (r["push_vol"] > 0))
     push = [
-        abs(r["push_vol"]) * (1 if (r["edge"] > 0) == (r["push_vol"] > 0) else -1)
-        for r in decided
+        abs(r["push_vol"]) * (1 if (r["edge"] > 0) == (r["push_vol"] > 0) else -1) for r in decided
     ]
     return right / len(decided), holds / len(kept), sum(push) / len(push), len(decided)
 
 
 def main() -> None:
-    print("%-10s %7s %10s %9s %8s %11s" % (
-        "half_life", "calls", "direction", "holds", "push", "separation"))
+    print(
+        "%-10s %7s %10s %9s %8s %11s"
+        % ("half_life", "calls", "direction", "holds", "push", "separation")
+    )
     print("-" * 60)
     for half in (60.0, 20.0, 10.0, 7.0):
         rows = collect(half)
@@ -107,8 +111,10 @@ def main() -> None:
         high, _, _, _ = score(rows, 0.20)
         low_rows = [r for r in rows if abs(r["edge"]) < 0.11]
         low = score(low_rows)[0] if low_rows else 0.0
-        print("%-10g %7d %9.1f%% %8.1f%% %8.2f %10.1fpp" % (
-            half, n, 100 * direction, 100 * holds, push, 100 * (high - low)))
+        print(
+            "%-10g %7d %9.1f%% %8.1f%% %8.2f %10.1fpp"
+            % (half, n, 100 * direction, 100 * holds, push, 100 * (high - low))
+        )
     print("\n`holds` is 'assume the level holds' on the same rows. The model has")
     print("never beaten it (features.md 3); the question here is whether the gap")
     print("narrows. `separation` is what a gate consumes.")

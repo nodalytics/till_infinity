@@ -167,8 +167,10 @@ for cell, chunk in sorted(cells.items(), key=lambda kv: -len(kv[1])):
     lo_held = sum(1 for r in lo if (r["above"] > 0.5) == r["_up"]) / len(lo)
     hi_held = sum(1 for r in hi if (r["above"] > 0.5) == r["_up"]) / len(hi)
     deltas.append(hi_held - lo_held)
-    print(f"  {cell[0] + ' ' + cell[1]:<16} {len(chunk):>5} {lo_held:>13.1%}"
-          f" {hi_held:>16.1%} {100 * (hi_held - lo_held):>+6.1f}pp")
+    print(
+        f"  {cell[0] + ' ' + cell[1]:<16} {len(chunk):>5} {lo_held:>13.1%}"
+        f" {hi_held:>16.1%} {100 * (hi_held - lo_held):>+6.1f}pp"
+    )
 if deltas:
     print(f"\n  cells where disagreement helped: {sum(1 for d in deltas if d > 0)}/{len(deltas)}")
     print(f"  median change: {100 * sorted(deltas)[len(deltas) // 2]:+.1f}pp")

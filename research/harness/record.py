@@ -78,9 +78,7 @@ for bar in _bars():
                 "record_push_mean": seen["push_mean"],
                 # Same-side agreement: did this side usually push the way it is
                 # about to be asked to again.
-                "record_agrees": (
-                    ((seen["ups"] / n) > 0.5) == above if n else False
-                ) * 1.0,
+                "record_agrees": (((seen["ups"] / n) > 0.5) == above if n else False) * 1.0,
                 "_up": touch.push_vol > 0,
             }
         )
@@ -109,8 +107,12 @@ def score(keys, subset=None):
 
 
 RECORD = (
-    "record_touches", "record_up_rate", "record_hold_rate",
-    "record_trap_rate", "record_push_mean", "record_agrees",
+    "record_touches",
+    "record_up_rate",
+    "record_hold_rate",
+    "record_trap_rate",
+    "record_push_mean",
+    "record_agrees",
 )
 
 print(f"{'features':<40} {'n':>6} {'right':>8} {'AUC':>7}")

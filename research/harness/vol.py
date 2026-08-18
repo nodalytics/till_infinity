@@ -73,15 +73,15 @@ def main() -> None:
             if vol.warm and recent:
                 per_interval[interval]["model"].append((vol.bps, realised))
                 per_interval[interval]["last"].append((recent[-1], realised))
-                per_interval[interval]["rolling20"].append(
-                    (statistics.fmean(recent), realised)
-                )
+                per_interval[interval]["rolling20"].append((statistics.fmean(recent), realised))
             recent.append(realised)
             vol.update(close)
             previous = close
 
-    print("%-6s %-11s %7s %9s %9s %8s %8s" % (
-        "iv", "forecast", "n", "mean pred", "mean real", "ratio", "corr"))
+    print(
+        "%-6s %-11s %7s %9s %9s %8s %8s"
+        % ("iv", "forecast", "n", "mean pred", "mean real", "ratio", "corr")
+    )
     print("-" * 66)
     for interval in INTERVALS:
         rows = per_interval.get(interval)
@@ -98,8 +98,10 @@ def main() -> None:
                 corr = statistics.correlation(pred, real)
             except Exception:
                 corr = float("nan")
-            print("%-6s %-11s %7d %9.3f %9.3f %8.2f %8.3f" % (
-                interval, name, len(pairs), mp, mr, mr / mp if mp else 0, corr))
+            print(
+                "%-6s %-11s %7d %9.3f %9.3f %8.2f %8.3f"
+                % (interval, name, len(pairs), mp, mr, mr / mp if mp else 0, corr)
+            )
         print()
 
     print("ratio 1.00 means the estimate is the size of a typical move.")

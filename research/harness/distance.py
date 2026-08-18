@@ -22,8 +22,16 @@ from till_infinity.structures.engine import Engine
 
 K = 12
 WARM = 150
-BASE = ("approach_vol", "depth_vol", "strength", "run_vol",
-        "experience", "pivot", "backcheck", "regime")
+BASE = (
+    "approach_vol",
+    "depth_vol",
+    "strength",
+    "run_vol",
+    "experience",
+    "pivot",
+    "backcheck",
+    "regime",
+)
 
 engine = Engine(intervals=INTERVALS)
 rows = []
@@ -62,9 +70,7 @@ def run(with_rate, weight=1.0):
     for i, row in enumerate(rows):
         if i < WARM:
             continue
-        window = [
-            r for r in rows[max(0, i - 3000) : i] if r["above"] == row["above"]
-        ]
+        window = [r for r in rows[max(0, i - 3000) : i] if r["above"] == row["above"]]
         if len(window) < K * 3:
             continue
         near = sorted(window, key=lambda r: dist(row, r, with_rate, weight))[:K]

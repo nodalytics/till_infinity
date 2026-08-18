@@ -262,6 +262,54 @@ The survival table is also the cleanest statement of the bug:
 
 1m keeps half and every coarse timeframe keeps almost nothing.
 
+## 0h. Pivots are inert, and they are the control the project needs most
+
+**Found on 2026-08-18** while asking what a model trained on pivots could do.
+The answer is nothing, because pivot levels have never opened a single touch.
+
+`vol.of(feed, "daily")` returns **warm=False, bps=0.0500**. The volatility book
+holds series for `1m`, `3m`, `5m`, `15m`, `1h`, `4h`, `1d` and `1w` — the bar
+intervals. Pivots live under their **session** name, `daily` and `weekly`, and
+there is no series behind either. Three consequences, in order:
+
+- 0.0500 is the documented **floor** from [levels.md](levels.md) §4, which
+  exists so a quiet instrument does not get a near-zero denominator. Here it
+  makes a series that has never been updated look like a real but tiny one
+  rather than an obvious error.
+- A zone built on it is **0.0bps wide**, so `dedupe` merges every pivot for an
+  instrument into one level. Production holds twelve daily levels whose origin
+  reads `pivot:PC+pivot:PH+pivot:PL+pivot:PP+pivot:R1+pivot:R2+pivot:R3+pivot:S1+pivot:S2+pivot:S3`
+  — all ten prices collapsed into a single point.
+- `check` returns early on `if not vol.warm`, so they are never tested against
+  price at all. **Every pivot level in production has 0.0 touches.**
+
+571 pip levels against 14 pivot levels, and 514 of the pip levels have been
+touched. The comparison the module was written for has never been possible.
+
+**Why this matters more than a dormant feature.** `pivots.py` states its own
+purpose:
+
+> **No look-ahead, at all.** A pivot for today is fully determined by
+> yesterday... That makes them a clean control: **if PIP levels do not
+> outperform pivots, the swing detection is not earning its complexity.**
+
+That control has never run, and this week it would have been worth a great
+deal. [prior.md](../research/prior.md) found the kNN prior contributes nothing
+and [similarity.md](../research/similarity.md) found the distance metric orders
+neighbours no better than random — so the cold-start mechanism is dead. **A
+pivot is on the chart before the first touch**, which is the same problem
+solved without borrowing anything.
+
+**The fix is small.** Either give the session names a volatility series, or have
+a pivot read the volatility of the bar interval it is derived from — `1d` for
+daily, `1w` for weekly, both of which exist and are warm (`btc/1d` reads 136.8
+bps against the floor's 0.05).
+
+**Then run the control**, and target magnitude rather than direction:
+[magnitude.md](../research/magnitude.md) found `expected_push` is the only
+component in this project to beat its null, ordering realised profit 7.5x from
+bottom decile to top, while every directional claim reduces to `side`.
+
 ## 0e. `edge` is measuring `side`, and the honest version is a coin flip
 
 **Measured on 2026-08-17, in [prior.md](../research/prior.md).** The most
