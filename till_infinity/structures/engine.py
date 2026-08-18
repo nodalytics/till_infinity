@@ -913,7 +913,9 @@ class Engine:
         # long closed, so this leaves the replay alone.
         observed = min(when + lv.SECONDS.get(interval, 0.0), time.time())
         for other in self.intervals_for(feed):
-            calls += self.check(feed, other, float(close), observed, low, high)
+            # `when` is the bar's *open*, which is what says whether a touch
+            # lived through the range this bar is about to hand over.
+            calls += self.check(feed, other, float(close), observed, low, high, since=when)
         return calls
 
     def observe_quote(self, payload: dict) -> list[Call]:
@@ -1092,6 +1094,7 @@ class Engine:
         when: float,
         low: float | None = None,
         high: float | None = None,
+        since: float | None = None,
     ) -> list[Call]:
         """Advance every open interaction, and open one where price has arrived.
 
@@ -1100,6 +1103,18 @@ class Engine:
         from. Without them the extreme and the origin are the same number, and
         the distinction between where liquidity was taken and where the level
         is drawn disappears.
+
+        `since` is when the bar supplying them **opened**, and it exists to stop
+        a range being applied to a touch that did not live through it. A quote
+        opens a touch part way through a bar; the bar then arrives carrying a
+        low and a high that describe the *whole* period, including the minutes
+        before that touch existed. Applied to it, the touch resolves instantly
+        on movement that predates it — recording a large push, a duration of
+        zero, and `run_vol` of exactly 0.00 because no leg in was ever seen.
+
+        That was **33.6% of production outcomes**, and 41.9% of 3m ones. See
+        todo 0g. A touch that began inside this bar therefore sees only the
+        close, and picks the wick up on the next bar it genuinely lives through.
         """
         vol = self.vol.of(feed, interval)
         if not vol.warm:
@@ -1108,7 +1123,17 @@ class Engine:
         for level in self._levels.get((feed, interval), []):
             open_touch = self.tracker.open_touch(level)
             if open_touch is not None:
-                done = self.tracker.update(level, price, vol, when, low, high)
+                # The wick belongs to this touch only if the touch was already
+                # open when the bar carrying it opened.
+                within = since is not None and open_touch.started >= since
+                done = self.tracker.update(
+                    level,
+                    price,
+                    vol,
+                    when,
+                    None if within else low,
+                    None if within else high,
+                )
                 if done is not None:
                     # The origin, not the extreme. The extreme is a wick —
                     # liquidity taken a fraction beyond the level at a price

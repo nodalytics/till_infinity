@@ -181,12 +181,35 @@ resolution recorded before its own touch began is a timestamp bug, and a
 separate one from the instant resolutions since it concentrates on the opposite
 interval.
 
-**Where to look first.** `Split observe_bar: form from own bars, touch from the
-finest` was done deliberately — a 1h level should notice a touch on 1m data.
-The open question is whether the *resolution* threshold and the volatility it
-is denominated in also came from the finest series rather than the level's own.
-If so, every coarse level is being resolved against a denominator too small by
-the ratio of the timeframes, which would produce exactly this table.
+**Found and fixed on 2026-08-18 — and the first hypothesis was wrong.** The
+suspicion recorded here was that the resolution threshold or its volatility
+denominator came from the finest series rather than the level's own. It does
+not: `check` reads `self.vol.of(feed, interval)`, the level's own.
+
+The actual mechanism is the **bar wick**. `observe_bar` hands `low` and `high`
+to `check`, which passes them to `Tracker.update` for whatever touch is open.
+A quote opens a touch part way through a bar; the bar then arrives carrying a
+range describing the *whole* period, including the seconds before that touch
+existed. Applied to it, the touch resolves immediately on movement that
+predates it.
+
+The journal says exactly that. Across all 8,897 zero-duration outcomes,
+`run_vol` is **0.00 at the median, at p90 and at the maximum** — not one of
+them ever recorded a leg into the level — while `push_vol` reads a median of
+2.88 volatility units. A large move, no approach, no time.
+
+The fix is one condition: a touch that began at or after the bar opened sees
+only the close, and picks the wick up on the next bar it genuinely lives
+through. `check` takes a `since` argument for it, which is the bar's open.
+
+Coarse intervals were worse because their bars cover more time, so more touches
+open inside one. 1m was least affected and is the only interval whose numbers
+looked sane, which is what made this legible at all.
+
+**Not yet verified in production.** The fix is measured only by a unit test;
+the journal has to be re-read after a day of running to confirm the zero
+durations are gone. The negative durations are a *separate* bug — they
+concentrate on 1m, the opposite interval — and are untouched by this.
 
 **What it does not touch.** Every research document replays bars only, so the
 findings in [prior.md](../research/prior.md),

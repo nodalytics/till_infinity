@@ -941,3 +941,63 @@ def test_every_persisted_class_restores_a_field_it_predates():
                 assert value == missing.default, f"{name}.{missing.name} restored wrong"
 
     assert checked > 20, "the walk found almost nothing, so it is not walking"
+
+
+def test_a_bars_wick_cannot_resolve_a_touch_born_inside_it():
+    """The range describes the whole bar, including before the touch existed.
+
+    A quote opens a touch part way through a bar. The bar then arrives carrying
+    a low and a high covering the *entire* period. Applied to that touch, it
+    resolves instantly on movement that predates it — a large push, a duration
+    of zero, and `run_vol` of exactly 0.00 because no leg in was ever observed.
+
+    That was 33.6% of production outcomes and 41.9% of 3m ones (todo 0g), and
+    it is invisible in a bars-only replay: without quotes, nothing opens a touch
+    part way through a bar.
+    """
+    from till_infinity.structures import engine as eng
+
+    handed: list[tuple] = []
+
+    class Touching:
+        """Stands in for one open touch, recording what it is offered."""
+
+        def __init__(self, started: float) -> None:
+            self.started = started
+
+        def open_touch(self, level):
+            return self
+
+        def update(self, level, price, vol, when, low=None, high=None):
+            handed.append((low, high))
+
+        def expire(self, when):
+            return []
+
+    machine = eng.Engine(intervals=("1m",))
+    volatility = machine.vol.of("x", "1m")
+    for i in range(200):
+        volatility.update(100.0 + (i % 5) * 0.1)
+    assert volatility.warm, "the check returns early on a cold estimate"
+
+    from till_infinity.structures.levels import Kalman, Level
+
+    level = Level(feed="x", interval="1m", filter=Kalman(mean=100.0, variance=0.01))
+    machine._levels[("x", "1m")] = [level]
+    machine.tracker = Touching(started=800.0)
+
+    # Open since 800. This bar opened at 900 and closed at 960, so the touch
+    # was already live for every price in the range it is carrying.
+    machine.check("x", "1m", 100.0, 960.0, low=99.0, high=101.0, since=900.0)
+
+    # Now a touch that opened at 1000, and the bar that opened at 1000 with it.
+    # Its low and high cover the seconds before this touch existed.
+    machine.tracker = Touching(started=1_000.0)
+    machine.check("x", "1m", 100.0, 1_060.0, low=99.0, high=101.0, since=1_000.0)
+    # And a caller with no bar behind it, which is every quote.
+    machine.check("x", "1m", 100.0, 1_120.0)
+
+    assert len(handed) == 3, "update was not reached on every check"
+    assert handed[0] == (99.0, 101.0), "a touch older than the bar keeps its wick"
+    assert handed[1] == (None, None), "a touch born inside the bar must not see its range"
+    assert handed[2] == (None, None), "a quote carries no range to begin with"
