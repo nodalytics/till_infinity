@@ -488,3 +488,67 @@ def test_auto_chats_makes_telegram_ready_without_a_chat_list():
     settings = Settings(telegram_token="t", telegram_auto_chats=True)
     assert settings.telegram_ready
     assert Settings(telegram_token="t").telegram_ready is False
+
+
+# ------------------------------------------------------- when it happened
+
+
+def test_an_alert_says_when():
+    """An alert read an hour later should say what it was about, and when."""
+    note = Notification(title="btc level", at=1787059920.0)
+    said = note.as_text()
+    assert "2026-08-18" in said
+    assert "13:32" in said
+    assert "UTC" in said
+
+
+def test_the_time_is_utc_and_says_so():
+    """Every other time in this project is UTC — bars, touches, the journal.
+
+    An alert rendering local time would be the one place they disagreed, read
+    by somebody comparing it against a chart.
+    """
+    assert Notification(title="x", at=1787059920.0).when.endswith("UTC")
+
+
+def test_the_time_comes_last():
+    """Context, not content: the reader wants the instrument before the clock."""
+    note = Notification(
+        title="btc level", body="down from below", fields={"probability": "89%"}, at=1787059920.0
+    )
+    lines = note.as_text().splitlines()
+    assert lines[-1] == note.when
+    assert "btc level" in lines[0]
+
+
+def test_a_notification_stamps_itself():
+    """A caller that says nothing still gets a timestamp."""
+    import time as _time
+
+    before = _time.time()
+    note = Notification(title="x")
+    assert before <= note.at <= _time.time()
+
+
+def test_an_event_time_beats_the_delivery_time():
+    """A delivery delayed by a retry must not be stamped with the retry."""
+    note = Notification(title="x", at=1787059920.0)
+    assert note.at == 1787059920.0
+    assert "2026-08-18" in note.when
+
+
+def test_no_timestamp_renders_nothing():
+    note = Notification(title="x", at=0.0)
+    assert note.when == ""
+    assert note.as_text().splitlines() == [note.mark + " x"]
+
+
+def test_discord_gets_a_machine_readable_stamp():
+    """Discord renders the time itself, in the reader's own timezone.
+
+    So the embed carries ISO-8601 rather than the string `as_text` builds for
+    Telegram — the same instant, in the form each destination can use.
+    """
+    payload = DiscordNotifier(FULL, HOOK).payload(Notification(title="x", at=1787059920.0))
+    stamp = payload["embeds"][0]["timestamp"]
+    assert stamp.startswith("2026-08-18T13:32")

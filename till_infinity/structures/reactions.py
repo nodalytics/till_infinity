@@ -102,23 +102,36 @@ PRIOR_WEIGHT = 4.0
 #: outcome, and inventing one is worse than losing it.
 GAP_FACTOR = 4.0
 
-#: The least a call may be worth against what being wrong costs.
+#: **No longer a gate.** Kept as a reported number, because a ratio of expected
+#: move to stop distance is worth a human seeing, and removed from `actionable`
+#: on 2026-08-17 because it was measured to invert the sign of the return.
 #:
-#: One, and that is a break-even rather than a preference: below it the move
-#: being predicted is smaller than the distance to the stop, so the trade loses
-#: more when it is wrong than it makes when it is right — before any question
-#: of how often it is right. It is the one number in `actionable` that is not
-#: somebody's taste, which is why it is here rather than at 1.5 or 2.
+#: The argument for it was clean and wrong. Below one, the move being predicted
+#: is smaller than the distance to the stop, so the trade loses more when wrong
+#: than it makes when right — break-even, not taste. That reasoning holds if
+#: the two quantities are what they claim to be, and
+#: [magnitude.md](../../research/magnitude.md) measured that they are not:
 #:
-#: **A ratio on purpose.** `risk_vol` is in each timeframe's own volatility
-#: units, so it must never be compared across them — 0.90 is $0.77 on 15m gold
-#: and $24.76 on the daily. The ratio divides those units out and is the only
-#: part of this geometry that means the same thing on the 1m and the 1w.
+#: | RR at least | n | mean realised push |
+#: |---|---|---|
+#: | 0.0 | 11,113 | **+0.496** |
+#: | 1.0 | 1,560 | **-0.268** |
+#: | 2.0 | 298 | -0.614 |
 #:
-#: Raising it is a policy about capital rather than a property of the model, and
-#: belongs to whoever owns the capital. Anything above one is a preference for
-#: fewer, better calls, and should be argued for with outcomes rather than set
-#: because the number sounds professional.
+#: End to end, the 9.9% of calls passing every gate returned **-0.151** while
+#: everything the gate rejected returned **+0.569**.
+#:
+#: **The mechanism.** The ratio correlates +0.571 with its numerator and -0.359
+#: with its denominator, so a high ratio is substantially a *small* `risk_vol`
+#: — a tight zone, so a close stop. Top-decile calls are stopped out 44.8% of
+#: the time against 29.1% in the bottom. `Level.stop_for` states the principle
+#: the ratio violates: a stop inside the zone "is a stop inside the noise — it
+#: gets hit by the level working."
+#:
+#: There is no threshold that fixes this, because the quantity is
+#: anti-correlated with what it claims to measure. A stop derived from realised
+#: adverse excursion — `Touch.excursion_vol`, already recorded — could make the
+#: ratio mean something. Until then it is a number, not a decision.
 MIN_REWARD_TO_RISK = 1.0
 
 #: The least separation from the base rate a call may claim.
@@ -526,19 +539,23 @@ class Inference(Restorable):
 
     @property
     def actionable(self) -> bool:
-        """Enough evidence, enough separation, enough size, and worth the risk.
+        """Enough evidence, enough separation, enough size, pointing one way.
 
         Every one of them, because any single one alone is how a backtest lies:
         a big edge on four touches is noise, a large sample at the base rate is
-        nothing, a confident call worth 0.1 volatility units does not pay for
-        itself, and a call worth less than the stop it sits behind loses more
-        when it is wrong than it makes when it is right.
+        nothing, and a confident call worth 0.1 volatility units does not pay
+        for itself.
 
-        The last of those was measured and ignored for as long as it existed.
-        `reward_to_risk` was identically zero — `risk_vol` was never computed —
-        so the gate could not have been written before it was fixed, and it is
-        worth knowing that it changed what qualifies rather than merely
-        restating what already did.
+        **A fifth gate was removed on 2026-08-17.** `reward_to_risk >=
+        MIN_REWARD_TO_RISK` read as the most principled of the set — a call
+        worth less than the stop behind it loses more when wrong than it makes
+        when right — and was measured to invert the sign of the expected
+        return. See `MIN_REWARD_TO_RISK` for the numbers.
+
+        That is worth remembering about the remaining four. They are gates
+        because a measurement says they select better calls, not because the
+        reasoning behind them sounds right. The removed one had the best
+        reasoning of any of them.
         """
         return (
             self.own_touches + self.neighbours >= 8
@@ -557,10 +574,6 @@ class Inference(Restorable):
             # shape, but it is not a call — whichever one you act on, the other
             # says you are wrong.
             and not self.mixed
-            # And it has to be worth more than it risks. See MIN_REWARD_TO_RISK:
-            # a ratio rather than a size, because a ratio is the only part of
-            # this that means the same thing on the 1m and the 1w.
-            and self.reward_to_risk >= MIN_REWARD_TO_RISK
         )
 
     def to_dict(self) -> dict:

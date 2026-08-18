@@ -9,7 +9,9 @@ transport.
 from __future__ import annotations
 
 import html
+import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import IntEnum
 from typing import Any
 
@@ -143,6 +145,11 @@ class Notification:
     url: str = ""
     fields: dict[str, str] = field(default_factory=dict)
     source: str = ""
+    #: When this is about, in epoch seconds. Defaults to the moment the
+    #: notification is built, which for a live alert is within a second of the
+    #: event; a caller that knows the event's own time should pass it, because
+    #: a delivery delayed by a retry would otherwise be stamped with the retry.
+    at: float = field(default_factory=time.time)
 
     @property
     def colour(self) -> int:
@@ -165,6 +172,19 @@ class Notification:
         symbol = INSTRUMENTS.get(str(self.fields.get("instrument", "")).lower(), "")
         return f"{icon} {symbol}" if symbol else icon
 
+    @property
+    def when(self) -> str:
+        """The timestamp as it is shown, or empty if there is none.
+
+        **UTC, and it says so.** Every other time in this project is UTC —
+        bars, touches, the journal — and an alert that quietly rendered local
+        time would be the one place they disagreed, read by someone comparing
+        it against a chart.
+        """
+        if not self.at:
+            return ""
+        return datetime.fromtimestamp(self.at, UTC).strftime("%Y-%m-%d %H:%M UTC")
+
     def as_text(self, *, escape: bool = False, limit: int | None = None) -> str:
         """Flatten to plain text — the shape Telegram and logs both want."""
         esc = html.escape if escape else (lambda text: text)
@@ -177,6 +197,10 @@ class Notification:
             lines.append(f"{esc(key)}: {esc(str(value))}")
         if self.url:
             lines.append(esc(self.url))
+        # Last, because it is context rather than content: an alert is read
+        # top-down and the reader wants the instrument before the clock.
+        if self.when:
+            lines.append(esc(self.when))
         text = "\n".join(lines)
         return truncate(text, limit) if limit else text
 
@@ -188,6 +212,7 @@ class Notification:
             "url": self.url,
             "fields": dict(self.fields),
             "source": self.source,
+            "at": self.at,
         }
 
 

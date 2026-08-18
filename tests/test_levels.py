@@ -1717,11 +1717,17 @@ def test_a_call_knows_what_being_wrong_costs():
     assert found.reward_to_risk == pytest.approx(abs(found.net_push) / found.risk_vol)
 
 
-def test_a_call_worth_less_than_its_stop_is_not_actionable():
-    """Break-even, not taste: below 1.0 it loses more when wrong than it makes.
+def test_reward_to_risk_no_longer_decides_anything():
+    """It was a gate until 2026-08-17, and it was losing money.
 
-    And before `risk_vol` was computed this gate could not have existed —
-    `reward_to_risk` was identically zero, so every call would have failed it.
+    Gating at `reward_to_risk >= 1.0` turned a mean realised push of +0.496
+    into **-0.268** across 11,113 calls, because the ratio is substantially a
+    measure of how *tight* the stop is: it correlates -0.359 with `risk_vol`,
+    and top-decile calls were stopped out 44.8% of the time against 29.1%.
+
+    The number is still computed and still reported — a human reading an alert
+    should see what the move is worth against what it risks. It just does not
+    decide any more.
     """
     shared = {
         "side": Side.BELOW,
@@ -1735,14 +1741,20 @@ def test_a_call_worth_less_than_its_stop_is_not_actionable():
     worth_it = reactions.Inference(risk_vol=0.5, **shared)
     not_worth_it = reactions.Inference(risk_vol=2.0, **shared)
 
+    # Still computed, still different.
     assert worth_it.reward_to_risk == pytest.approx(2.0)
-    assert worth_it.actionable
     assert not_worth_it.reward_to_risk == pytest.approx(0.5)
-    assert not not_worth_it.actionable
-    # Everything else about the two calls is identical, so the gate is the only
-    # thing that can have separated them.
+    # Everything else about the two calls is identical, so if the ratio still
+    # gated, these would differ. They must not.
     assert worth_it.edge == not_worth_it.edge
     assert worth_it.net_push == not_worth_it.net_push
+    assert worth_it.actionable == not_worth_it.actionable
+    assert worth_it.actionable
+
+    # And a ratio far below the old threshold cannot block a call on its own.
+    hopeless = reactions.Inference(risk_vol=50.0, **shared)
+    assert hopeless.reward_to_risk < 0.05
+    assert hopeless.actionable
 
 
 def test_the_risk_gate_is_a_ratio_so_it_travels_across_timeframes():

@@ -12,6 +12,7 @@ nothing to parse on the way out.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from ..logging import get_logger
@@ -56,6 +57,11 @@ class DiscordNotifier(Notifier):
             ]
         if notification.source:
             embed["footer"] = {"text": truncate(notification.source, 2048)}
+        # Discord renders this itself, in the reader's own timezone, so the
+        # embed gets the machine-readable form rather than the string
+        # `as_text` builds for Telegram.
+        if notification.at:
+            embed["timestamp"] = datetime.fromtimestamp(notification.at, UTC).isoformat()
         return {"embeds": [embed]}
 
     async def send(self, notification: Notification) -> Delivery:

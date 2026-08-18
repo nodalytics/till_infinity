@@ -1180,7 +1180,17 @@ The stop goes **beyond the zone**, not at the level. The zone is precisely the
 band where price can sit and still be respecting the level, so a stop inside it
 is a stop inside the noise — it gets hit by the level working.
 
-`reward_to_risk` is what decides whether an edge is worth taking. A 70% call
+**`reward_to_risk` stopped deciding anything on 2026-08-17.** It was measured
+to invert the sign of the return — gating at 1.0 turned a mean realised push of
++0.496 into -0.268 across 11,113 calls, and end to end the 9.9% of calls
+passing every gate returned -0.151 while everything the gate rejected returned
++0.569. The ratio correlates -0.359 with its own denominator, so a high value
+is substantially a *tight stop*, and a tight stop sits inside the noise the
+level is made of. See [magnitude.md](../research/magnitude.md). It is still
+computed and reported; it is no longer a gate.
+
+The reasoning it was built on follows, because it was the best-argued gate in
+the set and it was still wrong. A 70% call
 worth half what it risks is a losing trade; a 55% call worth three times it is
 not.
 
