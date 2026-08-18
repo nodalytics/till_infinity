@@ -139,6 +139,61 @@ be. The closest thing to a control remains a per-cell rate: `spx500/3m` runs
 1,750 per thousand bars where `nzdusd/1m` runs 148, and neither is known to be
 right. This needs a definition before it needs a measurement.
 
+## 0g. Two thirds of production outcomes resolve within two seconds
+
+**Found on 2026-08-18** while asking which journalled outcomes resolved well.
+Ahead of everything else: it may invalidate what the production journal says
+about anything.
+
+Over 26,495 resolved outcomes across 4.4 days:
+
+| | share |
+|---|---|
+| resolved in **0 seconds** | **33.6%** |
+| resolved in <= 2 seconds | **67.5%** |
+| resolved in <= 60 seconds | 84.0% |
+
+**It is the coarse timeframes, and 1m is the one that behaves.**
+
+| interval | n | zero-duration | negative |
+|---|---|---|---|
+| 3m | 13,794 | **41.9%** | 1.7% |
+| 15m | 3,017 | 35.1% | 1.2% |
+| 5m | 5,152 | 35.0% | 1.4% |
+| 1h | 946 | **22.7%** | 0.0% |
+| **1m** | 3,559 | **1.0%** | **7.9%** |
+
+A touch on a **1h** level opening and resolving inside two seconds means price
+travelled `resolve_vol` — 1.5 volatility units of *something* — in two seconds.
+For an hourly level that is not a market move; it is a threshold measured
+against the wrong denominator.
+
+The durations are **1, 2, 3 seconds**, not multiples of the bar, so this is the
+**quote path** rather than a bar containing both events. That matters twice
+over: it is where the resolution is happening, and it is why none of the
+bars-only research shows it. [edge.md](edge.md) already warns that "the quote
+path can overturn a bars-only result" — this is that, and it means the
+production journal and the replay are not measuring the same system.
+
+**Negative durations are back**, at 2.34% overall and worst at −1,347s. They
+were fixed to 0% on 2026-08-14 and 1m is now the worst offender at 7.9%. A
+resolution recorded before its own touch began is a timestamp bug, and a
+separate one from the instant resolutions since it concentrates on the opposite
+interval.
+
+**Where to look first.** `Split observe_bar: form from own bars, touch from the
+finest` was done deliberately — a 1h level should notice a touch on 1m data.
+The open question is whether the *resolution* threshold and the volatility it
+is denominated in also came from the finest series rather than the level's own.
+If so, every coarse level is being resolved against a denominator too small by
+the ratio of the timeframes, which would produce exactly this table.
+
+**What it does not touch.** Every research document replays bars only, so the
+findings in [prior.md](../research/prior.md),
+[magnitude.md](../research/magnitude.md) and the rest describe the bar path and
+are unaffected. What is now in doubt is whether production behaves like the
+thing that was measured.
+
 ## 0e. `edge` is measuring `side`, and the honest version is a coin flip
 
 **Measured on 2026-08-17, in [prior.md](../research/prior.md).** The most
