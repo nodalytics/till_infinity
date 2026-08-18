@@ -194,6 +194,51 @@ findings in [prior.md](../research/prior.md),
 are unaffected. What is now in doubt is whether production behaves like the
 thing that was measured.
 
+### It also means the journal cannot be trained on yet
+
+Asked on 2026-08-18 whether it was time to fit `facto` on the journal. It is
+not, and the way that was established is worth keeping: rather than pick one
+plausibility cutoff and assert it, the fit was run at several, so the answer
+could be read against how much the filter was doing.
+
+| filter | kept | facto | logistic | holds |
+|---|---|---|---|---|
+| everything | 26,538 | 96.0% | 97.3% | 97.4% |
+| positive duration only | 17,021 (64%) | 93.5% | 95.8% | 95.9% |
+| at least a quarter of its bar | 5,588 (21%) | 79.4% | 87.3% | 87.3% |
+| **at least one of its own bars** | **3,179 (12%)** | **60.7%** | **77.1%** | **77.3%** |
+| at least two of its own bars | 2,116 (8%) | 52.0% | 67.0% | 67.8% |
+
+**The filter is the whole result.** 96-97% on the raw journal is the same shape
+as the 99.9% that [edge.md](edge.md) was written about: not skill, but
+resolutions so fast the label predicts itself. Requiring a touch to outlive one
+bar of its own timeframe drops 88% of the journal and takes accuracy to 77%.
+
+Two things follow.
+
+**Do not fit `facto` on this.** It loses at every filter level — to a 1KB
+logistic regression and to the trivial rule alike — and at the honest filter it
+scores **52.0%**, which is a coin flip. That agrees with
+[models.md](../research/models.md), which measured it at 64.3% against 73.1% on
+replayed touches.
+
+**And the model is the trivial rule again, on production data this time.**
+Logistic and holds are within 0.8 points of each other at every level: 97.3 vs
+97.4, 77.1 vs 77.3, 67.0 vs 67.8. [prior.md](../research/prior.md) found that
+on the replay; here it is in the journal.
+
+The survival table is also the cleanest statement of the bug:
+
+| interval | outcomes | survive one bar | median seconds of those |
+|---|---|---|---|
+| 3m | 13,805 | **6.2%** | 472 |
+| 5m | 5,159 | 8.2% | 932 |
+| 15m | 3,021 | 5.1% | 2,435 |
+| 1h | 946 | **3.8%** | 7,048 |
+| **1m** | 3,580 | **47.6%** | 198 |
+
+1m keeps half and every coarse timeframe keeps almost nothing.
+
 ## 0e. `edge` is measuring `side`, and the honest version is a coin flip
 
 **Measured on 2026-08-17, in [prior.md](../research/prior.md).** The most
