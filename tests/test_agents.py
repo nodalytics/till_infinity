@@ -1073,12 +1073,25 @@ def test_a_full_window_gets_more_than_the_run_that_failed():
 def test_a_small_window_costs_less_than_the_old_constant():
     """The ceiling rose to 48 and the expected cost still fell.
 
-    Most windows name one instrument, and one instrument now asks for 12 calls
-    where the flat limit allowed 32.
+    Most windows name one instrument, and one instrument asks for well under
+    the 32 the flat limit allowed.
     """
     from till_infinity.agents.analyst import budget
 
     assert budget(1, ag.Settings()) < 32
+
+
+def test_the_overhead_leaves_room_for_a_chattier_model():
+    """The budget is model-dependent and the first version was fitted to one.
+
+    `8 + 4 per subject` was measured against llama-3.3-70b. When Groq
+    decommissioned it and the fallback became gemini-2.5-flash-lite, a
+    one-instrument window wanted **13** calls against the 12 it was given, and
+    the whole analysis was discarded for the sake of one.
+    """
+    from till_infinity.agents.analyst import budget
+
+    assert budget(1, ag.Settings()) >= 13
 
 
 def test_the_ceiling_still_binds():

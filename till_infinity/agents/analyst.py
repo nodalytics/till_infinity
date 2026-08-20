@@ -25,7 +25,14 @@ from .roles import Role, resolve
 
 #: Tool calls an analysis gets before it has looked at any particular
 #: instrument — orienting, and composing the answer.
-TOOL_CALLS_BASE = 8
+#:
+#: Twelve rather than eight because **the budget is model-dependent and the
+#: first version was fitted to one model.** 8 + 4 per subject was measured
+#: against `llama-3.3-70b`; when Groq decommissioned it on 2026-08-20 and the
+#: fallback moved to `gemini-2.5-flash-lite`, a one-instrument window wanted 13
+#: calls against the 12 it was given and the analysis was discarded. A chattier
+#: model orients differently, and the overhead term is where that shows.
+TOOL_CALLS_BASE = 12
 
 #: ...and per instrument it was asked about. Four is what the observed traffic
 #: needs: the window that failed at 37 calls carried ten triggers, so 8 + 4x10

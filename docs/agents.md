@@ -266,6 +266,36 @@ uv run till-infinity notify listen --redis redis://localhost:6379 &
 An alert is sent once. A spread that stays wide for an hour is reported the
 first time and then suppressed for an hour — being told is only useful once.
 
+### A model name is a moving target
+
+On **2026-08-20** every analysis had been failing for a day. Two causes, and
+the log named both — which is the whole reason the unwrapping below exists:
+
+- `groq:llama-3.3-70b-versatile` returned **404, `model_not_found`**. Groq
+  decommissioned it. It had answered a direct probe two days earlier.
+- `google:gemini-2.5-flash` returned **429**, free-tier quota exhausted at 20
+  requests a day.
+
+Picking replacements is not just "which ones respond". Measured against the
+real analyst path rather than a bare prompt:
+
+| model | conforms to `Analysis` | time |
+|---|---|---|
+| `groq:openai/gpt-oss-20b` | yes | **6.8s** |
+| `groq:openai/gpt-oss-120b` | yes | **240.8s** |
+| `google:gemini-2.5-flash-lite` | *exceeded the tool budget* | — |
+
+The 120b answers correctly and takes four minutes, against a
+`DEFAULT_TIMEOUT` of 120 seconds — it would fail in production while passing
+any probe that did not time it. **A model that responds is not the same as a
+model that works**, and the three ways to fail here are different: not
+existing, not conforming, and not finishing.
+
+`gemini-2.5-flash-lite` failing is worth its own note, because it was
+self-inflicted: the tool-call budget below was fitted to llama's calling style,
+and a chattier model wanted 13 calls where it was given 12. See
+`TOOL_CALLS_BASE`.
+
 ### When an analysis fails, the log says why
 
 `log.error("analysis failed: %s", exc)` was accurate and useless. A fallback
