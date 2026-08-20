@@ -13,6 +13,7 @@ rather than believed.
 | [models.md](models.md) | **measured** — would trees, forests, cosine similarity or an MLP help; a 1KB logistic regression beats all of them, and five times the data did not change that |
 | [features.md](features.md) | **measured** — `side` alone matches all nine features together, generated features make it worse, and the trivial "level holds" rule still beats our directional call everywhere but the top decile |
 | [volatility.md](volatility.md) | **measured** — the estimate is well calibrated and its half-life is well past the optimum; a flat 20-bar mean beats it at every interval |
+| [resolution.md](resolution.md) | **measured on production** — two thirds of outcomes resolved within two seconds; a bar's wick was resolving touches born inside it, and no bars-only replay could see it |
 | [states.md](states.md) | **measured** — does a level's behaviour change over its life; it does not, recency predicts worse than pooling, and there is no flip |
 | [structure.md](structure.md) | **measured** — the transit graph, confluence and the shape of the level set; the graph is flat and the one strong-looking property is `side` wearing a distance |
 | [magnitude.md](magnitude.md) | **measured** — does it know how far, and what being wrong costs; `expected_push` ranks profit 7.5x and the `reward_to_risk` gate inverts the sign of the return |
