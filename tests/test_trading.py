@@ -1008,13 +1008,24 @@ def test_resolutions_are_a_declared_topic():
 # ------------------------------------------------------- scoring what it did
 
 
-async def a_closed_trade(book, *, strategy="level-scalp", profit=10.0, risk=20.0, feed="gold"):
-    """Write the decision/outcome pair the trader writes."""
+async def a_closed_trade(
+    book, *, strategy="level-scalp", profit=10.0, risk=20.0, feed="gold", at=4400.5
+):
+    """Write the decision/outcome pair the trader writes.
+
+    `at` varies the entry price, and it has to. Journal entries are
+    content-addressed on `(time, actor, title)` and written INSERT OR IGNORE,
+    so two trades with the same title inside one clock tick are deliberately
+    one entry. A fixture that wrote ten identical titles therefore produced six
+    rows on a fast machine and ten on a slow one — which is the journal working
+    as documented, and a test that had not noticed real titles carry the volume
+    and the fill price.
+    """
     from till_infinity.journal import decide, outcome
 
     ref = await decide(
         book,
-        f"paper: buy 0.05 {feed}",
+        f"paper: buy 0.05 {feed} @ {at:.5g}",
         rationale="up from above",
         actor="trading",
         context={
@@ -1030,7 +1041,7 @@ async def a_closed_trade(book, *, strategy="level-scalp", profit=10.0, risk=20.0
     await outcome(
         book,
         ref,
-        f"{feed} closed {profit:+.2f}",
+        f"{feed} closed {profit:+.2f} from {at:.5g}",
         actor="trading",
         context={"profit": profit, "seconds": 300, "reason": "target", "exit_source": "broker"},
     )
@@ -1051,7 +1062,7 @@ async def test_a_small_sample_is_refused_rather_than_characterised(tmp_path):
     """A 70% win rate over ten trades is a coin that came up heads seven times."""
     async with Journal(tmp_path / "j.db") as book:
         for index in range(10):
-            await a_closed_trade(book, profit=10.0 if index < 7 else -20.0)
+            await a_closed_trade(book, profit=10.0 if index < 7 else -20.0, at=4400.0 + index)
     report = tr.build(tmp_path / "j.db")
     assert report.overall.count == 10
     assert not report.enough
@@ -1061,7 +1072,7 @@ async def test_a_small_sample_is_refused_rather_than_characterised(tmp_path):
 async def test_a_large_enough_sample_is_characterised(tmp_path):
     async with Journal(tmp_path / "j.db") as book:
         for index in range(tr.ENOUGH + 5):
-            await a_closed_trade(book, profit=10.0 if index % 2 else -20.0)
+            await a_closed_trade(book, profit=10.0 if index % 2 else -20.0, at=4400.0 + index)
     report = tr.build(tmp_path / "j.db")
     assert report.enough
     assert "won" in report.overall.verdict()
@@ -1070,8 +1081,8 @@ async def test_a_large_enough_sample_is_characterised(tmp_path):
 
 async def test_trades_are_grouped_by_strategy(tmp_path):
     async with Journal(tmp_path / "j.db") as book:
-        await a_closed_trade(book, strategy="level-scalp", profit=20.0)
-        await a_closed_trade(book, strategy="approach-scalp", profit=-20.0)
+        await a_closed_trade(book, strategy="level-scalp", profit=20.0, at=4400.0)
+        await a_closed_trade(book, strategy="approach-scalp", profit=-20.0, at=4401.0)
     report = tr.build(tmp_path / "j.db")
     assert report.by_strategy["level-scalp"].total_r == pytest.approx(1.0)
     assert report.by_strategy["approach-scalp"].total_r == pytest.approx(-1.0)
@@ -1098,10 +1109,12 @@ async def test_declines_are_tallied_per_gate(tmp_path):
     from till_infinity.journal import observe
 
     async with Journal(tmp_path / "j.db") as book:
-        for gate in ("news", "news", "exposure"):
+        # Distinct titles for the same reason `a_closed_trade` varies its
+        # price: two identical titles in one tick are one journal entry.
+        for index, gate in enumerate(("news", "news", "exposure")):
             await observe(
                 book,
-                f"declined buy gold ({gate})",
+                f"declined buy gold @ {4400 + index} ({gate})",
                 rationale=gate,
                 actor="trading",
                 context={"gate": gate, "strategy": "level-scalp"},
