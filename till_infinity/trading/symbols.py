@@ -12,13 +12,24 @@ instrument that cannot be traded should be reported while nobody is waiting on
 it, not turned into a rejected order three days later when a level finally
 fires.
 
-**The suffix is learned rather than enumerated.** Account types add a suffix to
-every symbol — `.raw`, `.r`, `m`, `.pro` — and it is the same suffix across the
-account. Probing ten of them against five candidate names for fourteen feeds is
-seven hundred round trips over the bridge; noticing that `XAUUSD.raw` worked
-and trying `.raw` first for everything after it is a handful. The full list is
-still there as a fallback, so a broker that is inconsistent is found anyway,
-just more slowly.
+There are two ways to find out, and the better one is used when it is
+available.
+
+**Scan, if the broker can list its symbols.** The native terminal can —
+`symbols_get()` returns the whole tree — and then the account's suffix does not
+have to be guessed at all: `XAUUSD.s` is found by looking, whatever `.s` means
+at that broker. This matters because the suffix is not a standard. `.raw`,
+`.r`, `.s`, `m`, `+`, `_SB`, `.ecn`, `.z` are all in use, brokers invent more,
+and no list of them can be complete. A scan has no list to be incomplete.
+
+**Probe, when it cannot.** The HTTP bridge's only symbol route takes one name,
+so there the candidates are tried in turn — and the suffix is *learned* rather
+than enumerated. The full cross-product is twenty-odd suffixes against several
+names for fourteen instruments, which is hundreds of round trips; noticing that
+`XAUUSD.raw` worked and trying `.raw` first for everything after it makes each
+of the remaining thirteen a single probe. The list is still walked in full for
+the first instrument, and for any later one the learned suffix does not fit, so
+an inconsistent broker is still found — just more slowly.
 """
 
 from __future__ import annotations
@@ -77,14 +88,20 @@ async def resolve(
     to different fixes.
     """
     resolution = Resolution()
+    listing = await _catalogue(broker)
     for feed in feeds:
         if feed not in INSTRUMENTS:
             resolution.missing[feed] = "not a tradable instrument in this module"
             continue
 
-        spec, tried = await _probe(broker, feed, resolution.suffix)
+        if listing is not None:
+            spec, tried = await _scan(broker, feed, listing)
+            how = f"scanned {tried} of {len(listing)} symbol(s)"
+        else:
+            spec, tried = await _probe(broker, feed, resolution.suffix)
+            how = f"tried {tried} name(s)"
         if spec is None:
-            resolution.missing[feed] = f"no symbol found (tried {tried} name(s))"
+            resolution.missing[feed] = f"no symbol found ({how})"
             continue
         if not spec.tradable:
             resolution.missing[feed] = f"{spec.symbol} is quoted but not open for trading"
@@ -98,6 +115,66 @@ async def resolve(
         settings.resolved = resolution.symbols
     log.info("trading: %s", resolution)
     return resolution
+
+
+async def _catalogue(broker: Broker) -> list[str] | None:
+    """The broker's symbol list, if it has one. Never raises."""
+    try:
+        listing = await broker.catalogue()
+    except Exception as exc:
+        log.debug("trading: could not list symbols: %s", exc)
+        return None
+    if listing:
+        log.info("trading: scanning %d broker symbols", len(listing))
+    return listing or None
+
+
+def matches(feed: str, listing: Sequence[str]) -> list[str]:
+    """Symbols in `listing` that look like this instrument, best first.
+
+    A match is one of the instrument's names plus **anything**, which is what
+    makes an unguessed suffix findable. Ranked by how much was appended, so an
+    exact `XAUUSD` beats `XAUUSD.s` beats `XAUUSD.raw.cfd` — the shortest
+    addition is the plain instrument and the longer ones are variants of it.
+
+    Case-insensitive, because a handful of brokers list in lower case and the
+    comparison is about identity rather than presentation.
+    """
+    names = INSTRUMENTS.get(feed, ())
+    found: list[tuple[int, int, str]] = []
+    for symbol in listing:
+        upper = symbol.upper()
+        for rank, name in enumerate(names):
+            if upper.startswith(name):
+                found.append((len(upper) - len(name), rank, symbol))
+                break
+    found.sort()
+    return [symbol for _, _, symbol in found]
+
+
+async def _scan(broker: Broker, feed: str, listing: Sequence[str]) -> tuple[SymbolSpec | None, int]:
+    """Find this instrument in the broker's own symbol list.
+
+    Still asks for the spec of each candidate rather than trusting the name:
+    a broker may carry `XAUUSD` as a CFD it will not let this account open, and
+    only the spec says so.
+    """
+    tried = 0
+    for symbol in matches(feed, listing):
+        tried += 1
+        try:
+            spec = await broker.spec(symbol)
+        except Exception as exc:
+            log.debug("trading: reading %s failed: %s", symbol, exc)
+            continue
+        if spec is not None and spec.tradable:
+            return spec, tried
+        if spec is not None and tried == 1:
+            # Keep the first match even if it is not tradable, so the caller
+            # can report *why* rather than "no symbol found" — which would be
+            # wrong, and would send somebody looking for a naming problem.
+            return spec, tried
+    return None, tried
 
 
 async def _probe(broker: Broker, feed: str, learned: str) -> tuple[SymbolSpec | None, int]:

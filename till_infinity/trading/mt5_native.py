@@ -123,6 +123,21 @@ class NativeBroker(Broker):
             tradable=int(info.trade_mode) == self._mt5.SYMBOL_TRADE_MODE_FULL,
         )
 
+    async def catalogue(self) -> list[str] | None:
+        """Every symbol on the account, so resolution can scan rather than guess.
+
+        `symbols_get()` with no argument returns the broker's whole tree,
+        including instruments not in Market Watch — which is the point, since a
+        symbol has to be found before it can be selected.
+        """
+        try:
+            found = await self._call("symbols_get")
+        except Exception as exc:
+            log.warning("trading: could not list symbols: %s", exc)
+            return None
+        names = [str(row.name) for row in (found or ())]
+        return names or None
+
     async def quote(self, symbol: str) -> Tick | None:
         tick = await self._call("symbol_info_tick", symbol)
         if tick is None or not tick.bid or not tick.ask:

@@ -1001,3 +1001,44 @@ def test_a_bars_wick_cannot_resolve_a_touch_born_inside_it():
     assert handed[0] == (99.0, 101.0), "a touch older than the bar keeps its wick"
     assert handed[1] == (None, None), "a touch born inside the bar must not see its range"
     assert handed[2] == (None, None), "a quote carries no range to begin with"
+
+
+async def test_a_resolution_is_published_as_ground_truth(tmp_path):
+    """The bus carries findings; this is the one message that carries facts.
+
+    Published unconditionally rather than only for touches something predicted:
+    most resolutions were never called by anything, and those are exactly the
+    ones a consumer learning what levels do needs to see.
+    """
+    from till_infinity.bus import RESOLUTIONS
+    from till_infinity.structures.levels import Kalman, Level
+    from till_infinity.structures.levels import Outcome as LevelOutcome
+    from till_infinity.structures.reactions import Features, Touch
+
+    bus = Bus()
+    resolutions = bus.subscribe(RESOLUTIONS, group="test")
+    watcher = Watcher(bus, settings=sx.Settings(state_dir=tmp_path), journal=None)
+
+    level = Level(feed="gold", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+    touch = Touch(
+        feed="gold",
+        level_price=level.price,
+        features=Features(Side.ABOVE, 1.0, 0.5, 0.5, 1.0, 0.5),
+        started=1_000_000.0,
+        entry=4400.0,
+        extreme=4399.0,
+        outcome=LevelOutcome.REJECT,
+        push_vol=1.8,
+        resolved=1_000_600.0,
+    )
+    watcher.engine._resolved.append((level, touch))
+    # Nothing predicted this touch, so nothing is journalled for it.
+    assert await watcher.record_outcomes() == 0
+
+    message = await resolutions.next()
+    assert message is not None
+    assert message.payload["feed"] == "gold"
+    assert message.payload["outcome"] == "reject"
+    assert message.payload["direction"] == "up"
+    assert message.payload["push_vol"] == 1.8
+    assert message.payload["seconds"] == 600

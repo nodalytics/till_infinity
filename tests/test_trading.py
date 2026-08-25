@@ -15,10 +15,12 @@ import time
 import pytest
 
 from till_infinity import trading as td
-from till_infinity.bus import ALERTS, QUOTES, SIGNALS, Bus, Message
+from till_infinity.bus import ALERTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from till_infinity.journal import Journal, read
+from till_infinity.trading import exposure as ex
 from till_infinity.trading import plans as tp
 from till_infinity.trading.book import Book, Seen
+from till_infinity.trading.context import Context
 from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick
 from till_infinity.trading.paper import PaperBroker
 from till_infinity.trading.risk import Guard
@@ -665,3 +667,338 @@ def test_the_book_forgets_a_level_nobody_has_mentioned_for_hours():
     book = Book()
     book.observe("gold", Seen(price=4400.0, interval="5m", when=NOW - 7 * 3_600), vol_bps=10.0)
     assert book.count("gold") == 0
+
+
+# ------------------------------------------------ standing aside for the world
+
+
+def release(country="USD", when=None, importance=2, **over):
+    payload = {
+        "source": "forexfactory",
+        "id": "nfp-1",
+        "title": "Non-Farm Employment Change",
+        "country": country,
+        "time": when if when is not None else NOW + 300,
+        "importance": importance,
+    }
+    payload.update(over)
+    return payload
+
+
+def test_a_us_release_blacks_out_gold_and_every_major():
+    """The dollar is on one side of all of them, so the window is wide."""
+    context = Context()
+    context.observe_event(release())
+    for feed in ("gold", "btc", "eurusd", "usdjpy", "spx500"):
+        assert context.blackout(feed, now=NOW) is not None
+
+
+def test_a_sterling_release_leaves_gold_alone():
+    context = Context()
+    context.observe_event(release(country="GBP"))
+    assert context.blackout("gbpusd", now=NOW) is not None
+    assert context.blackout("gold", now=NOW) is None
+
+
+def test_both_country_spellings_are_understood():
+    """TradingView writes ISO codes, ForexFactory writes currencies."""
+    assert ex.currency_of("US") == "USD"
+    assert ex.currency_of("USD") == "USD"
+    assert ex.currency_of("DE") == "EUR"  # a German print moves the euro
+    assert ex.currency_of("CNY") == "CNH"
+    assert ex.currency_of("ZZ") == ""
+
+
+def test_the_blackout_window_is_asymmetric_and_the_right_way_round():
+    context = Context(before=600.0, after=900.0)
+    context.observe_event(release(when=NOW))
+    assert context.blackout("gold", now=NOW - 300) is not None  # before the print
+    assert context.blackout("gold", now=NOW + 300) is not None  # after it
+    assert context.blackout("gold", now=NOW - 900) is None  # too early
+    assert context.blackout("gold", now=NOW + 1_200) is None  # long enough after
+    # Wider after than before, so this time sits inside one window and outside
+    # the other. It is the assertion that catches the two being swapped, which
+    # is exactly what the first version did.
+    assert context.blackout("gold", now=NOW + 700) is not None
+    assert context.blackout("gold", now=NOW - 700) is None
+
+
+def test_a_low_impact_release_is_not_worth_standing_aside_for():
+    context = Context()
+    context.observe_event(release(importance=0))
+    assert context.blackout("gold", now=NOW) is None
+
+
+def test_the_calendar_does_not_grow_without_bound():
+    context = Context()
+    for index in range(50):
+        context.observe_event(release(id=f"old-{index}", when=NOW - 86_400))
+    context.observe_event(release(id="new", when=NOW + 600))
+    assert len(context._events) == 1
+
+
+# --------------------------------------------------- our broker vs the venues
+
+
+def venue_quote(venue, mid, spread=0.3, feed="gold"):
+    return {"feed": feed, "venue": venue, "mid": mid, "spread_bps": spread, "time": NOW}
+
+
+def test_a_dislocated_broker_quote_is_refused():
+    context = Context(max_dislocation_bps=8.0)
+    for venue in ("OANDA", "PEPPERSTONE", "SAXO", "FOREXCOM"):
+        context.observe_quote(venue_quote(venue, 4400.0))
+    ours = Tick("XAUUSD", bid=4405.0, ask=4405.4)  # ~12bps away
+    assert "from the 4-venue median" in context.dislocation("gold", ours, now=NOW)
+
+
+def test_a_broker_charging_far_more_than_the_group_is_refused():
+    context = Context(max_spread_ratio=2.5)
+    for venue in ("OANDA", "PEPPERSTONE", "SAXO", "FOREXCOM"):
+        context.observe_quote(venue_quote(venue, 4400.0, spread=0.4))
+    wide = Tick("XAUUSD", bid=4399.0, ask=4401.0)  # ~4.5bps against 0.4
+    assert "our spread is" in context.dislocation("gold", wide, now=NOW)
+
+
+def test_without_a_quorum_of_venues_the_check_fails_open():
+    """A collector restarting must not stop the system trading."""
+    context = Context()
+    context.observe_quote(venue_quote("OANDA", 4400.0))
+    ours = Tick("XAUUSD", bid=4500.0, ask=4500.4)
+    assert context.dislocation("gold", ours, now=NOW) == ""
+
+
+def test_a_stale_venue_stops_anchoring_the_consensus():
+    context = Context()
+    for venue in ("OANDA", "PEPPERSTONE", "SAXO"):
+        context.observe_quote(venue_quote(venue, 4400.0))
+    _, _, venues = context.consensus("gold", now=NOW + 600)
+    assert venues == 0
+
+
+def test_the_consensus_is_a_median_so_one_broken_venue_cannot_drag_it():
+    context = Context()
+    for venue, mid in (("A", 4400.0), ("B", 4400.0), ("C", 4400.0), ("D", 9999.0)):
+        context.observe_quote(venue_quote(venue, mid))
+    median, _, venues = context.consensus("gold", now=NOW)
+    assert venues == 4
+    assert median == 4400.0
+
+
+# ----------------------------------------------------------------- drift
+
+
+def test_a_regime_change_pauses_that_instrument():
+    context = Context(drift_pause=900.0)
+    context.observe_signal({"shape": "drift", "feed": "gold", "time": NOW})
+    assert context.drifting("gold", now=NOW + 60) > 0
+    assert context.drifting("btc", now=NOW + 60) == 0
+    assert context.drifting("gold", now=NOW + 1_000) == 0
+
+
+def test_a_level_signal_is_not_a_drift_signal():
+    context = Context()
+    context.observe_signal(signal())
+    assert context.drifting("gold", now=NOW) == 0
+
+
+# ------------------------------------------------------- currency exposure
+
+
+def test_three_dollar_pairs_the_same_way_is_one_trade():
+    """Long EUR, GBP and AUD against the dollar is 3x short USD."""
+    positions = [
+        td.Position(ticket=1, symbol="EURUSD", side=Side.BUY, volume=0.1, price_open=1.1),
+        td.Position(ticket=2, symbol="GBPUSD", side=Side.BUY, volume=0.1, price_open=1.3),
+        td.Position(ticket=3, symbol="AUDUSD", side=Side.BUY, volume=0.1, price_open=0.66),
+    ]
+    feed_of = {"EURUSD": "eurusd", "GBPUSD": "gbpusd", "AUDUSD": "audusd"}
+    got = ex.measure(positions, {1: 25.0, 2: 25.0, 3: 25.0}, feed_of)
+    assert got.of("USD") == pytest.approx(-75.0)
+    assert got.of("EUR") == pytest.approx(25.0)
+    assert got.worst() == ("USD", -75.0)
+
+
+def test_gold_carries_a_dollar_leg_like_everything_else():
+    positions = [
+        td.Position(ticket=1, symbol="XAUUSD", side=Side.BUY, volume=0.05, price_open=4400.0)
+    ]
+    got = ex.measure(positions, {1: 25.0}, {"XAUUSD": "gold"})
+    assert got.of("USD") == pytest.approx(-25.0)
+    assert got.of("XAU") == pytest.approx(25.0)
+
+
+def test_opposite_sides_of_the_same_currency_net_off():
+    positions = [
+        td.Position(ticket=1, symbol="EURUSD", side=Side.BUY, volume=0.1, price_open=1.1),
+        td.Position(ticket=2, symbol="GBPUSD", side=Side.SELL, volume=0.1, price_open=1.3),
+    ]
+    feed_of = {"EURUSD": "eurusd", "GBPUSD": "gbpusd"}
+    got = ex.measure(positions, {1: 25.0, 2: 25.0}, feed_of)
+    assert got.of("USD") == pytest.approx(0.0)
+
+
+def test_a_us_release_hits_every_instrument_with_a_dollar_leg():
+    affected = ex.feeds_for("USD")
+    assert "gold" in affected
+    assert "btc" in affected
+    assert "eurusd" in affected
+    assert len(affected) == len(ex.LEGS)
+
+
+def test_the_exposure_gate_refuses_the_third_dollar_trade():
+    made = settings(max_currency_exposure=0.005)  # 50 on 10,000
+    guard = Guard(made)
+    guard.roll(10_000.0)
+    positions = [
+        td.Position(ticket=1, symbol="EURUSD", side=Side.BUY, volume=0.1, price_open=1.1),
+        td.Position(ticket=2, symbol="GBPUSD", side=Side.BUY, volume=0.1, price_open=1.3),
+    ]
+    stopped = guard.allows(
+        intent(feed="audusd", symbol="AUDUSD", risk_money=25.0),
+        positions=positions,
+        risk_of={1: 25.0, 2: 25.0},
+        feed_of={"EURUSD": "eurusd", "GBPUSD": "gbpusd"},
+    )
+    assert stopped is not None
+    assert stopped.gate == "exposure"
+    assert "USD" in stopped.detail
+
+
+def test_gold_and_btc_alone_do_not_trip_the_exposure_gate():
+    """The limit is harmless on the default two instruments."""
+    made = settings(max_currency_exposure=0.005)
+    guard = Guard(made)
+    guard.roll(10_000.0)
+    positions = [
+        td.Position(ticket=1, symbol="XAUUSD", side=Side.BUY, volume=0.05, price_open=4400.0)
+    ]
+    stopped = guard.allows(
+        intent(feed="btc", symbol="BTCUSD", risk_money=22.0),
+        positions=positions,
+        risk_of={1: 22.0},
+        feed_of={"XAUUSD": "gold"},
+    )
+    assert stopped is None
+
+
+# --------------------------------------------------------- the guards in place
+
+
+def test_the_guard_refuses_a_trade_inside_a_blackout():
+    context = Context()
+    context.observe_event(release(when=NOW + 300))
+    guard = Guard(settings(), context=context)
+    guard.roll(10_000.0, now=NOW)
+    stopped = guard.allows(intent(), positions=[], now=NOW)
+    assert stopped is not None
+    assert stopped.gate == "news"
+
+
+def test_the_guard_refuses_a_trade_on_a_drifting_instrument():
+    context = Context()
+    context.observe_signal({"shape": "drift", "feed": "gold", "time": NOW})
+    guard = Guard(settings(), context=context)
+    guard.roll(10_000.0, now=NOW)
+    stopped = guard.allows(intent(), positions=[], now=NOW)
+    assert stopped is not None
+    assert stopped.gate == "drift"
+
+
+def test_a_guard_with_no_context_still_trades():
+    """Every context-driven check fails open; none of them is required."""
+    guard = Guard(settings(), context=None)
+    guard.roll(10_000.0, now=NOW)
+    assert guard.allows(intent(), positions=[], now=NOW) is None
+
+
+# ------------------------------------------------------ moving a stop, gated
+
+
+def open_trade(**over):
+    made = {
+        "ticket": 1,
+        "symbol": "XAUUSD",
+        "side": Side.BUY,
+        "volume": 0.05,
+        "price_open": 4400.5,
+        "stop": 4395.6,
+        "target": 4406.66,
+    }
+    made.update(over)
+    return td.Position(**made)
+
+
+def test_nothing_moves_unless_a_rule_is_switched_on():
+    """Both are experiments, so both are off until asked for."""
+    made = settings()
+    assert made.break_even_at == 0.0
+    assert made.trail_vol == 0.0
+    assert td.advance(open_trade(), intent(), GOLD, made, best=4420.0) is None
+
+
+def test_break_even_moves_the_stop_past_the_entry_by_the_spread():
+    made = settings(break_even_at=1.0, break_even_ticks=2)
+    # Risk is 4.9; one R in front is 4405.4.
+    move = td.advance(open_trade(), intent(), GOLD, made, best=4406.0)
+    assert move is not None
+    assert move.stop == pytest.approx(4400.52)  # entry + 2 ticks
+    assert "break even" in move.reason
+
+
+def test_break_even_does_not_fire_before_the_trade_is_in_front():
+    made = settings(break_even_at=1.0)
+    assert td.advance(open_trade(), intent(), GOLD, made, best=4402.0) is None
+
+
+def test_a_trail_follows_the_best_price_seen():
+    made = settings(trail_vol=1.0)
+    move = td.advance(open_trade(), intent(), GOLD, made, best=4420.0, vol_bps=10.0)
+    assert move is not None
+    assert move.stop == pytest.approx(4415.58)  # 4420 - 1v of 4.42
+
+
+def test_a_stop_never_moves_backwards():
+    """The most expensive habit in discretionary trading, automated or not."""
+    made = settings(trail_vol=1.0)
+    already = open_trade(stop=4418.0)
+    assert td.advance(already, intent(), GOLD, made, best=4420.0, vol_bps=10.0) is None
+
+
+def test_a_short_trails_the_other_way():
+    made = settings(trail_vol=1.0)
+    short = open_trade(side=Side.SELL, price_open=4399.5, stop=4404.4, target=4393.0)
+    down = intent(side=Side.SELL, entry=4399.5, stop=4404.4, target=4393.0)
+    move = td.advance(short, down, GOLD, made, best=4380.0, vol_bps=10.0)
+    assert move is not None
+    assert move.stop == pytest.approx(4384.38)  # 4380 + 1v
+
+
+# ------------------------------------------------ resolutions on the bus
+
+
+async def test_the_trader_consumes_touch_resolutions():
+    bus = Bus()
+    trader = Trader(bus, settings=settings())
+    await trader.start()
+    await trader.handle(
+        Message(
+            topic=RESOLUTIONS,
+            payload={
+                "feed": "gold",
+                "interval": "5m",
+                "level": 4400.0,
+                "outcome": "reject",
+                "push_vol": 1.2,
+                "seconds": 240,
+            },
+        )
+    )
+    assert trader.resolutions == 1
+
+
+def test_resolutions_are_a_declared_topic():
+    """The one message on the bus that says what happened, not what might."""
+    from till_infinity.bus import TOPICS
+
+    assert RESOLUTIONS in TOPICS

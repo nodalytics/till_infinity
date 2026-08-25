@@ -142,6 +142,22 @@ class Broker(ABC):
         success."""
         raise BrokerError(f"{self.name}: modifying a position is not supported")
 
+    async def catalogue(self) -> list[str] | None:
+        """Every symbol this account carries, or None if it cannot be listed.
+
+        None is not a failure — it means "ask me one at a time", which is the
+        honest answer for the HTTP bridge, whose only symbol route takes a
+        name. The native terminal can enumerate, and when it can, resolution
+        scans the list instead of guessing suffixes.
+
+        That distinction matters more than it looks. A broker's account-type
+        suffix is not a standard: `.raw`, `.r`, `.s`, `m`, `+`, `_SB` and a
+        dozen others are all in use, and no list of them can be complete. A
+        scan finds whatever this broker actually calls gold without anybody
+        having guessed it first.
+        """
+        return None
+
     def drain_closed(self) -> list[tuple[Position, float, str]]:
         """Positions this backend closed itself since the last call.
 

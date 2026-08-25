@@ -32,7 +32,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from ..logging import get_logger
+from . import exposure as ex
 from .config import Settings
+from .context import Context
 from .models import Intent, Position, Refusal, Tick
 
 log = get_logger(__name__)
@@ -47,6 +49,9 @@ class Guard:
     """The day's state, and the decision to take another trade or not."""
 
     settings: Settings
+    #: What the rest of the system knows. Optional, so a Guard can be tested
+    #: and used without one — every check it drives fails open.
+    context: Context | None = None
     #: Equity as the day opened. The daily stop measures against this.
     opening_equity: float = 0.0
     day: str = ""
@@ -86,12 +91,45 @@ class Guard:
         positions: list[Position],
         tick: Tick | None = None,
         now: float | None = None,
+        risk_of: dict[int, float] | None = None,
+        feed_of: dict[str, str] | None = None,
     ) -> Refusal | None:
-        """None if this trade may go ahead, else the gate that stopped it."""
+        """None if this trade may go ahead, else the gate that stopped it.
+
+        Ordered cheapest-first and most-decisive-first, which happen to agree:
+        a halted day and a blackout are facts that need no arithmetic, and
+        checking them before sizing anything keeps the log honest about what
+        actually stopped a trade. A refusal names one gate, so the order
+        decides which one gets named when several apply.
+        """
         when = now if now is not None else time.time()
 
         if self.halted:
             return self._no("halted", intent.feed, self.halted)
+
+        if self.context is not None:
+            release = self.context.blackout(intent.feed, when)
+            if release is not None:
+                minutes = (release.when - when) / 60.0
+                due = f"in {minutes:.0f}m" if minutes >= 0 else f"{-minutes:.0f}m ago"
+                return self._no(
+                    "news",
+                    intent.feed,
+                    f"{release.currency} {release.title or 'high-impact release'} {due}",
+                )
+
+            paused = self.context.drifting(intent.feed, when)
+            if paused > 0:
+                return self._no(
+                    "drift",
+                    intent.feed,
+                    f"the regime changed; {paused:.0f}s of stand-aside left",
+                )
+
+            if tick is not None:
+                off = self.context.dislocation(intent.feed, tick, when)
+                if off:
+                    return self._no("dislocated", intent.feed, off)
 
         if len(positions) >= self.settings.max_positions:
             return self._no(
@@ -134,7 +172,39 @@ class Guard:
         if intent.volume <= 0:
             return self._no("size", intent.feed, "sized to nothing")
 
+        crowded = self._exposure(intent, positions, risk_of or {}, feed_of or {})
+        if crowded is not None:
+            return crowded
+
         return None
+
+    def _exposure(
+        self,
+        intent: Intent,
+        positions: list[Position],
+        risk_of: dict[int, float],
+        feed_of: dict[str, str],
+    ) -> Refusal | None:
+        """Refuse a trade that would pile too much onto one currency.
+
+        Checked last because it is the only gate that needs the trade to have
+        been sized — the limit is in money at risk, and until the volume is
+        known there is no number to add to the book.
+        """
+        limit = self.settings.max_currency_exposure * self.opening_equity
+        if limit <= 0:
+            return None
+
+        after = ex.would_be(ex.measure(positions, risk_of, feed_of), intent)
+        currency, amount = after.worst()
+        if abs(amount) <= limit:
+            return None
+        return self._no(
+            "exposure",
+            intent.feed,
+            f"would put {abs(amount):.2f} on {currency} "
+            f"({'long' if amount > 0 else 'short'}), limit is {limit:.2f}",
+        )
 
     def record(self, feed: str, profit: float, equity: float, now: float | None = None) -> None:
         """Fold a closed trade in, and halt for the day if it took us past the limit."""

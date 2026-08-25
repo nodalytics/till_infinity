@@ -116,6 +116,32 @@ TRADING_STRATEGIES=level-scalp,approach-scalp
 Several may run together. The first one to want a trade gets it, and the
 one-position-per-instrument limit is what stops two of them doubling up.
 
+### `confluence-scalp`, and a measurement that argues against it
+
+It takes only calls another timeframe agrees on. The intuition is the level
+model's own — several timeframes on one price is one structure seen several
+times — and it is worth knowing that **the only measurement bearing on it found
+nothing**.
+
+[strength.md](strength.md) tested confluence depth against whether a level
+holds. Four runs produced four different orderings, and as a ranking signal
+depth scores an **AUC of 0.476 and 0.452** — below 0.5, meaning that if
+anything more agreement goes very slightly with breaking. `depth >= 3` against
+`depth < 3` is −2.2 [−6.3, +1.7], −5.2 [−9.4, −1.2] and +0.3 [−4.2, +4.9]: not
+one interval excludes zero the way this strategy assumes. The same document
+calls `Zone.strength`'s `1 + 0.15 × (depth − 1)` multiplier "unearned".
+
+Two things separate this strategy from that result, and neither is a defence
+strong enough to call it validated. What was measured is *did price get through
+the level*, which strength.md is explicit is not *did the trade make money* — a
+level that holds after a 3v excursion is a hold and a loss. And this **selects**
+on depth rather than weighting by it, which is a different object from a
+multiplier on a score.
+
+Treat it as unvalidated and probably not better than `level-scalp`. It stays a
+named strategy so the journal can settle it, rather than the assumption living
+as a flag inside the default.
+
 ### `momentum-scalp`, and the turn it will always miss
 
 score.md §2 keeps three exponential averages and treats their agreement as the
@@ -247,6 +273,97 @@ not a rule anybody chose.
 **Spread as a fraction of the target.** Two pips is nothing against a target of
 forty and fatal against one of five, and a scalper's targets are small by
 construction.
+
+Four more come from outside the level model, in `context.py` and
+`exposure.py`. All of them fail open — a missing input never stops the system
+trading, because a collector restarting is not a reason to halt.
+
+**A high-impact release about to land.** `news.events` is on the bus with
+importance and country, so the trader stands aside around anything rated high.
+A US print blacks out gold, BTC *and* all seven majors, because the dollar is
+on one side of every one of them. The window is asymmetric and wider after the
+print than before: beforehand the job is only to not be holding when the number
+lands, whereas afterwards the spread is at its widest and the first move
+frequently reverses.
+
+The `country` field carries **both** an ISO code and a currency code depending
+on the source — TradingView writes `US`, `DE`, `GB`; ForexFactory writes `USD`,
+`EUR`, `GBP` — which was checked against the stored events rather than assumed.
+Both forms are mapped.
+
+**Our broker out of line with the venues.** You have six venues quoting each
+instrument and one broker filling. Two checks fall out for free: refuse to
+enter when our quote sits more than `max_dislocation_bps` from the venue
+median, and refuse when our spread is more than `max_spread_ratio` times the
+group's. Both need three venues before they say anything, matching the quorum
+`structures` requires of a consensus bar, and a venue that has stopped updating
+drops out after ninety seconds so one dead feed cannot manufacture a
+dislocation on everybody else.
+
+**A regime change.** A `drift` signal means every level on that instrument
+learned its behaviour in a regime that has ended. `structures` already
+discounts them; the trader stops entering for `drift_pause` seconds while they
+re-form.
+
+**Too much of the book on one currency.** `max_positions` counts tickets. Long
+EURUSD, long GBPUSD and long AUDUSD is **three positions and one trade** —
+all short dollars, right together and wrong together — and a limit reading "3
+of 4 used" has authorised triple what it thinks. So exposure is decomposed into
+currency legs and limited there, weighted by money at risk rather than by lots,
+since a 0.01-lot gold position and a 1-lot EURUSD position are comparable in
+nothing else.
+
+The decomposition is structural, not fitted: EURUSD and GBPUSD share a dollar
+leg by construction, and gold, the crypto and the indices are all treated as
+long-the-thing, short-USD because that is how they are quoted. A measured
+correlation matrix would be better on the day it was fitted and would then need
+refitting and monitoring; this version cannot go stale. The limit is 2x the
+per-trade risk in every plan, so the third same-direction dollar trade is the
+one refused — which is the case it exists for.
+
+## Moving a stop, once the trade is on
+
+Break-even and trailing stops are implemented and **off by default**.
+
+```bash
+TRADING_BREAK_EVEN_AT=1.0     # stop to entry once 1R in front
+TRADING_BREAK_EVEN_TICKS=2    # a cushion, because a long exits on the bid
+TRADING_TRAIL_VOL=1.0         # trail a volatility unit behind the best price
+```
+
+They are off because both cut the loss tail *and* cut winners, and which
+dominates is an empirical question about this strategy on these instruments
+that nothing here answers. Shipping them on would be asserting the answer. They
+exist so the experiment can be run: four combinations, compared on the journal
+once there are enough closed trades.
+
+The stop only ever moves toward profit — every path returns the existing stop
+unless the new one is strictly better. A rule that can widen a stop is not risk
+management, it is the trade asking for more room after it has started going
+wrong, and that does not get cheaper for being automated.
+
+If you turn these on, **switch the mt5-api trailing handler off**. It runs on
+its own twenty-second timer, and two things moving the same stop on different
+clocks race — with the loser looking like a broker fault.
+
+## Ground truth on the bus
+
+`structures.resolutions` carries what a touch actually did — held, broke,
+trapped, chopped, with the push and the time it took. It went only to the
+journal until now, which left everything consuming `structures.signals` blind
+to whether the calls it acted on were right.
+
+It is published **unconditionally**, not only for touches something predicted:
+most resolutions were never called by anything, and those are exactly the ones
+a consumer learning what levels do needs to see. Gating on "did we have a
+decision for this" would publish only the sample that teaches least.
+
+The trader subscribes and counts them today, and acts on none of them. That is
+deliberate — the topic has a subscriber from the day it shipped, so whatever is
+built on it first is not also debugging whether the messages arrive. What it
+unlocks: the back-check strategy (a measured asymmetry — 27 of 70 breakout
+attempts were false), edge.md's accuracy-targeting gate, and eventually a Kelly
+fraction. None of them exists yet.
 
 ## Sizing
 

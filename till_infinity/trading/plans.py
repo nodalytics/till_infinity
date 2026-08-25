@@ -54,6 +54,7 @@ CONTROLS: Mapping[str, str] = {
     "min_edge": "TRADING_MIN_EDGE",
     "loss_cooldown": "TRADING_LOSS_COOLDOWN_S",
     "max_hold": "TRADING_MAX_HOLD_S",
+    "max_currency_exposure": "TRADING_MAX_CURRENCY_EXPOSURE",
 }
 
 
@@ -73,6 +74,7 @@ class Plan:
     min_edge: float
     loss_cooldown: float
     max_hold: float
+    max_currency_exposure: float
     max_risk_money: float = 0.0
 
     @property
@@ -125,6 +127,7 @@ PLANS: dict[str, Plan] = {
             min_edge=0.22,
             loss_cooldown=1_800.0,
             max_hold=1_200.0,
+            max_currency_exposure=0.002,
         ),
         Plan(
             name="standard",
@@ -142,6 +145,7 @@ PLANS: dict[str, Plan] = {
             min_edge=0.15,
             loss_cooldown=900.0,
             max_hold=1_800.0,
+            max_currency_exposure=0.005,
         ),
         Plan(
             name="aggressive",
@@ -159,6 +163,7 @@ PLANS: dict[str, Plan] = {
             min_edge=0.11,
             loss_cooldown=600.0,
             max_hold=2_700.0,
+            max_currency_exposure=0.01,
         ),
     )
 }

@@ -241,16 +241,37 @@ class LevelScalp(LevelStrategy):
 class ConfluenceScalp(LevelStrategy):
     """Only levels more than one timeframe agrees on.
 
-    The claim is the one the level model already makes about itself: a price
-    that several timeframes have independently placed a level at is one
-    structure seen several times, not several findings. The higher timeframe
-    carries the significance and the lower the placement.
+    The intuition is the one the level model states about itself: a price that
+    several timeframes independently placed a level at is one structure seen
+    several times, the higher carrying the significance and the lower the
+    placement. Taking fewer trades for that reason is paid for with half a
+    volatility unit more room on the stop, since a confirmed level is not a
+    more *precisely located* one.
 
-    Taking fewer trades for that reason needs paying for, so the stop is given
-    half a volatility unit more room — a confirmed level is worth more but is
-    not more precisely located — and the target is left where the model put it.
-    Whether the trade-off is worth it is a question for the journal, which is
-    why this is a separate named strategy rather than a flag on the other one.
+    **The only measurement bearing on this says breadth does not predict.**
+    [strength.md](../../docs/strength.md) tested confluence depth against
+    whether a level holds and found nothing, in the strongest form of nothing:
+    four runs produced four different orderings — best at depth 1, at depth 2,
+    monotone increasing, and best at depth 3 — and as a ranking signal depth
+    scores an **AUC of 0.476 and 0.452**, below the 0.5 that means no
+    information at all. `depth >= 3` against `depth < 3` came out -2.2
+    [-6.3, +1.7], -5.2 [-9.4, -1.2] and +0.3 [-4.2, +4.9]; not one interval
+    excludes zero in the direction this strategy assumes. That document also
+    calls `Zone.strength`'s existing `1 + 0.15 x (depth - 1)` multiplier
+    "unearned on this evidence".
+
+    So why is this still here. Two reasons, and neither is that the measurement
+    is wrong. First, what it measured is *did price get through the level*, and
+    strength.md is explicit that this is not the same question as *did the
+    trade make money* — a level that holds after a 3v excursion is a hold and a
+    loss. Second, this uses depth to **select** rather than to weight, and a
+    filter that halves the trade count is a different object from a multiplier
+    on a score.
+
+    Both of those are excuses until something measures them, so treat this as
+    **unvalidated and probably not better than `level-scalp`**. It is kept as a
+    named strategy precisely so the journal can settle it rather than having
+    the assumption buried as a flag inside the default.
     """
 
     name: ClassVar[str] = "confluence-scalp"

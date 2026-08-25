@@ -125,6 +125,8 @@ max-returns = 8
 # is the design: each gate names itself and stops. Collapsing fifteen reasons
 # into fewer exits would trade a readable refusal for a lint score.
 "till_infinity/trading/scalper.py" = ["ARG002", "PLR0911"]
+# `Guard.allows` is the same shape: one return per gate, each naming itself.
+"till_infinity/trading/risk.py" = ["PLR0911"]
 # `import MetaTrader5 as mt5` is the name every MT5 example and the terminal's
 # own documentation uses; renaming it would make this file harder to check
 # against them.

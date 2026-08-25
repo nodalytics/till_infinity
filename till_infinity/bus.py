@@ -42,13 +42,32 @@ MACRO = "news.macro"
 #: What the online models found. Agents consume it as evidence; an unambiguous
 #: one goes straight to ALERTS without waiting for a model to agree.
 SIGNALS = "structures.signals"
+#: How a touch ended: broke, held, was trapped, chopped. This is **ground
+#: truth** rather than a finding — the one message on the bus that says what
+#: actually happened rather than what something thinks will happen.
+#:
+#: It went only to the journal until it was put here, which left every
+#: consumer of `SIGNALS` unable to learn whether the calls it acted on were
+#: right. A strategy blind to its own outcomes cannot improve, and neither can
+#: a threshold that ought to move with them.
+RESOLUTIONS = "structures.resolutions"
 #: What agents ask for. Notifications is the consumer.
 ALERTS = "alerts"
 #: Decisions and their reasoning, on their way to the journal. Any service can
 #: publish here; `journal listen` is what writes them down.
 JOURNAL = "journal"
 
-TOPICS: tuple[str, ...] = (BARS, QUOTES, ARTICLES, EVENTS, MACRO, SIGNALS, ALERTS, JOURNAL)
+TOPICS: tuple[str, ...] = (
+    BARS,
+    QUOTES,
+    ARTICLES,
+    EVENTS,
+    MACRO,
+    SIGNALS,
+    RESOLUTIONS,
+    ALERTS,
+    JOURNAL,
+)
 
 DEFAULT_CAPACITY = 1_000
 DEFAULT_GROUP = "default"

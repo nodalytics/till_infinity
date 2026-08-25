@@ -33,19 +33,28 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..bus import ALERTS, QUOTES, SIGNALS, Bus, Message
+from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
-from . import plans, strategy
+from . import manage, plans, strategy
 from . import symbols as sym
 from .broker import Broker, BrokerError, build
 from .config import Settings
-from .models import Intent, Order, Position, Refusal, SymbolSpec, Tick
+from .context import Context
+from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .risk import Guard
 
 log = get_logger(__name__)
 
-TOPICS: tuple[str, ...] = (SIGNALS, QUOTES)
+#: Everything the trader listens to, and why each one is needed.
+#:
+#: `signals` is the trade. `quotes` price the entry on the paper book and feed
+#: the venue consensus our own broker is judged against. `events` is the
+#: economic calendar, for standing aside around a release. `resolutions` is
+#: ground truth — what the levels we traded actually did — which is consumed
+#: for the record rather than for a decision, and is the seam anything that
+#: learns from outcomes will attach to.
+TOPICS: tuple[str, ...] = (SIGNALS, QUOTES, EVENTS, RESOLUTIONS)
 
 
 @dataclass(slots=True)
@@ -75,7 +84,14 @@ class Trader:
         self.plan = plans.apply(self.settings)
         self.broker = broker or build(self.settings)
         self.strategies = strategy.build(self.settings.strategies, self.settings)
-        self.guard = Guard(self.settings)
+        self.context = Context(
+            before=self.settings.news_before,
+            after=self.settings.news_after,
+            max_dislocation_bps=self.settings.max_dislocation_bps,
+            max_spread_ratio=self.settings.max_spread_ratio,
+            drift_pause=self.settings.drift_pause,
+        )
+        self.guard = Guard(self.settings, context=self.context)
         self.specs: dict[str, SymbolSpec] = {}
         self.open: dict[int, Live] = {}
         self.equity = 0.0
@@ -86,6 +102,15 @@ class Trader:
         #: The order just sent, waiting to be matched to the position it
         #: became. Held for exactly one reconcile — see `_reconcile`.
         self._pending: tuple[int, Intent, str] | None = None
+        #: Best price each open trade has seen, for the trailing stop. Tracked
+        #: from the quote stream rather than read from the broker, because
+        #: `price_current` is a snapshot and a trail anchored to snapshots
+        #: follows whatever the last poll happened to catch.
+        self._best: dict[int, float] = {}
+        #: The volatility unit last published per instrument, so a trail can be
+        #: measured in the same units the stop was placed in.
+        self._vol_bps: dict[str, float] = {}
+        self.resolutions = 0
 
     # ------------------------------------------------------------- lifecycle
 
@@ -147,12 +172,44 @@ class Trader:
         if message.topic == QUOTES:
             self._quote(message.payload)
             return None
+        if message.topic == EVENTS:
+            self.context.observe_event(message.payload)
+            return None
+        if message.topic == RESOLUTIONS:
+            self._resolution(message.payload)
+            return None
         if message.topic == SIGNALS:
             return await self.on_signal(message.payload)
         return None
 
+    def _resolution(self, payload: dict[str, Any]) -> None:
+        """Note what a level actually did.
+
+        Counted and logged, not acted on. This is the ground truth the bus
+        gained so that something *can* act on it — an accuracy-targeting gate,
+        a back-check strategy, a Kelly fraction — and none of those exist yet.
+        Consuming it now means the topic has a subscriber from the day it
+        shipped, so the first thing built on it is not also debugging whether
+        the messages arrive.
+        """
+        self.resolutions += 1
+        feed = str(payload.get("feed") or "")
+        if feed in self.specs:
+            log.debug(
+                "trading: %s %s at %s after %ss",
+                feed,
+                payload.get("outcome"),
+                payload.get("level"),
+                payload.get("seconds"),
+            )
+
     def _quote(self, payload: dict[str, Any]) -> None:
-        """Feed the paper book. A real terminal quotes itself."""
+        """Feed the consensus, the paper book, and the trailing high-water mark.
+
+        Every venue's quote goes to the consensus — that is the whole point of
+        having six of them — but only our own broker's fills anything else.
+        """
+        self.context.observe_quote(payload)
         feed = str(payload.get("feed") or "")
         symbol = self._symbol_of.get(feed)
         bid, ask = payload.get("bid"), payload.get("ask")
@@ -164,6 +221,7 @@ class Trader:
         if observed is not None:
             when = message_time(payload)
             observed(Tick(symbol=symbol, bid=float(bid), ask=float(ask), time=when))
+        self._mark_best(symbol, float(bid), float(ask))
 
     async def on_signal(self, payload: dict[str, Any]) -> Intent | Refusal | None:
         """Consider one signal against every strategy. The first taker wins.
@@ -174,6 +232,10 @@ class Trader:
         makes it something the operator chose rather than an accident of a
         dictionary.
         """
+        self.context.observe_signal(payload)
+        vol_bps = _vol_of(payload)
+        if vol_bps > 0:
+            self._vol_bps[str(payload.get("feed") or "")] = vol_bps
         for engine in self.strategies:
             engine.observe(payload)
 
@@ -200,7 +262,13 @@ class Trader:
                 log.debug("trading: %s declined %s: %s", engine.name, feed, verdict.detail)
                 continue
 
-            stopped = self.guard.allows(verdict, positions=positions, tick=tick)
+            stopped = self.guard.allows(
+                verdict,
+                positions=positions,
+                tick=tick,
+                risk_of={t: live.intent.risk_money for t, live in self.open.items()},
+                feed_of=self._feed_of,
+            )
             if stopped is not None:
                 self.refused += 1
                 # These *are* journalled: the strategy wanted this trade and
@@ -261,7 +329,54 @@ class Trader:
         self.equity = account.equity or self.equity
         self.guard.roll(self.equity)
         await self._reconcile()
+        await self._manage()
         await self._expire()
+
+    def _mark_best(self, symbol: str, bid: float, ask: float) -> None:
+        """Track the best price each open trade has seen, for the trail."""
+        for ticket, live in self.open.items():
+            if live.position.symbol != symbol:
+                continue
+            # The exit side, because that is the price a stop is measured
+            # against: a long is closed on the bid.
+            price = bid if live.position.side is Side.BUY else ask
+            seen = self._best.get(ticket)
+            if seen is None:
+                self._best[ticket] = price
+            elif live.position.side is Side.BUY:
+                self._best[ticket] = max(seen, price)
+            else:
+                self._best[ticket] = min(seen, price)
+
+    async def _manage(self) -> int:
+        """Move stops on open trades, if either rule is switched on."""
+        if not (self.settings.break_even_at > 0 or self.settings.trail_vol > 0):
+            return 0
+        moved = 0
+        for ticket, live in list(self.open.items()):
+            spec = self.specs.get(live.intent.feed)
+            best = self._best.get(ticket)
+            if spec is None or best is None:
+                continue
+            move = manage.advance(
+                live.position,
+                live.intent,
+                spec,
+                self.settings,
+                best=best,
+                vol_bps=self._vol_bps.get(live.intent.feed, 0.0),
+            )
+            if move is None:
+                continue
+            try:
+                result = await self.broker.modify(ticket, move.stop, live.position.target)
+            except BrokerError as exc:
+                log.warning("trading: could not move #%d: %s", ticket, exc)
+                continue
+            if result.ok:
+                moved += 1
+                log.info("trading: %s", move)
+        return moved
 
     async def _expire(self) -> None:
         """Close anything that has outstayed the hold its strategy asked for."""
@@ -314,6 +429,7 @@ class Trader:
                 continue
             price, why = exact.get(ticket, (live.position.price_current, "gone"))
             del self.open[ticket]
+            self._best.pop(ticket, None)
             settled.append((live, price, why))
             await self._settle(live, price, why)
         return settled
@@ -477,8 +593,18 @@ class Trader:
     def summary(self) -> str:
         return (
             f"{self.settings.mode} via {self.broker.name}: {self.taken} taken, "
-            f"{self.refused} declined, {len(self.open)} open · {self.guard.summary()}"
+            f"{self.refused} declined, {len(self.open)} open, "
+            f"{self.resolutions} resolutions seen · {self.guard.summary()}"
         )
+
+
+def _vol_of(payload: dict[str, Any]) -> float:
+    """The volatility unit a signal was measured in, or 0."""
+    features = payload.get("features")
+    if not isinstance(features, dict):
+        return 0.0
+    value = features.get("vol_bps")
+    return float(value) if isinstance(value, int | float) and value > 0 else 0.0
 
 
 def message_time(payload: dict[str, Any]) -> float:

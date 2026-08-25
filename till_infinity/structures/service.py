@@ -30,7 +30,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 
-from ..bus import ALERTS, BARS, QUOTES, SIGNALS, Bus, Message
+from ..bus import ALERTS, BARS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
 from . import confluence as cf
@@ -353,9 +353,43 @@ class Watcher:
         no parent links at all. The touch resolving *is* the label: which way
         price went from the level, how far, and whether a break it made was
         taken back.
+
+        Every resolution is also published to `structures.resolutions`, which
+        is the only ground truth on the bus. Anything acting on `signals` — the
+        trader, in particular — is otherwise blind to whether the calls it
+        acted on were right, and a threshold that should move with outcomes
+        cannot move without seeing them.
         """
         written = 0
         for level, touch in self.engine.drain_resolved():
+            # Announced before the journal lookup, and unconditionally. A
+            # resolution is a fact about the market, not a label on one of our
+            # decisions — most touches were never predicted by anything, and
+            # those are exactly the ones a consumer learning what levels do
+            # needs. Gating this on `ref` would publish only the outcomes we
+            # had already called, which is the sample that teaches least.
+            await self.bus.publish(
+                RESOLUTIONS,
+                {
+                    "feed": level.feed,
+                    "interval": level.interval,
+                    "level": round(touch.level_price, 8),
+                    "outcome": str(touch.outcome),
+                    "direction": "up" if touch.push_vol > 0 else "down",
+                    "push_vol": round(touch.push_vol, 6),
+                    "excursion_vol": round(touch.excursion_vol, 6),
+                    "seconds": round(touch.resolved - touch.started),
+                    "started": touch.started,
+                    "time": touch.resolved,
+                    **{
+                        k: round(v, 6)
+                        for k, v in touch.features.to_dict().items()
+                        if isinstance(v, int | float)
+                    },
+                },
+                source="structures",
+            )
+
             # Keyed on the price recorded *with the touch*, not the level's
             # current one. The Kalman mean moves when the touch is folded in,
             # and it is folded in before this runs — so looking up by

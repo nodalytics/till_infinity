@@ -54,8 +54,43 @@ INSTRUMENTS: dict[str, tuple[str, ...]] = {
 }
 
 #: Account-type suffixes, tried against every name above. Empty string first,
-#: so a broker with plain symbols never pays for the others.
-SUFFIXES: tuple[str, ...] = ("", ".raw", ".r", "m", ".pro", ".ecn", "_SB", ".a", ".c", "#")
+#: so a broker with plain symbols never pays for the others, then roughly in
+#: order of how often they turn up: Pepperstone razor accounts use `.r`,
+#: Eightcap `.raw`, Exness `m`/`c`/`z` for mini, cent and zero, Vantage `+`,
+#: spread-betting books `_SB`, and a good number of white labels use `.s` for
+#: "standard" or `.i`/`.ecn` for the institutional book.
+#:
+#: **This list is a fallback, not the mechanism.** It cannot be complete —
+#: brokers invent suffixes and nobody publishes the set — so a backend that can
+#: enumerate its symbols is asked to instead, and the scan finds whatever this
+#: list would have missed. See `Broker.catalogue` and `symbols.resolve`. The
+#: list is what remains for backends that can only be asked about one symbol at
+#: a time, which is the HTTP bridge as it stands.
+SUFFIXES: tuple[str, ...] = (
+    "",
+    ".raw",
+    ".r",
+    ".s",
+    "m",
+    ".pro",
+    ".ecn",
+    ".i",
+    ".a",
+    ".c",
+    ".z",
+    ".std",
+    ".stp",
+    ".prime",
+    ".p",
+    ".e",
+    "+",
+    "#",
+    "_SB",
+    "_i",
+    ".mini",
+    ".micro",
+    ".cent",
+)
 
 #: What is traded unless something else is named. The two the desk asked for.
 DEFAULT_SYMBOLS: tuple[str, ...] = ("gold", "btc")
@@ -206,6 +241,46 @@ class Settings:
     #: this default is a property of the trade being taken, not of the module.
     max_hold: float = 1_800.0
 
+    # ------------------------------------------------- standing aside
+    #: **Seconds** either side of a high-impact release to stop entering, like
+    #: every other duration here. The first version of this said "minutes" and
+    #: held seconds, which made the blackout two minutes wide instead of ten.
+    #:
+    #: Asymmetric, and wider *after* the print. Before it the only job is to
+    #: not be holding when the number lands, which needs about as long as a
+    #: scalp takes to reach its target. After it the spread is at its widest,
+    #: the first move frequently reverses, and a stop is least likely to fill
+    #: where it says — so the reason to stay out outlasts the release itself.
+    news_before: float = 600.0
+    news_after: float = 900.0
+    #: Basis points our broker may sit from the venue median before its quote
+    #: is treated as unusable, and the multiple of the group's spread it may
+    #: charge. Both fail open when fewer than three venues have reported.
+    max_dislocation_bps: float = 8.0
+    max_spread_ratio: float = 2.5
+    #: Seconds to stop entering an instrument after a drift signal. Every level
+    #: on it learned its behaviour in the regime that just ended.
+    drift_pause: float = 900.0
+
+    # ----------------------------------------------------- net exposure
+    #: Money at risk on any one currency, as a fraction of equity, counting
+    #: both legs of every open position. `max_positions` counts tickets; this
+    #: counts the trade they add up to. Zero switches it off.
+    #:
+    #: 2x the per-trade risk, so three same-direction dollar trades are refused
+    #: at the third — which is the case the limit exists for.
+    max_currency_exposure: float = 0.005
+
+    # -------------------------------------------- managing an open trade
+    #: R multiple at which the stop moves to break even. Zero is off, which is
+    #: the default — see `manage` for why this is an experiment rather than a
+    #: setting somebody should assume.
+    break_even_at: float = 0.0
+    #: Ticks past the entry the break-even stop sits, to cover the spread.
+    break_even_ticks: int = 2
+    #: Volatility units to trail behind the best price seen. Zero is off.
+    trail_vol: float = 0.0
+
     # ------------------------------------------- trading toward a level
     #: Nearest and furthest a target level may be, in volatility units. Closer
     #: than the minimum and it is the same structure we are standing on;
@@ -308,6 +383,15 @@ class Settings:
             min_edge=_float("TRADING_MIN_EDGE", 0.15),
             loss_cooldown=_float("TRADING_LOSS_COOLDOWN_S", 900.0),
             max_hold=_float("TRADING_MAX_HOLD_S", 1_800.0),
+            news_before=_float("TRADING_NEWS_BEFORE_S", 600.0),
+            news_after=_float("TRADING_NEWS_AFTER_S", 900.0),
+            max_dislocation_bps=_float("TRADING_MAX_DISLOCATION_BPS", 8.0),
+            max_spread_ratio=_float("TRADING_MAX_SPREAD_RATIO", 2.5),
+            drift_pause=_float("TRADING_DRIFT_PAUSE_S", 900.0),
+            max_currency_exposure=_float("TRADING_MAX_CURRENCY_EXPOSURE", 0.005),
+            break_even_at=_float("TRADING_BREAK_EVEN_AT", 0.0),
+            break_even_ticks=_int("TRADING_BREAK_EVEN_TICKS", 2),
+            trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             approach_min_vol=_float("TRADING_APPROACH_MIN_VOL", 0.8),
             approach_max_vol=_float("TRADING_APPROACH_MAX_VOL", 6.0),
             approach_buffer_vol=_float("TRADING_APPROACH_BUFFER_VOL", 0.25),

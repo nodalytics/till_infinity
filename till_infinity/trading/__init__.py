@@ -27,16 +27,20 @@ The pieces, in dependency order:
 | `symbols` | which instruments this broker actually offers, resolved once |
 | `sizing` | volatility units to price, price to lots |
 | `plans` | risk limits as named, internally consistent bundles |
+| `context` | what the rest of the system knows: the calendar, the venues, the regime |
+| `exposure` | what is at risk per currency, as opposed to per ticket |
 | `risk` | may this account take another trade right now |
 | `strategy` | the port a strategy implements, and the register |
 | `scalper` | the five level strategies |
 | `speeds` | three EWMAs and their agreement, for `momentum-scalp` |
 | `book` | the levels seen so far, for the ones that trade toward a level |
+| `manage` | moving a stop after the trade is on. Off by default |
 | `service` | the bus loop, the orders, the reconciliation, the record |
 """
 
 from __future__ import annotations
 
+from . import exposure
 from .book import Book, Seen
 from .broker import (
     Broker,
@@ -62,6 +66,9 @@ from .config import (
     feed_for,
     resolve_symbols,
 )
+from .context import Context, Release
+from .exposure import Exposure
+from .manage import Move, advance
 from .models import (
     Account,
     Intent,
@@ -108,11 +115,14 @@ __all__ = [
     "Broker",
     "BrokerError",
     "ConfluenceScalp",
+    "Context",
+    "Exposure",
     "Guard",
     "Intent",
     "LevelScalp",
     "LevelStrategy",
     "MomentumScalp",
+    "Move",
     "NotConnectedError",
     "Order",
     "OrderResult",
@@ -121,6 +131,7 @@ __all__ = [
     "Position",
     "Refusal",
     "RejectedError",
+    "Release",
     "Resolution",
     "Seen",
     "Settings",
@@ -133,10 +144,12 @@ __all__ = [
     "Trader",
     "TransientError",
     "Verdict",
+    "advance",
     "available",
     "build",
     "catalogue",
     "choose",
+    "exposure",
     "feed_for",
     "listen",
     "lots",
