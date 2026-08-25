@@ -19,6 +19,7 @@ from till_infinity.bus import ALERTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from till_infinity.journal import Journal, read
 from till_infinity.trading import exposure as ex
 from till_infinity.trading import plans as tp
+from till_infinity.trading import report as tr
 from till_infinity.trading.book import Book, Seen
 from till_infinity.trading.context import Context
 from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick
@@ -1002,3 +1003,129 @@ def test_resolutions_are_a_declared_topic():
     from till_infinity.bus import TOPICS
 
     assert RESOLUTIONS in TOPICS
+
+
+# ------------------------------------------------------- scoring what it did
+
+
+async def a_closed_trade(book, *, strategy="level-scalp", profit=10.0, risk=20.0, feed="gold"):
+    """Write the decision/outcome pair the trader writes."""
+    from till_infinity.journal import decide, outcome
+
+    ref = await decide(
+        book,
+        f"paper: buy 0.05 {feed}",
+        rationale="up from above",
+        actor="trading",
+        context={
+            "strategy": strategy,
+            "mode": "paper",
+            "feed": feed,
+            "side": "buy",
+            "risk_money": risk,
+            "reward_to_risk": 1.4,
+        },
+        tags=(feed, "buy", strategy, "paper"),
+    )
+    await outcome(
+        book,
+        ref,
+        f"{feed} closed {profit:+.2f}",
+        actor="trading",
+        context={"profit": profit, "seconds": 300, "reason": "target", "exit_source": "broker"},
+    )
+    return ref
+
+
+async def test_a_closed_trade_is_scored_in_r_not_money(tmp_path):
+    """40 won risking 20 and 40 won risking 200 are not the same result."""
+    async with Journal(tmp_path / "j.db") as book:
+        await a_closed_trade(book, profit=40.0, risk=20.0)
+    found = tr.trades(tmp_path / "j.db")
+    assert len(found) == 1
+    assert found[0].r == pytest.approx(2.0)
+    assert found[0].won
+
+
+async def test_a_small_sample_is_refused_rather_than_characterised(tmp_path):
+    """A 70% win rate over ten trades is a coin that came up heads seven times."""
+    async with Journal(tmp_path / "j.db") as book:
+        for index in range(10):
+            await a_closed_trade(book, profit=10.0 if index < 7 else -20.0)
+    report = tr.build(tmp_path / "j.db")
+    assert report.overall.count == 10
+    assert not report.enough
+    assert "too few to characterise" in report.overall.verdict()
+
+
+async def test_a_large_enough_sample_is_characterised(tmp_path):
+    async with Journal(tmp_path / "j.db") as book:
+        for index in range(tr.ENOUGH + 5):
+            await a_closed_trade(book, profit=10.0 if index % 2 else -20.0)
+    report = tr.build(tmp_path / "j.db")
+    assert report.enough
+    assert "won" in report.overall.verdict()
+    assert "R mean" in report.overall.verdict()
+
+
+async def test_trades_are_grouped_by_strategy(tmp_path):
+    async with Journal(tmp_path / "j.db") as book:
+        await a_closed_trade(book, strategy="level-scalp", profit=20.0)
+        await a_closed_trade(book, strategy="approach-scalp", profit=-20.0)
+    report = tr.build(tmp_path / "j.db")
+    assert report.by_strategy["level-scalp"].total_r == pytest.approx(1.0)
+    assert report.by_strategy["approach-scalp"].total_r == pytest.approx(-1.0)
+
+
+async def test_a_trade_with_no_risk_recorded_is_skipped_not_counted_as_zero(tmp_path):
+    """Counting it would land as an infinite R or a silent zero."""
+    from till_infinity.journal import decide, outcome
+
+    async with Journal(tmp_path / "j.db") as book:
+        ref = await decide(
+            book,
+            "paper: buy 0.05 gold",
+            rationale="adopted",
+            actor="trading",
+            context={"strategy": "level-scalp", "feed": "gold", "risk_money": 0.0},
+        )
+        await outcome(book, ref, "closed", actor="trading", context={"profit": 5.0})
+    assert tr.trades(tmp_path / "j.db") == []
+
+
+async def test_declines_are_tallied_per_gate(tmp_path):
+    """A gate that never fires does nothing; one that always fires is mis-set."""
+    from till_infinity.journal import observe
+
+    async with Journal(tmp_path / "j.db") as book:
+        for gate in ("news", "news", "exposure"):
+            await observe(
+                book,
+                f"declined buy gold ({gate})",
+                rationale=gate,
+                actor="trading",
+                context={"gate": gate, "strategy": "level-scalp"},
+            )
+    counted = tr.declines(tmp_path / "j.db")
+    assert counted["news"] == 2
+    assert counted["exposure"] == 1
+
+
+async def test_paper_and_live_are_not_averaged_together(tmp_path):
+    """Simulated fills and real ones describe different things."""
+    from till_infinity.journal import decide, outcome
+
+    async with Journal(tmp_path / "j.db") as book:
+        await a_closed_trade(book, profit=20.0)
+        ref = await decide(
+            book,
+            "live: buy 0.05 gold",
+            rationale="up",
+            actor="trading",
+            context={"strategy": "level-scalp", "mode": "live", "feed": "gold", "risk_money": 20.0},
+        )
+        await outcome(book, ref, "closed", actor="trading", context={"profit": -20.0})
+
+    assert tr.build(tmp_path / "j.db", mode="paper").overall.count == 1
+    assert tr.build(tmp_path / "j.db", mode="live").overall.count == 1
+    assert tr.build(tmp_path / "j.db").overall.count == 2

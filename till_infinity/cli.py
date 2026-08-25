@@ -27,6 +27,7 @@ from .bus import Bus
 from .logging import console, get_logger, setup_logging
 from .structures import confluence as cf
 from .trading import plans as tp
+from .trading import report as tr
 
 log = get_logger(__name__)
 T = TypeVar("T")
@@ -2206,3 +2207,88 @@ def trading_run(
         console.print("stopped")
         return
     console.print(escape(trader.summary()))
+
+
+@trading.command("report")
+@click.option("--db", type=click.Path(path_type=Path), help="Journal. Default: JOURNAL_DB.")
+@click.option(
+    "--mode",
+    type=click.Choice(["paper", "live", "both"]),
+    default="paper",
+    show_default=True,
+    help="Paper and live fills are not comparable; averaging them describes neither.",
+)
+@click.option("--strategy", help="One strategy only.")
+def trading_report(db, mode, strategy):
+    """Score the closed trades in the journal.
+
+    Reports R rather than money — a win of 40 risking 20 and a win of 40
+    risking 200 are not the same result — and refuses to characterise a sample
+    too small to characterise, which is the honest state of this today.
+    """
+    setup_logging()
+    path = _journal_db(db)
+    report = tr.build(path, mode="" if mode == "both" else mode, strategy=strategy or "")
+
+    if not report.overall.count:
+        console.print(
+            f"[yellow]no closed {mode} trades in {escape(str(path))}[/] — "
+            "nothing has been decided and resolved yet"
+        )
+        _decline_table(report)
+        return
+
+    console.print(f"[bold]{escape(report.overall.verdict())}[/]\n")
+
+    pooled = report.overall.win_rate
+    table = Table(title=f"by strategy · {mode}")
+    for column in ("strategy", "trades", "won", "vs pooled", "mean R", "total R", "median hold"):
+        table.add_column(column, justify="left" if column == "strategy" else "right")
+    for name, group in sorted(report.by_strategy.items(), key=lambda kv: -kv[1].count):
+        table.add_row(
+            name,
+            str(group.count),
+            f"{group.win_rate:.0%}" if group.enough else "—",
+            f"{group.win_rate - pooled:+.1%}" if group.enough else "—",
+            f"{group.mean_r:+.2f}",
+            f"{group.total_r:+.1f}",
+            f"{group.median_seconds / 60:.0f}m",
+        )
+    console.print(table)
+
+    instruments = Table(title="by instrument")
+    for column in ("instrument", "trades", "won", "mean R", "total R"):
+        instruments.add_column(column, justify="left" if column == "instrument" else "right")
+    for name, group in sorted(report.by_feed.items(), key=lambda kv: -kv[1].count):
+        instruments.add_row(
+            name,
+            str(group.count),
+            f"{group.win_rate:.0%}" if group.enough else "—",
+            f"{group.mean_r:+.2f}",
+            f"{group.total_r:+.1f}",
+        )
+    console.print(instruments)
+    _decline_table(report)
+
+    if not report.enough:
+        console.print(
+            f"\n[yellow]{report.overall.count} closed trades[/] — under {tr.ENOUGH}, "
+            "so the rates above are printed as dashes rather than as findings. "
+            "Nothing here says whether any strategy works yet."
+        )
+
+
+def _decline_table(report) -> None:
+    """What the account refused, per gate.
+
+    A gate that never fires is doing nothing; one that fires constantly is
+    mis-set. Neither shows up without the tally.
+    """
+    if not report.declines:
+        return
+    table = Table(title="declined, by gate")
+    table.add_column("gate")
+    table.add_column("trades refused", justify="right")
+    for gate, count in sorted(report.declines.items(), key=lambda kv: -kv[1]):
+        table.add_row(gate, str(count))
+    console.print(table)

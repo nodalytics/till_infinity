@@ -2589,3 +2589,47 @@ def test_the_startup_sweep_leaves_healthy_pairs_alone():
     assert engine.drop_unsupported() == 0
     assert len(engine.levels("gold", "5m")) == before
     assert not engine._declined
+
+
+# ------------------------------------------------- the level's own record
+
+
+def test_the_hold_rate_counts_a_back_check_as_the_level_holding():
+    """A retest that holds is the level holding, violently or not."""
+    from till_infinity.structures.levels import Outcome, SideStats
+
+    stats = SideStats()
+    stats.record(Outcome.REJECT, 1.0)
+    stats.record(Outcome.BACKCHECK, 1.0)
+    assert stats.decisive == 2
+    assert stats.hold_rate == 1.0
+
+
+def test_chop_is_excluded_from_the_hold_rate_rather_than_taking_a_side():
+    """Folding it into either column moves the rate for no reason."""
+    from till_infinity.structures.levels import Outcome, SideStats
+
+    stats = SideStats()
+    stats.record(Outcome.REJECT, 1.0)
+    stats.record(Outcome.BREAK, -1.0)
+    stats.record(Outcome.CHOP, 0.0)
+    assert stats.decisive == 2
+    assert stats.hold_rate == 0.5
+
+
+def test_a_trap_counts_as_price_having_got_through():
+    from till_infinity.structures.levels import Outcome, SideStats
+
+    stats = SideStats()
+    stats.record(Outcome.TRAP, -1.0)
+    assert stats.hold_rate == 0.0
+    assert stats.decisive == 1
+
+
+def test_a_rate_with_nothing_behind_it_is_not_a_low_rate():
+    """Which is why the count travels with it."""
+    from till_infinity.structures.levels import SideStats
+
+    stats = SideStats()
+    assert stats.hold_rate == 0.0
+    assert stats.decisive == 0

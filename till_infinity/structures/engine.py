@@ -304,6 +304,18 @@ class Call(Restorable):
                 # multiples without the unit made those two fields unusable
                 # outside this process.
                 "vol_bps": vol.bps,
+                # The level's own hold rate on the side price arrived from,
+                # and the decisive interactions behind it. The strongest
+                # single signal a level carries — strength.md puts it at AUC
+                # 0.648 where the `strength` composite reaches 0.548 — and it
+                # was computed on every touch and published nowhere.
+                #
+                # Unshrunk, with its count beside it, so a consumer can apply
+                # its own prior. A rate with two interactions behind it and one
+                # with ninety are not the same number and must not arrive
+                # looking like it.
+                "record_hold": self.inference.record_hold,
+                "record_n": self.inference.record_n,
             },
             direction=self.inference.direction,
             interval=self.interval,

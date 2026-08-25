@@ -439,6 +439,55 @@ signals — it needs `structures` publishing to the same bus, which on one
 machine means `till-infinity run` and across several means Redis. It says so at
 start-up rather than sitting silent.
 
+## Scoring it
+
+```bash
+uv run till-infinity trading report              # paper by default
+uv run till-infinity trading report --mode live
+uv run till-infinity trading report --strategy approach-scalp
+```
+
+Every trade writes a `decision` with the numbers it was sized from and an
+`outcome` pointing back at it. Pairing them is the whole evaluation, and three
+things about how it reports are deliberate:
+
+**R, not money.** A win of 40 on a trade risking 20 and a win of 40 on one
+risking 200 are not the same result, and averaging currency hides it. R is
+profit over the risk the trade was sized for — the only unit in which trades of
+different sizes compare.
+
+**The count, always, beside the number.** Under thirty closed trades the rates
+print as dashes and the report says so in full. A 70% win rate over ten trades
+is a coin that came up heads seven times, and this project's own history is
+mostly of numbers that looked principled while describing a distribution nobody
+had measured.
+
+**Paper and live are not averaged.** Simulated fills and real ones describe
+different things, so `--mode` defaults to paper and `both` has to be asked for.
+
+Declines are tallied per gate too. A gate that never fires is doing nothing and
+one that fires constantly is mis-set; neither is visible without the tally,
+which is why every `Refusal` carries a machine-readable gate name.
+
+## The level's own record, now published
+
+`structures` computes a level's hold rate on the side price is arriving from
+and, until recently, published it nowhere. [strength.md](strength.md) measures
+it as the strongest thing a level knows — 59.4% to 92.2% across four buckets
+with an **AUC of 0.648**, and the only signal in that study that got *stronger*
+when the volatility denominator bug was fixed, against `Level.strength`'s 0.548
+for a composite that does not contain it.
+
+Level signals now carry `record_hold` and `record_n`. Unshrunk, with the count
+beside it, because a rate with two decisive interactions behind it and one with
+ninety are not the same number and must not arrive looking like it — and
+because the pooled rate to shrink toward is instrument- and epoch-specific, so
+the choice belongs to the consumer.
+
+Nothing gates on it yet. It is published so that something can, and so the
+journal starts recording it against outcomes from today rather than from
+whenever a strategy is written.
+
 ## What this does not claim
 
 No strategy here has been evaluated against its own outcomes. The signal they

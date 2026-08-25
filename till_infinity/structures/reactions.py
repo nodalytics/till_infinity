@@ -423,6 +423,17 @@ class Inference(Restorable):
     #: call unchanged rather than silently re-gating history against a cost
     #: nobody measured.
     cost_vol: float = 0.0
+    #: The level's own hold rate **on this side**, and how many decisive
+    #: interactions are behind it. Carried separately from `probability_up`,
+    #: which blends it with the neighbours' prior — the blend is the better
+    #: estimate of what happens next, and the raw record is the better
+    #: *ranking* signal, which are different jobs.
+    #:
+    #: strength.md measures this as the strongest thing a level knows: AUC
+    #: 0.648 against `Level.strength`'s 0.548. It was computed on every touch
+    #: and published nowhere, so nothing downstream could rank on it.
+    record_hold: float = 0.0
+    record_n: float = 0.0
 
     @property
     def direction(self) -> str:
@@ -801,6 +812,8 @@ def infer(
         detail=detail,
         backcheck=bool(features.backcheck),
         risk_vol=level.risk_vol(side, price or level.price, vol),
+        record_hold=own.hold_rate,
+        record_n=own.decisive,
     )
 
 

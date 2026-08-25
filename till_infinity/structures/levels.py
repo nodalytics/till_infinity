@@ -397,6 +397,41 @@ class SideStats(Restorable):
                 self.chops += 1
 
     @property
+    def decisive(self) -> float:
+        """Resolved interactions that went one way or the other.
+
+        Chop is excluded rather than folded into either column. A level price
+        loitered at without resolving is a third thing, and hiding it in one
+        side or the other makes the rate below look better or worse for no
+        reason — which is the discipline [strength.md](../../docs/strength.md)
+        applies throughout, and the reason its numbers can be compared at all.
+        """
+        return self.rejects + self.breaks + self.traps
+
+    @property
+    def hold_rate(self) -> float:
+        """Share of decisive interactions this side turned price away.
+
+        `rejects` already carries back checks, because a retest that holds is
+        the level holding — see `record`. Breaks and traps both count as price
+        having got through, a trap being one that came back.
+
+        This is the strongest thing a level knows about itself. Bucketed on
+        corrected code it runs 59.4% to 92.2% across four bands with an AUC of
+        0.648, and it is the only signal in that study that got *stronger* when
+        the volatility denominator was fixed — against `Level.strength`'s 0.548,
+        a composite that does not contain it.
+
+        Unshrunk on purpose. Consumers want different priors and the honest
+        pooled rate to shrink toward is instrument- and epoch-specific, so the
+        raw rate is published beside `decisive` and the caller does its own.
+        Zero decisive interactions gives 0.0, which is why the count travels
+        with it — a rate with nothing behind it is not a low rate.
+        """
+        decisive = self.decisive
+        return self.rejects / decisive if decisive > 0 else 0.0
+
+    @property
     def mean_push(self) -> float:
         return self.push_sum / self.touches if self.touches else 0.0
 

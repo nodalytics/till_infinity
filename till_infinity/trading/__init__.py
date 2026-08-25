@@ -36,11 +36,12 @@ The pieces, in dependency order:
 | `book` | the levels seen so far, for the ones that trade toward a level |
 | `manage` | moving a stop after the trade is on. Off by default |
 | `service` | the bus loop, the orders, the reconciliation, the record |
+| `report` | scoring the closed trades, and refusing to when there are too few |
 """
 
 from __future__ import annotations
 
-from . import exposure
+from . import exposure, report
 from .book import Book, Seen
 from .broker import (
     Broker,
@@ -83,6 +84,7 @@ from .models import (
 )
 from .paper import PaperBroker
 from .plans import PLANS, Plan
+from .report import Report, Trade
 from .risk import Guard
 from .scalper import (
     ApproachScalp,
@@ -132,6 +134,7 @@ __all__ = [
     "Refusal",
     "RejectedError",
     "Release",
+    "Report",
     "Resolution",
     "Seen",
     "Settings",
@@ -141,6 +144,7 @@ __all__ = [
     "Strategy",
     "SymbolSpec",
     "Tick",
+    "Trade",
     "Trader",
     "TransientError",
     "Verdict",
@@ -154,6 +158,7 @@ __all__ = [
     "listen",
     "lots",
     "price_distance",
+    "report",
     "resolve",
     "resolve_symbols",
 ]
