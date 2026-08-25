@@ -1054,6 +1054,21 @@ wheels = [
 ]
 
 [[package]]
+name = "metatrader5"
+version = "5.0.6090"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' and sys_platform == 'win32'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' and sys_platform == 'win32'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/44/df7029799438a8e543e6ebf6ff5cf5e9f7685e6d4edf60483b2d859f0dc8/metatrader5-5.0.6090-cp311-cp311-win_amd64.whl", hash = "sha256:0c43c206ad6cfb47542fb532b1c0d75a873f410506581a0df9c30c2b73c3baab", size = 47990, upload-time = "2026-08-01T12:31:17.645Z" },
+    { url = "https://files.pythonhosted.org/packages/74/be/628204c9990d55aa075a6d0182b59fa0feddc0a842d628fb943b69df102e/metatrader5-5.0.6090-cp312-cp312-win_amd64.whl", hash = "sha256:70601ae582a0d9a5b8e4d074b6f198ccf82a3172ced4c8eb4b47ad091f578a86", size = 47928, upload-time = "2026-08-01T12:31:19.146Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/0f/b9959c2b74fc5f8d0b410ee872204ec12153540e1cb90aac92d4906cd0f9/metatrader5-5.0.6090-cp313-cp313-win_amd64.whl", hash = "sha256:66b5dfab5ca1411856595500232111f330e67b3293791bfddfb4c202b0f87db1", size = 47929, upload-time = "2026-08-01T12:31:20.34Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/f7/fe005151ebdb9cc5fc01d10abb5d0222e6853f69e71c3004c06f8d7c1c95/metatrader5-5.0.6090-cp314-cp314-win_amd64.whl", hash = "sha256:b79f9729fb7a48e73de911ae14bf6b6310c1ae2c68020fac1887f632d11c0621", size = 49490, upload-time = "2026-08-01T12:31:21.579Z" },
+]
+
+[[package]]
 name = "multitasking"
 version = "0.0.13"
 source = { registry = "https://pypi.org/simple" }
@@ -2412,6 +2427,9 @@ google = [
 groq = [
     { name = "pydantic-ai-slim", extra = ["groq"] },
 ]
+mt5 = [
+    { name = "metatrader5", marker = "sys_platform == 'win32'" },
+]
 openai = [
     { name = "pydantic-ai-slim", extra = ["openai"] },
 ]
@@ -2437,6 +2455,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.4.2" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx-ws", specifier = ">=0.9.0" },
+    { name = "metatrader5", marker = "sys_platform == 'win32' and extra == 'mt5'", specifier = ">=5.0.45" },
     { name = "orjson", specifier = ">=3.11.9" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], specifier = ">=2.28.0" },
     { name = "pydantic-ai-slim", extras = ["google"], marker = "extra == 'google'", specifier = ">=2.28.0" },
@@ -2450,7 +2469,7 @@ requires-dist = [
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'speed'", specifier = ">=0.21.0" },
     { name = "yfinance", specifier = ">=1.5.2" },
 ]
-provides-extras = ["speed", "openai", "google", "groq", "redis"]
+provides-extras = ["speed", "openai", "google", "groq", "redis", "mt5"]
 
 [package.metadata.requires-dev]
 dev = [

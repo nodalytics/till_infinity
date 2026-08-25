@@ -44,7 +44,8 @@ Five parts, in dependency order:
 | `prices` | one instrument from **many venues**, because the disagreement between feeds carries information no single feed does |
 | `structures` | arithmetic, not judgement — online models over the venues, and the **key levels** price keeps turning at, answered per approach side |
 | `news` | the calendar and the headlines on the same clock, because a move with a release behind it is a different animal |
-| `agents` | a model over the stored data, told plainly that "nothing is happening" is a correct answer. The only part needing a credential, and the only optional one |
+| `agents` | a model over the stored data, told plainly that "nothing is happening" is a correct answer. The only part needing a credential |
+| `trading` | the only part that can lose money, and the only one armed by a switch of its own — MT5 on Windows, the same code over a Wine bridge on Linux |
 | `journal` | what was decided, **why at that moment**, and what followed. Prices can be recomputed forever; the reasoning cannot be reconstructed once lost |
 
 The load-bearing idea is that a level is **where volatility turns, not where
@@ -266,6 +267,45 @@ No performance figures, and none until there are enough resolved outcomes to
 compute them honestly. The system records every call with the state it was made
 from and attaches what followed, so that question becomes answerable — it is
 not answerable yet.
+
+## Trading
+
+Scalping the level calls, on MetaTrader 5 or on paper. Gold and BTC by default;
+the other twelve instruments trade only if the broker actually quotes them.
+
+```bash
+uv run till-infinity trading doctor       # what this host can reach, and why not
+uv run till-infinity trading symbols      # what the broker actually offers
+uv run till-infinity trading strategies   # four ways of acting on a call
+uv run till-infinity trading plans        # conservative | standard | aggressive
+TRADING_ENABLED=1 uv run till-infinity run
+```
+
+**Two switches, and neither implies the other.** `TRADING_ENABLED` starts the
+service; `TRADING_LIVE` is the only thing that sends an order to an account.
+Configuring a terminal does not arm it. On paper the whole path still runs —
+symbols resolved, positions sized, stops placed, fills simulated against the
+live bid/ask, outcomes journalled — and the mode is printed at start-up.
+
+**Windows and Linux both work, by different routes.** The `MetaTrader5` package
+is a binding onto a running Windows terminal, so there is no Linux wheel and
+never will be. On Windows it is used in-process; everywhere else the same code
+reaches MT5 over HTTP through
+[`nodalytics/mt5-api`](https://github.com/nodalytics/mt5-api), which runs the
+terminal under Wine. The backend is chosen from what the host can reach and is
+always announced, because falling back to paper quietly is how a strategy runs
+for a week against nothing.
+
+Four strategies, none claiming an edge of its own — they read the same measured
+signal and differ in which calls they act on and where the stop and target go:
+take the call as published, require another timeframe to agree, require three
+speeds of recent edge to agree, or buy up to the level above and sell down to
+the one below. Risk is set by named plan rather than ten loose numbers, so the
+per-trade risk and the daily stop cannot silently disagree.
+
+Full guide: **[docs/trading.md](docs/trading.md)**, including the strategy that
+was written and removed because [docs/edge.md](docs/edge.md) had already
+measured it losing.
 
 ## Agents
 

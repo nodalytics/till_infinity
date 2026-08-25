@@ -5,11 +5,11 @@ right shape for deploying them separately and an awkward one for answering
 "does it work". This module starts all of them in one process against one bus,
 so an end-to-end run is a single command.
 
-    prices ──┬─▶ structures ─┬─▶ structures.signals ─┐
+    prices ──┬─▶ structures ─┬─▶ structures.signals ─┬─▶ trading ─▶ broker
              │               └───────────────────────┼─▶ alerts ─▶ notifications
     news  ───┴───────────────────▶ agents ───────────┘
                                       │
-                  structures, agents ─┴─▶ journal ─▶ journal.db
+        structures, agents, trading ──┴─▶ journal ─▶ journal.db
 
 ## What is optional, and why
 
@@ -21,6 +21,12 @@ flag is set, with a warning rather than a crash.
 
 **Notifications are off unless configured.** Same reasoning: no Telegram token
 is a reason to skip delivery, not to stop collecting.
+
+**Trading is off unless asked for**, and on paper unless armed on top of that.
+It is the only service that can lose money, so it is the one service whose
+absence should never be a surprise and whose presence always is a choice:
+`TRADING_ENABLED=1` starts it, and `TRADING_LIVE=1` is separately required
+before an order reaches an account. Neither is implied by the other.
 
 Everything else runs. If a service fails to start, the others carry on and the
 run reports which one is missing — a stack that dies because one collector
@@ -43,6 +49,7 @@ from . import news as nw
 from . import notifications as nt
 from . import prices as px
 from . import structures as sx
+from . import trading as td
 from .bus import Bus
 from .logging import get_logger
 
@@ -54,6 +61,7 @@ log = get_logger(__name__)
 ORDER: tuple[str, ...] = (
     "journal",
     "notifications",
+    "trading",
     "agents",
     "structures",
     "prices",
@@ -101,6 +109,8 @@ class Plan:
     redis_url: str | None = None
     #: Off by default: the only part needing a paid credential.
     agents: bool = False
+    #: Off by default: the only part that can lose money. See the docstring.
+    trading: bool = False
     notifications: bool = True
     structures: bool = True
     prices: bool = True
@@ -125,6 +135,7 @@ class Plan:
         return cls(
             redis_url=os.environ.get("TILL_REDIS_URL") or None,
             agents=truthy("AGENTS_ENABLED"),
+            trading=truthy("TRADING_ENABLED"),
             notifications=truthy("NOTIFICATIONS_ENABLED", "1"),
             structures=truthy("STRUCTURES_ENABLED", "1"),
             prices=truthy("PRICES_ENABLED", "1"),
@@ -176,6 +187,15 @@ def check(plan: Plan) -> dict[str, str]:
         settings = nt.Settings.from_env()
         if not nt.build_notifiers(None, settings):
             reasons["notifications"] = "no Telegram or Discord channel configured"
+    if plan.trading:
+        # Only the things that can be known without touching a terminal.
+        # Whether the broker actually offers gold is a question for start-up,
+        # where the answer can be reported per instrument.
+        try:
+            trading = td.Settings.from_env()
+            td.choose(trading)
+        except Exception as exc:
+            reasons["trading"] = first_cause(exc)
     return reasons
 
 
@@ -310,6 +330,9 @@ class Stack:
 
     async def _run_agents(self, book) -> None:
         await ag.watch(self.bus, journal=book)
+
+    async def _run_trading(self, book) -> None:
+        await td.listen(self.bus, journal=book)
 
     async def _run_structures(self, book) -> None:
         watcher = sx.Watcher(self.bus, journal=book)

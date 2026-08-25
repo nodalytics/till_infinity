@@ -5,8 +5,9 @@
 # service over Redis, so they scale and fail independently — a collector
 # restarting does not take the levels model with it.
 #
-#   docker compose up -d                    everything except agents
-#   docker compose --profile agents up -d   including the paid one
+#   docker compose up -d                     everything except agents and trading
+#   docker compose --profile agents up -d    including the paid one
+#   docker compose --profile trading up -d   including the one that can lose money
 #
 # Configuration comes from .env; see .env.example. Nothing here bakes a
 # credential into an image or a command line.
@@ -73,6 +74,19 @@ services:
     <<: *common
     profiles: ["agents"]
     command: ["agents", "watch", "--redis", "redis://redis:6379"]
+
+  # ── execution: the only part that can *lose* money, so opt in twice ───────
+  # The profile starts it; TRADING_LIVE in .env arms it. Without that it runs
+  # the whole path against a paper book and reaches no account.
+  #
+  # This container has no MetaTrader terminal in it and is not going to — the
+  # package is Windows-only. On Linux it reaches MT5 through the bridge, so
+  # TRADING_MT5_URL has to point at a `nodalytics/mt5-api` instance, which runs
+  # the terminal under Wine. Left unset, this stays on paper and says so.
+  trading:
+    <<: *common
+    profiles: ["trading"]
+    command: ["trading", "run", "--redis", "redis://redis:6379"]
 
 volumes:
   data:

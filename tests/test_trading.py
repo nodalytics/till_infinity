@@ -1,0 +1,667 @@
+"""Trading: sizing, gates, strategies, brokers and the loop that joins them.
+
+The arithmetic tests are exact — a stop distance and a lot size are facts, not
+estimates, and a test that allows them to be approximately right allows the
+class of bug that costs money. The behavioural ones are about what the module
+refuses: most of this code exists to not trade, and a gate that silently stops
+working looks exactly like a quiet market.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+
+import pytest
+
+from till_infinity import trading as td
+from till_infinity.bus import ALERTS, QUOTES, SIGNALS, Bus, Message
+from till_infinity.journal import Journal, read
+from till_infinity.trading import plans as tp
+from till_infinity.trading.book import Book, Seen
+from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick
+from till_infinity.trading.paper import PaperBroker
+from till_infinity.trading.risk import Guard
+from till_infinity.trading.service import Trader
+from till_infinity.trading.sizing import lots, price_distance, stop_for, target_for
+from till_infinity.trading.speeds import Speeds
+from till_infinity.trading.symbols import resolve
+
+#: Signals carry wall-clock times, and the level book forgets by age. Using a
+#: small constant here would put every level in 1970 and expire it instantly.
+NOW = time.time()
+
+GOLD = SymbolSpec(
+    symbol="XAUUSD",
+    digits=2,
+    point=0.01,
+    tick_size=0.01,
+    tick_value=1.0,  # one lot (100oz) moving one cent is $1
+    volume_min=0.01,
+    volume_max=50.0,
+    volume_step=0.01,
+    contract_size=100.0,
+)
+
+
+def signal(**over):
+    """A level call as `structures` publishes one."""
+    features = {
+        "level": 4400.0,
+        "probability": 0.72,
+        "probability_up": 0.72,
+        "expected_push_vol": 1.4,
+        "base_rate_up": 0.47,
+        "edge": 0.25,
+        "own_touches": 9.0,
+        "neighbours": 3.0,
+        "strength": 0.8,
+        "risk_vol": 1.0,
+        "vol_bps": 10.0,  # one volatility unit is 10bps: $4.40 at 4400
+    }
+    features.update(over.pop("features", {}))
+    payload = {
+        "shape": "level",
+        "feed": "gold",
+        "venue": "consensus",
+        "score": 0.25,
+        "detail": "up from above at 4400",
+        "features": features,
+        "interval": "5m",
+        "direction": "up",
+        "confluence": ["5m"],
+        "time": NOW,
+    }
+    payload.update(over)
+    return payload
+
+
+def settings(**over):
+    made = td.Settings(symbols=("gold",), account_equity=10_000.0, paper_equity=10_000.0)
+    for key, value in over.items():
+        setattr(made, key, value)
+    return made
+
+
+# --------------------------------------------------------------- the arithmetic
+
+
+def test_a_buy_pays_the_ask_and_a_sell_hits_the_bid():
+    """Sizing off the mid understates the cost twice — on entry and on exit."""
+    tick = Tick("XAUUSD", bid=4399.5, ask=4400.5)
+    assert tick.entry(Side.BUY) == 4400.5
+    assert tick.exit(Side.BUY) == 4399.5
+    assert tick.entry(Side.SELL) == 4399.5
+    assert tick.mid == 4400.0
+
+
+def test_a_volatility_unit_becomes_a_price_distance():
+    # 10bps of 4400 is 4.40, so 1.4v is 6.16.
+    assert price_distance(4400.0, 10.0, 1.0) == pytest.approx(4.40)
+    assert price_distance(4400.0, 10.0, 1.4) == pytest.approx(6.16)
+
+
+def test_the_stop_sits_beyond_the_level_on_the_side_price_came_from():
+    assert stop_for(4400.0, Side.BUY, 4.4) == pytest.approx(4395.6)
+    assert stop_for(4400.0, Side.SELL, 4.4) == pytest.approx(4404.4)
+
+
+def test_the_target_is_measured_from_the_fill_not_the_level():
+    assert target_for(4400.5, Side.BUY, 6.16) == pytest.approx(4406.66)
+    assert target_for(4399.5, Side.SELL, 6.16) == pytest.approx(4393.34)
+
+
+def test_lots_are_sized_so_the_stop_costs_the_budget():
+    """0.25% of 10,000 is 25. A $4.40 stop costs $440 a lot, so 0.05 lots."""
+    sized = lots(GOLD, equity=10_000.0, risk_fraction=0.0025, stop_distance=4.40)
+    assert sized.ok
+    assert sized.loss_per_lot == pytest.approx(440.0)
+    assert sized.volume == pytest.approx(0.05)
+    assert sized.risk_money == pytest.approx(22.0)
+
+
+def test_volume_rounds_down_to_the_lot_step_never_up():
+    """Rounding up is the one direction that breaches the risk it was sized for."""
+    # 25 / (4.0/0.01 * 1.0) is 0.0625 lots, which is 0.06 and not 0.07.
+    sized = lots(GOLD, equity=10_000.0, risk_fraction=0.0025, stop_distance=4.0)
+    assert sized.volume == pytest.approx(0.06)
+    assert sized.risk_money == pytest.approx(24.0)  # under the 25 budget, never over
+    assert GOLD.round_volume(0.0999) == 0.09
+    # And the result is a clean decimal, not 0.30000000000000004.
+    assert GOLD.round_volume(0.3) == 0.3
+
+
+def test_a_budget_under_the_minimum_lot_refuses_and_says_what_it_would_cost():
+    sized = lots(GOLD, equity=100.0, risk_fraction=0.0025, stop_distance=4.40)
+    assert not sized.ok
+    assert "minimum" in sized.reason
+    assert "4.40" in sized.reason or "4.4" in sized.reason  # 0.01 lots risks $4.40
+
+
+def test_a_symbol_with_no_tick_value_cannot_be_sized():
+    """Assuming one is how a position ends up ten times too large."""
+    sized = lots(
+        SymbolSpec(symbol="X", tick_value=0.0),
+        equity=10_000.0,
+        risk_fraction=0.0025,
+        stop_distance=1.0,
+    )
+    assert not sized.ok
+    assert "tick value" in sized.reason
+
+
+# --------------------------------------------------------------------- the gates
+
+
+def intent(**over):
+    made = {
+        "feed": "gold",
+        "symbol": "XAUUSD",
+        "side": Side.BUY,
+        "volume": 0.05,
+        "entry": 4400.5,
+        "stop": 4395.6,
+        "target": 4406.66,
+        "risk_money": 22.0,
+    }
+    made.update(over)
+    return Intent(**made)
+
+
+def position(**over):
+    made = {
+        "ticket": 1,
+        "symbol": "XAUUSD",
+        "side": Side.BUY,
+        "volume": 0.05,
+        "price_open": 4400.0,
+    }
+    made.update(over)
+    return td.Position(**made)
+
+
+def test_one_position_per_instrument():
+    """The same level firing twice is one idea, not two trades."""
+    guard = Guard(settings())
+    guard.roll(10_000.0, now=1_000.0)
+    assert guard.allows(intent(), positions=[]) is None
+    stopped = guard.allows(intent(), positions=[position()])
+    assert stopped is not None
+    assert stopped.gate == "already_open"
+
+
+def test_a_thin_reward_to_risk_is_refused():
+    guard = Guard(settings(min_reward_to_risk=1.2))
+    guard.roll(10_000.0)
+    # Target only half the risk away.
+    stopped = guard.allows(intent(target=4402.95), positions=[])
+    assert stopped is not None
+    assert stopped.gate == "reward_to_risk"
+
+
+def test_a_spread_that_eats_the_target_is_refused():
+    guard = Guard(settings(max_spread_fraction=0.25))
+    guard.roll(10_000.0)
+    wide = Tick("XAUUSD", bid=4398.0, ask=4402.0)  # 4.0 against a 6.16 target
+    stopped = guard.allows(intent(), positions=[], tick=wide)
+    assert stopped is not None
+    assert stopped.gate == "spread"
+
+
+def test_the_day_halts_after_the_daily_loss_and_lifts_on_the_next_day():
+    guard = Guard(settings(daily_loss_fraction=0.03))
+    guard.roll(10_000.0, now=1_000.0)
+    guard.record("gold", -200.0, 9_800.0, now=1_000.0)
+    assert not guard.halted
+    guard.record("gold", -150.0, 9_650.0, now=1_000.0)  # 350 > 300
+    assert guard.halted
+    assert guard.allows(intent(), positions=[], now=1_000.0).gate == "halted"
+
+    guard.roll(9_650.0, now=1_000.0 + 86_400 * 2)
+    assert not guard.halted
+
+
+def test_a_loss_puts_that_instrument_on_cooldown():
+    guard = Guard(settings(loss_cooldown=900.0))
+    guard.roll(10_000.0, now=1_000.0)
+    guard.record("gold", -20.0, 9_980.0, now=1_000.0)
+    stopped = guard.allows(intent(), positions=[], now=1_100.0)
+    assert stopped is not None
+    assert stopped.gate == "cooldown"
+    assert guard.allows(intent(), positions=[], now=2_000.0) is None
+
+
+def test_refusals_are_counted_per_gate():
+    """A gate that never fires does nothing; one that always fires is mis-set."""
+    guard = Guard(settings())
+    guard.roll(10_000.0)
+    guard.allows(intent(), positions=[position()])
+    guard.allows(intent(), positions=[position()])
+    assert guard.refusals["already_open"] == 2
+
+
+# --------------------------------------------------------------------- the plans
+
+
+def test_every_plan_number_is_a_settings_field():
+    assert tp._fields_are_covered()
+
+
+def test_a_plan_sets_the_limits_together():
+    made = settings()
+    tp.apply(made, "conservative")
+    assert made.risk_fraction == 0.001
+    assert made.daily_loss_fraction == 0.012
+    assert made.risk_plan == "conservative"
+
+
+def test_an_environment_variable_beats_the_plan():
+    """A prop account with a hard ceiling wants one number changed, not a new plan."""
+    made = settings()
+    kept = tp.PLANS["aggressive"].apply(made, environ={"TRADING_RISK_FRACTION": "0.001"})
+    assert "risk_fraction" in kept
+    assert made.risk_fraction != 0.005  # the plan did not overwrite it
+    assert made.daily_loss_fraction == 0.06  # but everything else came from the plan
+
+
+def test_every_plan_survives_a_similar_losing_run():
+    """The plans differ in size and selectivity, not in shape."""
+    for plan in tp.PLANS.values():
+        assert 10 <= plan.losses_to_halt <= 14
+
+
+# ---------------------------------------------------------------- the strategies
+
+
+def strategy(name, **over):
+    return td.STRATEGIES[name](settings(**over))
+
+
+def take(name, payload=None, *, tick=None, equity=10_000.0, **over):
+    engine = strategy(name, **over)
+    engine.observe(payload or signal())
+    return engine.consider(
+        payload or signal(),
+        spec=GOLD,
+        tick=tick or Tick("XAUUSD", bid=4399.5, ask=4400.5),
+        equity=equity,
+    )
+
+
+def test_a_level_call_becomes_a_sized_trade():
+    got = take("level-scalp")
+    assert isinstance(got, Intent)
+    assert got.side is Side.BUY
+    assert got.stop == pytest.approx(4395.6)
+    assert got.target == pytest.approx(4406.66)
+    assert got.volume == pytest.approx(0.05)
+    assert got.reward_to_risk > 1.2
+
+
+def test_a_down_call_sells_with_the_stop_above_the_level():
+    got = take("level-scalp", signal(direction="down"))
+    assert isinstance(got, Intent)
+    assert got.side is Side.SELL
+    assert got.stop > got.entry > got.target
+
+
+def test_a_call_below_the_probability_floor_is_refused():
+    got = take("level-scalp", signal(features={"probability": 0.51}))
+    assert isinstance(got, Refusal)
+    assert got.gate == "probability"
+
+
+def test_a_call_with_no_volatility_unit_is_refused_not_guessed():
+    """A stop from an assumed volatility is a stop in the wrong place, quietly."""
+    got = take("level-scalp", signal(features={"vol_bps": 0.0}))
+    assert isinstance(got, Refusal)
+    assert got.gate == "volatility"
+
+
+def test_a_call_with_no_direction_is_not_a_weak_buy():
+    got = take("level-scalp", signal(direction=""))
+    assert isinstance(got, Refusal)
+    assert got.gate == "direction"
+
+
+def test_a_timeframe_that_is_not_scalped_is_refused():
+    got = take("level-scalp", signal(interval="1d"))
+    assert isinstance(got, Refusal)
+    assert got.gate == "interval"
+
+
+def test_price_already_past_the_stop_is_not_a_trade_to_shrink():
+    # A buy call at 4400 with the stop at 4395.6, but price is already at 4390.
+    got = take("level-scalp", tick=Tick("XAUUSD", bid=4389.5, ask=4390.5))
+    assert isinstance(got, Refusal)
+    assert got.gate == "through"
+
+
+def test_confluence_scalp_refuses_a_level_only_one_timeframe_sees():
+    got = take("confluence-scalp", signal(confluence=["5m"]))
+    assert isinstance(got, Refusal)
+    assert got.gate == "confluence"
+    agreed = take("confluence-scalp", signal(confluence=["1h", "5m"]))
+    assert isinstance(agreed, Intent)
+
+
+def test_confluence_scalp_gives_the_stop_more_room():
+    plain = take("level-scalp", signal(confluence=["1h", "5m"]))
+    wider = take("confluence-scalp", signal(confluence=["1h", "5m"]))
+    assert wider.stop < plain.stop  # a buy: further below the level
+
+
+# ------------------------------------------------------------ three speeds
+
+
+def test_the_edge_floor_sits_above_the_gate_structures_already_applies():
+    """Below it, the gate is configuration that can never fire.
+
+    The first version of this module set 0.08 against an upstream 0.10, so it
+    refused nothing. Every plan has to clear the same bar.
+    """
+    from till_infinity.structures.reactions import MIN_EDGE
+
+    assert td.Settings().min_edge > MIN_EDGE
+    for plan in tp.PLANS.values():
+        assert plan.min_edge > MIN_EDGE
+
+
+def test_three_speeds_have_to_agree():
+    speeds = Speeds(half_lives=(2.0, 4.0, 8.0))
+    for _ in range(40):
+        speeds.observe("gold", 0.5)
+    assert speeds.agree("gold", 1)
+    assert not speeds.agree("gold", -1)
+
+
+def test_momentum_scalp_refuses_a_call_fighting_its_own_context():
+    engine = strategy("momentum-scalp")
+    for _ in range(60):
+        engine.observe(signal(features={"edge": 0.4}))
+    got = engine.consider(
+        signal(direction="down", features={"edge": -0.3}),
+        spec=GOLD,
+        tick=Tick("XAUUSD", bid=4399.5, ask=4400.5),
+        equity=10_000.0,
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "momentum"
+
+
+# ------------------------------------------------- trading toward the next level
+
+
+def test_the_book_merges_readings_of_the_same_level():
+    """The Kalman mean moves as touches fold in; that is one level, not twelve."""
+    book = Book()
+    book.observe("gold", Seen(price=4400.0, interval="5m", when=NOW), vol_bps=10.0)
+    book.observe("gold", Seen(price=4400.5, interval="5m", when=NOW + 60), vol_bps=10.0)
+    assert book.count("gold") == 1
+    book.observe("gold", Seen(price=4420.0, interval="5m", when=NOW + 60), vol_bps=10.0)
+    assert book.count("gold") == 2
+
+
+def test_the_book_finds_the_next_level_each_way():
+    book = Book()
+    for price in (4380.0, 4400.0, 4430.0):
+        book.observe("gold", Seen(price=price, interval="5m", when=NOW), vol_bps=10.0)
+    assert book.next_above("gold", 4400.0).price == 4430.0
+    assert book.next_below("gold", 4400.0).price == 4380.0
+
+
+def test_approach_scalp_buys_up_to_the_level_above():
+    engine = strategy("approach-scalp")
+    # A level above, and the confirming call at the one price is standing on.
+    engine.observe(signal(features={"level": 4420.0}))  # 4.4v above the fill
+    engine.observe(signal())
+    got = engine.consider(
+        signal(),
+        spec=GOLD,
+        tick=Tick("XAUUSD", bid=4399.5, ask=4400.5),
+        equity=10_000.0,
+    )
+    assert isinstance(got, Intent)
+    # Short of 4420 by the quarter-unit buffer (0.25 * 4.40 = 1.10), because
+    # the last stretch into the zone is the part magnet.md says nothing about.
+    assert got.target == pytest.approx(4418.9)
+    # The stop is still anchored beyond the confirming level, not the target.
+    assert got.stop == pytest.approx(4395.6)
+    assert got.hold == pytest.approx(2_700.0)
+
+
+def test_approach_scalp_sells_down_to_the_level_below():
+    engine = strategy("approach-scalp")
+    engine.observe(signal(features={"level": 4380.0}))  # 4.4v below the fill
+    down = signal(direction="down")
+    engine.observe(down)
+    got = engine.consider(
+        down, spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert got.side is Side.SELL
+    assert got.target == pytest.approx(4381.1)  # 4380 + the buffer
+
+
+def test_approach_scalp_refuses_when_it_knows_of_no_level_to_aim_at():
+    engine = strategy("approach-scalp")
+    engine.observe(signal())
+    got = engine.consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "no_target"
+
+
+def test_approach_scalp_refuses_a_level_too_far_to_reach_in_the_hold():
+    engine = strategy("approach-scalp")
+    engine.observe(signal(features={"level": 4700.0}))  # ~68 volatility units
+    engine.observe(signal())
+    got = engine.consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "too_far"
+
+
+def test_approach_scalp_asks_for_longer_than_the_default_hold():
+    """The desk's observation is that it takes twenty to thirty minutes."""
+    assert td.ApproachScalp.hold_seconds > td.Settings().max_hold
+
+
+# ------------------------------------------------------------------- the brokers
+
+
+class FakeBroker(td.PaperBroker):
+    """A broker that only carries some symbols, with a suffix."""
+
+    def __init__(self, made, offers=("XAUUSD.raw", "BTCUSD.raw")):
+        super().__init__(made)
+        self.offers = set(offers)
+        self.asked: list[str] = []
+
+    async def spec(self, symbol):
+        self.asked.append(symbol)
+        if symbol not in self.offers:
+            return None
+        return SymbolSpec(symbol=symbol, tick_value=1.0)
+
+
+async def test_resolution_finds_the_account_suffix_and_reuses_it():
+    """Probing ten suffixes for every instrument is hundreds of round trips."""
+    made = settings(symbols=("gold", "btc"))
+    broker = FakeBroker(made)
+    resolution = await resolve(broker, made.symbols, made)
+    assert resolution.symbols == {"gold": "XAUUSD.raw", "btc": "BTCUSD.raw"}
+    assert resolution.suffix == ".raw"
+    # Gold cost several probes; BTC found it on the first try because the
+    # suffix was already known.
+    assert broker.asked.index("BTCUSD.raw") - broker.asked.index("XAUUSD.raw") == 1
+
+
+async def test_an_instrument_the_broker_does_not_carry_is_reported_not_hidden():
+    made = settings(symbols=("gold", "sol"))
+    resolution = await resolve(FakeBroker(made), made.symbols, made)
+    assert "sol" in resolution.missing
+    assert "gold" in resolution.found
+
+
+async def test_a_quoted_but_untradable_symbol_says_so():
+    made = settings(symbols=("gold",))
+
+    class Closed(FakeBroker):
+        async def spec(self, symbol):
+            got = await super().spec(symbol)
+            return None if got is None else SymbolSpec(symbol=symbol, tradable=False)
+
+    resolution = await resolve(Closed(made), made.symbols, made)
+    assert "not open for trading" in resolution.missing["gold"]
+
+
+async def test_the_paper_book_fills_at_the_ask_and_stops_at_the_stop():
+    made = settings()
+    broker = PaperBroker(made)
+    await broker.connect()
+    broker.observe(Tick("XAUUSD", bid=4399.5, ask=4400.5))
+    result = await broker.send(
+        td.Order(symbol="XAUUSD", side=Side.BUY, volume=0.05, stop=4395.6, target=4406.66)
+    )
+    assert result.ok
+    assert result.price == 4400.5
+
+    closed = broker.observe(Tick("XAUUSD", bid=4395.0, ask=4396.0))
+    assert len(closed) == 1
+    assert closed[0][2] == "stop"
+    account = await broker.account()
+    assert account.balance < 10_000.0
+
+
+async def test_a_tick_spanning_both_resolves_as_the_stop():
+    """Assuming the good one filled first is how a paper book flatters itself."""
+    made = settings()
+    broker = PaperBroker(made)
+    await broker.connect()
+    broker.observe(Tick("XAUUSD", bid=4399.5, ask=4400.5))
+    await broker.send(
+        td.Order(symbol="XAUUSD", side=Side.BUY, volume=0.05, stop=4395.0, target=4406.0)
+    )
+    closed = broker.observe(Tick("XAUUSD", bid=4394.0, ask=4407.0))
+    assert closed[0][2] == "stop"
+
+
+def test_an_explicitly_named_backend_that_cannot_run_is_an_error():
+    """Someone who wrote TRADING_BACKEND=mt5 wants MT5, not a silent downgrade."""
+    made = settings(backend="mt5-http", url="")
+    with pytest.raises(td.BrokerError):
+        td.choose(made)
+
+
+def test_the_backend_falls_back_to_paper_and_says_why():
+    made = settings(backend="auto", url="")
+    assert td.choose(made) in (td.PAPER, td.NATIVE)
+
+
+# ---------------------------------------------------------------- the whole loop
+
+
+async def test_a_signal_on_the_bus_becomes_a_position_and_a_journal_entry(tmp_path):
+    bus = Bus()
+    async with Journal(tmp_path / "journal.db") as book:
+        trader = Trader(bus, settings=settings(), journal=book)
+        await trader.start()
+
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+        assert isinstance(got, Intent)
+        assert len(trader.open) == 1
+        assert trader.taken == 1
+
+        entries = read(tmp_path / "journal.db")
+        assert any("paper: buy" in entry.title for entry in entries)
+
+
+async def test_a_stop_hit_is_reconciled_and_recorded_as_an_outcome(tmp_path):
+    """A server-side stop leaves no message on any bus. The position is gone."""
+    bus = Bus()
+    async with Journal(tmp_path / "journal.db") as book:
+        trader = Trader(bus, settings=settings(), journal=book)
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        await trader.handle(Message(topic=SIGNALS, payload=signal()))
+        assert len(trader.open) == 1
+
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4395.0, "ask": 4396.0})
+        )
+        await trader.sweep()
+        assert not trader.open
+        assert trader.guard.trades == 1
+        assert trader.guard.realised < 0
+
+        entries = read(tmp_path / "journal.db")
+        assert any(entry.parent for entry in entries)
+
+
+async def test_the_second_call_on_the_same_instrument_is_refused_and_journalled(tmp_path):
+    bus = Bus()
+    async with Journal(tmp_path / "journal.db") as book:
+        trader = Trader(bus, settings=settings(), journal=book)
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        await trader.handle(Message(topic=SIGNALS, payload=signal()))
+        again = await trader.handle(Message(topic=SIGNALS, payload=signal(time=NOW + 60)))
+        assert isinstance(again, Refusal)
+        assert again.gate == "already_open"
+        entries = read(tmp_path / "journal.db")
+        assert any("declined" in entry.title for entry in entries)
+
+
+async def test_a_fill_is_announced_on_alerts():
+    bus = Bus()
+    alerts = bus.subscribe(ALERTS, group="test")
+    trader = Trader(bus, settings=settings())
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    message = await alerts.next()
+    assert message is not None
+    assert message.payload["fields"]["shape"] == "trade"
+    assert "gold" in message.payload["title"]
+
+
+async def test_announcements_can_be_switched_off():
+    """The trade still happens; nothing is published about it."""
+    bus = Bus()
+    alerts = bus.subscribe(ALERTS, group="test")
+    trader = Trader(bus, settings=settings(notify=False))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    assert trader.taken == 1
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(alerts.next(), 0.1)
+
+
+async def test_nothing_is_traded_on_an_instrument_the_broker_does_not_carry():
+    bus = Bus()
+    made = settings(symbols=("gold",))
+    trader = Trader(bus, settings=made, broker=FakeBroker(made, offers=()))
+    with pytest.raises(td.BrokerError):
+        await trader.start()
+
+
+def test_the_book_forgets_a_level_nobody_has_mentioned_for_hours():
+    """A stale map describes last week's engine, not this one's."""
+    book = Book()
+    book.observe("gold", Seen(price=4400.0, interval="5m", when=NOW - 7 * 3_600), vol_bps=10.0)
+    assert book.count("gold") == 0

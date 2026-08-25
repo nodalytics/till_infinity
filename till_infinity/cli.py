@@ -22,9 +22,11 @@ from . import notifications as nt
 from . import prices as px
 from . import stack as st
 from . import structures as sx
+from . import trading as td
 from .bus import Bus
 from .logging import console, get_logger, setup_logging
 from .structures import confluence as cf
+from .trading import plans as tp
 
 log = get_logger(__name__)
 T = TypeVar("T")
@@ -2004,3 +2006,203 @@ def run_command(
 
 if __name__ == "__main__":  # pragma: no cover
     main()
+
+
+@main.group()
+def trading() -> None:
+    """Scalp level calls on MT5, or on paper. Paper unless TRADING_LIVE=1."""
+
+
+def _trading_settings(symbols, plan, strategies, backend, live):
+    settings = td.Settings.from_env()
+    if symbols:
+        settings.symbols = td.resolve_symbols(symbols, settings)
+    if strategies:
+        settings.strategies = tuple(strategies)
+    if backend:
+        settings.backend = backend
+    if live:
+        settings.live = True
+    tp.apply(settings, plan)
+    return settings
+
+
+def _symbol_option(func):
+    return click.option(
+        "-s",
+        "--symbol",
+        "symbols",
+        multiple=True,
+        help=f"Instrument; repeatable. Default: {', '.join(td.DEFAULT_SYMBOLS)}.",
+    )(func)
+
+
+def _plan_option(func):
+    return click.option(
+        "--plan",
+        type=click.Choice(sorted(td.PLANS)),
+        help="Risk plan. Default: TRADING_RISK_PLAN, or standard.",
+    )(func)
+
+
+@trading.command("doctor")
+@_symbol_option
+@_plan_option
+@click.option("--strategy", "strategies", multiple=True, help="Strategy; repeatable.")
+@click.option("--backend", type=click.Choice(td.BACKENDS), help="Force a backend.")
+def trading_doctor(symbols, plan, strategies, backend):
+    """Say what this host can trade with, and how it is configured.
+
+    Touches no terminal, so it answers on a laptop with nothing installed —
+    which is the case it exists for. "Why is it on paper" has one answer per
+    backend, and printing only the chosen one is how the other gets missed.
+    """
+    setup_logging()
+    settings = _trading_settings(symbols, plan, strategies, backend, live=False)
+
+    table = Table(title="backends")
+    table.add_column("backend")
+    table.add_column("usable")
+    table.add_column("why not")
+    reasons = td.available()
+    chosen = td.choose(settings)
+    for name in td.BACKENDS:
+        why = reasons.get(name, "")
+        mark = "[green]yes[/]" if not why else "[red]no[/]"
+        if name == chosen:
+            mark += " [cyan](chosen)[/]"
+        table.add_row(name, mark, escape(why))
+    console.print(table)
+
+    armed = "[red]LIVE — orders reach the account[/]" if settings.live else "[green]paper[/]"
+    console.print(f"\nmode: {armed}")
+    console.print(f"plan: {escape(str(tp.get(settings.risk_plan)))}")
+    console.print(f"strategies: {', '.join(settings.strategies)}")
+    console.print(f"instruments: {', '.join(settings.symbols)}")
+    console.print(f"timeframes: {', '.join(settings.intervals)}")
+    if chosen == td.HTTP and not settings.account_equity:
+        console.print(
+            "[yellow]TRADING_ACCOUNT_EQUITY is not set[/] — the bridge exposes no "
+            "account endpoint, so sizing has nothing to measure risk against"
+        )
+
+
+@trading.command("strategies")
+def trading_strategies():
+    """The strategies that can be named in TRADING_STRATEGIES."""
+    setup_logging()
+    table = Table(title="strategies")
+    table.add_column("name")
+    table.add_column("what it does")
+    for name, description in td.catalogue().items():
+        table.add_row(name, description)
+    console.print(table)
+
+
+@trading.command("plans")
+def trading_plans():
+    """The risk plans, and what each one commits to."""
+    setup_logging()
+    table = Table(title="risk plans")
+    for column in ("plan", "per trade", "per day", "losses to halt", "open", "min p", "min RR"):
+        table.add_column(column, justify="left" if column == "plan" else "right")
+    for name, plan in sorted(tp.catalogue().items()):
+        table.add_row(
+            name,
+            f"{plan.risk_fraction:.2%}",
+            f"{plan.daily_loss_fraction:.1%}",
+            f"{plan.losses_to_halt:.0f}",
+            str(plan.max_positions),
+            f"{plan.min_probability:.0%}",
+            f"{plan.min_reward_to_risk:.1f}",
+        )
+    console.print(table)
+    for name, plan in sorted(tp.catalogue().items()):
+        console.print(f"\n[bold]{name}[/] — {escape(plan.description)}")
+
+
+@trading.command("symbols")
+@_symbol_option
+@click.option("--backend", type=click.Choice(td.BACKENDS), help="Force a backend.")
+def trading_symbols(symbols, backend):
+    """Ask the broker which of these instruments it actually offers.
+
+    The question the desk asks first — "can we scalp SOL here" — and the one
+    that should be answered while nobody is waiting on it rather than by a
+    rejected order three days later.
+    """
+    setup_logging()
+    settings = _trading_settings(symbols, None, (), backend, live=False)
+
+    async def go():
+        broker = td.build(settings)
+        async with broker:
+            return await td.resolve(broker, settings.symbols, settings)
+
+    resolution = run(go())
+    table = Table(title=f"{settings.mode} · {len(resolution.found)} tradable")
+    for column in ("instrument", "symbol", "lot step", "min lot", "tick value", "state"):
+        table.add_column(column, justify="left" if column == "instrument" else "right")
+    for feed in settings.symbols:
+        spec = resolution.found.get(feed)
+        if spec is None:
+            table.add_row(feed, "—", "—", "—", "—", f"[red]{escape(resolution.missing[feed])}[/]")
+            continue
+        table.add_row(
+            feed,
+            spec.symbol,
+            f"{spec.volume_step:g}",
+            f"{spec.volume_min:g}",
+            f"{spec.tick_value:g}",
+            "[green]tradable[/]",
+        )
+    console.print(table)
+    if resolution.suffix:
+        console.print(f"account suffix: [cyan]{escape(resolution.suffix)}[/]")
+
+
+@trading.command("run")
+@_symbol_option
+@_plan_option
+@click.option("--strategy", "strategies", multiple=True, help="Strategy; repeatable.")
+@click.option("--backend", type=click.Choice(td.BACKENDS), help="Force a backend.")
+@click.option("--redis", "redis_url", metavar="URL", help="Redis. Default: TILL_REDIS_URL.")
+@click.option("--live", is_flag=True, help="Arm it. Orders reach the account.")
+@click.option("--messages", type=int, help="Stop after this many bus messages.")
+@click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
+@click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only.")
+@click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs.")
+def trading_run(
+    symbols, plan, strategies, backend, redis_url, live, messages, verbose, quiet, log_file
+):
+    """Trade the level calls arriving on the bus.
+
+    Needs `structures` publishing to the same bus, which on one machine means
+    `till-infinity run` and on several means Redis. On its own it will attach,
+    resolve what it can trade, and then wait for signals that never come — so
+    it says what it is waiting for at start-up.
+    """
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    settings = _trading_settings(symbols, plan, strategies, backend, live)
+    if settings.live:
+        console.print("[red]armed[/] — orders will reach the account")
+
+    url = redis_url or os.environ.get("TILL_REDIS_URL") or None
+    bus = Bus(redis_url=url)
+    if bus.backend == "memory":
+        console.print(
+            "[yellow]in-process bus[/] — nothing else is publishing to it. "
+            "Use --redis, or run the whole stack with `till-infinity run`."
+        )
+
+    async def go():
+        db = Path(os.environ.get("JOURNAL_DB") or jr.DEFAULT_DB)
+        async with jr.Journal(db) as book:
+            return await td.listen(bus, settings=settings, journal=book, limit=messages)
+
+    try:
+        trader = run(go())
+    except KeyboardInterrupt:
+        console.print("stopped")
+        return
+    console.print(escape(trader.summary()))

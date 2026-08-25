@@ -30,6 +30,12 @@ openai = ["pydantic-ai-slim[openai]>=2.28.0"]
 google = ["pydantic-ai-slim[google]>=2.28.0"]
 groq = ["pydantic-ai-slim[groq]>=2.28.0"]
 redis = ["redis>=5.0.0"]
+# The native MT5 binding. Marked win32 because it is not a package that has
+# merely been neglected on other platforms — it is an in-process call into a
+# running Windows terminal, and there is no Linux wheel to build against. The
+# marker keeps `uv sync --all-extras` working in CI on Linux, where this
+# resolves to nothing and the bridge backend is used instead.
+mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
 
 [project.scripts]
 till-infinity = "till_infinity.cli:main"
@@ -107,6 +113,22 @@ max-returns = 8
     "PLW0603", # a module-level metrics default is set once, on purpose
 ]
 "tests/channels/*" = ["PT011", "RUF012", "PERF401"]
+# trading/ is a set of ports with several implementations behind each, so the
+# exemptions here are about interfaces rather than about code that got away.
+# A hook an implementation may leave alone still has to declare the arguments
+# its overrides receive, and `Broker.close` doing nothing is the correct
+# behaviour for a backend holding no connection — not an unfinished method.
+"till_infinity/trading/broker.py" = ["ARG002", "B027"]
+"till_infinity/trading/strategy.py" = ["B027"]
+"till_infinity/trading/paper.py" = ["ARG002"]
+# The gate chain in `LevelStrategy.consider` is one return per refusal, which
+# is the design: each gate names itself and stops. Collapsing fifteen reasons
+# into fewer exits would trade a readable refusal for a lint score.
+"till_infinity/trading/scalper.py" = ["ARG002", "PLR0911"]
+# `import MetaTrader5 as mt5` is the name every MT5 example and the terminal's
+# own documentation uses; renaming it would make this file harder to check
+# against them.
+"till_infinity/trading/mt5_native.py" = ["N813"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
