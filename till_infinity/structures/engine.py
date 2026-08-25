@@ -296,6 +296,14 @@ class Call(Restorable):
                 "neighbours": float(self.inference.neighbours),
                 "strength": self.level.strength(self.time, vol),
                 "risk_vol": self.inference.risk_vol,
+                # The volatility unit itself, in basis points. Everything else
+                # here is measured in multiples of it, so a consumer that only
+                # sees the published signal — `trading` reads them off the bus
+                # and never touches this engine — cannot turn `risk_vol` or
+                # `expected_push_vol` into a price without it. Carrying the
+                # multiples without the unit made those two fields unusable
+                # outside this process.
+                "vol_bps": vol.bps,
             },
             direction=self.inference.direction,
             interval=self.interval,
