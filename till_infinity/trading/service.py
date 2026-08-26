@@ -74,6 +74,33 @@ class Live:
     by: str = ""
 
 
+@dataclass(slots=True)
+class Waiting:
+    """A signal parked until price comes back to where the trade is worth taking.
+
+    Entry is a market order, so a call arriving after price has already left
+    the level is filled at whatever is on offer - which spends part of the move
+    before the trade starts and leaves the stop, anchored to the level, sitting
+    close underneath the fill. Parking it turns "buy here because a level is
+    over there" into "buy when price comes back to the level".
+
+    What is stored is the **signal**, not the intent. When price arrives the
+    strategy is asked again against the current tick, so entry, stop, target
+    and size are all re-derived through every gate rather than a stale intent
+    being resurrected. A setup that stopped being worth taking while it waited
+    is refused on arrival like any other.
+    """
+
+    payload: dict[str, Any]
+    feed: str
+    #: The price that wakes it, and which side of it counts.
+    trigger: float
+    side: Side
+    #: After this it is dropped. A resting order with no deadline is a trade
+    #: taken on information that has gone stale.
+    until: float
+
+
 class Trader:
     """Watches the bus, trades what it likes, records everything."""
 
@@ -122,6 +149,10 @@ class Trader:
         #: `price_current` is a snapshot and a trail anchored to snapshots
         #: follows whatever the last poll happened to catch.
         self._best: dict[int, float] = {}
+        #: feed -> a signal parked until price comes back. One per instrument,
+        #: because the per-instrument position limit would refuse the second
+        #: anyway and holding several would only decide which to drop later.
+        self._waiting: dict[str, Waiting] = {}
         #: Why signals did not become trades, counted per gate. Strategy-level
         #: refusals are far too many to journal - hundreds a day, and mostly
         #: the filter working - but counting them is what separates "the market
@@ -285,6 +316,12 @@ class Trader:
         """One bus message in. Returns what it did, for the tests and the log."""
         if message.topic == QUOTES:
             self._quote(message.payload)
+            feed = str(message.payload.get("feed") or "")
+            symbol = self._symbol_of.get(feed)
+            if feed in self._waiting and symbol:
+                got = await self._tick(symbol)
+                if got is not None:
+                    return await self._arrived(feed, got)
             return None
         if message.topic == EVENTS:
             self.context.observe_event(message.payload)
@@ -342,7 +379,9 @@ class Trader:
                 observed(tick)
         self._mark_best(symbol, float(bid), float(ask))
 
-    async def on_signal(self, payload: dict[str, Any]) -> Intent | Refusal | None:
+    async def on_signal(
+        self, payload: dict[str, Any], *, observe: bool = True, park: bool = True
+    ) -> Intent | Refusal | None:
         """Consider one signal against every strategy. The first taker wins.
 
         First rather than best: two strategies wanting the same instrument is
@@ -355,8 +394,12 @@ class Trader:
         vol_bps = _vol_of(payload)
         if vol_bps > 0:
             self._vol_bps[str(payload.get("feed") or "")] = vol_bps
-        for engine in self.strategies:
-            engine.observe(payload)
+        if observe:
+            # Skipped when a parked signal is re-considered: the level is
+            # already in each strategy's book, and folding it in twice would
+            # count one publication as two observations.
+            for engine in self.strategies:
+                engine.observe(payload)
 
         feed = str(payload.get("feed") or "")
         spec = self.specs.get(feed)
@@ -399,10 +442,79 @@ class Trader:
                 await self._announce_decline(verdict, stopped)
                 return stopped
 
+            if park:
+                parked = self._park(payload, verdict, engine.name, tick)
+                if parked is not None:
+                    return parked
             return await self.take(verdict, engine.name)
         return None
 
     # --------------------------------------------------------------- trading
+
+    def _park(self, payload: dict[str, Any], intent: Intent, by: str, tick: Tick) -> Refusal | None:
+        """Hold this signal back if a better fill is worth waiting for.
+
+        The target is where the stop would otherwise have sat - the far edge of
+        the level's sweep zone - approached by `pullback_fraction` of the way
+        from the current price. At 1.0 the trade waits for the price the stop
+        was going to defend, which is the best fill the setup can offer and the
+        one it fills least often; at 0.5 it meets it halfway.
+
+        The trade that gets stopped out today is the trade that gets *filled*
+        tomorrow, and the reward-to-risk improves because the target has not
+        moved. What it costs is the setups that never come back, and that cost
+        is real - a strategy that only fills on retracements is a different
+        strategy, not a cheaper version of this one. Which is why this is off
+        unless asked for, and why the journal records what it refused.
+        """
+        fraction = self.settings.pullback_fraction
+        if fraction <= 0:
+            return None
+        features = intent.features or {}
+        edge = features.get("sweep_low" if intent.side is Side.BUY else "sweep_high") or 0.0
+        if not edge:
+            return None
+
+        want = intent.entry + (float(edge) - intent.entry) * min(fraction, 1.0)
+        # Already there, or better: nothing to wait for.
+        if (intent.entry - want) * intent.side.sign <= 0:
+            return None
+
+        hold = intent.hold or self.settings.max_hold
+        self._waiting[intent.feed] = Waiting(
+            payload=payload,
+            feed=intent.feed,
+            trigger=want,
+            side=intent.side,
+            until=tick.time + hold * self.settings.pullback_window,
+        )
+        log.info(
+            "trading: %s %s parked - waiting for %.5g rather than filling at %.5g [%s]",
+            intent.side,
+            intent.feed,
+            want,
+            intent.entry,
+            by,
+        )
+        return Refusal("waiting", f"holding out for {want:.5g}", intent.feed)
+
+    async def _arrived(self, feed: str, tick: Tick) -> Intent | Refusal | None:
+        """Wake a parked signal if price has come to it, or drop it if stale."""
+        held = self._waiting.get(feed)
+        if held is None:
+            return None
+        if tick.time >= held.until:
+            self._waiting.pop(feed, None)
+            log.info("trading: %s expired waiting for %.5g", feed, held.trigger)
+            return None
+        price = tick.entry(held.side)
+        if (price - held.trigger) * held.side.sign > 0:
+            return None  # not there yet
+        self._waiting.pop(feed, None)
+        log.info("trading: %s reached %.5g - reconsidering", feed, held.trigger)
+        # Asked again rather than resurrected: a setup that stopped being worth
+        # taking while it waited is refused on arrival like any other.
+        return await self.on_signal(held.payload, observe=False, park=False)
 
     async def take(self, intent: Intent, by: str = "") -> Intent | Refusal:
         """Send an order, or say why it was not sent."""

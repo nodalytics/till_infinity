@@ -439,6 +439,23 @@ class Settings:
     #: Zero disables.
     max_chase_vol: float = 1.0
 
+    #: How far toward the stop's price the entry is moved, as a fraction.
+    #:
+    #: Zero enters at market, which is what every order here has always done.
+    #: One waits for the price the stop was going to defend - the far edge of
+    #: the level's sweep zone - which is the best fill the setup can offer and
+    #: the one it offers least often. A half meets it in the middle.
+    #:
+    #: The trade that gets stopped out today is the one that gets *filled*
+    #: tomorrow, and the reward-to-risk improves because the target does not
+    #: move with the entry. The cost is the setups that never come back, and it
+    #: is a real cost: a strategy that only fills on retracements is a
+    #: different strategy, not a cheaper version of this one.
+    pullback_fraction: float = 0.0
+    #: How much of the strategy's hold a parked signal may wait, as a multiple.
+    #: A resting order with no deadline is a trade taken on stale information.
+    pullback_window: float = 0.5
+
     #: The least a stop may sit from the level, in volatility units.
     #:
     #: Fair value is a distribution and volatility is its width, so a stop
@@ -640,6 +657,8 @@ class Settings:
             max_currency_exposure=_float("TRADING_MAX_CURRENCY_EXPOSURE", 0.005),
             min_stop_vol=_float("TRADING_MIN_STOP_VOL", 1.0),
             max_chase_vol=_float("TRADING_MAX_CHASE_VOL", 1.0),
+            pullback_fraction=_float("TRADING_PULLBACK_FRACTION", 0.0),
+            pullback_window=_float("TRADING_PULLBACK_WINDOW", 0.5),
             sweep_max_rate=_float("TRADING_SWEEP_MAX_RATE", 0.35),
             sweep_min_history=_float("TRADING_SWEEP_MIN_HISTORY", 6.0),
             sweep_max_exposure=_float("TRADING_SWEEP_MAX_EXPOSURE", 0.8),

@@ -2882,3 +2882,100 @@ def test_arriving_before_the_level_is_not_a_chase():
     """Price short of the level is the setup behaving as advertised."""
     got = take("level-scalp", tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), max_chase_vol=1.0)
     assert isinstance(got, Intent)
+
+
+# ------------------------------------------------ waiting for a better fill
+
+
+async def test_a_signal_is_parked_rather_than_chased():
+    """Buy where the stop was going to be, not where price happens to be."""
+    bus = Bus()
+    made = settings(live=True, pullback_fraction=1.0)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.handle(
+        Message(
+            topic=SIGNALS, payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0})
+        )
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "waiting"
+    assert venue.sent == [], "nothing should have been sent yet"
+    assert "gold" in trader._waiting
+
+
+async def test_a_parked_signal_fires_when_price_comes_to_it():
+    bus = Bus()
+    made = settings(live=True, pullback_fraction=1.0)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(
+        Message(
+            topic=SIGNALS, payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0})
+        )
+    )
+    assert venue.sent == []
+
+    # Price comes back to where the stop would have been.
+    venue.observe(Tick("XAUUSD", bid=4395.5, ask=4396.0))
+    got = await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4395.5, "ask": 4396.0})
+    )
+    assert isinstance(got, Intent)
+    assert len(venue.sent) == 1
+    assert "gold" not in trader._waiting
+    # And the fill is better than the one that was refused.
+    assert got.entry < 4400.5
+
+
+async def test_a_parked_signal_that_never_comes_back_expires():
+    """A resting order with no deadline is a trade taken on stale information."""
+    bus = Bus()
+    made = settings(live=True, pullback_fraction=1.0, pullback_window=0.001)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(
+        Message(
+            topic=SIGNALS, payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0})
+        )
+    )
+    assert "gold" in trader._waiting
+
+    held = trader._waiting["gold"]
+    held.until = 0.0  # its deadline has passed
+    venue.observe(Tick("XAUUSD", bid=4399.0, ask=4400.0))
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.0, "ask": 4400.0})
+    )
+    assert "gold" not in trader._waiting
+    assert venue.sent == []
+
+
+async def test_parking_is_off_unless_asked_for():
+    bus = Bus()
+    made = settings(live=True)  # pullback_fraction defaults to 0
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.handle(
+        Message(
+            topic=SIGNALS, payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0})
+        )
+    )
+    assert isinstance(got, Intent)
+    assert len(venue.sent) == 1
