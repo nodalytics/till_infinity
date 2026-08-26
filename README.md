@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="Till Infinity" width="92">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/logo-light.svg">
+    <img src="docs/logo.svg" alt="Till Infinity" width="92">
+  </picture>
 </p>
 
 <h1 align="center">Till Infinity</h1>

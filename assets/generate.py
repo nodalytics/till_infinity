@@ -58,8 +58,16 @@ ACCENT_DARK = "#3FBF9C"
 BLACK       = "#000000"
 WHITE       = "#FFFFFF"
 
+# Theme-safe. Ink is 1.06:1 against a dark canvas, so it vanishes there, and
+# paper is 1.21:1 against white, so it vanishes the other way. This one clears
+# 3:1 on both (4.16 against white, 4.55 against a GitHub-dark canvas) and stays
+# in the verdigris family rather than being neutral grey filler. Use it
+# wherever the background is unknown or the renderer cannot switch.
+DUO         = "#2E8B72"
+
 INKS = {"ink": INK, "paper": PAPER, "accent": ACCENT,
-        "accent-dark": ACCENT_DARK, "black": BLACK, "white": WHITE}
+        "accent-dark": ACCENT_DARK, "duo": DUO,
+        "black": BLACK, "white": WHITE}
 
 GROUND_LIGHT = "#F4F5F3"
 GROUND_DARK  = "#0E1113"
@@ -192,8 +200,13 @@ def main():
         w(f"svg/mark-{name}.svg", svg_mark(col))
         w(f"svg/mark-small-{name}.svg", svg_mark(col, small=True))
 
-    # The README points at docs/logo.svg; keep that path working.
-    w("logo.svg", svg_mark(INK), root=docs)
+    # The README points at these. Three files, because a single-colour mark
+    # cannot survive an unknown background: ink disappears on dark, paper
+    # disappears on light, and the theme-safe one is the fallback for any
+    # renderer that will not switch.
+    w("logo.svg", svg_mark(DUO), root=docs)          # unknown background
+    w("logo-light.svg", svg_mark(INK), root=docs)    # light background
+    w("logo-dark.svg", svg_mark(PAPER), root=docs)   # dark background
 
     if a.fonts:
         med = os.path.join(a.fonts, "PlexSans-500.ttf")
@@ -207,8 +220,10 @@ def main():
             draw_mark(s, col).save(os.path.join(here, f"png/mark-{name}-{s}.png"))
         print("  ", f"png/mark-{name}-*.png")
 
-    draw_mark(512, INK).save(os.path.join(docs, "logo.png"))
-    print("   docs/logo.png")
+    draw_mark(512, DUO).save(os.path.join(docs, "logo.png"))
+    draw_mark(512, INK).save(os.path.join(docs, "logo-light.png"))
+    draw_mark(512, PAPER).save(os.path.join(docs, "logo-dark.png"))
+    print("   docs/logo.png, logo-light.png, logo-dark.png")
 
     print("favicon/")
     for s in (16, 32, 48):

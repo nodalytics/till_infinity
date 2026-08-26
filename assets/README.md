@@ -50,14 +50,50 @@ favicon builds switch automatically at the cutoff.
 | Fixed dark ground | `svg/mark-paper.svg` |
 | Accent, light and dark ground | `svg/mark-accent.svg`, `svg/mark-accent-dark.svg` |
 | One-colour print | `svg/mark-black.svg`, `svg/mark-white.svg` |
+| Unknown or switching background | `svg/mark-duo.svg` (theme-safe verdigris) |
 | Anything at 20px or below | the `mark-small-*` variants |
 | Mark plus wordmark | `svg/lockup-*.svg` |
 | Raster | `png/mark-{variant}-{16..1024}.png` |
 | Browser tab | `favicon/favicon-{16,32,48}.png`, `favicon.ico` |
 | iOS, Android, PWA | `favicon/app-icon-{180,192,256,512}.png` |
 
-`docs/logo.svg` and `docs/logo.png` are written by the same run, because the
-repository README points at them.
+`docs/logo.svg`, `docs/logo-light.svg`, `docs/logo-dark.svg` and their PNG
+counterparts are written by the same run, because the repository README points
+at them.
+
+## Backgrounds: never ship one colour
+
+A single-colour mark cannot survive an unknown background, and this is not a
+matter of taste. Measured against the two grounds that matter:
+
+| Colour | vs white | vs a dark canvas | Verdict |
+| --- | --- | --- | --- |
+| `#14181A` ink | 17.87:1 | **1.06:1** | invisible on dark |
+| `#E7EAE6` paper | **1.21:1** | 15.60:1 | invisible on light |
+| `#2E8B72` **theme-safe** | 4.16:1 | 4.55:1 | **works on both** |
+
+The theme-safe verdigris is deliberately not neutral grey. Grey clears the
+contrast bar too, but it spends the one colour the mark gets on nothing; this
+stays in the brand family and reads as a decision rather than a hedge.
+
+Three files are generated for the repository README, and it uses `<picture>`
+so each ground gets the crisp version and anything that will not switch still
+gets a legible mark:
+
+```html
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/logo-light.svg">
+  <img src="docs/logo.svg" alt="Till Infinity" width="92">
+</picture>
+```
+
+`docs/logo.svg` is the theme-safe one, so it is the right fallback for npm,
+other Markdown renderers, and anywhere the background is not knowable.
+
+**In HTML and JSX, prefer `svg/mark.svg`.** It uses `currentColor` and inherits
+from CSS, which solves this properly. The three-file arrangement exists only
+because an `<img>` cannot inherit colour.
 
 ## Rules
 
