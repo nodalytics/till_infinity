@@ -1925,6 +1925,49 @@ the price it wanted. That is a worse fill than a resting limit and it cannot be
 hit while the process is down, but it needs no new order type and would answer
 whether the pullback fills often enough to be worth the plumbing.
 
+## 6k. What the terminal knows that we are not asking it
+
+Measured against the live account rather than reasoned from the MT5 API, on
+2026-08-26. What the broker actually serves decides most of this.
+
+| | this account | usable |
+| --- | --- | --- |
+| depth of market | `market_book_add` fails, then `"No book data"` | **no** |
+| tick stream | bid/ask, `time_msc`, `flags` | yes |
+| traded volume / last | `last=0.0`, `volume=0`, `session_volume=0.0` | **no** |
+| spread | `spread=16` points, `spread_float=True` | yes |
+| broker stop limits | `trade_stops_level=20`, `freeze_level=3` | already used |
+
+**No depth, so `liquidity_beyond` cannot be grounded.** `sweeps.py` infers
+resting liquidity from where peer levels sit, which was the right design and is
+now also the only one available here: this broker publishes no book at all.
+Worth re-testing on any new broker before assuming it, but nothing should be
+built that depends on it.
+
+**No traded volume either.** The tick stream is quotes, not trades - `last` and
+`volume` are zero on every tick and the session counters stay at zero. So MT5
+cannot supply the real volume that 6h wants for a point-of-control estimate.
+What it *can* supply is a quote-update rate from the venue we actually execute
+on, which is a better activity proxy than TradingView `tick_volume` for exactly
+one reason: it is the same book the order goes to. Same model as `activity.py`
+already uses, better input.
+
+**Spread is the one worth doing first.** `max_spread_fraction` is a fixed
+fraction of the stop, and spread is not fixed - `spread_float=True`, and it
+widens at rollover, before releases and at session edges. A per-`(symbol, hour)`
+spread distribution would let the gate say "this is the 95th percentile for this
+hour" instead of comparing against a constant, which is the same shrinkage
+machinery `sessions.py` already uses for hold rates and the same scale-free
+argument the rest of the project makes. It would also cost nothing at decision
+time, because the quote is already in hand.
+
+**Slippage is now recorded** - see the `entry_wanted`/`entry_filled`/`slippage`
+fields on every close - so the question 6f asks can start being answered from
+the journal rather than needing new plumbing. The thing to do with it once
+there is enough: compare the round trip against the edge the gate required. The
+edge gate currently does not know what trading costs, which is the largest
+unmeasured assumption in the module.
+
 ## 7. BOCPD
 
 Documented in [structures.md](structures.md) as a way to *grade* a regime change

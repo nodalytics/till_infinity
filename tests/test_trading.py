@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -2461,3 +2462,39 @@ def test_the_fill_floor_never_rescues_an_invalidated_trade():
     # so raising it moves the anchored stop down past the fill and the trade
     # stops being invalidated at all. The ordering is what protects this, not
     # the size of the floor.
+
+
+async def test_the_journal_records_what_the_fill_cost_against_what_was_asked(tmp_path):
+    """Slippage was not recoverable from the journal before this.
+
+    The decision held the requested price, the outcome held the exit, and the
+    actual fill in between reached only an alert. `position.price_open` is the
+    broker's own record of it, so this survives a restart without having kept
+    the order result around.
+    """
+    bus = Bus()
+    made = settings(live=True)
+    venue = RecordingBroker(made)
+    async with Journal(tmp_path / "journal.db") as book:
+        trader = Trader(bus, settings=made, journal=book, broker=venue)
+        await trader.start()
+
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+        assert isinstance(got, Intent)
+
+        live = next(iter(trader.open.values()))
+        wanted = live.intent.entry
+        # The terminal filled a touch worse than asked for.
+        live.position = replace(live.position, price_open=wanted + 0.30)
+        await trader._settle(live, price=wanted + 5.0, why="closed", profit=12.0)
+
+    entries = [e for e in read(tmp_path / "journal.db") if "slippage" in (e.context or {})]
+    assert entries, "the outcome carries no slippage"
+    ctx = entries[-1].context
+    assert ctx["entry_wanted"] == pytest.approx(wanted)
+    assert ctx["entry_filled"] == pytest.approx(wanted + 0.30)
+    # Signed against the trade: a buy filled higher than asked is worse.
+    assert ctx["slippage"] == pytest.approx(0.30)

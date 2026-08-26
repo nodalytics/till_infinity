@@ -650,6 +650,25 @@ class Trader:
                     "seconds": round(position.age),
                     "strategy": live.by,
                     "magic": position.magic,
+                    # What was asked for against what the terminal actually
+                    # filled at. `position.price_open` is the broker's own
+                    # record, so this survives a restart and does not depend on
+                    # having kept the order result around.
+                    #
+                    # Until this was written down slippage was not recoverable
+                    # from the journal at all: the decision held the requested
+                    # price, the outcome held the exit, and the fill in between
+                    # reached only an alert. It is signed against the trade -
+                    # positive is a worse fill than asked for, on either side -
+                    # so the sign means the same thing for a buy and a sell.
+                    #
+                    # Zero on an adopted position, whose synthetic intent is
+                    # built from the fill itself.
+                    "entry_wanted": round(live.intent.entry, 8),
+                    "entry_filled": round(position.price_open, 8),
+                    "slippage": round(
+                        (position.price_open - live.intent.entry) * live.intent.side.sign, 8
+                    ),
                     **live.intent.to_context(),
                 },
                 tags=(live.intent.feed, str(live.intent.side), why, live.by or "unattributed"),
