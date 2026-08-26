@@ -2092,3 +2092,151 @@ async def test_a_position_with_no_closing_deal_yet_returns_nothing():
 
     broker._get = fake_get
     assert await HttpBroker.closed_deal(broker, 42) is None
+
+
+# ------------------------------- asking what a thing is worth, not which way
+
+
+def valued(value=4450.0, width=15.0, hours=4.0, because="CPI"):
+    from till_infinity.trading.valuation import Valuation
+
+    return Valuation(value=value, width=width, hours=hours, because=because)
+
+
+UNIT = 4.4  # one volatility unit on gold at 4400
+
+
+def test_a_valuation_above_the_market_is_a_long():
+    """The stance is arithmetic. The model is never asked for a direction."""
+    from till_infinity.trading.valuation import price_it
+
+    got = price_it(valued(value=4450.0), spot=4400.0, unit=UNIT)
+    assert got is not None
+    assert got.stance == "buy"
+    assert got.gap_vol > 0
+
+
+def test_a_valuation_below_the_market_is_a_short():
+    from till_infinity.trading.valuation import price_it
+
+    got = price_it(valued(value=4350.0), spot=4400.0, unit=UNIT)
+    assert got is not None
+    assert got.stance == "sell"
+    assert got.gap_vol < 0
+
+
+def test_a_market_inside_the_interval_is_no_claim_at_all():
+    """Most of the time the market's price is a fair estimate of itself."""
+    from till_infinity.trading.valuation import price_it
+
+    assert price_it(valued(value=4410.0, width=30.0), spot=4400.0, unit=UNIT) is None
+
+
+def test_an_overconfident_width_is_widened_not_obeyed():
+    """A narrow interval is a claim about the model's certainty, and it is the
+    number that would size the position."""
+    from till_infinity.trading.valuation import MIN_WIDTH_VOL, price_it
+
+    got = price_it(valued(width=0.5), spot=4400.0, unit=UNIT)
+    assert got is not None
+    assert got.width == pytest.approx(MIN_WIDTH_VOL * UNIT)
+
+
+def test_a_shrug_is_not_a_valuation_either():
+    from till_infinity.trading.valuation import MAX_WIDTH_VOL, price_it
+
+    got = price_it(valued(value=4600.0, width=10_000.0), spot=4400.0, unit=UNIT)
+    assert got is None or got.width == pytest.approx(MAX_WIDTH_VOL * UNIT)
+
+
+def test_a_valuation_far_from_the_market_is_a_mistake_not_a_bold_call():
+    from till_infinity.trading.valuation import price_it
+
+    assert price_it(valued(value=9000.0, width=20.0), spot=4400.0, unit=UNIT) is None
+
+
+def test_declining_is_a_real_answer():
+    from till_infinity.trading.valuation import price_it
+
+    assert price_it(valued(value=0.0, width=0.0), spot=4400.0, unit=UNIT) is None
+
+
+def test_the_gap_is_measured_in_the_analysts_own_widths():
+    """Whether a gap is a mispricing depends on how sure the analyst was.
+
+    The same 50-point gap is three widths to a confident analyst and half a
+    width to an unsure one, and only the first is a claim.
+    """
+    from till_infinity.trading.valuation import price_it
+
+    confident = price_it(valued(value=4450.0, width=15.0), spot=4400.0, unit=UNIT)
+    assert confident is not None
+    assert confident.gap_widths == pytest.approx(50 / 15, abs=0.01)
+
+    unsure = price_it(valued(value=4450.0, width=120.0), spot=4400.0, unit=UNIT)
+    assert unsure is None
+
+
+async def test_a_failing_analyst_produces_no_valuation():
+    """Timeout, no credential, a malformed reply: all read as no answer."""
+    from till_infinity.trading import valuation
+
+    assert await valuation.ask("gold", "brief", timeout=0.01) is None
+
+
+# ------------------------------------- a stop inside the noise is not a stop
+
+
+def test_the_stop_is_floored_at_one_volatility_unit():
+    """Fair value is a distribution and volatility is its width.
+
+    A stop closer than one unit sits inside the estimate it is protecting and
+    is taken by ordinary movement rather than by the thesis failing. The first
+    two live trades carried risk_vol of 0.53 and 0.61.
+    """
+    made = settings()
+    engine = td.STRATEGIES["level-scalp"](made)
+    # The losing trade's own numbers.
+    stop, _ = engine.distances(
+        level=4624.97, entry=4624.97, vol_bps=3.72354, risk_vol=0.609921, push_vol=1.158286
+    )
+    unit = 4624.97 * 3.72354 / 10_000
+    assert stop / unit == pytest.approx(1.0, abs=0.01)
+    assert stop > 1.05  # wider than the stop that was actually placed
+
+
+def test_a_model_asking_for_a_wide_stop_still_gets_it():
+    """The floor only ever widens: it is a minimum, not a target."""
+    made = settings()
+    engine = td.STRATEGIES["level-scalp"](made)
+    stop, _ = engine.distances(
+        level=4400.0, entry=4400.0, vol_bps=10.0, risk_vol=3.0, push_vol=2.0
+    )
+    unit = 4400.0 * 10.0 / 10_000
+    assert stop / unit == pytest.approx(3.0, abs=0.01)
+
+
+def test_widening_the_stop_shrinks_the_size_rather_than_the_risk():
+    """The budget is fixed, so a wider stop buys fewer lots. That is the trade
+    being sized correctly, not being penalised."""
+    tight = settings(min_stop_vol=0.5)
+    wide = settings(min_stop_vol=2.0)
+    small = take("level-scalp", equity=10_000.0)
+    assert isinstance(small, Intent)
+
+    engine_wide = td.STRATEGIES["level-scalp"](wide)
+    engine_wide.observe(signal())
+    big_stop = engine_wide.consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(big_stop, Intent)
+    assert big_stop.volume < small.volume
+    assert big_stop.risk_money == pytest.approx(small.risk_money, rel=0.35)
+    assert abs(tight.min_stop_vol - wide.min_stop_vol) > 0
+
+
+def test_a_trade_that_cannot_afford_a_real_stop_is_refused():
+    """A stop inside the noise is not a cheaper trade, it is a worse one."""
+    got = take("level-scalp", equity=200.0, min_stop_vol=4.0)
+    assert isinstance(got, Refusal)
+    assert got.gate == "size"

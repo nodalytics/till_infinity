@@ -33,6 +33,7 @@ The pieces, in dependency order:
 | `strategy` | the port a strategy implements, and the register |
 | `scalper` | the four arithmetic level strategies |
 | `council` | agents that reason their own way to a trade, and discuss it |
+| `valuation` | asking an analyst what a thing is worth, rather than which way it goes |
 | `speeds` | three EWMAs and their agreement, for `momentum-scalp` |
 | `book` | the levels seen so far, for the ones that trade toward a level |
 | `manage` | moving a stop after the trade is on. Off by default |
@@ -104,6 +105,7 @@ from .sizing import Sizing, lots, price_distance
 from .speeds import Speeds
 from .strategy import STRATEGIES, Strategy, catalogue
 from .symbols import Resolution, resolve
+from .valuation import Priced, Valuation, price_it
 
 __all__ = [
     "BACKENDS",
@@ -142,6 +144,7 @@ __all__ = [
     "PaperBroker",
     "Plan",
     "Position",
+    "Priced",
     "Refusal",
     "RejectedError",
     "Release",
@@ -160,6 +163,7 @@ __all__ = [
     "Trade",
     "Trader",
     "TransientError",
+    "Valuation",
     "Verdict",
     "Voice",
     "advance",
@@ -172,6 +176,7 @@ __all__ = [
     "listen",
     "lots",
     "price_distance",
+    "price_it",
     "report",
     "resolve",
     "resolve_symbols",

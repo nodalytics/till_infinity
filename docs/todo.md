@@ -1685,7 +1685,7 @@ into `min_reward_to_risk`, which is currently a constant nobody derived. It is
 the same shape of question as the spread charge in §3, and the same answer: it
 is measurable from what is already written down.
 
-## 6g. Let the agents price the market too
+## ~~6g. Let the agents price the market too~~ - the primitive is built, the strategy is not
 
 The thesis is that we price the market and take a stance on the distance. The
 arithmetic side does that: `structures` estimates fair value from where
@@ -1713,6 +1713,30 @@ own.
 
 The `council` should follow: a voice that answers "buy at 0.7 conviction" is
 harder to score than one that answers "worth 4,415, give or take 30".
+
+**Built on 2026-08-26**: `trading/valuation.py` asks exactly that question and
+checks the answer against the market - a stance, a gap in volatility units, and
+a gap in the analyst's *own* widths, which is what decides whether a distance
+is a mispricing or the noise of its uncertainty. Widths are clamped in
+volatility units because a model's stated precision is the least trustworthy
+number it produces and the one that would size the position.
+
+**Left to do**, and deliberately not done at once:
+
+1. **A strategy that trades it.** The primitive returns a stance and a distance;
+   turning that into an entry needs the same gates and sizing everything else
+   uses, and there is no reason to write it before there is any evidence the
+   valuations are worth trading.
+2. **Score the calibration first.** Record valuations against what the market
+   subsequently paid and ask whether an 80% interval contains the price 80% of
+   the time. That is answerable long before any trade is taken on one, and it
+   is the question that decides whether step 1 is worth doing.
+3. **Compare the two estimates.** `structures` prices from where volatility
+   turned; an analyst prices from the calendar and the flow. Plot one against
+   the other and against what the market paid. Where they agree the distance
+   should be worth more, and where they disagree that is worth knowing on its
+   own - but "should" is doing a lot of work in that sentence and it is exactly
+   what the data can settle.
 
 ## 6h. Structures: what would actually improve the estimate
 

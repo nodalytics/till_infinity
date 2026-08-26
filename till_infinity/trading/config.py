@@ -308,6 +308,30 @@ class Settings:
     #: at the third - which is the case the limit exists for.
     max_currency_exposure: float = 0.005
 
+    #: The least a stop may sit from the level, in volatility units.
+    #:
+    #: Fair value is a distribution and volatility is its width, so a stop
+    #: closer than one unit is *inside the estimate's own noise* and will be
+    #: taken by ordinary movement rather than by the thesis being wrong. The
+    #: README says exactly this about distance - one unit is noise, three is a
+    #: statement - and it applies to the stop before it applies to the entry.
+    #:
+    #: Measured on the first two live trades, both gold, both sells: risk_vol
+    #: of 0.53 and 0.61 against volatility units of 0.99 and 1.72. The second
+    #: was stopped at 4626.09 on a 1.05-point stop and price then fell to 4615,
+    #: which is the direction being right and the stop being inside the noise.
+    #:
+    #: `risk_vol` comes from the level model's own geometry and is frequently
+    #: under a unit on young levels, where the zone has no wicks recorded to
+    #: widen it either. Flooring here rather than there is deliberate: the model
+    #: is describing where the level is invalidated, and this is a statement
+    #: about what a *tradable* stop costs.
+    #:
+    #: The size shrinks to keep the risk budget, and a trade that then cannot
+    #: make the minimum lot is refused - which is the correct outcome. A stop
+    #: inside the noise is not a cheaper trade, it is a worse one.
+    min_stop_vol: float = 1.0
+
     # ------------------------------------------- standing in front of a sweep
     #: A level run this often, from this side, is refused by `sweep-aware`.
     #: `TRAP` is the recorded outcome: through and back.
@@ -481,6 +505,7 @@ class Settings:
             max_spread_ratio=_float("TRADING_MAX_SPREAD_RATIO", 2.5),
             drift_pause=_float("TRADING_DRIFT_PAUSE_S", 900.0),
             max_currency_exposure=_float("TRADING_MAX_CURRENCY_EXPOSURE", 0.005),
+            min_stop_vol=_float("TRADING_MIN_STOP_VOL", 1.0),
             sweep_max_rate=_float("TRADING_SWEEP_MAX_RATE", 0.35),
             sweep_min_history=_float("TRADING_SWEEP_MIN_HISTORY", 6.0),
             sweep_max_exposure=_float("TRADING_SWEEP_MAX_EXPOSURE", 0.8),

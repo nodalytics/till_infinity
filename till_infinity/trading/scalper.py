@@ -96,9 +96,16 @@ class LevelStrategy(Strategy):
     def distances(
         self, level: float, entry: float, vol_bps: float, risk_vol: float, push_vol: float
     ) -> tuple[float, float]:
-        """Stop distance from the level, target distance from the entry."""
+        """Stop distance from the level, target distance from the entry.
+
+        The stop is floored at `min_stop_vol`. A stop inside one volatility
+        unit is inside the width of the estimate it is protecting, and is taken
+        by ordinary movement rather than by the thesis failing - see
+        `Settings.min_stop_vol` for the two live trades that made the case.
+        """
+        wide = max(risk_vol * self.stop_multiple, self.settings.min_stop_vol)
         return (
-            price_distance(level, vol_bps, risk_vol * self.stop_multiple),
+            price_distance(level, vol_bps, wide),
             price_distance(entry, vol_bps, push_vol * self.target_multiple),
         )
 
