@@ -2083,8 +2083,9 @@ def trading_doctor(symbols, plan, strategies, backend):
     console.print(f"timeframes: {', '.join(settings.intervals)}")
     if chosen == td.HTTP and not settings.account_equity:
         console.print(
-            "[yellow]TRADING_ACCOUNT_EQUITY is not set[/] — the bridge exposes no "
-            "account endpoint, so sizing has nothing to measure risk against"
+            "[dim]TRADING_ACCOUNT_EQUITY is not set — fine against a bridge with an "
+            "account endpoint (metatrader-terminal has one), needed against one "
+            "without it (the older mt5-api). `trading symbols` will say which.[/]"
         )
 
 

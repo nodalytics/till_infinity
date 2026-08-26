@@ -1280,3 +1280,112 @@ async def test_a_rejected_order_is_not_read_as_a_fill():
     )
     assert not result.ok
     assert result.retcode == 10014
+
+
+# ------------------------------------------- the switch that has to actually work
+
+
+class RecordingBroker(td.Broker):
+    """A stand-in for a **live** terminal that records what it is asked to send.
+
+    Deliberately not a `PaperBroker` subclass. The trader treats a paper broker
+    as its own execution venue — one book, not two — so a double that inherited
+    from it would be handed the orders it is supposed to prove never arrive.
+    """
+
+    name = "recording"
+
+    def __init__(self, made):
+        super().__init__(made)
+        self.sent: list = []
+        self._book = td.PaperBroker(made)
+
+    async def connect(self):
+        return await self._book.connect()
+
+    async def healthy(self):
+        return True
+
+    async def account(self):
+        return await self._book.account()
+
+    async def spec(self, symbol):
+        return await self._book.spec(symbol)
+
+    async def quote(self, symbol):
+        return await self._book.quote(symbol)
+
+    async def positions(self):
+        return await self._book.positions()
+
+    async def send(self, order):
+        self.sent.append(order)
+        return await self._book.send(order)
+
+    async def close_position(self, ticket, volume=0.0):
+        return await self._book.close_position(ticket, volume)
+
+    def observe(self, tick):
+        return self._book.observe(tick)
+
+
+async def test_an_unarmed_trader_sends_nothing_to_the_terminal():
+    """TRADING_LIVE used to change a log line and nothing else.
+
+    `take` called `self.broker.send` unconditionally, so a run in paper mode
+    against a live bridge placed real orders. Caught against a Deriv demo: a
+    paper run opened 0.03 BTCUSD, and the next run then refused to trade
+    because the instrument it had never really traded was already open.
+    """
+    bus = Bus()
+    made = settings(live=False)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+
+    assert isinstance(got, Intent)
+    assert trader.taken == 1
+    # The trade happened — on the paper book, which is a different object.
+    assert venue.sent == []
+    assert trader.paper is not None
+    assert trader.execution is trader.paper
+    assert trader.execution is not trader.broker
+
+
+async def test_an_armed_trader_sends_to_the_terminal():
+    bus = Bus()
+    made = settings(live=True)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+
+    assert isinstance(got, Intent)
+    assert len(venue.sent) == 1
+    assert venue.sent[0].symbol == "XAUUSD"
+    assert trader.paper is None
+    assert trader.execution is trader.broker
+
+
+async def test_the_paper_book_is_priced_off_the_real_venue():
+    """An unarmed run still pays the broker's actual spread."""
+    bus = Bus()
+    made = settings(live=False)
+    venue = RecordingBroker(made)
+    venue.observe(Tick("XAUUSD", bid=4399.0, ask=4402.0))  # a wide, real spread
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+
+    got = await trader._tick("XAUUSD")
+    assert got is not None
+    # The quote came from the venue and reached the paper book.
+    assert (await trader.paper.quote("XAUUSD")).ask == 4402.0

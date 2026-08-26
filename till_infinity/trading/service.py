@@ -42,6 +42,7 @@ from .broker import Broker, BrokerError, build
 from .config import Settings
 from .context import Context
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
+from .paper import PaperBroker
 from .risk import Guard
 
 log = get_logger(__name__)
@@ -83,6 +84,9 @@ class Trader:
         self.journal = journal
         self.plan = plans.apply(self.settings)
         self.broker = broker or build(self.settings)
+        #: Where orders go. **Not** the same object as `self.broker` unless
+        #: armed: see `execution`.
+        self.paper: PaperBroker | None = None
         self.strategies = strategy.build(self.settings.strategies, self.settings)
         self.context = Context(
             before=self.settings.news_before,
@@ -112,6 +116,27 @@ class Trader:
         self._vol_bps: dict[str, float] = {}
         self.resolutions = 0
 
+    @property
+    def execution(self) -> Broker:
+        """The venue orders are sent to.
+
+        The real terminal only when `TRADING_LIVE` is set; the paper book
+        otherwise. Market data always comes from `self.broker`, so an unarmed
+        run still resolves real symbols, reads the real account and prices
+        against the real bid/ask — it simply cannot place anything.
+
+        This exists because the flag used not to do anything. `take` called
+        `self.broker.send` unconditionally and `TRADING_LIVE` changed only a log
+        line, so a run in "paper" mode against a live bridge placed real orders
+        on the account. Caught by doing exactly that: a paper run opened 0.03
+        BTCUSD on the demo, and the next run refused to trade because the
+        instrument it had never really traded was already open.
+
+        A safety switch that is checked in one place and ignored in another is
+        worse than no switch, because it is believed.
+        """
+        return self.paper or self.broker
+
     # ------------------------------------------------------------- lifecycle
 
     async def start(self) -> None:
@@ -125,7 +150,21 @@ class Trader:
             account,
         )
         if not self.settings.live:
-            log.info("trading: TRADING_LIVE is not set, so no order will reach the account")
+            # One paper book, not two. When there is no terminal at all
+            # `build` has already returned a PaperBroker, and making a second
+            # one here would split the state: bus quotes would drive the stops
+            # on one book while the positions lived on the other, so nothing
+            # would ever resolve.
+            if isinstance(self.broker, PaperBroker):
+                self.paper = self.broker
+            else:
+                self.paper = PaperBroker(self.settings)
+                await self.paper.connect()
+            log.info(
+                "trading: TRADING_LIVE is not set — orders go to the paper book, "
+                "priced against %s's quotes",
+                self.broker.name,
+            )
 
         resolution = await sym.resolve(self.broker, self.settings.symbols, self.settings)
         self.specs = dict(resolution.found)
@@ -217,10 +256,15 @@ class Trader:
             return
         if not bid or not ask:
             return
-        observed = getattr(self.broker, "observe", None)
-        if observed is not None:
-            when = message_time(payload)
-            observed(Tick(symbol=symbol, bid=float(bid), ask=float(ask), time=when))
+        when = message_time(payload)
+        tick = Tick(symbol=symbol, bid=float(bid), ask=float(ask), time=when)
+        # The paper book holds its own stops, so it has to see the market. When
+        # the execution venue *is* the broker they are the same object and this
+        # runs once.
+        for venue in {id(self.broker): self.broker, id(self.paper): self.paper}.values():
+            observed = getattr(venue, "observe", None)
+            if observed is not None:
+                observed(tick)
         self._mark_best(symbol, float(bid), float(ask))
 
     async def on_signal(self, payload: dict[str, Any]) -> Intent | Refusal | None:
@@ -301,7 +345,7 @@ class Trader:
             deviation=self.settings.deviation,
         )
         try:
-            result = await self.broker.send(order)
+            result = await self.execution.send(order)
         except BrokerError as exc:
             log.warning("trading: %s rejected: %s", intent.title, exc)
             return Refusal("rejected", str(exc), intent.feed)
@@ -369,7 +413,7 @@ class Trader:
             if move is None:
                 continue
             try:
-                result = await self.broker.modify(ticket, move.stop, live.position.target)
+                result = await self.execution.modify(ticket, move.stop, live.position.target)
             except BrokerError as exc:
                 log.warning("trading: could not move #%d: %s", ticket, exc)
                 continue
@@ -391,7 +435,7 @@ class Trader:
                 continue
             log.info("trading: closing #%d after %.0fs, past its %.0fs hold", ticket, age, limit)
             with contextlib.suppress(BrokerError):
-                await self.broker.close_position(ticket)
+                await self.execution.close_position(ticket)
             closed = True
         if closed:
             await self._reconcile()
@@ -422,7 +466,7 @@ class Trader:
             pending = None
         self._pending = None
 
-        exact = {p.ticket: (price, why) for p, price, why in self.broker.drain_closed()}
+        exact = {p.ticket: (price, why) for p, price, why in self.execution.drain_closed()}
         settled: list[tuple[Live, float, str]] = []
         for ticket, live in list(self.open.items()):
             if ticket in current:
@@ -575,17 +619,26 @@ class Trader:
     # ---------------------------------------------------------------- inside
 
     async def _tick(self, symbol: str) -> Tick | None:
+        """The live quote, and the one the paper book fills against.
+
+        Feeding it here rather than only from the bus is what makes an unarmed
+        run against a real bridge honest: the simulated fill pays the broker's
+        actual spread at that instant, not a consensus of other venues.
+        """
         try:
-            return await self.broker.quote(symbol)
+            tick = await self.broker.quote(symbol)
         except BrokerError as exc:
             log.warning("trading: could not quote %s: %s", symbol, exc)
             return None
+        if tick is not None and self.paper is not None:
+            self.paper.observe(tick)
+        return tick
 
     async def _positions(self, fresh: bool = False) -> list[Position]:
         if not fresh and self.open:
             return [live.position for live in self.open.values()]
         try:
-            return await self.broker.positions()
+            return await self.execution.positions()
         except BrokerError as exc:
             log.warning("trading: could not read positions: %s", exc)
             return [live.position for live in self.open.values()]
