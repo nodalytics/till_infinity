@@ -1418,3 +1418,23 @@ def test_the_index_names_include_the_spaced_forms():
     assert matches("spx500", listing) == ["US SP 500"]
     # Exact beats a longer variant: the plain pair, not the micro contract.
     assert matches("usdjpy", listing) == ["USDJPY", "USDJPYmicro"]
+
+
+def test_bybit_style_suffixed_names_resolve():
+    """Bybit calls them `SP500.s` and `NAS100.s`, and plenty of brokers suffix.
+
+    Both routes have to find them: the catalogue scan, where the suffix is
+    whatever the broker appended and is never guessed, and the probe, where it
+    comes from the suffix list. The probe matters because the HTTP bridge
+    cannot enumerate symbols on every build.
+    """
+    from till_infinity.trading.symbols import candidates, matches
+
+    listing = ["SP500.s", "NAS100.s", "XAUUSD.s", "EURUSD.s", "BTCUSDT"]
+    assert matches("spx500", listing) == ["SP500.s"]
+    assert matches("us100", listing) == ["NAS100.s"]
+    assert matches("gold", listing) == ["XAUUSD.s"]
+    assert matches("btc", listing) == ["BTCUSDT"]
+
+    assert "NAS100.s" in candidates("us100")
+    assert "SP500.s" in candidates("spx500")
