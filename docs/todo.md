@@ -1778,15 +1778,37 @@ predictor. Every entry in the price-geometry family has been measured to a coin
 flip, here and elsewhere; the reason this project is not in that graveyard is
 that it is estimating a *quantity*, and that is the property to protect.
 
-## 6i. Copy trading: one decision, many accounts
+## 6i. More than one terminal, in two modes
 
-Not routing and not capacity. The goal is **fan-out**: the strategy decides
-once, and that position is replicated across several accounts on several MT5
-terminals.
+`Broker` is one terminal, one account, and everything above it assumes that:
+`symbols.resolve` scans one catalogue at start-up, sizing reads one equity, and
+the risk plan's limits are a fraction of that one number.
 
-That is a different shape from the one this module was built for, and it is
-worth being precise about which parts actually break, because two of them are
-not what they look like.
+There are two different reasons to want several, they are not variations of
+each other, and several questions below have **opposite** correct answers
+depending on which one is meant. Copy is the intended mode; split is recorded
+so that the reasoning survives if scale ever makes it worth building.
+
+| question | **copy** (the default) | **split** (later, if scale needs it) |
+| --- | --- | --- |
+| what is replicated | the decision | nothing - each position lives on one terminal |
+| lot size | re-derived from each account's own equity | derived once, from the shared book |
+| magic base | **the same** on every account | **must differ** per process |
+| exposure | per-account | must aggregate across terminals |
+| risk limits | each account's own plan | one plan spanning all of them |
+| a rejected order | let the accounts diverge, record it | route the same order elsewhere |
+| choosing a terminal | not a choice - all of them | a decision worth measuring |
+| what equity means | each account's own | the sum, or a designated primary |
+
+Running both at once is not a simple composition - it is a split book being
+copied, and every exposure question then has to be asked twice at two different
+scopes. Not a reason to rule it out, but a reason not to arrive at it by
+accident.
+
+### Copy: one decision, many accounts
+
+The strategy decides once and the position is replicated across several
+accounts. The parts that actually break, in the order they matter:
 
 **Lots must not be copied. Risk must be.** This is the correctness point
 everything else is downstream of. A 0.05-lot trade sized for a 10,000-unit
@@ -1794,9 +1816,9 @@ account is a quarter percent of it; replicated verbatim onto a 2,000-unit
 account it is one and a quarter percent - five times the risk the plan
 authorised, on the account least able to carry it. So a followed account
 re-runs `sizing.lots` against **its own** equity and its own symbol spec, and
-what is copied is the decision and the price levels, never the volume. An
-account whose minimum lot is larger than its risk budget allows should be
-refused rather than rounded up, which is the same `min_stop_vol` argument in a
+what travels is the decision and the price levels, never the volume. An account
+whose minimum lot is larger than its risk budget allows should be refused
+rather than rounded up, which is the same `min_stop_vol` argument in a
 different variable.
 
 **Partial failure is the normal case, not the edge.** Account A fills and
@@ -1804,42 +1826,63 @@ account B is refused - not enough margin, the instrument is not carried, a
 different filling mode, AutoTrading switched off on that terminal. The state
 afterwards is genuinely divergent and the policy has to be chosen rather than
 discovered: unwinding A to stay symmetric turns one broker's problem into a
-realised loss on an account that did nothing wrong, so the default should be to
-let them diverge and record it. What must not happen is a report that presents
-one decision with three fills as though it were one trade. Closes fan out the
-same way and fail the same way, and a close that only half succeeds is the more
-dangerous half of this.
+realised loss on an account that did nothing wrong, so the default is to let
+them diverge and record it. What must not happen is a report presenting one
+decision with three fills as though it were one trade. Closes fan out the same
+way and fail the same way, and a half-completed close is the more dangerous
+half of this.
 
-**Symbol resolution is already per-terminal and that is the part that works.**
-`symbols.resolve` scans one account's catalogue at start-up; run it per
-account and an account that does not carry `Germany 40` simply does not receive
-those trades. No new mechanism, just not sharing one resolved map.
+**The magic base stays the same across accounts.** Magic distinguishes our
+trades from a hand-placed one on that terminal, and every account should mark
+them identically. The collision that matters is two processes against *one*
+account, which is a separate problem and still real.
 
-**Risk limits are per-account and should stay that way.** Each account has its
-own equity, its own daily loss halt, its own position count. A follower that
-hits its daily halt stops copying while the others carry on, which is correct
-and needs to be visible rather than silent.
+**Exposure stays per-account.** The same position on five accounts is five
+accounts holding it against their own capital, not one position sized five
+times. Aggregating here would refuse the replication that is the entire point.
 
-Two things recorded here earlier were wrong under this reading, and are
-corrected rather than deleted because the reasoning is the useful part:
+**Risk limits stay per-account.** Each has its own equity, daily loss halt and
+position count. A follower that hits its halt stops copying while the others
+carry on, which is correct and needs to be visible rather than silent.
 
-* *"A second deployment needs a different magic base."* No - across **different
-  accounts** the same base is what you want. Magic distinguishes our trades
-  from a hand-placed one on that terminal, and every account should mark them
-  the same way. The collision that matters is two processes against **one**
-  account, which is a separate problem and still real.
-* *"Two terminals both long the dollar are one dollar trade, so exposure should
-  aggregate across them."* That is the right argument for splitting one book
-  across terminals and the wrong one here. Replication is the point: the same
-  position appearing on five accounts is five accounts holding it, each against
-  its own capital, not one position sized five times. `exposure.py` stays
-  per-account.
+**Symbol resolution is already per-terminal and that part works.** Run it per
+account and one that does not carry `Germany 40` simply does not receive those
+trades. No new mechanism, just not sharing one resolved map.
 
-The first step is the same either way: `Broker` construction should take an
-explicit account identity instead of reading one set of environment variables,
-and `Trader` should hold a set of execution targets rather than one. Doing that
-much leaves the single-account case behaving exactly as it does now, which is
-the property that makes it safe to build before the fan-out policy is settled.
+### Split: one book across several terminals
+
+Worth writing down because the answers invert, and because a note that
+originally said these things was corrected as wrong when it was only wrong for
+copy mode.
+
+The reason to do this is capacity or execution quality rather than
+replication - a size that moves one broker's book, or a second venue with
+better index pricing. Then:
+
+**The magic base must differ per process.** Two processes against the same
+account and band reconcile positions the other opened. Magic separates our
+trades from a hand-placed one; it does not separate us from ourselves, and
+per-strategy magics did not change that - two processes running the same
+strategy stamp the same number by construction, because the number derives from
+the strategy name so that it survives a restart.
+
+**Exposure must aggregate.** Two terminals both long the dollar are one dollar
+trade, and a guard seeing only its own book would authorise it twice. That is
+the argument `exposure.py` already makes about tickets, one level up.
+
+**Which terminal fills it becomes a real decision** with an answer worth
+measuring: the tighter spread at that instant, the account with room under its
+limits, or simply the venue whose symbol resolved. `speeds.py` and the slippage
+work in 6f are what would settle it, which is an argument for doing those
+first.
+
+### The step both modes need
+
+`Broker` construction should take an explicit account identity instead of
+reading one set of environment variables, and `Trader` should hold a set of
+execution targets rather than one. That much leaves the single-account case
+behaving exactly as it does now, which is the property that makes it safe to
+build before either mode's policy is settled.
 
 ## 7. BOCPD
 
