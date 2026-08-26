@@ -2697,7 +2697,8 @@ def test_the_crosses_consume_a_different_budget_from_everything_else():
     crosses = ("eurgbp", "eurjpy", "gbpjpy", "eurchf", "audjpy", "chfjpy", "euraud")
     for feed in crosses:
         base, quote = ex.legs(feed)
-        assert base and quote, f"{feed} is unmapped, so it escapes the limit entirely"
+        assert base, f"{feed} is unmapped, so it escapes the limit entirely"
+        assert quote, f"{feed} is unmapped, so it escapes the limit entirely"
         assert "USD" not in (base, quote), f"{feed} was mapped onto the dollar"
 
     # A full dollar book plus a cross: the cross adds nothing to USD.
