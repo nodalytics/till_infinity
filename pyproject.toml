@@ -66,7 +66,13 @@ target-version = "py311"
 # results and thrown away when the question is answered, so the repo's style
 # gates should not block CI on them — and a lint failure there would stop a
 # deploy over a scratch script.
-extend-exclude = ["research/harness"]
+#
+# `assets` is the same category: a generator run by hand to produce the logo
+# SVGs, judged by looking at what comes out. It is not imported by anything.
+# The exclusion was added after it did exactly what the paragraph above warns
+# about — an unsorted import block in a logo script failed CI and blocked a
+# deploy of the trading service.
+extend-exclude = ["research/harness", "assets"]
 
 [tool.ruff.lint]
 # Ruff covers pylint (the PL rules) alongside everything else, so there is one
