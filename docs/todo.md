@@ -1618,6 +1618,73 @@ claim.
   not a direction. Not the same thing, and the name collision will mislead
   someone — whatever this ends up called, it should not be called regime.
 
+## 6d. Score the trading, and stop calling four rules a strategy set
+
+**This is the largest gap the trading module has**, and it is the same gap the
+level model had before `record_outcomes`: decisions with no labels attached.
+
+Four strategies ship — `level-scalp`, `confluence-scalp`, `momentum-scalp`,
+`approach-scalp` — and none has been evaluated against its own outcomes. Each
+is a rule for acting on a measured signal; none is itself measured. The docs
+say so, and that is the honest position rather than a satisfactory one.
+
+The pieces are in place. `structures.resolutions` carries ground truth on the
+bus, `trading` writes a `decide` per intent and an `outcome` per close with the
+sizing copied in, and `trading report` pairs them and refuses to characterise a
+sample under thirty. What is missing is closed trades.
+
+**Order of work.**
+
+1. **Run it on paper against real broker quotes** for long enough to accumulate
+   trades. Unarmed runs fill against the terminal's actual bid/ask, so the
+   spread is real and only the fill is simulated — which is the cheapest
+   honest sample available.
+2. **Score by strategy against the pooled rate**, in R rather than money, the
+   way `trading report` already does. A win rate without the base rate beside
+   it is the mistake §7 of levels.md exists to prevent.
+3. **Then decide what to keep.** `confluence-scalp` is the one to watch:
+   [strength.md](strength.md) measures confluence depth at an AUC of 0.476 and
+   0.452 — below the 0.5 that means no information — so the prior says it
+   should not beat `level-scalp`. If it does, that is worth understanding
+   rather than celebrating, because what strength.md measured is "did price get
+   through the level" and not "did the trade make money".
+
+**What would falsify the module as a whole:** every strategy indistinguishable
+from the others and from a fixed-size entry at the same signals. That is the
+null, it is cheap to compute from the same journal, and it should be run first
+rather than last.
+
+## 6e. The gates have never been costed
+
+`Guard` counts refusals per gate — that is what the machine-readable `gate` on
+every `Refusal` is for — and nothing reads the tally back. A gate that never
+fires is doing nothing; one that fires constantly is mis-set. Both are
+invisible without looking, and both are one query away.
+
+`trading report` prints the tally today. What it cannot say is what the refused
+trades *would* have done, which is the number that decides whether a limit is
+protecting the account or just costing it. The refusals are journalled with the
+full sizing context precisely so that question can be answered later; nothing
+answers it yet.
+
+The one to look at first is `news`, because it is the widest: a single US
+release blacks out gold, BTC and all seven majors for ten minutes before and
+fifteen after, and on a busy calendar that is a large fraction of the session.
+It may well be worth it. Nobody has checked.
+
+## 6f. Trading is unmeasured against slippage and rejection
+
+Sizing assumes the fill is the quote. Against a real terminal it is not: the
+order pays the ask, the deviation allows a requote, and a stop fills where the
+market is rather than where it was placed. `OrderResult` carries the fill price
+and the intent carries the quote it was sized from, so the difference is
+already recorded on every trade — and nothing compares them.
+
+A running estimate of realised slippage per instrument would feed straight back
+into `min_reward_to_risk`, which is currently a constant nobody derived. It is
+the same shape of question as the spread charge in §3, and the same answer: it
+is measurable from what is already written down.
+
 ## 7. BOCPD
 
 Documented in [structures.md](structures.md) as a way to *grade* a regime change
@@ -1673,3 +1740,18 @@ rather than flag it. Deliberately deferred.
 - **Confluence text** in a delivered alert should match `structures zones` for
   the same instrument. Both are logged; if they diverge, the per-batch grouping
   in `_level_calls` is where to look.
+- **The MT5 tunnel** is a single point of failure that fails quietly in the
+  right direction: `trading` cannot reach the terminal, refuses to start, and
+  the rest of the stack carries on. `systemctl status mt5-bridge-tunnel` on the
+  box, and `trading doctor` inside the container, are the two things to look
+  at. A tunnel bound to loopback instead of the docker gateway is the failure
+  that looks like everything working — it answers from a shell and is invisible
+  to the container.
+- **AutoTrading on the terminal** switches itself off whenever the account
+  changes, and every order is then refused with a message naming the client
+  rather than the terminal. The auto-login script now reads the state back
+  rather than blind-toggling, but it is worth knowing what 10027 means.
+- **Two traders, one magic.** Running a second `trading` anywhere against the
+  same account and magic number makes both of them reconcile positions the
+  other opened. The magic is what separates our trades from a hand-placed one;
+  it does not separate us from ourselves.

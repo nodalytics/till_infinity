@@ -190,6 +190,10 @@ See [todo.md](todo.md) for the full list. The short version:
    fixed. Then `0.08`, which is still the one gate nobody chose.
 3. **Run-formed levels** as an experiment, not a feature.
 4. **Build the score** ([score.md](score.md)).
+5. **Score the trading.** `structures.resolutions` puts ground truth on the bus
+   and `trading report` pairs decisions with outcomes; neither has enough
+   closed trades to say anything. Until it does, four strategies are four
+   untested rules and the docs say so.
 
 ## What is deployed and working
 
@@ -209,6 +213,42 @@ sudo docker exec till-infinity till-infinity structures levels   # touches shoul
 sudo docker exec till-infinity till-infinity structures zones --feed btc --min-timeframes 2
 sudo docker logs till-infinity | grep "alert '"                  # what was actually sent
 ```
+
+## Trading, added 2026-08-26
+
+The level calls now reach an account. `trading` consumes `structures.signals`,
+sizes against the terminal's own symbol rules, and places the order — on paper
+unless `TRADING_LIVE=1`, and off entirely unless `TRADING_ENABLED=1`. Neither
+switch implies the other. Full guide: [trading.md](trading.md).
+
+**Where the terminal runs, and why not here.** MetaTrader 5 is an x86-64
+Windows binary and WineHQ publishes no arm64 packages, so it cannot run on the
+aarch64 deployment box at all. It runs on a separate x86-64 host behind the
+FastAPI bridge ([`metatrader-terminal`](https://github.com/nodalytics/metatrader-terminal))
+and is reached over an SSH tunnel in `mt5-bridge-tunnel.service`. The tunnel
+binds to the **docker bridge gateway**, not loopback: the consumer is the
+container, and bound to 127.0.0.1 it works perfectly from a shell here and is
+invisible to the only thing that needs it. `--add-host` in `deploy.sh` is the
+other half.
+
+There are two other routes to a terminal — the native package on Windows, and
+the module proxied over RPyC out of a Wine prefix — and `trading doctor` says
+which this host can use and why the others are out.
+
+```bash
+docker exec till-infinity till-infinity trading doctor    # what this host can reach
+docker exec till-infinity till-infinity trading symbols   # what the broker offers
+docker exec till-infinity till-infinity trading report    # what it has actually done
+```
+
+**Verified against a live Deriv demo on 2026-08-26**: reads, an order, a stop
+moved by ticket and confirmed on the terminal, and the close. All fourteen
+instruments resolve. Six defects were found doing it that no unit test could
+have caught, listed under the next heading.
+
+**What it does not claim.** No strategy here has been evaluated against its own
+outcomes. `structures.resolutions` now carries ground truth on the bus and
+`trading report` will score it, but there are no closed trades to score yet.
 
 ## Things that cost time, so they do not cost it twice
 
@@ -231,6 +271,30 @@ kind passes for the wrong reason.
 **A fix that looks complete often is not.** Touch counting took three rounds —
 per quote, per zone-edge crossing, per bar replay — each looking finished. When
 a class of bug is found, ask what else reaches the same counter.
+
+**A safety switch checked in one place and ignored in another is worse than no
+switch, because it is believed.** `TRADING_LIVE` gated a log line and nothing
+else: `take` called `broker.send` unconditionally, so a run in "paper" mode
+against a live bridge placed real orders. The README, the docs, `.env.example`
+and the start-up banner all described a switch that was not wired to anything.
+Found only by arming it against a demo and noticing the *previous* run had
+already traded.
+
+**An error usually blames the wrong component.** Every defect found against the
+live terminal presented as something else. A rejected login arrived as
+`connection reset by peer`, because the process exited mid-response. An
+unsupported fill policy arrived as `Unsupported filling mode` — reading like a
+bad order, and really a bad constant, since the symbol's own mask says FOK only.
+AutoTrading being off arrived as `AutoTrading disabled by client`, naming the
+client that sent the order rather than the terminal that refused it. Ask what
+the component *could* know before believing what it says.
+
+**Toggles are not switches.** `enable_algo_trading` pressed Ctrl+E once, which
+is correct exactly half the time. Every restart flipped AutoTrading to whatever
+it was not. The fix has to read the state back, and the first attempt at *that*
+failed too — the terminal writes its log asynchronously, so a fixed sleep read
+the previous line and toggled a second time. Wait for evidence, not for a
+duration.
 
 **Correct silence and broken silence are indistinguishable.** The channel going
 quiet, a gate never firing, an agent never waking, a filter dropping everything:
