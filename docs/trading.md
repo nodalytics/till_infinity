@@ -799,6 +799,30 @@ Two strategies can only collide in the hashed tail, and start-up says so out
 loud when they do rather than leaving it to be found in a scorecard that looks
 fine.
 
+## When the whole market goes wide
+
+`structures` already scores spread per venue and publishes an anomaly whenever
+one is out of line with the group. `trading` was not listening: `observe_signal`
+handled `drift` and ignored everything else, so a detector that already existed
+had no effect on a single decision.
+
+It is wired in now, with one condition that decides whether the idea works at
+all. **Those anomalies fire continuously, and they are supposed to** - one venue
+quoting badly is exactly what the detector is for - so standing aside on each
+would stop trading altogether. What is worth acting on is several venues
+widening *at the same moment*: that is not one venue misbehaving, it is the
+instrument thinning out everywhere, and there is no good fill to be had from
+anyone.
+
+So the gate needs `wide_venues` distinct venues flagged inside `wide_pause`,
+and the same venue reporting five times counts once. The pause is much shorter
+than `drift_pause` - a widening passes, a regime change does not.
+
+This is the case `dislocation` cannot cover, and the two are complements rather
+than duplicates: `dislocation` judges **our broker against the group**, which
+needs a healthy group to judge against. This one fires precisely when the group
+itself is the problem.
+
 ## Spread, when there is nothing to compare it against
 
 Two gates already judge spread and both are right. `Context.dislocation`

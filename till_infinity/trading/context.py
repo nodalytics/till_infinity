@@ -76,12 +76,28 @@ class Context:
     max_spread_ratio: float = 2.5
     #: Seconds to stand aside on an instrument after a drift signal.
     drift_pause: float = 900.0
+    #: Seconds to stand aside after the venues covering an instrument widen
+    #: together. Much shorter than `drift_pause`: a widening passes, a regime
+    #: change does not.
+    wide_pause: float = 300.0
+    #: How many distinct venues must be flagged wide at once before the market
+    #: is treated as wide rather than one venue being wide.
+    #:
+    #: `structures` scores spread per venue and publishes an anomaly whenever
+    #: one is out of line with the group. Those fire continuously and are
+    #: *supposed* to - one venue quoting badly is what the detector is for -
+    #: so standing aside on each would stop trading altogether. Several venues
+    #: widening at the same moment is a different statement: the instrument has
+    #: thinned out everywhere, and there is no good fill to be had from anyone.
+    wide_venues: int = 3
 
     _events: dict[str, Release] = field(default_factory=dict)
     _quotes: dict[str, dict[str, tuple[float, float, float]]] = field(
         default_factory=lambda: defaultdict(dict)
     )
     _drifted: dict[str, float] = field(default_factory=dict)
+    #: feed -> {venue: when it was last flagged wide}.
+    _wide: dict[str, dict[str, float]] = field(default_factory=lambda: defaultdict(dict))
     #: This broker's own spread by instrument and hour. Only consulted when
     #: there is no peer group to judge against - see `dislocation`.
     spreads: Spreads = field(default_factory=Spreads)
@@ -123,15 +139,35 @@ class Context:
         )
 
     def observe_signal(self, payload: dict[str, Any]) -> None:
-        """Note a regime change. Only `drift` is of interest here."""
-        if str(payload.get("shape") or "") != "drift":
-            return
+        """Note a regime change or a widening. Everything else is ignored."""
+        shape = str(payload.get("shape") or "")
         feed = str(payload.get("feed") or "")
         if not feed:
             return
         when = payload.get("time")
-        self._drifted[feed] = float(when) if isinstance(when, int | float) and when else time.time()
-        log.info("trading: %s drifted - standing aside for %.0fs", feed, self.drift_pause)
+        at = float(when) if isinstance(when, int | float) and when else time.time()
+
+        if shape == "drift":
+            self._drifted[feed] = at
+            log.info("trading: %s drifted - standing aside for %.0fs", feed, self.drift_pause)
+            return
+
+        if shape == "spread":
+            # Recorded per venue rather than counted, because the same venue
+            # reporting five times is one wide venue and not five.
+            venue = str((payload.get("fields") or {}).get("venue") or payload.get("venue") or "")
+            if not venue:
+                return
+            seen = self._wide[feed]
+            seen[venue] = at
+            fresh = sum(1 for last in seen.values() if at - last <= self.wide_pause)
+            if fresh == self.wide_venues:
+                log.info(
+                    "trading: %s is wide on %d venues at once - standing aside for %.0fs",
+                    feed,
+                    fresh,
+                    self.wide_pause,
+                )
 
     # -------------------------------------------------------------- answering
 
@@ -219,6 +255,21 @@ class Context:
                 f"{spread:.2f}bps, limit is {self.max_spread_ratio:.1f}x"
             )
         return ""
+
+    def widened(self, feed: str, now: float | None = None) -> int:
+        """How many venues are currently quoting this instrument wide.
+
+        Zero unless it is at or past `wide_venues`, so a caller cannot read a
+        single badly-behaved venue as the market thinning out. One venue out of
+        line is what `dislocation` already judges our own broker against; this
+        is the case where there is nobody left to be judged against.
+        """
+        seen = self._wide.get(feed)
+        if not seen:
+            return 0
+        when = now if now is not None else time.time()
+        fresh = sum(1 for last in seen.values() if when - last <= self.wide_pause)
+        return fresh if fresh >= self.wide_venues else 0
 
     def drifting(self, feed: str, now: float | None = None) -> float:
         """Seconds of stand-aside left after a regime change. Zero if none."""

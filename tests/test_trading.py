@@ -2722,3 +2722,68 @@ def test_every_tracked_instrument_can_be_exposure_mapped():
     """
     unmapped = [f for f in td.INSTRUMENTS if ex.legs(f) == ("", "")]
     assert not unmapped, f"no currency legs for {unmapped}"
+
+
+# ----------------------------------------------------- the market gone wide
+
+
+def _wide(feed, venue, when):
+    return {
+        "shape": "spread",
+        "feed": feed,
+        "time": when,
+        "fields": {"venue": venue},
+        "detail": "spread 1.6x the group",
+    }
+
+
+def test_one_wide_venue_is_not_the_market_going_wide():
+    """`structures` scores spread per venue and flags whichever is out of line.
+
+    Those fire continuously and are supposed to - one venue quoting badly is
+    what the detector is for - so standing aside on each would stop trading
+    altogether.
+    """
+    ctx = Context(wide_venues=3)
+    ctx.observe_signal(_wide("gold", "CAPITALCOM", 100.0))
+    ctx.observe_signal(_wide("gold", "CAPITALCOM", 120.0))
+    ctx.observe_signal(_wide("gold", "CAPITALCOM", 140.0))
+    # The same venue five times is one wide venue, not five.
+    assert ctx.widened("gold", now=150.0) == 0
+
+
+def test_several_venues_wide_at_once_is_the_market():
+    ctx = Context(wide_venues=3, wide_pause=300.0)
+    for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
+        ctx.observe_signal(_wide("gold", venue, 100.0))
+    assert ctx.widened("gold", now=150.0) == 3
+    # And it lapses: a widening passes, unlike a regime change.
+    assert ctx.widened("gold", now=500.0) == 0
+
+
+def test_a_wide_market_refuses_the_trade():
+    made = settings()
+    ctx = Context(wide_venues=3, wide_pause=300.0)
+    guard = Guard(made, context=ctx)
+    guard.roll(10_000.0)
+    for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
+        ctx.observe_signal(_wide("gold", venue, 100.0))
+
+    got = take("level-scalp")
+    assert isinstance(got, Intent)
+    stopped = guard.allows(got, positions=[], tick=None, now=150.0)
+    assert stopped is not None
+    assert stopped.gate == "wide"
+
+
+def test_a_wide_market_on_another_instrument_does_not_refuse_this_one():
+    made = settings()
+    ctx = Context(wide_venues=3, wide_pause=300.0)
+    guard = Guard(made, context=ctx)
+    guard.roll(10_000.0)
+    for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
+        ctx.observe_signal(_wide("btc", venue, 100.0))
+
+    got = take("level-scalp")
+    assert isinstance(got, Intent)
+    assert guard.allows(got, positions=[], tick=None, now=150.0) is None

@@ -126,6 +126,15 @@ class Guard:
                     f"the regime changed; {paused:.0f}s of stand-aside left",
                 )
 
+            wide = self.context.widened(intent.feed, when)
+            if wide:
+                return self._no(
+                    "wide",
+                    intent.feed,
+                    f"{wide} venues are quoting it wide at once; there is no "
+                    f"good fill to be had from anyone",
+                )
+
             if tick is not None:
                 off = self.context.dislocation(intent.feed, tick, when)
                 if off:
