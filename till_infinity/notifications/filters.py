@@ -49,6 +49,20 @@ def _names(raw: str) -> frozenset[str]:
     return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
+#: Shapes the hourly cap may not drop.
+#:
+#: The cap is one budget shared by everything, and the noisiest producer wins
+#: it: level signals arrive continuously and a trade happens a few times a day,
+#: so an hour of ordinary chatter can exhaust the allowance and the alert that
+#: gets dropped is the one saying money moved. That is the wrong way round. A
+#: level call is information and can wait for the next hour; a position opening
+#: is a thing that has already happened to the account.
+#:
+#: They still *count* toward the hour, so the tally stays honest and a burst of
+#: trading correctly quietens everything else.
+UNCAPPED: frozenset[str] = frozenset({"trade"})
+
+
 @dataclass(slots=True)
 class Filter:
     """Decides what reaches a channel. Empty allowlists allow everything."""
@@ -123,7 +137,11 @@ class Filter:
             return f"same finding {when - last:.0f}s ago"
 
         self._recent = [at for at in self._recent if when - at < 3_600]
-        if self.max_per_hour and len(self._recent) >= self.max_per_hour:
+        if (
+            self.max_per_hour
+            and len(self._recent) >= self.max_per_hour
+            and shape.lower() not in UNCAPPED
+        ):
             return f"{len(self._recent)} already sent this hour"
         return ""
 

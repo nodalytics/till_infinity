@@ -367,3 +367,50 @@ def test_a_close_is_not_dropped_as_a_repeat_of_its_own_fill():
     assert quiet.accept(trade("close"), when=240.0)
     # And a second fill on the same instrument is still held back.
     assert not quiet.accept(trade("open"), when=300.0)
+
+
+def test_level_chatter_cannot_starve_a_trade_alert():
+    """The cap is one budget and the noisiest producer wins it.
+
+    Level signals arrive continuously and a trade happens a few times a day, so
+    an ordinary hour can exhaust the allowance and the alert that gets dropped
+    is the one saying money moved. A level call is information and can wait; a
+    position opening has already happened to the account.
+    """
+    quiet = Filter(cooldown=0.0, max_per_hour=5)
+    for i in range(5):
+        assert quiet.accept(
+            {"title": f"level {i}", "fields": {"shape": "level", "instrument": f"f{i}"}},
+            when=float(i),
+        )
+    # The budget is spent, and more chatter is correctly refused.
+    assert not quiet.accept(
+        {"title": "one more level", "fields": {"shape": "level", "instrument": "gold"}}, when=6.0
+    )
+    # The trade still gets through.
+    assert quiet.accept(
+        {
+            "title": "live: buy gold",
+            "fields": {"shape": "trade", "instrument": "gold", "event": "open"},
+        },
+        when=7.0,
+    )
+    # ...and so does its close, which is a different event.
+    assert quiet.accept(
+        {
+            "title": "gold closed +12.56",
+            "fields": {"shape": "trade", "instrument": "gold", "event": "close"},
+        },
+        when=8.0,
+    )
+
+
+def test_an_uncapped_trade_still_respects_its_own_cooldown():
+    """Exempt from the cap is not exempt from everything."""
+    quiet = Filter(cooldown=900.0, max_per_hour=0)
+    opened = {
+        "title": "live: buy gold",
+        "fields": {"shape": "trade", "instrument": "gold", "event": "open"},
+    }
+    assert quiet.accept(opened, when=0.0)
+    assert not quiet.accept(opened, when=60.0)
