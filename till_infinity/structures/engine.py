@@ -329,6 +329,16 @@ class Call(Restorable):
                 # would have been the better number. See `garch.py`.
                 "garch_bps": vol.garch_bps,
                 "vol_stretch": vol.stretch,
+                # Read from whole bars rather than closes, and a forecast of
+                # the next bar rather than a reading of the last ones. Both
+                # recorded and used by nothing - see `ranges.py` and `har.py`.
+                "range_bps": vol.range_bps,
+                "forecast_bps": vol.forecast_bps,
+                "forecast_ratio": vol.forecast_ratio,
+                # All four on one scale, combined equally. Recorded so the
+                # journal can say whether the combination beat the estimate
+                # already in use - see `consensus_vol.py`.
+                "ensemble_bps": vol.ensemble_bps,
                 # The level's own hold rate on the side price arrived from,
                 # and the decisive interactions behind it. The strongest
                 # single signal a level carries - strength.md puts it at AUC

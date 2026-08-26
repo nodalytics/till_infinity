@@ -35,7 +35,7 @@ from ..logging import get_logger
 from . import exposure as ex
 from .config import Settings
 from .context import Context
-from .models import Intent, Position, Refusal, Tick
+from .models import Intent, Position, Refusal, Tick, money
 
 log = get_logger(__name__)
 
@@ -52,6 +52,9 @@ class Guard:
     #: What the rest of the system knows. Optional, so a Guard can be tested
     #: and used without one - every check it drives fails open.
     context: Context | None = None
+    #: The account's currency, for the running total. Empty prints a bare
+    #: number, which is what an account that never reported one deserves.
+    currency: str = ""
     #: Equity as the day opened. The daily stop measures against this.
     opening_equity: float = 0.0
     day: str = ""
@@ -241,4 +244,6 @@ class Guard:
     def summary(self) -> str:
         rate = f"{self.wins}/{self.trades}" if self.trades else "0/0"
         state = f" · HALTED ({self.halted})" if self.halted else ""
-        return f"{self.day or '-'}: {rate} won, {self.realised:+.2f} realised{state}"
+        return (
+            f"{self.day or '-'}: {rate} won, {money(self.realised, self.currency)} realised{state}"
+        )

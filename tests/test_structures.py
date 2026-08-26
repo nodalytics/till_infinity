@@ -1182,3 +1182,51 @@ def test_the_long_run_level_is_not_just_the_estimate_again():
     assert model.bps > model.long_run_bps
     assert model.long_run_bps == pytest.approx(quiet_long, rel=0.9)
     assert model.stretch > 1.5
+
+
+def test_the_scale_conversion_is_applied_before_anything_is_averaged():
+    """Averaging a mean absolute deviation against a standard deviation gives
+    a number that is neither, and every threshold here would shift by ~20%."""
+    from till_infinity.structures.consensus_vol import MAD_TO_SIGMA, Ensemble
+
+    book = Ensemble()
+    # Two members reporting the *same underlying* volatility, one on each
+    # scale. Reconciled, they should agree - so the average is that value.
+    book.observe({"ew": 10.0, "range": 10.0 * MAD_TO_SIGMA}, sigma_scaled=frozenset({"range"}))
+    assert book.bps == pytest.approx(10.0)
+
+
+def test_a_member_is_scored_against_what_actually_happened():
+    from till_infinity.structures.consensus_vol import SCORE_WARMUP, Ensemble
+
+    book = Ensemble()
+    for _ in range(SCORE_WARMUP + 20):
+        book.observe({"good": 10.0, "bad": 40.0})
+        book.settle(10.0)  # the truth was 10 every time
+    assert book.accuracy("good") > book.accuracy("bad")
+    assert [name for name, _ in book.standings()][0] == "good"
+
+
+def test_the_combination_is_equal_weight_until_told_otherwise():
+    """The simple average routinely beats fitted weights out of sample, and
+    edge.md is this repository's own version of that warning."""
+    from till_infinity.structures.consensus_vol import Ensemble
+
+    plain = Ensemble()
+    plain.observe({"a": 10.0, "b": 20.0})
+    assert plain.bps == pytest.approx(15.0)
+
+    fitted = Ensemble(weighted=True)
+    for _ in range(200):
+        fitted.observe({"a": 10.0, "b": 20.0})
+        fitted.settle(10.0)  # `a` has been right all along
+    assert fitted.bps < 15.0, "weighting should lean toward the accurate member"
+
+
+def test_nothing_earns_a_weight_before_it_has_been_scored():
+    """Zero accuracy everywhere is not the same as everything weighing zero."""
+    from till_infinity.structures.consensus_vol import Ensemble
+
+    book = Ensemble(weighted=True)
+    book.observe({"a": 10.0, "b": 20.0})
+    assert book.bps == pytest.approx(15.0)

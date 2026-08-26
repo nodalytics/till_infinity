@@ -23,7 +23,9 @@ from dataclasses import dataclass, field
 
 from river import stats
 
+from .consensus_vol import MAD_TO_SIGMA, Ensemble
 from .garch import Garch
+from .har import Har
 from .ranges import Ranges
 from .state import Restorable
 
@@ -148,6 +150,14 @@ class Volatility(Restorable):
     #: normal the two differ by a factor of sqrt(2/pi). Anything combining them
     #: has to reconcile that first - see `ranges.py`.
     _ranges: Ranges = field(default_factory=Ranges)
+    #: A forecast rather than an estimate - what the next bar is expected to
+    #: do, rather than what the last ones did. Fed the per-bar realised value
+    #: from `_ranges`, so it inherits the whole-bar reading rather than the
+    #: close-to-close one. Excluded from persistence: see `Har`.
+    _har: Har = field(default_factory=Har)
+    #: The four readings on one scale, scored against what each bar actually
+    #: did, and combined equally. Used by nothing - see `consensus_vol.py`.
+    _ensemble: Ensemble = field(default_factory=Ensemble)
 
     # `__setstate__` comes from `Restorable`, which fills in fields a saved
     # state predates. This class is why that exists: `_tick`, `_steps` and
@@ -249,6 +259,48 @@ class Volatility(Restorable):
     def observe_bar(self, open_: float, high: float, low: float, close: float) -> None:
         """Fold one whole bar into the range estimates. Closes go to `update`."""
         self._ranges.observe(open_, high, low, close)
+        # One bar's own realised reading, not the windowed one: the forecaster
+        # builds its own horizons and feeding it a smoothed series would give
+        # it three averages of an average.
+        single = Ranges(window=1, warmup=1)
+        single.observe(open_, high, low, close)
+        realised = single.rogers_satchell_bps
+        self._har.observe(realised)
+
+        # Score what everything said about this bar *before* folding it in, so
+        # each member is judged on the forecast it actually had to make. Doing
+        # it after would score them against a number they had already seen.
+        self._ensemble.settle(realised / MAD_TO_SIGMA)
+        self._ensemble.observe(
+            {
+                "ew": self.bps,
+                "garch": self._garch.bps,
+                "range": self._ranges.bps,
+                "har": self._har.predict(),
+            },
+            # The range family reports a standard deviation; the other two are
+            # on the mean-absolute convention already.
+            sigma_scaled=frozenset({"range", "har"}),
+        )
+
+    @property
+    def ensemble_bps(self) -> float:
+        """All four readings on one scale, combined. Zero until there are some."""
+        return self._ensemble.bps
+
+    def standings(self) -> list[tuple[str, float]]:
+        """Which estimator has been closest, best first."""
+        return self._ensemble.standings()
+
+    @property
+    def forecast_bps(self) -> float:
+        """What the next bar is expected to do, in bps. Naive until warm."""
+        return self._har.predict()
+
+    @property
+    def forecast_ratio(self) -> float:
+        """Forecast over the last realised value. 1.0 when there is no view."""
+        return self._har.ratio
 
     @property
     def range_bps(self) -> float:
@@ -351,6 +403,8 @@ class Book(Restorable):
                 half_life=self.half_life,
                 _garch=Garch(half_life=self.half_life),
                 _ranges=Ranges(),
+                _har=Har(),
+                _ensemble=Ensemble(),
             )
         return found
 

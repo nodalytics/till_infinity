@@ -246,6 +246,41 @@ class Refusal:
 Verdict = Intent | Refusal
 
 
+#: Symbols for the account currencies a retail terminal actually issues. Any
+#: code not here is written out beside the number instead - `12.56 SGD` reads
+#: fine, and a guessed symbol on the wrong currency does not.
+CURRENCY_SYMBOLS: dict[str, str] = {
+    "USD": "$",
+    "EUR": "€",
+    "GBP": "£",
+    "JPY": "¥",
+    "AUD": "A$",
+    "CAD": "C$",
+    "NZD": "NZ$",
+    "CHF": "CHF ",
+}
+
+
+def money(amount: float, currency: str = "", *, signed: bool = True) -> str:
+    """An amount with its currency attached.
+
+    `$` for dollars, `12.56 SGD` for anything without a well-known symbol - an
+    unrecognised code is written out rather than guessed at, because a wrong
+    symbol is worse than a verbose one. The sign sits outside the symbol:
+    `+$12.56`, not `$+12.56`.
+
+    Here rather than on `Trader` because more than one thing prints money. The
+    running day total in `risk.Guard.summary` did not, and read as a bare
+    number beside a title that had the symbol - which is the sort of
+    inconsistency that makes a reader doubt both.
+    """
+    symbol = CURRENCY_SYMBOLS.get(currency.upper(), "")
+    text = f"{amount:+,.2f}" if signed else f"{amount:,.2f}"
+    if symbol:
+        return f"{text[0]}{symbol}{text[1:]}" if signed else f"{symbol}{text}"
+    return f"{text} {currency}".rstrip() if currency else text
+
+
 @dataclass(frozen=True, slots=True)
 class Order:
     """An intent reduced to what a terminal needs."""

@@ -42,6 +42,7 @@ from .broker import Broker, BrokerError, build
 from .config import Settings, magic_for, strategy_for
 from .context import Context
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
+from .models import money as money  # noqa: PLC0414
 from .paper import PaperBroker
 from .risk import Guard
 
@@ -56,20 +57,6 @@ log = get_logger(__name__)
 #: for the record rather than for a decision, and is the seam anything that
 #: learns from outcomes will attach to.
 TOPICS: tuple[str, ...] = (SIGNALS, QUOTES, EVENTS, RESOLUTIONS)
-
-#: Symbols for the account currencies a retail terminal actually issues. Any
-#: code not here is written out beside the number instead - `12.56 SGD` reads
-#: fine, and a guessed symbol on the wrong currency does not.
-CURRENCY_SYMBOLS: dict[str, str] = {
-    "USD": "$",
-    "EUR": "€",
-    "GBP": "£",
-    "JPY": "¥",
-    "AUD": "A$",
-    "CAD": "C$",
-    "NZD": "NZ$",
-    "CHF": "CHF ",
-}
 
 
 @dataclass(slots=True)
@@ -174,6 +161,7 @@ class Trader:
         account = await self.broker.connect()
         self.equity = account.equity or account.balance
         self.currency = account.currency or ""
+        self.guard.currency = self.currency
         log.info(
             "trading: %s via %s - %s",
             self.settings.mode.upper(),
@@ -588,18 +576,8 @@ class Trader:
             await self._reconcile()
 
     def money(self, amount: float, *, signed: bool = True) -> str:
-        """An amount with the account's currency attached.
-
-        `$` for dollars, `EUR 12.56` for anything without a well-known symbol -
-        an unrecognised code is written out rather than guessed at, because a
-        wrong symbol is worse than a verbose one.
-        """
-        symbol = CURRENCY_SYMBOLS.get(self.currency.upper(), "")
-        sign = f"{amount:+,.2f}" if signed else f"{amount:,.2f}"
-        if symbol:
-            # The sign goes outside the symbol: +$12.56, not $+12.56.
-            return f"{sign[0]}{symbol}{sign[1:]}" if signed else f"{symbol}{sign}"
-        return f"{sign} {self.currency}".rstrip() if self.currency else sign
+        """An amount with the account's currency attached. See `models.money`."""
+        return money(amount, self.currency, signed=signed)
 
     async def _worth_keeping(self, live: Live, age: float, limit: float) -> bool:
         """Whether a trade past its hold is working well enough to keep.
