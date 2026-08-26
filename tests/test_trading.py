@@ -1801,7 +1801,12 @@ async def test_an_idle_trader_says_what_it_is_waiting_for(caplog):
     bus = Bus()
     trader = Trader(bus, settings=settings())
     await trader.start()
-    trader._last_summary = 0.0  # force it past the interval
+    # Far enough in the past to fire whatever the interval is. Setting this
+    # to 0.0 assumed `monotonic()` was already large, which is true on a
+    # machine that has been up a while and false on a fresh CI runner where
+    # it starts near zero - so the summary never fired and the test passed
+    # locally while failing there.
+    trader._last_summary = time.monotonic() - 100_000
 
     with caplog.at_level(logging.INFO, logger="till_infinity.trading.service"):
         trader._say_what_it_is_doing()
@@ -1822,7 +1827,7 @@ async def test_a_working_trader_reports_what_it_passed_over(caplog):
         Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
     )
     await trader.handle(Message(topic=SIGNALS, payload=signal(interval="1d")))
-    trader._last_summary = 0.0
+    trader._last_summary = time.monotonic() - 100_000
 
     with caplog.at_level(logging.INFO, logger="till_infinity.trading.service"):
         trader._say_what_it_is_doing()
