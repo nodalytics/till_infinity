@@ -111,6 +111,12 @@ class Trader:
         #: `price_current` is a snapshot and a trail anchored to snapshots
         #: follows whatever the last poll happened to catch.
         self._best: dict[int, float] = {}
+        #: Why signals did not become trades, counted per gate. Strategy-level
+        #: refusals are far too many to journal — hundreds a day, and mostly
+        #: the filter working — but counting them is what separates "the market
+        #: is quiet" from "the trader has been discarding everything".
+        self.passed_over: dict[str, int] = {}
+        self._last_summary = time.monotonic()
         #: The volatility unit last published per instrument, so a trail can be
         #: measured in the same units the stop was placed in.
         self._vol_bps: dict[str, float] = {}
@@ -299,6 +305,8 @@ class Trader:
             verdict = await engine.consider_async(payload, spec=spec, tick=tick, equity=self.equity)
             if isinstance(verdict, Refusal):
                 self.refused += 1
+                key = f"{engine.name}:{verdict.gate}"
+                self.passed_over[key] = self.passed_over.get(key, 0) + 1
                 # Deliberately not journalled. A strategy refusing on
                 # probability or interval is the normal case — hundreds a day —
                 # and writing all of it down would bury the refusals that
@@ -363,6 +371,40 @@ class Trader:
         await self._reconcile(ref_for=(result.ticket, intent, ref))
         return intent
 
+    def _say_what_it_is_doing(self) -> None:
+        """Report the shape of the silence, periodically.
+
+        A trader that has taken nothing looks identical whether the market is
+        quiet, the signals are being discarded by a gate, or the subscription
+        is broken. handoff.md calls this out as a class of bug: correct silence
+        and broken silence are indistinguishable, and every such place needs a
+        positive signal saying which it is.
+
+        It cost a day here. Level calls were arriving and being delivered to
+        Telegram while the trader discarded every one of them on a timeframe
+        filter, and the only trace was a DEBUG line nobody was reading.
+        """
+        every = max(300.0, self.settings.heartbeat * 5)
+        if time.monotonic() - self._last_summary < every:
+            return
+        self._last_summary = time.monotonic()
+        if not self.passed_over and not self.taken:
+            log.info(
+                "trading: nothing seen yet — %s on %s, %s",
+                " + ".join(s.name for s in self.strategies),
+                ", ".join(sorted(self.specs)),
+                ", ".join(self.settings.intervals),
+            )
+            return
+        top = sorted(self.passed_over.items(), key=lambda kv: -kv[1])[:4]
+        log.info(
+            "trading: %d taken, %d passed over (%s) · %s",
+            self.taken,
+            self.refused,
+            ", ".join(f"{gate} x{count}" for gate, count in top) or "none",
+            self.guard.summary(),
+        )
+
     async def sweep(self) -> None:
         """The heartbeat: roll the day, reconcile, and time out stale scalps."""
         if not await self.broker.healthy():
@@ -375,6 +417,7 @@ class Trader:
         await self._reconcile()
         await self._manage()
         await self._expire()
+        self._say_what_it_is_doing()
 
     def _mark_best(self, symbol: str, bid: float, ask: float) -> None:
         """Track the best price each open trade has seen, for the trail."""
@@ -644,10 +687,15 @@ class Trader:
             return [live.position for live in self.open.values()]
 
     def summary(self) -> str:
+        gates = ", ".join(
+            f"{gate} x{count}"
+            for gate, count in sorted(self.passed_over.items(), key=lambda kv: -kv[1])[:4]
+        )
         return (
             f"{self.settings.mode} via {self.broker.name}: {self.taken} taken, "
             f"{self.refused} declined, {len(self.open)} open, "
             f"{self.resolutions} resolutions seen · {self.guard.summary()}"
+            + (f" · passed over: {gates}" if gates else "")
         )
 
 

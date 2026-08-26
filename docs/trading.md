@@ -159,8 +159,8 @@ open one right now" lead to different fixes.
 
 ## Strategies
 
-Five. Four are arithmetic over the measured signal and claim no edge of their
-own; the fifth is a panel of agents that reasons its own way to an answer. Every one reads the same
+Six. Five are arithmetic over the measured signal and claim no edge of their
+own; the sixth is a panel of agents that reasons its own way to an answer. Every one reads the same
 measured `LEVEL` signal `structures` publishes; they differ in which calls they
 act on and where they put the stop and target. Adding a strategy is a claim
 that a *subset* of those calls behaves differently — which the journal can
@@ -177,10 +177,57 @@ TRADING_STRATEGIES=level-scalp,approach-scalp
 | `confluence-scalp` | only calls another timeframe agrees on | 1.5× wider | the expected push |
 | `momentum-scalp` | only calls agreeing with three speeds of recent edge | beyond the level | the expected push |
 | `approach-scalp` | a call confirming direction toward another level | beyond the level | the next level, short of it |
+| `swing-level` | a 4h/1d/1w level, triggered as low as 15m | beyond the level, 1.5x | the expected push |
 | `council` | whatever four agents agree on, or nothing | as the panel proposes, clamped | as the panel proposes, clamped |
 
 Several may run together. The first one to want a trade gets it, and the
 one-position-per-instrument limit is what stops two of them doubling up.
+
+### Entry and anchor: two timeframe sets, not one
+
+The service accepts **every timeframe a level forms on** — 1m, 3m, 5m, 15m, 1h,
+4h, 1d, 1w. Each strategy then declares two things, and the split is the useful
+part:
+
+- **`entries`** — where a trade may be *triggered*. The entry fixes the stop,
+  so this is the lower set.
+- **`context`** — where the *bias* comes from. Higher timeframes that trigger
+  nothing and say whether a trigger is worth taking.
+
+| strategy | triggers on | anchored to | needs it | hold |
+|---|---|---|---|---|
+| `level-scalp` | 1m, 3m, 5m | 15m, 1h, 4h | no | 30m |
+| `confluence-scalp` | 1m, 3m, 5m | 15m, 1h, 4h, 1d | **yes** | 30m |
+| `momentum-scalp` | 1m, 3m, 5m | 15m, 1h | no | 30m |
+| `approach-scalp` | 1m, 3m, 5m, 15m | 1h, 4h, 1d | no | 45m |
+| `swing-level` | 15m, 1h, 4h | 4h, 1d, 1w | **yes** | 6h |
+| `council` | whatever is allowed | whatever is allowed | no | 45m |
+
+**`swing-level` is the clearest case.** Its bias is the daily, but it triggers
+as low as 15m — because the entry is what fixes the stop, and a stop measured
+on 15m is a fraction of one measured on 1d for the identical idea. Same thesis,
+smaller distance to being wrong, so the same money buys more of it. That is
+risk reduction, not a different trade.
+
+Context reaches a strategy through the signal's `confluence` — the timeframes
+`structures` already found agreeing on that price. It is read rather than
+recomputed: asking again here would be a second, differently-wrong answer to a
+question settled upstream.
+
+An anchor has to be **higher**, not merely different. A 1m call confirmed by 3m
+is the same fast noise seen twice, which is a weaker claim than the one
+`confluence-scalp`'s name makes — and is what it used to accept.
+
+The effective entry set is the **intersection** of what the strategy claims and
+what `TRADING_INTERVALS` allows, so configuration can narrow a strategy and
+never widen one onto data its reasoning was not built for.
+
+This was wrong for a day and cost what that kind of bug costs. The module
+accepted `1m,5m` on the false grounds that "structures only builds levels on
+those two"; that is `structures.config.INTERVALS`, the *anomaly detector's*
+fast-data set. Six of eight timeframes were discarded in silence, and the first
+live signal was a 3m EURUSD call delivered to Telegram and ignored by the
+trader in the same second.
 
 ### `confluence-scalp`, and a measurement that argues against it
 
@@ -592,6 +639,12 @@ had measured.
 
 **Paper and live are not averaged.** Simulated fills and real ones describe
 different things, so `--mode` defaults to paper and `both` has to be asked for.
+
+**An idle trader says which kind of idle it is.** Every few minutes it logs
+what it has taken and what it passed over, per strategy and gate — or, if it
+has seen nothing at all, what it is watching for. handoff.md names this as a
+class of bug: correct silence and broken silence are indistinguishable, and
+this module produced a day of the second kind while looking like the first.
 
 Declines are tallied per gate too. A gate that never fires is doing nothing and
 one that fires constantly is mis-set; neither is visible without the tally,

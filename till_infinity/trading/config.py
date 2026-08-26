@@ -24,6 +24,8 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from ..structures import confluence
+
 #: Broker names for each instrument the price side tracks, best first.
 #:
 #: MT5 symbol naming is a broker-by-broker affair — spot gold is `XAUUSD` at
@@ -112,6 +114,11 @@ HTTP = "mt5-http"
 #: In the order `auto` prefers them: in-process, then the module proxy, then
 #: the HTTP wrapper, then no terminal at all. See `broker.choose`.
 BACKENDS: tuple[str, ...] = (NATIVE, RPYC, HTTP, PAPER)
+
+#: Every timeframe `structures` forms levels on. Imported rather than copied:
+#: a second list would go stale the first time a timeframe was added, and the
+#: symptom would be calls silently ignored.
+TIMEFRAMES: tuple[str, ...] = confluence.TIMEFRAMES
 
 DEFAULT_API_PATH = "/api/v1"
 
@@ -202,10 +209,22 @@ class Settings:
     #: it — see `plans`.
     risk_plan: str = "standard"
     symbols: tuple[str, ...] = DEFAULT_SYMBOLS
-    #: Timeframes whose level calls are acted on. Scalping is a 1m/5m activity
-    #: and `structures` only builds levels on those two for the tick path
-    #: anyway; a 1d call is a position trade wearing a scalp's clothes.
-    intervals: tuple[str, ...] = ("1m", "5m")
+    #: Timeframes the service will *accept*. Every one a level forms on, by
+    #: default — the restriction belongs to the strategy, not to the module.
+    #:
+    #: This started as `1m,5m` on the false grounds that "structures only
+    #: builds levels on those two"; `structures.config.INTERVALS` is the
+    #: anomaly detector's fast-data set, while levels form on all of
+    #: `confluence.TIMEFRAMES`. Six of eight were discarded in silence, and the
+    #: first live call to arrive was a 3m EURUSD one that the trader ignored
+    #: while the same call was delivered to Telegram.
+    #:
+    #: Narrowing this narrows every strategy at once, which is a blunt
+    #: instrument and rarely what is wanted. A strategy that only makes sense
+    #: on fast data says so itself, in `Strategy.timeframes`, and the effective
+    #: set is the intersection — so this can restrict a strategy but never
+    #: widen one past what it claims to handle.
+    intervals: tuple[str, ...] = TIMEFRAMES
 
     # ------------------------------------------------------------ the gates
     #: Fraction of equity risked per trade. 0.25% is a scalping number: the
@@ -414,7 +433,7 @@ class Settings:
             strategies=_names(_env("TRADING_STRATEGIES")) or ("level-scalp",),
             risk_plan=(_env("TRADING_RISK_PLAN") or "standard").lower(),
             symbols=_names(_env("TRADING_SYMBOLS")) or DEFAULT_SYMBOLS,
-            intervals=_names(_env("TRADING_INTERVALS")) or ("1m", "5m"),
+            intervals=_names(_env("TRADING_INTERVALS")) or TIMEFRAMES,
             risk_fraction=_float("TRADING_RISK_FRACTION", 0.0025),
             max_risk_money=_float("TRADING_MAX_RISK_MONEY", 0.0),
             max_positions=_int("TRADING_MAX_POSITIONS", 4),

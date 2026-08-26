@@ -340,10 +340,10 @@ def test_price_already_past_the_stop_is_not_a_trade_to_shrink():
     assert got.gate == "through"
 
 
-def test_confluence_scalp_refuses_a_level_only_one_timeframe_sees():
+def test_confluence_scalp_refuses_a_level_no_higher_timeframe_sees():
     got = take("confluence-scalp", signal(confluence=["5m"]))
     assert isinstance(got, Refusal)
-    assert got.gate == "confluence"
+    assert got.gate == "unanchored"
     agreed = take("confluence-scalp", signal(confluence=["1h", "5m"]))
     assert isinstance(agreed, Intent)
 
@@ -1655,3 +1655,178 @@ def test_the_arithmetic_strategies_stay_synchronous():
     # And the async door falls through to the sync one for them.
     assert plain.consider_async is Strategy.consider_async
     assert td.STRATEGIES["council"].consider_async is not Strategy.consider_async
+
+
+# ---------------------------------------------- saying which kind of silence
+
+
+def test_the_service_accepts_every_timeframe_a_level_forms_on():
+    """It accepted two of eight and discarded the rest without a word.
+
+    `structures.config.INTERVALS` is the anomaly detector's fast-data set;
+    levels form on `confluence.TIMEFRAMES`. Taking the former for the latter
+    meant a live 3m EURUSD call was delivered to Telegram and ignored by the
+    trader in the same second.
+    """
+    from till_infinity.structures import confluence
+
+    assert td.Settings().intervals == confluence.TIMEFRAMES
+
+
+def test_a_strategy_separates_where_it_triggers_from_where_its_bias_comes_from():
+    """Entry fixes the stop; context says whether the trigger is worth taking.
+
+    The gap between them is the point. A swing anchored on the daily does not
+    have to enter on the daily — dropping to 15m buys a tighter stop for the
+    same idea, which is risk reduction rather than a different trade.
+    """
+    made = settings()
+    swing = td.STRATEGIES["swing-level"](made)
+    assert swing.intervals == ("15m", "1h", "4h")
+    assert swing.anchors == ("4h", "1d", "1w")
+    # Its lowest trigger is well below its highest anchor.
+    assert swing.intervals[0] not in ("1d", "1w")
+    assert swing.hold_seconds > td.STRATEGIES["level-scalp"](made).hold_seconds
+
+
+def test_a_strategy_that_needs_an_anchor_refuses_without_one():
+    made = settings()
+    swing = td.STRATEGIES["swing-level"](made)
+
+    lonely = signal(interval="1h", confluence=["1h"])
+    swing.observe(lonely)
+    got = swing.consider(
+        lonely, spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "unanchored"
+
+
+def test_the_anchor_must_be_higher_not_merely_another_timeframe():
+    """A 1m call confirmed by 3m is the same fast noise seen twice.
+
+    `confluence-scalp` used to accept any other timeframe at all, which is a
+    weaker claim than the one its name makes.
+    """
+    made = settings()
+    engine = td.STRATEGIES["confluence-scalp"](made)
+
+    fast_only = signal(interval="1m", confluence=["1m", "3m"])
+    engine.observe(fast_only)
+    got = engine.consider(
+        fast_only, spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "unanchored"
+
+    anchored = signal(interval="5m", confluence=["5m", "1h"])
+    engine.observe(anchored)
+    assert isinstance(
+        engine.consider(
+            anchored, spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+        ),
+        Intent,
+    )
+
+
+def test_anchors_are_read_from_the_signal_not_recomputed():
+    """structures has already grouped the price into a zone across timeframes."""
+    made = settings()
+    engine = td.STRATEGIES["level-scalp"](made)
+    assert engine.anchored(signal(interval="5m", confluence=["5m", "1h", "4h"])) == ("1h", "4h")
+    # The entry's own timeframe is not its own context.
+    assert engine.anchored(signal(interval="5m", confluence=["5m"])) == ()
+    # A timeframe outside this strategy's anchors does not count.
+    assert engine.anchored(signal(interval="5m", confluence=["5m", "1w"])) == ()
+
+
+def test_a_strategy_declares_its_own_timeframes():
+    """The limit belongs to the strategy, not to the module.
+
+    Restricting the service restricts every strategy at once, which is a blunt
+    instrument: a scalper has no business on a 1w level, and a panel of agents
+    can be told the timeframe and asked to weigh it.
+    """
+    made = settings()
+    assert td.STRATEGIES["level-scalp"](made).intervals == ("1m", "3m", "5m")
+    assert "15m" in td.STRATEGIES["approach-scalp"](made).intervals
+    # The council takes whatever the operator allows and judges it itself.
+    assert td.STRATEGIES["council"](made).intervals == made.intervals
+
+
+def test_configuration_can_narrow_a_strategy_but_never_widen_one():
+    """The effective set is the intersection, so a scalper cannot be
+    configured onto weekly levels by an over-broad TRADING_INTERVALS."""
+    narrow = settings(intervals=("1m", "5m"))
+    assert td.STRATEGIES["level-scalp"](narrow).intervals == ("1m", "5m")
+
+    everything = settings(intervals=("1m", "3m", "5m", "15m", "1h", "4h", "1d", "1w"))
+    scalper = td.STRATEGIES["level-scalp"](everything)
+    assert "1w" not in scalper.intervals
+    assert scalper.intervals == ("1m", "3m", "5m")
+
+
+def test_higher_timeframes_reach_a_scalper_as_confluence_not_as_a_trade():
+    """A 1h level raises the probability of a fast call; it does not become a
+    slow trade of its own."""
+    got = take("level-scalp", signal(interval="1h"))
+    assert isinstance(got, Refusal)
+    assert got.gate == "interval"
+
+    # The same structure, seen on 5m and confirmed by 1h, is tradable.
+    confirmed = take("level-scalp", signal(interval="5m", confluence=["1h", "5m"]))
+    assert isinstance(confirmed, Intent)
+    assert "1h" in confirmed.confluence
+
+
+async def test_refusals_are_counted_per_gate_so_silence_can_be_explained():
+    bus = Bus()
+    trader = Trader(bus, settings=settings())
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    # A call on a timeframe this trader does not act on.
+    await trader.handle(Message(topic=SIGNALS, payload=signal(interval="1d")))
+    await trader.handle(Message(topic=SIGNALS, payload=signal(interval="1d")))
+
+    assert trader.passed_over.get("level-scalp:interval") == 2
+    assert "interval" in trader.summary()
+
+
+async def test_an_idle_trader_says_what_it_is_waiting_for(caplog):
+    """Rather than looking identical to a broken one."""
+    import logging
+
+    bus = Bus()
+    trader = Trader(bus, settings=settings())
+    await trader.start()
+    trader._last_summary = 0.0  # force it past the interval
+
+    with caplog.at_level(logging.INFO, logger="till_infinity.trading.service"):
+        trader._say_what_it_is_doing()
+
+    said = " ".join(caplog.messages)
+    assert "nothing seen yet" in said
+    assert "gold" in said
+    assert "3m" in said  # the timeframes it is actually watching
+
+
+async def test_a_working_trader_reports_what_it_passed_over(caplog):
+    import logging
+
+    bus = Bus()
+    trader = Trader(bus, settings=settings())
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(Message(topic=SIGNALS, payload=signal(interval="1d")))
+    trader._last_summary = 0.0
+
+    with caplog.at_level(logging.INFO, logger="till_infinity.trading.service"):
+        trader._say_what_it_is_doing()
+
+    said = " ".join(caplog.messages)
+    assert "passed over" in said
+    assert "interval" in said

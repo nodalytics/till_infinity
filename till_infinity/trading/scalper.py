@@ -145,6 +145,13 @@ class LevelStrategy(Strategy):
         if edge < settings.min_edge:
             return Refusal("edge", f"{edge:.3f} against a {settings.min_edge:.3f} floor", feed)
 
+        if self.needs_context and not self.anchored(payload):
+            return Refusal(
+                "unanchored",
+                f"no {'/'.join(self.anchors)} agrees with this {interval} call",
+                feed,
+            )
+
         narrowed = self.accept(payload, features)
         if narrowed is not None:
             return narrowed
@@ -233,8 +240,17 @@ class LevelScalp(LevelStrategy):
     name: ClassVar[str] = "level-scalp"
     description: ClassVar[str] = (
         "Trade a level call in the direction it states, stop beyond the level, "
-        "target the expected push. The default."
+        "target the expected push. Fast timeframes only. The default."
     )
+    #: Triggers on fast data. The stop is a volatility unit or two and
+    #: `max_hold` closes it inside the hour, so a 4h thesis would be ended by
+    #: the clock rather than by being right or wrong — which teaches the
+    #: journal nothing.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    #: Anchored above, without requiring it. A 5m call confirmed by 1h is a
+    #: better 5m call; one without is still a call, and refusing it is
+    #: `confluence-scalp`'s job rather than this one's.
+    context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
 
 
 @register
@@ -278,19 +294,18 @@ class ConfluenceScalp(LevelStrategy):
     description: ClassVar[str] = (
         "Only calls confirmed by another timeframe, with a wider stop. Fewer trades."
     )
+    #: Same fast trigger as `level-scalp`. The difference is that the anchor
+    #: is required rather than merely welcome.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h", "1d")
+    needs_context: ClassVar[bool] = True
     stop_multiple: ClassVar[float] = 1.5
 
-    def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
-        agreed = _confluence(payload)
-        interval = str(payload.get("interval") or "")
-        others = [t for t in agreed if t != interval]
-        if not others:
-            return Refusal(
-                "confluence",
-                "no other timeframe has a level here",
-                str(payload.get("feed") or ""),
-            )
-        return None
+    # The requirement is `needs_context`, applied by `LevelStrategy.consider`
+    # for every strategy that sets it. It used to live here as a bespoke check
+    # against any other timeframe at all, which is a different and weaker
+    # claim: a 1m call confirmed by 3m is not "confirmed by a higher
+    # timeframe", it is the same fast noise seen twice.
 
 
 @register
@@ -315,6 +330,12 @@ class MomentumScalp(LevelStrategy):
     description: ClassVar[str] = (
         "Only calls agreeing with three speeds of recent edge. Misses turns by construction."
     )
+    #: The speeds are half-lives of 3/12/48 arriving calls. On a 1w level those
+    #: forty-eight calls span months, so the slow line would describe a market
+    #: that no longer exists. Fast data is where the estimator has enough
+    #: observations for its own half-lives to mean anything.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    context: ClassVar[tuple[str, ...]] = ("15m", "1h")
 
     def __init__(self, settings) -> None:
         super().__init__(settings)
@@ -397,6 +418,11 @@ class ApproachScalp(LevelStrategy):
     )
     #: Forty-five minutes. See the last paragraph above.
     hold_seconds: ClassVar[float] = 2_700.0
+    #: Wider than the scalpers, because it holds for longer and because the
+    #: distance to the next level is what it trades — on 15m that distance is
+    #: worth crossing, where on 1m it is often inside the spread.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
+    context: ClassVar[tuple[str, ...]] = ("1h", "4h", "1d")
 
     def __init__(self, settings) -> None:
         super().__init__(settings)
@@ -487,3 +513,43 @@ class ApproachScalp(LevelStrategy):
         seconds = SECONDS.get(interval, 0.0)
         hold = self.hold_seconds or self.settings.max_hold
         return hold / seconds if seconds > 0 else 0.0
+
+
+@register
+class SwingLevel(LevelStrategy):
+    """A slower trade: anchored on the daily, triggered as low as it can be.
+
+    Everything else here is a scalp. This is the same machinery pointed at a
+    longer horizon, and it exists mainly to show that the entry/anchor split is
+    a real structure rather than a scalping detail.
+
+    **The anchor and the entry are not the same timeframe, and the gap is the
+    point.** The bias comes from 4h, 1d and 1w — where a level has enough
+    history to mean something and enough distance to be worth crossing. The
+    *trigger* is allowed as low as 15m, because the entry is what fixes the
+    stop, and a stop measured on 15m is a fraction of one measured on 1d for
+    the identical idea. That is risk reduction, not a different trade: same
+    thesis, smaller distance to being wrong, so the same money buys more of it.
+
+    It requires its anchor. A 1h call with nothing above it agreeing is a fast
+    trade wearing a swing's hold, which is the worst combination available —
+    the patience of the one and the evidence of the other.
+
+    Given six hours rather than the scalpers' thirty minutes, because a daily
+    level's push is measured in sessions. The hold is the setting most likely
+    to be wrong here and it has never been measured; `max_hold` closing a
+    winner early would look exactly like the strategy not working.
+    """
+
+    name: ClassVar[str] = "swing-level"
+    description: ClassVar[str] = (
+        "Bias from 4h/1d/1w, trigger as low as 15m for a tighter stop. Held for hours."
+    )
+    entries: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+    context: ClassVar[tuple[str, ...]] = ("4h", "1d", "1w")
+    needs_context: ClassVar[bool] = True
+    #: Six hours. A daily level does not resolve inside a scalper's half hour.
+    hold_seconds: ClassVar[float] = 6 * 3_600.0
+    #: More room than a scalp, because the level is placed on slower data and
+    #: the noise around it is proportionally larger.
+    stop_multiple: ClassVar[float] = 1.5

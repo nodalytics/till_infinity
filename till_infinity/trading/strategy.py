@@ -57,10 +57,67 @@ class Strategy(ABC):
     #: different kind of trade.
     hold_seconds: ClassVar[float] = 0.0
 
+    #: Where a trade may be **triggered**. The lower timeframes: the entry is
+    #: what decides the stop, and a tighter stop on faster data is the whole
+    #: reason to drop down to it.
+    #:
+    #: Empty means "whatever the operator allows". A strategy whose thesis only
+    #: holds on fast data says so here rather than relying on the deployment to
+    #: be configured for it — the module accepts every timeframe a level forms
+    #: on, because restricting the service restricts every strategy at once.
+    entries: ClassVar[tuple[str, ...]] = ()
+
+    #: Where the **bias** comes from. The higher timeframes, which do not
+    #: trigger anything: they say whether a trigger is worth taking.
+    #:
+    #: The pair is the point. A scalper anchored on 1h and entering on 3m is
+    #: taking a fast trade in a slow structure's direction; the same scalper
+    #: with no anchor is taking a fast trade in no direction at all. And a
+    #: swing anchored on 1d does not have to enter on 1d — dropping to 1h, or
+    #: lower, buys a tighter stop for the same idea, which is risk reduction
+    #: rather than a different trade.
+    #:
+    #: Context reaches a strategy through the signal's `confluence`, which is
+    #: the timeframes `structures` found agreeing on that price.
+    context: ClassVar[tuple[str, ...]] = ()
+
+    #: Whether an entry is refused when no context timeframe agrees.
+    needs_context: ClassVar[bool] = False
+
     @property
     def intervals(self) -> tuple[str, ...]:
-        """Timeframes this strategy acts on. Defaults to the configured ones."""
-        return self.settings.intervals
+        """Timeframes this strategy will trigger on.
+
+        The intersection of what it claims and what the operator allows, so
+        configuration can narrow a strategy and never widen one past the data
+        its reasoning was built for.
+        """
+        allowed = self.settings.intervals
+        if not self.entries:
+            return allowed
+        return tuple(t for t in self.entries if t in allowed)
+
+    @property
+    def anchors(self) -> tuple[str, ...]:
+        """Timeframes whose agreement counts as context for this strategy."""
+        if not self.context:
+            return ()
+        return tuple(t for t in self.context if t in self.settings.intervals)
+
+    def anchored(self, payload: dict[str, Any]) -> tuple[str, ...]:
+        """Which of this strategy's context timeframes agree with this call.
+
+        Read from the signal rather than fetched: `structures` has already
+        grouped a price into a zone across timeframes, and asking again here
+        would be a second, differently-wrong answer to a question already
+        settled upstream.
+        """
+        raw = payload.get("confluence")
+        if not isinstance(raw, list):
+            return ()
+        wanted = set(self.anchors)
+        interval = str(payload.get("interval") or "")
+        return tuple(str(t) for t in raw if str(t) in wanted and str(t) != interval)
 
     def wants(self, payload: dict[str, Any]) -> bool:
         """A cheap pre-filter, so a firehose of signals costs almost nothing."""

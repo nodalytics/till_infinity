@@ -345,6 +345,13 @@ class CouncilStrategy(Strategy):
     )
     shape: ClassVar[str] = "level"
     hold_seconds: ClassVar[float] = 2_700.0
+    #: Every timeframe the operator allows, and every timeframe as context.
+    #: The panel is told both and is expected to weigh them — a 1h call and a
+    #: 1m call are different trades, and deciding that is exactly what it is
+    #: for. The arithmetic strategies cannot make that judgement, so they are
+    #: pinned to fast data with a fixed anchor instead.
+    entries: ClassVar[tuple[str, ...]] = ()
+    context: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self, settings) -> None:
         super().__init__(settings)
