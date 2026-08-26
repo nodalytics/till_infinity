@@ -32,6 +32,7 @@ Requires Pillow, and IBM Plex Sans Medium for the lockup.
 
 import argparse
 import os
+
 from PIL import Image, ImageDraw
 
 # ── Geometry, on a 48 x 48 grid ─────────────────────────────────────────
@@ -99,13 +100,13 @@ def draw_mark(size, color, ground=None, small=None):
     rgb = hex_rgb(color)
 
     im = Image.new("RGBA", (n, n),
-                   hex_rgb(ground) + (255,) if ground else (0, 0, 0, 0))
+                   (*hex_rgb(ground), 255) if ground else (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
 
     d.ellipse([(c1x - r1) * k, (CY - r1) * k, (c1x + r1) * k, (CY + r1) * k],
-              outline=rgb + (255,), width=max(1, round(w * k)))
+              outline=(*rgb, 255), width=max(1, round(w * k)))
     d.ellipse([(c2x - r2) * k, (CY - r2) * k, (c2x + r2) * k, (CY + r2) * k],
-              fill=rgb + (255,))
+              fill=(*rgb, 255))
 
     return im.resize((size, size), Image.LANCZOS)
 
@@ -127,10 +128,10 @@ def svg_mark(color=None, small=False):
 
 
 def wordmark_paths(ttf, text, font_px, tracking_em=-0.015):
-    from fontTools.ttLib import TTFont
+    from fontTools.misc.transform import Transform
     from fontTools.pens.svgPathPen import SVGPathPen
     from fontTools.pens.transformPen import TransformPen
-    from fontTools.misc.transform import Transform
+    from fontTools.ttLib import TTFont
 
     font = TTFont(ttf)
     scale = font_px / font["head"].unitsPerEm
@@ -162,7 +163,7 @@ def svg_lockup(color, ttf):
     ty = mark_h / 2 + (font_px * 0.70) / 2
     w = tx + adv
 
-    L = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w:.2f} {mark_h:g}" '
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w:.2f} {mark_h:g}" '
          f'fill="none" role="img" aria-label="Till Infinity">',
          f'  <g transform="scale({k:.6f})">',
          f'    <circle cx="{C1X:g}" cy="{CY:g}" r="{R1:g}" stroke="{color}" '
@@ -170,9 +171,9 @@ def svg_lockup(color, ttf):
          f'    <circle cx="{C2X:g}" cy="{CY:g}" r="{R2:g}" fill="{color}"/>',
          '  </g>',
          f'  <g transform="translate({tx:.3f},{ty:.3f})" fill="{color}">']
-    L += [f'    <path d="{d}"/>' for d in paths]
-    L += ['  </g>', '</svg>', '']
-    return "\n".join(L)
+    out += [f'    <path d="{d}"/>' for d in paths]
+    out += ['  </g>', '</svg>', '']
+    return "\n".join(out)
 
 
 # ── Build ───────────────────────────────────────────────────────────────
