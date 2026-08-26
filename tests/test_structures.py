@@ -1085,3 +1085,47 @@ def test_activity_is_a_ratio_because_the_underlying_count_is_not_comparable():
     assert book.update("eurusd", "5m", None) == 1.0
     # And a cold estimator says "ordinary" rather than inventing a ratio.
     assert Book().update("btc", "1m", 99_999) == 1.0
+
+
+def test_a_bar_with_no_extremes_is_reported_once(caplog):
+    """The fallback that let the original bug hide in plain sight.
+
+    `prices.announce_bars` shipped for a while sending close alone. Every live
+    bar arrived flat, so levels on the live path formed from closing prices
+    while the leg extremes that place an origin existed only in replayed
+    history - and nothing said so. The fallback stays, because a notice from an
+    older producer is better folded in flat than dropped, but it is no longer
+    quiet.
+    """
+    engine = sx.Engine(intervals=("5m",))
+    with caplog.at_level("WARNING"):
+        for i in range(4):
+            engine.observe_bar(
+                {
+                    "feed": "gold",
+                    "interval": "5m",
+                    "venue": "OANDA",
+                    "time": 1_700_000_000 + i * 300,
+                    "close": 4400.0 + i,
+                }
+            )
+    said = [r.getMessage() for r in caplog.records if "no high/low" in r.getMessage()]
+    assert len(said) == 1, "warned once per series, not once per bar"
+    assert "gold" in said[0]
+
+
+def test_a_bar_with_real_extremes_is_not_reported(caplog):
+    engine = sx.Engine(intervals=("5m",))
+    with caplog.at_level("WARNING"):
+        engine.observe_bar(
+            {
+                "feed": "gold",
+                "interval": "5m",
+                "venue": "OANDA",
+                "time": 1_700_000_000,
+                "close": 4400.0,
+                "high": 4402.0,
+                "low": 4398.0,
+            }
+        )
+    assert not [r for r in caplog.records if "no high/low" in r.getMessage()]

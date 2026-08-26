@@ -501,6 +501,11 @@ class Engine:
         self.sessions = pivots.Sessions()
         #: Bars are per venue; levels are not. This makes them one series.
         self.consensus = Consensus()
+        #: (feed, interval, venue) already reported as arriving with no
+        #: high/low. Warned once each rather than per bar - the condition is a
+        #: property of the producer, so it either happens always or never, and
+        #: per-bar it would be thousands of identical lines a day.
+        self._flat_bars: set[tuple[str, str, str]] = set()
         #: And quotes are per venue for exactly the same reason, which they were
         #: not given until the bar fix made the omission visible.
         self.quotes = Quotes()
@@ -899,6 +904,25 @@ class Engine:
         high = float(payload.get("high") or close)
         low = float(payload.get("low") or close)
         venue = str(payload.get("venue") or "")
+        # A bar with no extremes is a doji as far as everything below is
+        # concerned, and a doji has no leg in and no leg out - which is what an
+        # origin is made of. The fallback above is deliberate, because a notice
+        # from an older producer is better folded in flat than dropped, but it
+        # must not be quiet: `prices.announce_bars` shipped for a while sending
+        # close alone, every live bar arrived flat, and levels on the live path
+        # were built from closing prices while the leg extremes existed only in
+        # replayed history. Nothing said so. This is what would have said so.
+        if high == low == close:
+            key = (feed, interval, venue)
+            if key not in self._flat_bars:
+                self._flat_bars.add(key)
+                log.warning(
+                    "structures: %s %s from %s carries no high/low - levels on "
+                    "this series are forming from closes alone",
+                    feed,
+                    interval,
+                    venue or "an unnamed venue",
+                )
 
         agreed = self.consensus.observe(feed, interval, venue, when, high, low, float(close))
         if agreed is None:
