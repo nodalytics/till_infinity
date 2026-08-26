@@ -31,6 +31,7 @@ from typing import Any
 from ..logging import get_logger
 from . import exposure as ex
 from .models import Tick
+from .spreads import Spreads, hour_of
 
 log = get_logger(__name__)
 
@@ -81,6 +82,9 @@ class Context:
         default_factory=lambda: defaultdict(dict)
     )
     _drifted: dict[str, float] = field(default_factory=dict)
+    #: This broker's own spread by instrument and hour. Only consulted when
+    #: there is no peer group to judge against - see `dislocation`.
+    spreads: Spreads = field(default_factory=Spreads)
 
     # ------------------------------------------------------------- consuming
 
@@ -177,9 +181,31 @@ class Context:
         not hold, and a broker charging several times the group's spread is
         charging the trade's whole expected push to open it.
         """
+        when = now if now is not None else time.time()
+        self.spreads.observe(feed, when, tick.spread_bps)
+
         median, spread, venues = self.consensus(feed, now)
         if venues < MIN_VENUES or median <= 0:
-            return ""  # no consensus to judge against; fail open
+            # No peer group. This used to fail open, which meant no spread
+            # check of any kind - and the moments with too few fresh quotes are
+            # thin hours, rollover, holidays and the instruments carried by
+            # fewer venues, which is exactly when a broker's spread is worst.
+            #
+            # So fall back to the instrument's own history at this hour. It
+            # cannot overrule the peer test, only stand in when there is none,
+            # and it stays silent until it has evidence - `ratio` returns 0.0
+            # rather than 1.0 for "unknown" so an unmeasured instrument can
+            # never be mistaken for a normal one.
+            times = self.spreads.ratio(feed, when, tick.spread_bps)
+            if times > self.max_spread_ratio:
+                usual, _ = self.spreads.expected(feed, when)
+                return (
+                    f"our spread is {tick.spread_bps:.2f}bps against the "
+                    f"{usual:.2f}bps usual for {hour_of(when):02d}:00 on this "
+                    f"instrument ({times:.1f}x), and only {venues} peer "
+                    f"quote(s) to check it against"
+                )
+            return ""
 
         away_bps = abs(tick.mid - median) / median * 10_000
         if away_bps > self.max_dislocation_bps:

@@ -766,6 +766,48 @@ Two strategies can only collide in the hashed tail, and start-up says so out
 loud when they do rather than leaving it to be found in a scorecard that looks
 fine.
 
+## Spread, when there is nothing to compare it against
+
+Two gates already judge spread and both are right. `Context.dislocation`
+compares ours against the **peer group's spread at that instant**, which is the
+best available test - if six venues have all widened, ours widening with them
+is the market and not the broker. `Guard.allows` compares it against the
+**trade's own reward**, which is the economic question: a cost that eats the
+target refuses the trade whatever the reason for it.
+
+Between them the ordinary case is covered, including the one a time-of-day
+model is usually reached for. When spread widens at rollover, `spread / reward`
+rises and the trade is refused already. A per-hour gate layered on top of that
+would refuse trades that are economically fine.
+
+**The gap is the fail-open.** The peer test needs `MIN_VENUES` fresh quotes and
+returns "" without them - no spread check of any kind. That is not a rare path.
+It is thin hours, rollover, holidays, and any instrument carried by fewer
+venues than the majors, which is exactly the set of moments a broker's spread
+is worst.
+
+So `spreads.py` supplies a reference from the instrument's own history at that
+hour, and only on that path. It cannot overrule the peer test, only stand in
+when there is none, and on that path the current behaviour is to allow
+everything - so its only possible effect is to refuse a trade that would
+otherwise have been taken on an unexamined spread.
+
+**Why this is not the rolling quantile that was already refuted.**
+[edge.md](edge.md) measured a rolling quantile against a matched constant and
+the constant won by four to ten points, four times out of four. The reasoning
+is what carries over: `edge` was *already scale-free*, so normalising it per
+cell destroyed a comparability it already had. A broker's spread in bps is not
+in that position - no constant could mean the same thing on gold at rollover
+and on EURUSD at the London open - and on this path there is no reference of
+any kind to destroy.
+
+It is also not a quantile. Quantiles need a stored distribution and a warm-up
+long enough to fill it, and edge.md's second finding was that 9 of 24 cells
+never reached the 50 observations the rolling rule needed. This keeps a decayed
+mean and a count, shrinks the hour toward the instrument's own pooled spread,
+and reports `0.0` rather than `1.0` when it has too little to speak - so an
+unmeasured instrument can never be mistaken for a normal one.
+
 ## Announcements
 
 Gated three ways, because the three messages have very different volumes:

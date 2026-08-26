@@ -2498,3 +2498,94 @@ async def test_the_journal_records_what_the_fill_cost_against_what_was_asked(tmp
     assert ctx["entry_filled"] == pytest.approx(wanted + 0.30)
     # Signed against the trade: a buy filled higher than asked is worse.
     assert ctx["slippage"] == pytest.approx(0.30)
+
+
+# ------------------------------------------------------- spread, by the hour
+
+
+def test_the_spread_model_says_nothing_until_it_has_evidence():
+    """A spread limit derived from four quotes is not a limit."""
+    from till_infinity.trading.spreads import MIN_EVIDENCE, Spreads
+
+    book = Spreads()
+    when = 1_700_000_000.0
+    for _ in range(5):
+        book.observe("gold", when, 3.0)
+    # It has an opinion about the level, but not enough to act on.
+    assert book.expected("gold", when)[0] > 0
+    assert book.ratio("gold", when, 30.0) == 0.0
+
+    for _ in range(int(MIN_EVIDENCE) + 5):
+        book.observe("gold", when, 3.0)
+    assert book.ratio("gold", when, 30.0) > 5.0
+
+
+def test_an_unmeasured_instrument_is_never_mistaken_for_a_normal_one():
+    """Zero means "no opinion", not "a ratio of zero" and not "normal"."""
+    from till_infinity.trading.spreads import Spreads
+
+    book = Spreads()
+    assert book.ratio("gold", 1_700_000_000.0, 4.0) == 0.0
+    assert book.expected("gold", 1_700_000_000.0) == (0.0, 0.0)
+
+
+def test_a_thin_hour_reports_roughly_the_instruments_usual_spread():
+    """Shrinkage, so one wide quote in a quiet hour is not a new normal."""
+    from till_infinity.trading.spreads import Spreads
+
+    book = Spreads()
+    busy = 1_700_000_000.0
+    for _ in range(200):
+        book.observe("gold", busy, 3.0)
+    quiet = busy + 3600.0  # a different hour, with one observation
+    book.observe("gold", quiet, 60.0)
+
+    usual, seen = book.expected("gold", quiet)
+    assert seen < 2
+    # Nowhere near 60: one observation cannot outvote the pooled estimate.
+    assert usual < 10.0
+
+
+def test_no_peer_group_no_longer_means_no_spread_check():
+    """The fail-open this was written for.
+
+    `dislocation` needs MIN_VENUES fresh quotes and returned "" without them -
+    no spread check at all, in exactly the moments a broker's spread is worst.
+    """
+    ctx = Context(max_spread_ratio=2.5)
+    when = 1_700_000_000.0
+    normal = Tick("XAUUSD", bid=4399.85, ask=4400.15)  # ~0.68bps
+    for _ in range(60):
+        ctx.spreads.observe("gold", when, normal.spread_bps)
+
+    wide = Tick("XAUUSD", bid=4398.0, ask=4402.0)  # ~9bps, over 13x normal
+    said = ctx.dislocation("gold", wide, now=when)
+    assert said, "a wide spread with no peer group is no longer waved through"
+    assert "peer quote" in said
+
+    # And a normal spread on the same path is still fine.
+    assert ctx.dislocation("gold", normal, now=when) == ""
+
+
+def test_the_peer_test_still_wins_when_there_is_a_peer_group():
+    """The fallback stands in for the peer test, it does not layer on top."""
+    ctx = Context(max_spread_ratio=2.5)
+    when = 1_700_000_000.0
+    tight = Tick("XAUUSD", bid=4399.85, ask=4400.15)
+    for _ in range(60):
+        ctx.spreads.observe("gold", when, tight.spread_bps)
+
+    # Three venues all quoting the same wide spread: the market widened, and
+    # our broker widening with it is not a fault.
+    wide = Tick("XAUUSD", bid=4398.0, ask=4402.0)
+    for venue in ("A", "B", "C"):
+        ctx.observe_quote(
+            {
+                "feed": "gold",
+                "venue": venue,
+                "mid": 4400.0,
+                "spread_bps": wide.spread_bps,
+                "time": when,
+            }
+        )
+    assert ctx.dislocation("gold", wide, now=when) == ""
