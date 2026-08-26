@@ -931,6 +931,12 @@ class Engine:
                     venue or "an unnamed venue",
                 )
 
+        # The open was on the payload and read by nothing. Range estimators
+        # need all four prices, and Yang-Zhang needs the open specifically -
+        # it is the only one of them unbiased across an opening gap, and the
+        # gap is exactly what the open measures.
+        opened = float(payload.get("open") or close)
+
         agreed = self.consensus.observe(feed, interval, venue, when, high, low, float(close))
         if agreed is None:
             return []  # not enough venues on this bar yet
@@ -960,6 +966,9 @@ class Engine:
         # rounding error beside it.
         if fresh:
             vol.update(float(close))
+            # Whole-bar estimates, once per bar rather than once per venue -
+            # same reasoning as the line above.
+            vol.observe_bar(opened, high, low, float(close))
         # Pivots are session structures priced at today's scale, so they use the
         # reference estimate rather than the bar interval that happened to
         # deliver them - a 4h bar completing a day does not make it a 4h level.

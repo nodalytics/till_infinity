@@ -2809,3 +2809,26 @@ def test_a_freshly_added_instrument_is_not_judged_unusual_yet():
     for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
         ctx.observe_signal(_wide("chfjpy", venue, 1_100.0))
     assert ctx.widened("chfjpy", now=1_150.0) == 3
+
+
+def test_the_wide_log_does_not_announce_a_decision_nobody_made(caplog):
+    """It said "standing aside" while the gate was correctly doing nothing.
+
+    During the warm-up window `widened` returns 0, so no trade was ever
+    refused - but the line went out anyway, once per venue report, on a dozen
+    instruments at a time. A log that claims an action not taken is worse than
+    no log, because it is what gets believed later.
+    """
+    ctx = Context(wide_venues=3, wide_pause=300.0, wide_warmup=900.0)
+    with caplog.at_level("INFO", logger="till_infinity.trading.context"):
+        for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
+            ctx.observe_signal(_wide("gold", venue, 100.0))
+        assert ctx.widened("gold", now=150.0) == 0
+        assert not [r.getMessage() for r in caplog.records if "standing aside" in r.getMessage()]
+
+        # Past the warm-up the same evidence both gates and says so - once.
+        for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
+            ctx.observe_signal(_wide("gold", venue, 1_100.0))
+        assert ctx.widened("gold", now=1_150.0) == 3
+        said = [r.getMessage() for r in caplog.records if "standing aside" in r.getMessage()]
+        assert len(said) == 1, "one widening should be one line, not one per venue"

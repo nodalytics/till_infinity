@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from river import stats
 
 from .garch import Garch
+from .ranges import Ranges
 from .state import Restorable
 
 #: Bars of history before the estimate is trusted. Below this the variance of
@@ -138,6 +139,15 @@ class Volatility(Restorable):
     #: writing down. See `garch.py` for what it adds and why it is written on
     #: absolute returns rather than squared ones.
     _garch: Garch = field(default_factory=Garch)
+    #: The same instrument read from whole bars rather than closes. Fed only
+    #: from `observe_bar`, so it is coarser in time than the rest of this class
+    #: and a fair comparison has to be made per bar rather than per update.
+    #:
+    #: **Not on the same scale as `bps`.** This class tracks a mean absolute
+    #: deviation; the range estimators produce a standard deviation, and for a
+    #: normal the two differ by a factor of sqrt(2/pi). Anything combining them
+    #: has to reconcile that first - see `ranges.py`.
+    _ranges: Ranges = field(default_factory=Ranges)
 
     # `__setstate__` comes from `Restorable`, which fills in fields a saved
     # state predates. This class is why that exists: `_tick`, `_steps` and
@@ -236,6 +246,19 @@ class Volatility(Restorable):
     def bps(self) -> float:
         return max(self._mean_abs, self.floor_bps)
 
+    def observe_bar(self, open_: float, high: float, low: float, close: float) -> None:
+        """Fold one whole bar into the range estimates. Closes go to `update`."""
+        self._ranges.observe(open_, high, low, close)
+
+    @property
+    def range_bps(self) -> float:
+        """Yang-Zhang over the recent bars, in bps. Zero-ish until warm."""
+        return self._ranges.bps
+
+    @property
+    def range_warm(self) -> bool:
+        return self._ranges.warm
+
     @property
     def garch_bps(self) -> float:
         """The mean-reverting estimate of the same quantity, in bps."""
@@ -327,6 +350,7 @@ class Book(Restorable):
             found = self._by_key[key] = Volatility(
                 half_life=self.half_life,
                 _garch=Garch(half_life=self.half_life),
+                _ranges=Ranges(),
             )
         return found
 

@@ -110,6 +110,9 @@ class Context:
     _wide: dict[str, dict[str, float]] = field(default_factory=lambda: defaultdict(dict))
     #: feed -> when anything was first heard about it, for `wide_warmup`.
     _first_seen: dict[str, float] = field(default_factory=dict)
+    #: feed -> already announced as wide, so one widening is one line rather
+    #: than one per venue report for as long as it lasts.
+    _said_wide: dict[str, bool] = field(default_factory=dict)
     #: This broker's own spread by instrument and hour. Only consulted when
     #: there is no peer group to judge against - see `dislocation`.
     spreads: Spreads = field(default_factory=Spreads)
@@ -173,14 +176,21 @@ class Context:
                 return
             seen = self._wide[feed]
             seen[venue] = at
-            fresh = sum(1 for last in seen.values() if at - last <= self.wide_pause)
-            if fresh == self.wide_venues:
+            # Asked through `widened` rather than counted here, so the log
+            # cannot claim an action the gate is not taking. It said "standing
+            # aside" during the warm-up window, when the gate was correctly
+            # doing nothing - a log that announces a decision nobody made is
+            # worse than no log, because it is what gets believed later.
+            if self.widened(feed, at) and not self._said_wide.get(feed):
+                self._said_wide[feed] = True
                 log.info(
                     "trading: %s is wide on %d venues at once - standing aside for %.0fs",
                     feed,
-                    fresh,
+                    self.widened(feed, at),
                     self.wide_pause,
                 )
+            elif not self.widened(feed, at):
+                self._said_wide.pop(feed, None)
 
     # -------------------------------------------------------------- answering
 
