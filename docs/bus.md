@@ -20,7 +20,7 @@ instead of by being told.
 
 | topic | published when | payload |
 |---|---|---|
-| `prices.bars` | a candle sweep wrote or corrected rows | source, feed, venue, ticker, interval, inserted, updated, time, close, closed |
+| `prices.bars` | a candle sweep wrote or corrected rows | source, feed, venue, ticker, interval, inserted, updated, time, **open, high, low**, close, **volume**, closed |
 | `prices.quotes` | a broker's top of book changed | source, feed, venue, ticker, bid, ask, mid, spread_bps, time |
 | `news.articles` | a headline is seen for the first time | source, provider, title, url, published, symbols, urgency |
 | `news.events` | a calendar entry appears, **and again when it prints** | source, country, title, time, importance, actual, forecast, previous, unit, released |
@@ -31,6 +31,32 @@ instead of by being told.
 Macro is a count rather than a row per observation on purpose: one IMF pull is
 ~15,000 rows of historic reserves, and announcing each would be noise. The
 notice says the series changed; `reserves()` says what it changed to.
+
+### The bar notice carries the whole candle, and used to not
+
+`prices.bars` is a notice rather than the series - the store stays the source
+of truth - but the four numbers describing the bar are part of the notice, and
+for a long time three of them were missing.
+
+It carried `close` alone. `Engine.observe_bar` reads the extremes as
+`float(payload.get("high") or close)`, so every bar arriving live was a doji:
+levels formed on the live path sat at closing prices rather than at the extreme
+where the leg turned, session pivots were the highest and lowest *close*, and a
+bar that pierced a level intrabar and closed away from it recorded no touch.
+
+It never failed. The stored history has always held true OHLC, so every warm
+start rebuilt a correct model and the fault only reappeared as live bars
+accumulated - invisible at precisely the moments anyone inspected it.
+
+`volume` is carried too, and is **activity rather than size**: TradingView's
+`v` counts price changes on most feeds, is not comparable between venues
+quoting the same instrument, and is absent for some. Consumers must read it as
+a ratio against that instrument's own typical bar, which is what
+`structures.activity` produces.
+
+The general point, since the shape recurs: a consumer with a plausible fallback
+and a publisher that omits a field agree with each other perfectly and disagree
+with reality. Whatever a downstream model reads, the notice should carry.
 
 ## Publishing
 

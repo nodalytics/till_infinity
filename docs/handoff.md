@@ -268,6 +268,32 @@ were both pushed because of this, on separate days. Run gates unpiped.
 up. "One print in sixty-one cannot move a median" is the property. The first
 kind passes for the wrong reason.
 
+**A field left off a message is a silent, partial version of the system.** For
+months `prices.announce_bars` carried the close and not the extremes, and
+`Engine.observe_bar` reads them as `float(payload.get("high") or close)`. Every
+bar arriving on the bus was therefore a doji, and three things followed
+quietly:
+
+- levels formed on the live path sat at **closing prices**, when the origin is
+  supposed to be an extreme - the leg in meeting the leg out;
+- session pivots were the highest and lowest **close** rather than the session
+  high and low;
+- a bar that pierced a level intrabar and closed away from it recorded **no
+  touch** on the bar path.
+
+Nothing failed. The stored history has always held true OHLC, so every warm
+start rebuilt a correct model and the defect only reappeared as live bars
+accumulated - which means it was invisible at exactly the moments anyone looked
+at it. The quote path drives touches live and carries real prices, which is the
+only reason it was not worse.
+
+Two general lessons. **A fallback that looks sensible hides a missing input**:
+`or close` reads as defensive and is indistinguishable, at the call site, from
+the data being present. And **the wire format is part of the model** - a
+notice carrying seven fields was carrying six of the seven that mattered, and
+no test asserted what a bar announcement should contain because both sides were
+written to agree with each other rather than with the bar.
+
 **A fix that looks complete often is not.** Touch counting took three rounds -
 per quote, per zone-edge crossing, per bar replay - each looking finished. When
 a class of bug is found, ask what else reaches the same counter.

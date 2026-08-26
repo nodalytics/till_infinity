@@ -515,16 +515,30 @@ class Trader:
             if ticket in current:
                 continue
             price, why = exact.get(ticket, (live.position.price_current, "gone"))
+            profit = live.position.profit
+            if why == "gone":
+                # Ask the terminal what it actually paid, rather than settling
+                # at the last snapshot we happened to hold. See
+                # `Broker.closed_deal`.
+                try:
+                    told = await self.execution.closed_deal(ticket)
+                except BrokerError as exc:
+                    log.debug("trading: could not confirm #%d: %s", ticket, exc)
+                    told = None
+                if told is not None and told[0]:
+                    price, profit, why = told[0], told[1], "closed"
             del self.open[ticket]
             self._best.pop(ticket, None)
             settled.append((live, price, why))
-            await self._settle(live, price, why)
+            await self._settle(live, price, why, profit)
         return settled
 
-    async def _settle(self, live: Live, price: float, why: str) -> None:
+    async def _settle(
+        self, live: Live, price: float, why: str, profit: float | None = None
+    ) -> None:
         """Record a closed position, and tell the day about it."""
         position = live.position
-        profit = position.profit
+        profit = position.profit if profit is None else profit
         self.guard.record(live.intent.feed, profit, self.equity)
         log.info(
             "trading: closed #%d %s @ %.5g for %+.2f (%s) · %s",
@@ -553,7 +567,9 @@ class Trader:
                     # Said plainly because it is not always a fill price: a
                     # position that vanished between polls is settled at the
                     # last quote we saw for it.
-                    "exit_source": "broker" if why != "gone" else "last seen",
+                    # "closed" is the terminal's own deal record, "gone" the
+                    # last snapshot we held because it could not be read.
+                    "exit_source": "last seen" if why == "gone" else "broker",
                     "seconds": round(position.age),
                     **live.intent.to_context(),
                 },

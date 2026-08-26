@@ -167,6 +167,22 @@ class Broker(ABC):
         """
         return None
 
+    async def closed_deal(self, ticket: int) -> tuple[float, float] | None:
+        """(exit price, realised profit) for a position that has closed.
+
+        The terminal's own record, rather than the last snapshot we happened to
+        hold. A position closed server-side vanishes between polls, and
+        settling it at its last observed `price_current` is a guess that is
+        always a little stale and always in the direction of the move that
+        closed it: the first live trade recorded +52.20 where the broker had
+        paid +59.40, a 12% error on the one number every strategy will later be
+        scored by.
+
+        None when the backend cannot answer, in which case the caller keeps the
+        stale estimate and says so.
+        """
+        return None
+
     def drain_closed(self) -> list[tuple[Position, float, str]]:
         """Positions this backend closed itself since the last call.
 

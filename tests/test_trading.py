@@ -1983,3 +1983,112 @@ def test_the_side_is_arithmetic_once_the_valuation_exists():
     assert short.side is Side.SELL
     # Identical signal, identical direction field on it: only the valuation differs.
     assert signal()["direction"] == "up"
+
+
+# ------------------------------------------ what the terminal actually paid
+
+
+class ClosingBroker(RecordingBroker):
+    """A live-terminal double that can be asked what a close actually paid."""
+
+    def __init__(self, made, deal=None):
+        super().__init__(made)
+        self.deal = deal
+        self.asked: list[int] = []
+
+    async def closed_deal(self, ticket):
+        self.asked.append(ticket)
+        return self.deal
+
+
+async def test_a_vanished_position_is_settled_at_what_the_terminal_paid():
+    """It was settled at the last snapshot, which is always a little stale.
+
+    The first live trade recorded +52.20 where the broker had paid +59.40 - a
+    12% error on the one number every strategy is later scored by, and always
+    in the direction of the move that closed the position.
+    """
+    bus = Bus()
+    made = settings(live=True)
+    venue = ClosingBroker(made, deal=(4623.82, 59.4))
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    assert len(trader.open) == 1
+    ticket = next(iter(trader.open))
+
+    # The position vanishes server-side, as a stop or target fill does.
+    await venue._book.close_position(ticket)
+    venue._book.drain_closed()
+    await trader.sweep()
+
+    assert venue.asked == [ticket]
+    assert not trader.open
+    assert trader.guard.realised == pytest.approx(59.4)
+
+
+async def test_a_backend_that_cannot_confirm_keeps_the_estimate_and_says_so():
+    bus = Bus()
+    made = settings(live=True)
+    venue = ClosingBroker(made, deal=None)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    ticket = next(iter(trader.open))
+    await venue._book.close_position(ticket)
+    venue._book.drain_closed()
+    await trader.sweep()
+
+    assert venue.asked == [ticket]
+    assert not trader.open  # still settled, just on the stale number
+
+
+async def test_the_closing_deal_is_the_one_that_left_the_position():
+    """Deals link by position_id; the one that closed it has entry == 1.
+
+    Costs are folded in, because what the account received is the number worth
+    scoring - not the gross move.
+    """
+    from till_infinity.trading.mt5_http import HttpBroker
+
+    broker = http_broker()
+
+    async def fake_get(path, **kwargs):
+        return [
+            {"position_id": 42, "entry": 0, "price": 4624.81, "profit": 0.0},
+            {"position_id": 99, "entry": 1, "price": 1.0, "profit": 1000.0},
+            {
+                "position_id": 42,
+                "entry": 1,
+                "price": 4623.82,
+                "profit": 59.4,
+                "swap": -0.4,
+                "commission": 0.0,
+                "time_msc": 2,
+            },
+        ]
+
+    broker._get = fake_get
+    got = await HttpBroker.closed_deal(broker, 42)
+    assert got is not None
+    price, profit = got
+    assert price == 4623.82
+    assert profit == pytest.approx(59.0)  # 59.4 less the 0.4 swap
+
+
+async def test_a_position_with_no_closing_deal_yet_returns_nothing():
+    from till_infinity.trading.mt5_http import HttpBroker
+
+    broker = http_broker()
+
+    async def fake_get(path, **kwargs):
+        return [{"position_id": 42, "entry": 0, "price": 4624.81, "profit": 0.0}]
+
+    broker._get = fake_get
+    assert await HttpBroker.closed_deal(broker, 42) is None

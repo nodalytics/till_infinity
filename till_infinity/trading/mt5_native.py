@@ -178,6 +178,26 @@ class NativeBroker(Broker):
         }
         return _result_from(await self._call("order_send", request))
 
+    async def closed_deal(self, ticket: int) -> tuple[float, float] | None:
+        """The closing deal, straight from the terminal's history."""
+        try:
+            found = await self._call("history_deals_get", position=ticket)
+        except Exception as exc:
+            log.debug("trading: could not read deal history: %s", exc)
+            return None
+        rows = [row for row in (found or ()) if int(getattr(row, "entry", 0)) == 1]
+        if not rows:
+            return None
+        rows.sort(key=lambda row: getattr(row, "time_msc", 0) or 0)
+        profit = sum(
+            float(getattr(row, "profit", 0.0) or 0.0)
+            + float(getattr(row, "swap", 0.0) or 0.0)
+            + float(getattr(row, "commission", 0.0) or 0.0)
+            + float(getattr(row, "fee", 0.0) or 0.0)
+            for row in rows
+        )
+        return float(getattr(rows[-1], "price", 0.0) or 0.0), profit
+
     async def close_position(self, ticket: int, volume: float = 0.0) -> OrderResult:
         mt5 = self._require()
         found = await self._call("positions_get", ticket=ticket)

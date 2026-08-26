@@ -296,6 +296,39 @@ class HttpBroker(Broker):
             comment=str(result.get("comment") or ""),
         )
 
+    async def closed_deal(self, ticket: int) -> tuple[float, float] | None:
+        """The closing deal for a position, from the bridge's history.
+
+        Deals are linked to their position by `position_id`, and the one that
+        closed it is the one with `entry == 1` (DEAL_ENTRY_OUT). A partial
+        close leaves several, so the profits are summed and the last price is
+        the one the position finally left at.
+        """
+        try:
+            raw = await self._get("/history/deals", params={"days": 1})
+        except Exception as exc:
+            log.debug("trading: could not read deal history: %s", exc)
+            return None
+        rows = raw if isinstance(raw, list) else raw.get("deals", [])
+        closing = [
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and int(row.get("position_id") or 0) == ticket
+            and int(row.get("entry") or 0) == 1
+        ]
+        if not closing:
+            return None
+        closing.sort(key=lambda row: row.get("time_msc") or row.get("time") or 0)
+        profit = sum(
+            float(row.get("profit") or 0.0)
+            + float(row.get("swap") or 0.0)
+            + float(row.get("commission") or 0.0)
+            + float(row.get("fee") or 0.0)
+            for row in closing
+        )
+        return float(closing[-1].get("price") or 0.0), profit
+
     async def close_position(self, ticket: int, volume: float = 0.0) -> OrderResult:
         raw = await self._post("/positions/close", params={"ticket": ticket})
         result = raw.get("result") or {}
