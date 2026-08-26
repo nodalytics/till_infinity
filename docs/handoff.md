@@ -216,6 +216,18 @@ sudo docker logs till-infinity | grep "alert '"                  # what was actu
 
 ## Trading, added 2026-08-26
 
+> **First live trades, 2026-08-26.** Two on gold, both sells, from real
+> `structures` calls on a Deriv demo. One took its target for +59.40; the other
+> was stopped for -31.20 and price then went 9.79 points the right way. The
+> chain works unattended - signal, strategy, gates, sizing, order, broker fill,
+> reconciliation, journal - and n=2 says nothing at all about whether it should
+> keep doing it. `trading report` prints dashes rather than rates under thirty
+> closed trades, which is the correct answer and the reason it does that.
+>
+> The loss produced the `min_stop_vol` floor below. The refusal tally from the
+> same session is the more useful artefact: 9 on `reward_to_risk`, 5 on
+> `dislocated`, 1 each on `news` and `spread`, against 1 taken.
+
 The level calls now reach an account. `trading` consumes `structures.signals`,
 sizes against the terminal's own symbol rules, and places the order - on paper
 unless `TRADING_LIVE=1`, and off entirely unless `TRADING_ENABLED=1`. Neither
@@ -263,6 +275,13 @@ this way before it shipped.
 
 **`cmd | tail` returns tail's exit code.** A red `pytest` and a failing `ruff`
 were both pushed because of this, on separate days. Run gates unpiped.
+
+It happened a third time on 2026-08-26, in a new disguise: the gates were
+chained into a *backgrounded* command whose tail printed the pytest summary, so
+a failing `ruff format` scrolled past inside output that ended in "962 passed".
+Every gate had run and one of them was red. Backgrounding and piping are the
+same mistake wearing different clothes - if the thing you read is not the exit
+code, you have not checked.
 
 **Assert properties, not tolerances.** "Less than 3x" is a number someone made
 up. "One print in sixty-one cannot move a median" is the property. The first
@@ -321,6 +340,20 @@ it was not. The fix has to read the state back, and the first attempt at *that*
 failed too - the terminal writes its log asynchronously, so a fixed sleep read
 the previous line and toggled a second time. Wait for evidence, not for a
 duration.
+
+**A stop inside one volatility unit is not a stop.** The first two live trades
+placed theirs 0.53 and 0.61 units from the level. The second was stopped at
+4626.09 on a 1.05-point stop and price then fell to 4615: the direction was
+right and the stop was inside the noise of the estimate it was protecting.
+`risk_vol` from the level model is frequently under a unit on young levels -
+where the zone has no recorded wicks to widen it either, so the zone-aware stop
+cannot save it. Floored at `min_stop_vol`, and the size shrinks to hold the
+risk budget.
+
+The general form: **the same number cannot be both the invalidation point and
+the affordable one.** The model says where the level stops being true; what a
+tradable stop costs is a separate question, and answering them with one number
+means the cheaper answer silently wins.
 
 **Correct silence and broken silence are indistinguishable.** The channel going
 quiet, a gate never firing, an agent never waking, a filter dropping everything:

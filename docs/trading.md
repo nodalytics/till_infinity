@@ -587,6 +587,40 @@ unlocks: the back-check strategy (a measured asymmetry - 27 of 70 breakout
 attempts were false), edge.md's accuracy-targeting gate, and eventually a Kelly
 fraction. None of them exists yet.
 
+## Where the stop goes
+
+Three things decide it, and they are applied in this order.
+
+**Beyond the level, not beyond the entry.** The level is what is being traded,
+so the trade is wrong when price is through *it*, whatever the fill happened to
+be. Anchoring to the fill would move the invalidation point every time the
+spread widened.
+
+**Outside the zone.** A level is a range: the origin at the centre, each edge
+stretched by how far the wick ran past it on that side. A stop at
+`origin - distance` can sit inside the band where wicks routinely reach, which
+is a standing offer to be swept and then watch the trade work without you.
+
+**At least one volatility unit away.** Fair value is a distribution and
+volatility is its width, so a stop closer than a unit is inside the estimate it
+is protecting. This is the same sentence the thesis uses about distance - one
+unit is noise, three is a statement - applied to the stop before the entry.
+
+The third exists because the first two were not enough. Measured on the first
+two live trades, both gold sells: `risk_vol` of 0.53 and 0.61. The second was
+stopped at 4626.09 on a 1.05-point stop and price then fell to 4615. The zone
+check had worked - the zone edge was 4625.58 and the stop went outside it at
+4626.02 - but the level was young, its recorded wick was 0.35v, and a narrow
+zone cannot widen a stop that was never wide enough.
+
+`risk_vol` comes from the level model, which is answering "where does this level
+stop being true". What a *tradable* stop costs is a different question, and
+answering both with one number lets the cheaper answer win silently.
+
+**Widening shrinks the size, not the risk.** The budget is fixed, so a wider
+stop buys fewer lots, and a trade that can no longer make the minimum lot is
+refused. A stop inside the noise is not a cheaper trade, it is a worse one.
+
 ## Sizing
 
 Two conversions, both of which have to be the right way round.
