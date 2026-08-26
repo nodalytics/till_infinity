@@ -249,6 +249,40 @@ FEEDS: dict[str, Feed] = {
             ),
             yahoo=("^GSPC", "ES=F"),
         ),
+        _feed(
+            "ger40",
+            # The DAX. Every venue here was checked and quoting before it was
+            # added - a dead symbol logs a skip on every sweep, forever, and
+            # the list is otherwise indistinguishable from a working one.
+            #
+            # Quoted in euros, not dollars, which is the point of carrying it:
+            # it is the first index here whose second leg is not USD.
+            tradingview=(
+                "OANDA:DE30EUR",
+                "PEPPERSTONE:GER40",
+                "FOREXCOM:GRXEUR",
+                "CAPITALCOM:DE40",
+                "BLACKBULL:GER40",
+                "TVC:DAX",
+            ),
+            # ^GDAXI is the index itself. There is no free DAX future on
+            # Yahoo - FDAX=F does not resolve - so unlike us100 and spx500
+            # this one has no out-of-hours companion series.
+            yahoo=("^GDAXI",),
+        ),
+        _feed(
+            "uk100",
+            # The FTSE 100, quoted in sterling. Same reasoning as ger40.
+            tradingview=(
+                "OANDA:UK100GBP",
+                "PEPPERSTONE:UK100",
+                "FOREXCOM:UKXGBP",
+                "CAPITALCOM:UK100",
+                "BLACKBULL:UK100",
+                "TVC:UKX",
+            ),
+            yahoo=("^FTSE",),
+        ),
     )
 }
 
@@ -296,6 +330,8 @@ DEFAULT_SYMBOLS: tuple[str, ...] = (
     "sol",
     "us100",
     "spx500",
+    "ger40",
+    "uk100",
 )
 
 #: What people actually type, mapped to the feed it means.
@@ -316,6 +352,20 @@ SYMBOL_ALIASES: dict[str, str] = {
     "sandp": "spx500",
     "gspc": "spx500",
     "es": "spx500",
+    "ger40": "ger40",
+    "germany40": "ger40",
+    "germany": "ger40",
+    "dax": "ger40",
+    "dax40": "ger40",
+    "de40": "ger40",
+    "de30": "ger40",
+    "gdaxi": "ger40",
+    "uk100": "uk100",
+    "uk": "uk100",
+    "ftse": "uk100",
+    "ftse100": "uk100",
+    "ukx": "uk100",
+    "footsie": "uk100",
     "xauusd": "gold",
     "xau": "gold",
     "gold": "gold",

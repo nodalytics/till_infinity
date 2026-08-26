@@ -97,6 +97,8 @@ INSTRUMENTS: dict[str, str] = {
     "usdcnh": "元",
     "us100": "NDX",
     "spx500": "SPX",
+    "ger40": "DAX",
+    "uk100": "FTSE",
 }
 
 #: Keys the notification filter routes on. Rendered nowhere: every publisher

@@ -53,6 +53,13 @@ LEGS: dict[str, tuple[str, str]] = {
     "sol": ("SOL", "USD"),
     "us100": ("US100", "USD"),
     "spx500": ("SPX500", "USD"),
+    # The two that are **not** short dollars. A DAX CFD is quoted in euros and
+    # a FTSE CFD in sterling, so they load EUR and GBP instead - which is why
+    # they are worth carrying at all in a book where everything else shares a
+    # dollar leg by construction. Mapping them to USD out of habit would have
+    # made them count against the one limit they genuinely diversify.
+    "ger40": ("GER40", "EUR"),
+    "uk100": ("UK100", "GBP"),
 }
 
 #: What a calendar row's `country` means, in currency terms. The field carries

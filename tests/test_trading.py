@@ -844,7 +844,53 @@ def test_a_us_release_hits_every_instrument_with_a_dollar_leg():
     assert "gold" in affected
     assert "btc" in affected
     assert "eurusd" in affected
-    assert len(affected) == len(ex.LEGS)
+    # Everything except the two indices that are not quoted in dollars.
+    assert set(ex.LEGS) - set(affected) == {"ger40", "uk100"}
+
+
+def test_the_european_indices_do_not_load_the_dollar():
+    """The reason for carrying them at all.
+
+    Every other instrument here is short dollars by construction - a book of
+    gold, BTC and the majors is one trade wearing several tickets, which is
+    what `max_currency_exposure` exists to catch. A DAX CFD is quoted in euros
+    and a FTSE CFD in sterling, so they are the only two positions that can be
+    opened without consuming the dollar budget. Mapping them to USD out of
+    habit would have quietly removed that.
+    """
+    assert ex.legs("ger40") == ("GER40", "EUR")
+    assert ex.legs("uk100") == ("UK100", "GBP")
+    assert "ger40" not in ex.feeds_for("USD")
+    assert "uk100" not in ex.feeds_for("USD")
+    # And they are reached by the releases that actually move them.
+    assert "ger40" in ex.feeds_for("EUR")
+    assert "uk100" in ex.feeds_for("GBP")
+
+
+def test_a_dax_trade_leaves_the_dollar_budget_alone():
+    """The gate that refuses a third dollar trade must not refuse this one."""
+    positions = [
+        td.Position(ticket=1, symbol="XAUUSD", side=Side.BUY, volume=0.1, price_open=4400.0),
+        td.Position(ticket=2, symbol="EURUSD", side=Side.BUY, volume=0.1, price_open=1.1),
+    ]
+    feed_of = {"XAUUSD": "gold", "EURUSD": "eurusd", "GER40": "ger40"}
+    got = ex.measure(positions, {1: 25.0, 2: 25.0}, feed_of)
+    before = abs(got.of("USD"))
+
+    positions.append(
+        td.Position(ticket=3, symbol="GER40", side=Side.BUY, volume=0.1, price_open=26_430.0)
+    )
+    after = ex.measure(positions, {1: 25.0, 2: 25.0, 3: 25.0}, feed_of)
+
+    # The dollar budget is untouched, which is the point.
+    assert abs(after.of("USD")) == pytest.approx(before)
+    # And the euro leg *nets down* rather than up: a long EURUSD is +EUR and a
+    # long DAX is -EUR, so the second position hedges the first. That falls out
+    # of the decomposition rather than being asserted into it, and it is the
+    # behaviour that makes this a diversifying trade instead of another way to
+    # be long the same thing.
+    assert after.of("EUR") == pytest.approx(0.0)
+    assert after.of("GER40") == pytest.approx(25.0)
 
 
 def test_the_exposure_gate_refuses_the_third_dollar_trade():

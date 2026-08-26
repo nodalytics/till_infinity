@@ -59,6 +59,8 @@ INSTRUMENTS: dict[str, tuple[str, ...]] = {
     # Names are matched upper-cased, so they are written that way.
     "us100": ("US100", "NAS100", "USTEC", "NDX100", "USATECH", "US TECH 100"),
     "spx500": ("US500", "SPX500", "SP500", "USA500", "US SP 500"),
+    "ger40": ("GER40", "DE40", "DE30", "DAX40", "GERMANY40", "GERMANY 40"),
+    "uk100": ("UK100", "FTSE100", "UKX", "UK 100"),
 }
 
 #: Account-type suffixes, tried against every name above. Empty string first,
