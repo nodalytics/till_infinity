@@ -1204,7 +1204,7 @@ def test_a_member_is_scored_against_what_actually_happened():
         book.observe({"good": 10.0, "bad": 40.0})
         book.settle(10.0)  # the truth was 10 every time
     assert book.accuracy("good") > book.accuracy("bad")
-    assert [name for name, _ in book.standings()][0] == "good"
+    assert next(name for name, _ in book.standings()) == "good"
 
 
 def test_the_combination_is_equal_weight_until_told_otherwise():
