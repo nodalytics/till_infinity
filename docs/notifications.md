@@ -31,7 +31,7 @@ The level filter is what lets one bot serve both an on-call chat and a
 firehose: a `critical` channel simply never sees the routine traffic.
 
 A label must be a plain word, which is how `https://…` is never mistaken for
-one — a URL always has `:` and `/` before any `=`.
+one - a URL always has `:` and `/` before any `=`.
 
 ## Finding Telegram chat ids
 
@@ -43,7 +43,7 @@ asks the bot which chats it can see and prints a ready-made export line. Two
 caveats come from the API itself:
 
 - `getUpdates` only covers the **last 24 hours**, so a chat the bot has been
-  idle in will not appear — send it a message first;
+  idle in will not appear - send it a message first;
 - it returns **409** while a webhook is registered, since the two delivery
   modes are mutually exclusive.
 
@@ -67,7 +67,7 @@ await notify(
 )
 ```
 
-`notify` returns one `Delivery` per channel and never raises — an alert that
+`notify` returns one `Delivery` per channel and never raises - an alert that
 reached the ops chat but not the Discord board is a partial success, and the
 result says exactly that:
 
@@ -78,7 +78,7 @@ result says exactly that:
 
 ## What the transports handle
 
-**Rate limits.** Both providers answer 429 with the exact seconds to wait —
+**Rate limits.** Both providers answer 429 with the exact seconds to wait -
 Telegram in `parameters.retry_after`, Discord in `retry_after`, either in a
 `Retry-After` header. The wait is read from wherever it appears and capped at
 `max_retry_after` so a hostile number cannot stall the process.
@@ -88,7 +88,7 @@ description over 4096; neither trims for you, so an over-long alert would
 simply never arrive. Messages are truncated with a visible `[…]` marker.
 
 **Escaping.** Telegram messages are HTML, not Markdown, because a stray
-underscore or asterisk in a symbol name is a parse error in Markdown — and
+underscore or asterisk in a symbol name is a parse error in Markdown - and
 instrument names are full of both. Everything interpolated is escaped.
 
 **Failures that look like successes.** Telegram can answer HTTP 200 with
@@ -107,7 +107,7 @@ uv run till-infinity notify listen --redis redis://localhost:6379
 Nothing off the bus is trusted: a payload with no title is dropped rather than
 sent as an empty alert, `fields` is flattened to strings, and an out-of-range
 level is clamped instead of raising. A failed delivery is logged and the loop
-continues — one unreachable webhook must not stop the next alert from reaching
+continues - one unreachable webhook must not stop the next alert from reaching
 the chat that is up. See [bus.md](bus.md).
 
 ## How a message is laid out
@@ -126,10 +126,10 @@ which before reading a word. Direction wins over shape when a signal claims one.
 | ⚡ | one venue is away from the consensus |
 | 🧭 | the [score](score.md), when it exists |
 | 🤖 | an agent finding |
-| • ▲ ■ | nothing claimed — falls back to severity |
+| • ▲ ■ | nothing claimed - falls back to severity |
 
 **The instrument's own symbol follows it**, because the two answer different
-questions — *what happened*, and *to what* — and a phone notification is read
+questions - *what happened*, and *to what* - and a phone notification is read
 at a glance, where `📈 ₿` separates from `📈 €` before a word of the title has
 been:
 
@@ -141,7 +141,7 @@ been:
 | NDX us100 | SPX spx500 | | |
 
 Currency signs where one exists, since that is what the instrument is called in
-print. The dollar pairs carry their prefix — `A$`, `C$`, `NZ$` — because a bare
+print. The dollar pairs carry their prefix - `A$`, `C$`, `NZ$` - because a bare
 `$` would say nothing at the moment the distinction matters. **`元` for
 offshore yuan rather than `¥`**, which would collide with the yen at exactly
 the glance this exists for; a test pins that no two instruments share a symbol.
@@ -155,17 +155,17 @@ Then the instrument, timeframe and direction lead the headline, and the
 evidence sits underneath, one claim per line:
 
 ```
-📉 🥇 GOLD 4h — down
+📉 🥇 GOLD 4h - down
 level 3421.5
 
-down 77% — against a 53% base rate
+down 77% - against a 53% base rate
 expected push -1.87v · risk 0.62v
 9 touches here + 12 similar · strength 0.94
 ```
 
 Two details worth stating. The probability is for **the direction being
-claimed** — quoting P(up) beside a down call reads as the confidence in down
-when it is the confidence against it — and the base rate moves with it, or the
+claimed** - quoting P(up) beside a down call reads as the confidence in down
+when it is the confidence against it - and the base rate moves with it, or the
 pair is not a comparison. And the fields the filter routes on (`shape`,
 `instrument`, `venue`, `direction`) are never printed back: they are already in
 the headline, so `instrument: gold` under a line containing "GOLD" is the
@@ -192,7 +192,7 @@ was *sent* can be compared against what was computed.
 ## Filtering: what a channel accepts
 
 A channel people actually read is quiet most of the time. The detectors are not
-quiet — a stale feed re-fires every few seconds for as long as it stays stale,
+quiet - a stale feed re-fires every few seconds for as long as it stays stale,
 and a wide spread does the same. All of it belongs in the journal, where it is
 evidence. Very little of it belongs on a phone.
 
@@ -203,13 +203,13 @@ answering something the others cannot:
 
 | variable | filters on | example |
 |---|---|---|
-| `NOTIFY_SHAPES` | kind of finding | `level,drift` — level calls and regime changes, nothing else |
+| `NOTIFY_SHAPES` | kind of finding | `level,drift` - level calls and regime changes, nothing else |
 | `NOTIFY_FEEDS` | instrument | `gold,btc` |
-| `NOTIFY_COOLDOWN_S` | the same finding again | `900` — at most once per 15 minutes (default) |
+| `NOTIFY_COOLDOWN_S` | the same finding again | `900` - at most once per 15 minutes (default) |
 | `NOTIFY_MAX_PER_HOUR` | everything, together | `20` (default) |
 
-Shapes are the ones in [structures.md](structures.md#the-four-shapes) —
-`level`, `stale`, `spread`, `dislocation`, `drift` — plus **`agent`**, which is
+Shapes are the ones in [structures.md](structures.md#the-four-shapes) -
+`level`, `stale`, `spread`, `dislocation`, `drift` - plus **`agent`**, which is
 what an [agent](agents.md) finding carries. That last one matters: agents
 publish to the same `alerts` topic, so a channel narrowed to `level,drift` drops
 every analysis silently, which is the worst way for one to fail. Anything
@@ -236,7 +236,7 @@ Four details that are deliberate:
 
 The filter sits in the `notify listen` consumer, not at the publisher. What is
 worth *recording* and what is worth *interrupting someone with* are different
-questions — the journal keeps everything either way, and a dropped alert is
+questions - the journal keeps everything either way, and a dropped alert is
 logged with the reason at `debug`.
 
 ## Secrets
@@ -244,4 +244,4 @@ logged with the reason at `debug`.
 Credentials are read from the environment and never stored, logged or printed.
 The Telegram token lives in the URL path, which keeps it out of payload dumps.
 `notify targets` masks webhook URLs to host plus a short tail, and shows chat
-ids in full — a webhook URL is a credential, while a chat id only names a room.
+ids in full - a webhook URL is a credential, while a chat id only names a room.

@@ -4,15 +4,15 @@ Run: `python research/harness/topology.py`, `python research/harness/structure.p
 
 Every feature the model carries is local to the touch. [features.md](features.md)
 found none of them predicts direction beyond `side`;
-[cycles.md](cycles.md) tried one non-local class — where the instrument sits in
-a larger move — and got an effect that did not survive being resampled by
+[cycles.md](cycles.md) tried one non-local class - where the instrument sits in
+a larger move - and got an effect that did not survive being resampled by
 instrument. This tries three more, all structural:
 
 | family | what it asks |
 |---|---|
 | **transit graph** | where this level sits in the network of levels price actually moves between |
 | **confluence** | how many timeframes agree on this price, and how tightly |
-| **shape** | what the whole level set looks like — how many, how dense, how dispersed, how much room either side |
+| **shape** | what the whole level set looks like - how many, how dense, how dispersed, how much room either side |
 
 and then asks all of them again inside volatility terciles, because structure
 measured in volatility units is the one thing here that is comparable across
@@ -53,13 +53,13 @@ Gain **-0.0006**, and resampled by instrument **-0.0042 to +0.0021**. Nothing.
 Worth recording, because the null it produced looked perfectly respectable.
 Nodes were keyed on `(feed, interval, rounded price)`. A level is a Kalman
 filter whose mean moves on every touch it absorbs, so a price key mints a **new
-node every time** — the graph never accumulated. It reported 94 of 11,094
+node every time** - the graph never accumulated. It reported 94 of 11,094
 touches at a node it had seen before, an out-degree maxing at 2, and a `pull`
 of 1.00 at the median: the signature of a graph with no edges, not a market
 with no structure.
 
 A null deserves the same scrutiny as a positive. This is the second time in a
-week that one turned out to be instrumentation — [cycles.md](cycles.md) §2 was
+week that one turned out to be instrumentation - [cycles.md](cycles.md) §2 was
 the first.
 
 ## 2. Confluence and shape: one apparent finding, and what it really is
@@ -79,7 +79,7 @@ the first.
 | cluster_vol | 0.505 |
 
 Three properties well off 0.5, and they hold up under a strict correction. With
-11 properties across 3 volatility regimes — 33 tests — each cell needs 99.84%
+11 properties across 3 volatility regimes - 33 tests - each cell needs 99.84%
 rather than 95% (Šidák, z = 3.165), and `gap_up`, `gap_down` and `gap_ratio`
 **separate in every regime**:
 
@@ -89,7 +89,7 @@ rather than 95% (Šidák, z = 3.165), and `gap_up`, `gap_down` and `gap_ratio`
 | gap_ratio | 0.579 | 0.610 | 0.601 | all three |
 | gap_down | 0.427 | 0.381 | 0.414 | all three |
 | zone_rank | 0.490 | 0.436 | 0.434 | middle, violent |
-| everything else | — | — | — | none |
+| everything else | - | - | - | none |
 
 That is the strongest-looking result in any of this week's structural work.
 
@@ -123,7 +123,7 @@ Which is exactly what §3 shows.
 | plus everything | 73.1% | 0.744 | +0.0055 |
 
 Gain **+0.0055**, resampled by instrument **-0.0000 to +0.0113**. The interval
-touches zero. Accuracy does not move at all — 73.1% to 73.3% across every
+touches zero. Accuracy does not move at all - 73.1% to 73.3% across every
 configuration, which is where it has sat in every document this week.
 
 A model that already has `side` gains nothing from being told the same thing in
@@ -135,7 +135,7 @@ units of distance.
    in combination. The gap properties are `side` restated.
 2. **The correction earned its place.** Three properties separated in all three
    regimes at z = 3.165 and were still an artefact. A family-wise correction
-   protects against chance, not against measuring the wrong thing — only
+   protects against chance, not against measuring the wrong thing - only
    checking what a feature correlates with does that.
 3. **The pattern across five documents is now hard to miss.** `side` carries
    the direction; everything else is either noise or a re-encoding of `side`;

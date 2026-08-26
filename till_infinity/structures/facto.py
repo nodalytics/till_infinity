@@ -2,7 +2,7 @@
 
 The levels model treats its features one at a time: deviation, then spread,
 then how recently the level broke. A factorisation machine models how they
-**combine** — a back check on a strong level in a violent regime is not the sum
+**combine** - a back check on a strong level in a violent regime is not the sum
 of those three things, and an additive model cannot say so.
 
 This module was deliberately empty until now, because an FM is supervised and
@@ -27,9 +27,9 @@ train and one in test measures memorisation.
 
 The score means nothing alone. Two are reported beside it:
 
-- **mean** — predict the average push, every time. A model that cannot beat
+- **mean** - predict the average push, every time. A model that cannot beat
   this has learned nothing from the features.
-- **the levels model** — what `reactions.infer` predicted at the time, which is
+- **the levels model** - what `reactions.infer` predicted at the time, which is
   already in the journal. This is the one that matters: an FM that does not
   beat the model it was meant to improve on is not an improvement.
 
@@ -65,7 +65,7 @@ MIN_EXAMPLES = 200
 #: does not grow at the rate it was first sized for: every level call is
 #: recorded, actionable or not, so it accrues around a thousand rows an hour
 #: rather than dozens a day. At the original 5,000 a fit drew its examples from
-#: the last two hours however long the service had run — walk-forward validated
+#: the last two hours however long the service had run - walk-forward validated
 #: inside a single afternoon, which is not the guarantee the discipline is
 #: supposed to give. The real fix is to select outcomes and their parents in
 #: SQL; this is the honest interim, and it is bounded so a journal that has run
@@ -81,18 +81,18 @@ JOURNAL_ROWS = 200_000
 
 #: How much better than a baseline counts as better at all. A model that edges
 #: the running mean by one per cent over a few hundred examples has not learned
-#: anything — it has been handed a small advantage by the baseline starting
+#: anything - it has been handed a small advantage by the baseline starting
 #: cold, and calling that a win is how a system talks itself into believing its
 #: own noise.
 MARGIN = 0.05
 
-#: Latent dimensions. Small on purpose — the interactions worth finding here
+#: Latent dimensions. Small on purpose - the interactions worth finding here
 #: are low-order (side x regime, backcheck x strength), and capacity beyond
 #: that is capacity to memorise.
 N_FACTORS = 4
 
 #: The numeric features. All scale-free, which is what makes gold and EURUSD
-#: comparable — but scale-free is not the same as bounded, and the three named
+#: comparable - but scale-free is not the same as bounded, and the three named
 #: in `UNBOUNDED` are saturated before the model sees them.
 NUMERIC: tuple[str, ...] = (
     "approach_vol",
@@ -104,7 +104,7 @@ NUMERIC: tuple[str, ...] = (
     "backcheck",
     "regime",
     # Already in [0, 1], so it needs no saturation. The one feature here
-    # measured to add anything once `side` is known — see research/features.md.
+    # measured to add anything once `side` is known - see research/features.md.
     "up_rate",
 )
 
@@ -118,7 +118,7 @@ CATEGORICAL: tuple[str, ...] = ("side", "interval")
 UNBOUNDED: tuple[str, ...] = ("approach_vol", "depth_vol", "run_vol")
 
 #: Where the saturating transform puts a typical value. Chosen from what the
-#: journal actually holds — median `approach_vol` sits near 1.7 — so ordinary
+#: journal actually holds - median `approach_vol` sits near 1.7 - so ordinary
 #: touches land mid-range rather than bunched against either end.
 TYPICAL = 2.0
 
@@ -126,8 +126,8 @@ TYPICAL = 2.0
 def saturate(value: float, *, typical: float = TYPICAL) -> float:
     """Map [0, inf) onto [0, 1), monotonically, with no cutoff to argue about.
 
-    A factorisation machine's gradients are *quadratic* in feature magnitude —
-    the interaction terms multiply two features together — so an unbounded
+    A factorisation machine's gradients are *quadratic* in feature magnitude -
+    the interaction terms multiply two features together - so an unbounded
     input does not merely skew the fit, it diverges it. Feeding the raw values
     took the latent factors non-finite within tens of examples, after which
     `Model.predict` returned zero forever and the model learned nothing while
@@ -137,7 +137,7 @@ def saturate(value: float, *, typical: float = TYPICAL) -> float:
     maximum here is a number someone made up: it would treat a four-volatility
     approach and a forty-volatility one as the same event, which is exactly the
     distinction a violent touch consists of. This keeps the ordering everywhere
-    and simply stops the tail from dominating — the same instinct as
+    and simply stops the tail from dominating - the same instinct as
     `experience_of` log-compressing a touch count, held to a hard bound because
     the FM needs one.
     """
@@ -171,7 +171,7 @@ def encode(context: dict[str, Any]) -> dict[str, float]:
     scale it should interpolate along, which is true of the durations and not
     of anything the model does with them.
 
-    Everything this returns is bounded, which is the property the FM needs —
+    Everything this returns is bounded, which is the property the FM needs -
     see `saturate`. The volatility-unit features are saturated into [0, 1) on
     the way past; the rest already hold themselves down, `strength`, `regime`,
     `pivot` and `backcheck` in [0, 1] by construction and `experience` growing
@@ -207,7 +207,7 @@ def dataset(
         return []
 
     # Indexed **before** the boundary filter, because a parent is not an
-    # example — it is what an example points back at. Filtering first made a
+    # example - it is what an example points back at. Filtering first made a
     # call recorded before `since` unreachable from an outcome recorded after
     # it, so a touch that straddled the boundary silently lost what the levels
     # model had predicted. Here that costs only the comparison; for anything
@@ -274,7 +274,7 @@ class Report(Restorable):
     @property
     def verdict(self) -> str:
         if not self.enough:
-            return f"not enough data — {self.examples} of {MIN_EXAMPLES} needed"
+            return f"not enough data - {self.examples} of {MIN_EXAMPLES} needed"
         if not self.beats_baseline:
             return (
                 f"no better than predicting the average "
@@ -326,8 +326,8 @@ class Model(Restorable):
     def predict(self, features: dict[str, float]) -> float:
         """Zero when there is nothing to say. Two cases, both real.
 
-        `FMRegressor.predict_one` raises `AttributeError` — not something
-        catchable by intent — in two situations, because its internal dot
+        `FMRegressor.predict_one` raises `AttributeError` - not something
+        catchable by intent - in two situations, because its internal dot
         product returns a plain float where river expects a numpy scalar and
         calls `.item()` on it:
 
@@ -345,13 +345,13 @@ class Model(Restorable):
             return 0.0
         guess = float(self._fm.predict_one(features))
         # river's FM warns rather than raises when its latent factors go
-        # non-finite — `invalid value encountered in scalar add` — and hands
+        # non-finite - `invalid value encountered in scalar add` - and hands
         # back a NaN. A NaN propagates silently through `metrics.MAE`, which
         # then reports a NaN error the comparisons read as "not better", so a
         # diverged model would be scored as merely unhelpful. Zero is the
         # honest answer: a model that has produced a non-number has no opinion.
         if not math.isfinite(guess):
-            log.warning("facto: model produced a non-finite prediction — treating as no opinion")
+            log.warning("facto: model produced a non-finite prediction - treating as no opinion")
             return 0.0
         return guess
 
@@ -408,7 +408,7 @@ def fit(journal_db: Path | str, *, since: float = 0.0, **kwargs) -> Report:
     """Read the journal and report. The everyday entry point.
 
     `since` exists because a measurement bug does not only corrupt the numbers
-    it produced — it corrupts every example recorded while it was live. Touch
+    it produced - it corrupts every example recorded while it was live. Touch
     counts fed `experience` and `strength`, and a pooled base rate made `edge`
     wrong on every row, so examples from before those were fixed describe a
     model that no longer exists. Fitting across the boundary would teach the FM

@@ -60,7 +60,7 @@ def resolve_intervals(names: Sequence[str] | None) -> tuple[Interval, ...]:
 
 @dataclass(frozen=True, slots=True)
 class Symbol:
-    """A ticker at a venue — ``OANDA:XAUUSD``, ``YAHOO:GC=F``."""
+    """A ticker at a venue - ``OANDA:XAUUSD``, ``YAHOO:GC=F``."""
 
     venue: str
     ticker: str
@@ -190,7 +190,7 @@ class Quote:
 
     @property
     def spread_bps(self) -> float | None:
-        """Spread in basis points of mid — the cross-broker comparable."""
+        """Spread in basis points of mid - the cross-broker comparable."""
         spread, mid = self.spread, self.mid
         if spread is None or not mid:
             return None
@@ -201,7 +201,7 @@ class Quote:
         return self.bid is None and self.ask is None and self.last is None
 
     def same_price_as(self, other: Quote | None) -> bool:
-        """True when nothing tradable moved — used to skip redundant writes."""
+        """True when nothing tradable moved - used to skip redundant writes."""
         if other is None:
             return False
         return (self.bid, self.ask, self.last) == (other.bid, other.ask, other.last)

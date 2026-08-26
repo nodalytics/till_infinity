@@ -5,7 +5,7 @@ Run from the repository root:  python research/harness/models.py
 Every model is walk-forward: each touch is predicted before it is learned and
 never from itself. Two nulls sit in the table and both matter. `always up` is
 the majority class. `random 12` is a neighbour vote with no similarity at all,
-which is the bar any similarity metric has to clear — and none of them do by
+which is the bar any similarity metric has to clear - and none of them do by
 much.
 
 Memory and time per call are reported because the box is 908MB with a 640MB

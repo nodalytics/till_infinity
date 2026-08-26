@@ -3,7 +3,7 @@
 Run: `python research/harness/magnitude.py`
 
 [prior.md](prior.md) established that the directional claim is a re-encoding of
-`side` — give the baseline the same side conditioning and what remains predicts
+`side` - give the baseline the same side conditioning and what remains predicts
 at 51.8%, AUC 0.520. It also said what it had not tested: magnitude and risk. A
 system can be useful for *how far* while having nothing to say about *which
 way*.
@@ -13,10 +13,10 @@ on it is losing money.**
 
 | claim | verdict |
 |---|---|
-| `expected_push` ranks how far price goes | **yes** — and it is the first thing in this project to beat its null |
-| `expected_push` is the right size | **no** — it understates by 3x |
-| `risk_vol` bounds the loss | **no** — zero relationship to realised adverse movement |
-| `reward_to_risk` selects good trades | **no** — it selects losing ones, and the mechanism is known |
+| `expected_push` ranks how far price goes | **yes** - and it is the first thing in this project to beat its null |
+| `expected_push` is the right size | **no** - it understates by 3x |
+| `risk_vol` bounds the loss | **no** - zero relationship to realised adverse movement |
+| `reward_to_risk` selects good trades | **no** - it selects losing ones, and the mechanism is known |
 
 11,116 calls paired with the outcome of the touch each one opened, across
 fourteen instruments.
@@ -34,8 +34,8 @@ Realised profit of the call's own trade, by decile of `|expected_push|`:
 | 9 | 1.609 | 1,111 | 3.127 | +0.944 |
 | 10 | 2.033 | 1,117 | 3.451 | **+1.603** |
 
-**A 7.5x spread, monotone in the top half.** Against its null — the
-per-(feed, interval) mean push, accumulated causally — it wins on rank
+**A 7.5x spread, monotone in the top half.** Against its null - the
+per-(feed, interval) mean push, accumulated causally - it wins on rank
 correlation too, +0.072 against +0.029. Both are small; the point is the sign
 and the ordering, and that this is the first measurement in this project where
 the machinery beats the counting.
@@ -72,7 +72,7 @@ Order matters here.
 | **would have been stopped out** | **31.6%** |
 | **corr(stop distance, adverse excursion)** | **+0.006** |
 
-Zero. The stop is placed by geometry — the zone plus a buffer — and that
+Zero. The stop is placed by geometry - the zone plus a buffer - and that
 geometry carries no information about how far price actually goes against the
 trade.
 
@@ -114,7 +114,7 @@ A small `risk_vol` is a tight zone, which puts the stop close to the level.
 
 > Beyond the zone, not at the level. The zone is precisely the band in which
 > price can sit and still be respecting the level, so a stop inside it is a
-> stop inside the noise — **it gets hit by the level working.**
+> stop inside the noise - **it gets hit by the level working.**
 
 `reward_to_risk` rewards the thing that docstring was written to avoid. The
 principle was understood and the ratio quietly violates it.
@@ -155,7 +155,7 @@ stop will produce.
 ## Recommendations, in order
 
 1. **Stop gating on `reward_to_risk`.** It is measured, on 11,113 calls, to
-   invert the sign of the expected return. This is not a tuning question —
+   invert the sign of the expected return. This is not a tuning question -
    there is no threshold at which it helps, because the quantity is
    anti-correlated with what it claims to measure.
 2. **Do not fix the calibration first.** Correcting the 3x understatement while
@@ -166,11 +166,11 @@ stop will produce.
    It is the most valuable thing the level model produces, and it is currently
    used mainly as an input to the ratio that is doing the damage.
 4. **Re-derive the stop from realised adverse excursion**, not from zone
-   geometry. The data to do it is already collected — `excursion_vol` is
-   recorded on every touch — and the current placement has a measured
+   geometry. The data to do it is already collected - `excursion_vol` is
+   recorded on every touch - and the current placement has a measured
    correlation of +0.006 with what it is supposed to bound.
 5. **Then reconsider what a risk gate is for.** A stop that gets hit 31.6% of
    the time on a population that resolves favourably 64% of the time is
    converting winners into losers. Whether the answer is a wider stop, no stop,
    or a different exit rule is a design question this measurement does not
-   settle — but it does rule out the current one.
+   settle - but it does rule out the current one.

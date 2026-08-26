@@ -8,7 +8,7 @@ sits. That framing decides most of the design.
 ## The level is a Kalman state
 
 Each touch updates a 1D Kalman filter whose state is the level's price and
-whose transition is a slow random walk — levels do drift, slowly, as the market
+whose transition is a slow random walk - levels do drift, slowly, as the market
 repositions around them.
 
 This is what gives the level its ability to be pushed up or down by what price
@@ -38,7 +38,7 @@ A 20bps push is enormous in a quiet hour and noise in a violent one. Storing
 raw basis points would make a level's history incomparable with its own past
 the moment the regime changed. Distances, zone widths and pushes are all
 divided by current volatility, which is what lets a level learned in January
-still mean something in June — and what lets gold and EURUSD share one model.
+still mean something in June - and what lets gold and EURUSD share one model.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ MAX_ZONE_VOL = 3.0
 #:
 #: `MIN_ZONE_TICKS` is a sensible floor while a tick is small, and a disaster
 #: when it is not. On `sol` a tick is 0.378 volatility units, so six of them is
-#: 2.27 — wider than `reactions.resolve_vol`, which is the distance that counts
+#: 2.27 - wider than `reactions.resolve_vol`, which is the distance that counts
 #: as a rejection. A zone that wide catches everything: measured over 24 hours,
 #: sol 3m produced **582 outcomes per thousand bars against btc 3m's 62.8**, a
 #: touch resolving every 1.7 bars, and sol alone was half of every outcome the
@@ -80,11 +80,11 @@ MAX_ZONE_VOL = 3.0
 #:
 #: Half of `resolve_vol`, so a zone from the grid alone can never reach the
 #: distance a touch has to travel to resolve. The filter's own uncertainty and
-#: the observed wicks may still push a zone past this — they are evidence about
+#: the observed wicks may still push a zone past this - they are evidence about
 #: *this* level. The grid is not; it is a fact about the venue's price ladder.
 GRID_ZONE_VOL = 0.75
 
-#: A zone is also never narrower than this many **ticks** — the smallest price
+#: A zone is also never narrower than this many **ticks** - the smallest price
 #: change the venue can quote.
 #:
 #: `MIN_ZONE_VOL` assumes price is continuous relative to the zone, so that
@@ -114,7 +114,7 @@ RESOLVE_VOL = 1.5
 #: The legs meeting at an origin are *runs*, and a run survives noise: a single
 #: observation that fails to extend the move is not a departure, it is a pause.
 #: Fixing the origin on the first such tick makes the origin a property of the
-#: sampling rate — the finer the timeframe, the earlier some tick fails to
+#: sampling rate - the finer the timeframe, the earlier some tick fails to
 #: extend, so the same structure gets a different origin on every timeframe and
 #: the multi-timeframe fusion then spends its precision reconciling an artefact.
 ARRIVAL_RUN_VOL = 0.5
@@ -124,7 +124,7 @@ ARRIVAL_RUN_VOL = 0.5
 #: the level *is*, and being wrong moves every statistic the level owns. The
 #: departure threshold decides how much of the move that followed counts as
 #: this reaction, and being wrong changes one feature. They are equal today
-#: because nothing yet says they should differ — but one shared constant also
+#: because nothing yet says they should differ - but one shared constant also
 #: made the departure rule impossible to test in isolation, since disabling it
 #: disabled the arrival rule first.
 DEPARTURE_RUN_VOL = 0.5
@@ -141,7 +141,7 @@ BREAK_VOL = 0.75
 
 #: How far back through a level a broken-out price must come for the break to
 #: have been a trap. Measured from the level, on the side price started from,
-#: so a drift back into the zone is not enough — it has to give it all back.
+#: so a drift back into the zone is not enough - it has to give it all back.
 TRAP_VOL = 0.5
 
 #: How long a break stays provisional, in seconds. A break is not a break until
@@ -197,8 +197,8 @@ def half_life_days(interval: str) -> float:
     """How fast a level's evidence should fade, for its timeframe.
 
     A single constant cannot serve both ends. Twenty-one days is far too long
-    for a 5m level — behaviour from three weeks ago on a five-minute chart is
-    not evidence about now — and far too short for a weekly one, which might
+    for a 5m level - behaviour from three weeks ago on a five-minute chart is
+    not evidence about now - and far too short for a weekly one, which might
     only be tested a handful of times a year and would have forgotten each
     touch before the next arrived.
 
@@ -228,9 +228,9 @@ BREAK_DECAY = 0.25
 class Side(StrEnum):
     """Which side price arrived from. The level behaves differently per side."""
 
-    #: Price came down onto the level — a floor being tested.
+    #: Price came down onto the level - a floor being tested.
     ABOVE = "above"
-    #: Price came up into the level — a ceiling being tested.
+    #: Price came up into the level - a ceiling being tested.
     BELOW = "below"
 
     @property
@@ -255,7 +255,7 @@ class Outcome(StrEnum):
     #: already proven by the break, the entry is a pullback rather than a
     #: chase, and the risk is defined because the flipped level is the stop.
     BACKCHECK = "backcheck"
-    #: Let it through, then took it back — a false breakout. Distinct from both
+    #: Let it through, then took it back - a false breakout. Distinct from both
     #: of the above and not a shade of either: the price action that precedes it
     #: is a break, and the price action that follows is a rejection, so a model
     #: that only has those two words records it as a break that worked.
@@ -271,7 +271,7 @@ class State(StrEnum):
     FRESH = "fresh"
     TESTED = "tested"
     BROKEN = "broken"
-    #: Broken, then respected from the other side — the classic flip. Worth its
+    #: Broken, then respected from the other side - the classic flip. Worth its
     #: own state because a flipped level is a *repeating structure*, which is
     #: the thing this whole package exists to notice.
     FLIPPED = "flipped"
@@ -322,14 +322,14 @@ class SideStats(Restorable):
     """What the level has done to price arriving from one particular side.
 
     Push is signed and in volatility units: positive is upward. Summing the
-    signed push rather than counting rejections is deliberate — two rejections
+    signed push rather than counting rejections is deliberate - two rejections
     of very different size are not the same evidence, and a direction with no
     magnitude cannot be sized or compared with the cost of being wrong.
     """
 
     #: Counts are floats, not integers, because they decay. What is tracked is
-    #: an *effective* touch count — how much evidence there is once age has been
-    #: discounted — which is the number every downstream estimate wants anyway.
+    #: an *effective* touch count - how much evidence there is once age has been
+    #: discounted - which is the number every downstream estimate wants anyway.
     touches: float = 0.0
     rejects: float = 0.0
     #: Retests of a recent break that held. Counted apart from plain rejects
@@ -385,7 +385,7 @@ class SideStats(Restorable):
             case Outcome.REJECT:
                 self.rejects += 1
             case Outcome.BACKCHECK:
-                # Also a rejection — the level held — but recorded as its own
+                # Also a rejection - the level held - but recorded as its own
                 # thing so "does a retest work here" can be asked directly.
                 self.rejects += 1
                 self.backchecks += 1
@@ -403,7 +403,7 @@ class SideStats(Restorable):
         Chop is excluded rather than folded into either column. A level price
         loitered at without resolving is a third thing, and hiding it in one
         side or the other makes the rate below look better or worse for no
-        reason — which is the discipline [strength.md](../../docs/strength.md)
+        reason - which is the discipline [strength.md](../../docs/strength.md)
         applies throughout, and the reason its numbers can be compared at all.
         """
         return self.rejects + self.breaks + self.traps
@@ -413,20 +413,20 @@ class SideStats(Restorable):
         """Share of decisive interactions this side turned price away.
 
         `rejects` already carries back checks, because a retest that holds is
-        the level holding — see `record`. Breaks and traps both count as price
+        the level holding - see `record`. Breaks and traps both count as price
         having got through, a trap being one that came back.
 
         This is the strongest thing a level knows about itself. Bucketed on
         corrected code it runs 59.4% to 92.2% across four bands with an AUC of
         0.648, and it is the only signal in that study that got *stronger* when
-        the volatility denominator was fixed — against `Level.strength`'s 0.548,
+        the volatility denominator was fixed - against `Level.strength`'s 0.548,
         a composite that does not contain it.
 
         Unshrunk on purpose. Consumers want different priors and the honest
         pooled rate to shrink toward is instrument- and epoch-specific, so the
         raw rate is published beside `decisive` and the caller does its own.
         Zero decisive interactions gives 0.0, which is why the count travels
-        with it — a rate with nothing behind it is not a low rate.
+        with it - a rate with nothing behind it is not a low rate.
         """
         decisive = self.decisive
         return self.rejects / decisive if decisive > 0 else 0.0
@@ -457,7 +457,7 @@ class SideStats(Restorable):
         """Beta-binomial posterior that the next push is upward.
 
         Shrunk towards a prior on purpose. Three touches that all went up is
-        not 100% — reporting it as such is how a system talks itself into a
+        not 100% - reporting it as such is how a system talks itself into a
         trade it has no evidence for. The prior is where kNN over similar
         levels supplies what this level's own history cannot.
         """
@@ -497,7 +497,7 @@ class Level(Restorable):
     #: same object as one from two, however similar their prices.
     swings: int = 1
     #: When it was last broken, and the side price broke *from*. Kept because a
-    #: back check is only a back check relative to a recent break — without the
+    #: back check is only a back check relative to a recent break - without the
     #: link it is just another touch at a level that happens to have flipped.
     broke_at: float = 0.0
     broke_from: Side | None = None
@@ -508,7 +508,7 @@ class Level(Restorable):
     #: resolves, the next quote arrives with price still inside the zone and no
     #: open touch, and a fresh touch begins immediately. The counter then
     #: measures how long price loitered rather than how many times it turned,
-    #: which is the opposite of evidence — a level price hovers at looks
+    #: which is the opposite of evidence - a level price hovers at looks
     #: stronger than one it reverses off hard. It reached 316 "touches" on a BTC
     #: level in a day, on an instrument with 288 five-minute bars in one, and
     #: swamped the beta-binomial prior badly enough to report p=100%.
@@ -533,7 +533,7 @@ class Level(Restorable):
         """The band that counts as touching, in price.
 
         A level is a zone, not a line, and it is not symmetric. The centre is
-        the **origin** — where the leg in ended and the leg out began — and each
+        the **origin** - where the leg in ended and the leg out began - and each
         edge extends by however far the **wick** ran past it on that side. Price
         arriving from above wicks *down* through the level, so the lower edge is
         the one that stretches; arriving from below stretches the upper.
@@ -545,7 +545,7 @@ class Level(Restorable):
         half = self.filter.sigma * ZONE_SIGMA
         # The floor is whichever binds: a typical move, or enough ticks that
         # the band is wider than the grid price is quoted on. See
-        # MIN_ZONE_TICKS — on a coarsely quoted instrument the second is the
+        # MIN_ZONE_TICKS - on a coarsely quoted instrument the second is the
         # larger by an order of magnitude.
         # The grid part is bounded on its own, before the two are compared: see
         # GRID_ZONE_VOL. Unbounded it made a coarsely quoted instrument's zone
@@ -554,7 +554,7 @@ class Level(Restorable):
         grid = min(vol.tick * MIN_ZONE_TICKS, vol.price_units(self.price, GRID_ZONE_VOL))
         floor = max(vol.price_units(self.price, MIN_ZONE_VOL), grid)
         # The ceiling still wins if the two cross, and that is deliberate. The
-        # tick is *observed* — the smallest change that has actually happened —
+        # tick is *observed* - the smallest change that has actually happened -
         # so an instrument that has not yet printed a single-step move reads as
         # coarser than it is, and the error is always upward. Letting the grid
         # floor override the ceiling would turn that transient
@@ -591,8 +591,8 @@ class Level(Restorable):
     def is_backcheck(self, side: Side, when: float) -> bool:
         """Whether a touch from `side` right now is a retest of a recent break.
 
-        Two conditions, and both matter. The break has to be **recent** — a
-        return three months later is a level, not a retest — and price has to be
+        Two conditions, and both matter. The break has to be **recent** - a
+        return three months later is a level, not a retest - and price has to be
         arriving from the side it broke *to*, which is the definition of coming
         back to it. Arriving from the original side is not a back check; it is
         the break failing late.
@@ -608,7 +608,7 @@ class Level(Restorable):
 
         Beyond the zone, not at the level. The zone is precisely the band in
         which price can sit and still be respecting the level, so a stop inside
-        it is a stop inside the noise — it gets hit by the level working.
+        it is a stop inside the noise - it gets hit by the level working.
         """
         low, high = self.zone(vol)
         buffer = vol.price_units(self.price, STOP_BUFFER_VOL)
@@ -628,8 +628,8 @@ class Level(Restorable):
     def strength(self, when: float, vol: Volatility) -> float:
         """How much this level deserves attention, in [0, 1].
 
-        Three things, and they trade off. Touches are evidence. Confidence — a
-        tight zone — means the evidence agrees. Age cuts both ways, so it is
+        Three things, and they trade off. Touches are evidence. Confidence - a
+        tight zone - means the evidence agrees. Age cuts both ways, so it is
         deliberately not rewarded: an old level with two touches is not strong,
         it is stale, and treating longevity as authority is how a chart ends up
         covered in lines nobody trades.
@@ -656,7 +656,7 @@ class Level(Restorable):
 
         Observation noise scales with volatility: in a violent market the price
         at which price turned says less about where the level is, and the
-        filter should — and now does — believe it less.
+        filter should - and now does - believe it less.
         """
         self.filter.predict(when, vol.price_units(self.price, DRIFT_VOL_PER_HOUR))
         noise = vol.price_units(self.price, 0.5) ** 2
@@ -692,7 +692,7 @@ class Level(Restorable):
         one barely touches it. Grading matters because the alternative is one
         constant standing in for every regime change there will ever be.
 
-        The level itself survives either way — price still turns there. It is
+        The level itself survives either way - price still turns there. It is
         the statistics that were learned in a market that no longer exists.
         """
         severity = min(max(severity, 0.0), 1.0)
@@ -713,12 +713,12 @@ class Level(Restorable):
                 # still predicting a bounce it has just conspicuously failed.
                 self.stats(side).decay(BREAK_DECAY)
         elif outcome is Outcome.TRAP:
-            # A trap is the level holding, not failing — violently, after
+            # A trap is the level holding, not failing - violently, after
             # letting price through first. Its history stays intact, because
             # this is the level doing exactly what it did before.
             self.state = State.FLIPPED if self.state is State.BROKEN else State.TESTED
         elif outcome in (Outcome.REJECT, Outcome.BACKCHECK) and self.state is State.BROKEN:
-            # Broken, and now respected again — the level flipped, which is a
+            # Broken, and now respected again - the level flipped, which is a
             # repeating structure rather than a dead one.
             self.state = State.FLIPPED
         # The statistics keep their own clock. Relying on observe_touch to
@@ -773,7 +773,7 @@ def form(
 
     Agglomerative and one-dimensional: sort the swings by price and merge
     neighbours that sit within `tolerance_vol` volatility units of each other.
-    Simple, and correct for the shape of the problem — the data is a line, so
+    Simple, and correct for the shape of the problem - the data is a line, so
     the cluster boundaries are just the gaps in it, and the popular alternatives
     (k-means, DBSCAN) either need k chosen in advance or rediscover exactly this
     in more code.
@@ -783,7 +783,7 @@ def form(
 
     A cluster needs `min_swings` distinct turns. Two is not enough: any two
     swings define a line, so a two-swing level is not evidence of anything, and
-    admitting them is how a chart ends up with a level every few basis points —
+    admitting them is how a chart ends up with a level every few basis points -
     at which density every price is "at a level" and the model predicts nothing.
     """
     ordered = sorted((point for point in turns if point.is_turn), key=lambda p: p.price)
@@ -838,7 +838,7 @@ def agree(left: str, right: str) -> str:
     than either makes alone. A level only one pass found is weaker, and the
     difference is invisible unless it is recorded here.
 
-    Sorted and joined so `pip+run` and `run+pip` are the same string — an
+    Sorted and joined so `pip+run` and `run+pip` are the same string - an
     origin that depends on the order the passes happened to run in would be a
     fact about the code rather than about the level.
     """
@@ -849,7 +849,7 @@ def agree(left: str, right: str) -> str:
 def merge(existing: Sequence[Level], found: Sequence[Level], vol: Volatility) -> list[Level]:
     """Fold newly formed levels into the ones already known.
 
-    A level rediscovered is not a new level — it is evidence about an old one,
+    A level rediscovered is not a new level - it is evidence about an old one,
     and treating it as new would throw away exactly the touch history that
     makes it worth anything.
     """

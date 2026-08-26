@@ -15,7 +15,7 @@ news    ──┘
 **A notice that something happened, not the data itself.** The SQLite stores
 stay the source of truth; the bus says "gold moved on OANDA" and the subscriber
 reads the store for the detail. That is why a dropped message costs latency
-rather than history — nothing is lost, the consumer just finds out by querying
+rather than history - nothing is lost, the consumer just finds out by querying
 instead of by being told.
 
 | topic | published when | payload |
@@ -43,7 +43,7 @@ uv run till-infinity news collect   --publish redis://localhost:6379
 uv run till-infinity notify listen  --redis   redis://localhost:6379
 ```
 
-Without `--publish` there is no bus at all — the seam costs nothing when
+Without `--publish` there is no bus at all - the seam costs nothing when
 nobody is listening. Bare `--publish` falls back to `TILL_REDIS_URL`, and to an
 in-process bus when that is unset (useful only when publisher and subscriber
 share a process).
@@ -62,7 +62,7 @@ audit = bus.subscribe(bus.QUOTES, group="audit")  # also sees every quote
 
 Two readers in the *same* group still share the work, which is how you run the
 consumer on more than one worker. It is exactly Redis consumer-group semantics,
-which the Redis backend gives for free — one stream per topic, one group per
+which the Redis backend gives for free - one stream per topic, one group per
 subscriber.
 
 ## A slow consumer never stalls a collector
@@ -104,7 +104,7 @@ asyncio.run(main())
 ```
 
 `Message` carries `topic`, `payload`, `source` and `time`. `Message.from_dict`
-returns `None` on junk rather than raising — anything can write to a Redis
+returns `None` on junk rather than raising - anything can write to a Redis
 stream, so nothing off the wire is trusted. The same applies to `alerts`: a
 payload with no title is dropped rather than delivered as an empty message, and
 `fields` is flattened to strings before a notifier ever sees it.
@@ -112,7 +112,7 @@ payload with no title is dropped rather than delivered as an empty message, and
 ## Deduplication
 
 The stores dedup on write but report only counts, so the news publisher keeps
-its own bounded LRU of what it has announced — otherwise every poll would
+its own bounded LRU of what it has announced - otherwise every poll would
 re-announce the whole feed. Calendar events are marked on `(source, id, actual)`
 rather than `(source, id)`, so an event announced as upcoming is announced again
 the moment it prints. That second announcement is usually the interesting one.
@@ -123,10 +123,10 @@ the moment it prints. That second announcement is usually the interesting one.
 |---|---|---|
 | `structures watch` | `prices.quotes`, `prices.bars` | `structures.signals`, `alerts` |
 | `agents watch` | `prices.quotes`, `prices.bars`, `news.events`, `news.articles` | `alerts` |
-| `notify listen` | `alerts` | — |
+| `notify listen` | `alerts` | - |
 
 `structures` reaches `alerts` directly, bypassing `agents`, for findings that
-interpret themselves — a dead feed needs no model and no calendar, and should
+interpret themselves - a dead feed needs no model and no calendar, and should
 not depend on one being reachable. See [structures.md](structures.md).
 
 `news.macro` is deliberately not consumed: reserves move monthly, so a bulk row

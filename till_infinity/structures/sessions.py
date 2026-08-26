@@ -6,7 +6,7 @@ because the timestamp is already on every bar.
 
 ## The claim, and the honest version of it
 
-The folk version names windows — sessions, "killzones", fixed one-hour slots —
+The folk version names windows - sessions, "killzones", fixed one-hour slots -
 and asserts that price behaves differently inside them. The literature that
 actually survives says something narrower and better supported: **volatility,
 volume and liquidity have pronounced time-of-day structure**, consistently
@@ -18,15 +18,15 @@ hour is equally an argument that costs are worse in it.
 So this module asserts nothing about which hours are good. It measures two
 things per instrument and hour, and lets whatever consumes it decide:
 
-- **how the hour behaves** — the volatility of that hour against the
+- **how the hour behaves** - the volatility of that hour against the
   instrument's own day, which is the part the literature supports;
-- **how calls made in that hour resolved** — held or broke, against the
+- **how calls made in that hour resolved** - held or broke, against the
   instrument's own base rate, which is the part nobody here has measured.
 
 ## Why it is a model and not a table of hours
 
-An hour with four observations knows nothing, and the naive version — bucket by
-hour, divide, compare — will happily report 100% from two samples and send a
+An hour with four observations knows nothing, and the naive version - bucket by
+hour, divide, compare - will happily report 100% from two samples and send a
 strategy chasing it. Every rate here is therefore **shrunk toward the
 instrument's own pooled rate** with a Beta prior, so a thin hour reports
 approximately the base rate and only earns a distinct number as evidence
@@ -44,7 +44,7 @@ and their counts onto the level signal; a strategy may use them as context, and
 the journal records them against outcomes so the question *"does the hour carry
 information here"* becomes answerable from our own data rather than from
 somebody's chart. Given six prior nulls in this project on filters over an
-already-selected entry, the prior is not high — which is the reason to measure
+already-selected entry, the prior is not high - which is the reason to measure
 rather than to assume.
 """
 
@@ -67,7 +67,7 @@ HOURS = 24
 PRIOR_WEIGHT = 12.0
 
 #: Per-observation decay, applied on write. About a 30-day half-life at a few
-#: observations an hour — long enough to be a distribution, short enough to
+#: observations an hour - long enough to be a distribution, short enough to
 #: still be this market.
 DECAY = 0.999
 
@@ -197,7 +197,7 @@ class Clock(Restorable):
 
         The share is the interpretable half: 1.0 is an ordinary hour for this
         instrument, 1.8 is one of its violent ones. It is also the half the
-        literature actually supports, and it cuts both ways — a violent hour is
+        literature actually supports, and it cuts both ways - a violent hour is
         equally an argument that the spread is worse in it.
         """
         hours = self._for(feed)

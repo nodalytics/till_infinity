@@ -15,7 +15,7 @@ so an end-to-end run is a single command.
 
 **Agents are off unless asked for.** They are the only part that needs a paid
 credential, and a stack that refuses to start without one would make the free
-path — collect, detect levels, alert on a dead feed — hostage to the expensive
+path - collect, detect levels, alert on a dead feed - hostage to the expensive
 one. `AGENTS_ENABLED=1` turns them on; without a key they stay off however the
 flag is set, with a warning rather than a crash.
 
@@ -29,7 +29,7 @@ absence should never be a surprise and whose presence always is a choice:
 before an order reaches an account. Neither is implied by the other.
 
 Everything else runs. If a service fails to start, the others carry on and the
-run reports which one is missing — a stack that dies because one collector
+run reports which one is missing - a stack that dies because one collector
 cannot reach a venue would be less useful than the collector it replaced.
 """
 
@@ -56,7 +56,7 @@ from .logging import get_logger
 log = get_logger(__name__)
 
 #: Services in start order. Consumers first, so nothing published during
-#: start-up is dropped for want of a subscriber — an in-memory bus only
+#: start-up is dropped for want of a subscriber - an in-memory bus only
 #: delivers to groups that already exist when publish is called.
 ORDER: tuple[str, ...] = (
     "journal",
@@ -88,7 +88,7 @@ def first_cause(exc: BaseException, depth: int = 0) -> str:
     """The innermost real error, not the group that wrapped it.
 
     TaskGroups raise `ExceptionGroup`, whose message is "unhandled errors in a
-    TaskGroup (1 sub-exception)" — which names neither the error nor where it
+    TaskGroup (1 sub-exception)" - which names neither the error nor where it
     came from. A supervisor that reports that has told nobody anything, so this
     walks down to the exception that actually happened.
     """
@@ -124,7 +124,7 @@ class Plan:
     once: bool = False
     #: Pull history before starting, when the store has too little for levels
     #: to form. A fresh machine otherwise collects for days before the levels
-    #: model can place anything — the bus carries a notice per sweep, not a
+    #: model can place anything - the bus carries a notice per sweep, not a
     #: series, so it is not a source of history however long it runs.
     backfill: bool = True
 
@@ -220,7 +220,7 @@ class Stack:
         is recorded; the rest keep running.
 
         `once` waits for the **collectors** and then stops the rest. The
-        consumers have no notion of a pass — they run until stopped — so
+        consumers have no notion of a pass - they run until stopped - so
         waiting for everything would wait forever, which is exactly what it did
         before this knew the difference.
         """
@@ -229,7 +229,7 @@ class Stack:
         for name in wanted:
             if name in blocked:
                 self.status.skipped[name] = blocked[name]
-                log.warning("stack: %s skipped — %s", name, blocked[name])
+                log.warning("stack: %s skipped - %s", name, blocked[name])
 
         runnable = [name for name in wanted if name not in blocked]
         say = on_event or (lambda name, note: log.info("stack: %s %s", name, note))
@@ -336,7 +336,7 @@ class Stack:
 
     async def _run_structures(self, book) -> None:
         watcher = sx.Watcher(self.bus, journal=book)
-        # One line, in one place — `structures.watch` had the same two lines and
+        # One line, in one place - `structures.watch` had the same two lines and
         # only one of them was fixed, so production kept the bug for a deploy
         # after the fix shipped. Warming is decided by whether there are levels,
         # not by whether the restore worked.

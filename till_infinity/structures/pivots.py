@@ -1,6 +1,6 @@
 """Pivots: the levels everyone else is already looking at.
 
-Swing levels are discovered from what price did. Pivots are the opposite —
+Swing levels are discovered from what price did. Pivots are the opposite -
 arithmetic on the previous session's high, low and close, published before the
 session opens, and watched by enough people that they matter whether or not the
 formula means anything. A level's power here is partly self-fulfilling, and
@@ -17,8 +17,8 @@ detection is not earning its complexity.
 there already. A pivot is there on the open, which is exactly when a level is
 most useful and a swing level knows least.
 
-They flow into the same machinery — same zones, same touch tracking, same
-per-side statistics — and carry `origin="pivot"` so kNN can learn that they
+They flow into the same machinery - same zones, same touch tracking, same
+per-side statistics - and carry `origin="pivot"` so kNN can learn that they
 behave differently from swing levels without being cut off from them.
 """
 
@@ -37,7 +37,7 @@ from .volatility import Volatility
 PERIODS: tuple[str, ...] = ("daily", "weekly")
 
 #: Pivot levels, strongest first. R3/S3 are included for completeness and are
-#: rarely reached — which the touch statistics will discover on their own
+#: rarely reached - which the touch statistics will discover on their own
 #: rather than being told.
 NAMES: tuple[str, ...] = ("PP", "R1", "S1", "R2", "S2", "R3", "S3", "PH", "PL", "PC")
 
@@ -61,7 +61,7 @@ class Session(Restorable):
 def levels_from(session: Session) -> dict[str, float]:
     """The classic floor-trader set, plus the prior range itself.
 
-    `PH`, `PL` and `PC` — yesterday's high, low and close — are included
+    `PH`, `PL` and `PC` - yesterday's high, low and close - are included
     because they are observed more often than the computed pivots, and it costs
     nothing to let the statistics decide which of them actually matter.
     """
@@ -122,7 +122,7 @@ def label(level: Level) -> str:
 
 def day_of(when: float) -> int:
     """UTC midnight for the day containing `when`. Sessions are UTC like
-    everything else here — a pivot set that shifts with the observer's clock
+    everything else here - a pivot set that shifts with the observer's clock
     is not the same level two people are looking at."""
     moment = datetime.fromtimestamp(when, UTC)
     return int(datetime(moment.year, moment.month, moment.day, tzinfo=UTC).timestamp())
@@ -174,5 +174,5 @@ class Sessions:
         return completed
 
     def current(self, feed: str, period: str = "daily") -> Session | None:
-        """The session still in progress. Not usable for pivots — that is the point."""
+        """The session still in progress. Not usable for pivots - that is the point."""
         return self._current.get((feed, period))

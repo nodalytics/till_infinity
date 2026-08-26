@@ -47,12 +47,12 @@ It is worse than one relay path. It is several, and they account for nearly
 everything.
 
 Normalising titles to lowercase alphanumerics and grouping gives **105 duplicate
-groups covering 214 rows — 7.76% of the corpus**. The groups are shallow: 102
+groups covering 214 rows - 7.76% of the corpus**. The groups are shallow: 102
 pairs, two triples, one group of four. Nothing is restated five times.
 
-Attributing each row to an *outlet* rather than to a feed — TradingView tags the
+Attributing each row to an *outlet* rather than to a feed - TradingView tags the
 provider, so `provider='Cointelegraph'` and `source='cointelegraph'` are the
-same newsroom under two labels — splits the 105 groups like this:
+same newsroom under two labels - splits the 105 groups like this:
 
 | | groups | rows |
 |---|---|---|
@@ -76,19 +76,19 @@ relaying CoinTelegraph, identical text, different ids. `INSERT OR IGNORE` keyed
 on `(source, id)` cannot see it, and is right not to.
 
 **The second pattern was not suspected and is not a relay at all.** Twenty-three
-groups are Dow Jones Newswires duplicated *within TradingView* — the "Market
+groups are Dow Jones Newswires duplicated *within TradingView* - the "Market
 Talk" column re-issued under a fresh id, sometimes hours apart. That is one wire
 counting itself twice, upstream of us.
 
 The eleven multi-outlet groups are worth listing individually, because the
 listing is the finding:
 
-- **4** — Chainwire and Investing carrying the same crypto **press release**
+- **4** - Chainwire and Investing carrying the same crypto **press release**
   (`Zebec Introduces "Earn on Pay"`, `BTCC Exchange Joins TOKEN2049`, …)
-- **3** — Investing republishing **Reuters** copy verbatim
-- **2** — CNBC TV18 and Moneycontrol, both Network18 titles, on the rupee close
-- **1** — GlobeNewswire and Reuters on the same **press release**
-- **1** — BusinessWire and Dow Jones on the same **press release**
+- **3** - Investing republishing **Reuters** copy verbatim
+- **2** - CNBC TV18 and Moneycontrol, both Network18 titles, on the rupee close
+- **1** - GlobeNewswire and Reuters on the same **press release**
+- **1** - BusinessWire and Dow Jones on the same **press release**
 
 That is six press releases, three syndication republications, and two sister
 publications of one owner. **Zero groups are two independent newsrooms deciding
@@ -102,10 +102,10 @@ is worth: canonicalising removes **109 rows, 3.96% of the corpus**.
 
 ## 2. SimHash, and what it adds over `GROUP BY`
 
-Implemented as [news-models.md](news-models.md) specifies — 64-bit fingerprint
+Implemented as [news-models.md](news-models.md) specifies - 64-bit fingerprint
 over word shingles, `blake2b` from the standard library, Hamming distance by
 popcount, no new dependency. Three-word shingles over the normalised title.
-**2,756 fingerprints cost 22,048 bytes — 21.5 KB.** The footprint argument in
+**2,756 fingerprints cost 22,048 bytes - 21.5 KB.** The footprint argument in
 that document is sound and is not in question here.
 
 **At distance zero it reproduces exact matching precisely.** 114 identical-
@@ -115,7 +115,7 @@ but it means SimHash costs nothing in accuracy for the job exact matching
 already does.
 
 Above zero it finds very little, and it starts lying quickly. Every pair beyond
-exact match, hand-labelled — a pair is genuine when both headlines report the
+exact match, hand-labelled - a pair is genuine when both headlines report the
 same event:
 
 | threshold | new pairs | genuine | precision |
@@ -131,7 +131,7 @@ same event:
 **There is no threshold that separates.** The single false positive at d=5 sits
 *below* all four true positives at d=6, so no cut-off admits the genuine finds
 without admitting a wrong one. And the total yield at the most generous usable
-threshold is **five extra pairs over forty-five hours** — StoneX's acquisition
+threshold is **five extra pairs over forty-five hours** - StoneX's acquisition
 release picked up twice, a Barron's piece re-headlined by Mint, and Reuters
 rewriting its own headline (`Dollar rises` → `Dollar climbs`, `investors leery`
 → `investors wary`).
@@ -144,8 +144,8 @@ that carries the information:
 FX option expiries for 22 June 10am New York cut
 FX option expiries for 22 July 10am New York cut
 
-PBOC is expected to set the USD/CNY reference rate at 6.7497 – Reuters estimate
-PBOC is expected to set the USD/CNY reference rate at 6.7413 – Reuters estimate
+PBOC is expected to set the USD/CNY reference rate at 6.7497 - Reuters estimate
+PBOC is expected to set the USD/CNY reference rate at 6.7413 - Reuters estimate
 
 Canada stocks higher at close of trade; S&P/TSX Composite up 0.51%
 Canada stocks higher at close of trade; S&P/TSX Composite up 0.26%
@@ -160,7 +160,7 @@ Ten percent of this corpus is a form letter, and the form letter is where
 near-duplicate detection is most confidently wrong.
 
 Shingle size was varied, and the comparison is stark. At d ≤ 7, **k=2 produces
-13 new pairs and every one of them is wrong** — its closest match of all, at
+13 new pairs and every one of them is wrong** - its closest match of all, at
 d=3, is two PBOC fixings at different rates. **k=4** produces one new pair,
 also wrong. k=3 produces seven, of which five are genuine. k=3 is what is
 reported above, and it is the best of the three by a wide margin.
@@ -196,13 +196,13 @@ locally and has a full hour of them after the group's first `fetched`.
 There are three groups of three-or-more in the whole corpus, at any window, and
 none of them survives contact:
 
-- **×4, spanning 33 hours** — `Bitcoin Edges Higher as U.S. Stock Futures Rise —
+- **×4, spanning 33 hours** - `Bitcoin Edges Higher as U.S. Stock Futures Rise -
   Market Talk`, all four Dow Jones Newswires. One outlet, four times, over a day
   and a half. Not a burst.
-- **×3, spanning 3.4 hours** — `Rate hike bets leave yen's post-intervention
+- **×3, spanning 3.4 hours** - `Rate hike bets leave yen's post-intervention
   gains at BOJ's mercy`, Reuters and Investing. Tagged to no instrument we price
   locally.
-- **×3, spanning 2.6 hours** — `Yen's weekly loss puts more intervention on
+- **×3, spanning 2.6 hours** - `Yen's weekly loss puts more intervention on
   traders' radar`, Reuters and Investing. Resolves to two instruments at once.
 
 **The test as specified cannot be run. That is the result.**
@@ -210,9 +210,9 @@ none of them survives contact:
 ### The weakest version that has any data, and its answer
 
 Splitting at one versus **two or more** instead, and measuring on the honest
-unit — the distinct `(instrument, minute)` cell an excursion is actually
-computed over, not the group, since the 500 measurable groups — singletons
-included, which is nearly all of them — collapse onto 47 such cells:
+unit - the distinct `(instrument, minute)` cell an excursion is actually
+computed over, not the group, since the 500 measurable groups - singletons
+included, which is nearly all of them - collapse onto 47 such cells:
 
 | | cells | median 1h max excursion |
 |---|---|---|
@@ -238,8 +238,8 @@ on six observations does not establish anything, and a p just under 0.05 from
 n=6 is what a null looks like a twentieth of the time.
 
 **Second, the seven cells are not seven observations.** Four of them fall inside
-seventy-five minutes on one afternoon — 2026-08-14, 14:22 to 15:37 UTC, around
-the US inflation print — and their hour-long measurement windows overlap, so
+seventy-five minutes on one afternoon - 2026-08-14, 14:22 to 15:37 UTC, around
+the US inflation print - and their hour-long measurement windows overlap, so
 they read the same BTC price path several times. Taken greedily, the seven cells
 reduce to **five non-overlapping hours**, two of which are that same afternoon.
 That is the real denominator.
@@ -248,7 +248,7 @@ That is the real denominator.
 artefact.** All fourteen restated BTC groups are either CoinTelegraph counted
 twice (RSS plus TradingView relay) or Dow Jones Market Talk republished inside
 TradingView. Not one is two independent outlets. Whatever this measures, it is
-not crowding — it is that CoinTelegraph publishes more about Bitcoin when
+not crowding - it is that CoinTelegraph publishes more about Bitcoin when
 Bitcoin is moving, observed through a duplicate.
 
 One control is worth recording because it is a clean null in its own right:
@@ -266,7 +266,7 @@ not be reported as either the claim confirmed or the claim refuted.
 [news-models.md](news-models.md) says: keep the first copy by `fetched`, record
 the duplicates as a count, because the fuller copy usually arrives later and
 stamping it with the earlier timestamp imports the future into the past. **The
-hazard is real and the measurement confirms it** — in 41 of 105 duplicate
+hazard is real and the measurement confirms it** - in 41 of 105 duplicate
 groups the later copy carries more symbols, and among the 55 CoinTelegraph
 pairs the RSS copy arrives first 54 times while it is the TradingView copy that
 carries the symbol tags.
@@ -277,7 +277,7 @@ symbols that exist only on the second.** Without those tags the story is
 untaggable, and half the corpus is already untaggable.
 
 The measurement supplies the fix. **41 of the 55 relay pairs arrive in the same
-poll** — lag under one second, because `fetched` is a batch stamp — and 50 of
+poll** - lag under one second, because `fetched` is a batch stamp - and 50 of
 all 105 duplicate groups do. Within one poll there is no future to import: both
 copies were known at the same instant. So the honest rule is finer than
 first-wins:
@@ -294,8 +294,8 @@ remaining 14 stay lossy, and correctly so.
 
 - **Eight of the fourteen tracked instruments have no local 1m bars.** Only
   `btc`, `eurusd`, `gbpusd`, `gold`, `spx500` and `us100` are present.
-  `usdjpy` is the fourth most-mentioned instrument in the news table — 208
-  articles, behind `btc` at 319, `eurusd` at 274 and `gbpusd` at 229 — and
+  `usdjpy` is the fourth most-mentioned instrument in the news table - 208
+  articles, behind `btc` at 319, `eurusd` at 274 and `gbpusd` at 229 - and
   there is nothing to measure it against. Of 1,267 symbol-carrying rows,
   700 resolve onto a locally priced instrument and 524 onto exactly one.
 - **RSS rows carry no symbols at all.** The CoinTelegraph relay pairs are only
@@ -304,7 +304,7 @@ remaining 14 stay lossy, and correctly so.
 - **Direction.** Excursion here is unsigned. With six observations a signed test
   would be theatre.
 - **Restatement across genuinely independent outlets.** No such event exists in
-  this corpus, so its effect on price is not merely unmeasured — it is
+  this corpus, so its effect on price is not merely unmeasured - it is
   unobserved.
 - **Whether more collection fixes this.** Duplicates arrive at roughly 105
   groups per 45 hours, but the *composition* is the problem, not the rate. More
@@ -317,7 +317,7 @@ remaining 14 stay lossy, and correctly so.
 1. **Implement the fingerprint, run it at d=0, and treat it as hygiene.** 8
    bytes a row, no dependency, and it stops the same story being counted twice
    by whatever consumes the stream. Do not set a threshold above zero on this
-   corpus, and do not reach for MinHash — the measured problem is precision, not
+   corpus, and do not reach for MinHash - the measured problem is precision, not
    recall, and MinHash does not help with precision.
 2. **Adopt the same-poll merge rule** above rather than plain first-wins, or
    deduplication will silently delete the symbol tags on the largest duplicate

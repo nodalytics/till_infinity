@@ -79,7 +79,7 @@ ProgressHook = Callable[[JobResult], None]
 
 
 def announce_bars(key: SeriesKey, candles: Sequence[Bar], result: WriteResult) -> dict[str, object]:
-    """What goes on the wire when a series moves — a notice, not the candles."""
+    """What goes on the wire when a series moves - a notice, not the candles."""
     latest = max(candles, key=lambda bar: bar.time)
     return {
         "source": key.source,

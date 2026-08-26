@@ -1,6 +1,6 @@
 # News
 
-`till_infinity.news` collects headlines and the economic calendar around them —
+`till_infinity.news` collects headlines and the economic calendar around them -
 the event-proximity context a vol or regime model needs to know *why* a price
 moved.
 
@@ -18,7 +18,7 @@ uv run till-infinity news sources          # the configured feeds
 | source | what it gives |
 |---|---|
 | `rss` | ForexLive, FXStreet, Investing (macro/FX) and CoinDesk, CoinTelegraph (crypto) |
-| `headlines` | TradingView's news feed — **symbol-attached**, with provider attribution and urgency |
+| `headlines` | TradingView's news feed - **symbol-attached**, with provider attribution and urgency |
 | `forexfactory` | the weekly calendar JSON, keyed by currency |
 | `tradingview` | the calendar service, keyed by country, with importance and raw numerics |
 | `imf` | central bank reserve assets per country (IRFCL), monthly |
@@ -27,7 +27,7 @@ TradingView headlines are the one feed that arrives already tagged with the
 instruments a story concerns (`OANDA:XAUUSD`, `TVC:GOLD`), so gold news lines up
 against the gold series without a keyword search.
 
-**Both calendars are kept.** They overlap, and that is the point — the same
+**Both calendars are kept.** They overlap, and that is the point - the same
 print appears under TradingView's `GB / GDP MoM` and ForexFactory's
 `GBP / GDP m/m`, so a number can be cross-checked between providers exactly the
 way a price is cross-checked between brokers.
@@ -49,20 +49,20 @@ days as a forecast and only gains its `actual` at the moment of release.
 
 SQLite by default, and the two tables deliberately behave differently:
 
-- **`articles`** — a headline is immutable. `INSERT OR IGNORE`, keyed on
+- **`articles`** - a headline is immutable. `INSERT OR IGNORE`, keyed on
   `(source, id)`. Re-polling a feed writes nothing.
-- **`events`** — a calendar row is *rewritten* when the print lands. The upsert
+- **`events`** - a calendar row is *rewritten* when the print lands. The upsert
   fires only when `actual`, `forecast`, `previous` or `time` actually changed,
   so a quiet poll costs nothing and a release shows up as an update.
-- **`observations`** — macro series, keyed on `(source, series, time)`. Reserves
+- **`observations`** - macro series, keyed on `(source, series, time)`. Reserves
   get revised, so a changed value rewrites its row and counts as an update.
 
 ForexFactory supplies no event id, so one is derived from title + country +
-date — stable across polls, which is what makes the rewrite work.
+date - stable across polls, which is what makes the rewrite work.
 
 **Times are UTC**, stored as epoch seconds. The feeds send three different date
-formats — ISO-8601 with a literal `Z`, ISO with a numeric offset, and RFC 2822
-`pubDate` — and all three are parsed to the same absolute instant.
+formats - ISO-8601 with a literal `Z`, ISO with a numeric offset, and RFC 2822
+`pubDate` - and all three are parsed to the same absolute instant.
 
 ```
 .data/news/news.db                        # sqlite: articles + events
@@ -106,7 +106,7 @@ async with SqliteStore(Settings.from_env().database) as store:
 
 ## Which instrument a headline is about
 
-Publishers tag articles `VENUE:TICKER` — 641 distinct strings across 3,058
+Publishers tag articles `VENUE:TICKER` - 641 distinct strings across 3,058
 articles, and none of them the feed names the rest of this project uses.
 [`news/symbols.py`](../till_infinity/news/symbols.py) maps them onto feeds,
 building its table from the symbols `prices` already collects rather than from
@@ -120,7 +120,7 @@ venue any publisher might name. Three passes, narrowing: the ticker as given,
 the ticker stripped to bare alphanumerics (which turns `EURUSD_TOD`,
 `EURUSDTDTM` and `EURUSD.SIM` into `EURUSD`), then the longest known ticker it
 starts with, at six characters or more. Six is the length of a currency pair
-and below it a prefix stops being evidence — `SPX` would claim anything.
+and below it a prefix stops being evidence - `SPX` would claim anything.
 
 44% of articles carry tags at all; 60% of those name a tracked instrument:
 
@@ -132,8 +132,8 @@ and below it a prefix stops being evidence — `SPX` would claim anything.
 | usdjpy | 209 | | gold | 65 |
 | audusd | 107 | | usdcnh | 45 |
 
-The remaining 40% of tagged articles map to nothing — `XRPUSD`, `DXY`,
-`POLYMARKET`, `HYPEUSD`, `USDINR`, `COIN`, `BNBUSD`, `USDKRW` — and that is the
+The remaining 40% of tagged articles map to nothing - `XRPUSD`, `DXY`,
+`POLYMARKET`, `HYPEUSD`, `USDINR`, `COIN`, `BNBUSD`, `USDKRW` - and that is the
 correct answer rather than a gap. They are instruments this project does not
 price, so a headline about one cannot be joined to anything. Mapping `USDINR`
 to `usdjpy` because both are dollar pairs would invent a relationship, and
@@ -150,7 +150,7 @@ once one is awake. See [agents.md](agents.md), "News can wake the analyst".
 ## Not yet included
 
 **FRED** (US money supply, Fed balance sheet, credit facilities). This section
-used to say FRED was unreachable — every TCP connection to
+used to say FRED was unreachable - every TCP connection to
 `api.stlouisfed.org` timed out, so the integration was left unwritten rather
 than shipped unverified. **That is no longer true.** Retested with a key:
 
@@ -173,7 +173,7 @@ Central bank reserve assets per country from IRFCL, monthly, ~19k rows for the
 six default countries (USA, GBR, JPN, CHN, DEU, CHE). Three findings cost real
 time and are worth keeping:
 
-The legacy SDMX host `dataservices.imf.org` is **gone** — absent from DNS, not
+The legacy SDMX host `dataservices.imf.org` is **gone** - absent from DNS, not
 merely deprecated. The live service is `api.imf.org/external/sdmx/2.1`.
 
 The series key is `COUNTRY.INDICATOR.SECTOR.FREQUENCY` and country codes are
@@ -183,7 +183,7 @@ the status line, which is what makes this expensive to debug.
 
 Series carry `SCALE="6"`, which reads as "values are in millions" and is not:
 the numbers are already plain USD. US reserves for 2026-07 arrive as
-`252,708,091,800` — the $252.7bn actually held. Applying the exponent would
+`252,708,091,800` - the $252.7bn actually held. Applying the exponent would
 overstate every figure by a million, so `scale` is stored as provenance and
 never multiplied. Sanity check across countries, latest period:
 

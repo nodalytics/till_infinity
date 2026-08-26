@@ -5,7 +5,7 @@ Run from the repository root:  python research/harness/states.py
 `Inference.probability_up` pools every touch a level has ever had, equally. A
 support that held six times and then broke is **averaged with itself**: the
 level's behaviour changed and the statistic cannot say so. The proposal is a
-per-level state model — {respected, breaking, flipped} with transitions — so
+per-level state model - {respected, breaking, flipped} with transitions - so
 that "it has flipped" becomes a discrete, reportable event with a probability
 on it.
 
@@ -119,7 +119,7 @@ def main() -> None:
         print(f"    p{q:<4} {lengths[min(int(len(lengths) * q / 100), len(lengths) - 1)]:>4} touches")
     print(f"    a two-state transition matrix needs four counts; the median level has {lengths[len(lengths) // 2]}")
 
-    print("\n=== 1. is behaviour stationary — first half against second")
+    print("\n=== 1. is behaviour stationary - first half against second")
     firsts = seconds = first_held = second_held = 0
     moved = []
     for group in runs.values():
@@ -168,7 +168,7 @@ def main() -> None:
     print(f"    expected from independent coins: {chance:.1%}")
     print(f"    {'runs are longer than chance' if swaps / total < chance else 'NO run structure'}")
 
-    print("\n=== 4. the flip — does a level that fails twice keep failing")
+    print("\n=== 4. the flip - does a level that fails twice keep failing")
     after: dict[str, list[bool]] = collections.defaultdict(list)
     for group in runs.values():
         held = [r["held"] for r in group]

@@ -30,7 +30,7 @@ def test_the_median_matches_the_known_constant():
     Given a distance in *sigmas*. What this module is handed is a distance in
     volatility units, and `Volatility.bps` is a mean absolute deviation, so the
     argument has to be converted before the constant applies. It was not, which
-    understated every probability by a quarter of a distance — quietly, and in
+    understated every probability by a quarter of a distance - quietly, and in
     one direction.
     """
     one_sigma = 1.0 / timing.MAD_TO_SIGMA
@@ -81,7 +81,7 @@ def test_no_time_means_no_chance():
 
 
 def test_the_two_forms_agree_with_each_other():
-    """P(within the median time) should be about a half — that is what median means."""
+    """P(within the median time) should be about a half - that is what median means."""
     median = timing.bars_to_reach(2.0, 0.5)
     assert timing.probability_within(2.0, median) == pytest.approx(0.5, abs=0.01)
 

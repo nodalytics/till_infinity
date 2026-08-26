@@ -9,8 +9,8 @@ over a socket like anything else.
 
 There are two of these in the wild and they are not the same API:
 
-* **`metatrader-terminal`** — the published one, and the more complete;
-* **`mt5-api`** — an earlier variant, which may only exist locally.
+* **`metatrader-terminal`** - the published one, and the more complete;
+* **`mt5-api`** - an earlier variant, which may only exist locally.
 
 They share the `/api/v1` prefix, the `X-API-Key` header, `POST /trading/order`
 and `POST /positions/close`, and they differ in exactly the places that matter
@@ -19,17 +19,17 @@ here. Rather than pick one and be broken against the other, this client
 
 | | `metatrader-terminal` | `mt5-api` |
 |---|---|---|
-| account | `GET /terminal/account/info` | none — falls back to `TRADING_ACCOUNT_EQUITY` |
-| symbol list | `GET /symbols/` returns every name | none — suffixes have to be probed |
+| account | `GET /terminal/account/info` | none - falls back to `TRADING_ACCOUNT_EQUITY` |
+| symbol list | `GET /symbols/` returns every name | none - suffixes have to be probed |
 | symbol spec | `GET /symbols/info/{symbol}` | `GET /symbols/{symbol}` |
 
 That last one is not cosmetic. `metatrader-terminal` has **no** bare
 `/symbols/{symbol}` route, so a client hard-wired to it 404s on every symbol
-and concludes the broker carries none of them — which is a total failure that
+and concludes the broker carries none of them - which is a total failure that
 looks exactly like a broker naming problem. And on `mt5-api` the `info` route
 is the one that cannot be used, because its response model narrows the payload
 to name, path, volume limits and `price_digits`, dropping `trade_tick_value`
-and `trade_tick_size` — precisely what position sizing needs. Each project's
+and `trade_tick_size` - precisely what position sizing needs. Each project's
 working route is the other's broken one, so both are tried and the answer is
 judged by whether it actually carries a tick value.
 
@@ -38,7 +38,7 @@ distance: the account's suffix is *found* rather than guessed from a list of
 twenty-odd that cannot be complete. See `symbols.resolve`.
 
 **The magic filter is applied here as well as there.** The bridge passes magic
-to `positions_get`, which does not take that keyword — it filters by symbol,
+to `positions_get`, which does not take that keyword - it filters by symbol,
 group or ticket. Rather than depend on that being fixed, every position is
 checked against our magic locally. The cost is a few dictionaries; the failure
 it prevents is this system closing somebody's hand-placed trade.
@@ -183,7 +183,7 @@ class HttpBroker(Broker):
         """The instrument's trading rules, from whichever route this bridge has.
 
         Both are tried, and the answer is accepted only when it carries a tick
-        value — `mt5-api`'s `info` route returns a 200 with a narrowed payload
+        value - `mt5-api`'s `info` route returns a 200 with a narrowed payload
         rather than an error, so status alone cannot tell a usable spec from an
         unusable one. Sizing off a spec with no tick value is refused later
         anyway; discovering it here means the *other* route still gets a turn.
@@ -202,7 +202,7 @@ class HttpBroker(Broker):
             try:
                 raw = await self._get(path)
             except RejectedError:
-                continue  # 404 — this route, or this symbol. The next one says which.
+                continue  # 404 - this route, or this symbol. The next one says which.
             except Exception:
                 continue
             if not isinstance(raw, dict) or not raw.get("name"):
@@ -254,15 +254,15 @@ class HttpBroker(Broker):
         raw = await self._post("/trading/order", json=body)
         trade = raw.get("trade") or {}
         # The terminal's own answer where the bridge returns it, and the stored
-        # row otherwise. Older builds returned only the row — and serialised it
-        # to `{}` — so every field here has to survive both being absent.
+        # row otherwise. Older builds returned only the row - and serialised it
+        # to `{}` - so every field here has to survive both being absent.
         result = raw.get("result") or {}
         ticket = result.get("order") or trade.get("transaction_broker_id") or 0
         price = result.get("price") or trade.get("entry_price") or 0.0
         retcode = int(result.get("retcode") or 0)
         return OrderResult(
             # A retcode when there is one, `success` when there is not. The
-            # bridge raises on a bad retcode, so a 2xx already means filled —
+            # bridge raises on a bad retcode, so a 2xx already means filled -
             # but reading the code when it is there means a future build that
             # stops raising does not silently look like a fill.
             ok=bool(raw.get("success")) and retcode in (0, TRADE_DONE, 10008),
@@ -278,7 +278,7 @@ class HttpBroker(Broker):
 
         `POST /positions/modify` takes the MT5 ticket. The older
         `/trading/modify-sl-tp` takes a `trade_id` from the bridge's own
-        database and so cannot touch a position it did not record — which is
+        database and so cannot touch a position it did not record - which is
         every position after the bridge restarts. Without the ticket route this
         backend could not trail a stop at all.
         """

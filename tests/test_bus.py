@@ -42,7 +42,7 @@ async def test_every_group_gets_the_message():
 
 
 async def test_two_readers_of_one_group_share_the_work():
-    """Same group is deliberately *not* fan-out — that is how you scale a consumer."""
+    """Same group is deliberately *not* fan-out - that is how you scale a consumer."""
     bus = Bus()
     bus.subscribe(topics.QUOTES, group="workers")
     for n in range(2):
@@ -117,7 +117,7 @@ def test_quote_payload_carries_the_derived_spread():
 
 
 async def test_publishing_wraps_the_sink_and_still_writes():
-    """Store first, announce after — the store stays the source of truth."""
+    """Store first, announce after - the store stays the source of truth."""
     bus = Bus()
     sub = bus.subscribe(topics.QUOTES, group="agents")
     written: list[QuoteKey] = []
@@ -211,7 +211,7 @@ def test_an_alert_becomes_a_notification():
     )
     assert notification.title == "Gold spread blew out"
     assert notification.level.name == "WARNING"
-    assert notification.fields == {"bps": "4.2"}  # flattened — notifiers render text
+    assert notification.fields == {"bps": "4.2"}  # flattened - notifiers render text
 
 
 @pytest.mark.parametrize("payload", [{}, {"title": "   "}, {"body": "no title"}])

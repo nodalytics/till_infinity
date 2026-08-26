@@ -2,8 +2,8 @@
 
 The default, and not only as a convenience. Three quite different situations
 land here: a laptop with no terminal, a server whose bridge is down, and a
-deliberate dry run before arming. All three want the same thing — the whole
-path exercised, orders sized, stops placed, outcomes journalled — with nothing
+deliberate dry run before arming. All three want the same thing - the whole
+path exercised, orders sized, stops placed, outcomes journalled - with nothing
 reaching an account.
 
 **Fills are against the live quote, not the mid.** A paper book that fills at
@@ -19,8 +19,8 @@ server-side; here the book has to do it, and doing it on the quote stream
 rather than on a timer is what stops a 20-second poll from turning a stop into
 a gap.
 
-The money arithmetic is exact for USD-quoted instruments — gold, BTC, and the
-majors quoted against the dollar — because one lot moving one tick is then
+The money arithmetic is exact for USD-quoted instruments - gold, BTC, and the
+majors quoted against the dollar - because one lot moving one tick is then
 `contract_size * tick_size` dollars. For USDJPY and the cross-quoted rest it is
 an approximation, and deliberately not corrected: paper exists to exercise the
 path, and any real question about position size should be asked of a terminal
@@ -94,7 +94,7 @@ class PaperBroker(Broker):
         )
 
     async def spec(self, symbol: str) -> SymbolSpec | None:
-        """Every symbol exists on paper — that is the point of paper.
+        """Every symbol exists on paper - that is the point of paper.
 
         Availability is a question about a broker, and there is no broker here.
         Answering None would make a dry run refuse the very instruments it is
@@ -170,8 +170,8 @@ class PaperBroker(Broker):
     def observe(self, tick: Tick) -> list[tuple[Position, float, str]]:
         """Take one quote in; return anything it closed.
 
-        Stops are checked before targets. When a single tick spans both — a bar
-        that traded through the stop and the target — assuming the good one
+        Stops are checked before targets. When a single tick spans both - a bar
+        that traded through the stop and the target - assuming the good one
         filled first is how a paper book flatters itself, so the loss wins.
         """
         self._ticks[tick.symbol] = tick
@@ -238,8 +238,8 @@ class PaperBroker(Broker):
     def _feed_of(self, symbol: str) -> str:
         """Which instrument a broker symbol belongs to, for the spec table.
 
-        The resolved map when there is one — it is exact, and covers a symbol
-        named in a way `feed_for` cannot guess — and the name otherwise. The
+        The resolved map when there is one - it is exact, and covers a symbol
+        named in a way `feed_for` cannot guess - and the name otherwise. The
         fallback is not an optimisation: `spec` is called *during* resolution,
         when the map is still empty. See `config.feed_for`.
         """

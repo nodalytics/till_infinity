@@ -4,7 +4,7 @@
 
 MetaTrader 5 is a Windows program, and the `MetaTrader5` Python package is a
 thin binding onto the terminal's Win32 DLL. There is no Linux wheel and there
-will not be one — it is not a pure-Python package that upstream has neglected
+will not be one - it is not a pure-Python package that upstream has neglected
 to build, it is an in-process call into a running Windows executable.
 
 That leaves three ways to reach a terminal from this codebase, and the project
@@ -25,7 +25,7 @@ through whatever subset somebody wrapped in FastAPI. RPyC is faster and more
 complete; the bridge is the one that can safely face a network, because an
 RPyC server with `allow_all_attrs` will run anything it is asked to.
 
-The HTTP bridge is `nodalytics/metatrader-terminal` — MT5 under Wine in a
+The HTTP bridge is `nodalytics/metatrader-terminal` - MT5 under Wine in a
 container, behind FastAPI. `mt5_http.py` speaks its routes, and those of the
 earlier `mt5-api` variant, which are not the same; see that module.
 
@@ -88,7 +88,7 @@ class Broker(ABC):
     """One trading account, however it is reached.
 
     Async throughout even where a backend is synchronous. The native package
-    blocks — every call into it is a call into a Windows DLL — so `mt5_native`
+    blocks - every call into it is a call into a Windows DLL - so `mt5_native`
     runs its calls in a thread rather than pretending they are cheap. Making
     the *interface* async is what lets one scalper drive either backend
     without knowing which it has.
@@ -127,7 +127,7 @@ class Broker(ABC):
     @abstractmethod
     async def spec(self, symbol: str) -> SymbolSpec | None:
         """The instrument's trading rules, or None if the broker has no such
-        symbol. None is an answer, not a failure — it is how availability is
+        symbol. None is an answer, not a failure - it is how availability is
         discovered."""
 
     @abstractmethod
@@ -154,7 +154,7 @@ class Broker(ABC):
     async def catalogue(self) -> list[str] | None:
         """Every symbol this account carries, or None if it cannot be listed.
 
-        None is not a failure — it means "ask me one at a time", which is the
+        None is not a failure - it means "ask me one at a time", which is the
         honest answer for the HTTP bridge, whose only symbol route takes a
         name. The native terminal can enumerate, and when it can, resolution
         scans the list instead of guessing suffixes.
@@ -172,7 +172,7 @@ class Broker(ABC):
 
         Only the paper book can answer, because only it holds the stops. A real
         terminal keeps them server-side, and a position it closed is noticed by
-        the position having disappeared — which `service` reconciles for every
+        the position having disappeared - which `service` reconciles for every
         backend anyway, so this is an accuracy improvement rather than the
         mechanism.
         """
@@ -183,7 +183,7 @@ def available() -> dict[str, str]:
     """Why each backend can or cannot run here, keyed by backend name.
 
     An empty string means it can. Returned rather than logged so `trading
-    doctor` can print the whole table — the question "why is it on paper" has
+    doctor` can print the whole table - the question "why is it on paper" has
     one answer per backend and showing one of them is how the other gets
     missed.
     """
@@ -196,7 +196,7 @@ def available() -> dict[str, str]:
     else:
         reasons[NATIVE] = (
             f"the MetaTrader5 package is Windows-only and this is {platform.system()} "
-            f"— reach a terminal over rpyc or the http bridge"
+            f"- reach a terminal over rpyc or the http bridge"
         )
 
     reasons[RPYC] = (
@@ -238,13 +238,13 @@ def choose(settings: Settings) -> str:
         return NATIVE
     if settings.rpyc_host and not reasons[RPYC]:
         log.info(
-            "trading: %s — using the module over rpyc at %s",
+            "trading: %s - using the module over rpyc at %s",
             reasons[NATIVE],
             settings.rpyc_host,
         )
         return RPYC
     if settings.url and not reasons[HTTP]:
-        log.info("trading: %s — using the bridge at %s", reasons[NATIVE], settings.url)
+        log.info("trading: %s - using the bridge at %s", reasons[NATIVE], settings.url)
         return HTTP
     log.warning(
         "trading: no terminal available (%s%s), running on paper",
@@ -260,7 +260,7 @@ def build(settings: Settings, backend: str | None = None) -> Broker:
     """The broker for this host. Imports the backend lazily.
 
     Lazily because importing `MetaTrader5` on a machine that has it will try to
-    attach to a terminal, and importing `mt5_http` drags in httpx — neither
+    attach to a terminal, and importing `mt5_http` drags in httpx - neither
     should happen because someone ran `trading symbols` on a laptop.
     """
     chosen = backend or choose(settings)

@@ -1,4 +1,4 @@
-"""Redis-backed channel — durable, cross-process MPMC.
+"""Redis-backed channel - durable, cross-process MPMC.
 
 Built on Redis Streams + consumer groups so multiple processes can
 share a channel with at-least-once delivery.

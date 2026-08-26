@@ -1,21 +1,21 @@
 """Turning quotes into features that describe a venue *relative to the others*.
 
 This is the part that matters. An anomaly detector fed one venue's spread
-learns what is normal for that venue, which is useful but not the point — the
+learns what is normal for that venue, which is useful but not the point - the
 project collects six venues precisely because the disagreement between them
 carries information no single feed does.
 
 So every feature here is relative:
 
-- `dev_bps` — how far this venue's mid sits from where the others agree it is.
+- `dev_bps` - how far this venue's mid sits from where the others agree it is.
   Robust to the venue itself, because the consensus is a median taken *without*
   it. Including a venue in the number it is measured against is how a stale
   feed hides: with six venues one bad reading barely moves a mean, and with two
   it moves it halfway.
-- `spread_ratio` — this venue's spread against the group's, so "wide" means
+- `spread_ratio` - this venue's spread against the group's, so "wide" means
   wide compared with everyone quoting the same instrument at the same instant,
   not wide against a constant.
-- `staleness` — how long since this venue last moved, against how long since
+- `staleness` - how long since this venue last moved, against how long since
   the group last moved. A market that stops on a Sunday is not an anomaly; one
   venue stopping while five carry on is.
 
@@ -84,7 +84,7 @@ class Book:
         moved = when
         if previous is not None and previous.mid == mid:
             # Same price: it spoke, it did not move. Keeping these apart is what
-            # makes a stale feed detectable — a dead feed often keeps sending.
+            # makes a stale feed detectable - a dead feed often keeps sending.
             moved = previous.moved
         self._readings[venue] = Reading(venue, mid, spread_bps, when, moved)
 
@@ -115,7 +115,7 @@ class Book:
     def features(self, venue: str, now: float | None = None) -> dict[str, float] | None:
         """How this venue looks against the rest, right now.
 
-        Returns None when there is nothing to compare against — silence is the
+        Returns None when there is nothing to compare against - silence is the
         honest answer when five of six feeds are down, not a score of zero.
         """
         now = time.time() if now is None else now
@@ -136,7 +136,7 @@ class Book:
             "staleness": reading.still(now),
             # Against a floor, not against the raw group figure. When every
             # other venue is updating, their median stillness is ~0, and
-            # dividing by it would either explode or — worse — be guarded away
+            # dividing by it would either explode or - worse - be guarded away
             # to 1.0, blinding the ratio at the exact moment it matters most.
             "staleness_ratio": reading.still(now) / max(group_still, STILL_FLOOR),
             "venues": float(rest.venues),
@@ -165,7 +165,7 @@ class Books:
     def observe(self, payload: dict) -> tuple[str, str, dict[str, float]] | None:
         """Take one `prices.quotes` message and return (feed, venue, features).
 
-        None when the message cannot produce a comparison — no mid, an unknown
+        None when the message cannot produce a comparison - no mid, an unknown
         venue, or not enough other venues to be a consensus yet.
         """
         feed = str(payload.get("feed") or "")

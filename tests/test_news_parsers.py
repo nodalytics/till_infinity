@@ -265,7 +265,7 @@ def test_imf_dataset_becomes_observations():
 
 
 def test_imf_values_are_not_rescaled():
-    """SCALE=6 is provenance, not a multiplier — US reserves are $252.7bn, and
+    """SCALE=6 is provenance, not a multiplier - US reserves are $252.7bn, and
     applying the exponent would report $252.7 quadrillion."""
     from till_infinity.news.imf import parse_dataset
 

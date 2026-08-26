@@ -44,7 +44,7 @@ HIGH = 2
 MIN_VENUES = 3
 
 #: Quotes older than this stop counting toward the consensus. A venue that has
-#: stopped updating should not anchor the price our broker is judged against —
+#: stopped updating should not anchor the price our broker is judged against -
 #: that is the `stale` shape, and it would otherwise turn one dead feed into a
 #: dislocation on everybody else.
 QUOTE_TTL = 90.0
@@ -127,7 +127,7 @@ class Context:
             return
         when = payload.get("time")
         self._drifted[feed] = float(when) if isinstance(when, int | float) and when else time.time()
-        log.info("trading: %s drifted — standing aside for %.0fs", feed, self.drift_pause)
+        log.info("trading: %s drifted - standing aside for %.0fs", feed, self.drift_pause)
 
     # -------------------------------------------------------------- answering
 
@@ -148,7 +148,7 @@ class Context:
                 continue
             # `since` is negative before the print and positive after it, so
             # `before` bounds the negative side. Getting this backwards swaps
-            # the two windows and blacks out the wrong minutes — which is what
+            # the two windows and blacks out the wrong minutes - which is what
             # the first version did, with a comment warning against it.
             since = when - release.when
             if -self.before <= since <= self.after:

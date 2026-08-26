@@ -1,4 +1,4 @@
-"""TradingView chart socket — per-broker OHLCV, no API key.
+"""TradingView chart socket - per-broker OHLCV, no API key.
 
 Wire format is socket.io 0.9 style: ``~m~<len>~m~<payload>`` frames, several per
 websocket message. A payload is either JSON ``{"m": method, "p": params}``, the
@@ -7,7 +7,7 @@ verbatim or the server hangs up.
 
 What this does differently from the throwaway script it grew out of:
 
-* one socket per *symbol* instead of one per (symbol, interval) — a chart
+* one socket per *symbol* instead of one per (symbol, interval) - a chart
   session is cheap, a TCP+TLS handshake is not;
 * symbols run concurrently under a semaphore rather than serially;
 * ``request_more_data`` pagination, so deep history is actually reachable
@@ -303,7 +303,7 @@ class TradingViewSource(Source):
             raise
         except Exception as exc:
             # anyio wraps a failed connect in an ExceptionGroup, which is
-            # neither HTTPError nor OSError — left unclassified it would skip
+            # neither HTTPError nor OSError - left unclassified it would skip
             # the retry entirely, so anything unrecognised here is transient.
             raise TransientError(f"connect failed: {first_cause(exc)}") from exc
 

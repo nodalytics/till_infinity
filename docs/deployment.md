@@ -31,7 +31,7 @@ so a collector restarting does not take the levels model with it. Agents sit
 behind a profile because they are the only part that costs money.
 
 **It needs real memory.** Six Python processes with the modules imported cost
-about **861 MB** measured — before Redis, before any data, before the OS. On
+about **861 MB** measured - before Redis, before any data, before the OS. On
 anything under ~2 GB use the single process instead.
 
 ## Continuous deployment
@@ -64,7 +64,7 @@ AWS have neither problem.
 - **Prune old images *before* the pull.** An image per deploy on a 6.7 GB disk
   fills up weeks later, as a confusing failure rather than an obvious one. It
   did: five 973 MB images took the box to 99% and the deploy died on `no space
-  left on device`. The cleanup was already there — it ran *after* the pull, so
+  left on device`. The cleanup was already there - it ran *after* the pull, so
   `set -e` ended the script above the line that would have fixed it, and it
   carried an `until=72h` filter that spares every image from a busy day. A
   cleanup that only runs when it was not needed is not a cleanup. Docker never
@@ -81,8 +81,8 @@ Measured on the running instance:
 till-infinity | Up (healthy) | 243.5 MiB / 640 MiB
 ```
 
-243 MB against a 640 MB cap on a 908 MB box — **and that reading is from six
-instruments.** At fourteen it sits nearer 260–280 MB and has peaked at 400 MB,
+243 MB against a 640 MB cap on a 908 MB box - **and that reading is from six
+instruments.** At fourteen it sits nearer 260-280 MB and has peaked at 400 MB,
 which on this box is the edge.
 
 The cap exists so that a leak takes the container down and the restart policy
@@ -91,7 +91,7 @@ kernel chose anyway**, five times, and the way it presented is worth
 recognising: `docker inspect` reported `OOMKilled: false` while `dmesg` showed
 `Out of memory: Killed process … (till-infinity)` with `constraint=
 CONSTRAINT_NONE`. The container never reached its 640 MB cap. The *host* ran out
-— 908 MB total, ~150 MB free — so the cap was never the binding constraint and
+- 908 MB total, ~150 MB free - so the cap was never the binding constraint and
 the container's own flag was truthful and useless.
 
 Two things follow for sizing:
@@ -103,11 +103,11 @@ Two things follow for sizing:
   does not improve on a larger machine; it just gets harder to reach.
 
 Nothing heavier than a read should run alongside it at this size. Both
-`till-infinity agents ask` and `till-infinity prices prune` — each a second
-Python process importing the whole application — killed the container outright.
+`till-infinity agents ask` and `till-infinity prices prune` - each a second
+Python process importing the whole application - killed the container outright.
 
 Databases and model state live on a mounted volume. Without one they go when
-the container does, and for online models that means starting cold — no learned
+the container does, and for online models that means starting cold - no learned
 distributions, no levels, no touch history.
 
 ## Configuration
@@ -127,12 +127,12 @@ Do the first item before touching anything else.
 
 ### 1. `till.env` exists nowhere but the instance
 
-`/home/ubuntu/till.env` holds every live credential — the Telegram bot token
+`/home/ubuntu/till.env` holds every live credential - the Telegram bot token
 and chat ids, the Gemini and Groq keys, the model and fallback list, the notify
 cooldown and rate. It is not in git, not in GitHub secrets, and not in the
 image. `deploy.sh` writes defaults only when the file is **absent** and never
 overwrites it, which is what keeps a deploy from silently reverting a
-configured box — and also what means nothing recreates it if the instance goes
+configured box - and also what means nothing recreates it if the instance goes
 away.
 
 Copy it off before the old instance is stopped, and keep it somewhere that
@@ -149,7 +149,7 @@ Everything else on this page can be rebuilt from the repository. This cannot.
 | secret | what it is |
 |---|---|
 | `EC2_HOST` | the new hostname or address |
-| `EC2_USER` | the SSH user, `ubuntu` — see the path note below |
+| `EC2_USER` | the SSH user, `ubuntu` - see the path note below |
 | `EC2_SSH_KEY` | the **private** key, whole file including the header and footer lines |
 
 ```bash
@@ -161,7 +161,7 @@ gh secret set EC2_SSH_KEY < ~/.ssh/new-instance.pem
 `GITHUB_TOKEN` is issued per run by Actions and is not migrated.
 
 Set all three before the next push to `main`, or the deploy runs against the
-old host — `paths-ignore` skips prose, but any code change deploys.
+old host - `paths-ignore` skips prose, but any code change deploys.
 
 ### 3. What the instance has to provide
 
@@ -180,16 +180,16 @@ old host — `paths-ignore` skips prose, but any code change deploys.
 - **No registry credential is needed** while the package is public: `deploy.sh`
   contains no `docker login` and the old instance has no
   `~/.docker/config.json`. If the package is ever made private, deploys break
-  at the pull with an error that does not mention permissions — add a
+  at the pull with an error that does not mention permissions - add a
   `docker login ghcr.io` with a read-only PAT at that point, not before.
 
 ### 4. Data worth carrying over
 
 ```
-journal    40M   the decision journal — irreplaceable, this is the learning history
+journal    40M   the decision journal - irreplaceable, this is the learning history
 news      9.7M   headlines and the calendar, re-fetchable but slow
 prices    960M   candles and quotes, fully re-backfillable
-structures 14M   model state — do not bother, see below
+structures 14M   model state - do not bother, see below
 ```
 
 `journal` is the one to move. `prices` can be re-backfilled and is most of the
@@ -210,7 +210,7 @@ rsync -avz -e "ssh -i key.pem" ubuntu@OLD_HOST:/home/ubuntu/till-data/journal/ \
 ### 5. The limits size themselves; swap does not
 
 `deploy.sh` no longer pins the memory limit. It takes **70% of the host's total**,
-floored at 512m — which is 635MB on the old 908MB instance, near enough the 640m
+floored at 512m - which is 635MB on the old 908MB instance, near enough the 640m
 it used to hard-code, and 2,676MB on a 3.8GB one. The pin was wrong on both
 boxes it ran on: too small to use a bigger machine, and silently
 over-committed on a smaller one.
@@ -221,7 +221,7 @@ What is still worth setting by hand is **swap**, because there is none:
   neither instance has host swap either, which is why every overrun was a kill
   rather than a slowdown.
 - The kills that mattered were `global_oom` on the *host* with
-  `oomkilled=false` on the container — a confusing pair to read, and the reason
+  `oomkilled=false` on the container - a confusing pair to read, and the reason
   the host needs headroom of its own rather than just a generous cgroup.
 
 ```bash

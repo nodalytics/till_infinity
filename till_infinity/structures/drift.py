@@ -7,7 +7,7 @@ at. Drift invalidates every threshold learned before it.
 
 `ADWIN` is the right tool because it needs no window length chosen in advance.
 It maintains a window and cuts it wherever the two halves stop looking like the
-same distribution, so the horizon is discovered rather than configured — which
+same distribution, so the horizon is discovered rather than configured - which
 matters when the horizon is exactly what changed.
 
 ## One timeframe is not enough
@@ -19,14 +19,14 @@ away real evidence, so the cost of a false positive went up sharply and the
 detector had to get more conservative to match.
 
 So a detector runs per timeframe and a change is only declared when they
-**agree**: either a slow timeframe fires — a 4h regime change is a regime
-change, it is not noise — or two fast ones fire close together. One fast
+**agree**: either a slow timeframe fires - a 4h regime change is a regime
+change, it is not noise - or two fast ones fire close together. One fast
 timeframe on its own is a busy hour and is deliberately ignored.
 
 ## How much, not just whether
 
 ADWIN answers *whether*. On its own that is not enough, because a confirmed
-change discounts every level's accumulated history — and a marginal change and
+change discounts every level's accumulated history - and a marginal change and
 a violent one would get the same flat discount, from a constant somebody picked.
 
 So the magnitude is measured and **calibrated against past magnitudes**, the
@@ -159,7 +159,7 @@ class Drift:
             venue="consensus",
             score=1.0,
             detail=(
-                f"volatility regime changed on {'+'.join(agreed)} — typical move now "
+                f"volatility regime changed on {'+'.join(agreed)} - typical move now "
                 f"{detector.estimation:.3f}bps across {detector.width} readings"
             ),
             features={
@@ -180,7 +180,7 @@ class Drift:
         """How big the change was, scale-free.
 
         The log-ratio of the mean move either side of the cut, so a doubling
-        counts the same on gold as on BTC — and a halving counts the same as a
+        counts the same on gold as on BTC - and a halving counts the same as a
         doubling, because a market going quiet is as much a regime change as one
         going wild.
         """

@@ -79,7 +79,7 @@ class Announcer:
     """Publishes what is genuinely new.
 
     The stores dedup on write but report only counts, so the bus needs its own
-    memory of what it has already announced — otherwise every poll would
+    memory of what it has already announced - otherwise every poll would
     re-announce the entire feed. It is an LRU rather than a set because a
     collector left running for a week must not grow one forever.
     """
@@ -140,7 +140,7 @@ class Announcer:
             )
 
     async def macro(self, source: str, result: WriteResult, rows: int) -> None:
-        """Macro moves in bulk — one IMF pull is thousands of historic rows.
+        """Macro moves in bulk - one IMF pull is thousands of historic rows.
 
         Announcing each would be noise, so this is a count: the notice says the
         series changed and the subscriber reads the store for the detail.
@@ -190,7 +190,7 @@ async def poll_once(
         if batch is None:
             summary.failed += 1
             continue
-        # Store first, announce after — the store stays the source of truth.
+        # Store first, announce after - the store stays the source of truth.
         if batch.articles:
             summary.articles += await store.write_articles(batch.articles)
             if announcer is not None:

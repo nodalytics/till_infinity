@@ -1,6 +1,6 @@
 """Which of the instruments we watch can actually be traded here.
 
-The price side names an instrument once — `gold`, `btc` — and six venues quote
+The price side names an instrument once - `gold`, `btc` - and six venues quote
 it. A broker names it whatever it likes: `XAUUSD`, `GOLD`, `XAUUSD.raw`,
 `BTCUSD` or nothing at all, because plenty of retail MT5 accounts that carry
 gold and bitcoin carry neither Solana nor the Nasdaq under any name.
@@ -15,21 +15,21 @@ fires.
 There are two ways to find out, and the better one is used when it is
 available.
 
-**Scan, if the broker can list its symbols.** The native terminal can —
-`symbols_get()` returns the whole tree — and then the account's suffix does not
+**Scan, if the broker can list its symbols.** The native terminal can -
+`symbols_get()` returns the whole tree - and then the account's suffix does not
 have to be guessed at all: `XAUUSD.s` is found by looking, whatever `.s` means
 at that broker. This matters because the suffix is not a standard. `.raw`,
 `.r`, `.s`, `m`, `+`, `_SB`, `.ecn`, `.z` are all in use, brokers invent more,
 and no list of them can be complete. A scan has no list to be incomplete.
 
 **Probe, when it cannot.** The HTTP bridge's only symbol route takes one name,
-so there the candidates are tried in turn — and the suffix is *learned* rather
+so there the candidates are tried in turn - and the suffix is *learned* rather
 than enumerated. The full cross-product is twenty-odd suffixes against several
 names for fourteen instruments, which is hundreds of round trips; noticing that
 `XAUUSD.raw` worked and trying `.raw` first for everything after it makes each
 of the remaining thirteen a single probe. The list is still walked in full for
 the first instrument, and for any later one the learned suffix does not fit, so
-an inconsistent broker is still found — just more slowly.
+an inconsistent broker is still found - just more slowly.
 """
 
 from __future__ import annotations
@@ -81,9 +81,9 @@ async def resolve(
 ) -> Resolution:
     """Probe the broker for each feed. Never raises: a miss is a result.
 
-    A symbol that exists but is not fully tradable — close-only, or quotes with
+    A symbol that exists but is not fully tradable - close-only, or quotes with
     no execution, which is what a broker shows for an instrument outside its
-    session — is recorded as missing *with that reason*, because "the broker
+    session - is recorded as missing *with that reason*, because "the broker
     does not have it" and "the broker will not let you open one right now" lead
     to different fixes.
     """
@@ -134,7 +134,7 @@ def matches(feed: str, listing: Sequence[str]) -> list[str]:
 
     A match is one of the instrument's names plus **anything**, which is what
     makes an unguessed suffix findable. Ranked by how much was appended, so an
-    exact `XAUUSD` beats `XAUUSD.s` beats `XAUUSD.raw.cfd` — the shortest
+    exact `XAUUSD` beats `XAUUSD.s` beats `XAUUSD.raw.cfd` - the shortest
     addition is the plain instrument and the longer ones are variants of it.
 
     Case-insensitive, because a handful of brokers list in lower case and the
@@ -171,7 +171,7 @@ async def _scan(broker: Broker, feed: str, listing: Sequence[str]) -> tuple[Symb
             return spec, tried
         if spec is not None and tried == 1:
             # Keep the first match even if it is not tradable, so the caller
-            # can report *why* rather than "no symbol found" — which would be
+            # can report *why* rather than "no symbol found" - which would be
             # wrong, and would send somebody looking for a naming problem.
             return spec, tried
     return None, tried
@@ -185,7 +185,7 @@ async def _probe(broker: Broker, feed: str, learned: str) -> tuple[SymbolSpec | 
             spec = await broker.spec(name)
         except Exception as exc:
             # One unreachable probe must not decide that an instrument is
-            # unavailable — that would silently stop trading it for the run.
+            # unavailable - that would silently stop trading it for the run.
             log.debug("trading: probing %s failed: %s", name, exc)
             continue
         if spec is not None:

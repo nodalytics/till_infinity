@@ -2,15 +2,15 @@
 
 Two rules, both standard, both switched off unless asked for:
 
-* **break-even** — once price is `break_even_at` R in front, move the stop to
+* **break-even** - once price is `break_even_at` R in front, move the stop to
   the entry (plus a configurable cushion for the spread, because a stop
   *at* the entry on a long is hit by the bid while the fill paid the ask);
-* **trailing** — thereafter, keep the stop `trail_vol` volatility units behind
+* **trailing** - thereafter, keep the stop `trail_vol` volatility units behind
   the best price the trade has seen, never moving it backwards.
 
 **Why they are off.** Both cut the loss tail, and both cut winners. Which
 dominates is an empirical question about this strategy on these instruments,
-and nothing in this repository answers it — there is no evaluation of trading
+and nothing in this repository answers it - there is no evaluation of trading
 outcomes yet, because until `structures.resolutions` was put on the bus there
 was no ground truth to evaluate against. Shipping them on by default would be
 asserting the answer.
@@ -22,14 +22,14 @@ compared on the journal once there are enough closed trades to compare.
 
 **The stop only ever moves toward profit.** Every path returns the existing
 stop unless the new one is strictly better, because a rule that can widen a
-stop is not risk management — it is the trade quietly asking for more room
+stop is not risk management - it is the trade quietly asking for more room
 after it has started going wrong, which is the single most expensive habit in
 discretionary trading and does not become cheaper for being automated.
 
 The bridge has its own trailing-stop handler running on a twenty-second timer.
 This does not use it: two things moving the same stop on different clocks would
 race, and the one that lost would look like a broker fault. Ours is the one the
-journal can explain, so ours is the one that runs — set the bridge's off.
+journal can explain, so ours is the one that runs - set the bridge's off.
 """
 
 from __future__ import annotations
@@ -67,8 +67,8 @@ def advance(
 ) -> Move | None:
     """Where this position's stop should be now, or None to leave it.
 
-    `best` is the most favourable price the trade has seen — the high for a
-    long, the low for a short — tracked by the caller from the quote stream,
+    `best` is the most favourable price the trade has seen - the high for a
+    long, the low for a short - tracked by the caller from the quote stream,
     because a broker's `price_current` is a snapshot and a trailing stop
     anchored to snapshots trails whatever the last poll happened to catch.
     """
@@ -98,7 +98,7 @@ def advance(
     if settings.trail_vol > 0 and vol_bps > 0:
         behind = price_distance(best, vol_bps, settings.trail_vol)
         level = best - sign * behind
-        # Only once the trail is actually in front of the original stop —
+        # Only once the trail is actually in front of the original stop -
         # otherwise a trade that has barely moved gets a tighter stop than it
         # was sized for, which is a different trade from the one that was
         # judged.

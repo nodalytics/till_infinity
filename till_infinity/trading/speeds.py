@@ -7,8 +7,8 @@ than bars, because a strategy sees signals as they are published rather than
 one per bar.
 
 **What used to be in this module, and why it is not.** An earlier version of
-this file also held a rolling-quantile gate — take the top decile of each
-instrument's own recent `|edge|` rather than a fixed threshold — on the
+this file also held a rolling-quantile gate - take the top decile of each
+instrument's own recent `|edge|` rather than a fixed threshold - on the
 strength of score.md §3's argument that a constant is a claim about a
 distribution nobody has measured.
 
@@ -28,7 +28,7 @@ because the instinct will recur". It recurred here, in this module, and this
 paragraph is the record.
 
 Nothing else in the level signal wants a per-cell quantile either, because the
-whole project is already measured in volatility units for exactly that reason —
+whole project is already measured in volatility units for exactly that reason -
 so the machinery went rather than waiting for a consumer that has no reason to
 appear.
 """

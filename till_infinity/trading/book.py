@@ -1,7 +1,7 @@
 """The levels this module has been told about, per instrument.
 
 `trading` reads signals off a bus and never touches the level engine, which is
-the right seam — but it leaves it knowing about exactly one level at a time,
+the right seam - but it leaves it knowing about exactly one level at a time,
 the one the current call is at. Trading *toward* a level needs the other ones:
 where the next level above price is, and the next below.
 
@@ -9,7 +9,7 @@ So the book is built from what arrives. Every `LEVEL` signal names a price for
 an instrument, and remembering those gives a map of the levels the engine
 currently holds, without a shared database, an import from `structures`, or a
 second copy of the level model. It is a cache of things already published, and
-it is honest about being one — a level nobody has published a call for recently
+it is honest about being one - a level nobody has published a call for recently
 is one this module has never heard of, and `forget` drops what has gone quiet
 rather than keeping a map that describes last week.
 

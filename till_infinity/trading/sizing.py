@@ -3,8 +3,8 @@
 Two conversions, and everything depends on getting them the right way round.
 
 **Volatility units to price.** `structures` measures everything in volatility
-units — a stop 1.4v away means 1.4 times the typical recent move, not 1.4
-dollars — because a fixed distance encodes one market regime and stops
+units - a stop 1.4v away means 1.4 times the typical recent move, not 1.4
+dollars - because a fixed distance encodes one market regime and stops
 describing the next. The signal carries `risk_vol` and `expected_push_vol` in
 those units and `vol_bps` as the unit itself, so a distance in price is
 `price * vol_bps * multiple / 10_000`. That is the same arithmetic
@@ -14,14 +14,14 @@ those units and `vol_bps` as the unit itself, so a distance in price is
 **Price to money.** MT5 states risk per lot as tick value over tick size: a
 stop `d` away costs `d / tick_size * tick_value` per lot, in the account
 currency. Inverting that against a risk budget gives lots, and it is the only
-step that has to be right to the cent — everything upstream of it is an
+step that has to be right to the cent - everything upstream of it is an
 estimate of what price will do, and this is an arithmetic fact about what a
 loss will cost.
 
 The order of clamping matters and is the reason this is a module rather than a
 line. Round to the broker's lot step **downwards**, then check the result is
-still at least the minimum lot. Doing it the other way — clamping up to the
-minimum first — silently converts "this trade is too small to take" into "take
+still at least the minimum lot. Doing it the other way - clamping up to the
+minimum first - silently converts "this trade is too small to take" into "take
 it anyway at a risk nobody authorised", which on a 0.25% budget and a tight
 stop is most trades on an account whose minimum lot is 0.1.
 """
@@ -38,16 +38,39 @@ def price_distance(price: float, vol_bps: float, multiple: float) -> float:
     return abs(price * (vol_bps * multiple) / 10_000)
 
 
-def stop_for(level: float, side: Side, distance: float) -> float:
-    """Where the stop goes: beyond the level, on the side price came from.
+def stop_for(
+    level: float,
+    side: Side,
+    distance: float,
+    zone_edge: float = 0.0,
+    clearance: float = 0.0,
+) -> float:
+    """Where the stop goes: beyond the level's **zone**, on the side price came from.
 
     Beyond the *level*, not beyond the entry. The level is the thing being
-    traded — the price at which this instrument has repeatedly turned — so the
+    traded - the price at which this instrument has repeatedly turned - so the
     trade is wrong when price is through it, whatever the fill happened to be.
     Anchoring the stop to the fill instead would move the invalidation point
     every time the spread widened.
+
+    **And beyond the zone, not beyond the origin.** A level is a range, not a
+    line: the origin is where the leg in met the leg out, and the band extends
+    by however far the wick ran past it on that side. A stop placed at
+    `origin - distance` can therefore sit *inside* the band where wicks
+    routinely reach, which is not a stop at all - it is a standing offer to be
+    swept and then watch the trade work without you. `zone_edge` is that
+    band's far edge and the stop is pushed outside it, plus `clearance` so it
+    is not resting exactly where the last wick stopped.
+
+    Being wrong and being swept look identical in the account and are not the
+    same event. This is the difference.
     """
-    return level - distance if side is Side.BUY else level + distance
+    beyond = level - distance if side is Side.BUY else level + distance
+    if not zone_edge:
+        return beyond
+    outside = zone_edge - clearance if side is Side.BUY else zone_edge + clearance
+    # Whichever is further from the level, so the zone can only widen a stop.
+    return min(beyond, outside) if side is Side.BUY else max(beyond, outside)
 
 
 def target_for(entry: float, side: Side, distance: float) -> float:
@@ -118,8 +141,8 @@ def respects_stops_level(spec: SymbolSpec, entry: float, stop: float, target: fl
 
     Brokers refuse a stop or target closer to price than `stops_level`, and the
     refusal arrives as a retcode after the decision has been made. Scalping
-    lives exactly in that band — a tight stop on a quiet minute is often inside
-    it — so it is checked before the order rather than discovered by it.
+    lives exactly in that band - a tight stop on a quiet minute is often inside
+    it - so it is checked before the order rather than discovered by it.
     """
     minimum = spec.min_stop_distance
     if minimum <= 0:

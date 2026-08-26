@@ -1,8 +1,8 @@
 """Does the edge beat "assume the level holds"?
 
 `features.py` found `side` alone predicts direction at 78.8% while all nine
-features together manage 77.8%. That makes the trivial rule — a touch from
-above pushes back up, a touch from below pushes down, i.e. the level holds — a
+features together manage 77.8%. That makes the trivial rule - a touch from
+above pushes back up, a touch from below pushes down, i.e. the level holds - a
 baseline nothing here had been measured against.
 
 Scored on identical rows, which the first version of this script did not do: it

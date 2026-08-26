@@ -1,7 +1,7 @@
 """Risk management plans: the limits, as named bundles rather than loose knobs.
 
 Ten separate numbers control how much this can lose. Set individually they are
-ten chances to be inconsistent — a 2% per-trade risk under a 3% daily stop
+ten chances to be inconsistent - a 2% per-trade risk under a 3% daily stop
 halts the day on the second loss, which is not a plan, it is two settings that
 have not been read together. So the numbers that have to agree are grouped and
 named, and the name is what gets chosen.
@@ -10,19 +10,19 @@ named, and the name is what gets chosen.
 
 **A plan is a floor, not a cage.** Any individual `TRADING_*` variable that is
 actually set wins over the plan's value, because the plans cannot anticipate
-every account — a prop-firm evaluation with a hard 4% daily ceiling wants
+every account - a prop-firm evaluation with a hard 4% daily ceiling wants
 `standard` with one number changed, not a fourth plan. What a plan guarantees
 is that the numbers you *didn't* set are consistent with the ones you did.
 
 **The edge floors all sit above the upstream gate.** `reactions.MIN_EDGE` is
 0.10 and every signal on the bus has cleared it, so a plan setting anything at
 or below that would be configuring a gate that cannot fire. The three sit at
-0.11, 0.15 and 0.22 — just above it, comfortably above it, and up in the band
+0.11, 0.15 and 0.22 - just above it, comfortably above it, and up in the band
 [edge.md](../../docs/edge.md) measures as the strongest.
 
 **The differences between the plans are ratios, not opinions.** Each one keeps
-the same relationship between per-trade risk and the daily stop — roughly a
-dozen consecutive losses to reach it — so that moving between them changes how
+the same relationship between per-trade risk and the daily stop - roughly a
+dozen consecutive losses to reach it - so that moving between them changes how
 much is at stake without changing how the account behaves on a bad run. What
 actually varies is how selective the entry is: the conservative plan demands a
 higher probability and a better reward-to-risk, and therefore trades less.
@@ -41,7 +41,7 @@ log = get_logger(__name__)
 
 #: Each tunable, and the environment variable that sets it directly. A plan
 #: only fills in what the environment has not, so this table is the authority
-#: on which is which — a field missing from here is one a plan cannot touch.
+#: on which is which - a field missing from here is one a plan cannot touch.
 CONTROLS: Mapping[str, str] = {
     "risk_fraction": "TRADING_RISK_FRACTION",
     "max_risk_money": "TRADING_MAX_RISK_MONEY",
@@ -87,7 +87,7 @@ class Plan:
 
         Mutates rather than returning a copy, because `Settings` is what every
         other part of the module already holds a reference to by the time a
-        plan is chosen — handing back a second one would leave the first in
+        plan is chosen - handing back a second one would leave the first in
         service, configured differently, with nothing to say so.
         """
         env = os.environ if environ is None else environ

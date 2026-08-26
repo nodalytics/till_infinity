@@ -24,7 +24,7 @@ gold, BTC) and every broker configured for each. Nothing is fetched yet.
 
 ## 2. Pull some history
 
-Start small — one instrument, two timeframes — so you can see the shape of the
+Start small - one instrument, two timeframes - so you can see the shape of the
 output before committing to a full run:
 
 ```bash
@@ -46,7 +46,7 @@ series, and each source is capped by its own retention anyway:
 uv run till-infinity prices backfill --bars 5000
 ```
 
-Re-running a backfill is safe and cheap — bars are keyed on their open time, so
+Re-running a backfill is safe and cheap - bars are keyed on their open time, so
 the second run writes only what is genuinely new.
 
 ## 3. See what you have
@@ -75,7 +75,7 @@ uv run till-infinity prices quotes   # live bid/ask, streamed as it moves
 ```
 
 `bars` fills in candles as they close. `quotes` holds a websocket open and
-writes the moment a broker's book changes — it is not polling, so a busy venue
+writes the moment a broker's book changes - it is not polling, so a busy venue
 produces ~40 rows a minute and a quiet one produces two.
 
 Add `--once` to either for a single pass, which is what you want from cron or
@@ -143,7 +143,7 @@ df.index = pd.to_datetime(df.index, unit="s", utc=True)
 ## 6. Add the context
 
 Prices tell you *that* something moved. The news collector tells you why, and
-runs the same way — poll, store, query:
+runs the same way - poll, store, query:
 
 ```bash
 uv run till-infinity news collect --once   # headlines, calendars, IMF reserves
@@ -178,7 +178,7 @@ uv run till-infinity news collect   --publish redis://localhost:6379 &
 uv run till-infinity notify listen  --redis   redis://localhost:6379 &
 ```
 
-Nothing changes about storage — the database is still the source of truth, and
+Nothing changes about storage - the database is still the source of truth, and
 without `--publish` there is no bus at all. Full guide: [bus.md](bus.md).
 
 ## 9. Let the numbers watch first
@@ -192,7 +192,7 @@ uv run till-infinity structures info    # what it has learned so far
 ```
 
 It publishes findings for an agent to weigh, and alerts you directly about the
-ones that interpret themselves — a feed that has stopped while the others move.
+ones that interpret themselves - a feed that has stopped while the others move.
 Full guide: [structures.md](structures.md).
 
 ## 10. Let something judge it for you
@@ -232,13 +232,13 @@ Full lists in [prices.md](prices.md#environment), [news.md](news.md#environment)
 
 **`symbol_not_exists` warnings.** That venue does not carry that symbol on that
 endpoint. It is logged once, the sweep continues, and the other brokers are
-unaffected. DERIV on the `scanner` transport is the common one — use the
+unaffected. DERIV on the `scanner` transport is the common one - use the
 default socket transport instead.
 
 **A source returns nothing for 1m.** Check the retention caps in
 [prices.md](prices.md#sources); Yahoo's minute data stops at 7 days.
 
-**Quotes look frozen.** They probably are — outside market hours FX stops
+**Quotes look frozen.** They probably are - outside market hours FX stops
 moving, and the store only writes changes. `--all-ticks` records every update
 if you want proof of liveness.
 

@@ -92,13 +92,13 @@ class BarConsensus:
 def alert_payload(signal: Signal) -> dict[str, object]:
     """The message a person actually reads, as opposed to the record.
 
-    `Signal.title` is built for a log line — venue, feed, then the whole detail
-    string — which arrives on a phone as one long sentence with the numbers
+    `Signal.title` is built for a log line - venue, feed, then the whole detail
+    string - which arrives on a phone as one long sentence with the numbers
     buried in it. What a reader wants first is the instrument, the timeframe and
     the direction; the evidence belongs underneath, one claim per line.
 
     Routing fields (`shape`, `instrument`, `venue`, `direction`) are set for the
-    notification filter and are deliberately not rendered again — the title
+    notification filter and are deliberately not rendered again - the title
     already carries them.
     """
     fields = {
@@ -135,12 +135,12 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     body = [
         f"level {price:.5g} · {story}",
         "",
-        f"{signal.direction} {probability:.0%} — against a {base:.0%} base rate",
+        f"{signal.direction} {probability:.0%} - against a {base:.0%} base rate",
         f"expected push {push:+.2f}v" + (f" · risk {risk:.2f}v" if risk else ""),
         f"{touches:.0f} touches here + {similar} similar · strength {got.get('strength', 0.0):.2f}",
     ]
     return {
-        "title": f"{signal.feed.upper()} {signal.interval} — {signal.direction}",
+        "title": f"{signal.feed.upper()} {signal.interval} - {signal.direction}",
         "body": "\n".join(body),
         "level": "warning",
         "fields": fields,
@@ -174,7 +174,7 @@ class Watcher:
         self.bars = BarConsensus()
         #: Key levels and what they do when price arrives. Fed by both bars
         #: (which form the levels) and quotes (which detect the touch in time
-        #: to matter — waiting for a 5m close reports it after the fact).
+        #: to matter - waiting for a 5m close reports it after the fact).
         self.engine = Engine(charge_spread=self.settings.charge_spread)
         #: What the hour of the day has been worth, per instrument. Learns
         #: from resolutions and from the volatility it sees; asserts
@@ -207,8 +207,8 @@ class Watcher:
     def warm(self, on_progress: Callable[[int, int], None] | None = None) -> int:
         """Fill the level windows from stored price history.
 
-        The bus carries a notice per sweep, not a series — roughly one bar per
-        venue per minute — so an engine that only learned from it would take
+        The bus carries a notice per sweep, not a series - roughly one bar per
+        venue per minute - so an engine that only learned from it would take
         days to see enough bars to place a level. The store already holds the
         history, read-only.
 
@@ -283,7 +283,7 @@ class Watcher:
         """Whether this goes to a human without an agent in between.
 
         Deliberately *not* keyed on score. Score measures statistical rarity,
-        and rarity is not unambiguity — an unusually wide spread is rare and is
+        and rarity is not unambiguity - an unusually wide spread is rare and is
         exactly the case that needs the calendar before anyone is woken. What
         qualifies is a reading that no fundamental could explain: a feed that
         has stopped, or a price so far from every other venue that it is a
@@ -294,8 +294,8 @@ class Watcher:
         if signal.shape in UNAMBIGUOUS:
             return True
         # A level call is the exception to the paragraph above, and on purpose.
-        # It is not unambiguous in that sense — a fundamental absolutely can
-        # explain why a level gave way — but it is the only shape here that is
+        # It is not unambiguous in that sense - a fundamental absolutely can
+        # explain why a level gave way - but it is the only shape here that is
         # a *finding* rather than a fault, and the one the channel exists for.
         # Every call that reaches this point is already `actionable`
         # (`_level_calls` drops the rest), which is a stricter gate than any
@@ -325,7 +325,7 @@ class Watcher:
 
             # Journalled with the features it was found from, because those are
             # the inputs a later model would need and they cannot be recovered
-            # from the stores — the consensus at that instant is not written
+            # from the stores - the consensus at that instant is not written
             # down anywhere else.
             ref = await decide(
                 self.journal,
@@ -360,14 +360,14 @@ class Watcher:
         """Attach what happened to the decision that predicted it.
 
         A decision without its result is half a training example, and until
-        this ran the journal held only halves — decisions with no outcomes and
+        this ran the journal held only halves - decisions with no outcomes and
         no parent links at all. The touch resolving *is* the label: which way
         price went from the level, how far, and whether a break it made was
         taken back.
 
         Every resolution is also published to `structures.resolutions`, which
-        is the only ground truth on the bus. Anything acting on `signals` — the
-        trader, in particular — is otherwise blind to whether the calls it
+        is the only ground truth on the bus. Anything acting on `signals` - the
+        trader, in particular - is otherwise blind to whether the calls it
         acted on were right, and a threshold that should move with outcomes
         cannot move without seeing them.
         """
@@ -375,7 +375,7 @@ class Watcher:
         for level, touch in self.engine.drain_resolved():
             # Announced before the journal lookup, and unconditionally. A
             # resolution is a fact about the market, not a label on one of our
-            # decisions — most touches were never predicted by anything, and
+            # decisions - most touches were never predicted by anything, and
             # those are exactly the ones a consumer learning what levels do
             # needs. Gating this on `ref` would publish only the outcomes we
             # had already called, which is the sample that teaches least.
@@ -403,7 +403,7 @@ class Watcher:
 
             # Keyed on the price recorded *with the touch*, not the level's
             # current one. The Kalman mean moves when the touch is folded in,
-            # and it is folded in before this runs — so looking up by
+            # and it is folded in before this runs - so looking up by
             # `level.price` searches for a key that no longer exists.
             ref = self._awaiting.pop((level.feed, round(touch.level_price, 8)), None)
             if ref is None:
@@ -478,7 +478,7 @@ class Watcher:
                 found = self.drift.observe(feed, mid, message.time, interval)
                 if found is not None:
                     # The tide changed: every level for this instrument learned
-                    # its behaviour in the old regime, so discount it — by how
+                    # its behaviour in the old regime, so discount it - by how
                     # big this change was against past ones, not by a constant.
                     self.engine.regime_changed(feed, found.features.get("severity_pct", 0.5))
                     signals.append(found)
@@ -514,7 +514,7 @@ class Watcher:
             signal = replace(signal, confluence=zone.timeframes)
             # One zone, one message. Three timeframes agreeing on a price is one
             # structure seen three times, and sending it three times says the
-            # opposite of what it means — it reads as three findings when it is
+            # opposite of what it means - it reads as three findings when it is
             # really one with more behind it. The strongest call speaks for the
             # zone, and the timeframes it beat are named in the message.
             key = id(zone)
@@ -528,7 +528,7 @@ class Watcher:
         Not cached *across* batches, and that is the deliberate half. Levels
         move under the Kalman filter and are pruned between batches, so a zone
         held longer than a batch would name timeframes that had since stopped
-        agreeing — staleness that reads as confidence, which is the worst kind.
+        agreeing - staleness that reads as confidence, which is the worst kind.
         Within a batch nothing moves, so grouping once is both correct and
         cheap: a few dozen levels through one pass of overlap grouping.
         """
@@ -548,7 +548,7 @@ class Watcher:
     async def _watch_calls(self, calls: Sequence[object]) -> None:
         """Record every level call, acted on or not, so the result can be paired.
 
-        Only `actionable` calls become signals — but a dataset containing only
+        Only `actionable` calls become signals - but a dataset containing only
         the calls we acted on is the worst possible sample to learn from. It
         cannot say when holding off was right, because holding off is never in
         it. Non-actionable calls are journalled as observations instead: same

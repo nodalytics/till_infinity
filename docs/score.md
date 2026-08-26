@@ -1,4 +1,4 @@
-# The score — a plan
+# The score - a plan
 
 **Status: designed, not built.** Nothing in this document exists in the code
 yet. It is written down first because the interesting decisions here are the
@@ -61,8 +61,8 @@ to `P(up)`.
 
 ### The missing weight: how strong the level is
 
-`w_l` currently asks two questions — *is it near* and *has it been touched
-often* — and neither of them asks whether the level is any **good**. A level
+`w_l` currently asks two questions - *is it near* and *has it been touched
+often* - and neither of them asks whether the level is any **good**. A level
 found by one method, seen on one timeframe, that has held twice out of nine
 counts exactly as much as one found by two methods, agreed on by four
 timeframes, that has held nineteen times in twenty. That is the largest hole in
@@ -74,7 +74,7 @@ from each other, which is what makes combining them worth anything:
 
 | | what it says | where it is |
 |---|---|---|
-| **how it was found** | one formation or both — a bar extreme that is also a run boundary has been confirmed by two methods | [todo.md](todo.md) 5a |
+| **how it was found** | one formation or both - a bar extreme that is also a run boundary has been confirmed by two methods | [todo.md](todo.md) 5a |
 | **how many timeframes see it** | a price four resolutions agree on is not the same object as one only 3m can see | confluence, computed and reported, weighting nothing |
 | **what it has done** | touches, hold rate, `strength` | measured, reported, consumed nowhere |
 
@@ -84,7 +84,7 @@ The shape that fits what is already here is a third factor:
 w_l = proximity_l · confidence_l · quality_l
 ```
 
-`quality_l` in `(0, 1]`, so a weak level is discounted rather than excluded —
+`quality_l` in `(0, 1]`, so a weak level is discounted rather than excluded -
 the same instinct as shrinking a conditional toward its prior rather than
 throwing it away. **Graded against what quality has looked like recently**, as
 a rolling quantile, for exactly the reason §3 gives for the thresholds: a
@@ -128,7 +128,7 @@ enter = q₉₀(|score|)          exit = q₇₀(|score|)
 
 Two of them, not one, which gives **hysteresis**: a state is entered at the 90th
 percentile and only released back to neutral below the 70th. A single threshold
-makes a score hovering near it flip state every bar — the noisiest possible
+makes a score hovering near it flip state every bar - the noisiest possible
 behaviour precisely when the evidence is weakest.
 
 ## 4. A state machine, so the channel gets transitions
@@ -147,16 +147,16 @@ which the cooldown and hourly ceiling then apply to as a backstop) rather than
 relying on it.
 
 Every transition is journalled with the score, the three EWMAs, the thresholds
-in force, the contributing levels and the regime — so the question *"why did it
+in force, the contributing levels and the regime - so the question *"why did it
 say that, then?"* has an answer later, and so the transitions become labelled
 examples once the following move resolves.
 
 ## 5. Sending a picture
 
 The chart is most of what makes that indicator readable, and Telegram takes
-images via `sendPhoto`. A small renderer — price with the levels drawn as
+images via `sendPhoto`. A small renderer - price with the levels drawn as
 **bands** rather than lines (they are zones, see levels §5b), the score below
-with its three EWMAs and the two current thresholds — would go on the message.
+with its three EWMAs and the two current thresholds - would go on the message.
 
 This is the only part that needs a new dependency (matplotlib), so it belongs
 behind an optional extra and must degrade to text when it is not installed. A
@@ -164,7 +164,7 @@ notifier that cannot send a picture should send the words, not fail.
 
 ## 6. Order of work
 
-1. `structures/score.py` — aggregation, the three EWMAs, rolling-quantile
+1. `structures/score.py` - aggregation, the three EWMAs, rolling-quantile
    thresholds, the state machine. Publishes on transition only.
 2. Wire into `structures/service.py` and the `structures.signals` topic; give it
    the shape name `score`.
@@ -175,7 +175,7 @@ notifier that cannot send a picture should send the words, not fail.
    term teaches the evaluation to accept a shape that is about to change.
 4. `sendPhoto` in the Telegram transport plus the renderer, behind an extra.
 5. **Evaluation, and not before there is data.** Score at the time against the
-   push that followed, from the journal — the same progressive-validation
+   push that followed, from the journal - the same progressive-validation
    discipline `facto.py` uses, against the same two baselines. Until that runs,
    the score is a summary of the model's opinion and is documented as one.
 

@@ -2,7 +2,7 @@
 
 `|edge| >= 0.08` decides whether a level call is said out loud. `edge` is
 `probability_up - base_rate_up`: how far the conditional sits from the
-unconditional, in probability. The number was never derived from anything — not
+unconditional, in probability. The number was never derived from anything - not
 in the commit that introduced it, not in the docs.
 
 [todo.md](todo.md) has carried "derive it from the journal" for a while, and the
@@ -27,13 +27,13 @@ proposed.
 
 790,000 stored bars replayed through the engine across 1m, 5m, 15m and 1h on
 fourteen instruments, pairing **every call with the outcome of the touch it opened**
-— 10,483 pairs. A call claims a direction through the sign of `edge`; the
+- 10,483 pairs. A call claims a direction through the sign of `edge`; the
 outcome is the sign of the realised `push_vol`. "Direction" below is how often
 those agree; "mean push" is the realised push in volatility units, signed
 positive when the call was right.
 
 **Bars only.** Production also drives touches from quotes, and today's evidence
-is that the two paths differ in ways that matter — the instant-resolution fix
+is that the two paths differ in ways that matter - the instant-resolution fix
 looked complete on a bars-only replay and was still 42.9% wrong on production
 because the quote path had no consensus. Treat everything here as the level
 machinery rather than the whole system.
@@ -44,7 +44,7 @@ machinery rather than the whole system.
 before. That is a plausible number rather than a broken one, and it is the
 finding that makes the rest of this document possible at all.
 
-## 1. Bigger edge, better call — and the gate is below the step
+## 1. Bigger edge, better call - and the gate is below the step
 
 By decile of |edge|, which is a finer cut than the first reading could support:
 
@@ -61,8 +61,8 @@ By decile of |edge|, which is a finer cut than the first reading could support:
 | 9 | 0.2514 | 1,042 | 74.7% | 0.86 |
 | 10 | 0.2959 | 1,049 | 77.9% | 1.11 |
 
-**The step survives and it is where it was.** Deciles 1 to 3 — everything below
-**0.0968** — sit between 54.8% and 61.5% with a mean push of about zero. Decile
+**The step survives and it is where it was.** Deciles 1 to 3 - everything below
+**0.0968** - sit between 54.8% and 61.5% with a mean push of about zero. Decile
 4 jumps to 69.3% and a push of 0.49, and nothing after it goes back.
 
 The first reading put the step at 0.11 on six bands; ten deciles on five times
@@ -98,7 +98,7 @@ and 84.9% of calls in each, so no single instrument is carrying the effect.
 ## 2. A rolling quantile is **worse** than a constant
 
 [todo.md](todo.md) proposed making the gate "a rolling quantile of realised
-edges rather than a constant — the same instinct as [score.md](score.md)'s
+edges rather than a constant - the same instinct as [score.md](score.md)'s
 thresholds". **That was wrong, and the measurement is not close.** Each rolling
 rule is compared against the constant that lets exactly the same number of
 calls through, on the same calls:
@@ -123,7 +123,7 @@ thresholds are on quantities in instrument-specific units, where a constant
 cannot mean the same thing on gold and EURUSD and a quantile is the only
 honest form. `edge` is *already* scale-free: it is a difference of two
 probabilities, and 0.11 means the same thing everywhere by construction.
-Normalising it per cell therefore destroys the comparability it already had —
+Normalising it per cell therefore destroys the comparability it already had -
 promoting the best of a weak cell and demoting a genuinely strong call in a
 cell that often has strong ones.
 
@@ -143,7 +143,7 @@ does not transport, only its ordering. Splitting the calls in half by time:
 
 Every band is far better in the second half, and the top band holds 163 calls
 in the first half against 432 in the second. That is the engine warming up
-during the replay — levels accumulating history, base rates settling — not a
+during the replay - levels accumulating history, base rates settling - not a
 market regime. The step at 0.11 appears in **both** halves (54.8% to 63.3% in
 the first, 71.4% to 88.0% in the second), so the boundary is real; the absolute
 accuracy either side of it is not a number to quote.
@@ -155,9 +155,9 @@ gate already removes most of what moving the threshold would remove.
 ## 4. Computing it instead of choosing it
 
 > **Partly re-run.** The rolling-quantile-versus-constant table below is from
-> the 2026-08-15 dataset. The re-run measured the rolling rules on their own —
+> the 2026-08-15 dataset. The re-run measured the rolling rules on their own -
 > q0.80 passes 19.3% of calls at 76.9% direction, q0.90 passes 9.6% at 77.8%,
-> q0.95 passes 5.2% at 78.0%, against the fixed 0.08 passing 75.8% at 72.0% —
+> q0.95 passes 5.2% at 78.0%, against the fixed 0.08 passing 75.8% at 72.0% -
 > and roughly 1,985 calls are still warming when they are asked, which is the
 > same warm-up problem the original found. The conclusion is unchanged and the
 > matched-volume comparison was not repeated.
@@ -166,7 +166,7 @@ The rolling quantile failing is an argument against *that* dynamic rule, not
 against every one. Three others were tried, each scored against the constant
 that passes exactly the same number of calls.
 
-**Evidence-scaled: `|edge| >= z * sqrt(p(1-p)/n)`.** The principled form — a
+**Evidence-scaled: `|edge| >= z * sqrt(p(1-p)/n)`.** The principled form - a
 difference of two probabilities is only meaningful against the uncertainty of
 the estimate, so require the conditional to sit a given number of standard
 errors from the base rate. It needs no threshold at all, only a confidence
@@ -189,8 +189,8 @@ matter if `k` varied with how much similar history actually existed.
 
 **Accuracy-targeting.** Rather than a quantile of edges, take the lowest
 |edge| whose *realised* accuracy above it has been clearing a target,
-re-estimated from outcomes as they arrive, and — this is the part the rolling
-quantile got wrong — kept **global** rather than per instrument.
+re-estimated from outcomes as they arrive, and - this is the part the rolling
+quantile got wrong - kept **global** rather than per instrument.
 
 Over the whole replay this looked like a clear win: +4.4, +5.1 and +3.6 points
 over the matched constant at targets of 70%, 75% and 80%.
@@ -219,19 +219,19 @@ Not accuracy. **Maintenance.**
 
 A constant is exactly as good as the adaptive rule *provided somebody keeps
 re-deriving it*, and the evidence that nobody does is this document. `0.08` was
-presumably defensible when it was set — [levels.md](levels.md) records it at the
+presumably defensible when it was set - [levels.md](levels.md) records it at the
 97.7th percentile of its input, passing 2.3% of calls. Today it passes 69.6%
 and sits below the median. Nothing changed it; the distribution moved underneath
 it when the counting bugs were fixed, and it went stale silently.
 
 An accuracy-targeting rule would have moved with it. That is the argument for
 building one, and it is a different argument from the one this file started
-with — it is about the threshold not needing an owner, rather than about it
+with - it is about the threshold not needing an owner, rather than about it
 being sharper.
 
 The cost is honest too: it needs outcomes before it can say anything (200 calls
 here), it will track a drift whether the drift is real or an artefact, and a
-target accuracy is still a number somebody picks — but it is a number with a
+target accuracy is still a number somebody picks - but it is a number with a
 meaning, which `0.08` never was.
 
 ## What to do
@@ -242,7 +242,7 @@ meaning, which `0.08` never was.
    on six bands over 1,990 calls; ten deciles over 10,483 put it at **0.0968**,
    and everything below runs 54.8% to 61.5% with a mean push of zero. 0.10 is
    the round number between them, and both readings agree on the only load-
-   bearing point — that 0.08 was below the step.
+   bearing point - that 0.08 was below the step.
 
    Two things changed besides the value. It is a **named constant** rather than
    a bare literal inside `actionable`, which is how it went unexamined for
@@ -251,7 +251,7 @@ meaning, which `0.08` never was.
    service has stopped using.
 2. **Then build the accuracy-targeting rule, and expect no accuracy from it.**
    It matched the constant three times out of three at matched volume, so it is
-   not an improvement in what gets said — it is an improvement in the threshold
+   not an improvement in what gets said - it is an improvement in the threshold
    not going stale, which this document is the evidence for. Global, never per
    instrument, and parameterised by a target accuracy rather than a quantile.
 3. **Do not build the rolling quantile**, and record why, because the instinct
@@ -269,8 +269,8 @@ meaning, which `0.08` never was.
    [todo.md](todo.md) item 4.
 6. **The step is the one finding here that has now survived a fivefold sample.**
    Direction fell from 71.1% to 68.8% overall and the absolute accuracies moved
-   throughout, but the shape — flat below the step, better above it, never
-   reverting — did not. Prefer it to any number in this document that has been
+   throughout, but the shape - flat below the step, better above it, never
+   reverting - did not. Prefer it to any number in this document that has been
    measured once.
 
 ## 5. Evidence scaling, in full
@@ -282,7 +282,7 @@ level shifts the odds by eleven points.
 
 **A gap is only meaningful against how confidently it was measured.** Take a
 base rate of 50%. A level touched four times went up three: p = 0.75, edge =
-+0.25, a huge number — and three-of-four from a fair coin happens 31% of the
++0.25, a huge number - and three-of-four from a fair coin happens 31% of the
 time, so nothing has been measured. A level touched four hundred times went up
 240: p = 0.60, edge = +0.10, less than half the size, and essentially
 impossible by chance.
@@ -299,13 +299,13 @@ Evidence scaling asks instead how far the gap is in units of its own noise:
 
 `sqrt(p(1-p)/n)` is how much a proportion estimated from `n` observations
 wobbles by chance, so dividing by it turns "eleven points" into "this many
-standard errors from the base rate" — the question a significance test asks.
+standard errors from the base rate" - the question a significance test asks.
 `z` is then a confidence level with a meaning rather than a number somebody
 picked.
 
 The effect is a threshold that **moves per call**: at n = 4 it demands an
 enormous edge, at n = 400 a small one. Measured here, `z = 1.5` ranged from
-**0.072 to 0.750** across calls — the same rule asking for a ten-fold different
+**0.072 to 0.750** across calls - the same rule asking for a ten-fold different
 edge depending on the evidence behind it.
 
 Two honest caveats. `prior` already shrinks `p` toward the kNN estimate with
@@ -315,8 +315,8 @@ independent observations, which touches at one level are not.
 
 ## 6. Why it has nothing to work with, which turned out to be the real finding
 
-§4 recorded that the effective evidence count barely varies — 12.5 / 13.8 /
-15.3 across the quartiles — because `Memory.neighbours` returns `scored[:k]`,
+§4 recorded that the effective evidence count barely varies - 12.5 / 13.8 /
+15.3 across the quartiles - because `Memory.neighbours` returns `scored[:k]`,
 the k nearest touches *regardless of distance*. The obvious repair is a
 similarity radius: take neighbours within a cutoff, so the count means "how
 much comparable history exists".
@@ -337,7 +337,7 @@ ordered neighbours by relevance, near pairs would agree more than far ones.
 | 2.0 - 3.0 | 188,021 | 65.1% |
 | 3.0 + | 144,890 | 68.8% |
 
-Agreement **rises** with distance, and it survives every control — within one
+Agreement **rises** with distance, and it survives every control - within one
 (feed, interval), across cells, and restricted to pairs more than a day apart,
 which removes the market-direction dependence that makes any two nearby touches
 agree. Four cuts, same direction each time.
@@ -347,7 +347,7 @@ The starkest form, taking twelve neighbours four different ways and voting:
 | neighbours used | direction called right |
 |---|---|
 | nearest 12 | 72.9% |
-| nearest 12, `1/(1+d)` weighted — what `prior` does | 73.8% |
+| nearest 12, `1/(1+d)` weighted - what `prior` does | 73.8% |
 | **random 12** | **72.7%** |
 | farthest 12 | 75.4% |
 
@@ -360,15 +360,15 @@ overlapping samples and probably the same subpopulation effect seen above.
 It does *not* mean the kNN prior is useless. Twelve neighbours vote the
 direction correctly 73% of the time against a 51% base rate, which is a large
 effect. It means **the similarity is not what is doing the work.** A pooled
-vote of recent touches captures the market's prevailing direction — the same
-dependence that makes any two touches agree 57-62% even a day apart — and
+vote of recent touches captures the market's prevailing direction - the same
+dependence that makes any two touches agree 57-62% even a day apart - and
 `Features.distance` adds nothing on top of it.
 
 So three things follow:
 
 1. **Do not build the similarity radius.** It would restrict the pool to
    neighbours carrying no advantage, and the resulting count would measure
-   proximity in a metric that does not predict — which is not the evidence
+   proximity in a metric that does not predict - which is not the evidence
    count §5 needs.
 2. **The `1/(1+d)` weighting in `prior` is not earning its place.** It gains
    0.9 points over unweighted-nearest and still loses to farthest. It is not
@@ -380,5 +380,5 @@ So three things follow:
 The repair is the metric, not the cutoff: which features belong in
 `Features.distance`, and with what weights, is an empirical question nobody has
 asked. [strength.md](strength.md) reached the same shape of conclusion from a
-different direction — the level's own record predicts, and the derived
+different direction - the level's own record predicts, and the derived
 quantities layered on top of it mostly do not.

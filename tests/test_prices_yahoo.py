@@ -76,8 +76,8 @@ async def test_shaping_a_frame_does_not_block_the_event_loop():
     `_download` was already threaded, but `resample` and `to_bars` were not,
     and they are the expensive half: pandas over the whole frame, then a Python
     loop building a dict per row. On the box that starved the structures
-    consumer for the length of every backfill — its queue filled and the bus
-    dropped quotes at eight a second — and because a backfill runs on every
+    consumer for the length of every backfill - its queue filled and the bus
+    dropped quotes at eight a second - and because a backfill runs on every
     startup, each deploy took the level pipeline down for the length of the
     backfill rather than the length of the restart.
     """

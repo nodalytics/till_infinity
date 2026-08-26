@@ -14,7 +14,7 @@ So this runs in four steps and the first is a gate on the other three:
 
   0. is the data still degenerate? if direction accuracy is near 100%, stop.
   1. where does 0.08 sit in the distribution of |edge| it is applied to?
-  2. does |edge| separate outcomes at all — bigger edge, better call?
+  2. does |edge| separate outcomes at all - bigger edge, better call?
   3. fixed constant against a causal rolling quantile, on the same calls.
 
 Bars only. Production also drives touches from quotes, so this is the level
@@ -33,7 +33,7 @@ from till_infinity.structures.reactions import MIN_EDGE
 DB = ".data/prices/prices.db"  # run from the repository root
 INTERVALS = ("1m", "5m", "15m", "1h")
 #: Read from the code rather than copied, so this harness cannot quietly test a
-#: threshold the service is no longer using — which is exactly what happened
+#: threshold the service is no longer using - which is exactly what happened
 #: while the constant was a bare literal in `actionable`.
 GATE = MIN_EDGE
 
@@ -141,7 +141,7 @@ def main():  # noqa: PLR0915 - a report, and splitting it would hide the order
     overall, decided = rate(paired)
     print(f"\n=== 0. sanity: direction called correctly {overall:.1%} of {decided:,} decided")
     if overall > 0.95:
-        print("    Still degenerate — a gate cannot be placed on this. Stopping.")
+        print("    Still degenerate - a gate cannot be placed on this. Stopping.")
         return
     print("    Plausible, so the rest of this means something.")
 

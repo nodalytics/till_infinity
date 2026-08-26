@@ -3,7 +3,7 @@
 A strategy answers one question: *given this signal, this instrument's trading
 rules and this quote, is there a trade here?* It does not place orders, size
 against the account's history, or know whether the day has already hit its loss
-limit — those belong to `risk` and `service`, and keeping them out is what lets
+limit - those belong to `risk` and `service`, and keeping them out is what lets
 two strategies run side by side without either one deciding the other's limits.
 
 The split is worth stating plainly because it is easy to blur:
@@ -18,7 +18,7 @@ The split is worth stating plainly because it is easy to blur:
 **A strategy claims no edge of its own.** Every one registered here reads the
 same measured signal `structures` publishes; they differ in which of those
 calls they will act on and how they place the stop and target around it. None
-of them adds an indicator, and that is deliberate — the edge has been measured
+of them adds an indicator, and that is deliberate - the edge has been measured
 upstream, and a rule invented here would be an unmeasured one riding on a
 measured one's reputation. Adding a strategy is a claim that a *subset* of
 those calls behaves differently, which is a claim the journal can settle.
@@ -63,7 +63,7 @@ class Strategy(ABC):
     #:
     #: Empty means "whatever the operator allows". A strategy whose thesis only
     #: holds on fast data says so here rather than relying on the deployment to
-    #: be configured for it — the module accepts every timeframe a level forms
+    #: be configured for it - the module accepts every timeframe a level forms
     #: on, because restricting the service restricts every strategy at once.
     entries: ClassVar[tuple[str, ...]] = ()
 
@@ -73,7 +73,7 @@ class Strategy(ABC):
     #: The pair is the point. A scalper anchored on 1h and entering on 3m is
     #: taking a fast trade in a slow structure's direction; the same scalper
     #: with no anchor is taking a fast trade in no direction at all. And a
-    #: swing anchored on 1d does not have to enter on 1d — dropping to 1h, or
+    #: swing anchored on 1d does not have to enter on 1d - dropping to 1h, or
     #: lower, buys a tighter stop for the same idea, which is risk reduction
     #: rather than a different trade.
     #:
@@ -129,7 +129,7 @@ class Strategy(ABC):
         Called for every matching signal before any of them is considered, and
         called on every strategy rather than only the one that ends up acting.
         A strategy that accumulated state only from the signals it was asked
-        about would be learning from a sample it had already filtered — the
+        about would be learning from a sample it had already filtered - the
         rolling-quantile gate would measure the distribution of what it already
         accepts, and the level book would only know about levels that produced
         a trade.
@@ -147,7 +147,7 @@ class Strategy(ABC):
 
         Defaults to the synchronous one, so the four arithmetic strategies are
         unchanged and `service` has a single call site. Only `council`
-        overrides it — making every strategy async would be a lie about what
+        overrides it - making every strategy async would be a lie about what
         the others cost.
         """
         return self.consider(payload, spec=spec, tick=tick, equity=equity)
@@ -185,8 +185,8 @@ def build(names: Sequence[str] | None, settings: Settings) -> list[Strategy]:
     unknown instrument does: a typo that silently runs one strategy instead of
     two is only noticed by the trades that never happened.
     """
-    from . import council as _council  # noqa: F401 — registers `council`
-    from . import scalper as _  # noqa: F401 — registers the built-ins
+    from . import council as _council  # noqa: F401 - registers `council`
+    from . import scalper as _  # noqa: F401 - registers the built-ins
 
     chosen = tuple(names) if names else settings.strategies
     unknown = [n for n in chosen if n not in STRATEGIES]

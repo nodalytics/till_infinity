@@ -1,6 +1,6 @@
 """Does cross-venue disagreement at the moment of touch predict anything?
 
-This project exists to measure disagreement between venues — `features.Book`
+This project exists to measure disagreement between venues - `features.Book`
 computes each venue's deviation from the consensus, and `anomaly.Detector`
 alerts on it. None of it is ever handed to the level model. `Features` carries
 nine numbers and every one of them describes the level or the approach; not one
@@ -10,7 +10,7 @@ So the first thing to try is the thing already collected: how far apart the
 venues were on the bar the touch opened on.
 
 Measured against AUC as well as accuracy, because the base rate is 78% and
-accuracy is nearly blind to a better ranking at that mix — which is what made
+accuracy is nearly blind to a better ranking at that mix - which is what made
 the level's own record look useless in `record.py` until AUC was added.
 """
 
@@ -76,14 +76,14 @@ for bar in _bars():
         rows.append(
             {
                 "above": 1.0 if touch.features.side.name == "ABOVE" else 0.0,
-                # Raw, and in volatility units — the only form comparable across
+                # Raw, and in volatility units - the only form comparable across
                 # instruments, which is the whole argument of levels.md §10b.
                 "venue_bps": seen["venue_bps"],
                 "venue_vol": seen["venue_bps"] / book.bps if book.bps else 0.0,
                 "feed": touch.feed,
                 "interval": touch.interval,
                 # The interaction. "Venues disagree" predicts *holding*, and
-                # holding is direction combined with side — so a linear model
+                # holding is direction combined with side - so a linear model
                 # cannot use it without the product.
                 "gap_x_side": (seen["venue_bps"] / book.bps if book.bps else 0.0)
                 * (1.0 if touch.features.side.name == "ABOVE" else -1.0),
@@ -147,8 +147,8 @@ if live:
         print(f"  {name:<16} {len(chunk):>6} {held / len(chunk):>11.1%}")
 
 
-# The confound: venue gaps are far wider on some instruments than others —
-# 3.46 volatility units on spx500 against 0.05 on gold — so a tercile split
+# The confound: venue gaps are far wider on some instruments than others -
+# 3.46 volatility units on spx500 against 0.05 on gold - so a tercile split
 # across all of them may just be an instrument split. Redone within each cell.
 print("\nwithin (feed, interval), so the split cannot be an instrument split")
 print(f"  {'cell':<16} {'n':>5} {'agreeing held':>14} {'disagreeing held':>17} {'gap':>7}")

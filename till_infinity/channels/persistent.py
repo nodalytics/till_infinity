@@ -1,7 +1,7 @@
-"""Persistent storage — SQLite outbox underneath Redis.
+"""Persistent storage - SQLite outbox underneath Redis.
 
 Design: the persistent layer sits BELOW the primary backend as a
-durable write-ahead log. It is not normally read from — it catches
+durable write-ahead log. It is not normally read from - it catches
 writes that failed to reach the primary and replays them later.
 
 Flow (send):
@@ -14,7 +14,7 @@ Flow (send):
 
 Flow (recv):
     - Receives go straight through the primary (Redis Streams)
-    - SQLite is not consulted on recv — it's a send-side safety net
+    - SQLite is not consulted on recv - it's a send-side safety net
 
 This gives you Redis's read performance with local-disk
 durability underneath, so a restart or transient outage doesn't drop
@@ -250,7 +250,7 @@ class DurableSender:
                                 e,
                             )
                         else:
-                            # No DLQ configured — leave in outbox, skip
+                            # No DLQ configured - leave in outbox, skip
                             await loop.run_in_executor(
                                 None,
                                 self._outbox.mark_attempt,
@@ -264,7 +264,7 @@ class DurableSender:
                             [row_id],
                             str(e),
                         )
-                    break  # stop on first failure — primary is flaky
+                    break  # stop on first failure - primary is flaky
             if drained:
                 await loop.run_in_executor(None, self._outbox.ack, drained)
                 self._metrics.drain(self._channel_name, len(drained))

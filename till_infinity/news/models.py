@@ -1,7 +1,7 @@
 """Value types for headlines and macro events.
 
 Two shapes, because they behave differently. A headline is immutable once
-published — it arrives whole and never changes. A calendar event is the
+published - it arrives whole and never changes. A calendar event is the
 opposite: it exists for days as a forecast, and the number that matters
 (`actual`) appears the instant the print lands. Storage has to respect that.
 """
@@ -168,12 +168,12 @@ class Event:
 
 @dataclass(frozen=True, slots=True)
 class Observation:
-    """One macro data point — a value for a series at a period.
+    """One macro data point - a value for a series at a period.
 
     `value` is the quantity as published, in the series' own units. `scale` is
     the provider's unit-multiplier metadata, kept for provenance only: it is
     **already reflected in value** and must not be applied again. IMF sends
-    reserves with ``SCALE="6"`` yet the number is plain USD — US reserves for
+    reserves with ``SCALE="6"`` yet the number is plain USD - US reserves for
     2026-07 arrive as 252,708,091,800, which is the $252.7bn actually held.
     Multiplying by 10**6 would report a quintillion.
     """

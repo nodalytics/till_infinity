@@ -20,7 +20,7 @@ TRADING_ENABLED=1 TRADING_LIVE=1 ...            # and orders reach the account
 ```
 
 `TRADING_ENABLED` starts the service. `TRADING_LIVE` arms it. Configuring a
-terminal does **not** arm it, and neither does anything else — there is exactly
+terminal does **not** arm it, and neither does anything else - there is exactly
 one variable that puts money at risk, and it is printed at start-up whichever
 way it is set.
 
@@ -30,7 +30,7 @@ the live bid/ask, outcomes journalled. What does not happen is the order.
 
 ## Windows and Linux
 
-The `MetaTrader5` Python package is a binding onto a running Windows terminal —
+The `MetaTrader5` Python package is a binding onto a running Windows terminal -
 an in-process call into a Win32 DLL. There is no Linux wheel and there will not
 be one. So there are three backends and the host decides which:
 
@@ -45,14 +45,14 @@ The middle two both put the terminal on another host and differ in what crosses
 the wire.
 
 **RPyC carries the module.** A Windows Python inside the Wine prefix serves the
-`MetaTrader5` module, and this process gets a proxy of it — same functions,
-same arguments, same namedtuples — so the native backend drives it with no
+`MetaTrader5` module, and this process gets a proxy of it - same functions,
+same arguments, same namedtuples - so the native backend drives it with no
 changes at all. `mt5_rpyc.py` is connection handling on top of `mt5_native.py`
 and no trading logic of its own, which is the point: a second copy would be a
 second place for the filling-mode logic to drift.
 
 ```bash
-# in the Wine prefix, once — the mt5linux package packages exactly this
+# in the Wine prefix, once - the mt5linux package packages exactly this
 wine python -m rpyc.utils.server --port 18812 ThreadedServer
 
 TRADING_RPYC_HOST=127.0.0.1 uv run till-infinity trading doctor
@@ -61,7 +61,7 @@ TRADING_RPYC_HOST=127.0.0.1 uv run till-infinity trading doctor
 Its cost is round trips: RPyC returns *netrefs*, handles to objects still
 living on the other side, so reading eleven fields off a position is eleven
 socket calls rather than eleven memory reads. Results are therefore
-materialised as they arrive — one round trip instead of dozens — falling back
+materialised as they arrive - one round trip instead of dozens - falling back
 to the netref when a value will not copy, because slow still works.
 
 **Never expose the RPyC server.** `allow_all_attrs` makes it a
@@ -81,37 +81,37 @@ matters:
 
 | | `metatrader-terminal` | `mt5-api` |
 |---|---|---|
-| account | `GET /terminal/account/info` | none — falls back to `TRADING_ACCOUNT_EQUITY` |
-| symbol list | `GET /symbols/` returns every name | none — suffixes must be probed |
+| account | `GET /terminal/account/info` | none - falls back to `TRADING_ACCOUNT_EQUITY` |
+| symbol list | `GET /symbols/` returns every name | none - suffixes must be probed |
 | symbol spec | `GET /symbols/info/{symbol}` | `GET /symbols/{symbol}` |
 | health | `GET /terminal/ping` | `GET /account/health` |
 | move a stop | `POST /positions/modify` by ticket | only by internal `trade_id` |
 | order reply | the terminal's `result` | the stored row, which serialised to `{}` |
 
 The last two were added to `metatrader-terminal` for this client. Trailing a
-stop over HTTP was impossible without a ticket route — the old one keys on a
+stop over HTTP was impossible without a ticket route - the old one keys on a
 row in the bridge's own database, so a position it had not recorded could not
-be touched — and an order used to come back carrying no ticket, no retcode and
+be touched - and an order used to come back carrying no ticket, no retcode and
 no fill price, leaving the caller to infer what it had just opened. Both are
 read defensively, so an older bridge still works.
 
 The client probes and adapts rather than picking one. That last row is not
 cosmetic: `metatrader-terminal` has **no** bare `/symbols/{symbol}` route, so a
 client hard-wired to it 404s on every symbol and concludes the broker carries
-none — a total failure that looks exactly like a naming problem. And on
+none - a total failure that looks exactly like a naming problem. And on
 `mt5-api` the `info` route is the unusable one, because its response model
 narrows the payload and drops `trade_tick_value` and `trade_tick_size`, which
 are precisely what sizing needs. Each project's working route is the other's
 broken one, so both are tried and the answer is accepted only when it carries a
-tick value — a 200 with a narrowed body is not an error, so status alone cannot
+tick value - a 200 with a narrowed body is not an error, so status alone cannot
 tell them apart.
 
 Where the symbol list exists it is used, and that is much the better path: the
 account's suffix is found rather than guessed from a list that cannot be
 complete.
 
-Selection is automatic, in a fixed order — explicit `TRADING_BACKEND`, then the
-native package, then the bridge, then paper — because a config file that has to
+Selection is automatic, in a fixed order - explicit `TRADING_BACKEND`, then the
+native package, then the bridge, then paper - because a config file that has to
 change between the two operating systems will be wrong on one of them. What it
 never does is fall back quietly: dropping from a terminal to paper is the
 difference between trading and pretending to.
@@ -125,7 +125,7 @@ uv run till-infinity trading doctor
 ┃ backend  ┃ usable       ┃ why not                                          ┃
 ┡━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
 │ mt5      │ no           │ the MetaTrader5 package is Windows-only and this  │
-│          │              │ is Linux — use the mt5-http bridge                │
+│          │              │ is Linux - use the mt5-http bridge                │
 │ mt5-http │ yes          │                                                  │
 │ paper    │ yes (chosen) │                                                  │
 └──────────┴──────────────┴──────────────────────────────────────────────────┘
@@ -137,7 +137,7 @@ answer per backend, and printing one of them is how the other gets missed.
 ## What can be traded here
 
 Gold and BTC by default. The other twelve instruments the price side tracks can
-be named, and will only trade if the broker actually quotes them — a retail MT5
+be named, and will only trade if the broker actually quotes them - a retail MT5
 account carrying `XAUUSD` and `BTCUSD` very often carries no `SOLUSD` under any
 name, and no `US100` either.
 
@@ -147,7 +147,7 @@ So availability is discovered once, at start-up, against the terminal:
 uv run till-infinity trading symbols -s gold -s btc -s sol
 ```
 
-Brokers also suffix every symbol by account type — `.raw`, `.r`, `m`, `.pro` —
+Brokers also suffix every symbol by account type - `.raw`, `.r`, `m`, `.pro` -
 and the suffix is the same across the account. It is **learned** rather than
 enumerated: probing ten suffixes against five candidate names for fourteen
 instruments is seven hundred round trips over the bridge, and noticing that
@@ -163,8 +163,8 @@ Six. Five are arithmetic over the measured signal and claim no edge of their
 own; the sixth is a panel of agents that reasons its own way to an answer. Every one reads the same
 measured `LEVEL` signal `structures` publishes; they differ in which calls they
 act on and where they put the stop and target. Adding a strategy is a claim
-that a *subset* of those calls behaves differently — which the journal can
-settle — not a new indicator.
+that a *subset* of those calls behaves differently - which the journal can
+settle - not a new indicator.
 
 ```bash
 uv run till-infinity trading strategies
@@ -185,13 +185,13 @@ one-position-per-instrument limit is what stops two of them doubling up.
 
 ### Entry and anchor: two timeframe sets, not one
 
-The service accepts **every timeframe a level forms on** — 1m, 3m, 5m, 15m, 1h,
+The service accepts **every timeframe a level forms on** - 1m, 3m, 5m, 15m, 1h,
 4h, 1d, 1w. Each strategy then declares two things, and the split is the useful
 part:
 
-- **`entries`** — where a trade may be *triggered*. The entry fixes the stop,
+- **`entries`** - where a trade may be *triggered*. The entry fixes the stop,
   so this is the lower set.
-- **`context`** — where the *bias* comes from. Higher timeframes that trigger
+- **`context`** - where the *bias* comes from. Higher timeframes that trigger
   nothing and say whether a trigger is worth taking.
 
 | strategy | triggers on | anchored to | needs it | hold |
@@ -204,19 +204,19 @@ part:
 | `council` | whatever is allowed | whatever is allowed | no | 45m |
 
 **`swing-level` is the clearest case.** Its bias is the daily, but it triggers
-as low as 15m — because the entry is what fixes the stop, and a stop measured
+as low as 15m - because the entry is what fixes the stop, and a stop measured
 on 15m is a fraction of one measured on 1d for the identical idea. Same thesis,
 smaller distance to being wrong, so the same money buys more of it. That is
 risk reduction, not a different trade.
 
-Context reaches a strategy through the signal's `confluence` — the timeframes
+Context reaches a strategy through the signal's `confluence` - the timeframes
 `structures` already found agreeing on that price. It is read rather than
 recomputed: asking again here would be a second, differently-wrong answer to a
 question settled upstream.
 
 An anchor has to be **higher**, not merely different. A 1m call confirmed by 3m
 is the same fast noise seen twice, which is a weaker claim than the one
-`confluence-scalp`'s name makes — and is what it used to accept.
+`confluence-scalp`'s name makes - and is what it used to accept.
 
 The effective entry set is the **intersection** of what the strategy claims and
 what `TRADING_INTERVALS` allows, so configuration can narrow a strategy and
@@ -232,13 +232,13 @@ trader in the same second.
 ### `confluence-scalp`, and a measurement that argues against it
 
 It takes only calls another timeframe agrees on. The intuition is the level
-model's own — several timeframes on one price is one structure seen several
-times — and it is worth knowing that **the only measurement bearing on it found
+model's own - several timeframes on one price is one structure seen several
+times - and it is worth knowing that **the only measurement bearing on it found
 nothing**.
 
 [strength.md](strength.md) tested confluence depth against whether a level
 holds. Four runs produced four different orderings, and as a ranking signal
-depth scores an **AUC of 0.476 and 0.452** — below 0.5, meaning that if
+depth scores an **AUC of 0.476 and 0.452** - below 0.5, meaning that if
 anything more agreement goes very slightly with breaking. `depth >= 3` against
 `depth < 3` is −2.2 [−6.3, +1.7], −5.2 [−9.4, −1.2] and +0.3 [−4.2, +4.9]: not
 one interval excludes zero the way this strategy assumes. The same document
@@ -246,7 +246,7 @@ calls `Zone.strength`'s `1 + 0.15 × (depth − 1)` multiplier "unearned".
 
 Two things separate this strategy from that result, and neither is a defence
 strong enough to call it validated. What was measured is *did price get through
-the level*, which strength.md is explicit is not *did the trade make money* — a
+the level*, which strength.md is explicit is not *did the trade make money* - a
 level that holds after a 3v excursion is a hold and a loss. And this **selects**
 on depth rather than weighting by it, which is a different object from a
 multiplier on a score.
@@ -267,7 +267,7 @@ It learns from **every** call published, including the ones it refuses.
 Accumulating only from calls that reached the gate would have the three lines
 agreeing with themselves by construction.
 
-### `council` — agents that reason their own way to a trade
+### `council` - agents that reason their own way to a trade
 
 The other four read the measured signal and apply arithmetic. This one hands
 the same evidence to several models with **different reasoning modes** and lets
@@ -279,7 +279,7 @@ TRADING_STRATEGIES=level-scalp,council
 
 **Why different modes rather than several copies.** Asking one model five times
 gives five answers with the same blind spots. Four told to reason in different
-ways fail differently — and only then does agreement mean anything. A committee
+ways fail differently - and only then does agreement mean anything. A committee
 that agrees because every member made the same mistake has confirmed nothing.
 
 | voice | argues from | its characteristic error |
@@ -287,12 +287,12 @@ that agrees because every member made the same mistake has confirmed nothing.
 | `trend` | continuation | late, buying exhaustion |
 | `contrarian` | exhaustion, mean reversion | standing in front of something that keeps going |
 | `quant` | the numbers only, against base rates | blind to context |
-| `skeptic` | refusal — must be convinced | abstaining when there was a trade |
+| `skeptic` | refusal - must be convinced | abstaining when there was a trade |
 
 The skeptic matters most. Somebody whose job is to say no is the difference
 between a panel and a chorus.
 
-**They discuss, once.** First independently — a first round that could see its
+**They discuss, once.** First independently - a first round that could see its
 neighbours would collapse onto whoever answered first, which is the failure a
 committee exists to avoid. Then each sees what the others concluded and may
 revise. One round only, because the second is where a panel starts agreeing for
@@ -300,7 +300,7 @@ social rather than evidential reasons, and because every round is four more
 model calls.
 
 There is no judge. A judge is another model with another blind spot; the
-resolution is arithmetic — a quorum on a side, and the median of what those who
+resolution is arithmetic - a quorum on a side, and the median of what those who
 agreed proposed.
 
 **Abstaining is a real answer** and is removed from the count rather than
@@ -308,21 +308,21 @@ counted as opposition. A panel that cannot say "I don't know" will always find
 a trade.
 
 **What they may and may not decide.** They choose the side and the stop and
-target *in volatility units* — the shape of the trade, in the project's own
+target *in volatility units* - the shape of the trade, in the project's own
 scale-free currency. They do not choose the size: that is `sizing.lots` against
 the risk budget, and it is not a matter of opinion. Their numbers are clamped
-to 0.4–4v on the stop and 0.5–8v on the target, because a model proposing a
+to 0.4-4v on the stop and 0.5-8v on the target, because a model proposing a
 forty-unit stop is failing rather than being bold, and clamping makes the
 failure harmless instead of expensive.
 
 **Everything still passes the gates.** The council's intent goes through
-`Guard` exactly as any other — news blackout, drift pause, broker dislocation,
+`Guard` exactly as any other - news blackout, drift pause, broker dislocation,
 exposure, reward-to-risk, spread, the daily stop. It decides what to propose,
 not what is allowed.
 
 **It costs money.** Four voices over two rounds is eight model calls per signal
 considered, so `TRADING_COUNCIL_DAILY_CALLS` is a ceiling rather than a tuning
-knob. Any failure — timeout, no credential, a malformed answer — reads as an
+knob. Any failure - timeout, no credential, a malformed answer - reads as an
 abstention, because a model that timed out has not made a case for a trade.
 
 Like every other strategy here, it is **unvalidated**. It is a named strategy
@@ -346,8 +346,8 @@ to ten points of direction, in all four comparisons, and the reason is specific:
 
 That document ends with "do not build the rolling quantile, and record why,
 because the instinct will recur". It recurred, here, and this is the record.
-Rolling quantiles remain right for anything in volatility units — which is most
-of this project — and wrong for this one quantity.
+Rolling quantiles remain right for anything in volatility units - which is most
+of this project - and wrong for this one quantity.
 
 The same reading fixed a second thing. This module first shipped `min_edge` at
 **0.08**, below the **0.10** `reactions.MIN_EDGE` that `structures` already
@@ -362,9 +362,9 @@ configured at or below the upstream gate again.
 The desk's setup: a level below price is something to sell down to, a level
 above is something to buy up to, once something confirms the direction. The
 confirmation is the ordinary level call; the target is the next level the book
-knows about in that direction. The geometry is inverted from the others — they
+knows about in that direction. The geometry is inverted from the others - they
 enter at a level and take the push, this one enters on a call and exits at a
-level — while the stop is unchanged, still anchored beyond the confirming
+level - while the stop is unchanged, still anchored beyond the confirming
 level, because that is still what makes the read wrong.
 
 **[magnet.md](magnet.md) tested whether levels pull price and found they do
@@ -377,8 +377,8 @@ to become one:
 - the target stops `approach_buffer_vol` (a quarter unit) **short** of the
   level, because the last stretch into the zone is precisely the part the
   measurement does not support;
-- the distance is checked against `structures.timing` — magnet.md's own
-  baseline — and refused when a driftless walk would rarely cover it inside the
+- the distance is checked against `structures.timing` - magnet.md's own
+  baseline - and refused when a driftless walk would rarely cover it inside the
   hold.
 
 What remains is a rule for choosing a *target distance*, which the null does
@@ -387,8 +387,8 @@ that this is the one strategy here resting on a desk observation rather than a
 measurement in this repository, and that the repository's nearest measurement
 is a null.
 
-It is also given longer to work — forty-five minutes rather than the default
-thirty — because the observation is that it takes twenty to thirty minutes to
+It is also given longer to work - forty-five minutes rather than the default
+thirty - because the observation is that it takes twenty to thirty minutes to
 deliver, and the default hold would close a good trade at the moment it started
 paying. A strategy declares its own hold; it is carried on the intent, so a
 position is timed out against the thesis that opened it.
@@ -402,7 +402,7 @@ description of last week.
 ## Risk plans
 
 Ten numbers control how much this can lose, and set individually they are ten
-chances to be inconsistent — 2% per trade under a 3% daily stop halts the day
+chances to be inconsistent - 2% per trade under a 3% daily stop halts the day
 on the second loss, which is not a plan. So they are grouped and named:
 
 ```bash
@@ -416,8 +416,8 @@ uv run till-infinity trading plans
 | standard | 0.25% | 3.0% | 12 | 4 | 58% | 1.2 |
 | aggressive | 0.50% | 6.0% | 12 | 6 | 55% | 1.0 |
 
-Each keeps the same relationship between per-trade risk and the daily stop — a
-dozen consecutive losses to a halt — so moving between them changes what is at
+Each keeps the same relationship between per-trade risk and the daily stop - a
+dozen consecutive losses to a halt - so moving between them changes what is at
 stake without changing how the account behaves on a bad run. What varies is
 selectivity: the conservative plan demands a higher probability and a better
 reward-to-risk, and therefore trades less.
@@ -433,8 +433,8 @@ did.
 Strategy decides whether a signal is worth trading. Risk decides whether *this
 account, right now* should take another one. Three are worth their reasoning:
 
-**One position per instrument.** A level fires repeatedly — that is what a
-level is — and `structures` re-arms it after each resolution. Without this, a
+**One position per instrument.** A level fires repeatedly - that is what a
+level is - and `structures` re-arms it after each resolution. Without this, a
 level that is quietly wrong is not one loss but one loss per re-arm, all the
 same direction, all for the same reason.
 
@@ -450,7 +450,7 @@ forty and fatal against one of five, and a scalper's targets are small by
 construction.
 
 Four more come from outside the level model, in `context.py` and
-`exposure.py`. All of them fail open — a missing input never stops the system
+`exposure.py`. All of them fail open - a missing input never stops the system
 trading, because a collector restarting is not a reason to halt.
 
 **A high-impact release about to land.** `news.events` is on the bus with
@@ -462,8 +462,8 @@ lands, whereas afterwards the spread is at its widest and the first move
 frequently reverses.
 
 The `country` field carries **both** an ISO code and a currency code depending
-on the source — TradingView writes `US`, `DE`, `GB`; ForexFactory writes `USD`,
-`EUR`, `GBP` — which was checked against the stored events rather than assumed.
+on the source - TradingView writes `US`, `DE`, `GB`; ForexFactory writes `USD`,
+`EUR`, `GBP` - which was checked against the stored events rather than assumed.
 Both forms are mapped.
 
 **Our broker out of line with the venues.** You have six venues quoting each
@@ -481,8 +481,8 @@ discounts them; the trader stops entering for `drift_pause` seconds while they
 re-form.
 
 **Too much of the book on one currency.** `max_positions` counts tickets. Long
-EURUSD, long GBPUSD and long AUDUSD is **three positions and one trade** —
-all short dollars, right together and wrong together — and a limit reading "3
+EURUSD, long GBPUSD and long AUDUSD is **three positions and one trade** -
+all short dollars, right together and wrong together - and a limit reading "3
 of 4 used" has authorised triple what it thinks. So exposure is decomposed into
 currency legs and limited there, weighted by money at risk rather than by lots,
 since a 0.01-lot gold position and a 1-lot EURUSD position are comparable in
@@ -494,7 +494,7 @@ long-the-thing, short-USD because that is how they are quoted. A measured
 correlation matrix would be better on the day it was fitted and would then need
 refitting and monitoring; this version cannot go stale. The limit is 2x the
 per-trade risk in every plan, so the third same-direction dollar trade is the
-one refused — which is the case it exists for.
+one refused - which is the case it exists for.
 
 ## Moving a stop, once the trade is on
 
@@ -512,18 +512,18 @@ that nothing here answers. Shipping them on would be asserting the answer. They
 exist so the experiment can be run: four combinations, compared on the journal
 once there are enough closed trades.
 
-The stop only ever moves toward profit — every path returns the existing stop
+The stop only ever moves toward profit - every path returns the existing stop
 unless the new one is strictly better. A rule that can widen a stop is not risk
 management, it is the trade asking for more room after it has started going
 wrong, and that does not get cheaper for being automated.
 
 If you turn these on, **switch the mt5-api trailing handler off**. It runs on
 its own twenty-second timer, and two things moving the same stop on different
-clocks race — with the loser looking like a broker fault.
+clocks race - with the loser looking like a broker fault.
 
 ## Ground truth on the bus
 
-`structures.resolutions` carries what a touch actually did — held, broke,
+`structures.resolutions` carries what a touch actually did - held, broke,
 trapped, chopped, with the push and the time it took. It went only to the
 journal until now, which left everything consuming `structures.signals` blind
 to whether the calls it acted on were right.
@@ -534,9 +534,9 @@ a consumer learning what levels do needs to see. Gating on "did we have a
 decision for this" would publish only the sample that teaches least.
 
 The trader subscribes and counts them today, and acts on none of them. That is
-deliberate — the topic has a subscriber from the day it shipped, so whatever is
+deliberate - the topic has a subscriber from the day it shipped, so whatever is
 built on it first is not also debugging whether the messages arrive. What it
-unlocks: the back-check strategy (a measured asymmetry — 27 of 70 breakout
+unlocks: the back-check strategy (a measured asymmetry - 27 of 70 breakout
 attempts were false), edge.md's accuracy-targeting gate, and eventually a Kelly
 fraction. None of them exists yet.
 
@@ -546,7 +546,7 @@ Two conversions, both of which have to be the right way round.
 
 Volatility units to price, because `structures` measures everything in them:
 `price × vol_bps × multiple / 10_000`. The signal carries `risk_vol` and
-`expected_push_vol` as multiples and `vol_bps` as the unit — the last of those
+`expected_push_vol` as multiples and `vol_bps` as the unit - the last of those
 was added for this module, since a consumer reading signals off the bus cannot
 price a distance without it.
 
@@ -555,7 +555,7 @@ stop `d` away costs `d / tick_size × tick_value` per lot. Inverting that
 against the risk budget gives lots.
 
 Then round **down** to the broker's lot step and check the result still clears
-the minimum lot — in that order. Clamping up to the minimum first silently
+the minimum lot - in that order. Clamping up to the minimum first silently
 turns "this trade is too small to take" into "take it anyway at a risk nobody
 authorised", which on a 0.25% budget and a tight stop is most trades on an
 account whose minimum lot is 0.1. When it does not fit, the refusal says what
@@ -564,7 +564,7 @@ the minimum lot *would* have risked.
 ## What gets written down
 
 Every fill is a `decide` with the numbers it was made from. Every close is an
-`outcome` pointing back at it — the label. Every trade the strategy wanted and
+`outcome` pointing back at it - the label. Every trade the strategy wanted and
 the account refused is an `observe`, because that is the half of the record
 that says what the limits cost.
 
@@ -573,7 +573,7 @@ declining on probability is the normal case, hundreds a day, and writing all of
 it down would bury the refusals that matter under the filter working.
 
 Positions are **reconciled, not assumed**. A stop hit server-side leaves no
-message on any bus — the position is simply gone next time it is asked for — so
+message on any bus - the position is simply gone next time it is asked for - so
 the open set is compared on every heartbeat and a vanished ticket is settled at
 its last known price. That is exact on paper and slightly stale against a real
 broker, and the journal entry says which, in `exit_source`.
@@ -610,7 +610,7 @@ uv run till-infinity trading doctor
 ```
 
 On its own the trader attaches, resolves what it can trade, and then waits for
-signals — it needs `structures` publishing to the same bus, which on one
+signals - it needs `structures` publishing to the same bus, which on one
 machine means `till-infinity run` and across several means Redis. It says so at
 start-up rather than sitting silent.
 
@@ -628,7 +628,7 @@ things about how it reports are deliberate:
 
 **R, not money.** A win of 40 on a trade risking 20 and a win of 40 on one
 risking 200 are not the same result, and averaging currency hides it. R is
-profit over the risk the trade was sized for — the only unit in which trades of
+profit over the risk the trade was sized for - the only unit in which trades of
 different sizes compare.
 
 **The count, always, beside the number.** Under thirty closed trades the rates
@@ -641,7 +641,7 @@ had measured.
 different things, so `--mode` defaults to paper and `both` has to be asked for.
 
 **An idle trader says which kind of idle it is.** Every few minutes it logs
-what it has taken and what it passed over, per strategy and gate — or, if it
+what it has taken and what it passed over, per strategy and gate - or, if it
 has seen nothing at all, what it is watching for. handoff.md names this as a
 class of bug: correct silence and broken silence are indistinguishable, and
 this module produced a day of the second kind while looking like the first.
@@ -654,14 +654,14 @@ which is why every `Refusal` carries a machine-readable gate name.
 
 `structures` computes a level's hold rate on the side price is arriving from
 and, until recently, published it nowhere. [strength.md](strength.md) measures
-it as the strongest thing a level knows — 59.4% to 92.2% across four buckets
+it as the strongest thing a level knows - 59.4% to 92.2% across four buckets
 with an **AUC of 0.648**, and the only signal in that study that got *stronger*
 when the volatility denominator bug was fixed, against `Level.strength`'s 0.548
 for a composite that does not contain it.
 
 Level signals now carry `record_hold` and `record_n`. Unshrunk, with the count
 beside it, because a rate with two decisive interactions behind it and one with
-ninety are not the same number and must not arrive looking like it — and
+ninety are not the same number and must not arrive looking like it - and
 because the pooled rate to shrink toward is instrument- and epoch-specific, so
 the choice belongs to the consumer.
 
@@ -673,7 +673,7 @@ whenever a strategy is written.
 
 No strategy here has been evaluated against its own outcomes. The signal they
 all read is measured; the rules for acting on it are not, and the journal is
-being collected so that they can be. Until that evaluation runs — the same
-progressive-validation discipline `facto.py` uses, against the same baselines —
+being collected so that they can be. Until that evaluation runs - the same
+progressive-validation discipline `facto.py` uses, against the same baselines -
 this is a way of acting on the level model consistently and recording what
 happened, which is a different and smaller claim than an edge.

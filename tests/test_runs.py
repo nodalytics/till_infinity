@@ -1,4 +1,4 @@
-"""Swings as run boundaries — the formation experiment in `runs.py`.
+"""Swings as run boundaries - the formation experiment in `runs.py`.
 
 What is worth pinning is the point-in-time discipline and the claim that
 motivates the whole idea: a run boundary is the same price whichever
@@ -47,7 +47,7 @@ def test_confirmation_is_the_retracement_rather_than_a_bar_count():
     """A PIP waits a fixed number of bars; a run waits for the proof.
 
     The retracement past the threshold is what establishes the turn, so the
-    bar that completes it is when the boundary became knowable — earlier on a
+    bar that completes it is when the boundary became knowable - earlier on a
     sharp reversal, later on a slow one, which is the honest answer in both.
     """
     times, prices = _zigzag()
@@ -93,8 +93,8 @@ def test_a_boundary_holds_its_price_across_resolutions():
     """The claim the whole idea rests on.
 
     One path, observed on two sampling grids. A run boundary should be the
-    same price on both — the runs differ in length, the meeting point does not
-    — where a bar extreme is whichever bar happened to be picked.
+    same price on both - the runs differ in length, the meeting point does not
+    - where a bar extreme is whichever bar happened to be picked.
 
     Both are measured against **one** volatility, so the threshold is the same
     *price* move at each resolution. Without that control the finer series
@@ -149,7 +149,7 @@ def test_an_origin_records_every_formation_that_found_it():
     """Agreement is the reason to merge rather than choose, so it must survive.
 
     A level both passes find has been confirmed by two methods that fail
-    differently, and that is measurably stronger — 81.7% against 77.1% for
+    differently, and that is measurably stronger - 81.7% against 77.1% for
     run-only over 726 decisive interactions. None of that is visible unless the
     origin keeps both names.
     """

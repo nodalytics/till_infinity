@@ -1,7 +1,7 @@
 # Research
 
 Experiments and their results. Each document is a question, what was run to
-answer it, and what the answer turned out to be — including when the answer was
+answer it, and what the answer turned out to be - including when the answer was
 "do not build this", which it often is.
 
 Design documents live in [docs/](../docs). This folder is for things that were
@@ -10,20 +10,20 @@ rather than believed.
 
 | | |
 |---|---|
-| [models.md](models.md) | **measured** — would trees, forests, cosine similarity or an MLP help; a 1KB logistic regression beats all of them, and five times the data did not change that |
-| [features.md](features.md) | **measured** — `side` alone matches all nine features together, generated features make it worse, and the trivial "level holds" rule still beats our directional call everywhere but the top decile |
-| [volatility.md](volatility.md) | **measured** — the estimate is well calibrated and its half-life is well past the optimum; a flat 20-bar mean beats it at every interval |
-| [resolution.md](resolution.md) | **measured on production** — two thirds of outcomes resolved within two seconds; a bar's wick was resolving touches born inside it, and no bars-only replay could see it |
-| [states.md](states.md) | **measured** — does a level's behaviour change over its life; it does not, recency predicts worse than pooling, and there is no flip |
-| [structure.md](structure.md) | **measured** — the transit graph, confluence and the shape of the level set; the graph is flat and the one strong-looking property is `side` wearing a distance |
-| [magnitude.md](magnitude.md) | **measured** — does it know how far, and what being wrong costs; `expected_push` ranks profit 7.5x and the `reward_to_risk` gate inverts the sign of the return |
-| [prior.md](prior.md) | **measured** — what `edge` is actually measuring; subtract a side-aware baseline and the level's record plus its neighbours predict at 51.8%, AUC 0.520 |
-| [turns.md](turns.md) | **measured** — can a major turn be seen coming; yes, weakly. AUC 0.595 purged over 310 turns, and `vol` alone carries it |
-| [cycles.md](cycles.md) | **measured** — does a level's place in the larger move matter; one cell separates by nothing at all, and the AUC gain's interval includes zero |
-| [bandits.md](bandits.md) | design note — where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
+| [models.md](models.md) | **measured** - would trees, forests, cosine similarity or an MLP help; a 1KB logistic regression beats all of them, and five times the data did not change that |
+| [features.md](features.md) | **measured** - `side` alone matches all nine features together, generated features make it worse, and the trivial "level holds" rule still beats our directional call everywhere but the top decile |
+| [volatility.md](volatility.md) | **measured** - the estimate is well calibrated and its half-life is well past the optimum; a flat 20-bar mean beats it at every interval |
+| [resolution.md](resolution.md) | **measured on production** - two thirds of outcomes resolved within two seconds; a bar's wick was resolving touches born inside it, and no bars-only replay could see it |
+| [states.md](states.md) | **measured** - does a level's behaviour change over its life; it does not, recency predicts worse than pooling, and there is no flip |
+| [structure.md](structure.md) | **measured** - the transit graph, confluence and the shape of the level set; the graph is flat and the one strong-looking property is `side` wearing a distance |
+| [magnitude.md](magnitude.md) | **measured** - does it know how far, and what being wrong costs; `expected_push` ranks profit 7.5x and the `reward_to_risk` gate inverts the sign of the return |
+| [prior.md](prior.md) | **measured** - what `edge` is actually measuring; subtract a side-aware baseline and the level's record plus its neighbours predict at 51.8%, AUC 0.520 |
+| [turns.md](turns.md) | **measured** - can a major turn be seen coming; yes, weakly. AUC 0.595 purged over 310 turns, and `vol` alone carries it |
+| [cycles.md](cycles.md) | **measured** - does a level's place in the larger move matter; one cell separates by nothing at all, and the AUC gain's interval includes zero |
+| [bandits.md](bandits.md) | design note - where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
 
 Findings that changed the code, or that belong next to it, are written up in
-`docs/` instead — [edge.md](../docs/edge.md), [strength.md](../docs/strength.md),
+`docs/` instead - [edge.md](../docs/edge.md), [strength.md](../docs/strength.md),
 [absorption.md](../docs/absorption.md), [magnet.md](../docs/magnet.md),
 [news-dedup.md](../docs/news-dedup.md).
 
@@ -83,6 +83,6 @@ enough to pin a constant. Where a number is quoted as transportable, the
 document says so and shows the split that establishes it.
 
 **Measured after 2026-08-14.** Everything before that date was counted on data
-where roughly half of all outcomes were artefacts — touches resolving at the
-instant they opened — so earlier measurements in this project are not
+where roughly half of all outcomes were artefacts - touches resolving at the
+instant they opened - so earlier measurements in this project are not
 comparable, and several were withdrawn.

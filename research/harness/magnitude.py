@@ -18,7 +18,7 @@ measured it.
 ## The nulls, chosen before the measurement
 
 Each claim is scored against the cheapest thing that could replace it, because
-that is the only comparison that says whether the machinery earns its place —
+that is the only comparison that says whether the machinery earns its place -
 and in this project the cheap thing keeps winning.
 
 | claim | null |
@@ -32,7 +32,7 @@ and in this project the cheap thing keeps winning.
 A call from **above** claiming *up* is the level holding, so its profit is
 `+push_vol`; from **below** claiming *down* it is `-push_vol`. `excursion_vol`
 is how far price got **beyond** the level, which for that trade is exactly the
-adverse excursion — so `excursion_vol >= risk_vol` is a stop-out, measured
+adverse excursion - so `excursion_vol >= risk_vol` is a stop-out, measured
 rather than assumed.
 """
 
@@ -139,7 +139,7 @@ def collect():
             # Two different trades, and conflating them was the first version
             # of this script. `held` is the trivial rule's trade: the level
             # holds, so a touch from above goes up. `realised` is **the call's
-            # own** trade, taken in the direction `edge` claims — which differs
+            # own** trade, taken in the direction `edge` claims - which differs
             # from the trivial rule on about a tenth of calls, and that tenth
             # is precisely what a measurement of the model is about.
             push = float(touch.push_vol)
@@ -252,7 +252,7 @@ def mechanism(rows) -> None:
 
     `reward_to_risk` is `|net_push| / risk_vol`, and the denominator varies far
     more than the numerator. A high ratio is therefore mostly a **small
-    `risk_vol`** — a tight zone, which puts the stop close to the level, which
+    `risk_vol`** - a tight zone, which puts the stop close to the level, which
     is where price sits while the level is working. If that is the mechanism,
     the ratio is a measure of how easily a trade is stopped out wearing the
     name of how much it is worth.

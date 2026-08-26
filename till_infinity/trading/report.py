@@ -2,7 +2,7 @@
 
 Every trade writes two entries: a `decision` carrying the numbers it was sized
 from, and an `outcome` pointing back at it with what happened. Pairing them is
-the whole evaluation, and this module does only that — reads the pairs, groups
+the whole evaluation, and this module does only that - reads the pairs, groups
 them, and reports.
 
 **It computes no claim the data cannot carry.** Three disciplines, all of them
@@ -26,7 +26,7 @@ compared against reads as a finding when it is a summary.
 
 The declines are counted too, per gate. A gate that never fires is doing
 nothing and a gate that fires constantly is mis-set, and neither is visible
-without the tally — which is why `Refusal` carries a machine-readable `gate` in
+without the tally - which is why `Refusal` carries a machine-readable `gate` in
 the first place.
 """
 
@@ -41,7 +41,7 @@ from typing import Any
 from ..journal import DEFAULT_DB, Entry, Kind, read
 
 #: Closed trades below which no rate is characterised. Not a significance
-#: threshold — it is the point below which quoting a percentage misleads more
+#: threshold - it is the point below which quoting a percentage misleads more
 #: than it informs, and the honest output is the count itself.
 ENOUGH = 30
 
@@ -123,7 +123,7 @@ class Group:
         if not self.count:
             return "no closed trades"
         if not self.enough:
-            return f"{self.count} trades — too few to characterise (need {ENOUGH})"
+            return f"{self.count} trades - too few to characterise (need {ENOUGH})"
         edge = ""
         if against is not None:
             edge = f", {self.win_rate - against:+.1%} against the pooled rate"
@@ -170,7 +170,7 @@ def trades(path: Path | str = DEFAULT_DB, *, limit: int = 100_000) -> list[Trade
 
     Built by pairing outcomes to their parents rather than by reading outcomes
     alone, because the outcome carries what happened and the decision carries
-    what was intended — the strategy that opened it, and the risk it was sized
+    what was intended - the strategy that opened it, and the risk it was sized
     for, which is the denominator of every number worth reporting.
     """
     outcomes = read(path, actor="trading", kind=Kind.OUTCOME, limit=limit)

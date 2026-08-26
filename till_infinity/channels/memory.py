@@ -1,4 +1,4 @@
-"""In-memory MPMC channel — bounded or unbounded.
+"""In-memory MPMC channel - bounded or unbounded.
 
 Thin asyncio.Queue wrapper with close semantics matching Rust
 async-channel: once closed, sends raise ChannelClosed and pending
@@ -18,7 +18,7 @@ T = TypeVar("T")
 
 class MemoryChannel(Channel[T], Generic[T]):
     def __init__(self, capacity: int | None = None) -> None:
-        # capacity=0 would block forever — treat as unbounded
+        # capacity=0 would block forever - treat as unbounded
         self._queue: asyncio.Queue[T] = asyncio.Queue(maxsize=capacity or 0)
         self._closed = False
         self._capacity = capacity
@@ -42,7 +42,7 @@ class MemoryChannel(Channel[T], Generic[T]):
                 return self._queue.get_nowait()
             if self._closed:
                 raise ChannelClosed("channel is closed and empty")
-            # Wait for something to arrive — or the channel to close.
+            # Wait for something to arrive - or the channel to close.
             try:
                 return await asyncio.wait_for(self._queue.get(), timeout=0.1)
             except TimeoutError:

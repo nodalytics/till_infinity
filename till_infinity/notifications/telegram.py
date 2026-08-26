@@ -5,7 +5,7 @@ One bot token, any number of chats:
     export TELEGRAM_BOT_TOKEN=123456:AA...
     export TELEGRAM_CHAT_IDS="ops=-1001111|warning, feed=-1002222"
 
-Chat ids are awkward to find by hand, so they can be discovered instead —
+Chat ids are awkward to find by hand, so they can be discovered instead -
 ``till-infinity notify chats`` asks the bot what it can see. Two caveats come
 from the API itself and are worth knowing before trusting it:
 
@@ -15,7 +15,7 @@ from the API itself and are worth knowing before trusting it:
   modes are mutually exclusive.
 
 Messages are sent as HTML because the alternative, Markdown, makes any stray
-underscore or asterisk in a symbol name a parse error — and instrument names
+underscore or asterisk in a symbol name a parse error - and instrument names
 are full of them. Everything interpolated is escaped.
 """
 

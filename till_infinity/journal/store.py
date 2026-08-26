@@ -3,7 +3,7 @@
 Append-only, and that is enforced rather than promised: writes are
 `INSERT OR IGNORE` on a content-addressed id, there is no update path, and an
 outcome is a *new* entry pointing back at the decision it judges. A journal you
-can edit is not a journal — the value of "why we thought that at the time" is
+can edit is not a journal - the value of "why we thought that at the time" is
 entirely in nobody having tidied it up afterwards.
 
 Reads open the file `mode=ro`, the same guarantee the agents' data views give,
@@ -29,7 +29,7 @@ log = get_logger(__name__)
 DEFAULT_DB = ".data/journal/journal.db"
 
 #: How many entries a listing shows before it stops being readable. A display
-#: ceiling, not a storage one — `read` honours whatever limit it is given, and
+#: ceiling, not a storage one - `read` honours whatever limit it is given, and
 #: this is the default the CLI reaches for.
 MAX_ROWS = 500
 
@@ -100,7 +100,7 @@ class Journal:
         return self._conn
 
     async def write(self, entries: Entry | Sequence[Entry]) -> int:
-        """Append. Returns how many were new — re-writing one is not an error."""
+        """Append. Returns how many were new - re-writing one is not an error."""
         batch = [entries] if isinstance(entries, Entry) else list(entries)
         if not batch:
             return 0
@@ -144,7 +144,7 @@ def read_only(path: Path | str) -> Iterator[sqlite3.Connection]:
     """Open the journal read-only. Nothing that reads history can rewrite it."""
     target = Path(path)
     if not target.exists():
-        raise FileNotFoundError(f"no journal at {target} — nothing has been recorded yet")
+        raise FileNotFoundError(f"no journal at {target} - nothing has been recorded yet")
     conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=10.0)
     conn.row_factory = sqlite3.Row
     try:
@@ -170,8 +170,8 @@ def read(
     which made the argument a suggestion: `facto.dataset` asked for 200,000 rows
     to assemble its training examples, received the most recent 500, and found
     ~167 usable outcomes in a journal holding 9,359 of them. Nothing reported a
-    truncation, so the shortfall read as a data problem — outcomes recorded
-    without their features — rather than as a window that was never opened.
+    truncation, so the shortfall read as a data problem - outcomes recorded
+    without their features - rather than as a window that was never opened.
 
     `MAX_ROWS` remains what it always was in practice: the ceiling the CLI puts
     on a listing so a long history cannot flood a terminal. That is a display
@@ -232,7 +232,7 @@ def export(path: Path | str = DEFAULT_DB, *, target: Path | None = None, **filte
 
     Oldest first because that is the order a sequence model wants, and one
     object per line because that is what every dataframe loader reads without
-    argument. `context` stays nested — flattening it here would bake in one
+    argument. `context` stays nested - flattening it here would bake in one
     guess about which features matter.
     """
     filters.setdefault("limit", MAX_ROWS)

@@ -7,7 +7,7 @@ Two ways in. `analyse()` asks one question and returns a validated answer:
     run = await analyse("Is anyone quoting gold out of line right now?")
     print(run.analysis.summary)
 
-`watch()` is the standing version — it consumes prices and news off the bus,
+`watch()` is the standing version - it consumes prices and news off the bus,
 decides when something is worth a model call, and publishes what it finds to
 `alerts` for the notifiers to deliver.
 

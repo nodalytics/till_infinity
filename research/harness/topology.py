@@ -8,8 +8,8 @@ Every feature the model carries describes the level or the approach:
 them predicts direction beyond `side`, and that the missing class is probably
 not another function of price at the touch.
 
-[cycles.md](../cycles.md) tried one non-local class — where the instrument sits
-in a larger move — and found a marginal effect that did not survive being
+[cycles.md](../cycles.md) tried one non-local class - where the instrument sits
+in a larger move - and found a marginal effect that did not survive being
 resampled by instrument. This is a different non-local class: not where price
 is in a *trend*, but where this level sits in the **network of levels** the
 instrument has actually been trading between.
@@ -21,20 +21,20 @@ instrument has actually been trading between.
            touch on that instrument was at B
 
 So an edge is an **observed transit**: price left this level and arrived at
-that one. Nothing is inferred from geometry — two levels a hair apart with no
+that one. Nothing is inferred from geometry - two levels a hair apart with no
 transit between them are not connected, and two far apart that price shuttles
 between are.
 
 ## What is asked of it
 
-Six properties, all accumulated causally — a touch is described by the graph as
+Six properties, all accumulated causally - a touch is described by the graph as
 it stood *before* that touch resolved, never after:
 
     out_degree      distinct levels price has departed to from here
     in_degree       distinct levels price has arrived from
     self_rate       how often the next touch is this level again
     pull            share of departures that went to the single commonest
-                    next level — how concentrated this level's traffic is
+                    next level - how concentrated this level's traffic is
     through         how often this level sits in the middle of an A->L->B chain
     reach           median distance, in volatility units, of a departure
 
@@ -46,8 +46,8 @@ whether these predict on their own. It is whether they **add** to `side`:
 > Does AUC over `side` plus the graph beat AUC over `side` alone, by more than
 > the interval on the difference when it is resampled by instrument?
 
-That last clause is the one that killed [cycles.md](../cycles.md) — a gain of
-+0.0041 there had an interval of -0.0008 to +0.0085 — and it is applied here
+That last clause is the one that killed [cycles.md](../cycles.md) - a gain of
++0.0041 there had an interval of -0.0008 to +0.0085 - and it is applied here
 from the start rather than after the fact.
 """
 
@@ -153,7 +153,7 @@ def collect():
             # price-keyed node is a *new* node each time and the graph never
             # accumulates. It showed 94 of 11,094 touches at a node it had seen
             # before, an `out_degree` maxing at 2, and a `pull` of 1.00 at the
-            # median — the signature of a graph with no edges rather than a
+            # median - the signature of a graph with no edges rather than a
             # market with no structure.
             #
             # Identity is replay-local, which is all this needs: the question

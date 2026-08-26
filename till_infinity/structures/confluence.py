@@ -4,9 +4,9 @@ A level found on the 4h chart and one found on the 15m chart at the same price
 are not two levels. They are one level seen at two resolutions, and each
 resolution knows something the other does not:
 
-- the **higher** timeframe knows the level *matters* — a swing that shows up on
+- the **higher** timeframe knows the level *matters* - a swing that shows up on
   a 4h chart is a larger structure than one visible only on 15m;
-- the **lower** timeframe knows *where it is* — its swings cluster inside a
+- the **lower** timeframe knows *where it is* - its swings cluster inside a
   tighter band, so it pins the price far more precisely.
 
 ## Fusing them is inverse-variance weighting
@@ -18,7 +18,7 @@ estimates of the same quantity by their precision is the standard result:
     1/sigma^2  =  sum of 1/sigma_i^2
     x          =  sum(x_i / sigma_i^2) / sum(1 / sigma_i^2)
 
-The finer timeframe has the smaller sigma, so it dominates the position — "the
+The finer timeframe has the smaller sigma, so it dominates the position - "the
 lower you go the more precise you get" is not a rule anyone had to write, it
 falls out of the arithmetic. And the fused sigma is smaller than any member's,
 which is correct: several timeframes agreeing on a price is more evidence about
@@ -70,7 +70,7 @@ ORDER: tuple[str, ...] = (
 #: timeframe that did not exist.
 #:
 #: Finest first. The top end runs to 1w because that is where the levels people
-#: actually trade come from — and it only became usable once volatility and
+#: actually trade come from - and it only became usable once volatility and
 #: evidence decay were measured per timeframe, since a weekly level in 5m units
 #: is placed to the nearest dollar and forgets a touch before the next one
 #: arrives.
@@ -81,11 +81,11 @@ ORDER: tuple[str, ...] = (
 #: dropping a timeframe gives series back. That was measured afterwards and was
 #: very nearly worthless: the engine's retained structures come to **0.15MB per
 #: series**, so removing 1m from fourteen instruments saved about 2MB of a
-#: 400MB process. It changed no bus traffic either — `prices` collects 1m
+#: 400MB process. It changed no bus traffic either - `prices` collects 1m
 #: whether or not levels are built on it.
 #:
 #: The memory was somewhere else entirely. The agents watcher held every
-#: message of a thirty-minute window — 101,297 of them, **199MB** — to derive
+#: message of a thirty-minute window - 101,297 of them, **199MB** - to derive
 #: fifteen triggers from. Bounding that is what actually fixed it, and this
 #: line went back.
 #:
@@ -124,12 +124,12 @@ class Zone(Restorable):
 
     @property
     def span(self) -> str:
-        """The highest timeframe present — how big a structure this is."""
+        """The highest timeframe present - how big a structure this is."""
         return self.timeframes[0] if self.timeframes else ""
 
     @property
     def precision(self) -> str:
-        """The lowest timeframe present — how precisely it is placed."""
+        """The lowest timeframe present - how precisely it is placed."""
         return self.timeframes[-1] if self.timeframes else ""
 
     @property
@@ -186,7 +186,7 @@ class Zone(Restorable):
         # overlap chains: A can overlap B and B overlap C while A and C do not
         # touch, so the intersection is empty and the narrowest-band rule above
         # returns an inverted pair. Fall back to the tightest member's width,
-        # centred on the fused price — the members still agree on roughly where
+        # centred on the fused price - the members still agree on roughly where
         # this is, which is what put them in one zone, and a band that reads
         # high-then-low is worse than a slightly generous one.
         width = min(hi - lo for lo, hi in bands) / 2.0
@@ -195,9 +195,9 @@ class Zone(Restorable):
     def strength(self, when: float, vol: Volatility) -> float:
         """The best member. Depth is reported beside it, not folded into it.
 
-        Averaging is still wrong for the reason it always was — it would let a
+        Averaging is still wrong for the reason it always was - it would let a
         weak 15m level drag down a strong 4h one it merely happens to sit
-        beside — so the best member is what a zone is worth.
+        beside - so the best member is what a zone is worth.
 
         What is gone is the multiplier that used to lift that by 15% per extra
         timeframe. Confluence breadth was measured against whether the level
@@ -239,7 +239,7 @@ def fuse(members: Sequence[Level]) -> tuple[float, float]:
     """Inverse-variance fusion of several estimates of one price.
 
     Returns (price, sigma). A member with zero variance would claim infinite
-    precision and swallow the result, so variances are floored — no estimate
+    precision and swallow the result, so variances are floored - no estimate
     from finitely many noisy touches is exact.
     """
     weights, weighted = 0.0, 0.0
@@ -265,13 +265,13 @@ def combine(
     Grouping is on **zone overlap**, not on a single tolerance, and that is the
     difference between this working and not. A shared tolerance is necessarily
     expressed in one timeframe's volatility, and the timeframes differ by more
-    than an order of magnitude — measured on gold, one volatility unit is $0.74
+    than an order of magnitude - measured on gold, one volatility unit is $0.74
     on 5m and $9.87 on 4h. With a 5m-scale tolerance a 4h level would have to
     sit within about fifty cents of a 5m level to be considered the same price,
     which almost never happens, so nothing ever combined.
 
     A level's zone already encodes how precisely its own timeframe can place
-    it. Two levels describe one price when those zones overlap — which is the
+    it. Two levels describe one price when those zones overlap - which is the
     same test `dedupe` uses within a timeframe, applied across them.
 
     `volatility` resolves each level's estimate; without it every level is
@@ -296,7 +296,7 @@ def combine(
         low, high = level.zone(resolve(level))
         if low <= reach:
             groups[-1].append(level)
-            # The group reaches as far as its widest member — a coarse level
+            # The group reaches as far as its widest member - a coarse level
             # that overlaps a fine one also reaches whatever else it covers.
             reach = max(reach, high)
         else:

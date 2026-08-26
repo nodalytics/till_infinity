@@ -121,7 +121,7 @@ async def notify(
 def from_message(payload: dict[str, Any]) -> Notification | None:
     """Turn an `alerts` message into a Notification.
 
-    The payload comes off the bus, which means an agent wrote it — so nothing
+    The payload comes off the bus, which means an agent wrote it - so nothing
     here trusts it. A message with no title is dropped rather than sent as an
     empty alert, and `fields` is flattened to strings because a notifier
     renders text, not arbitrary JSON.
@@ -153,7 +153,7 @@ async def listen(
     """Deliver every alert published to the bus. Returns how many were sent.
 
     Runs until the bus closes (or `limit` alerts have been handled). Delivery
-    failures are logged and the loop continues — one unreachable webhook must
+    failures are logged and the loop continues - one unreachable webhook must
     not stop the next alert from reaching the chat that is up.
     """
     settings = settings or Settings.from_env()
@@ -176,7 +176,7 @@ async def listen(
         failed = [d for d in deliveries if not d.ok]
         # The first body line comes along, because the title alone cannot be
         # checked against anything. For a level call that line carries the
-        # price and which timeframes agreed — the one claim in the message that
+        # price and which timeframes agreed - the one claim in the message that
         # is verifiable from outside, against `structures zones` for the same
         # instrument. Logging what was *sent* rather than what was computed is
         # the point: those are the two things that can silently disagree.

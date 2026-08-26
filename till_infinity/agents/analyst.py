@@ -2,7 +2,7 @@
 
 pydantic-ai supplies the loop, the tool plumbing and the output validation.
 What is added here is the Claude-specific configuration it exposes but does not
-choose for you — thinking, a token ceiling, a tool-call limit — and a fallback
+choose for you - thinking, a token ceiling, a tool-call limit - and a fallback
 model, so a run does not die because one model is briefly unavailable.
 """
 
@@ -24,7 +24,7 @@ from .models import Analysis, Run
 from .roles import Role, resolve
 
 #: Tool calls an analysis gets before it has looked at any particular
-#: instrument — orienting, and composing the answer.
+#: instrument - orienting, and composing the answer.
 #:
 #: Twelve rather than eight because **the budget is model-dependent and the
 #: first version was fitted to one model.** 8 + 4 per subject was measured
@@ -56,7 +56,7 @@ def one_model(name: str) -> Model:
         return infer_model(providers.qualified(name))
     except ImportError as exc:
         known = providers.provider_for(name)
-        hint = f" — install it with `{known.install}`" if known.extra else ""
+        hint = f" - install it with `{known.install}`" if known.extra else ""
         raise ProviderUnavailableError(f"{providers.qualified(name)} needs a client{hint}") from exc
 
 
@@ -65,7 +65,7 @@ def build_model(settings: Settings) -> Model:
 
     A monitor that goes quiet because one model returned a 529 is a monitor
     that failed at the only moment it mattered, so a degraded answer from the
-    next model down beats no answer. Fallbacks may cross providers — a Claude
+    next model down beats no answer. Fallbacks may cross providers - a Claude
     primary with a GPT spare survives an outage at either.
 
     A fallback whose client is not installed, or whose key is not set, is
@@ -91,8 +91,8 @@ def build_model(settings: Settings) -> Model:
 def model_settings(settings: Settings) -> ModelSettings:
     """Per-run levers, in whichever dialect the provider speaks.
 
-    `max_tokens` and `timeout` are common to every provider. Reasoning is not —
-    each spells it differently — so `providers.reasoning` maps the one
+    `max_tokens` and `timeout` are common to every provider. Reasoning is not -
+    each spells it differently - so `providers.reasoning` maps the one
     `thinking` switch onto the right key. The depth wanted here genuinely
     varies: "is this spread unusual" is one tool call, "does the calendar
     explain this move" is several rounds of reading and comparing.
@@ -133,8 +133,8 @@ def budget(subjects: int, settings: Settings) -> int:
     died at **thirty-seven** on 2026-08-17 with fourteen instruments tracked.
 
     The comment beside the constant already said what was wrong with the fix
-    applied to it — *"raising the limit each time is chasing rather than
-    fixing"* — and then it was raised, and the chase continued. So the budget
+    applied to it - *"raising the limit each time is chasing rather than
+    fixing"* - and then it was raised, and the chase continued. So the budget
     is a function of the work now: a fixed overhead for orienting and answering,
     plus an allowance per subject.
 
@@ -157,7 +157,7 @@ async def analyse(
 ) -> Run:
     """Ask one analyst one question and get a validated answer back.
 
-    `subjects` is how many distinct things the question asks about — triggers,
+    `subjects` is how many distinct things the question asks about - triggers,
     in the watcher's case. It sets the tool-call budget, because that is what
     the budget is actually a function of. See `budget`.
     """
@@ -180,7 +180,7 @@ async def analyse(
     )
     # A property, not a method. Calling it raised "'RunUsage' object is not
     # callable" *after* a successful analysis, so a working run was thrown away
-    # at the last step — and only a live call could show that, since the
+    # at the last step - and only a live call could show that, since the
     # failure is in accounting for work already done.
     usage = result.usage
     return Run(

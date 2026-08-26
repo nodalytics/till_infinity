@@ -16,11 +16,11 @@ class SourceError(Exception):
 
 
 class PermanentError(SourceError):
-    """A dead feed or a rejected request — retrying will not help."""
+    """A dead feed or a rejected request - retrying will not help."""
 
 
 class TransientError(SourceError):
-    """Timeout, disconnect, throttle — worth another attempt."""
+    """Timeout, disconnect, throttle - worth another attempt."""
 
 
 class Source(ABC):

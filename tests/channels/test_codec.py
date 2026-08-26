@@ -1,4 +1,4 @@
-"""Tests for Redis channel codec — encode/decode symmetry.
+"""Tests for Redis channel codec - encode/decode symmetry.
 
 Redis streams only accept string fields; the codec must round-trip
 arbitrary JSON payloads and preserve primitive types for flat dicts.
@@ -18,7 +18,7 @@ def test_encode_flat_dict_primitives():
     msg = {"symbol": "EURUSD", "price": 1.2345, "volume": 100, "is_live": True}
     decoded = _roundtrip(msg)
     assert decoded["symbol"] == "EURUSD"
-    # Flat dicts store as strings — preserves identity for round-trip
+    # Flat dicts store as strings - preserves identity for round-trip
     assert decoded["symbol"] == "EURUSD"
 
 

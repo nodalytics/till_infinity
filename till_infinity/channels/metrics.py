@@ -49,7 +49,7 @@ class NoOpMetrics:
 
 
 class InMemoryMetrics:
-    """Simple thread-safe in-memory counter — handy for tests and demos."""
+    """Simple thread-safe in-memory counter - handy for tests and demos."""
 
     def __init__(self) -> None:
         self.counters: dict[str, int] = {}

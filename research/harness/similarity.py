@@ -1,7 +1,7 @@
 """Where does similarity stop carrying information?
 
 `Memory.neighbours` returns the k nearest touches regardless of distance, so a
-level with no comparable history still gets twelve neighbours — distant ones.
+level with no comparable history still gets twelve neighbours - distant ones.
 To replace that with a radius, the radius has to come from somewhere, and the
 honest place is the data: at what `Features.distance` does a neighbour stop
 predicting which way the touch under test went?

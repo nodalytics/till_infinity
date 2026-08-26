@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Replace the running container with a new image. **Runs on the instance**,
-# not here — the deploy workflow copies it across and executes it there.
+# not here - the deploy workflow copies it across and executes it there.
 #
 #   IMAGE=ghcr.io/owner/repo TAG=<sha> bash deploy.sh
 #
 # One container, not the compose split. Six separate services need about 861 MB
-# before Redis, data or the OS — measured, not estimated — against the 908 MB
+# before Redis, data or the OS - measured, not estimated - against the 908 MB
 # this started on. `till-infinity run` is one process with an in-process bus,
 # which is the shape that hardware could hold.
 #
@@ -22,12 +22,12 @@ DATA="/home/ubuntu/till-data"
 
 mkdir -p "$DATA"
 
-# Written once, then left alone — this is the file to edit on the box to turn
+# Written once, then left alone - this is the file to edit on the box to turn
 # agents on or point at a different instrument set. Recreating it on every
 # deploy would silently discard whatever was configured there.
 ENV_FILE="/home/ubuntu/till.env"
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "no $ENV_FILE — writing defaults"
+  echo "no $ENV_FILE - writing defaults"
   cat > "$ENV_FILE" <<'DEFAULTS'
 # Till Infinity on this instance. Edit and re-run the deploy to apply.
 #
@@ -51,7 +51,7 @@ fi
 # this box reached 99% full with five 973 MB images on a 6.7 GB disk.
 #
 # `-af` with no age filter, because an age filter is the same bug in slower
-# form — several deploys in one day are all newer than any window worth setting.
+# form - several deploys in one day are all newer than any window worth setting.
 # Docker never removes the image a running container is using, so the version
 # currently serving is safe; what is lost is a local copy of the *previous*
 # one, and that lives in the registry, which is where a rollback should come
@@ -69,7 +69,7 @@ docker pull "$IMAGE:$TAG"
 docker rm -f "$NAME" 2>/dev/null || true
 
 # Sized from the host rather than pinned, because the pin was wrong on both
-# boxes it ever ran on. 640m was chosen for a 908MB instance — about 70%, which
+# boxes it ever ran on. 640m was chosen for a 908MB instance - about 70%, which
 # left the host itself enough to breathe. Hard-coding it means a bigger machine
 # runs the service in a 640MB box and wastes the rest, while a smaller one
 # would be over-committed on the first deploy and nobody would notice until the

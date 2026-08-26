@@ -7,7 +7,7 @@ Written 2026-08-14. What is true, what is broken, and what to do first.
 Neither was what I predicted, and the third guess was wrong too. Reading the
 data settled the first inside one query; the second needed the magnitudes.
 
-### 1. ~98% of outcomes unusable — it was the read window, not the data
+### 1. ~98% of outcomes unusable - it was the read window, not the data
 
 Not missing features. `journal.read` silently clamped **every** caller's limit
 to `MAX_ROWS = 500`:
@@ -22,36 +22,36 @@ held ~167 outcomes. Every symptom follows from that one line: raising
 500-row window sliding forward, not examples ageing out of qualification.
 
 The premise was checkable and false. Every outcome context carries `push_vol`
-and the full feature set — `record_outcomes` is the only place outcomes are
+and the full feature set - `record_outcomes` is the only place outcomes are
 written and it always spreads `touch.features.to_dict()` in. Reproduced by
 inflating a journal copy to 9,408 rows: 3,264 outcomes → 185 examples, and
 identical at limits of 500, 5,000 and 200,000. That last equality is the tell,
 and it costs one command to look for.
 
 `read` now honours the limit it is given. `MAX_ROWS` stays as what it always
-was in practice — the ceiling the CLI puts on a listing.
+was in practice - the ceiling the CLI puts on a listing.
 
 The old test could not have caught this: it wrote ten entries and asserted the
 result was under five hundred. True whatever the clamp did. Replaced with one
 that writes past `MAX_ROWS`.
 
-### 2. The factorisation machine overflowed — unscaled features, confirmed
+### 2. The factorisation machine overflowed - unscaled features, confirmed
 
 The guess was right and the magnitudes prove it. `strength`, `regime`, `pivot`
 and `backcheck` are already in [0, 1] and `experience` is log-compressed, but
 `approach_vol`, `depth_vol` and `run_vol` are ratios with a volatility estimate
-underneath — a touch arriving in a dead pocket divides by a small number and
+underneath - a touch arriving in a dead pocket divides by a small number and
 comes back arbitrarily large.
 
 An FM multiplies its features together, so its gradients are *quadratic* in
 magnitude and an unbounded input does not skew the fit, it diverges it. Scaling
 one touch in 37 by 5x diverged the model within 55 examples; by 20x, within 18.
 So on production it was diverged almost from the start, and `Model.predict`'s
-NaN guard had been returning "no opinion" ever since — up, honest, and learning
+NaN guard had been returning "no opinion" ever since - up, honest, and learning
 nothing.
 
 `encode` now saturates the three through `x/(1+x)` about a typical value of 2,
-which bounds them into [0, 1) while keeping the ordering — a clip would need a
+which bounds them into [0, 1) while keeping the ordering - a clip would need a
 maximum, and any maximum here would call a 4v approach and a 40v one the same
 event. Survives 10,000x spikes now, and predicts real numbers instead of zero.
 
@@ -60,19 +60,19 @@ model cost accuracy rather than uptime.
 
 ## The channel speaks again, 2026-08-14
 
-Three alerts delivered within minutes of the fixes below landing — SPX500, ETH
+Three alerts delivered within minutes of the fixes below landing - SPX500, ETH
 and SOL, all `1/1 channels`:
 
 ```
-alert 'SPX500 3m — up' [level 7801.5 · this timeframe only]
-alert 'ETH 3m — up'    [level 1875.1 · this timeframe only]
-alert 'SOL 3m — up'    [level 75.413 · this timeframe only]
+alert 'SPX500 3m - up' [level 7801.5 · this timeframe only]
+alert 'ETH 3m - up'    [level 1875.1 · this timeframe only]
+alert 'SOL 3m - up'    [level 75.413 · this timeframe only]
 ```
 
 The journalled decision behind the last one, which is the whole chain working:
 
 ```
-sol: up from above at 75.413 — p=51% vs 24% base, push +1.43
+sol: up from above at 75.413 - p=51% vs 24% base, push +1.43
     edge 0.265   expected_push +1.428   risk_vol 0.641   → r:r 2.23
 ```
 
@@ -87,7 +87,7 @@ symptom.
 
 ## Why the channel was silent, traced 2026-08-14
 
-Worth reading because it is one chain and the obvious suspect was innocent —
+Worth reading because it is one chain and the obvious suspect was innocent -
 the same shape of mistake will be made again, on something else.
 
 **It was not the spread cost.** That gate charged `cost_vol` of exactly 0.0 on
@@ -100,7 +100,7 @@ is btc at 0.0031 against a journal that rounds to four decimals.
 **It was the edge gate, and underneath it the touch counts.** Every recorded
 call but one failed `|edge| >= 0.08`, median `0.0748`. The edges were small
 because a single 3m level took a touch every two seconds until it held 171 of
-them, dragging the base rate to 92.6% down — against which even a 99.7% call
+them, dragging the base rate to 92.6% down - against which even a 99.7% call
 earns only seven points. Inflated touches, lopsided base rate, eaten edge,
 closed gate, silent channel. Four steps, each reasonable alone.
 
@@ -109,16 +109,16 @@ and the measured numbers are in [levels.md](levels.md), "The base rate is what
 actually closed the gate" and "It charges zero on the replay path".
 
 Two smaller things found alongside, both now fixed: `risk_vol` was 0.0 on every
-recorded call, so `reward_to_risk` was meaningless — `vol` was optional on
+recorded call, so `reward_to_risk` was meaningless - `vol` was optional on
 `infer` and every caller forgot it. And `0.08` itself was never derived from
 anything, which is still true and still open: see "0.08 is not derived from
 anything" for the attempt to derive it and why the pre-fix journal cannot.
 
-## The first weekend, 2026-08-15/16 — what to look at on Monday
+## The first weekend, 2026-08-15/16 - what to look at on Monday
 
 Deployed on the Friday afternoon, untested against a real close. FX and the
 indices stop trading; crypto does not, which makes the weekend a free
-controlled experiment — the same code over two instrument classes where only
+controlled experiment - the same code over two instrument classes where only
 one of them halts.
 
 **Alerts should stay quiet on FX and keep working on crypto.** Nothing knows
@@ -131,7 +131,7 @@ assumption is wrong.
 
 **No outcome should span the close.** `GAP_FACTOR` discards a touch open more
 than four horizons rather than resolving it, because `_close` records
-`push_vol` as the distance at the moment of closing — so before this, a touch
+`push_vol` as the distance at the moment of closing - so before this, a touch
 open at the Friday close wrote the Sunday reopening gap into the level's
 statistics and into `facto`'s targets as that level's reaction. On EURUSD one
 weekend resolved as a 27-volatility-unit rejection.
@@ -140,12 +140,12 @@ weekend resolved as a 27-volatility-unit rejection.
 sudo docker exec till-infinity till-infinity structures gaps --hours 72
 ```
 
-Expected: **`none — the gap guard held`**, and exit 0. Anything listed is the
+Expected: **`none - the gap guard held`**, and exit 0. Anything listed is the
 guard having failed, and the command exits 1 so a cron can act on it.
 
 It splits by whether the instrument closes, because that is the control.
 **Crypto never stops**, so a gap on btc, eth or sol means the *collector*
-stopped rather than the market — the same guard firing for a different reason,
+stopped rather than the market - the same guard firing for a different reason,
 and the difference is only visible with both classes side by side.
 
 A handful of large `push_vol` values on Monday morning that are genuine gap
@@ -158,7 +158,7 @@ The second thing to read on Monday, and the weekend makes it a better
 experiment than a weekday would.
 
 The zone floor shipped on Friday evening to explain why sol produced half of
-all outcomes. Its effect on the *rate* was never verified — the last reading
+all outcomes. Its effect on the *rate* was never verified - the last reading
 before the box was left alone showed the rate falling from ~2,280/hour to ~500
 and sol dropping out of the top feeds entirely, which is the shape the fix
 predicts and is also what a Friday evening looks like on its own. Restarts from
@@ -167,13 +167,13 @@ observation.
 
 **Crypto separates them.** btc, eth and sol trade through the weekend while FX
 and the indices do not, so a weekend reading of crypto alone has no
-Friday-evening confound and no market-hours effect at all — only the fix. If
+Friday-evening confound and no market-hours effect at all - only the fix. If
 sol's share among crypto has fallen, it is the zones. If it has not, the cause
 is still unfound, and that would be the third hypothesis to fail on this item
 after the re-arm hole and the `observe_bar` split.
 
 Read it beside the hold rate rather than alone. Widening a zone reduces touch
-counts mechanically, so a lower rate is necessary evidence and not sufficient —
+counts mechanically, so a lower rate is necessary evidence and not sufficient -
 the question is whether what remains is *better*, and only the outcomes say
 that.
 
@@ -183,7 +183,7 @@ See [todo.md](todo.md) for the full list. The short version:
 
 1. **Re-measure memory now the window is bounded.** The box is 908MB with no
    swap and was OOM-killed five times on 2026-08-14. The cause was not the
-   level set — it was the agents watcher holding 101,297 messages, 199MB, to
+   level set - it was the agents watcher holding 101,297 messages, 199MB, to
    derive fifteen triggers. Bounded at 20,000 now, and 1m went back on the
    level set once the real cause was measured. Swap still does not exist.
 2. **Re-measure the outcome rate** before any `fit`, now that touch counting is
@@ -197,11 +197,11 @@ See [todo.md](todo.md) for the full list. The short version:
 
 ## What is deployed and working
 
-Levels form on 1m/3m/5m/15m/1h/4h/1d/1w across fourteen instruments — gold, btc,
+Levels form on 1m/3m/5m/15m/1h/4h/1d/1w across fourteen instruments - gold, btc,
 eth, sol, eurusd, gbpusd, usdjpy, audusd, usdcad, usdchf, nzdusd, usdcnh,
-us100, spx500 — alert to Telegram
+us100, spx500 - alert to Telegram
 with confluence, deduplicated per zone, and charged the median spread before
-qualifying — which now records a non-zero cost, having charged nothing until
+qualifying - which now records a non-zero cost, having charged nothing until
 `observe_bar` was split. Agents run on Groq with a Gemini fallback. 713 tests.
 
 Production: one container on the EC2 box named in `.secrets/samuel.md`, data
@@ -217,7 +217,7 @@ sudo docker logs till-infinity | grep "alert '"                  # what was actu
 ## Trading, added 2026-08-26
 
 The level calls now reach an account. `trading` consumes `structures.signals`,
-sizes against the terminal's own symbol rules, and places the order — on paper
+sizes against the terminal's own symbol rules, and places the order - on paper
 unless `TRADING_LIVE=1`, and off entirely unless `TRADING_ENABLED=1`. Neither
 switch implies the other. Full guide: [trading.md](trading.md).
 
@@ -231,8 +231,8 @@ container, and bound to 127.0.0.1 it works perfectly from a shell here and is
 invisible to the only thing that needs it. `--add-host` in `deploy.sh` is the
 other half.
 
-There are two other routes to a terminal — the native package on Windows, and
-the module proxied over RPyC out of a Wine prefix — and `trading doctor` says
+There are two other routes to a terminal - the native package on Windows, and
+the module proxied over RPyC out of a Wine prefix - and `trading doctor` says
 which this host can use and why the others are out.
 
 ```bash
@@ -268,8 +268,8 @@ were both pushed because of this, on separate days. Run gates unpiped.
 up. "One print in sixty-one cannot move a median" is the property. The first
 kind passes for the wrong reason.
 
-**A fix that looks complete often is not.** Touch counting took three rounds —
-per quote, per zone-edge crossing, per bar replay — each looking finished. When
+**A fix that looks complete often is not.** Touch counting took three rounds -
+per quote, per zone-edge crossing, per bar replay - each looking finished. When
 a class of bug is found, ask what else reaches the same counter.
 
 **A safety switch checked in one place and ignored in another is worse than no
@@ -283,7 +283,7 @@ already traded.
 **An error usually blames the wrong component.** Every defect found against the
 live terminal presented as something else. A rejected login arrived as
 `connection reset by peer`, because the process exited mid-response. An
-unsupported fill policy arrived as `Unsupported filling mode` — reading like a
+unsupported fill policy arrived as `Unsupported filling mode` - reading like a
 bad order, and really a bad constant, since the symbol's own mask says FOK only.
 AutoTrading being off arrived as `AutoTrading disabled by client`, naming the
 client that sent the order rather than the terminal that refused it. Ask what
@@ -292,7 +292,7 @@ the component *could* know before believing what it says.
 **Toggles are not switches.** `enable_algo_trading` pressed Ctrl+E once, which
 is correct exactly half the time. Every restart flipped AutoTrading to whatever
 it was not. The fix has to read the state back, and the first attempt at *that*
-failed too — the terminal writes its log asynchronously, so a fixed sleep read
+failed too - the terminal writes its log asynchronously, so a fixed sleep read
 the previous line and toggled a second time. Wait for evidence, not for a
 duration.
 

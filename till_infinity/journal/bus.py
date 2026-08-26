@@ -2,8 +2,8 @@
 
 Everything else here talks over the bus, and the journal was the exception: it
 was a library each service called in-process, so `agents` and `structures` each
-held their own connection to the same SQLite file. That works — WAL tolerates
-several writers — but it means only processes on this machine can record
+held their own connection to the same SQLite file. That works - WAL tolerates
+several writers - but it means only processes on this machine can record
 anything, and the writer count grows with the service count.
 
 Publishing entries instead makes the journal an ordinary consumer:
@@ -103,7 +103,7 @@ async def listen(
     """Write down everything published to `journal`. Returns entries written.
 
     Runs until the bus closes, or until `limit` entries have been handled. A
-    bad entry is logged and skipped — one malformed message from one service
+    bad entry is logged and skipped - one malformed message from one service
     must not stop the next service's decision being recorded.
     """
     written = 0

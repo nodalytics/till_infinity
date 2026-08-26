@@ -24,7 +24,7 @@ Three measurements say something is wrong with that.
 ## The asymmetry this script was written to test
 
 `neighbours()` filters `touch.features.side is features.side`, so the prior is
-**side-conditioned**. `base_rate_for(feed, interval)` is not — it is the
+**side-conditioned**. `base_rate_for(feed, interval)` is not - it is the
 unconditional up-rate for the series.
 
 So `edge` subtracts a side-blind baseline from a side-aware estimate, and most
@@ -42,9 +42,9 @@ If that is right, the fix is not a better model. It is comparing like with like.
 | `side base` | own + kNN prior | **side-conditioned** |
 | `no knn` | own + side base rate | side-conditioned |
 | `base only` | side-conditioned base rate | side-conditioned |
-| `holds` | the trivial rule | — |
+| `holds` | the trivial rule | - |
 
-Every baseline is accumulated **causally** — a call is scored against the rates
+Every baseline is accumulated **causally** - a call is scored against the rates
 as they stood when it was made, never against rates its own outcome helped set.
 """
 
@@ -91,7 +91,7 @@ def watching(original):
                 # The raw counts, not the shrunk probability. `probability_up`
                 # shrinks the level's own record **toward the kNN prior**, so a
                 # variant without the kNN has to re-shrink toward whatever
-                # replaces it — reusing the shrunk value would smuggle the kNN
+                # replaces it - reusing the shrunk value would smuggle the kNN
                 # back in through the component that was meant to be free of it.
                 "own_ups": own.ups,
                 "prior_up": prior_up,

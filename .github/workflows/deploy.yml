@@ -4,7 +4,7 @@
 # slow on two cores at best and was OOM-killed at worst on the 908MB box this
 # started on. GitHub builds and publishes; the instance pulls.
 #
-# For **both** architectures, since they are not all the same — the box may be
+# For **both** architectures, since they are not all the same - the box may be
 # Graviton, and an amd64-only image fails at the pull rather than at the build.
 
 name: Deploy
@@ -43,7 +43,7 @@ jobs:
   # Both architectures, because the instances are not all the same. An
   # amd64-only image fails at `docker pull` on Graviton with "no matching
   # manifest for linux/arm64/v8", which is a clear message arriving at the
-  # least convenient moment — after the old box has been stopped for the
+  # least convenient moment - after the old box has been stopped for the
   # cutover.
   #
   # Native runners rather than QEMU. The repository is public, so
@@ -159,7 +159,7 @@ jobs:
       # This step exists anyway, for two reasons worth the duplication: it runs
       # before a single byte is transferred, so a full disk cannot fail the scp
       # either; and it holds even when deploying a commit whose `deploy.sh`
-      # predates that fix — a rollback to an old tag is exactly when the box is
+      # predates that fix - a rollback to an old tag is exactly when the box is
       # already full. Reporting free space makes the next failure legible
       # instead of arriving as `no space left on device` with no context.
       - name: Reclaim disk on the instance

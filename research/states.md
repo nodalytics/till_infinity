@@ -5,14 +5,14 @@ Run: `python research/harness/states.py`
 `Inference.probability_up` pools every touch a level has ever had, equally. A
 support that held six times and then broke is **averaged with itself**: the
 level's behaviour changed and the statistic cannot say so. The proposal was a
-per-level state model — `{respected, breaking, flipped}` with transitions — so
+per-level state model - `{respected, breaking, flipped}` with transitions - so
 that "it has flipped" becomes a discrete, reportable event with a probability
 attached.
 
 The sample-size objection was raised with it, and it is the right one: levels
 carry a handful of touches, and a two-state transition matrix estimated from
-six observations is noise fitted confidently. The honest form is hierarchical —
-one transition model pooled across every level, per-level state inferred — and
+six observations is noise fitted confidently. The honest form is hierarchical -
+one transition model pooled across every level, per-level state inferred - and
 that is a real modelling project.
 
 **So the premise was measured first, because the premise is cheap and the
@@ -45,7 +45,7 @@ Splitting each level's touches in half by time:
 | **mean within-level change** | **-0.011** |
 
 Eleven thousandths, on the wrong side of zero. The median *absolute* change is
-0.182, which is what five touches a half produces from a fair coin — dispersion
+0.182, which is what five touches a half produces from a fair coin - dispersion
 without direction.
 
 ## 2. Recency predicts worse than pooling
@@ -56,7 +56,7 @@ describe it better than all of them averaged:
 | predictor | n | right |
 |---|---|---|
 | **always "it holds"** | 7,158 | **74.4%** |
-| pooled — what the code does | 7,158 | 70.1% |
+| pooled - what the code does | 7,158 | 70.1% |
 | the last three | 7,158 | 67.5% |
 | the last one only | 7,158 | 63.4% |
 
@@ -95,8 +95,8 @@ The sharpest test, and the clearest answer:
 
 | state | n | next one holds | 95% |
 |---|---|---|---|
-| after two holds | 5,048 | **74.9%** | 73.7% – 76.1% |
-| after two failures | 561 | **74.9%** | 71.1% – 78.3% |
+| after two holds | 5,048 | **74.9%** | 73.7% - 76.1% |
+| after two failures | 561 | **74.9%** | 71.1% - 78.3% |
 | pooled | 11,104 | 73.4% | |
 
 **Identical to the decimal.** A level that has just failed twice in a row is
@@ -110,7 +110,7 @@ on 561 observations of levels that had every appearance of having entered it.
 
 ## What this saves
 
-**Do not build the state model.** Not because it is hard — because there is
+**Do not build the state model.** Not because it is hard - because there is
 nothing for it to find. A hierarchical HMM would infer states over a process
 that §1 says does not drift, §2 says is best described by its long-run average,
 and §4 says has no absorbing failure mode. It would produce state probabilities,

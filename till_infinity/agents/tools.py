@@ -6,8 +6,8 @@ its store `mode=ro`. That is the whole security story: a headline that says
 available verbs are SELECT.
 
 Wrappers exist rather than registering `data.py` directly because a tool is a
-prompt. The docstrings here are written for the model — what the number means
-and how to compare it — while `data.py`'s are written for us.
+prompt. The docstrings here are written for the model - what the number means
+and how to compare it - while `data.py`'s are written for us.
 
 Every tool returns `{"error": ...}` rather than raising when a store is
 missing. A run that hits an empty database should end with the model saying so,
@@ -35,7 +35,7 @@ log = get_logger(__name__)
 
 @dataclass(slots=True)
 class Deps:
-    """What a tool needs to answer. Paths only — no credentials reach a tool."""
+    """What a tool needs to answer. Paths only - no credentials reach a tool."""
 
     prices_db: Path
     news_db: Path
@@ -62,7 +62,7 @@ def instruments(ctx: RunContext[Deps]) -> Any:
 
     Start here when you do not already know which instruments exist. If the
     latest timestamp is old, the collector is not running and everything else
-    you read will be stale — say so rather than analysing dead data.
+    you read will be stale - say so rather than analysing dead data.
     """
     return _guard(lambda: data.instruments(ctx.deps.prices_db), "instruments")
 
@@ -72,7 +72,7 @@ def quotes(ctx: RunContext[Deps], feed: str, limit: int = 20) -> Any:
 
     `feed` is an instrument name such as gold, btc, eurusd, gbpusd.
     `spread_bps` is the ask-bid gap in basis points of mid, which is the only
-    number comparable across venues and instruments — raw spread is not.
+    number comparable across venues and instruments - raw spread is not.
     """
     return _guard(lambda: data.quotes(ctx.deps.prices_db, feed, limit), "quotes")
 
@@ -89,8 +89,8 @@ def spreads(ctx: RunContext[Deps], feed: str, hours: int = 24) -> Any:
     share of those earlier samples at or below it.
 
     Compare against `latest_pctile`, not against `max_bps`. The two used to be
-    the same number whenever the latest reading was the widest — the reading
-    counted in its own history — so "this is at the maximum" was true by
+    the same number whenever the latest reading was the widest - the reading
+    counted in its own history - so "this is at the maximum" was true by
     construction and said nothing. 100 now means genuinely wider than anything
     else in the window. `latest_pctile` is null when the venue has quoted only
     once, which means there is no history to judge it against, not that it is
@@ -103,7 +103,7 @@ def divergence(ctx: RunContext[Deps], feed: str) -> Any:
     """How far apart the venues are on one instrument right now.
 
     Returns the cheapest and dearest mid across venues and the gap in basis
-    points. A large gap is either a genuine dislocation or one stale feed —
+    points. A large gap is either a genuine dislocation or one stale feed -
     check the `observed` times in `quotes` before deciding which, because a
     venue that stopped updating will look dramatic and mean nothing.
     """
@@ -130,7 +130,7 @@ def move(ctx: RunContext[Deps], feed: str, interval: str = "1h", periods: int = 
     """Percentage change over the last `periods` bars, with the high and low.
 
     This is the headline number for "how much has it moved". Judge it against
-    the instrument's own range from `bars`, not against a fixed threshold —
+    the instrument's own range from `bars`, not against a fixed threshold -
     1% is a large day for EURUSD and a quiet one for BTC.
     """
     return _guard(lambda: data.move(ctx.deps.prices_db, feed, interval, periods), "move")
@@ -154,7 +154,7 @@ def events(
 
     Two calendars are stored side by side on purpose, so the same release may
     appear twice from different `source` values. That is corroboration, not two
-    separate events — do not report it as two.
+    separate events - do not report it as two.
     """
     return _guard(
         lambda: data.events(ctx.deps.news_db, hours, min_importance, released, limit),
@@ -175,7 +175,7 @@ def reserves(ctx: RunContext[Deps], country: str = "", limit: int = 20) -> Any:
     """IMF central bank reserve observations, newest period first.
 
     `country` is an ISO-3 code such as CHN, USA, JPN. Values are already in
-    USD — the `scale` column records how the IMF published the figure and is
+    USD - the `scale` column records how the IMF published the figure and is
     not a multiplier. Do not multiply by it.
     """
     return _guard(lambda: data.reserves(ctx.deps.news_db, country, limit), "reserves")
@@ -188,7 +188,7 @@ def levels(ctx: RunContext[Deps], feed: str, interval: str = "", limit: int = 25
     """Key price levels for one instrument, strongest first.
 
     Where price has repeatedly turned, how wide the zone is, and what it did on
-    arrival **from each side** — the same level often behaves oppositely
+    arrival **from each side** - the same level often behaves oppositely
     depending on which direction price came from, so `sides` is keyed that way.
 
     `touches` are *effective* counts, decayed by age: a level tested ten times
@@ -212,7 +212,7 @@ def level_at(ctx: RunContext[Deps], feed: str, price: float, limit: int = 5) -> 
     `base_rate_up` beside it.
 
     **Compare the two.** A level whose `probability_up` matches `base_rate_up`
-    has told you nothing, however confident it looks — `edge` is the difference
+    has told you nothing, however confident it looks - `edge` is the difference
     and `actionable` is whether it clears the bar for evidence, edge and size
     together. `mixed` means the win rate and the expected move disagree, which
     is a real shape and not a call.
@@ -231,7 +231,7 @@ def next_levels(ctx: RunContext[Deps], feed: str, price: float, limit: int = 5) 
     that timeframe. Time goes as the **square** of distance, so a level twice
     as far away takes four times as long, not twice.
 
-    There is deliberately no average — the first-passage distribution has an
+    There is deliberately no average - the first-passage distribution has an
     infinite mean, so an average would grow with the length of the sample. Use
     the median.
 
@@ -264,7 +264,7 @@ def recent(ctx: RunContext[Deps], hours: float = 24.0, tag: str = "", limit: int
     whether a situation is the same one continuing or a genuinely new one.
 
     `tag` filters to an instrument or venue. Entries of kind `outcome` say what
-    actually happened after an earlier decision — those are the ones worth
+    actually happened after an earlier decision - those are the ones worth
     weighing most, because they are the only ones that were checked.
     """
 

@@ -153,5 +153,5 @@ class TradingViewCalendar(Source):
 
 
 def _stamp(moment: datetime) -> str:
-    """``2026-05-06T00:00:00.000Z`` — the literal shape the endpoint requires."""
+    """``2026-05-06T00:00:00.000Z`` - the literal shape the endpoint requires."""
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")

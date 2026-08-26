@@ -1,4 +1,4 @@
-"""TradingView headlines — the feed behind its own news pane.
+"""TradingView headlines - the feed behind its own news pane.
 
 Worth having alongside the RSS feeds because it is *symbol-attached*: a story
 arrives already tagged with the instruments it concerns, so gold headlines can

@@ -3,7 +3,7 @@
 `structures` publishes a `LEVEL` signal when price reaches somewhere it has
 repeatedly turned and the history says which way it goes from there. The signal
 carries a price, a direction, a probability against its own base rate, the push
-it expects and the risk it runs — the last two in volatility units — and says
+it expects and the risk it runs - the last two in volatility units - and says
 nothing about how to trade any of it.
 
 `LevelStrategy` is that translation, done once. The two registered strategies
@@ -78,7 +78,7 @@ class LevelStrategy(Strategy):
 
     Subclasses override `accept` to narrow which calls they take, and
     `distances` to place the stop and target differently. The order of the
-    checks in `consider` is not arbitrary — the cheap refusals about the signal
+    checks in `consider` is not arbitrary - the cheap refusals about the signal
     come before the arithmetic, and the arithmetic comes before anything that
     would need the broker.
     """
@@ -177,7 +177,14 @@ class LevelStrategy(Strategy):
 
         entry = tick.entry(side)
         risk_distance, push_distance = self.distances(level, entry, vol_bps, risk_vol, push_vol)
-        stop = spec.round_price(stop_for(level, side, risk_distance))
+        # The far edge of the level's own band on the side the stop sits, and a
+        # quarter unit of clearance beyond it. Absent on an older signal, in
+        # which case the stop falls back to the origin as before.
+        unit = price_distance(level, vol_bps, 1.0)
+        edge = _number(features, "zone_low") if side is Side.BUY else _number(features, "zone_high")
+        stop = spec.round_price(
+            stop_for(level, side, risk_distance, zone_edge=edge, clearance=unit * 0.25)
+        )
         aimed = self.target(
             Aim(
                 payload=payload,
@@ -194,8 +201,8 @@ class LevelStrategy(Strategy):
             return aimed
         target = aimed
 
-        # The stop is anchored to the level, so a fill on the far side of it —
-        # price ran through while this was being decided — leaves a stop that is
+        # The stop is anchored to the level, so a fill on the far side of it -
+        # price ran through while this was being decided - leaves a stop that is
         # already behind price. That is not a trade to shrink; it is a trade
         # that has already been invalidated.
         if (side is Side.BUY and entry <= stop) or (side is Side.SELL and entry >= stop):
@@ -244,7 +251,7 @@ class LevelScalp(LevelStrategy):
     )
     #: Triggers on fast data. The stop is a volatility unit or two and
     #: `max_hold` closes it inside the hour, so a 4h thesis would be ended by
-    #: the clock rather than by being right or wrong — which teaches the
+    #: the clock rather than by being right or wrong - which teaches the
     #: journal nothing.
     entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
     #: Anchored above, without requiring it. A 5m call confirmed by 1h is a
@@ -267,8 +274,8 @@ class ConfluenceScalp(LevelStrategy):
     **The only measurement bearing on this says breadth does not predict.**
     [strength.md](../../docs/strength.md) tested confluence depth against
     whether a level holds and found nothing, in the strongest form of nothing:
-    four runs produced four different orderings — best at depth 1, at depth 2,
-    monotone increasing, and best at depth 3 — and as a ranking signal depth
+    four runs produced four different orderings - best at depth 1, at depth 2,
+    monotone increasing, and best at depth 3 - and as a ranking signal depth
     scores an **AUC of 0.476 and 0.452**, below the 0.5 that means no
     information at all. `depth >= 3` against `depth < 3` came out -2.2
     [-6.3, +1.7], -5.2 [-9.4, -1.2] and +0.3 [-4.2, +4.9]; not one interval
@@ -279,7 +286,7 @@ class ConfluenceScalp(LevelStrategy):
     So why is this still here. Two reasons, and neither is that the measurement
     is wrong. First, what it measured is *did price get through the level*, and
     strength.md is explicit that this is not the same question as *did the
-    trade make money* — a level that holds after a 3v excursion is a hold and a
+    trade make money* - a level that holds after a 3v excursion is a hold and a
     loss. Second, this uses depth to **select** rather than to weight, and a
     filter that halves the trade count is a different object from a multiplier
     on a score.
@@ -318,7 +325,7 @@ class MomentumScalp(LevelStrategy):
     edge of the calls arriving for each instrument, and a trade is taken only
     when all three agree with the direction it states.
 
-    What that buys is a filter against calls fighting their own context — a
+    What that buys is a filter against calls fighting their own context - a
     short at a level while every recent call on that instrument has been long.
     What it costs is the turn: the trade at the exact moment a move reverses is
     precisely the one all three lines disagree with, and this strategy will
@@ -375,8 +382,8 @@ class ApproachScalp(LevelStrategy):
 
     The setup, in the desk's words: a level below price is something to sell
     down to, a level above is something to buy up to, once something confirms
-    the direction. The confirmation here is the ordinary level call — a
-    measured, directional reading at the level price is standing on — and the
+    the direction. The confirmation here is the ordinary level call - a
+    measured, directional reading at the level price is standing on - and the
     target is the next level the book knows about in that direction.
 
     So the geometry is inverted from the other strategies. They enter at a
@@ -419,7 +426,7 @@ class ApproachScalp(LevelStrategy):
     #: Forty-five minutes. See the last paragraph above.
     hold_seconds: ClassVar[float] = 2_700.0
     #: Wider than the scalpers, because it holds for longer and because the
-    #: distance to the next level is what it trades — on 15m that distance is
+    #: distance to the next level is what it trades - on 15m that distance is
     #: worth crossing, where on 1m it is often inside the spread.
     entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
     context: ClassVar[tuple[str, ...]] = ("1h", "4h", "1d")
@@ -524,7 +531,7 @@ class SwingLevel(LevelStrategy):
     a real structure rather than a scalping detail.
 
     **The anchor and the entry are not the same timeframe, and the gap is the
-    point.** The bias comes from 4h, 1d and 1w — where a level has enough
+    point.** The bias comes from 4h, 1d and 1w - where a level has enough
     history to mean something and enough distance to be worth crossing. The
     *trigger* is allowed as low as 15m, because the entry is what fixes the
     stop, and a stop measured on 15m is a fraction of one measured on 1d for
@@ -532,7 +539,7 @@ class SwingLevel(LevelStrategy):
     thesis, smaller distance to being wrong, so the same money buys more of it.
 
     It requires its anchor. A 1h call with nothing above it agreeing is a fast
-    trade wearing a swing's hold, which is the worst combination available —
+    trade wearing a swing's hold, which is the worst combination available -
     the patience of the one and the evidence of the other.
 
     Given six hours rather than the scalpers' thirty minutes, because a daily

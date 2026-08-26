@@ -1,7 +1,7 @@
 # Structures
 
 The numeric layer. It watches quotes and fast bars, learns continuously what is
-normal, and says when something is not — **arithmetic, not judgement, and it
+normal, and says when something is not - **arithmetic, not judgement, and it
 does not stop when a model provider does.**
 
 ```bash
@@ -14,7 +14,7 @@ uv run till-infinity structures info      # what the models have learned
 The deciding argument is dependency direction. `agents` needs credentials for a
 model provider and cannot run without them. The layer that watches for a broken
 feed must run continuously whether or not you are paying for inference and
-whether or not the provider is up — putting it inside `agents` would make the
+whether or not the provider is up - putting it inside `agents` would make the
 always-on layer inherit the availability of the expensive, occasionally-absent
 one.
 
@@ -26,7 +26,7 @@ seconds, and inside `agents` this would inherit that batching and lose exactly
 the tick-level learning that makes online ML worth using.
 
 **It replaces a threshold that could never have been right.** The gate in
-`agents` was `spread_bps >= 8` — a constant, when the comparison that matters is
+`agents` was `spread_bps >= 8` - a constant, when the comparison that matters is
 "unusual *for this venue, right now, against the others*". A constant cannot
 express that. An online model is precisely that comparison.
 
@@ -40,7 +40,7 @@ prices ──▶ structures ──┬──▶ structures.signals ──▶ agen
 ## Everything is measured against the other venues
 
 An anomaly detector fed one venue's spread learns what is normal for that
-venue. Useful, and not the point — the project collects six venues because the
+venue. Useful, and not the point - the project collects six venues because the
 disagreement between them carries information no single feed does.
 
 | feature | what it asks |
@@ -54,7 +54,7 @@ disagreement between them carries information no single feed does.
 For venue `v` at time `t`, with `V` the set of venues quoting the same
 instrument and still fresh (a quote older than 300s is not evidence about now):
 
-**Consensus** — the median of everyone *except* the venue being judged:
+**Consensus** - the median of everyone *except* the venue being judged:
 
 ```
 mid*(v)     = median{ mid(u) : u in V, u != v }
@@ -66,7 +66,7 @@ against is precisely how a bad feed hides: with six venues one wrong reading
 barely moves the number, and with two it moves it halfway. And a **median**
 rather than a mean because a mean is dragged by the outlier it exists to expose.
 
-**Deviation** — how far this venue sits from where the others agree, in basis
+**Deviation** - how far this venue sits from where the others agree, in basis
 points, signed:
 
 ```
@@ -74,14 +74,14 @@ dev_bps(v)      = (mid(v) - mid*(v)) / mid*(v) x 10000
 abs_dev_bps(v)  = | dev_bps(v) |
 ```
 
-**Spread ratio** — wide compared with everyone quoting the same instrument at
+**Spread ratio** - wide compared with everyone quoting the same instrument at
 the same instant, not wide against a constant:
 
 ```
 spread_ratio(v) = spread_bps(v) / spread*(v)          (1.0 if spread* = 0)
 ```
 
-**Staleness** — seconds since this venue's mid last *changed*, against how long
+**Staleness** - seconds since this venue's mid last *changed*, against how long
 the group has been still:
 
 ```
@@ -91,7 +91,7 @@ staleness_ratio(v)  = still(v) / max(group_still, 1s)
 ```
 
 The floor of one second in the denominator is load-bearing. When every other
-venue is updating, their median stillness is near zero — dividing by it either
+venue is updating, their median stillness is near zero - dividing by it either
 explodes or, worse, gets guarded away to a constant, blinding the ratio at
 exactly the moment it matters most. That was a real bug.
 
@@ -110,10 +110,10 @@ The largest part of this package, and it has [its own guide](levels.md):
 swings found by Perceptually Important Points, each level tracked as a Kalman
 state whose variance *is* its zone, statistics kept **per approach side**, and
 an answer of the form *given price arrived from this side, P(pushed up) is p and
-the expected push is n volatility units — against a base rate of q*.
+the expected push is n volatility units - against a base rate of q*.
 
-The level's price is the **origin** — where the leg in ended and the leg out
-began — and not the wick's extreme. The extreme is not a second level; it is how
+The level's price is the **origin** - where the leg in ended and the leg out
+began - and not the wick's extreme. The extreme is not a second level; it is how
 far past the first one price was pushed, which is what makes the zone
 [asymmetric](levels.md#5b-the-origin-and-why-it-is-not-the-extreme).
 
@@ -131,12 +131,12 @@ A **stale** feed goes straight to `alerts`. It needs no language model to
 interpret and no economic release to explain, and making it wait for an agent
 would put an LLM in the path of the one message that most needs to arrive
 during an outage. So does a dislocation beyond `STRUCTURES_DIRECT_DEV_BPS`
-(default 100bps) — nothing on the calendar moves one venue 100bps while five
+(default 100bps) - nothing on the calendar moves one venue 100bps while five
 others hold still, so that is a broken quote, not a market opinion.
 
 An **actionable level call** also goes straight through, and it is the one
 exception to the paragraph above rather than an instance of it. A fundamental
-absolutely can explain why a level gave way — but a level call is the only shape
+absolutely can explain why a level gave way - but a level call is the only shape
 here that is a *finding* rather than a fault, and it is what the channel exists
 for. Every call that reaches the alert path has already passed `actionable`
 (enough evidence, enough separation from the base rate, enough size), which is a
@@ -155,17 +155,17 @@ exactly the case that needs the fundamentals before anyone is woken.
 ## A note on units
 
 Distances here are in **basis points** (1bps = 0.01%), and ratios like
-`spread_ratio` are dimensionless. The levels model uses a third unit —
-**volatility units**, where `1v` is one typical move — which is defined with
+`spread_ratio` are dimensionless. The levels model uses a third unit -
+**volatility units**, where `1v` is one typical move - which is defined with
 worked conversions in [levels.md](levels.md#0-what-a-volatility-unit-is).
 
 ## The detectors, and what their numbers mean
 
 Three scorers, each answering a different question, and each with a different
-notion of "unusual" — which is why none of their outputs is comparable with
+notion of "unusual" - which is why none of their outputs is comparable with
 another's without the conversions below.
 
-### GaussianScorer — is this unusual *for this venue*
+### GaussianScorer - is this unusual *for this venue*
 
 One per `(instrument, venue, metric)`. It fits a normal to the stream and
 returns
@@ -194,17 +194,17 @@ unit anyone reasoning about markets already thinks in.
 **The metric must be the one the fit assumes.** `dev_bps` is scored *signed*,
 not absolute. A signed cross-venue deviation is roughly normal, so the fit is
 sound and the two-tailed score already covers both directions; folding it to
-absolute first makes it half-normal, which a normal cannot represent — the
+absolute first makes it half-normal, which a normal cannot represent - the
 upper tail is then permanently overweight and the scorer cries wolf. That was
 also a real bug.
 
-### HalfSpaceTrees + QuantileFilter — is this *combination* unusual
+### HalfSpaceTrees + QuantileFilter - is this *combination* unusual
 
 Scores the joint vector `(abs_dev_bps, spread_ratio, staleness_ratio)`, catching
 combinations no single threshold would: a small deviation is fine, a slightly
 wide spread is fine, both at once on a venue that has gone quiet is not.
 
-Its score is **not calibrated** — on normal cross-venue data the median lands
+Its score is **not calibrated** - on normal cross-venue data the median lands
 around **0.77**, so a fixed `>= 0.75` cutoff fired on 55% of everything.
 `QuantileFilter` supplies the missing calibration by tracking the running
 distribution of scores and flagging only
@@ -220,10 +220,10 @@ cannot drift toward accepting its own detections.
 Inputs are min-max scaled first, because HST partitions ranges and staleness in
 seconds would otherwise dominate a deviation in basis points.
 
-### ADWIN — has the distribution itself moved
+### ADWIN - has the distribution itself moved
 
 Maintains an adaptive window over absolute returns and cuts it wherever two
-sub-windows stop looking like the same distribution — a Hoeffding-style bound,
+sub-windows stop looking like the same distribution - a Hoeffding-style bound,
 so no window length has to be chosen in advance and the horizon is discovered
 rather than configured.
 
@@ -251,7 +251,7 @@ built:
 **HalfSpaceTrees scores are not calibrated.** On normal cross-venue data the
 median score is about 0.77, so a fixed `>= 0.75` cutoff fired on **55% of
 everything**. `QuantileFilter` fixes it by learning the running distribution of
-scores and flagging only the top `q` — a threshold that retunes itself as the
+scores and flagging only the top `q` - a threshold that retunes itself as the
 market changes, which is the whole reason to be online.
 
 **A signal that cannot be named is not sent.** The joint model reports rare
@@ -265,7 +265,7 @@ Three more, each of which silently destroys a detector:
 - **Score before learn, always.** Learning first teaches the model the anomaly
   is normal, and it then scores it as normal.
 - **Do not learn from outliers.** One 30bps print folded into the variance makes
-  the next 3bps look ordinary — the detector goes quiet right after the
+  the next 3bps look ordinary - the detector goes quiet right after the
   interesting thing starts.
 - **Score the signed deviation.** `GaussianScorer` fits a normal; a signed
   cross-venue deviation is roughly normal, and folding it to absolute first
@@ -275,7 +275,7 @@ Measured on synthetic six-venue data, 1800 quotes of a calm market:
 
 | | |
 |---|---|
-| false positives | 0–3 (0–0.17%) |
+| false positives | 0-3 (0-0.17%) |
 | 30bps dislocation | caught |
 | 3bps dislocation | caught |
 | spread 10x the group | caught |
@@ -287,7 +287,7 @@ An online model that resets on restart has learned nothing, so state is saved
 to `.data/structures/models.pkl` and restored on start.
 
 **The replay does not run again once there is state.** Start-up restores the
-models first and only warms from stored bars `if cold` — and `cold` means *the
+models first and only warms from stored bars `if cold` - and `cold` means *the
 engine holds no levels*, not *the restore failed*. That distinction is load
 bearing: a state file saved before any history existed restores an empty engine
 perfectly happily, and keying the warm-up off a successful load once made that
@@ -298,7 +298,7 @@ entirely.
 
 **When it does run, it says so as it goes.** A cold start replays six-figure bar
 counts and used to print one line, at the end. Minutes of a service whose only
-honest reading was "possibly hung" — the same failure as a gate that declines
+honest reading was "possibly hung" - the same failure as a gate that declines
 silently. The replay now reports progress every ten per cent to the log, which
 is where a running service is read from, and `seed(on_progress=...)` hands the
 counts to a caller with a terminal instead: `structures watch` draws a bar.
@@ -311,7 +311,7 @@ records the river and Python versions it was written with and **refuses to load
 into a mismatch**, costing a warmup. Silently loading a half-restored model
 would give scores that look fine and mean nothing.
 
-Writes are atomic — temp file, then rename — so a process killed mid-save
+Writes are atomic - temp file, then rename - so a process killed mid-save
 leaves the previous state intact.
 
 ### Unpickling does not call `__init__`, and that took the service down
@@ -333,7 +333,7 @@ consumer and a quiet market are the same picture, which is this project's
 recurring shape.
 
 `Engine.__setstate__` now fills anything missing from a default-constructed
-engine — not from a hand-written list of field names, because that list is the
+engine - not from a hand-written list of field names, because that list is the
 part that goes stale, needing an edit on every field added. Anything the state
 carries wins; anything it lacks arrives at its default.
 
@@ -352,14 +352,14 @@ different world. See [journal.md](journal.md).
 ADWIN answers *whether* the regime changed. It has no opinion on **how much**,
 and that gap is now load-bearing: a confirmed change applies a flat `x 0.4` to
 every level's accumulated history, so a marginal change and a violent one are
-treated identically — and `0.4` is a number somebody picked.
+treated identically - and `0.4` is a number somebody picked.
 
 Two ways to fix it, in the order they are worth doing.
 
 ### 1. Percentiles (cheap, and the pattern is already proven here)
 
 The anomaly detector had exactly this defect. HalfSpaceTrees' raw scores turned
-out to be uncalibrated — median 0.77 on normal data — and a fixed cutoff fired
+out to be uncalibrated - median 0.77 on normal data - and a fixed cutoff fired
 on 55% of everything. `QuantileFilter` fixed it by learning the running
 distribution of scores. Drift has the same shape of problem and no fix yet.
 
@@ -379,7 +379,7 @@ learned, which is the same move that rescued the anomaly detector.
 **Gate the confirmation.** ADWIN fires on changes that are statistically real
 and practically trivial. Requiring the new volatility to sit outside, say, the
 85th/15th percentile band of its own recent history removes those, more cheaply
-and more precisely than the multi-timeframe quorum — and complementary to it,
+and more precisely than the multi-timeframe quorum - and complementary to it,
 since one filters by size and the other by agreement.
 
 **Make the regime a feature.** "Volatility is at the 92nd percentile of the
@@ -388,8 +388,8 @@ last month" is directly usable by the levels kNN; "volatility is 25bps" is not.
 
 ### 2. Bayesian online changepoint detection (more work, one real trap)
 
-BOCPD maintains a posterior over **run length** — how long since the last
-changepoint — so it gives a *probability* of a change rather than a flag, and
+BOCPD maintains a posterior over **run length** - how long since the last
+changepoint - so it gives a *probability* of a change rather than a flag, and
 its run-length posterior directly answers **how old the current regime is**.
 
 That last part is the thing percentiles cannot supply, and it matters: level
@@ -397,18 +397,18 @@ evidence currently decays on wall-clock days, which is a proxy for regime age
 rather than the thing itself. Two weeks inside one stable regime should discount
 a level's history far less than two weeks spanning three.
 
-**The trap is the predictive model.** BOCPD needs one, plus a hazard rate — both
+**The trap is the predictive model.** BOCPD needs one, plus a hazard rate - both
 assumptions ADWIN pointedly avoids. A Gaussian model on fat-tailed financial
 returns fires on kurtosis alone and would be *noisier* than what is here now.
 Done properly it wants a normal-inverse-gamma conjugate prior, whose posterior
 predictive is Student-t and handles the tails correctly. That is the difference
 between an improvement and a regression, and it is not optional.
 
-Cost: river does not ship it, so it is an implementation — log-space numerics
+Cost: river does not ship it, so it is an implementation - log-space numerics
 for stability and run-length pruning to keep it O(1) per step rather than O(t).
 
-**Order.** Percentiles first, because they deliver the graded magnitude — the
-main reason to want BOCPD — at a fraction of the cost and with no distributional
+**Order.** Percentiles first, because they deliver the graded magnitude - the
+main reason to want BOCPD - at a fraction of the cost and with no distributional
 assumption. BOCPD after, once it is clear whether regime *age* changes any
 decision, rather than writing a detector that can be subtly wrong to find out.
 
@@ -424,7 +424,7 @@ category error.
 | **HMM** | which world are we in, and how do worlds succeed each other | a sequence | a state, or a posterior over states |
 
 An HMM cannot predict a push, so it cannot replace the FM. What it can do is
-**fill the `regime` slot** — the feature that exists so a touch is compared with
+**fill the `regime` slot** - the feature that exists so a touch is compared with
 touches from a market that felt the same. Today that is planned as a rolling
 quantile of volatility; an HMM would put a discrete state there instead. The
 two then compose rather than compete, and cleanly: `encode` already one-hots
@@ -438,7 +438,7 @@ axis:
 - **BOCPD gives regime _age_.** The run-length posterior answers "how long
   since the last change", which is the quantity the decay actually wants.
 - **HMM gives regime _identity_.** "This is the quiet regime we were in last
-  month." BOCPD structurally cannot say that — it knows only time since the
+  month." BOCPD structurally cannot say that - it knows only time since the
   break, never that the current stretch resembles an earlier one.
 
 So the question that decides whether an HMM is worth building is empirical and
@@ -455,7 +455,7 @@ levels, and doing so costs nothing but a comparison.
 2. river ships neither, so either is an implementation rather than a
    dependency.
 3. **An HMM invites look-ahead by default.** Standard fitting is Baum-Welch
-   over a whole sequence, and the standard state estimate is *smoothed* —
+   over a whole sequence, and the standard state estimate is *smoothed* -
    forward-backward, which uses the future to label the past. Only the
    **filtered**, forward-only estimate is admissible under
    [levels.md](levels.md) §2. An HMM fitted in batch over all history and then
@@ -463,17 +463,17 @@ levels, and doing so costs nothing but a comparison.
    beautifully, which is the worst combination available and the specific
    failure this project designs out rather than tests for.
 
-**Order, therefore: unchanged.** Percentiles first — same slot, a fraction of
+**Order, therefore: unchanged.** Percentiles first - same slot, a fraction of
 the cost, no distributional assumption, no look-ahead hazard. An HMM is worth
 revisiting only after the recurrence question above has been asked of real
 outcomes, and it sits behind BOCPD rather than ahead of it, because regime age
 has a decision waiting on it and regime identity does not yet.
 
-## `facto.py` — the interaction model
+## `facto.py` - the interaction model
 
 Factorisation machines model how features *combine*. The levels model treats
-them one at a time — deviation, then spread, then how recently the level broke
-— and a back check on a strong level in a violent regime is not the sum of
+them one at a time - deviation, then spread, then how recently the level broke
+- and a back check on a strong level in a violent regime is not the sum of
 those three. An additive model cannot say so; an FM can.
 
 This was empty until the journal started attaching outcomes, because an FM is
@@ -502,7 +502,7 @@ splitting them across train and test measures memorisation.
 
 An FM multiplies its features together, so its gradients are **quadratic** in
 magnitude: an unbounded input does not skew the fit, it diverges it. That is
-not a hypothetical — it happened, and quietly.
+not a hypothetical - it happened, and quietly.
 
 `strength`, `regime`, `pivot` and `backcheck` live in [0, 1] and `experience`
 is log-compressed, but `approach_vol`, `depth_vol` and `run_vol` are ratios
@@ -512,7 +512,7 @@ in thirty-seven by 5x took the latent factors non-finite within 55 examples; by
 20x, within 18. Production was diverged almost from the start.
 
 **Nothing appeared to be wrong**, which is the part worth remembering.
-`Model.predict` catches the resulting NaN and returns zero — "no opinion" —
+`Model.predict` catches the resulting NaN and returns zero - "no opinion" -
 so the service stayed up, the numbers stayed plausible, and the model learned
 nothing while reporting nothing. A guard against a symptom will hide the cause
 if the cause is never looked for.
@@ -530,7 +530,7 @@ accuracy rather than uptime.
 
 Also worth keeping, because the symptom pointed everywhere except the cause.
 `fit` reported 167 examples against a journal holding 9,359 outcomes, and the
-obvious reading — outcomes recorded without the features that produced them —
+obvious reading - outcomes recorded without the features that produced them -
 was wrong. `journal.read` clamped every caller's limit to its 500-row display
 ceiling, so `dataset` asked for 200,000 rows and got the most recent 500.
 
@@ -542,14 +542,14 @@ is what a silent clamp looks like from outside.
 
 A score alone means nothing, so it is reported beside:
 
-- **predict the average** — the floor. A model that cannot beat this has
+- **predict the average** - the floor. A model that cannot beat this has
   learned nothing from the features.
-- **the levels model** — what `reactions.infer` said at the time, already in
+- **the levels model** - what `reactions.infer` said at the time, already in
   the journal. An FM that does not beat the model it was meant to improve on
   is not an improvement.
 
 Both need beating by a **margin**, not by any amount. On pure noise the FM
-edged the running mean by 1.3% — not from learning, but because the running
+edged the running mean by 1.3% - not from learning, but because the running
 mean starts cold and is handicapped early. Calling that a win is how a system
 talks itself into believing its own noise.
 
@@ -557,7 +557,7 @@ talks itself into believing its own noise.
 
 Below 200 examples it reports the count and stops. A factorisation machine over
 eighteen rows will produce a number, and the number is noise wearing a decimal
-point. Verified on synthetic data with a pure interaction — sign depending on
+point. Verified on synthetic data with a pure interaction - sign depending on
 `side × regime` with no main effect, which is exactly what an additive model
 cannot represent:
 
@@ -571,7 +571,7 @@ cannot represent:
 catchable by intent, in two situations: before anything has been learned, and
 when given fewer than two features. The first is hit by progressive validation
 on **every first example**; the second by any sparse row. Both return zero
-here, which is also the honest answer — a model with no history, or no pair to
+here, which is also the honest answer - a model with no history, or no pair to
 look at, has no opinion.
 
 ### Examples have an expiry, and it is not time
@@ -581,12 +581,12 @@ the numbers it printed. Inflated touch counts fed `experience` and `strength`;
 a pooled base rate made `edge` wrong on every row. Examples from before those
 fixes describe a model that no longer exists, and fitting across the boundary
 teaches the FM the relationship between features and outcomes *as they were
-mismeasured* — worse than no model, because it looks like one.
+mismeasured* - worse than no model, because it looks like one.
 
 `fit(journal_db, since=<unix ts>)` counts only what was recorded after a
 known-good point. There is deliberately no default: where that boundary sits is
 a judgement about a particular deployment's history, and the code cannot know
-it. The cost is real — it resets progress toward `MIN_EXAMPLES` — and it is
+it. The cost is real - it resets progress toward `MIN_EXAMPLES` - and it is
 still cheaper than a confident model fitted on a ruler that has since changed
 length.
 
@@ -603,4 +603,4 @@ length.
 | `STRUCTURES_ALERT_LEVELS` | `0` to hold actionable level calls back for an agent |
 | `STRUCTURES_DIRECT_DEV_BPS` | deviation that is a broken quote (100) |
 | `STRUCTURES_SAVE_S` | seconds between saves (300) |
-| `STRUCTURES_CHARGE_SPREAD` | `0` to judge level calls on their gross push, for comparison only — it says so in the log, because a configured `cost_vol: 0.0` and a broken one are otherwise identical ([levels.md](levels.md)) |
+| `STRUCTURES_CHARGE_SPREAD` | `0` to judge level calls on their gross push, for comparison only - it says so in the log, because a configured `cost_vol: 0.0` and a broken one are otherwise identical ([levels.md](levels.md)) |

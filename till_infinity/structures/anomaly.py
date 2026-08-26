@@ -3,11 +3,11 @@
 Two detectors, because "unusual" has two useful meanings and one model cannot
 express both:
 
-- **`HalfSpaceTrees`** scores the joint feature vector — deviation, spread ratio
+- **`HalfSpaceTrees`** scores the joint feature vector - deviation, spread ratio
   and staleness together. It catches combinations no single threshold would:
   a small deviation is fine, a slightly wide spread is fine, both at once on a
-  venue that has gone quiet is not. Its score is **not calibrated** — on normal
-  cross-venue data the median lands around 0.77 — so a fixed cutoff would fire
+  venue that has gone quiet is not. Its score is **not calibrated** - on normal
+  cross-venue data the median lands around 0.77 - so a fixed cutoff would fire
   on half of everything. `QuantileFilter` is what makes it usable: it learns the
   running distribution of scores and flags only the top `q`, which is a
   threshold that retunes itself as the market changes.
@@ -21,7 +21,7 @@ invalidates them silently, whereas a model that learns from the last N readings
 is always describing the market that exists now.
 
 Scoring happens **before** learning, always. Learning first would teach the
-model that the anomaly is normal, and it would then score it as normal — the
+model that the anomaly is normal, and it would then score it as normal - the
 detector would quietly train itself to miss exactly what it exists to find.
 """
 
@@ -49,7 +49,7 @@ FEATURES = ("abs_dev_bps", "spread_ratio", "staleness_ratio")
 #: GaussianScorer fits a normal and scores `2*|CDF(y) - 0.5|`. A signed
 #: deviation between venues really is roughly normal, so the fit is sound and
 #: the two-tailed score already covers both directions. Folding it to absolute
-#: first makes it half-normal, which a normal fit cannot represent — the upper
+#: first makes it half-normal, which a normal fit cannot represent - the upper
 #: tail is then permanently overweight and the scorer cries wolf.
 PER_VENUE = ("dev_bps", "spread_ratio")
 
@@ -58,14 +58,14 @@ PER_VENUE = ("dev_bps", "spread_ratio")
 WARMUP = 60
 
 #: Quantile of the score distribution above which a joint reading is unusual.
-#: 0.999 is roughly one tick in a thousand per venue — with six venues quoting
+#: 0.999 is roughly one tick in a thousand per venue - with six venues quoting
 #: continuously that is a handful an hour, not a stream.
 ANOMALY_QUANTILE = 0.999
 #: How many standard deviations from a venue's own norm counts as unusual.
 SIGMA = 4.0
 
 #: A venue this far off consensus, or this much stiller than the group, is not
-#: ambiguous — it needs no model to interpret and no calendar to explain.
+#: ambiguous - it needs no model to interpret and no calendar to explain.
 OBVIOUS_DEV_BPS = 50.0
 #: Times longer than the group has been still. A venue quoting the same price
 #: while five others move is not a judgement call.
@@ -143,7 +143,7 @@ class Detector:
 
         # Score everything before learning anything. Learning first would teach
         # each model that the reading is normal, and it would then score it as
-        # normal — training itself to miss exactly what it exists to find.
+        # normal - training itself to miss exactly what it exists to find.
         model = self._model(feed)
         score = float(model.score_one(vector))
         unusual = bool(model[-1].classify(score))
@@ -256,7 +256,7 @@ class Detector:
             named = _describe(features)
             # A signal we cannot name is a signal we should not send. The joint
             # model reports rare *combinations*, and a combination in which no
-            # single component is remarkable is a rare shade of ordinary —
+            # single component is remarkable is a rare shade of ordinary -
             # reporting it sends someone looking for something that is not there.
             if named is None:
                 return []
@@ -294,7 +294,7 @@ def _describe(features: dict[str, float]) -> tuple[Shape, str] | None:
 
     The joint model says "this combination is rare" without saying which part
     was rare, and a signal reported as a dislocation when the price never moved
-    is worse than no signal — it sends someone looking in the wrong place.
+    is worse than no signal - it sends someone looking in the wrong place.
     """
     if features["staleness_ratio"] >= NAMEABLE_STALENESS:
         return Shape.STALE, (

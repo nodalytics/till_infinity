@@ -4,29 +4,29 @@ Run: `python research/harness/turns.py`
 
 [todo.md](../docs/todo.md) §6a asks for the reversal that matters over weeks
 rather than the next touch, and asks for the falsification to be written before
-the model — because major turns are rare, and a dozen observations will produce
+the model - because major turns are rare, and a dozen observations will produce
 a confident-looking number from anything.
 
-**The answer is yes, weakly — and it took doubling the cross-section to see it.**
+**The answer is yes, weakly - and it took doubling the cross-section to see it.**
 
 > **Re-measured on 2026-08-15.** The first reading of this document said no: on
 > six instruments the purged walk-forward gave AUC 0.559 with an interval of
-> 0.462–0.661, which contains 0.5. It also said the one cheap lever was to
-> backfill the eight tracked feeds that had no daily bars. That was done — see
-> [todo.md](../docs/todo.md) §0d — and it took the sample from 131 turns to
+> 0.462-0.661, which contains 0.5. It also said the one cheap lever was to
+> backfill the eight tracked feeds that had no daily bars. That was done - see
+> [todo.md](../docs/todo.md) §0d - and it took the sample from 131 turns to
 > **310**. The answer changed. This is the second reading; the first is in git.
 
 On fourteen instruments the purged walk-forward gives **AUC 0.595, 95% interval
-0.540 – 0.654**, which excludes 0.5. Two signals separate on their own. The
-effect is small, it is the conventional one — old, extended, volatile trends
-turn — and it is now measurable rather than merely plausible.
+0.540 - 0.654**, which excludes 0.5. Two signals separate on their own. The
+effect is small, it is the conventional one - old, extended, volatile trends
+turn - and it is now measurable rather than merely plausible.
 
 It is worth being precise about what changed. Nothing about the method: the
 same universe, the same labels, the same purging, the same episode bootstrap.
 Only the sample. A result that appears when you double the data and changes no
 code is the most ordinary kind of finding there is, and the reason the first
 reading could not see it was that 131 turns could not resolve an effect of this
-size — which the first reading said, and was right about.
+size - which the first reading said, and was right about.
 
 ## 1. The question, stated so it can be wrong
 
@@ -48,7 +48,7 @@ generational move" for the second, and pooling them would pool two questions.
 Twenty units is about 11% for the median instrument here.
 
 **A forward drawdown, not a swing pivot.** A zigzag pivot is only *confirmed*
-some days after the extreme — a median of 29 days at this size — so a model
+some days after the extreme - a median of 29 days at this size - so a model
 trained on pivot labels is being asked when a pivot will be *confirmed*, which
 is not when the turn happened. The forward drawdown has no confirmation lag and
 no ambiguity about which day the turn was.
@@ -59,7 +59,7 @@ Three things here manufacture a good answer from nothing.
 
 **Overlapping windows.** Two days a week apart share 53 of their 60 forward
 days. 691 labelled days are nowhere near 691 observations. Everything is
-counted and resampled in **episodes** — contiguous runs of the label — and the
+counted and resampled in **episodes** - contiguous runs of the label - and the
 bootstrap resamples whole episodes rather than days. This is the single most
 important choice in the script: resampling days would have returned intervals
 several times too narrow, and every result below would have looked significant.
@@ -97,29 +97,29 @@ reading any of them will get, so a signal flat here is dead:
 
 | signal | AUC | 95% by episode | |
 |---|---|---|---|
-| `vol` — realised volatility now | 0.628 | 0.572 – 0.685 | separates |
-| `extension` — how far the trend has carried | 0.583 | 0.526 – 0.643 | separates |
-| `above_mean` — distance above the long mean | 0.580 | 0.523 – 0.642 | separates |
-| `off_low` — how far off the 250-day low | 0.575 | 0.521 – 0.638 | separates |
-| `since_low` | 0.531 | 0.476 – 0.591 | |
-| `vol_ratio` | 0.527 | 0.477 – 0.580 | |
-| `up_days` | 0.513 | 0.462 – 0.562 | |
-| `efficiency` | 0.487 | 0.435 – 0.540 | |
-| `decel` | 0.481 | 0.450 – 0.515 | |
-| `drawdown` | 0.472 | 0.424 – 0.516 | |
+| `vol` - realised volatility now | 0.628 | 0.572 - 0.685 | separates |
+| `extension` - how far the trend has carried | 0.583 | 0.526 - 0.643 | separates |
+| `above_mean` - distance above the long mean | 0.580 | 0.523 - 0.642 | separates |
+| `off_low` - how far off the 250-day low | 0.575 | 0.521 - 0.638 | separates |
+| `since_low` | 0.531 | 0.476 - 0.591 | |
+| `vol_ratio` | 0.527 | 0.477 - 0.580 | |
+| `up_days` | 0.513 | 0.462 - 0.562 | |
+| `efficiency` | 0.487 | 0.435 - 0.540 | |
+| `decel` | 0.481 | 0.450 - 0.515 | |
+| `drawdown` | 0.472 | 0.424 - 0.516 | |
 
 Four separate, and they are not quite the four the smaller sample found.
 `vol` strengthened from 0.606 to 0.628 and is now clearly the best single
 signal. `above_mean` and `off_low` were flat before and separate now.
 `since_low`, which was the *strongest* signal on six instruments at 0.616, has
-faded to 0.531 — a good reminder of how much of a marginal ranking is noise.
+faded to 0.531 - a good reminder of how much of a marginal ranking is noise.
 
 What survives across both readings is the shape: **extended, volatile trends
 turn.** What does not survive is any particular member of the set.
 
 Two things still measure at chance and both are worth naming, because they are
 what anyone would try first: **momentum deceleration** (`decel`, 0.481) and the
-**efficiency ratio** (`efficiency`, 0.487) — the cycle labeller from
+**efficiency ratio** (`efficiency`, 0.487) - the cycle labeller from
 [cycles.md](cycles.md). How cleanly a trend has run says nothing about whether
 it is ending.
 
@@ -129,13 +129,13 @@ Walk-forward over purged folds, 222 turns in test:
 
 | signals | AUC | 95% by episode | |
 |---|---|---|---|
-| **all ten** | **0.595** | **0.540 – 0.654** | separates |
-| `vol` alone | 0.604 | 0.537 – 0.671 | separates |
-| the four that separated | 0.595 | 0.535 – 0.659 | separates |
-| `extension` alone | 0.589 | 0.520 – 0.652 | separates |
-| age and extension | 0.580 | 0.513 – 0.645 | separates |
-| `since_low` alone | 0.528 | 0.465 – 0.592 | |
-| `vol_ratio` alone | 0.497 | 0.430 – 0.567 | |
+| **all ten** | **0.595** | **0.540 - 0.654** | separates |
+| `vol` alone | 0.604 | 0.537 - 0.671 | separates |
+| the four that separated | 0.595 | 0.535 - 0.659 | separates |
+| `extension` alone | 0.589 | 0.520 - 0.652 | separates |
+| age and extension | 0.580 | 0.513 - 0.645 | separates |
+| `since_low` alone | 0.528 | 0.465 - 0.592 | |
+| `vol_ratio` alone | 0.497 | 0.430 - 0.567 | |
 
 `vol` alone very nearly matches all ten, which is the pattern
 [features.md](features.md) found with `side` and this project keeps finding:
@@ -146,20 +146,20 @@ the result:
 
 | held out | AUC | 95% by episode | turns |
 |---|---|---|---|
-| btc | 0.753 | 0.537 – 0.919 | 20 |
-| gold | 0.711 | 0.540 – 0.842 | 19 |
-| eurusd | 0.698 | 0.529 – 0.843 | 24 |
-| usdchf | 0.636 | 0.449 – 0.796 | 32 |
-| sol | 0.633 | 0.331 – 0.892 | 6 |
-| gbpusd | 0.631 | 0.466 – 0.809 | 30 |
-| usdcnh | 0.576 | 0.438 – 0.716 | 47 |
-| audusd | 0.572 | 0.402 – 0.749 | 20 |
-| eth | 0.564 | 0.344 – 0.755 | 10 |
-| us100 | 0.554 | 0.373 – 0.803 | 22 |
-| usdjpy | 0.537 | 0.280 – 0.711 | 23 |
-| spx500 | 0.537 | 0.304 – 0.789 | 16 |
-| nzdusd | 0.464 | 0.193 – 0.709 | 13 |
-| usdcad | 0.447 | 0.293 – 0.688 | 28 |
+| btc | 0.753 | 0.537 - 0.919 | 20 |
+| gold | 0.711 | 0.540 - 0.842 | 19 |
+| eurusd | 0.698 | 0.529 - 0.843 | 24 |
+| usdchf | 0.636 | 0.449 - 0.796 | 32 |
+| sol | 0.633 | 0.331 - 0.892 | 6 |
+| gbpusd | 0.631 | 0.466 - 0.809 | 30 |
+| usdcnh | 0.576 | 0.438 - 0.716 | 47 |
+| audusd | 0.572 | 0.402 - 0.749 | 20 |
+| eth | 0.564 | 0.344 - 0.755 | 10 |
+| us100 | 0.554 | 0.373 - 0.803 | 22 |
+| usdjpy | 0.537 | 0.280 - 0.711 | 23 |
+| spx500 | 0.537 | 0.304 - 0.789 | 16 |
+| nzdusd | 0.464 | 0.193 - 0.709 | 13 |
+| usdcad | 0.447 | 0.293 - 0.688 | 28 |
 
 Twelve of fourteen above chance, three separating individually, and **two below
 0.5**. Every interval is at least 0.25 wide. Held-out generalisation is
@@ -169,7 +169,7 @@ directionally supported and nowhere near established.
 
 Across four eras of 3,804 days each:
 
-| signal | 2007– | 2015– | 2019– | 2023– | spread |
+| signal | 2007- | 2015- | 2019- | 2023- | spread |
 |---|---|---|---|---|---|
 | **`vol`** | **0.670** | **0.625** | **0.613** | **0.585** | **0.085** |
 | `extension` | 0.604 | 0.648 | 0.603 | **0.441** | 0.206 |
@@ -181,7 +181,7 @@ is also the best single signal purged. That is two independent reasons to
 prefer it, and it is why the recommendation is to build on `vol` alone if
 anything is built at all.
 
-It is also **monotonically decaying** — 0.670, 0.625, 0.613, 0.585. The effect
+It is also **monotonically decaying** - 0.670, 0.625, 0.613, 0.585. The effect
 is real and getting weaker, which is what one would expect of anything this
 obvious in a market that people trade.
 
@@ -206,17 +206,17 @@ Measured rather than assumed, by subsampling episodes:
 | 94 | 0.124 |
 
 Only the downward direction is valid. Resampling *more* episodes than exist
-duplicates the ones there are and adds no information — the curve flattens for
+duplicates the ones there are and adds no information - the curve flattens for
 a reason that has nothing to do with statistics, which is worth stating because
 the flat part looks exactly like convergence.
 
 The interval narrows more slowly than 1/sqrt(n), because episodes are
-themselves correlated and unequal in size. Reaching a half-width of 0.05 —
-enough to call 0.56 apart from 0.50 — therefore needs **several hundred**
+themselves correlated and unequal in size. Reaching a half-width of 0.05 -
+enough to call 0.56 apart from 0.50 - therefore needs **several hundred**
 out-of-sample turns against the 94 available, and probably more than the
 square-root law suggests.
 
-**Eight tracked feeds have no daily bars at all** — audusd, eth, nzdusd, sol,
+**Eight tracked feeds have no daily bars at all** - audusd, eth, nzdusd, sol,
 usdcad, usdchf, usdcnh, usdjpy. Backfilling them would take the cross-section
 from six instruments to fourteen, which is the one lever available that costs
 nothing but a collection run. It would roughly double the turns. It would not
@@ -228,7 +228,7 @@ be enough on its own, and saying so now is cheaper than finding out later.
    weak one. "This trend is extended and volatility is rising" is a sentence
    worth putting in front of an analyst; it is not a signal worth acting on,
    and the gap between those two things is the whole discipline here. The
-   nearest home is [todo.md](../docs/todo.md) §6 — the score — as context on
+   nearest home is [todo.md](../docs/todo.md) §6 - the score - as context on
    the number rather than a term in it.
 2. **If anything is built, build it on `vol` alone.** It scores 0.604 purged
    against 0.595 for all ten, so nine of the ten signals are decoration. This
@@ -243,7 +243,7 @@ be enough on its own, and saying so now is cheaper than finding out later.
    0.25 wide. Before this is trusted across instruments it needs either more
    turns per instrument or an honest admission that it is a pooled effect.
 5. **Note what did not work, so it is not retried.** Momentum deceleration
-   (0.481) and the efficiency ratio (0.487) both measure at chance — the two
+   (0.481) and the efficiency ratio (0.487) both measure at chance - the two
    things most likely to be tried first by anyone picking this up. And
    `since_low`, the strongest signal on six instruments, faded to chance on
    fourteen; a marginal ranking is mostly noise.

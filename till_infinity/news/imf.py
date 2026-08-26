@@ -1,4 +1,4 @@
-"""IMF reserves — International Reserves and Foreign Currency Liquidity (IRFCL).
+"""IMF reserves - International Reserves and Foreign Currency Liquidity (IRFCL).
 
 Central bank reserve assets per country, monthly. Slow-moving data, but it is
 the balance-sheet side of the same story the calendar covers: who has the
@@ -6,7 +6,7 @@ firepower to defend a currency, and how that stock is changing.
 
 Three things about this API cost time to discover, so they are pinned here:
 
-* the legacy host ``dataservices.imf.org`` is **gone** — not deprecated, absent
+* the legacy host ``dataservices.imf.org`` is **gone** - not deprecated, absent
   from DNS. The live service is ``api.imf.org/external/sdmx/2.1``;
 * the series key is ``COUNTRY.INDICATOR.SECTOR.FREQUENCY`` and country codes
   are **ISO-3**. ``US...M`` returns a valid, empty document; ``USA...M`` returns
@@ -14,7 +14,7 @@ Three things about this API cost time to discover, so they are pinned here:
   this worth writing down;
 * series carry ``SCALE="6"``, which looks like "values are in millions" and is
   not: the numbers are already plain USD. US reserves for 2026-07 arrive as
-  252,708,091,800 — the $252.7bn actually held. Applying the exponent would
+  252,708,091,800 - the $252.7bn actually held. Applying the exponent would
   overstate every figure by a million.
 
 Responses are SDMX StructureSpecificData: dimensions live in the attributes of
@@ -108,7 +108,7 @@ class ImfSource(Source):
     """Reserve assets per country, one request each."""
 
     name = "imf"
-    #: Monthly data — there is nothing to gain from the fast clock.
+    #: Monthly data - there is nothing to gain from the fast clock.
     slow = True
 
     def __init__(self, settings: Settings, countries: tuple[str, ...] | None = None) -> None:

@@ -7,7 +7,7 @@ collected already and never handed to the model:
   volume      the bar's volume against this series' own recent average
   session     time of day, as the hour in UTC, one-hot into four sessions
   momentum    where price is relative to twenty bars ago, in volatility units
-  headroom    distance to the next level beyond this one — is there room to
+  headroom    distance to the next level beyond this one - is there room to
               run, or a barrier a few units away
 
 Scored on AUC as well as accuracy: the base rate is 78% and accuracy is nearly

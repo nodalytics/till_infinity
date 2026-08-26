@@ -3,13 +3,13 @@
 One general analyst is worse than several narrow ones at the same cost: a
 prompt that has to cover spreads, calendars and reserves at once hedges, while
 a prompt that only knows about cross-broker pricing commits. So a role is a
-goal, the standard of evidence it is held to, and the tools it can reach —
+goal, the standard of evidence it is held to, and the tools it can reach -
 that last part matters most, because a role that cannot read the calendar
 cannot invent a calendar entry.
 
 The lenses are deliberately different rather than redundant. `market` reads
 price, `macro` reads context, and `risk` reads both and decides whether a human
-should be interrupted — a question neither of the other two can answer alone.
+should be interrupted - a question neither of the other two can answer alone.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ Rules you do not break:
 - If the tools return nothing useful, say so and return no findings. An empty
   findings list is a correct and expected answer. Do not manufacture something
   to report.
-- Put the **figures** in `evidence` — the numbers and what they mean, in
+- Put the **figures** in `evidence` - the numbers and what they mean, in
   plain words. Never the tool call that produced them: `spreads(feed='btc')`
   tells a reader nothing they can act on and is an implementation detail of
   how you were wired up, not a fact about the market. Write
@@ -60,7 +60,7 @@ class Role:
 
 PRICE_TOOLS = ("instruments", "quotes", "spreads", "divergence", "bars", "move")
 #: The structural view: where price has turned before and what it did there.
-#: Separate from PRICE_TOOLS because it answers a different question — those
+#: Separate from PRICE_TOOLS because it answers a different question - those
 #: describe the present, these describe what the present has meant before.
 LEVEL_TOOLS = ("levels", "level_at", "next_levels", "zones")
 NEWS_TOOLS = ("events", "headlines", "reserves")
@@ -81,11 +81,11 @@ between them are the signal, not the level itself.
 What is worth reporting:
 - Price arriving at a level with a history (`level_at`, `zones`), where what
   happened before actually says something. Always compare `probability_up`
-  against `base_rate_up` — equal means the level has told you nothing.
+  against `base_rate_up` - equal means the level has told you nothing.
 - One venue's mid drifting away from the others (`divergence`), which is either
   a stale feed or a real dislocation. Say which you think it is.
 - A spread widening against its own recent average (`spreads`), not against
-  some absolute number you have in mind — 4bps is normal for one venue and
+  some absolute number you have in mind - 4bps is normal for one venue and
   alarming for another.
 - A move that is large relative to the instrument's own recent range (`move`,
   `bars`), not large in points.
@@ -105,13 +105,13 @@ printed, and what the coverage actually claims.
 
 What is worth reporting:
 - A high-importance release that just printed away from forecast (`events`
-  with released=True) — the gap between actual and forecast is the story.
+  with released=True) - the gap between actual and forecast is the story.
 - A release due shortly that is likely to move the instruments being tracked.
 - Several independent outlets converging on the same story (`headlines`), which
   is different from one outlet repeating itself.
 
 Central bank reserves (`reserves`) are already in USD; the `scale` column is
-provenance, not a multiplier. Reserves move slowly — a monthly change is news,
+provenance, not a multiplier. Reserves move slowly - a monthly change is news,
 a daily one is a data artefact.
 """.strip(),
     tools=NEWS_TOOLS + MEMORY_TOOLS,
@@ -125,7 +125,7 @@ You see both price and context, and you are the last gate before an alert
 reaches someone's phone. Most of the time the answer is no, and returning no
 findings is you doing your job well.
 
-Interrupt someone when price and context agree — a dislocation that a release
+Interrupt someone when price and context agree - a dislocation that a release
 explains, a release whose expected move has not shown up in price yet, or price
 arriving at a level whose history points the same way the calendar does.
 A number on its own is rarely worth a phone buzzing.

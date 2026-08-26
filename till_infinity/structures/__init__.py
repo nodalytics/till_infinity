@@ -1,7 +1,7 @@
 """Online models over the price data: what is unusual, and what has changed.
 
 The numeric half of the project. It watches `prices.quotes` and `prices.bars`,
-learns continuously, and publishes what it finds — without an API key, without
+learns continuously, and publishes what it finds - without an API key, without
 a language model, and without stopping when either is unavailable.
 
     prices ──▶ structures ──┬──▶ structures.signals ──▶ agents ──▶ alerts

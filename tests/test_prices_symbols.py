@@ -121,7 +121,7 @@ def test_the_onshore_yuan_resolves_to_the_offshore_feed():
     """USDCNY is carried by one venue of ours, which is below the quorum.
 
     A consensus bar needs three venues, so a `usdcny` feed would form no levels
-    and would do it silently — the failure that looks exactly like a quiet
+    and would do it silently - the failure that looks exactly like a quiet
     market. CNH is what the six venues actually quote.
     """
     (feed,) = resolve_symbols(["usdcny"])
@@ -143,7 +143,7 @@ def test_the_crypto_feeds_carry_the_same_venues():
     """One venue would defeat the cross-venue consensus the whole model rests on.
 
     Every symbol here was checked against the live socket before being listed,
-    including Bybit — which quotes BTC and ETH in both USD and USDT but SOL
+    including Bybit - which quotes BTC and ETH in both USD and USDT but SOL
     only in USDT, so USDT is what all three share.
     """
     for name in ("btc", "eth", "sol"):

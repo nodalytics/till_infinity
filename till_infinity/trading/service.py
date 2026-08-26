@@ -18,7 +18,7 @@ path prices its entry off the broker's own quote rather than the consensus,
 because the consensus is six venues' opinion and the fill is one broker's.
 
 **Positions are reconciled, not assumed.** A stop hit server-side leaves no
-message on any bus — the position is simply gone next time it is asked for. So
+message on any bus - the position is simply gone next time it is asked for. So
 the open set is compared on every heartbeat and a ticket that has vanished is
 recorded as closed at its last known price. That is a slightly stale exit for
 a real broker and an exact one on paper, and it is honest about which: the
@@ -52,7 +52,7 @@ log = get_logger(__name__)
 #: `signals` is the trade. `quotes` price the entry on the paper book and feed
 #: the venue consensus our own broker is judged against. `events` is the
 #: economic calendar, for standing aside around a release. `resolutions` is
-#: ground truth — what the levels we traded actually did — which is consumed
+#: ground truth - what the levels we traded actually did - which is consumed
 #: for the record rather than for a decision, and is the seam anything that
 #: learns from outcomes will attach to.
 TOPICS: tuple[str, ...] = (SIGNALS, QUOTES, EVENTS, RESOLUTIONS)
@@ -104,7 +104,7 @@ class Trader:
         self._symbol_of: dict[str, str] = {}
         self._feed_of: dict[str, str] = {}
         #: The order just sent, waiting to be matched to the position it
-        #: became. Held for exactly one reconcile — see `_reconcile`.
+        #: became. Held for exactly one reconcile - see `_reconcile`.
         self._pending: tuple[int, Intent, str] | None = None
         #: Best price each open trade has seen, for the trailing stop. Tracked
         #: from the quote stream rather than read from the broker, because
@@ -112,8 +112,8 @@ class Trader:
         #: follows whatever the last poll happened to catch.
         self._best: dict[int, float] = {}
         #: Why signals did not become trades, counted per gate. Strategy-level
-        #: refusals are far too many to journal — hundreds a day, and mostly
-        #: the filter working — but counting them is what separates "the market
+        #: refusals are far too many to journal - hundreds a day, and mostly
+        #: the filter working - but counting them is what separates "the market
         #: is quiet" from "the trader has been discarding everything".
         self.passed_over: dict[str, int] = {}
         self._last_summary = time.monotonic()
@@ -129,7 +129,7 @@ class Trader:
         The real terminal only when `TRADING_LIVE` is set; the paper book
         otherwise. Market data always comes from `self.broker`, so an unarmed
         run still resolves real symbols, reads the real account and prices
-        against the real bid/ask — it simply cannot place anything.
+        against the real bid/ask - it simply cannot place anything.
 
         This exists because the flag used not to do anything. `take` called
         `self.broker.send` unconditionally and `TRADING_LIVE` changed only a log
@@ -150,7 +150,7 @@ class Trader:
         account = await self.broker.connect()
         self.equity = account.equity or account.balance
         log.info(
-            "trading: %s via %s — %s",
+            "trading: %s via %s - %s",
             self.settings.mode.upper(),
             self.broker.name,
             account,
@@ -167,7 +167,7 @@ class Trader:
                 self.paper = PaperBroker(self.settings)
                 await self.paper.connect()
             log.info(
-                "trading: TRADING_LIVE is not set — orders go to the paper book, "
+                "trading: TRADING_LIVE is not set - orders go to the paper book, "
                 "priced against %s's quotes",
                 self.broker.name,
             )
@@ -194,8 +194,8 @@ class Trader:
 
         `structures` will not publish a call below `reactions.MIN_EDGE`, so an
         edge floor at or under it is configuration that looks like a limit and
-        is not one. This module shipped with exactly that — 0.08 against an
-        upstream 0.10 — and nothing would have said so.
+        is not one. This module shipped with exactly that - 0.08 against an
+        upstream 0.10 - and nothing would have said so.
         """
         from ..structures.reactions import MIN_EDGE
 
@@ -231,8 +231,8 @@ class Trader:
         """Note what a level actually did.
 
         Counted and logged, not acted on. This is the ground truth the bus
-        gained so that something *can* act on it — an accuracy-targeting gate,
-        a back-check strategy, a Kelly fraction — and none of those exist yet.
+        gained so that something *can* act on it - an accuracy-targeting gate,
+        a back-check strategy, a Kelly fraction - and none of those exist yet.
         Consuming it now means the topic has a subscriber from the day it
         shipped, so the first thing built on it is not also debugging whether
         the messages arrive.
@@ -251,8 +251,8 @@ class Trader:
     def _quote(self, payload: dict[str, Any]) -> None:
         """Feed the consensus, the paper book, and the trailing high-water mark.
 
-        Every venue's quote goes to the consensus — that is the whole point of
-        having six of them — but only our own broker's fills anything else.
+        Every venue's quote goes to the consensus - that is the whole point of
+        having six of them - but only our own broker's fills anything else.
         """
         self.context.observe_quote(payload)
         feed = str(payload.get("feed") or "")
@@ -308,7 +308,7 @@ class Trader:
                 key = f"{engine.name}:{verdict.gate}"
                 self.passed_over[key] = self.passed_over.get(key, 0) + 1
                 # Deliberately not journalled. A strategy refusing on
-                # probability or interval is the normal case — hundreds a day —
+                # probability or interval is the normal case - hundreds a day -
                 # and writing all of it down would bury the refusals that
                 # matter under the ones that are simply the filter working.
                 log.debug("trading: %s declined %s: %s", engine.name, feed, verdict.detail)
@@ -340,7 +340,7 @@ class Trader:
         ref = await self._record_intent(intent, by)
 
         if not self.settings.live:
-            log.info("trading: [paper] %s — %s", intent.title, intent.reason)
+            log.info("trading: [paper] %s - %s", intent.title, intent.reason)
 
         order = Order(
             symbol=intent.symbol,
@@ -363,7 +363,7 @@ class Trader:
             return Refusal("rejected", str(result), intent.feed)
 
         self.taken += 1
-        log.info("trading: %s %s — %s", self.settings.mode, result, intent.reason)
+        log.info("trading: %s %s - %s", self.settings.mode, result, intent.reason)
         await self._announce_fill(intent, result.price, result.ticket)
         # Tracked from the broker's own position list rather than from the
         # result, because the ticket a fill reports is the order's and the one
@@ -390,7 +390,7 @@ class Trader:
         self._last_summary = time.monotonic()
         if not self.passed_over and not self.taken:
             log.info(
-                "trading: nothing seen yet — %s on %s, %s",
+                "trading: nothing seen yet - %s on %s, %s",
                 " + ".join(s.name for s in self.strategies),
                 ", ".join(sorted(self.specs)),
                 ", ".join(self.settings.intervals),
@@ -493,8 +493,8 @@ class Trader:
 
         current = {p.ticket: p for p in await self._positions(fresh=True)}
 
-        # Anything the broker has that we do not is ours as of this moment —
-        # it is filtered to our magic — so adopt it with whatever intent is
+        # Anything the broker has that we do not is ours as of this moment -
+        # it is filtered to our magic - so adopt it with whatever intent is
         # waiting. An unadopted position would never be journalled on close.
         pending = self._pending
         for ticket, position in current.items():
@@ -638,7 +638,7 @@ class Trader:
         """A trade the strategy wanted and the account refused.
 
         Off unless asked for. It is the most interesting message here and the
-        easiest to drown in — every gate that does its job produces one, and a
+        easiest to drown in - every gate that does its job produces one, and a
         halted day produces one per signal until the clock rolls over.
         """
         if not (self.settings.notify and self.settings.notify_declines):
@@ -646,7 +646,7 @@ class Trader:
         await self.bus.publish(
             ALERTS,
             {
-                "title": f"declined {intent.side} {intent.feed} — {refusal.gate}",
+                "title": f"declined {intent.side} {intent.feed} - {refusal.gate}",
                 "body": f"{refusal.detail}\n\n{intent.title}\n{self.guard.summary()}",
                 "level": "info",
                 "fields": {

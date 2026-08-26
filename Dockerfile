@@ -1,4 +1,4 @@
-# Till Infinity — collectors, online models and agents in one image.
+# Till Infinity - collectors, online models and agents in one image.
 #
 # Multi-stage so the runtime carries the virtualenv and the source, not the
 # build tooling: uv, caches and compilers stay in the builder and never reach

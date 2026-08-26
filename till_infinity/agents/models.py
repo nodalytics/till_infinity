@@ -40,7 +40,7 @@ class Finding(BaseModel):
         default_factory=list,
         description=(
             "The specific figures and what they mean, in plain words. Not the"
-            " tool calls that produced them — the reader gets a notification"
+            " tool calls that produced them - the reader gets a notification"
             " and cannot run them."
         ),
     )
@@ -52,7 +52,7 @@ class Finding(BaseModel):
 
         The prompt asks for figures and says not to cite the call, which the
         model mostly honours and did not here: it published
-        `(from default_api.spreads(feed='btc'))` to the channel — a namespace
+        `(from default_api.spreads(feed='btc'))` to the channel - a namespace
         belonging to how the model is wired to its tools, not to anything about
         the market. `default_api` is not even ours.
 

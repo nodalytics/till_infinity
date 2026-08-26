@@ -1,7 +1,7 @@
 """The online layer: cross-venue features, detection, routing and persistence.
 
-The detector is stochastic, so the tests that matter are behavioural — does a
-stale feed get caught, does a quiet market stay quiet — rather than assertions
+The detector is stochastic, so the tests that matter are behavioural - does a
+stale feed get caught, does a quiet market stay quiet - rather than assertions
 about particular scores.
 """
 
@@ -31,7 +31,7 @@ def quote(venue, mid, bps=0.3, when=1_000.0, feed="gold"):
 
 
 def test_a_venue_is_never_part_of_its_own_consensus():
-    """Including it is how a bad feed hides — it drags the number it is judged by."""
+    """Including it is how a bad feed hides - it drags the number it is judged by."""
     book = features.Book("gold")
     for venue in VENUES[:5]:
         book.update(venue, 4400.0, 0.3, 1_000.0)
@@ -342,7 +342,7 @@ def test_a_stale_feed_goes_straight_to_a_human():
 
 
 def test_a_rare_spread_waits_for_an_agent():
-    """Rarity is not unambiguity — a wide spread may well have a release behind it."""
+    """Rarity is not unambiguity - a wide spread may well have a release behind it."""
     watcher = Watcher(Bus(), settings=sx.Settings())
     assert not watcher.direct(_signal(Shape.SPREAD, score=1.0, spread_ratio=12.0))
 
@@ -688,7 +688,7 @@ def test_adding_a_field_invalidates_old_state(tmp_path, monkeypatch):
 def test_the_schema_follows_the_fields_of_every_persisted_class():
     """Nobody remembers to bump a version, and the failure is silent until it is not.
 
-    This used to check one class — `reactions.Features` — which was on the
+    This used to check one class - `reactions.Features` - which was on the
     hand-written list the hash was built from, so it passed while the guard was
     blind to everything not on that list. `Volatility` was not on it. Adding
     `_tick`, `_steps` and `_grid` therefore left the hash unchanged, stale
@@ -821,7 +821,7 @@ def test_a_volatility_saved_before_a_field_existed_still_loads():
     `slots=True` dataclass has no `__dict__`, so a field added after the save
     is missing rather than defaulted and every read raises. When `_tick`,
     `_steps` and `_grid` were added the service came up, logged "restored
-    models", then threw on the first quote inside the structures consumer — so
+    models", then threw on the first quote inside the structures consumer - so
     the container stayed healthy at 11% CPU and simply produced nothing for
     four hours.
     """
@@ -858,7 +858,7 @@ def test_every_persisted_class_restores_a_field_it_predates():
     """The companion guard to the schema hash, and the one that walks.
 
     `store._schema` stops state being *loaded* once a shape has changed.
-    `Restorable` stops a *crash* if any ever is — a pickle arriving by another
+    `Restorable` stops a *crash* if any ever is - a pickle arriving by another
     path, a schema that is itself wrong, a class the walk cannot see. Neither
     subsumes the other, and this one is cheap.
 
@@ -922,7 +922,7 @@ def test_every_persisted_class_restores_a_field_it_predates():
             revived = pickle.loads(pickle.dumps(built))
             for f in dataclasses.fields(cls):
                 assert hasattr(revived, f.name), (
-                    f"{found.name}.{name} lost {f.name} through pickle — "
+                    f"{found.name}.{name} lost {f.name} through pickle - "
                     "its state shape is not being read correctly"
                 )
 
@@ -948,7 +948,7 @@ def test_a_bars_wick_cannot_resolve_a_touch_born_inside_it():
 
     A quote opens a touch part way through a bar. The bar then arrives carrying
     a low and a high covering the *entire* period. Applied to that touch, it
-    resolves instantly on movement that predates it — a large push, a duration
+    resolves instantly on movement that predates it - a large push, a duration
     of zero, and `run_vol` of exactly 0.00 because no leg in was ever observed.
 
     That was 33.6% of production outcomes and 41.9% of 3m ones (todo 0g), and

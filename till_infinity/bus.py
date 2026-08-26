@@ -1,7 +1,7 @@
 """The message bus: how services talk to each other.
 
 Collectors publish what they just stored, agents consume it and publish alerts,
-notifications consume those. The SQLite stores stay the source of truth — the
+notifications consume those. The SQLite stores stay the source of truth - the
 bus carries *notice that something happened*, not the data itself, so a dropped
 message costs latency rather than history.
 
@@ -10,7 +10,7 @@ message costs latency rather than history.
     news    ──┘
 
 Backed by `till_infinity.channels`: in-memory by default, Redis Streams when a
-URL is set — the same in-process-or-shared choice `--store` offers.
+URL is set - the same in-process-or-shared choice `--store` offers.
 
 **Publishing fans out per subscriber group.** A channel's `recv()` is
 work-sharing: two consumers of one channel split the messages between them
@@ -43,7 +43,7 @@ MACRO = "news.macro"
 #: one goes straight to ALERTS without waiting for a model to agree.
 SIGNALS = "structures.signals"
 #: How a touch ended: broke, held, was trapped, chopped. This is **ground
-#: truth** rather than a finding — the one message on the bus that says what
+#: truth** rather than a finding - the one message on the bus that says what
 #: actually happened rather than what something thinks will happen.
 #:
 #: It went only to the journal until it was put here, which left every
@@ -131,7 +131,7 @@ class Bus:
         return "redis" if self.redis_url else "memory"
 
     def key(self, topic: str) -> str:
-        """The Redis stream name. One stream per topic — groups read it in parallel."""
+        """The Redis stream name. One stream per topic - groups read it in parallel."""
         return f"{self.namespace}:{topic}"
 
     def _channel(self, topic: str, group: str) -> tuple[Sender[Any], Receiver[Any]]:
@@ -182,7 +182,7 @@ class Bus:
     async def close(self) -> None:
         self._closed = True
         for sender, _ in self._channels.values():
-            # Sender.close is a coroutine — awaiting it is what actually wakes
+            # Sender.close is a coroutine - awaiting it is what actually wakes
             # blocked receivers with ChannelClosed and ends their iteration.
             with suppress(Exception):
                 await sender.close()
@@ -191,7 +191,7 @@ class Bus:
 
 @dataclass(slots=True)
 class Subscription:
-    """One group's view of one topic — an async iterator of messages."""
+    """One group's view of one topic - an async iterator of messages."""
 
     bus: Bus
     topic: str

@@ -3,7 +3,7 @@
 Run from the repository root:  python research/harness/turns.py
 
 [todo.md](../../docs/todo.md) §6a asks for the reversal that matters over weeks,
-not the next touch — and asks for the falsification to be written before the
+not the next touch - and asks for the falsification to be written before the
 model, because major turns are rare and a dozen observations will produce a
 confident-looking number from anything.
 
@@ -26,7 +26,7 @@ percentage threshold would mean "a routine week" for one and "a generational
 move" for the other, and pooling them would be pooling two different questions.
 
 **A forward drawdown, not a zigzag pivot.** A swing pivot is only *confirmed*
-some days after the extreme — a median of 29 days at this size — so a model
+some days after the extreme - a median of 29 days at this size - so a model
 trained on pivot labels is being asked when a pivot will be confirmed, which is
 not the same as when the turn happens. The forward drawdown has no confirmation
 lag and no ambiguity about which day the turn "was".
@@ -38,7 +38,7 @@ a guard:
 
 1. **Overlapping windows.** Two days a week apart share 53 of their 60 forward
    days, so 691 positive days are nowhere near 691 observations. Everything is
-   counted and resampled in **episodes** — contiguous runs of the label — and
+   counted and resampled in **episodes** - contiguous runs of the label - and
    the bootstrap resamples whole episodes rather than days.
 2. **Leakage across the split.** A training day at t and a test day at t+10
    share most of a forward window, so an ordinary walk-forward split leaks the
@@ -69,7 +69,7 @@ from cycles import daily
 
 #: How far price must fall, in the instrument's own median daily moves, for the
 #: turn to count as major. Twenty units is about 11% for the median instrument
-#: here — a real reversal rather than a pullback.
+#: here - a real reversal rather than a pullback.
 DROP = 20.0
 
 #: And within how many trading days.
@@ -130,7 +130,7 @@ def features(closes: list[float], t: int, unit: float) -> dict[str, float]:
         "since_low": (t - (t - HIGH_WINDOW + window.index(low))) / HIGH_WINDOW,
         # Where price sits against its own long mean.
         "above_mean": math.log(closes[t] / statistics.fmean(closes[t - 200 : t])) / unit,
-        # How far below the running high — a turn may already be underway.
+        # How far below the running high - a turn may already be underway.
         "drawdown": math.log(closes[t] / high) / unit,
         # Volatility now, and whether it is expanding.
         "vol": short_vol / unit,
@@ -198,7 +198,7 @@ def _auc(values, labels) -> float:
 
     In pure Python this was the whole runtime: thirty bootstrap calls, two
     thousand resamples each, a sort of fifteen thousand rows every time. The
-    arithmetic is identical — average ranks for ties, Mann-Whitney — and it is
+    arithmetic is identical - average ranks for ties, Mann-Whitney - and it is
     two orders of magnitude faster, which is the difference between running
     this and not.
     """
@@ -281,7 +281,7 @@ def purged_folds(rows: list[dict], folds: int = 5):
 
     A training day at t and a test day at t+10 share most of a forward window,
     so an ordinary time split leaks the answer backwards across the boundary.
-    Every training row within `HORIZON` days of the test set is dropped —
+    Every training row within `HORIZON` days of the test set is dropped -
     which costs sample and is the only thing that makes the number mean
     anything.
     """

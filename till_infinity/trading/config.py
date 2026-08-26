@@ -15,7 +15,7 @@ the others cannot be scalped, but because the broker has to actually quote
 them. A retail MT5 account that carries XAUUSD and BTCUSD very often does not
 carry SOLUSD or US100 under any name, and a scalper that discovers this at the
 moment of firing has already decided to trade. Availability is resolved once,
-at start-up, against the terminal — see `symbols.py`.
+at start-up, against the terminal - see `symbols.py`.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from ..structures import confluence
 
 #: Broker names for each instrument the price side tracks, best first.
 #:
-#: MT5 symbol naming is a broker-by-broker affair — spot gold is `XAUUSD` at
+#: MT5 symbol naming is a broker-by-broker affair - spot gold is `XAUUSD` at
 #: most, `GOLD` at some, and either of those plus a suffix (`.raw`, `.r`, `m`,
 #: `.pro`) on the raw-spread account types. The suffixes are handled separately
 #: in `symbols.py` because they cross-multiply with every name here; this table
@@ -66,8 +66,8 @@ INSTRUMENTS: dict[str, tuple[str, ...]] = {
 #: spread-betting books `_SB`, and a good number of white labels use `.s` for
 #: "standard" or `.i`/`.ecn` for the institutional book.
 #:
-#: **This list is a fallback, not the mechanism.** It cannot be complete —
-#: brokers invent suffixes and nobody publishes the set — so a backend that can
+#: **This list is a fallback, not the mechanism.** It cannot be complete -
+#: brokers invent suffixes and nobody publishes the set - so a backend that can
 #: enumerate its symbols is asked to instead, and the scan finds whatever this
 #: list would have missed. See `Broker.catalogue` and `symbols.resolve`. The
 #: list is what remains for backends that can only be asked about one symbol at
@@ -172,7 +172,7 @@ class Settings:
     retries: int = 3
 
     #: An RPyC server exposing the MetaTrader5 module from inside a Wine
-    #: prefix — the `mt5linux` arrangement. Faster than the bridge and with the
+    #: prefix - the `mt5linux` arrangement. Faster than the bridge and with the
     #: whole API surface rather than the wrapped subset.
     #:
     #: An RPyC server with `allow_all_attrs` runs whatever it is asked to, so
@@ -188,7 +188,7 @@ class Settings:
     server: str = ""
     terminal: str = ""
     #: Equity to size from when the venue cannot be asked. Required by the
-    #: bridge backend, which exposes no account endpoint — see `mt5_http`. A
+    #: bridge backend, which exposes no account endpoint - see `mt5_http`. A
     #: wrong number here sizes every trade wrongly, so it is never guessed
     #: from a default that looks plausible; the fallback is logged when used.
     account_equity: float = 0.0
@@ -206,11 +206,11 @@ class Settings:
     #: position rather than any coordination between them.
     strategies: tuple[str, ...] = ("level-scalp",)
     #: The named risk plan. Individual limits set in the environment win over
-    #: it — see `plans`.
+    #: it - see `plans`.
     risk_plan: str = "standard"
     symbols: tuple[str, ...] = DEFAULT_SYMBOLS
     #: Timeframes the service will *accept*. Every one a level forms on, by
-    #: default — the restriction belongs to the strategy, not to the module.
+    #: default - the restriction belongs to the strategy, not to the module.
     #:
     #: This started as `1m,5m` on the false grounds that "structures only
     #: builds levels on those two"; `structures.config.INTERVALS` is the
@@ -222,7 +222,7 @@ class Settings:
     #: Narrowing this narrows every strategy at once, which is a blunt
     #: instrument and rarely what is wanted. A strategy that only makes sense
     #: on fast data says so itself, in `Strategy.timeframes`, and the effective
-    #: set is the intersection — so this can restrict a strategy but never
+    #: set is the intersection - so this can restrict a strategy but never
     #: widen one past what it claims to handle.
     intervals: tuple[str, ...] = TIMEFRAMES
 
@@ -236,7 +236,7 @@ class Settings:
     #: the case where the account query returns something absurd.
     max_risk_money: float = 0.0
     #: Open positions across everything, and per instrument. One per instrument
-    #: is not conservatism — the same level firing three times is one idea, and
+    #: is not conservatism - the same level firing three times is one idea, and
     #: stacking it turns a single wrong read into three losses.
     max_positions: int = 4
     max_per_symbol: int = 1
@@ -254,13 +254,13 @@ class Settings:
     min_probability: float = 0.58
 
     #: The floor on |edge|, and it has to sit **above** `reactions.MIN_EDGE`
-    #: or it is configuration that can never fire — every signal reaching the
+    #: or it is configuration that can never fire - every signal reaching the
     #: bus has already cleared that gate. The first version of this module set
     #: it to 0.08, which is below the 0.10 upstream and therefore did nothing.
     #:
     #: 0.15 rather than 0.10 because [edge.md](../../docs/edge.md) puts the
     #: step at 0.0968 over ten deciles of 10,483 calls and finds direction
-    #: keeps improving above it — its 0.20+ band calls 74.2% and 91.4% correct
+    #: keeps improving above it - its 0.20+ band calls 74.2% and 91.4% correct
     #: across the two halves against 63.3% and 88.0% at 0.11-0.14. Alerting on
     #: a call and staking money on it can reasonably want different margins
     #: over the same step, and this is the margin.
@@ -273,7 +273,7 @@ class Settings:
     loss_cooldown: float = 900.0
     #: Seconds a scalp may stay open before it is closed regardless. A scalp
     #: that has been open an hour has become a swing trade nobody planned.
-    #: A strategy may ask for longer — see `Strategy.hold_seconds` — because
+    #: A strategy may ask for longer - see `Strategy.hold_seconds` - because
     #: this default is a property of the trade being taken, not of the module.
     max_hold: float = 1_800.0
 
@@ -286,7 +286,7 @@ class Settings:
     #: not be holding when the number lands, which needs about as long as a
     #: scalp takes to reach its target. After it the spread is at its widest,
     #: the first move frequently reverses, and a stop is least likely to fill
-    #: where it says — so the reason to stay out outlasts the release itself.
+    #: where it says - so the reason to stay out outlasts the release itself.
     news_before: float = 600.0
     news_after: float = 900.0
     #: Basis points our broker may sit from the venue median before its quote
@@ -304,7 +304,7 @@ class Settings:
     #: counts the trade they add up to. Zero switches it off.
     #:
     #: 2x the per-trade risk, so three same-direction dollar trades are refused
-    #: at the third — which is the case the limit exists for.
+    #: at the third - which is the case the limit exists for.
     max_currency_exposure: float = 0.005
 
     # ------------------------------------------------------- the council
@@ -328,7 +328,7 @@ class Settings:
 
     # -------------------------------------------- managing an open trade
     #: R multiple at which the stop moves to break even. Zero is off, which is
-    #: the default — see `manage` for why this is an experiment rather than a
+    #: the default - see `manage` for why this is an experiment rather than a
     #: setting somebody should assume.
     break_even_at: float = 0.0
     #: Ticks past the entry the break-even stop sits, to cover the spread.
@@ -344,21 +344,21 @@ class Settings:
     approach_min_vol: float = 0.8
     approach_max_vol: float = 6.0
     #: Stop this far short of the target level, in volatility units. See
-    #: `ApproachScalp` — this is what keeps the strategy off the one claim the
+    #: `ApproachScalp` - this is what keeps the strategy off the one claim the
     #: repository has already measured and rejected.
     approach_buffer_vol: float = 0.25
     #: Least acceptable chance of covering the distance within the hold, from
     #: the first-passage model in `structures.timing`.
     #:
     #: **A floor against the absurd, not a forecast.** Diffusion is a null
-    #: model and markets depart from it — magnet.md measured exactly that — so
+    #: model and markets depart from it - magnet.md measured exactly that - so
     #: this is not the strategy's estimate of anything. It is here to refuse a
     #: level that a driftless walk would rarely reach inside the hold, which is
     #: the case where the target is simply too far away for the time allowed.
     #:
     #: 0.20 rather than something higher because of where the two gates meet.
     #: On 5m with a 45-minute hold there are nine bars, and a 35% floor caps
-    #: the distance at about 3.5v — below `approach_max_vol`, which would make
+    #: the distance at about 3.5v - below `approach_max_vol`, which would make
     #: that ceiling dead configuration that never fires. At 0.20 the reach gate
     #: binds on the slower timeframes and the distance ceiling binds on the
     #: faster ones, and both do something.
@@ -373,9 +373,9 @@ class Settings:
     #:
     #: Gated three ways on purpose, because the three messages have completely
     #: different volumes. A fill is rare and always worth seeing. A decline is
-    #: the most informative and the easiest to drown in — every gate doing its
+    #: the most informative and the easiest to drown in - every gate doing its
     #: job produces one, and a halted day produces one per signal until the
-    #: clock rolls over — so it is off unless asked for.
+    #: clock rolls over - so it is off unless asked for.
     #:
     #: All of this is still subject to the notification layer's own filter: if
     #: `NOTIFY_SHAPES` has been narrowed, `trade` has to be in it or none of
@@ -482,7 +482,7 @@ def feed_for(symbol: str) -> str:
     answering about. Consulting `Settings.resolved` there is circular, and the
     paper book did exactly that: while resolution was still running the map was
     empty, gold fell through to the currency-pair default, and a 100-ounce
-    contract was priced as 100,000 units — a stop that should cost $440 a lot
+    contract was priced as 100,000 units - a stop that should cost $440 a lot
     priced at $440,000, so every trade refused itself as too large to size.
 
     Exact matches win over prefixes, and the longest prefix wins among the

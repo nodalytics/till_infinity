@@ -5,17 +5,17 @@ detectors are not quiet: a stale feed re-fires every few seconds for as long as
 it stays stale, and a wide spread does the same. All of that belongs in the
 journal, where it is evidence. Very little of it belongs on a phone.
 
-Level routing was the only filter there was — `info`, `warning`, `critical` —
+Level routing was the only filter there was - `info`, `warning`, `critical` -
 and it is the wrong axis on its own. A stale feed and a level call can both be
 `warning` while being completely different things to a reader.
 
 Four filters, each answering a question the others cannot:
 
-- **shape** — a kind of finding. "I want level calls, not every wide spread."
-- **instrument** — "gold and BTC only."
-- **repeat** — the same finding again inside a cooling-off window. A stale feed
+- **shape** - a kind of finding. "I want level calls, not every wide spread."
+- **instrument** - "gold and BTC only."
+- **repeat** - the same finding again inside a cooling-off window. A stale feed
   is one situation, not one situation per second.
-- **rate** — a ceiling per hour, whatever else got through. The backstop for
+- **rate** - a ceiling per hour, whatever else got through. The backstop for
   the case nobody predicted, because the failure being guarded against is a
   channel nobody reads any more.
 
@@ -53,9 +53,9 @@ def _names(raw: str) -> frozenset[str]:
 class Filter:
     """Decides what reaches a channel. Empty allowlists allow everything."""
 
-    #: Shapes to accept — `level`, `stale`, `spread`, `dislocation`, `drift`.
+    #: Shapes to accept - `level`, `stale`, `spread`, `dislocation`, `drift`.
     shapes: frozenset[str] = frozenset()
-    #: Instruments to accept — `gold`, `btc`, …
+    #: Instruments to accept - `gold`, `btc`, …
     feeds: frozenset[str] = frozenset()
     cooldown: float = DEFAULT_COOLDOWN
     max_per_hour: int = DEFAULT_MAX_PER_HOUR
@@ -119,7 +119,7 @@ class Filter:
         when = time.time() if when is None else when
         why = self.rejects(payload, when)
         if why:
-            log.debug("notify: dropped %r — %s", payload.get("title"), why)
+            log.debug("notify: dropped %r - %s", payload.get("title"), why)
             return False
 
         key = self.key(payload)

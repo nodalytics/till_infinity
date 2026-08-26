@@ -47,7 +47,7 @@ async def test_recording_the_same_decision_twice_is_one_entry(book):
 
 
 async def test_there_is_no_update_path(book):
-    """Append-only is enforced, not promised — a journal you can edit is not one."""
+    """Append-only is enforced, not promised - a journal you can edit is not one."""
     assert not [name for name in dir(book) if "update" in name or "delete" in name]
     await jr.note(book, "original")
     with jr.read_only(book.path) as conn, pytest.raises(sqlite3.OperationalError):
@@ -81,7 +81,7 @@ async def test_an_outcome_pairs_with_its_decision(book):
 
 
 async def test_an_outcome_with_no_parent_is_refused(book):
-    """It could never be paired, so it is not a training example — just noise."""
+    """It could never be paired, so it is not a training example - just noise."""
     assert await jr.outcome(book, "", "something happened") == ""
     assert jr.read(book.path) == []
 
@@ -121,7 +121,7 @@ async def test_an_explicit_limit_is_honoured_past_the_display_ceiling(book):
     """`limit` used to be clamped to MAX_ROWS, silently.
 
     `facto.dataset` asked for its 200,000 rows, got 500, and reported a few
-    hundred usable examples from a journal holding thousands — a truncation
+    hundred usable examples from a journal holding thousands - a truncation
     that read as missing data. The count here is deliberately past MAX_ROWS:
     the old assertion wrote ten entries and checked they numbered under five
     hundred, which was true however the clamp behaved.

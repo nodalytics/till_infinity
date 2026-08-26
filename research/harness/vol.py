@@ -6,7 +6,7 @@ wrong the whole scale is wrong, and nobody has ever checked it.
 
 `Volatility` is an exponentially weighted **mean absolute return**, so the claim
 it makes is precise and testable: the next bar's absolute return should be about
-`bps`, on average. Not the standard deviation — the mean absolute deviation, and
+`bps`, on average. Not the standard deviation - the mean absolute deviation, and
 those differ by a factor of 1.25 for a normal (see `timing.MAD_TO_SIGMA`, which
 is a mistake this project has already made once).
 
@@ -14,7 +14,7 @@ Strictly walk-forward: the estimate is read **before** the bar it is judged on,
 and the bar is folded in afterwards. Compared against three baselines a forecast
 has to beat to be worth anything:
 
-  last        the previous bar's absolute return — the naive persistence forecast
+  last        the previous bar's absolute return - the naive persistence forecast
   rolling20   a flat mean of the last twenty
   constant    each series' own long-run mean, which knows the future and is
               therefore a ceiling rather than a competitor
@@ -69,7 +69,7 @@ def main() -> None:
                 previous = close
                 continue
             realised = abs((close - previous) / previous * 10_000)
-            # Read before the bar is folded in — this is the forecast.
+            # Read before the bar is folded in - this is the forecast.
             if vol.warm and recent:
                 per_interval[interval]["model"].append((vol.bps, realised))
                 per_interval[interval]["last"].append((recent[-1], realised))

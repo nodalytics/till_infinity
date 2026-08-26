@@ -7,8 +7,8 @@
         await collect(settings=settings, store=store, cycles=1)
 
 Sources are RSS (ForexLive, FXStreet, Investing, CoinDesk, CoinTelegraph),
-TradingView's symbol-attached headlines, and two economic calendars —
-ForexFactory and TradingView — kept side by side so a print can be
+TradingView's symbol-attached headlines, and two economic calendars -
+ForexFactory and TradingView - kept side by side so a print can be
 cross-checked between providers.
 """
 

@@ -1,13 +1,13 @@
 """Does a shorter volatility half-life make the *calls* better?
 
 [volatility.md](../volatility.md) found `HALF_LIFE = 60` well past the optimum
-for forecasting the next move — 7 to 10 wins at every interval — and stopped
+for forecasting the next move - 7 to 10 wins at every interval - and stopped
 there deliberately. The forecast is not what the estimate is for. Levels,
 touches and directional calls are, and the downstream effect measured in counts
 (3% more touches, 14% fewer levels) cannot say whether any of it got better.
 
-This runs the same pairing `edge_gate.py` does — every call matched to the
-outcome of the touch it opened — at each half-life, and scores what actually
+This runs the same pairing `edge_gate.py` does - every call matched to the
+outcome of the touch it opened - at each half-life, and scores what actually
 matters:
 
   direction   how often the sign of `edge` matched the realised push

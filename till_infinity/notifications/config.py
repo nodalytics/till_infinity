@@ -1,6 +1,6 @@
 """Credentials, channels and delivery settings.
 
-Secrets are read from the environment and never written anywhere — not to the
+Secrets are read from the environment and never written anywhere - not to the
 store, not to a log line, not to `notify targets`, which prints a masked
 address at most.
 
@@ -33,7 +33,7 @@ DISCORD_DESCRIPTION_LIMIT = 4096
 
 DEFAULT_TARGETS: tuple[str, ...] = ("telegram", "discord")
 
-#: A label is a plain word. Anything else — a URL, a negative chat id — is an
+#: A label is a plain word. Anything else - a URL, a negative chat id - is an
 #: address, which is how ``https://…`` avoids being mistaken for ``label=…``.
 _LABEL = re.compile(r"^[A-Za-z0-9_-]+$")
 

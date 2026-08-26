@@ -1,6 +1,6 @@
 """Project logging: one place that decides where debug/info/warn/error go.
 
-Modules never configure anything — they just do::
+Modules never configure anything - they just do::
 
     from till_infinity.logging import get_logger
 
@@ -175,7 +175,7 @@ def quiet_noisy_loggers(level: int = logging.WARNING) -> None:
 
 
 def get_logger(name: str | None = None) -> logging.Logger:
-    """The logger for a module — ``get_logger(__name__)``."""
+    """The logger for a module - ``get_logger(__name__)``."""
     return logging.getLogger(name if name else "till_infinity")
 
 

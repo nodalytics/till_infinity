@@ -20,7 +20,7 @@ worth acting on; a 55% chance of two volatility units might be.
 ## Two sources of evidence, and the honest weighting between them
 
 A level that has been touched twenty times knows its own behaviour. A level
-formed yesterday knows nothing — but it *resembles* levels that have been
+formed yesterday knows nothing - but it *resembles* levels that have been
 touched hundreds of times, and that resemblance is real evidence.
 
 So the estimate is a shrinkage between:
@@ -35,7 +35,7 @@ is right at both ends.
 
 ## What stops it fooling itself
 
-Every conditional probability here is reported next to the **base rate** — the
+Every conditional probability here is reported next to the **base rate** - the
 unconditional chance price went up over the same horizon. A level where
 P(up | touched from below) equals the base rate has told you nothing, however
 confident the number looks, and a system that does not show both will find
@@ -85,7 +85,7 @@ PRIOR_WEIGHT = 4.0
 #: than resolved.
 #:
 #: A touch that outlives its horizon normally means price sat at the level and
-#: did nothing, which is `chop` and worth recording — a model never shown
+#: did nothing, which is `chop` and worth recording - a model never shown
 #: "nothing happened" predicts a move every time. But a touch open for two days
 #: does not mean that. It means nobody was watching: the FX market shut on
 #: Friday evening and reopened on Sunday, or the collector was down.
@@ -108,7 +108,7 @@ GAP_FACTOR = 4.0
 #:
 #: The argument for it was clean and wrong. Below one, the move being predicted
 #: is smaller than the distance to the stop, so the trade loses more when wrong
-#: than it makes when right — break-even, not taste. That reasoning holds if
+#: than it makes when right - break-even, not taste. That reasoning holds if
 #: the two quantities are what they claim to be, and
 #: [magnitude.md](../../research/magnitude.md) measured that they are not:
 #:
@@ -123,14 +123,14 @@ GAP_FACTOR = 4.0
 #:
 #: **The mechanism.** The ratio correlates +0.571 with its numerator and -0.359
 #: with its denominator, so a high ratio is substantially a *small* `risk_vol`
-#: — a tight zone, so a close stop. Top-decile calls are stopped out 44.8% of
+#: - a tight zone, so a close stop. Top-decile calls are stopped out 44.8% of
 #: the time against 29.1% in the bottom. `Level.stop_for` states the principle
-#: the ratio violates: a stop inside the zone "is a stop inside the noise — it
+#: the ratio violates: a stop inside the zone "is a stop inside the noise - it
 #: gets hit by the level working."
 #:
 #: There is no threshold that fixes this, because the quantity is
 #: anti-correlated with what it claims to measure. A stop derived from realised
-#: adverse excursion — `Touch.excursion_vol`, already recorded — could make the
+#: adverse excursion - `Touch.excursion_vol`, already recorded - could make the
 #: ratio mean something. Until then it is a number, not a decision.
 MIN_REWARD_TO_RISK = 1.0
 
@@ -147,15 +147,15 @@ MIN_REWARD_TO_RISK = 1.0
 #: | 4 | **0.0968** | **69.3%** | **0.49** |
 #: | 5-10 | 0.1262+ | 68.8% - 77.9% | 0.37 - 1.11 |
 #:
-#: This was **0.08**, which was never derived from anything — not in the commit
-#: that introduced it, not in the docs — and which sat inside the flat region.
+#: This was **0.08**, which was never derived from anything - not in the commit
+#: that introduced it, not in the docs - and which sat inside the flat region.
 #: Three deciles of calls, a quarter of everything said out loud, were being
 #: published at a coin flip.
 #:
 #: The first measurement put the step at 0.11 on six bands over 1,990 calls; the
 #: second put it at 0.0968 on ten deciles over 10,483 calls across fourteen
 #: instruments. Ten is the round number between them, and both readings agree on
-#: the only thing that matters here — that 0.08 is below the step.
+#: the only thing that matters here - that 0.08 is below the step.
 #:
 #: **What this does not claim.** The step's *location* is well established; the
 #: accuracy either side of it is not a number to quote, because it does not
@@ -176,15 +176,15 @@ MIN_EDGE = 0.10
 #:     3m  20         4h    0.25
 #:
 #: On 4h and coarser a touch expired **before a single bar of its own
-#: timeframe closed**, so it could not resolve by price at all — only by the
+#: timeframe closed**, so it could not resolve by price at all - only by the
 #: clock. Measured over a replay, the chop rate follows the horizon exactly and
 #: not the market: 0.2% on 1m, 2.1% on 5m, 13.7% on 15m and **73.4% on 1h**,
 #: with 91% of every chop recorded coming from 1h or coarser. Those are not
 #: observations of price sitting still; they are the timer running out.
 #:
-#: Twelve, for two reasons that agree. It is what 5m already had — the
+#: Twelve, for two reasons that agree. It is what 5m already had - the
 #: timeframe carrying most of the outcomes, so it is the value the system has
-#: actually been exercised at — and the first-passage arithmetic in
+#: actually been exercised at - and the first-passage arithmetic in
 #: `timing.py` puts the median resolution at about 3.2 bars and 12 bars at
 #: roughly 73% of touches resolving by price, which is a defensible place to
 #: call the rest chop.
@@ -229,7 +229,7 @@ class Features(Restorable):
     backcheck: float = 0.0
     #: Where volatility sat in its own recent range when this happened, in
     #: [0, 1]. Everything else here is *scaled* by volatility, which makes
-    #: sizes comparable but deliberately erases the regime — and a level held
+    #: sizes comparable but deliberately erases the regime - and a level held
     #: in a dead session is weaker evidence about a violent one than the
     #: normalised numbers suggest. This puts that back as a dimension, so a
     #: touch is compared with touches from a market that felt the same.
@@ -239,7 +239,7 @@ class Features(Restorable):
     #:
     #: The one measured addition to this set. Everything else here describes
     #: the level or the approach, and research/features.md found that none of
-    #: it predicts direction once `side` is known — while the level's own
+    #: it predicts direction once `side` is known - while the level's own
     #: record, which was never among the features, is worth +0.024 AUC on
     #: levels with three or more prior same-side touches.
     #:
@@ -248,7 +248,7 @@ class Features(Restorable):
     #: counts touches without saying what they did.
     #:
     #: 0.5 means no history rather than an even split, which are different
-    #: things the model cannot distinguish — `experience` carries how much
+    #: things the model cannot distinguish - `experience` carries how much
     #: evidence there is, so the pair reads correctly together.
     #:
     #: Point in time by construction: `features_for` runs before
@@ -264,7 +264,7 @@ class Features(Restorable):
         Being worth *predicting* with and worth *comparing* on are separate
         claims, so `up_rate` was measured on both before being added here:
         over a replay of the stored bars it takes the neighbour vote's AUC from
-        0.797 to 0.813. Unweighted, like every other dimension — weighting it
+        0.797 to 0.813. Unweighted, like every other dimension - weighting it
         two or four times over reached 0.816 and 0.819, which is not enough to
         justify fitting a constant to two thousand touches.
 
@@ -319,11 +319,11 @@ class Touch(Restorable):
 
     entry: float
     #: The furthest price reached while inside the zone. Kept, but **not** what
-    #: the level's position is learned from — see `origin`.
+    #: the level's position is learned from - see `origin`.
     extreme: float
     #: The timeframe this level lives on. The base rate is per
     #: `(feed, interval)`, since an unconditional rate pooled across BTC 15m and
-    #: GBPUSD daily describes neither. Empty means "do not bucket this" — a
+    #: GBPUSD daily describes neither. Empty means "do not bucket this" - a
     #: touch assembled by hand has no timeframe to speak for, and guessing one
     #: would put it in a bucket it does not belong to.
     interval: str = ""
@@ -331,7 +331,7 @@ class Touch(Restorable):
     #:
     #: The better observation of where the level actually is. The extreme is a
     #: wick: liquidity taken a fraction beyond the level, at a price nobody
-    #: traded around. The origin is where the move *turned* — in bar terms the
+    #: traded around. The origin is where the move *turned* - in bar terms the
     #: close of the last bar in against the open of the first bar out, which
     #: are usually the same price outside a session gap.
     origin: float = 0.0
@@ -347,7 +347,7 @@ class Touch(Restorable):
     #: Symmetric with `turned`, and for the same reason. Without it the
     #: departure is the largest excursion anywhere in the touch's life, which
     #: can be a move that happened long after the reaction and had nothing to do
-    #: with it — "how hard price left" quietly becoming "the biggest thing that
+    #: with it - "how hard price left" quietly becoming "the biggest thing that
     #: happened while we were watching".
     departure_done: bool = False
     outcome: Outcome = Outcome.OPEN
@@ -373,7 +373,7 @@ class Touch(Restorable):
     def energy(self) -> float:
         """How much harder it left than it arrived.
 
-        Above one, the level pushed price away faster than price came in —
+        Above one, the level pushed price away faster than price came in -
         which is what a level doing something looks like. At or below one,
         price walked in and drifted out, and the level was scenery.
         """
@@ -418,14 +418,14 @@ class Inference(Restorable):
     #: Distance to a stop beyond the flipped level, in volatility units. What
     #: being wrong costs, which an expected push means nothing without.
     risk_vol: float = 0.0
-    #: What taking this costs, in volatility units — spread, and eventually
+    #: What taking this costs, in volatility units - spread, and eventually
     #: slippage. Zero until a caller supplies it, which keeps every existing
     #: call unchanged rather than silently re-gating history against a cost
     #: nobody measured.
     cost_vol: float = 0.0
     #: The level's own hold rate **on this side**, and how many decisive
     #: interactions are behind it. Carried separately from `probability_up`,
-    #: which blends it with the neighbours' prior — the blend is the better
+    #: which blends it with the neighbours' prior - the blend is the better
     #: estimate of what happens next, and the raw record is the better
     #: *ranking* signal, which are different jobs.
     #:
@@ -437,7 +437,7 @@ class Inference(Restorable):
 
     @property
     def direction(self) -> str:
-        """Which way to lean — taken from the expected push, not the win rate.
+        """Which way to lean - taken from the expected push, not the win rate.
 
         The two can disagree, and when they do the expected value is what a
         consumer acts on: a level that drifts down four times in five and jumps
@@ -455,7 +455,7 @@ class Inference(Restorable):
     def mixed(self) -> bool:
         """True when the win rate and the expected move point opposite ways.
 
-        Not an error — it is a skewed distribution, usually many small moves one
+        Not an error - it is a skewed distribution, usually many small moves one
         way and a few large ones the other. Worth surfacing rather than hiding,
         because it is exactly the shape where a win rate alone misleads.
         """
@@ -470,8 +470,8 @@ class Inference(Restorable):
         gap between what it produces and something worth acting on. A `+0.5v`
         edge on an instrument whose spread is `0.3v` is not an edge; it is a
         rounding error with a direction attached, and gross numbers cannot tell
-        the two apart. The project measures spread — it is one of the signal
-        shapes — and until now never subtracted it from anything.
+        the two apart. The project measures spread - it is one of the signal
+        shapes - and until now never subtracted it from anything.
 
         Signed toward the same direction as the push, so cost always makes the
         claim smaller and can flip it through zero. A cost larger than the edge
@@ -485,7 +485,7 @@ class Inference(Restorable):
 
     @property
     def probability_down(self) -> float:
-        """`1 - P(up)`, exactly — not a second model.
+        """`1 - P(up)`, exactly - not a second model.
 
         There is one number because there are two outcomes: `record` increments
         `ups` when the push was positive, and the beta-binomial's `beta` term is
@@ -507,7 +507,7 @@ class Inference(Restorable):
         The number a reader wants, and the reason this exists: printing P(up)
         beside a *down* call renders as `down p=23%`, which invites reading 23%
         as the confidence in down when it is the confidence against it. When
-        `mixed`, this deliberately comes out below 50% — the direction is taken
+        `mixed`, this deliberately comes out below 50% - the direction is taken
         from the expected push while the win rate points the other way, and the
         honest rendering of that is a low number with `mixed` beside it.
         """
@@ -558,9 +558,9 @@ class Inference(Restorable):
         for itself.
 
         **A fifth gate was removed on 2026-08-17.** `reward_to_risk >=
-        MIN_REWARD_TO_RISK` read as the most principled of the set — a call
+        MIN_REWARD_TO_RISK` read as the most principled of the set - a call
         worth less than the stop behind it loses more when wrong than it makes
-        when right — and was measured to invert the sign of the expected
+        when right - and was measured to invert the sign of the expected
         return. See `MIN_REWARD_TO_RISK` for the numbers.
 
         That is worth remembering about the remaining four. They are gates
@@ -577,12 +577,12 @@ class Inference(Restorable):
             # test, so an edge smaller than the spread cannot qualify.
             and abs(self.net_push) >= 0.5
             # And the cost must not have flipped it. A net push pointing the
-            # other way is not a trade in the other direction — it means the
+            # other way is not a trade in the other direction - it means the
             # edge was eaten, and a large enough cost would otherwise sail back
             # through the size test above wearing the opposite sign.
             and self.net_push * self.expected_push > 0
             # A win rate and an expected move pointing opposite ways is a real
-            # shape, but it is not a call — whichever one you act on, the other
+            # shape, but it is not a call - whichever one you act on, the other
             # says you are wrong.
             and not self.mixed
         )
@@ -628,7 +628,7 @@ class Memory:
     """Resolved touches, and the kNN over them.
 
     A plain scan rather than a spatial index. The bound is a few thousand rows
-    of five floats, which is microseconds — an index here would be complexity
+    of five floats, which is microseconds - an index here would be complexity
     bought with nothing, and it would have to be rebuilt as touches age out.
     """
 
@@ -674,7 +674,7 @@ class Memory:
     def base_rate_up(self) -> float:
         """The unconditional rate. Without it no conditional means anything.
 
-        Jeffreys-smoothed — `(ups + 0.5) / (n + 1)` — so it never reaches 0 or
+        Jeffreys-smoothed - `(ups + 0.5) / (n + 1)` - so it never reaches 0 or
         1. Twenty observations that all went up make the base rate 0.98, not
         1.0, and the difference matters because everything else is shrunk
         *toward* this number: an unsmoothed 1.0 would propagate certainty into
@@ -690,7 +690,7 @@ class Memory:
         The pooled rate above is one number for the whole system, and for a
         while it was the only one: every call on every instrument and timeframe
         was measured against it. That is wrong in a way that does real damage,
-        because `edge` is `conditional - base` and `actionable` gates on it —
+        because `edge` is `conditional - base` and `actionable` gates on it -
         so a pool that happens to sit at 72% down hands every down call a
         twenty-point apparent edge and handicaps every up call, systematically,
         on instruments that have nothing to do with the samples that set it.
@@ -770,7 +770,7 @@ def infer(
     `vol` is **required**, and used to be optional with a zero fallback. That
     made the risk geometry something a caller could forget, and every caller
     did: `risk_vol` was 0.0 on every level call ever journalled, which made
-    `reward_to_risk` identically zero — the number documented as deciding
+    `reward_to_risk` identically zero - the number documented as deciding
     whether an edge is worth taking, never once computed. It went unnoticed
     because nothing gates on it yet and because zero is a plausible-looking
     number rather than an obviously missing one.
@@ -835,7 +835,7 @@ class Tracker(Restorable):
     break_vol: float = 0.75
     #: **The fallback only**, for a touch whose interval is not a known
     #: timeframe. Every real touch is scaled by `horizon_for` instead, so
-    #: passing this expecting to shorten a 5m touch does nothing — set
+    #: passing this expecting to shorten a 5m touch does nothing - set
     #: `horizon_bars`, which is the knob that survives the scaling.
     horizon: float = 3600.0
     #: Bars of the touch's own timeframe. See `HORIZON_BARS`.
@@ -867,7 +867,7 @@ class Tracker(Restorable):
         return (level.feed, round(level.price, 8))
 
     def begin(self, level: Level, price: float, features: Features, when: float) -> Touch:
-        """Record first contact. The side comes from `features`, not separately —
+        """Record first contact. The side comes from `features`, not separately -
         two sources for one fact is two things that can disagree."""
         touch = Touch(
             feed=level.feed,
@@ -879,7 +879,7 @@ class Tracker(Restorable):
             extreme=price,
             # First contact is already part of the leg in, so the origin starts
             # there rather than at zero. Left falsy, the first `update` compared
-            # price against `touch.origin or price` — price against itself, so
+            # price against `touch.origin or price` - price against itself, so
             # every first observation read as "deeper" and moved the origin to
             # wherever price happened to be. Nothing downstream noticed while
             # the leg out was measured from the level; measuring it from the
@@ -901,7 +901,7 @@ class Tracker(Restorable):
         """Advance an open interaction. Returns it once resolved.
 
         `price` is where the bar closed (or the current mid); `wick` is how far
-        it reached — the bar's low approaching from above, its high from below.
+        it reached - the bar's low approaching from above, its high from below.
         The two are what separate the **extreme** from the **origin**, and with
         only one of them they collapse into the same number: the deepest price
         seen is trivially also the last one before the turn.
@@ -928,7 +928,7 @@ class Tracker(Restorable):
         if deeper and not touch.turned:
             touch.origin = price
         elif not touch.turned and touch.origin:
-            # Not the first observation that fails to extend — that is a pause,
+            # Not the first observation that fails to extend - that is a pause,
             # not a departure. The leg in is a *run*, and it is over only once
             # price has come back off its deepest point by a run's worth. Until
             # then a deeper print re-extends it and moves the origin with it.
@@ -955,7 +955,7 @@ class Tracker(Restorable):
         # MAX_ZONE_VOL from the centre while a rejection needs only
         # resolve_vol, so price clipping the far edge of a wide zone arrived
         # already past the threshold and closed on the next observation having
-        # reacted to nothing — 17% of touches, spread evenly across feeds.
+        # reacted to nothing - 17% of touches, spread evenly across feeds.
         #
         # Only the rejection. A break is defined by the level, and the trap
         # that follows one has to be measured from the level too: `origin`
@@ -969,7 +969,7 @@ class Tracker(Restorable):
 
         if touch.breaking:
             # A break is provisional. Coming back through the level means the
-            # breakout was a trap, and the trade it invited has lost — which is
+            # breakout was a trap, and the trade it invited has lost - which is
             # a different fact from the level holding in the first place, and
             # the one worth knowing before trading the next break here.
             touch.excursion_vol = max(touch.excursion_vol, beyond)
@@ -986,7 +986,7 @@ class Tracker(Restorable):
             held = Outcome.BACKCHECK if level.is_backcheck(side, touch.started) else Outcome.REJECT
             return self._close(level, touch, held, travelled, side, when)
         if beyond >= self.resolve_vol:
-            # Through it — but not resolved yet. A break is not a break until
+            # Through it - but not resolved yet. A break is not a break until
             # it survives, which is how anyone trading one treats it.
             touch.broke_at = when
             touch.excursion_vol = beyond
@@ -1001,7 +1001,7 @@ class Tracker(Restorable):
         Checked before anything is read from `price`, because a touch open this
         long spans a period nobody observed and where price sits *now* says
         nothing about what this level did. The movement tests in `update` would
-        otherwise read the reopening gap as a decisive reaction — a weekend on
+        otherwise read the reopening gap as a decisive reaction - a weekend on
         EURUSD resolving as a 27-volatility-unit rejection, which is the market
         having been shut rather than the level having done anything. Dropped
         without an outcome; see GAP_FACTOR.
@@ -1022,7 +1022,7 @@ class Tracker(Restorable):
         when: float,
     ) -> Touch:
         touch.outcome = outcome
-        # Signed in absolute terms — positive is up — rather than relative to
+        # Signed in absolute terms - positive is up - rather than relative to
         # the approach. A consumer wants to know which way to lean, not whether
         # the level "won".
         touch.push_vol = travelled
@@ -1033,7 +1033,7 @@ class Tracker(Restorable):
             # The retest clock starts when price *got through*, not when the
             # break was confirmed. Confirmation waits out the trap window, so
             # dating it from there spends most of the window before a retest
-            # could possibly happen — which is why almost none were detected.
+            # could possibly happen - which is why almost none were detected.
             level.broke_at = touch.broke_at
         self.memory.add(touch)
         return touch
@@ -1061,13 +1061,13 @@ class Tracker(Restorable):
         for key in stale:
             touch = self._open.pop(key)
             if when - touch.started >= self.horizon_for(touch) * GAP_FACTOR:
-                continue  # a gap, not an outcome — see GAP_FACTOR
+                continue  # a gap, not an outcome - see GAP_FACTOR
             touch.outcome = Outcome.BREAK if touch.breaking else Outcome.CHOP
             touch.resolved = when
             # No price arrived to close this out, so the push is whatever the
             # touch had already reached: the excursion for a break that got
             # through and went quiet, and nothing at all for chop, which is
-            # what chop means. Signed like `_close`'s — positive is up — so a
+            # what chop means. Signed like `_close`'s - positive is up - so a
             # break away from a level approached from above reads negative.
             if touch.outcome is Outcome.BREAK:
                 sign = -1.0 if touch.features.side is Side.ABOVE else 1.0
@@ -1107,7 +1107,7 @@ def up_rate_of(stats: SideStats) -> float:
     """What share of this side's touches pushed up, or 0.5 for no history.
 
     Counts are decayed, so this is already an age-weighted rate rather than a
-    lifetime average — a level that held ten times last year and broke twice
+    lifetime average - a level that held ten times last year and broke twice
     this week reads closer to the recent behaviour, which is the one worth
     knowing.
     """

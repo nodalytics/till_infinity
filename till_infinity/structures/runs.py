@@ -9,7 +9,7 @@ sampling artefact rather than a disagreement about the market.
 
 Price does not turn at a bar. It turns where one run of volatility ends and the
 next begins, and that meeting point is the same price whichever resolution
-watched it — the runs differ in length, the intersection does not.
+watched it - the runs differ in length, the intersection does not.
 
 This is written to be **compared, not adopted**. It produces the same `Point`
 objects `pips.points` does, so `levels.form` consumes either without knowing
@@ -23,7 +23,7 @@ rather than one replacing the other.
 
 A PIP needs `confirm` bars after it before it can be called a turn, and the
 count is a choice. A run boundary settles when price has retraced from it by
-the threshold — the retracement *is* the proof, so `confirmed` is the bar that
+the threshold - the retracement *is* the proof, so `confirmed` is the bar that
 completed it rather than a fixed offset. A boundary the series has not yet
 turned away from is not emitted at all, which is the same guarantee `as_of`
 gives, arrived at by construction instead of by filtering.
@@ -47,7 +47,7 @@ from .volatility import Volatility
 #: structure at all. A move that reverses by less than one typical move has not
 #: shown that anybody defended it.
 #:
-#: The first thing to sweep when comparing the two formations — it is the knob
+#: The first thing to sweep when comparing the two formations - it is the knob
 #: that decides how many levels exist, and a threshold chosen to produce a
 #: pleasing number would be the same mistake as a hand-picked tolerance.
 RUN_SWING_VOL = 1.0
@@ -73,7 +73,7 @@ def points(
     retracement is when it became knowable.
 
     Returns points in the order they were *settled*, which is also the order
-    they became usable. An unfinished trailing run contributes nothing — its
+    they became usable. An unfinished trailing run contributes nothing - its
     extreme may still be exceeded, and emitting it would be the trailing-swing
     look-ahead that `pips.confirmed` exists to prevent.
     """
@@ -118,7 +118,7 @@ def points(
                 time=times[extreme_at],
                 price=extreme,
                 swing=Swing.HIGH if direction > 0 else Swing.LOW,
-                # How far the run ran, in basis points — the analogue of a
+                # How far the run ran, in basis points - the analogue of a
                 # PIP's prominence, and a measurement rather than a distance
                 # from an imaginary chord.
                 prominence_bps=abs((extreme - start) / start * 10_000) if start else 0.0,
@@ -146,7 +146,7 @@ def spans(found: Sequence[Point]) -> list[tuple[Point, Point]]:
 
     A level found this way is defined by the period on each side of it rather
     than by one bar, and this is the pair a caller needs to say so. Unused by
-    formation today — kept because the whole argument for run boundaries is
+    formation today - kept because the whole argument for run boundaries is
     that a level *spans* something, and the shape should exist before anything
     is built on it.
     """

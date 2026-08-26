@@ -2,7 +2,7 @@
 
 Run from the repository root:  python research/harness/cycles.py
 
-Every feature the model has is local to the touch — the last few bars before
+Every feature the model has is local to the touch - the last few bars before
 price arrived. None of them says whether the instrument has been climbing for
 a quarter, falling for one, or oscillating; nor, if oscillating, whether this
 level is near the floor or near the ceiling. `docs/todo.md` §6c asks whether
@@ -26,7 +26,7 @@ about **1 / sqrt(N)**, which is 0.129 at N=60. `TREND = 0.30` is therefore
 is stated rather than assumed.
 
 Position within the range is where the touch price sits between the window's
-low and high. Defined always, but only *meaningful* when ranging — a trend has
+low and high. Defined always, but only *meaningful* when ranging - a trend has
 no ceiling to be near, which is why it is reported split by direction.
 
 ## The falsification, which is about the interaction
@@ -59,7 +59,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 CACHE = Path(__file__).with_name("cycle-touches.pkl")
 
 #: Daily closes in the window the cycle is measured over. Sixty trading days is
-#: about a quarter — long enough to be a different object from a touch, short
+#: about a quarter - long enough to be a different object from a touch, short
 #: enough that the stored history holds more than one of them.
 WINDOW = 60
 
@@ -94,8 +94,8 @@ def daily() -> dict[str, tuple[list[int], list[float]]]:
 
     **A cross-venue median was the first attempt and it was wrong here**, which
     is worth recording because it is the opposite of what the rest of the
-    project does. Venues within a feed sit at slightly different levels — spx500
-    quotes between 7,780 and 7,805 across eight of them, a third of a percent —
+    project does. Venues within a feed sit at slightly different levels - spx500
+    quotes between 7,780 and 7,805 across eight of them, a third of a percent -
     and they do not all report every day. So the median switches between price
     levels as coverage changes, and every switch adds a step to the path that
     the instrument never took.
@@ -180,7 +180,7 @@ def rank_direction(signed: float, history: list[float]) -> int:
     rather than answered.
 
     Terciles of the feed's own distribution are symmetric by construction, and
-    self-calibrating in the way the rest of this project prefers — btc's
+    self-calibrating in the way the rest of this project prefers - btc's
     ordinary directionality is not eurusd's. Point-in-time: only ratios from
     before this moment are in `history`.
     """
@@ -237,7 +237,7 @@ def load():
     """Resolved touches, each carrying the cycle state it began in.
 
     Its own replay rather than `touches.load()`, which caches a row shape
-    without `started` — and the label has to be read at the moment price
+    without `started` - and the label has to be read at the moment price
     arrived at the level, not at the moment it resolved. The touch is the thing
     being predicted; using anything from its own lifetime would be the leak
     this whole script is written to avoid.

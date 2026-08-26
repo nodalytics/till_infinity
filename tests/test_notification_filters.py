@@ -235,14 +235,14 @@ def test_the_icon_says_which_kind_of_finding_before_a_word_is_read():
     assert mark(shape="level", direction="down") == "📉"
     assert mark(shape="stale") == "💤"
     assert mark(shape="drift") == "🌊"
-    assert mark() == "▲"  # nothing claimed — fall back to severity
+    assert mark() == "▲"  # nothing claimed - fall back to severity
 
 
 def test_routing_fields_are_not_printed_back_at_the_reader():
     from till_infinity.notifications.models import Notification
 
     text = Notification(
-        title="GOLD 1h — up",
+        title="GOLD 1h - up",
         fields={"shape": "level", "instrument": "gold", "venue": "consensus", "strength": "0.94"},
     ).as_text()
     assert "instrument: gold" not in text
@@ -276,7 +276,7 @@ def test_a_level_alert_leads_with_the_instrument_and_the_direction():
     )
     text = from_message(alert_payload(signal)).as_text()
     # Direction, then the instrument's own symbol: what happened, and to what.
-    assert text.startswith("📉 🥇 GOLD 4h — down")
+    assert text.startswith("📉 🥇 GOLD 4h - down")
     # The claimed direction's probability, not P(up).
     assert "down 77%" in text
     assert "53% base rate" in text

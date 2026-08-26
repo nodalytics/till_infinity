@@ -1,7 +1,7 @@
 """Repeating structures: has this shape happened before, and what followed?
 
 Levels answer "price has been *here* before". This answers a different
-question — "price has done *this* before" — and the two are independent. A
+question - "price has done *this* before" - and the two are independent. A
 double top is the same structure at 4400 and at 95,000, on gold and on BTC, in
 January and in June. Nothing about the level machinery can see that, because a
 level is a price and a shape is not.
@@ -14,7 +14,7 @@ comparable along both axes before two of them can be compared at all:
 - **price** is z-scored, so the same shape at 4400 and at 95,000 is the same
   shape, and a violent version of it is the same shape as a calm one;
 - **time** is dropped entirely and only the *order* is kept, because two
-  instances of a pattern rarely take the same number of bars — which is
+  instances of a pattern rarely take the same number of bars - which is
   precisely what dynamic time warping exists to handle.
 
 ## Dynamic time warping, not Euclidean distance
@@ -22,7 +22,7 @@ comparable along both axes before two of them can be compared at all:
 Comparing point-by-point would call a three-day double top and a three-hour
 double top completely different shapes. DTW finds the alignment minimising
 total distance while preserving order, so it matches a stretched instance to a
-compressed one — the property that makes it the standard partner to PIP in the
+compressed one - the property that makes it the standard partner to PIP in the
 literature this is built from.
 
 The band constraint (Sakoe-Chiba) is not an optimisation detail. Unconstrained
@@ -32,7 +32,7 @@ without a band the "matches" are alignments rather than resemblances.
 ## What stops it finding patterns in noise
 
 Searching many shapes across many instruments and timeframes **will** turn up
-repeats by chance — that is what multiple comparisons do, not a flaw in any one
+repeats by chance - that is what multiple comparisons do, not a flaw in any one
 match. Three things guard against it, and they are the same three the levels
 model uses because the failure is the same failure:
 
@@ -82,7 +82,7 @@ def normalise(prices: Sequence[float]) -> list[float]:
     """Z-score a price sequence so shape survives and level and scale do not.
 
     A flat sequence has no shape, so it returns zeros rather than dividing by
-    zero — and a zero vector matches nothing interesting, which is correct.
+    zero - and a zero vector matches nothing interesting, which is correct.
     """
     if len(prices) < 2:
         return [0.0] * len(prices)
@@ -215,8 +215,8 @@ class Match(Restorable):
 class Library:
     """Shapes seen before, and what followed each.
 
-    A plain scan rather than an index. DTW is not a metric — it violates the
-    triangle inequality — so the usual spatial structures do not apply to it,
+    A plain scan rather than an index. DTW is not a metric - it violates the
+    triangle inequality - so the usual spatial structures do not apply to it,
     and the honest options are a linear scan or a lower-bound filter. At a few
     thousand short sequences the scan is fast enough that the filter would be
     complexity bought with nothing.
@@ -275,7 +275,7 @@ class Library:
         """What happened the other times this shape appeared.
 
         Distance-weighted, so a close instance counts for more than a marginal
-        one — with a hard threshold alone, the estimate is dominated by whatever
+        one - with a hard threshold alone, the estimate is dominated by whatever
         sits just inside it.
         """
         if shape.flat:

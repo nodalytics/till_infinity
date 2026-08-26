@@ -1,4 +1,4 @@
-"""Backbone — abstract channel interface.
+"""Backbone - abstract channel interface.
 
 All channel backends (in-memory, Redis, etc.) implement this protocol.
 Users generally create channels via the top-level helpers (bounded,
@@ -15,7 +15,7 @@ T = TypeVar("T")
 
 
 class Backbone(ABC, Generic[T]):
-    """Low-level transport — a single backbone services many channels."""
+    """Low-level transport - a single backbone services many channels."""
 
     @abstractmethod
     async def send(self, channel: str, message: T) -> None: ...
@@ -95,7 +95,7 @@ class Receiver(Generic[T]):
 
 
 class Channel(ABC, Generic[T]):
-    """Full-duplex channel object — source of Sender / Receiver pairs."""
+    """Full-duplex channel object - source of Sender / Receiver pairs."""
 
     @abstractmethod
     async def send(self, message: T) -> None: ...

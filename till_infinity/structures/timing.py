@@ -1,6 +1,6 @@
 """How long until price gets there.
 
-A level three volatility units away is not "close" or "far" — it is a distance
+A level three volatility units away is not "close" or "far" - it is a distance
 a random walk has to cover, and asking how long that takes is a **first-passage
 time** problem with a known answer. The input is a distance measured in
 volatility units, which is precisely what `distance_vol` already produces.
@@ -21,13 +21,13 @@ Both are exact for Brownian motion and need nothing beyond the normal
 quantile function.
 
 Both also want `n` in **standard deviations**, and a distance in volatility
-units is a distance in mean absolute deviations — see `MAD_TO_SIGMA`, which is
+units is a distance in mean absolute deviations - see `MAD_TO_SIGMA`, which is
 the conversion, and which was missing.
 
 ## The quadratic is the point
 
 Time goes as the **square** of distance. Twice as far is four times as long,
-not twice — which is the single most useful thing this module says, because it
+not twice - which is the single most useful thing this module says, because it
 is not what intuition offers. A level 1v away is typically touched within a
 couple of bars; one 5v away takes fifty.
 
@@ -37,7 +37,7 @@ The expected first-passage time of a driftless walk is **infinite**. The
 distribution has a tail heavy enough that the mean does not converge, so any
 "average time to reach" is an artefact of where the sample was truncated.
 Quantiles are reported instead: a median, and a slow case. That is not
-pedantry — an average here would be a number that gets larger the longer you
+pedantry - an average here would be a number that gets larger the longer you
 collect data for.
 
 ## What this is not
@@ -49,7 +49,7 @@ that keeps getting reached far sooner than this says something; the estimate is
 the baseline that makes "sooner" mean anything.
 
 Drift is deliberately excluded. Estimating it from recent data is noisy enough
-that a wrong sign would make the answer worse than the null — and the honest
+that a wrong sign would make the answer worse than the null - and the honest
 version of "price is heading there" is the directional inference, which is
 already a separate answer.
 """
@@ -74,7 +74,7 @@ MIN_DISTANCE_VOL = 0.05
 MAX_BARS = 10_000.0
 
 #: A distance in volatility units is a distance in **mean absolute deviations**
-#: — that is what `Volatility.bps` returns, chosen there because it is the more
+#: - that is what `Volatility.bps` returns, chosen there because it is the more
 #: stable estimator on financial returns. Both estimates below are the
 #: reflection principle, which wants standard deviations. For a normal walk
 #: MAD = sigma*sqrt(2/pi), so a distance counted in MADs is sqrt(2/pi) of the same distance
@@ -93,7 +93,7 @@ MAD_TO_SIGMA = math.sqrt(2.0 / math.pi)
 def bars_to_reach(distance_vol: float, quantile: float = 0.5) -> float:
     """Bars until a walk first touches something `distance_vol` away.
 
-    `quantile` 0.5 is the median — half the time it is reached sooner. 0.9 is
+    `quantile` 0.5 is the median - half the time it is reached sooner. 0.9 is
     the slow case. There is no mean: the distribution's is infinite.
     """
     n = abs(distance_vol)
@@ -167,7 +167,7 @@ class Approach(Restorable):
         """The unlucky case, or "beyond" when it ran past the horizon.
 
         Printing a precise duration for a clamped value would read as an
-        estimate when it is a ceiling — and "34.7d" looks like a finding while
+        estimate when it is a ceiling - and "34.7d" looks like a finding while
         "beyond" is what is actually known.
         """
         return "beyond" if self.capped else _humanise(self.slow_seconds)
@@ -210,7 +210,7 @@ def estimate(
     """Turn a distance into a time, on one timeframe's clock.
 
     The same distance is minutes on 5m and months on 1w, so the timeframe is
-    not decoration — it is what converts bars into anything anyone can use.
+    not decoration - it is what converts bars into anything anyone can use.
     """
     seconds = SECONDS.get(interval, 3_600.0)
     median = bars_to_reach(distance_vol, 0.5)

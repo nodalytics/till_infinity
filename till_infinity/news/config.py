@@ -9,7 +9,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-#: RSS feeds. Macro/FX first, then crypto — the mix the gold/BTC/FX book needs.
+#: RSS feeds. Macro/FX first, then crypto - the mix the gold/BTC/FX book needs.
 RSS_FEEDS: dict[str, str] = {
     "forexlive": "https://www.forexlive.com/feed/",
     "fxstreet": "https://www.fxstreet.com/rss/news",
@@ -36,7 +36,7 @@ HEADLINE_SYMBOLS: tuple[str, ...] = (
 #: Broad feeds, fetched without a symbol.
 HEADLINE_CATEGORIES: tuple[str, ...] = ("forex", "crypto")
 
-#: Only the current week is published any more — ff_calendar_nextweek.json and
+#: Only the current week is published any more - ff_calendar_nextweek.json and
 #: ff_calendar_lastweek.json both 404. TradingView covers the forward window.
 FOREXFACTORY_URLS: tuple[str, ...] = ("https://nfs.faireconomy.media/ff_calendar_thisweek.json",)
 
@@ -51,7 +51,7 @@ DEFAULT_USER_AGENT = (
 #: TradingView's calendar and headline services check the browser origin.
 TRADINGVIEW_ORIGIN = "https://www.tradingview.com"
 
-#: IMF SDMX. Country codes are ISO-3 — "US" matches nothing, "USA" does.
+#: IMF SDMX. Country codes are ISO-3 - "US" matches nothing, "USA" does.
 IMF_BASE_URL = "https://api.imf.org/external/sdmx/2.1"
 #: International Reserves and Foreign Currency Liquidity. The "+" resolves to
 #: the latest version, which moves (12.0.0 at time of writing).

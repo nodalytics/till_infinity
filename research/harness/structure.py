@@ -7,14 +7,14 @@ says anything. This asks the two neighbouring questions, and one more that only
 makes sense alongside them:
 
     confluence   how many timeframes agree on this price, and how tightly
-    shape        what the whole level set looks like at this moment — how many,
+    shape        what the whole level set looks like at this moment - how many,
                  how dense, how dispersed, how fast it is turning over
     volatility   whether any of it says something different in a quiet market
                  from a violent one
 
 The last is the reason to do all three together. Every threshold in this
 project is denominated in volatility units already, so structure measured in
-those units is comparable across instruments — and if structure carries
+those units is comparable across instruments - and if structure carries
 anything, the most likely shape is *conditional*: a dense band of levels means
 one thing when volatility is low and another when a single bar crosses the
 whole band.
@@ -27,7 +27,7 @@ one to look significant at 95%, which is roughly two by construction.
 
 So: the family-wise correction is applied **from the start**, the count of
 tests is reported beside the results, and the headline test remains the one
-[cycles.md](../cycles.md) settled on — does it add AUC over what the model
+[cycles.md](../cycles.md) settled on - does it add AUC over what the model
 already has, by more than the interval on the difference when resampled by
 instrument.
 """
@@ -223,7 +223,7 @@ def honest(rows, live, base_scored, feeds, base_auc) -> None:
 
 def regimes(rows, live) -> None:
     """Whether any of it says something different in a quiet market."""
-    print("\n=== 4. paired with volatility — does any of it work in one regime only")
+    print("\n=== 4. paired with volatility - does any of it work in one regime only")
     thirds = sorted(rows, key=lambda r: r["vol_bps"])
     size = len(thirds) // 3
     bands = (

@@ -309,8 +309,8 @@ def test_the_edge_gate_sits_above_the_measured_step():
     to 69.3% and a push of 0.49.
 
     This guards the number rather than the behaviour, which is unusual and
-    deliberate: it was a bare literal for months at 0.08 — inside the flat
-    region, publishing a quarter of its calls at a coin flip — precisely
+    deliberate: it was a bare literal for months at 0.08 - inside the flat
+    region, publishing a quarter of its calls at a coin flip - precisely
     because nothing pointed at it.
     """
     assert reactions.MIN_EDGE >= 0.0968
@@ -378,7 +378,7 @@ def test_a_touch_spanning_a_closed_market_is_discarded_rather_than_resolved():
 
     FX shuts on Friday evening and reopens on Sunday. A touch open at the close
     would otherwise resolve on the reopen, and `_close` records `push_vol` as
-    the distance at the moment of closing — so the level's own statistics and
+    the distance at the moment of closing - so the level's own statistics and
     `facto`'s training targets would learn the **opening gap** as this level's
     reaction to being touched. It is not a reaction to anything.
     """
@@ -431,7 +431,7 @@ QUORUM = ("OANDA", "SAXO", "TVC")
 
 
 def _bar(feed, interval, when, price, rand=None, venues=QUORUM):
-    """One bar as every venue reports it — the shape the bus delivers."""
+    """One bar as every venue reports it - the shape the bus delivers."""
     for venue in venues:
         wobble = rand.gauss(0, 0.02) if rand else 0.0
         yield {
@@ -466,7 +466,7 @@ def test_the_engine_finds_a_handful_of_swing_levels_not_a_forest():
 
 
 def test_pivots_are_built_from_completed_sessions():
-    """They need no confirmation delay — yesterday fully determines today."""
+    """They need no confirmation delay - yesterday fully determines today."""
     engine = Engine(intervals=("5m",))
     for bar in _range_bound():
         engine.observe_bar(bar)
@@ -667,7 +667,7 @@ def test_old_evidence_fades_rather_than_counting_forever():
 
 
 def test_evidence_survives_a_short_gap():
-    """Fading must be gradual — a level should not forget overnight."""
+    """Fading must be gradual - a level should not forget overnight."""
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     start = 1_000_000.0
     for i in range(6):
@@ -908,7 +908,7 @@ def _walk(tracker, level, side, path, vol, start=1_000_000.0, wick_bps=0.0):
     """Run price along `path` (bps from the level) until the touch resolves.
 
     `wick_bps` extends each bar beyond its close, which is what separates the
-    extreme from the origin — without it they are the same number.
+    extreme from the origin - without it they are the same number.
     """
     entry = level.price
     features = reactions.features_for(level, side, entry, vol, approach_vol=1.0, when=start)
@@ -964,7 +964,7 @@ def test_a_break_is_provisional_until_it_survives():
 
 
 def test_a_trap_leaves_the_level_intact():
-    """It held — violently, after letting price through. That is not failing."""
+    """It held - violently, after letting price through. That is not failing."""
     vol = _vol()
     tracker = reactions.Tracker(horizon_bars=24, trap_bars=12)
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
@@ -1067,7 +1067,7 @@ def test_a_first_touch_is_not_counted_as_a_back_check():
 
 
 def test_the_stop_sits_beyond_the_zone_not_at_the_level():
-    """A stop inside the zone is a stop inside the noise — the level working hits it."""
+    """A stop inside the zone is a stop inside the noise - the level working hits it."""
     vol = _vol()
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
     low, high = level.zone(vol)
@@ -1170,7 +1170,7 @@ def test_energy_needs_both_legs_to_mean_anything():
         extreme=4400.0,
         departure_vol=1.0,
     )
-    assert quiet.energy < 1.0  # walked in, drifted out — the level was scenery
+    assert quiet.energy < 1.0  # walked in, drifted out - the level was scenery
 
 
 def test_an_approach_of_zero_has_no_energy_ratio():
@@ -1260,7 +1260,7 @@ def test_p_down_is_the_complement_and_nothing_else():
 
 
 def test_a_down_call_reports_the_probability_of_going_down():
-    """`down p=23%` reads as 23% confidence in down. It is 77% — say that."""
+    """`down p=23%` reads as 23% confidence in down. It is 77% - say that."""
     from till_infinity.structures.reactions import Inference
 
     call = Inference(
@@ -1318,7 +1318,7 @@ def test_the_edge_is_the_same_size_whichever_way_it_points():
 
 
 def test_a_mixed_call_shows_a_probability_below_half_rather_than_hiding_it():
-    """Direction from the push, win rate the other way — visible, and not actionable."""
+    """Direction from the push, win rate the other way - visible, and not actionable."""
     from till_infinity.structures.reactions import Inference
 
     call = Inference(
@@ -1370,7 +1370,7 @@ def test_one_visit_is_one_touch_however_long_price_loiters():
     Before this, a resolved interaction left the level immediately eligible: the
     next quote arrived with price still inside the zone and no open touch, so a
     fresh touch began, resolved, and began again. A BTC level reached 316
-    "touches" in a day — on an instrument with 288 five-minute bars in one — and
+    "touches" in a day - on an instrument with 288 five-minute bars in one - and
     that swamped the beta-binomial prior badly enough to report p=100%.
     """
     engine = Engine(intervals=("5m",))
@@ -1487,7 +1487,7 @@ def test_riding_the_zone_edge_is_not_a_touch_each_time():
     """Leaving the zone is not the same as going away from the level.
 
     A price sitting on the edge crosses it constantly. Re-arming on each
-    crossing counts one consolidation as dozens of turns — the residue of the
+    crossing counts one consolidation as dozens of turns - the residue of the
     same inflation the `waiting` flag was added for, which the flag alone did
     not reach: a BTC zone still read 337 effective touches after a cold start.
     """
@@ -1496,7 +1496,7 @@ def test_riding_the_zone_edge_is_not_a_touch_each_time():
     # A moving price, because a still one estimates a volatility near zero and
     # then every distance divided by it is enormous: fed 120 identical prices
     # this read 0.05bps, a hundredth of gold's real 5m move, and the edge of
-    # the zone came out **three** volatility units from the level — past
+    # the zone came out **three** volatility units from the level - past
     # `resolve_vol`, so the consolidation this test is about resolved as a
     # three-unit rejection on its first step. The fixture has to be realistic
     # for the assertion to mean what it says.
@@ -1547,7 +1547,7 @@ def test_the_leg_in_survives_a_pause_and_ends_on_a_run():
     engine.tracker.update(level, 2000.0 - 0.4 * unit, vol, 1.0)
     assert touch.origin == pytest.approx(2000.0 - 0.4 * unit)
 
-    # A pause — back off the low by well under a run. Not a departure.
+    # A pause - back off the low by well under a run. Not a departure.
     engine.tracker.update(level, 2000.0 - 0.3 * unit, vol, 2.0)
     assert not touch.turned, "one non-extending observation ended the leg"
 
@@ -1556,7 +1556,7 @@ def test_the_leg_in_survives_a_pause_and_ends_on_a_run():
     assert touch.origin == pytest.approx(2000.0 - 0.8 * unit)
     assert not touch.turned
 
-    # A real departure — a run's worth back off the low — fixes it.
+    # A real departure - a run's worth back off the low - fixes it.
     engine.tracker.update(level, 2000.0 - 0.2 * unit, vol, 4.0)
     assert touch.turned
     settled = touch.origin
@@ -1620,7 +1620,7 @@ def test_an_edge_smaller_than_the_cost_is_not_a_trade():
 
 
 def test_a_cost_bigger_than_the_edge_flips_it_through_zero():
-    """Not a weak trade — the wrong side of one."""
+    """Not a weak trade - the wrong side of one."""
     from till_infinity.structures.reactions import Inference
 
     call = Inference(
@@ -1697,7 +1697,7 @@ def test_a_call_knows_what_being_wrong_costs():
     """`risk_vol` was 0.0 on every level call ever journalled.
 
     `vol` was an optional argument to `infer` with a zero fallback, so the risk
-    geometry was something a caller could forget — and every caller did, though
+    geometry was something a caller could forget - and every caller did, though
     each had `vol` right there in scope. `reward_to_risk` is documented as the
     number that decides whether an edge is worth taking, and it was identically
     zero. Nothing gates on it, which is the only reason it stayed invisible:
@@ -1725,7 +1725,7 @@ def test_reward_to_risk_no_longer_decides_anything():
     measure of how *tight* the stop is: it correlates -0.359 with `risk_vol`,
     and top-decile calls were stopped out 44.8% of the time against 29.1%.
 
-    The number is still computed and still reported — a human reading an alert
+    The number is still computed and still reported - a human reading an alert
     should see what the move is worth against what it risks. It just does not
     decide any more.
     """
@@ -1832,7 +1832,7 @@ def test_state_from_an_older_build_restores_without_losing_new_fields():
     This took structures down in production: the deploy restored its models,
     hit `AttributeError: 'Engine' object has no attribute '_touch_eras'` on the
     first bar five seconds later, and stopped. Nothing then consumed the bus,
-    so it presented as dropped quotes and a silent journal — never as the
+    so it presented as dropped quotes and a silent journal - never as the
     attribute error that caused it.
 
     The property is that a state file missing *any* field still restores a
@@ -1878,7 +1878,7 @@ def test_early_history_is_touched_by_the_finest_thing_that_existed_then():
     """The regression that pinning to the globally finest series caused.
 
     A replay of a few hundred bars per interval covers hours at 1m and years
-    at 1w. Pinning the check to 1m left every earlier era untouched — 1w and 4h
+    at 1w. Pinning the check to 1m left every earlier era untouched - 1w and 4h
     opened zero touches across 20,159 gold bars, so their levels were pruned
     for never having been visited and twenty-one levels became four.
 
@@ -1889,7 +1889,7 @@ def test_early_history_is_touched_by_the_finest_thing_that_existed_then():
     engine = Engine()
     engine._touch_eras = [(0.0, "1w"), (1_000.0, "1m")]
 
-    # Before the 1m series starts, 1w carries it — this is what was broken.
+    # Before the 1m series starts, 1w carries it - this is what was broken.
     assert engine.touch_interval("gold", 10.0) == "1w"
     assert engine.touch_interval("gold", 999.0) == "1w"
     # Once it starts, it takes over and the coarse bars stop touching.
@@ -1922,7 +1922,7 @@ def test_the_spread_charge_can_be_turned_off():
     """Off is for asking what the model would have said gross, and nothing else.
 
     Charged and uncharged runs differ in this one term, which is what makes the
-    comparison worth anything — so the test pins that the *same* quotes and the
+    comparison worth anything - so the test pins that the *same* quotes and the
     *same* volatility produce a real cost with it on and exactly zero with it
     off.
     """
@@ -1931,7 +1931,7 @@ def test_the_spread_charge_can_be_turned_off():
 
     assert on.cost_of("gold", vol_on) == pytest.approx(4.0 / vol_on.bps, rel=0.05)
     assert off.cost_of("gold", vol_off) == 0.0
-    # The spreads were still observed either way — the switch decides whether
+    # The spreads were still observed either way - the switch decides whether
     # they are charged, not whether they are measured, so turning it back on
     # must not need a fresh window.
     off.charge_spread = True
@@ -1959,7 +1959,7 @@ def test_disabling_the_charge_says_so_rather_than_going_quiet(caplog):
 
 
 def test_the_tick_is_measured_from_the_series():
-    """`structures` has no other route to it — `prices` sees quotes and stops."""
+    """`structures` has no other route to it - `prices` sees quotes and stops."""
     vol = Volatility()
     price = 0.18
     for step in [3, -2, 1, -1, 5, -3, 2, -1, 1, 4] * 6:
@@ -1986,8 +1986,8 @@ def test_a_series_that_only_jumps_teaches_nothing_about_the_grid():
 def test_a_coarse_grid_is_still_believed():
     """The case the tempting guard threw away.
 
-    On ADA the tick genuinely *is* most of a typical move — that is the whole
-    problem — so "the tick must be small against a typical move" rejects the
+    On ADA the tick genuinely *is* most of a typical move - that is the whole
+    problem - so "the tick must be small against a typical move" rejects the
     instrument this exists for. Distinct multiples separate them instead.
     """
     vol = Volatility()
@@ -2005,7 +2005,7 @@ def test_a_coarse_grid_widens_the_zone_beyond_the_volatility_floor():
 
     The widening is bounded by `MAX_ZONE_VOL` rather than granted outright,
     because the tick is an *observed* minimum and errs large. What the test
-    pins is that the grid raises the floor at all — without it the zone would
+    pins is that the grid raises the floor at all - without it the zone would
     sit at the volatility floor, narrower than the prices that can be quoted.
     """
     vol = Volatility()
@@ -2035,7 +2035,7 @@ def test_an_instrument_quoted_finely_is_left_alone():
     vol = Volatility()
     price = 63_000.0
     # Large moves with the occasional single-tick print, which is what a real
-    # series looks like — and what lets the tick be resolved at all.
+    # series looks like - and what lets the tick be resolved at all.
     for step in [250, -200, 1, 300, -150, -1, 400, -260, 1, 180, 220, -190] * 5:
         price = round(price + step * 0.12, 6)
         vol.update(price)
@@ -2053,7 +2053,7 @@ def test_a_bar_is_observed_at_its_close_not_its_open():
     """Bars are stamped with the open; quotes carry wall clock. One tracker.
 
     A touch opened by a quote and resolved by the bar that closed *after* it
-    recorded a negative duration — 10% of resolved touches in the journal,
+    recorded a negative duration - 10% of resolved touches in the journal,
     every one 5m, every one about 300 seconds, which is exactly one bar. The
     duration itself is cosmetic. What is not is that `horizon`, `trap_window`
     and the `GAP_FACTOR` weekend guard all test `when - touch.started`, and a
@@ -2114,7 +2114,7 @@ def test_volatility_does_not_depend_on_how_many_venues_report(venues):
     same close in once per venue and read a run of zero returns.
 
     Measured on the live feeds, that divided the estimate by the venue count
-    past quorum — four on EURUSD and GBPUSD, three on XAUUSD, two on BTCUSD —
+    past quorum - four on EURUSD and GBPUSD, three on XAUUSD, two on BTCUSD -
     and since every threshold here is expressed in volatility units, and a
     distance in those units *divides* by this number, every distance read two
     to four times larger than it was. A level 0.4 volatility units away
@@ -2158,13 +2158,13 @@ def test_a_touch_arriving_at_the_far_edge_is_not_born_resolved():
     Those two are independent numbers, and the first is twice the second, so
     price clipping the far edge of a wide zone used to open a touch that was
     *already* past the rejection threshold. The next observation closed it as
-    a REJECT having watched nothing happen — 17% of touches in a replay of the
+    a REJECT having watched nothing happen - 17% of touches in a replay of the
     stored bars, spread evenly across all six instruments, and on the
     production journal 46% of outcomes resolved at or before the instant they
     opened.
 
-    Measuring the leg out from the origin — where the leg in ended, which
-    `Level.zone` already calls the price the level is drawn at — makes the two
+    Measuring the leg out from the origin - where the leg in ended, which
+    `Level.zone` already calls the price the level is drawn at - makes the two
     independent. A touch must now *move*, whatever width it arrived through.
     """
     vol = _vol()
@@ -2190,14 +2190,14 @@ def test_a_touch_that_expires_reaches_the_level_and_the_journal():
     """A touch ends two ways, and only one of them was being delivered.
 
     `Tracker.expire` closes a touch on the clock, gives it an outcome and folds
-    it into the kNN memory — and `Engine.check` discarded what it returned, so
+    it into the kNN memory - and `Engine.check` discarded what it returned, so
     that memory was the only place it ever reached. No `level.record`, no
     Kalman update, nothing appended to `_resolved`, so nothing in the journal
     and nothing in `facto`.
 
     It matters far past the count, because expiry is where a break that got
     through and then went quiet resolves. On a replay of the stored bars,
-    delivering these took breaks from 11 to 61 and back checks from 3 to 29 —
+    delivering these took breaks from 11 to 61 and back checks from 3 to 29 -
     the second because `level.broke_at` is what makes a retest detectable, and
     it was only ever set on the path that already worked.
     """
@@ -2236,7 +2236,7 @@ def test_a_change_of_quoting_venue_is_not_a_price_move():
 
     It is why spx500 and btc led the instant-resolution table at 41% and 39%
     while gold and the FX majors, whose venues agree to within a twentieth of a
-    unit, sat near zero — and why the rate stayed at 43% on production after
+    unit, sat near zero - and why the rate stayed at 43% on production after
     the bar path was fixed.
     """
     from till_infinity.structures.engine import QUOTE_STALE, Quotes
@@ -2265,7 +2265,7 @@ def test_a_bar_still_forming_is_not_observed_in_the_future():
 
     Stamping a bar at its close is right for a bar that has closed. The bar
     being delivered is usually the one still forming, and stamping *that* one
-    at its close puts it up to a whole interval ahead of now — so a quote
+    at its close puts it up to a whole interval ahead of now - so a quote
     arriving in the meantime resolves a touch before it began, which is the
     negative duration the close-time stamp was introduced to remove.
 
@@ -2303,8 +2303,8 @@ def test_a_bar_still_forming_is_not_observed_in_the_future():
 def test_a_market_that_has_shut_opens_no_new_touches():
     """Quotes keep arriving after a market closes; price stops.
 
-    On a Saturday morning the FX venues were still answering every poll —
-    quotes sixteen minutes old — while the last 3m bar was nine hours old.
+    On a Saturday morning the FX venues were still answering every poll -
+    quotes sixteen minutes old - while the last 3m bar was nine hours old.
     Those quotes carry Friday's closing price, and a frozen price cannot
     arrive anywhere. Without this the engine opened touches against it and
     published directional calls: USDCNH and AUDUSD both alerted on a Saturday,
@@ -2334,7 +2334,7 @@ def test_a_market_that_has_shut_opens_no_new_touches():
 def test_an_expired_touch_holds_the_level_back():
     """Otherwise the same visit is counted again on the next observation.
 
-    A touch expires because price sat at the level and went nowhere — so price
+    A touch expires because price sat at the level and went nowhere - so price
     is still there. Leaving the level re-armed opened another touch against
     that same visit immediately, producing another call and another alert. On a
     closed market, where the price is frozen and nothing can ever resolve, that
@@ -2358,8 +2358,8 @@ def test_a_levels_own_record_reaches_the_features():
     """The one measured addition, and the one thing that was never handed over.
 
     research/features.md found that none of the other eight features predicts
-    direction once `side` is known, while the level's own same-side record —
-    which was not among them — is worth +0.024 AUC on levels with three or
+    direction once `side` is known, while the level's own same-side record -
+    which was not among them - is worth +0.024 AUC on levels with three or
     more prior touches. It was hiding inside `strength`, diluted with terms
     that separate nothing, and behind `experience`, which counts touches
     without saying what they did.
@@ -2367,7 +2367,7 @@ def test_a_levels_own_record_reaches_the_features():
     vol = _vol()
     level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
 
-    # No history reads as 0.5 — not knowing rather than an even split. The pair
+    # No history reads as 0.5 - not knowing rather than an even split. The pair
     # with `experience` is what tells them apart.
     fresh = reactions.features_for(level, Side.ABOVE, 4400.0, vol)
     assert fresh.up_rate == 0.5
@@ -2441,7 +2441,7 @@ def test_a_coarse_grid_cannot_make_a_zone_wider_than_a_resolution():
 
     `MIN_ZONE_TICKS` is six, which is sensible while a tick is a small part of
     a typical move. On sol a tick is 0.378 volatility units, so six of them is
-    2.27 — wider than `resolve_vol`, the distance a touch must travel to count
+    2.27 - wider than `resolve_vol`, the distance a touch must travel to count
     as a rejection. The zone then catches everything: sol 3m produced 582
     outcomes per thousand bars against btc 3m's 62.8, a resolution every 1.7
     bars, and sol alone was half of every outcome in the journal.
@@ -2485,7 +2485,7 @@ def test_a_grid_too_coarse_for_a_zone_forms_no_levels():
 
     A level is a band price is meant to enter, react inside and leave. When the
     venue's tick is a large fraction of a typical move, price cannot be inside
-    it — it jumps across, and every crossing is a touch. On the instance
+    it - it jumps across, and every crossing is a touch. On the instance
     `sol 3m` fits 2.5 ticks in a zone and `audusd 1m` fits 2.7, against
     `btc 5m`'s 170, and sol alone was half of every outcome in the journal.
 
@@ -2544,7 +2544,7 @@ def test_an_instrument_with_no_evidence_yet_is_not_declined():
 def test_an_unsupported_pair_is_declined_at_startup_not_at_the_next_reform():
     """`reform` applies the rule; it just does not apply it soon enough.
 
-    A series comes due every `REFORM_EVERY` bars, which is twenty — so a 15m
+    A series comes due every `REFORM_EVERY` bars, which is twenty - so a 15m
     series restored from disk carries levels it should not have for five hours,
     opening touches and publishing calls from them the whole time. A restart is
     exactly when that matters, because state on disk was formed under whatever
@@ -2575,7 +2575,7 @@ def test_an_unsupported_pair_is_declined_at_startup_not_at_the_next_reform():
     assert engine.levels("gold", "5m") == []
     assert ("gold", "5m") in engine._declined
 
-    # And it is idempotent — a second sweep has nothing left to say.
+    # And it is idempotent - a second sweep has nothing left to say.
     assert engine.drop_unsupported() == 0
 
 

@@ -1,6 +1,6 @@
 # Two thirds of outcomes resolved before they could have happened
 
-Run: the production journal, not a replay — that is the point of this one.
+Run: the production journal, not a replay - that is the point of this one.
 
 Every other document here replays stored bars. This one came from asking a
 plain question of the live journal, "which resolved outcomes went well", and
@@ -17,7 +17,7 @@ Scored naively, production looked extraordinary:
 | backcheck | 4.9% | 3.12 | +3.12 |
 | break | 2.5% | 6.02 | −6.02 |
 
-A 97% win rate — and it is **circular**. The outcome *label* determines the
+A 97% win rate - and it is **circular**. The outcome *label* determines the
 sign of the push: a `reject` means price was pushed back, so a hold trade is
 positive by construction, and a `break` is negative by construction. Scoring
 outcomes that way re-reports the mix and calls it profit.
@@ -50,14 +50,14 @@ travelled 1.5 volatility units in two seconds. Not a market move.
 
 Recorded here because the wrong one was plausible and cost time. The suspicion
 was that the resolution threshold, or the volatility it is denominated in, came
-from the *finest* series rather than the level's own — touch detection had been
+from the *finest* series rather than the level's own - touch detection had been
 deliberately moved there, so resolution might have followed.
 
 It had not. `check` reads `self.vol.of(feed, interval)`, the level's own.
 
 ## 4. What it actually was
 
-`run_vol` — the length of the leg *into* the level — is **0.00 at the median,
+`run_vol` - the length of the leg *into* the level - is **0.00 at the median,
 at p90 and at the maximum** across all 8,897 zero-duration outcomes. Not one
 ever recorded an approach. Meanwhile `push_vol` reads a median of 2.88
 volatility units. A large move, no approach, no time.
@@ -70,7 +70,7 @@ existed. Applied to it, the touch resolves immediately on movement that
 predates it.
 
 Coarse intervals were worse because their bars cover more time, so more touches
-open inside one. **1m being least affected is what made this legible at all** —
+open inside one. **1m being least affected is what made this legible at all** -
 with every interval equally broken there would have been no contrast to notice.
 
 The fix is one condition: a touch that began at or after the bar opened sees
@@ -100,7 +100,7 @@ resolutions *were* 60% of outcomes.
 
 ## 6. What is still broken
 
-**Negative durations** — a resolution stamped before its own touch began. A
+**Negative durations** - a resolution stamped before its own touch began. A
 separate bug, and now the dominant one: 294 of them since the fix, worst −524s,
 median −18s.
 
@@ -121,7 +121,7 @@ was always a separate bug.
 **No bars-only replay could have found it.** Without quotes, nothing opens a
 touch part way through a bar. Every research document in this folder replays
 bars, so the production journal and the harness were not measuring the same
-system — which [edge.md](../docs/edge.md) has warned about since 2026-08-14
+system - which [edge.md](../docs/edge.md) has warned about since 2026-08-14
 without a concrete instance until now.
 
 **And it made the journal untrainable.** Asked whether it was time to fit
@@ -135,6 +135,6 @@ without a concrete instance until now.
 | at least two of its own bars | 2,116 | 52.0% | 67.0% | 67.8% |
 
 96% on the raw journal is the same shape as the 99.9% that
-[edge.md](../docs/edge.md) exists to explain — not skill, but resolutions so
+[edge.md](../docs/edge.md) exists to explain - not skill, but resolutions so
 fast the label predicts itself. **The filter was the whole result.** Fitting on
 everything would have produced a confident model of a bug.

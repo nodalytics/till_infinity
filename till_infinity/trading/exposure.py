@@ -8,7 +8,7 @@ authorised triple the risk it thinks it has.
 So exposure is decomposed into the currencies behind it and limited there. The
 decomposition is the only interesting part, and it is deliberately crude:
 
-* a pair is long the base and short the quote — a long EURUSD is +EUR, -USD;
+* a pair is long the base and short the quote - a long EURUSD is +EUR, -USD;
 * gold and the crypto are treated as long the instrument, short USD, because
   that is what they are quoted as. XAUUSD rising and EURUSD rising share a
   dollar, and pretending gold is uncorrelated with the majors is how a book
@@ -55,7 +55,7 @@ LEGS: dict[str, tuple[str, str]] = {
 }
 
 #: What a calendar row's `country` means, in currency terms. The field carries
-#: **both forms** — checked against the stored events rather than assumed:
+#: **both forms** - checked against the stored events rather than assumed:
 #: TradingView writes ISO country codes (`US`, `JP`, `GB`, `DE`, `EU`, `CN`,
 #: `CH`, `AU`, `CA`) and ForexFactory writes currency codes (`USD`, `GBP`,
 #: `EUR`, `CNY`, `JPY`, `CAD`, `AUD`, `CHF`). Both appear in the same table.
@@ -144,7 +144,7 @@ def measure(
 
     `risk_of` is money at risk per ticket and `feed_of` maps broker symbol back
     to instrument. Both are passed in rather than looked up because a
-    `Position` carries neither — the broker does not know what we risked on it,
+    `Position` carries neither - the broker does not know what we risked on it,
     and the symbol is the broker's name for the instrument, not ours.
     """
     totals: dict[str, float] = defaultdict(float)

@@ -116,7 +116,7 @@ def test_durable_sender_stashes_when_primary_down(outbox_path):
         assert ds._outbox.pending_count() == 2
         assert primary.sent == []
 
-        # Primary recovers — replay drains the outbox.  The replay
+        # Primary recovers - replay drains the outbox.  The replay
         # loop sleeps ``backoff.delay(attempt)`` between iterations
         # which can exceed a fixed 0.2 s wait under suite load, so
         # poll up to 5 s for the outbox to drain instead of a single

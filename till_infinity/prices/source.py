@@ -39,7 +39,7 @@ class Job:
 def first_cause(exc: BaseException, depth: int = 5) -> str:
     """Name the real failure behind an ExceptionGroup.
 
-    anyio — which httpx-ws runs on — reports a failed connect as an
+    anyio - which httpx-ws runs on - reports a failed connect as an
     ExceptionGroup whose str() is the famously unhelpful "unhandled errors in a
     TaskGroup (1 sub-exception)". Unwrap it so the log says what went wrong.
     """
@@ -55,11 +55,11 @@ class SourceError(Exception):
 
 
 class PermanentError(SourceError):
-    """Bad symbol, unsupported interval — retrying will not help."""
+    """Bad symbol, unsupported interval - retrying will not help."""
 
 
 class TransientError(SourceError):
-    """Timeout, disconnect, throttle — worth another attempt."""
+    """Timeout, disconnect, throttle - worth another attempt."""
 
 
 class Source(ABC):

@@ -1,6 +1,6 @@
 """Trading: sizing, gates, strategies, brokers and the loop that joins them.
 
-The arithmetic tests are exact — a stop distance and a lot size are facts, not
+The arithmetic tests are exact - a stop distance and a lot size are facts, not
 estimates, and a test that allows them to be approximately right allows the
 class of bug that costs money. The behavioural ones are about what the module
 refuses: most of this code exists to not trade, and a gate that silently stops
@@ -90,7 +90,7 @@ def settings(**over):
 
 
 def test_a_buy_pays_the_ask_and_a_sell_hits_the_bid():
-    """Sizing off the mid understates the cost twice — on entry and on exit."""
+    """Sizing off the mid understates the cost twice - on entry and on exit."""
     tick = Tick("XAUUSD", bid=4399.5, ask=4400.5)
     assert tick.entry(Side.BUY) == 4400.5
     assert tick.exit(Side.BUY) == 4399.5
@@ -1017,7 +1017,7 @@ async def a_closed_trade(
     content-addressed on `(time, actor, title)` and written INSERT OR IGNORE,
     so two trades with the same title inside one clock tick are deliberately
     one entry. A fixture that wrote ten identical titles therefore produced six
-    rows on a fast machine and ten on a slow one — which is the journal working
+    rows on a fast machine and ten on a slow one - which is the journal working
     as documented, and a test that had not noticed real titles carry the volume
     and the fill price.
     """
@@ -1289,7 +1289,7 @@ class RecordingBroker(td.Broker):
     """A stand-in for a **live** terminal that records what it is asked to send.
 
     Deliberately not a `PaperBroker` subclass. The trader treats a paper broker
-    as its own execution venue — one book, not two — so a double that inherited
+    as its own execution venue - one book, not two - so a double that inherited
     from it would be handed the orders it is supposed to prove never arrive.
     """
 
@@ -1350,7 +1350,7 @@ async def test_an_unarmed_trader_sends_nothing_to_the_terminal():
 
     assert isinstance(got, Intent)
     assert trader.taken == 1
-    # The trade happened — on the paper book, which is a different object.
+    # The trade happened - on the paper book, which is a different object.
     assert venue.sent == []
     assert trader.paper is not None
     assert trader.execution is trader.paper
@@ -1404,7 +1404,7 @@ def test_every_instrument_prices_tracks_can_be_traded():
 def test_the_index_names_include_the_spaced_forms():
     """Deriv calls them `US Tech 100` and `US SP 500`.
 
-    The compact CFD forms — US100, NAS100, USTEC — matched nothing across its
+    The compact CFD forms - US100, NAS100, USTEC - matched nothing across its
     798 symbols, so both instruments resolved to "no symbol found" while every
     other one worked. Names are compared upper-cased.
     """
@@ -1542,7 +1542,7 @@ async def test_a_voice_that_fails_reads_as_an_abstention():
 
     Exercises the real `_ask`, by breaking the agent underneath it. An earlier
     version of this test replaced `_ask` itself, which bypassed the very
-    try/except it was meant to prove — and passed for the wrong reason until
+    try/except it was meant to prove - and passed for the wrong reason until
     the exception escaped `deliberate`.
     """
     from till_infinity.trading.council import Council, Voice
@@ -1677,7 +1677,7 @@ def test_a_strategy_separates_where_it_triggers_from_where_its_bias_comes_from()
     """Entry fixes the stop; context says whether the trigger is worth taking.
 
     The gap between them is the point. A swing anchored on the daily does not
-    have to enter on the daily — dropping to 15m buys a tighter stop for the
+    have to enter on the daily - dropping to 15m buys a tighter stop for the
     same idea, which is risk reduction rather than a different trade.
     """
     made = settings()

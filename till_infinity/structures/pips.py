@@ -4,7 +4,7 @@ A price series has thousands of bars and perhaps a dozen turns that matter.
 PIP finds those turns by repeatedly keeping whichever point sits furthest from
 the line joining the points already kept, so the shape survives while the noise
 does not. It is the right primitive for levels because the levels people trade
-are drawn at swing highs and lows — not at round numbers, and not at every
+are drawn at swing highs and lows - not at round numbers, and not at every
 local extreme.
 
 Distance is measured **vertically**, not perpendicularly. Time and price are
@@ -41,7 +41,7 @@ from .state import Restorable
 #: to be useful. Three is the smallest number that survives a single outlier.
 DEFAULT_CONFIRM = 3
 
-#: Below four points there is nothing to select — the endpoints are the series.
+#: Below four points there is nothing to select - the endpoints are the series.
 MIN_POINTS = 4
 
 
@@ -189,5 +189,5 @@ def as_of(found: Sequence[Point], when: float) -> list[Point]:
 
 
 def turns(found: Sequence[Point]) -> list[Point]:
-    """Just the highs and lows — the points a level can be drawn at."""
+    """Just the highs and lows - the points a level can be drawn at."""
     return [point for point in found if point.is_turn]

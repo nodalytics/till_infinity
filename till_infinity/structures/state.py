@@ -21,10 +21,10 @@ deploys, each one restoring the same stale state and dying the same way.
 shape of every persisted dataclass, so a changed field invalidates the file and
 the service starts cold. Cold is slow and correct. That guard now derives its
 list by walking the package, because the version with seven hand-written names
-is what let this through — `Volatility` was not on it.
+is what let this through - `Volatility` was not on it.
 
 This module is the second. The schema stops bad state being *loaded*; this
-stops a *crash* if any ever is — a pickle that arrives by some other path, a
+stops a *crash* if any ever is - a pickle that arrives by some other path, a
 schema that is itself wrong, a class the walk cannot see. Neither subsumes the
 other, and this one is cheap.
 """
@@ -40,7 +40,7 @@ class Restorable:
 
     `__slots__ = ()` is load-bearing. A base class without it gives every
     subclass instance a `__dict__`, which would silently undo the `slots=True`
-    these classes are declared with — turning a memory fix into a memory
+    these classes are declared with - turning a memory fix into a memory
     regression on a box that has been OOM-killed five times.
 
     Not a dataclass itself, so a frozen subclass stays legal: dataclasses only
@@ -55,8 +55,8 @@ class Restorable:
         A `frozen=True, slots=True` dataclass gets a `_dataclass_setstate`
         written onto the class itself, and a method on the class beats one
         inherited from a base. So merely listing this mixin does nothing for
-        every frozen value object here — `Features`, `Inference`, `Point`,
-        `Approach`, `Signal` — which is most of them, and it does nothing
+        every frozen value object here - `Features`, `Inference`, `Point`,
+        `Approach`, `Signal` - which is most of them, and it does nothing
         *silently*, which is the failure this whole module exists to stop.
 
         The generated version copies what is in the state and no more, so a
@@ -80,8 +80,8 @@ class Restorable:
         values: dict[str, Any] = {}
         if isinstance(state, list):
             # A `frozen=True, slots=True` dataclass pickles as a **list of
-            # values in field order** — that is what `_dataclass_getstate`
-            # produces — not as a mapping. Missing this took production down:
+            # values in field order** - that is what `_dataclass_getstate`
+            # produces - not as a mapping. Missing this took production down:
             # every frozen value object restored with an empty mapping, so
             # optional fields silently took defaults and required ones were
             # skipped entirely, leaving `Features` with no `side` at all.
@@ -106,7 +106,7 @@ class Restorable:
                 value = field.default
             elif field.default_factory is not dataclasses.MISSING:
                 # Called per instance, so two restored objects never share a
-                # mutable default — the bug this factory exists to prevent.
+                # mutable default - the bug this factory exists to prevent.
                 value = field.default_factory()
             else:
                 # A required field genuinely absent from the state. Defaulting

@@ -67,10 +67,10 @@ def test_an_alert_carries_the_instrument_symbol_beside_the_shape():
     from till_infinity.notifications.models import Notification
 
     up_btc = Notification(
-        title="BTC 3m — up", fields={"shape": "level", "instrument": "btc", "direction": "up"}
+        title="BTC 3m - up", fields={"shape": "level", "instrument": "btc", "direction": "up"}
     )
     down_gold = Notification(
-        title="GOLD 3m — down", fields={"shape": "level", "instrument": "gold", "direction": "down"}
+        title="GOLD 3m - down", fields={"shape": "level", "instrument": "gold", "direction": "down"}
     )
     assert up_btc.mark == "📈 ₿"
     assert down_gold.mark == "📉 🥇"
@@ -104,7 +104,7 @@ def test_every_tracked_instrument_has_a_symbol():
 
 
 def test_symbols_tell_the_instruments_apart():
-    """A shared sign is worse than none — ¥ on both yen and yuan reads as one."""
+    """A shared sign is worse than none - ¥ on both yen and yuan reads as one."""
     from till_infinity.notifications.models import INSTRUMENTS
 
     assert len(set(INSTRUMENTS.values())) == len(INSTRUMENTS)
@@ -376,7 +376,7 @@ def test_channel_parsing_handles_labels_levels_and_urls():
 
 def test_a_url_is_never_mistaken_for_a_label():
     """`https://…` contains an '=' only in query strings, but always a ':' and
-    '/' before it — so the label pattern must not match a URL."""
+    '/' before it - so the label pattern must not match a URL."""
     (hook,) = parse_channels("https://discord.com/api/webhooks/1/abc?x=1", "discord")
     assert hook.address == "https://discord.com/api/webhooks/1/abc?x=1"
     assert hook.label == "1"
@@ -474,7 +474,7 @@ async def test_discover_calls_get_updates():
 
 @pytest.mark.asyncio
 async def test_a_registered_webhook_makes_discovery_fail_permanently():
-    """Telegram answers 409 while a webhook is set — the two modes are exclusive."""
+    """Telegram answers 409 while a webhook is set - the two modes are exclusive."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(409, json={"description": "Conflict: can't use getUpdates"})
@@ -503,7 +503,7 @@ def test_an_alert_says_when():
 
 
 def test_the_time_is_utc_and_says_so():
-    """Every other time in this project is UTC — bars, touches, the journal.
+    """Every other time in this project is UTC - bars, touches, the journal.
 
     An alert rendering local time would be the one place they disagreed, read
     by somebody comparing it against a chart.
@@ -547,7 +547,7 @@ def test_discord_gets_a_machine_readable_stamp():
     """Discord renders the time itself, in the reader's own timezone.
 
     So the embed carries ISO-8601 rather than the string `as_text` builds for
-    Telegram — the same instant, in the form each destination can use.
+    Telegram - the same instant, in the form each destination can use.
     """
     payload = DiscordNotifier(FULL, HOOK).payload(Notification(title="x", at=1787059920.0))
     stamp = payload["embeds"][0]["timestamp"]

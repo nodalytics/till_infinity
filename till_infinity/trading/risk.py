@@ -9,8 +9,8 @@ fifth open position or the third loss in an hour.
 Three of the gates deserve their reasoning stated, because each exists to stop
 a specific way an automated scalper loses money faster than it can be watched.
 
-**One position per instrument.** The same level fires repeatedly — that is what
-a level *is* — and `structures` re-arms it after each resolution. Without this
+**One position per instrument.** The same level fires repeatedly - that is what
+a level *is* - and `structures` re-arms it after each resolution. Without this
 gate a level that is quietly wrong is not one loss, it is one loss per re-arm,
 all in the same direction, all for the same reason.
 
@@ -50,7 +50,7 @@ class Guard:
 
     settings: Settings
     #: What the rest of the system knows. Optional, so a Guard can be tested
-    #: and used without one — every check it drives fails open.
+    #: and used without one - every check it drives fails open.
     context: Context | None = None
     #: Equity as the day opened. The daily stop measures against this.
     opening_equity: float = 0.0
@@ -67,8 +67,8 @@ class Guard:
     def roll(self, equity: float, now: float | None = None) -> bool:
         """Start a new day if the clock has. True when it did.
 
-        A halt lasts the day and no longer. The alternative — carrying it until
-        someone restarts the process — makes the size of the loss decide how
+        A halt lasts the day and no longer. The alternative - carrying it until
+        someone restarts the process - makes the size of the loss decide how
         long trading stops, which is not a rule anybody chose.
         """
         today = _day(now if now is not None else time.time())
@@ -188,7 +188,7 @@ class Guard:
         """Refuse a trade that would pile too much onto one currency.
 
         Checked last because it is the only gate that needs the trade to have
-        been sized — the limit is in money at risk, and until the volume is
+        been sized - the limit is in money at risk, and until the volume is
         known there is no number to add to the book.
         """
         limit = self.settings.max_currency_exposure * self.opening_equity
@@ -223,7 +223,7 @@ class Guard:
                 f"down {abs(self.realised):.2f} today, past the "
                 f"{self.settings.daily_loss_fraction:.1%} limit of {limit:.2f}"
             )
-            log.warning("trading: halted for %s — %s", self.day, self.halted)
+            log.warning("trading: halted for %s - %s", self.day, self.halted)
 
     def _no(self, gate: str, feed: str, detail: str) -> Refusal:
         self.refusals[gate] = self.refusals.get(gate, 0) + 1

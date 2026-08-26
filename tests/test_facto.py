@@ -58,7 +58,7 @@ def test_volatility_unit_features_are_bounded_without_losing_their_order():
 def test_a_violent_touch_does_not_diverge_the_model():
     """The invariant: one low-volatility pocket must not take the factors out.
 
-    Raw, this diverged inside tens of examples and then answered zero forever —
+    Raw, this diverged inside tens of examples and then answered zero forever -
     `Model.predict` catching the NaN, so the service stayed up and the model
     stopped learning without either of them saying so.
     """
@@ -95,7 +95,7 @@ def test_an_empty_journal_is_not_an_error():
 
 
 def test_nothing_learnable_does_not_beat_the_average():
-    """Random targets with no signal — the honest answer is 'the features are not helping'."""
+    """Random targets with no signal - the honest answer is 'the features are not helping'."""
     rand = random.Random(3)
     rows = [
         _example(float(i), rand.gauss(0, 1), approach_vol=rand.random(), regime=rand.random())
@@ -122,7 +122,7 @@ def test_a_real_interaction_is_found():
     for i in range(facto.MIN_EXAMPLES * 3):
         above = i % 2 == 0
         violent = (i // 2) % 2 == 0
-        # push is up only when both hold — a pure interaction, zero main effect
+        # push is up only when both hold - a pure interaction, zero main effect
         target = (2.0 if (above and violent) else -2.0) + rand.gauss(0, 0.1)
         rows.append(
             Example(
@@ -240,8 +240,8 @@ def test_a_touch_straddling_the_boundary_keeps_its_parent(tmp_path):
 
     The index was built after the filter, so a call recorded before the
     boundary was unreachable from an outcome recorded after it. For `facto`
-    that costs only the levels-model comparison — the features come from the
-    outcome, so the example survives — but for anything scoring
+    that costs only the levels-model comparison - the features come from the
+    outcome, so the example survives - but for anything scoring
     `probability_up` the claim lives on the parent and the whole example goes.
     A one-sided loss that presents as missing data rather than as a filter.
     """

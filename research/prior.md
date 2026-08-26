@@ -14,7 +14,7 @@ Run: `python research/harness/prior.py`
 
 **It is largely a re-encoding of which side price arrived from.** Subtract a
 baseline that also knows the side and the remainder predicts direction at
-**51.8%** with an **AUC of 0.520** — a coin flip. Nothing the level knows about
+**51.8%** with an **AUC of 0.520** - a coin flip. Nothing the level knows about
 itself, and nothing its twelve nearest neighbours know, survives that
 subtraction.
 
@@ -22,13 +22,13 @@ subtraction.
 
 `Memory.neighbours()` filters `touch.features.side is features.side`, so the
 kNN prior is **side-conditioned**. `Memory.base_rate_for(feed, interval)` is
-not — it is the unconditional up-rate for the series.
+not - it is the unconditional up-rate for the series.
 
 So `edge` subtracts a side-blind baseline from a side-aware estimate. Whatever
 else it contains, it contains `side`, and [features.md](features.md) §1 has
 established twice that `side` is the only feature here that predicts anything.
 
-This was not a deliberate choice anywhere. `base_rate_for` was itself a fix — it
+This was not a deliberate choice anywhere. `base_rate_for` was itself a fix - it
 replaced a single pooled rate for the whole system, on the correct reasoning
 that "BTC on 15m and GBPUSD on the daily do not share an unconditional drift".
 The side half of the same argument was never made.
@@ -42,7 +42,7 @@ made, never against rates its own outcome helped set.
 
 | variant | probability | baseline | n | direction | AUC |
 |---|---|---|---|---|---|
-| *assume the level holds* | — | — | 11,056 | **73.2%** | — |
+| *assume the level holds* | - | - | 11,056 | **73.2%** | - |
 | **current** | own + kNN | blind | 11,054 | 69.0% | 0.730 |
 | **side-conditioned base** | own + kNN | side-aware | 11,053 | **51.8%** | **0.520** |
 | no kNN | own + side base | side-aware | 8,961 | 66.5% | 0.694 |
@@ -59,7 +59,7 @@ neighbours together predict direction at 51.8% and rank at 0.520. That is not
 a weak signal; it is the absence of one.
 
 **The best-ranking variant uses none of the machinery.** A per-(feed, interval,
-side) base rate — counting, and nothing else — scores **AUC 0.741**, ahead of
+side) base rate - counting, and nothing else - scores **AUC 0.741**, ahead of
 the current composite's 0.730, with no `Memory`, no kNN, no
 `Features.distance`, and no level history.
 
@@ -74,7 +74,7 @@ the current composite's 0.730, with no `Memory`, no kNN, no
 | no kNN | 408 | 3.7% | 77.7% | +0.0pp |
 | side base rate only | 8,961 | 81.1% | 73.8% | −0.0pp |
 
-The gate is doing real work — it selects larger, cleaner moves, which
+The gate is doing real work - it selects larger, cleaner moves, which
 [edge.md](../docs/edge.md) §1 established separately. What it is *not* doing is
 selecting calls with directional skill, because there is none to select.
 
@@ -96,7 +96,7 @@ was identification.
 1. **Redefine `edge` against a side-conditioned base rate.** It is the honest
    comparison and it is four lines: bucket by `(feed, interval, side)` instead
    of `(feed, interval)`. Expect the channel to go nearly silent, because that
-   is what the measurement says is warranted — at `MIN_EDGE = 0.10` the honest
+   is what the measurement says is warranted - at `MIN_EDGE = 0.10` the honest
    edge passes 43% of calls at 51.2% direction, so **the correct gate on an
    honest edge is one almost nothing clears**.
 2. **Do not ship 1 without deciding what the product is.** A system that
@@ -105,7 +105,7 @@ was identification.
    for rather than a measurement. State the choice; do not let it be made by
    whichever definition happens to be in the code.
 3. **The side-conditioned base rate is the best directional estimate here** at
-   AUC 0.741. If anything is published, publish that — it is calibrated, it is
+   AUC 0.741. If anything is published, publish that - it is calibrated, it is
    free, and it beats the composite that costs a kNN over every stored touch.
 4. **`Memory` and `Features.distance` can go**, on this evidence plus
    [similarity.md](similarity.md), which found the distance orders neighbours no
@@ -114,6 +114,6 @@ was identification.
    and the memory they occupy.
 5. **This does not touch magnitude or risk.** `expected_push`, `risk_vol` and
    `reward_to_risk` are separate claims and are not tested here. The system may
-   well be useful for *how far* while having nothing to say about *which way* —
+   well be useful for *how far* while having nothing to say about *which way* -
    and [features.md](features.md) §3 has flagged that possibility twice without
    anyone measuring it. That is now the most valuable open question.

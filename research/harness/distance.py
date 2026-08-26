@@ -3,7 +3,7 @@
 Being a useful *model* feature and being a useful *distance dimension* are
 different claims. The first says it predicts; the second says two touches with
 similar values are worth comparing. edge.md §6 found the current distance
-orders neighbours no better than random, so there is little to lose — but
+orders neighbours no better than random, so there is little to lose - but
 "little to lose" is not a measurement.
 """
 

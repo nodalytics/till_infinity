@@ -9,7 +9,7 @@ conclusion that there is no trade.
 
 Asking one model five times gives five answers with the same blind spots.
 Asking five models that have been told to reason in *different* ways gives
-answers that fail differently — and only then does agreement mean anything. A
+answers that fail differently - and only then does agreement mean anything. A
 committee that agrees because every member made the same mistake is a committee
 that has confirmed nothing.
 
@@ -21,7 +21,7 @@ say no is the difference between a panel and a chorus.
 
 Two rounds, and only two.
 
-1. **Independently.** Each voice sees the evidence and nothing else — not the
+1. **Independently.** Each voice sees the evidence and nothing else - not the
    others' answers. A first round that could see its neighbours would collapse
    onto whoever answered first, which is the failure mode a committee exists to
    avoid.
@@ -31,19 +31,19 @@ Two rounds, and only two.
    more model calls.
 
 There is no judge. A judge is another model with another blind spot; the
-resolution here is arithmetic — a quorum on a side, and the median of what
+resolution here is arithmetic - a quorum on a side, and the median of what
 those who agreed proposed.
 
 ## Abstain is a real answer
 
-A voice may decline, and declining is not a vote against — it is removed from
+A voice may decline, and declining is not a vote against - it is removed from
 the count rather than counted as opposition. `structures` already publishes
 "nothing is happening" as a valid finding and the agents' ground rules say the
 same; a trading panel that cannot say "I don't know" will always find a trade.
 
 ## What the agents may and may not decide
 
-They choose the **side**, and the **stop and target in volatility units** —
+They choose the **side**, and the **stop and target in volatility units** -
 which is to say the shape of the trade, in the project's own scale-free
 currency. They do not choose the size: that is `sizing.lots` against the
 account's risk budget, and it is not a matter of opinion.
@@ -76,7 +76,7 @@ log = get_logger(__name__)
 
 #: Bounds on what a voice may propose, in volatility units. A model asking for
 #: a stop forty units away is not being bold, it is failing; clamping is what
-#: keeps that cheap. The floor exists for the same reason in reverse — a
+#: keeps that cheap. The floor exists for the same reason in reverse - a
 #: hairline stop is a guaranteed loss dressed as conviction.
 MIN_STOP_VOL, MAX_STOP_VOL = 0.4, 4.0
 MIN_TARGET_VOL, MAX_TARGET_VOL = 0.5, 8.0
@@ -115,7 +115,7 @@ class Voice:
     lens: str
 
 
-#: The cast. Each lens is a *reasoning mode*, not a topic — the point is that
+#: The cast. Each lens is a *reasoning mode*, not a topic - the point is that
 #: they make different kinds of mistake, so disagreement carries information.
 VOICES: tuple[Voice, ...] = (
     Voice(
@@ -135,7 +135,7 @@ VOICES: tuple[Voice, ...] = (
     Voice(
         "quant",
         "Argue only from the numbers in front of you. Ignore narrative entirely. "
-        "Compare every conditional against its base rate — a probability that matches "
+        "Compare every conditional against its base rate - a probability that matches "
         "the base rate has told you nothing however large it is. If the edge is inside "
         "the spread, say so and abstain.",
     ),
@@ -237,7 +237,7 @@ class Council:
         return self._agent_cache[voice.name]
 
     async def _ask(self, voice: Voice, prompt: str) -> Opinion | None:
-        """One voice, once. None on any failure — which reads as an abstention.
+        """One voice, once. None on any failure - which reads as an abstention.
 
         Failing to an abstention rather than to an exception is the whole
         posture of this module: a model that times out has not made a case for
@@ -269,7 +269,7 @@ class Council:
                     voice,
                     f"{brief}\n\nThe rest of the desk has now spoken:\n{table}\n\n"
                     "Answer again. Change your mind if they have made a better case, "
-                    "and hold it if they have not — agreeing to agree is worse than "
+                    "and hold it if they have not - agreeing to agree is worse than "
                     "disagreeing. Abstaining is still open to you.",
                 )
                 for voice in self.voices
@@ -283,7 +283,7 @@ class Council:
         return merged, f"{table}\n-- after discussion --\n{_minutes(merged)}"
 
     def resolve(self, opinions: dict[str, Opinion]) -> tuple[Side | None, float, float, str]:
-        """The panel's answer: side, stop, target — or no side at all."""
+        """The panel's answer: side, stop, target - or no side at all."""
         voting = {n: o for n, o in opinions.items() if o.trades and o.as_side is not None}
         if not voting:
             return None, 0.0, 0.0, "every voice abstained"
@@ -329,7 +329,7 @@ def _minutes(opinions: dict[str, Opinion]) -> str:
         return "  (nobody answered)"
     return "\n".join(
         f"  {name}: {o.side} conviction {o.conviction:.2f} "
-        f"stop {o.stop_vol:.2f}v target {o.target_vol:.2f}v — {o.because}"
+        f"stop {o.stop_vol:.2f}v target {o.target_vol:.2f}v - {o.because}"
         for name, o in opinions.items()
     )
 
@@ -346,7 +346,7 @@ class CouncilStrategy(Strategy):
     shape: ClassVar[str] = "level"
     hold_seconds: ClassVar[float] = 2_700.0
     #: Every timeframe the operator allows, and every timeframe as context.
-    #: The panel is told both and is expected to weigh them — a 1h call and a
+    #: The panel is told both and is expected to weigh them - a 1h call and a
     #: 1m call are different trades, and deciding that is exactly what it is
     #: for. The arithmetic strategies cannot make that judgement, so they are
     #: pinned to fast data with a fixed anchor instead.
@@ -369,7 +369,7 @@ class CouncilStrategy(Strategy):
     ) -> Verdict:
         """Synchronous by interface; the panel is async. See `service`.
 
-        The Strategy port is deliberately synchronous — the other four are pure
+        The Strategy port is deliberately synchronous - the other four are pure
         arithmetic and making them async would be a lie about their cost. This
         one genuinely blocks on the network, so it is driven by `consider_async`
         and refuses if called on the sync path, rather than quietly running an
@@ -409,7 +409,7 @@ class CouncilStrategy(Strategy):
         self.calls += len(self.council.voices) * (2 if self.council.discuss else 1)
         opinions, minutes = await self.council.deliberate(evidence(payload, tick, spec, feed))
         side, stop_vol, target_vol, verdict = self.council.resolve(opinions)
-        log.info("council: %s — %s\n%s", feed, verdict, minutes)
+        log.info("council: %s - %s\n%s", feed, verdict, minutes)
 
         if side is None:
             self.abstained += 1

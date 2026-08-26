@@ -6,7 +6,7 @@ instrument across many brokers, then stores them.
 The point of tracking one instrument across brokers is that the *differences*
 are the signal: cross-broker spread, which venue leads, where quotes diverge.
 
-**Defaults**: EURUSD, GBPUSD, gold (XAUUSD) and BTC — each from every broker
+**Defaults**: EURUSD, GBPUSD, gold (XAUUSD) and BTC - each from every broker
 configured for it. Anything else works too.
 
 ## Commands
@@ -23,7 +23,7 @@ uv run till-infinity prices info               # what is stored
 
 `collect` is the everyday command: it sweeps candles on the slow clock while
 quotes stream, and prints one compact line per tick rather than a line per
-update — a glance, with the database holding the detail.
+update - a glance, with the database holding the detail.
 
 ```
 20:15:23 eurusd 1.15223 ·   gbpusd 1.34904 ·   gold 4,409.60 ·   btc 63,452.01 ·
@@ -39,7 +39,7 @@ providers; quotes always use the socket transport.
 run until interrupted: `bars` sweeps every `--cycle` seconds (default 60),
 `quotes` streams continuously.
 
-`bars --once` is a *full* pass, not one bar — it sweeps every symbol ×
+`bars --once` is a *full* pass, not one bar - it sweeps every symbol ×
 interval asking for `--bars` recent candles each (default 300). Dedup is what
 makes that cheap: only genuinely new closed bars get written.
 
@@ -63,7 +63,7 @@ to before you commit to a long run.
 
 ## Instruments
 
-Fourteen tracked by default, each quoted by several venues — the disagreement
+Fourteen tracked by default, each quoted by several venues - the disagreement
 between them is the point, so a one-venue instrument would not earn its place.
 
 | feed | what it is | venues |
@@ -84,20 +84,20 @@ holding only two of them meant reading a dollar story as a euro story.
 
 **`usdcny` is an alias onto `usdcnh`, not a feed.** Onshore CNY is carried by
 exactly one of our venues, which is below the three-venue quorum a consensus
-bar needs — so a `usdcny` feed would form no levels and would do it silently,
+bar needs - so a `usdcny` feed would form no levels and would do it silently,
 the failure that looks exactly like a quiet market. CNH is the rate that trades
 outside the mainland's daily band and all six venues quote it.
 
 **Instruments answer to whatever you call them.** `us100`, `nas100`, `nasdaq`,
 `ndx`, `nq` all reach the same feed; so do `spx500`, `spx`, `us500`, `sp500`,
 `s&p500`, `es`. There is no canonical name for an index in practice, so the
-aliases are the interface. The same holds for crypto — `eth`, `ether`,
-`ethereum`, `ethusdt` are one feed, as are `sol`, `solana`, `solusdt` — and for
+aliases are the interface. The same holds for crypto - `eth`, `ether`,
+`ethereum`, `ethusdt` are one feed, as are `sol`, `solana`, `solusdt` - and for
 the majors under their desk names: `yen`, `aussie`, `loonie`, `swissy`, `kiwi`.
 
 **Every venue on a feed was checked against the live socket before it was
 listed**, rather than assumed from a sibling. The three crypto feeds share
-Binance, Bybit, Coinbase, Bitstamp, Kraken and Deriv — but Bybit quotes BTC and
+Binance, Bybit, Coinbase, Bitstamp, Kraken and Deriv - but Bybit quotes BTC and
 ETH in both USD and USDT while carrying SOL only in USDT, so the USDT pair is
 what all three have in common. Guessing the other way costs a `symbol_error`
 on every sweep, forever, which is the same reason SAXO and DERIV are absent
@@ -109,8 +109,8 @@ that is checked rather than assumed: brokers quote the Nasdaq CFD under
 not carry it at all. Listing a venue that does not have a symbol would log a
 `symbol_error` on every sweep, forever, for something nobody expects to appear.
 
-Both index feeds carry the **cash index and the continuous future** — `^NDX`
-with `NQ=F`, `^GSPC` with `ES=F` — because the future trades when the cash
+Both index feeds carry the **cash index and the continuous future** - `^NDX`
+with `NQ=F`, `^GSPC` with `ES=F` - because the future trades when the cash
 index does not, and the gap between them at the open is itself information.
 
 ## Sources
@@ -120,12 +120,12 @@ index does not, and the gap between them at the open is itself information.
 | candles | chart websocket, per broker | yfinance |
 | intervals | all seven | 1m/5m/15m/1h/1d native, 2h and 4h resampled from 1h |
 | depth | paginated via `request_more_data` | capped per interval (1m→7d, 5m/15m→60d, 1h→729d, 1d→unlimited) |
-| bid/ask | quote websocket, pushed | last trade only — no real book for FX or futures |
+| bid/ask | quote websocket, pushed | last trade only - no real book for FX or futures |
 
 ### Things that will otherwise surprise you
 
 **Yahoo has no spot XAUUSD.** `XAUUSD=X` 404s, and so does `XAU=X`. Gold there
-is `GC=F` (COMEX continuous) — it tracks spot closely, but it is a futures
+is `GC=F` (COMEX continuous) - it tracks spot closely, but it is a futures
 contract, not the instrument the FX brokers quote. Treat the two as related
 series, not the same one.
 
@@ -133,7 +133,7 @@ series, not the same one.
 exchange, on any endpoint, so it is not in the feed list.
 
 **DERIV works, but only over the websockets.** The scanner endpoint 404s on it
-while the chart and quote sockets serve it fine — which is one reason the
+while the chart and quote sockets serve it fine - which is one reason the
 socket is the default quote transport.
 
 **Yahoo's minute history stops at 7 days.** Asking for 5000 1m bars gets you
@@ -146,17 +146,17 @@ failing.
 
 | | how it works |
 |---|---|
-| `tradingview` (default) | quote websocket. One connection, all symbols, server *pushes* every change — so a write lands the moment a broker moves, not on a timer. Covers DERIV and fills in the last price the scanner leaves null. |
+| `tradingview` (default) | quote websocket. One connection, all symbols, server *pushes* every change - so a write lands the moment a broker moves, not on a timer. Covers DERIV and fills in the last price the scanner leaves null. |
 | `scanner` | `scanner.tradingview.com/symbol`. Request/response, so it must be polled. Stateless and simpler to reason about; misses DERIV and returns a null last price on FX. |
 | `yahoo` | last trade and previous close. |
 
 With the default transport `--poll` does **not** control how often quotes are
-captured — it only sets how often you get a summary line (and how often
+captured - it only sets how often you get a summary line (and how often
 `scanner`/`yahoo` re-fetch). Measured over 44 seconds with `--poll 10`, each
 active venue landed ~40 rows, one per actual move; a quiet venue landed 2.
 
-Both TradingView transports write to the **same series** — storage is keyed on
-the venue (`tradingview`/`OANDA`/`XAUUSD`), not on how the quote was fetched —
+Both TradingView transports write to the **same series** - storage is keyed on
+the venue (`tradingview`/`OANDA`/`XAUUSD`), not on how the quote was fetched -
 so switching between them, or running one after the other, does not fragment
 the store.
 
@@ -191,9 +191,9 @@ quotes (source, feed, venue, ticker, ts, bid, ask, last, mid, spread,
 `quotes.ts` is epoch **milliseconds**, since quotes arrive faster than one a
 second. Yahoo frames are converted with `tz_convert("UTC")` before storage, 2h
 and 4h buckets are resampled with `origin="epoch"` so they align to UTC
-midnight, and every timestamp printed by the CLI — including log records — is
+midnight, and every timestamp printed by the CLI - including log records - is
 rendered in UTC. Local time never enters the project. `bars.closed`
-records whether the window had elapsed when the row was written — the UPSERT
+records whether the window had elapsed when the row was written - the UPSERT
 only overwrites rows where it is 0, so history is immutable and forming bars
 are not.
 
@@ -207,7 +207,7 @@ WHERE feed = 'gold' AND ts > ? ORDER BY ts;
 ### Retention
 
 Nothing expires on its own. Bars accumulate for as long as the collector runs,
-and on a 6.7GB box that is the constraint which bites first — 1m candles across
+and on a 6.7GB box that is the constraint which bites first - 1m candles across
 fourteen instruments and six venues are most of the growth.
 
 ```bash
@@ -221,13 +221,13 @@ question, which is what a cron entry wants.
 
 **Per series, and by count.** The unit is `(source, feed, venue, ticker,
 interval)`, so a quiet weekly series is never pruned to make room for a busy
-1m one — a whole-table cap would do exactly that. A count rather than a cutoff
+1m one - a whole-table cap would do exactly that. A count rather than a cutoff
 date because the models consume a *window of bars*. `Engine.seed` reads
-`bars * 8` rows per `(feed, interval)` — 4,000 — shared across the dozen
+`bars * 8` rows per `(feed, interval)` - 4,000 - shared across the dozen
 venue-and-source series making up one instrument's timeframe, so each needs
 around 333; 1,000 is three times that. One number also self-scales into roughly
-the horizon each timeframe's evidence survives anyway — 1,000 bars is about
-seventeen hours of 1m and about nineteen years of 1w — so no table of
+the horizon each timeframe's evidence survives anyway - 1,000 bars is about
+seventeen hours of 1m and about nineteen years of 1w - so no table of
 per-interval durations is needed.
 
 **Size it against the data, not a formula.** The first version took four times
@@ -246,7 +246,7 @@ they feed the spread median which prices every level call, and that the store's
 dedup bounds them. The dedup only drops *unchanged* top-of-book, which on a
 moving market bounds very little: production holds **1,775,491 quote rows
 against 536,827 bars**, so quotes are three times the thing retention actually
-prunes. Worth revisiting — the spread median reads a window of the recent ones
+prunes. Worth revisiting - the spread median reads a window of the recent ones
 and has no use for last month's.
 
 ## Library use
@@ -290,7 +290,7 @@ await stream(settings=Settings(), feeds=resolve_symbols(("gold",)), sink=on_quot
 | `source.py` | the contract candle sources implement |
 | `tradingview.py` | chart websocket, candles |
 | `yahoo.py` | yfinance in a thread pool, candles |
-| `quotes.py` | live bid/ask — socket and scanner transports |
+| `quotes.py` | live bid/ask - socket and scanner transports |
 | `store.py` | SQLite and JSONL |
 | `service.py` | concurrent sweeps, retries |
 

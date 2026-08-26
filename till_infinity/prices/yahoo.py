@@ -5,7 +5,7 @@ worker thread and the sweep stays async end to end.
 
 Two Yahoo quirks are handled here rather than leaking into the rest of the
 package: history depth is capped per interval (a minute bar older than a week
-simply does not exist), and there are no 2h/4h candles — those are resampled
+simply does not exist), and there are no 2h/4h candles - those are resampled
 from 1h so both sources cover the same grid.
 """
 
@@ -37,7 +37,7 @@ INTERVAL_CODES: dict[str, str] = {
 }
 
 #: Intervals Yahoo does not serve, rebuilt from a finer one. Yahoo offers 2m
-#: but not 3m, so this one comes off the 1m series — which caps its history at
+#: but not 3m, so this one comes off the 1m series - which caps its history at
 #: Yahoo's 7-day 1m window, unlike the venues that serve 3m directly.
 RESAMPLE_FROM: dict[str, str] = {"2h": "1h", "4h": "1h", "3m": "1m"}
 
@@ -153,7 +153,7 @@ class YahooSource(Source):
         if code is None:
             raise PermanentError(f"Yahoo has no {interval.name} candles")
 
-        # 2h and 4h both derive from the same 1h pull — download it once.
+        # 2h and 4h both derive from the same 1h pull - download it once.
         frame = cache.get(code)
         if frame is None:
             frame = await asyncio.to_thread(
@@ -164,11 +164,11 @@ class YahooSource(Source):
         # Off the event loop, like the download above and for a better reason.
         # The download at least waits on a socket; these two are pure work.
         # `resample` is pandas over the whole frame and `to_bars` is a Python
-        # loop over every row of it, building a dict per row — tens of thousands
+        # loop over every row of it, building a dict per row - tens of thousands
         # of iterations for a 1m backfill, none of which yields.
         #
-        # Everything here runs in one process on two cores — bus, journal,
-        # notifications, agents, structures, prices, news — so for as long as
+        # Everything here runs in one process on two cores - bus, journal,
+        # notifications, agents, structures, prices, news - so for as long as
         # this ran, the structures consumer was not scheduled at all. Its queue
         # filled and the bus dropped quotes at eight a second, and since a
         # backfill runs on every startup, every deploy took the level pipeline
@@ -192,8 +192,8 @@ class YahooSource(Source):
         The slice cannot simply be taken first, which is why it was left alone
         the first time: `to_bars` drops rows with a NaN open, so the last
         `bars` *rows* are not the last `bars` *bars*, and the count would
-        quietly come up short. Dropping them in pandas first — the same
-        condition, applied where it is cheap — makes the two equivalent.
+        quietly come up short. Dropping them in pandas first - the same
+        condition, applied where it is cheap - makes the two equivalent.
 
         A row whose open is present but not a number is still dropped by
         `to_bars` alone, so the trimmed result can be short. That is rare

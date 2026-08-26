@@ -25,7 +25,7 @@ DEFAULT_JOURNAL_DB = ".data/journal/journal.db"
 
 #: How long a batch of bus messages is gathered before the model sees it.
 #: The bus carries tens of quotes a second and a model call takes seconds, so
-#: something has to absorb the difference — a window, not a queue.
+#: something has to absorb the difference - a window, not a queue.
 DEFAULT_WINDOW_SECONDS = 60.0
 #: Only wake the model when the market is actually doing something.
 DEFAULT_SPREAD_BPS = 8.0
@@ -39,7 +39,7 @@ DEFAULT_TIMEOUT = 120.0
 #: A cost guard: every call is a round trip, and a model that has decided to
 #: check everything about everything is not analysing, it is grazing. But the
 #: budget has to fit the work, and the work scales with **how many instruments
-#: can appear in one window** — the analyst looks at the venues that moved, and
+#: can appear in one window** - the analyst looks at the venues that moved, and
 #: a window that names five instruments needs more calls than one naming one.
 #:
 #: **A ceiling now, not the budget.** `analyst.budget` sizes each analysis by
@@ -48,7 +48,7 @@ DEFAULT_TIMEOUT = 120.0
 #:
 #: The history is why it works this way. It sat at 12 while six instruments
 #: were tracked and was never revisited when that became fourteen; the first
-#: window the agents ever closed, on 2026-08-14, died on it —
+#: window the agents ever closed, on 2026-08-14, died on it -
 #: `tool_calls_limit of 12 (tool_calls=14)`. It was raised to 32 with the note
 #: that "the next instrument added should not cost another outage". On
 #: **2026-08-17 it died again at 37**, and 26 analyses were lost in a day.
@@ -59,7 +59,7 @@ DEFAULT_TIMEOUT = 120.0
 #:
 #: 48 covers `MAX_TRIGGERS` (10) at the per-subject rate with room to spare.
 #: **The expected cost falls even though the ceiling rises**, because a window
-#: naming one instrument now asks for 12 calls rather than 32 — and most
+#: naming one instrument now asks for 12 calls rather than 32 - and most
 #: windows name one.
 DEFAULT_TOOL_CALLS = 48
 

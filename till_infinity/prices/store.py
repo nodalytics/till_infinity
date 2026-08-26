@@ -1,7 +1,7 @@
 """Where candles land: SQLite by default, append-only JSONL alongside it.
 
 SQLite is primary because an UPSERT keyed on the bar's open time gives dedup for
-free *and* lets a bar that was still forming be corrected once it closes —
+free *and* lets a bar that was still forming be corrected once it closes -
 something the append-only JSONL layout can never do. JSONL stays available
 because it is trivially greppable and streams into anything.
 """
@@ -99,7 +99,7 @@ WHERE bars.closed = 0
 """
 
 #: Retention, per series. `bars` is WITHOUT ROWID, so rows are addressed by the
-#: primary key rather than by rowid — hence the row-value `IN`, which SQLite has
+#: primary key rather than by rowid - hence the row-value `IN`, which SQLite has
 #: supported since 3.15.
 _PRUNE_BARS = """
 DELETE FROM bars
@@ -226,8 +226,8 @@ class SqliteStore(Store):
         """Keep the most recent `keep` bars of every series, drop the rest.
 
         Per **series**, not per table and not per age. A count rather than a
-        cutoff date because the models consume a *window of bars* — the level
-        engine seeds from the last few hundred per instrument and timeframe —
+        cutoff date because the models consume a *window of bars* - the level
+        engine seeds from the last few hundred per instrument and timeframe -
         so a count keeps exactly what can still be used. It also self-scales
         across timeframes without a table of durations: 2,000 is about a day
         and a half of 1m and about forty years of 1w, which is the right shape,
@@ -235,8 +235,8 @@ class SqliteStore(Store):
         anything.
 
         **Quotes are left alone, and that is a gap rather than a decision.**
-        The claim that used to sit here — that they are bounded by
-        `dedupe_quotes`, and that bars are what grow without limit — is wrong
+        The claim that used to sit here - that they are bounded by
+        `dedupe_quotes`, and that bars are what grow without limit - is wrong
         in both halves, and measuring the file says so plainly:
 
             quotes             333.2 MB
@@ -247,19 +247,19 @@ class SqliteStore(Store):
 
         Quotes are 76% of it and their two indexes cost more than the rows.
         `dedupe_quotes` skips a quote whose price is *unchanged*, which lowers
-        the write rate in a quiet market and removes nothing — every price
+        the write rate in a quiet market and removes nothing - every price
         change is kept for ever. On the instance they spanned 39.3 hours,
         which was the entire age of the database: not one had ever been
         deleted, at roughly 64,000 rows an hour.
 
-        So this prunes the smaller, slower half. See todo.md — quote retention
+        So this prunes the smaller, slower half. See todo.md - quote retention
         is its own item, and the answer there is probably not "keep them
         longer" but "record what a touch needed at the moment it happened".
 
         **Deleting does not shrink the file.** SQLite frees the pages for reuse,
         so growth stops but the database stays its current size until it is
         rebuilt. `vacuum=True` rebuilds it, and needs room for a second copy
-        while it runs — which is the one thing in short supply when this is
+        while it runs - which is the one thing in short supply when this is
         being reached for, so it is off by default and the caller decides.
         """
         async with self._lock:
@@ -268,7 +268,7 @@ class SqliteStore(Store):
     def _prune(self, keep: int, vacuum: bool) -> PruneResult:
         conn = self._require()
         if keep < 1:
-            raise ValueError("keep must be at least 1 — prune does not empty the table")
+            raise ValueError("keep must be at least 1 - prune does not empty the table")
         before = conn.execute("SELECT COUNT(*) FROM bars").fetchone()[0]
         with conn:
             conn.execute(_PRUNE_BARS, (keep,))
@@ -375,7 +375,7 @@ class JsonlStore(Store):
     """``<dir>/<source>/<feed>_<VENUE>_<TICKER>_<interval>.jsonl``, append only.
 
     Dedup is by last written timestamp, so bars only ever move forward. A bar
-    already on disk is never rewritten — use SQLite if you need corrections.
+    already on disk is never rewritten - use SQLite if you need corrections.
     """
 
     name = "jsonl"

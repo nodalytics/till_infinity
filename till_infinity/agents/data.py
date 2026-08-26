@@ -1,14 +1,14 @@
 """Read-only views over the collected data.
 
 Everything the model can see comes through here, and every connection is opened
-``mode=ro`` — the agent cannot write to the stores even if it tries, and a
+``mode=ro`` - the agent cannot write to the stores even if it tries, and a
 prompt injection in a headline cannot turn into an UPDATE. That guarantee is
 worth more than the convenience of reusing the async stores directly, which is
 why this module talks to SQLite itself and stays synchronous: tool callbacks
 run in a plain function, not a coroutine.
 
-The queries here are the cross-cutting ones an analyst actually asks for —
-spread per venue, divergence between brokers, what is about to print — rather
+The queries here are the cross-cutting ones an analyst actually asks for -
+spread per venue, divergence between brokers, what is about to print - rather
 than the row-level accessors the collectors use.
 """
 
@@ -35,7 +35,7 @@ class DataError(Exception):
 def read_only(path: Path) -> Iterator[sqlite3.Connection]:
     """Open a store read-only. Writes fail at the driver, not by convention."""
     if not Path(path).exists():
-        raise DataError(f"no store at {path} — run the collectors first")
+        raise DataError(f"no store at {path} - run the collectors first")
     conn = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True, timeout=10.0)
     conn.row_factory = sqlite3.Row
     try:
@@ -104,12 +104,12 @@ def quotes(prices_db: Path, feed: str, limit: int = 20) -> list[dict[str, Any]]:
 
 
 def spreads(prices_db: Path, feed: str, hours: int = 24) -> list[dict[str, Any]]:
-    """Spread statistics per venue — who is consistently tightest, and who blew out.
+    """Spread statistics per venue - who is consistently tightest, and who blew out.
 
     The window **excludes the latest quote**, which is returned beside it as
     `latest_bps`. That is not a detail: the question anyone asks here is "is
     what I am looking at now unusual", and answering it against a window
-    containing that same reading is circular. It produced exactly that — an
+    containing that same reading is circular. It produced exactly that - an
     alert reporting a venue "at the historical maximum" on a maximum of 8.49
     against a current 8.5, which is the current reading having been folded into
     its own comparison. True by construction and worth nothing.
@@ -150,7 +150,7 @@ def spreads(prices_db: Path, feed: str, hours: int = 24) -> list[dict[str, Any]]
 
 
 def divergence(prices_db: Path, feed: str) -> dict[str, Any]:
-    """How far apart the brokers are right now — the cross-broker signal.
+    """How far apart the brokers are right now - the cross-broker signal.
 
     Returns the tightest and widest mid across venues at each one's latest
     quote, and the gap between them in basis points.
@@ -206,7 +206,7 @@ def bars(
 
 
 def move(prices_db: Path, feed: str, interval: str = "1h", periods: int = 24) -> dict[str, Any]:
-    """Percentage change over the last `periods` bars — the headline number."""
+    """Percentage change over the last `periods` bars - the headline number."""
     series = bars(prices_db, feed, interval, limit=periods + 1)
     if len(series) < 2:
         return {"feed": feed, "change_pct": None, "bars": len(series)}
@@ -288,7 +288,7 @@ def headlines(
 def arrivals(news_db: Path, days: int = 30) -> list[tuple[float, list[str]]]:
     """When each recent headline landed and what it was tagged with.
 
-    Not a tool — nothing here is meant for a model to read. It exists so the
+    Not a tool - nothing here is meant for a model to read. It exists so the
     headline gate can start knowing how much is normally written about each
     instrument, instead of learning it again from nothing after every restart.
 
@@ -341,7 +341,7 @@ def levels(state_dir: Path, feed: str, interval: str = "", limit: int = 25) -> l
     """Key price levels found for one instrument, strongest first.
 
     Each carries where it is, how wide the zone is, how many *effective*
-    touches it has from each side, and what price did on arrival — including
+    touches it has from each side, and what price did on arrival - including
     `trap_rate`, the share of breakouts here that were taken back.
 
     Touch counts are decayed by age, so they are smaller than a raw tally and
@@ -350,7 +350,7 @@ def levels(state_dir: Path, feed: str, interval: str = "", limit: int = 25) -> l
     """
     engine = _engine(state_dir)
     if engine is None:
-        return [{"error": "no level state yet — the structures service has not run"}]
+        return [{"error": "no level state yet - the structures service has not run"}]
     rows = [row for row in engine.summary() if row["feed"] == feed]
     if interval:
         rows = [row for row in rows if row["interval"] == interval]
@@ -368,7 +368,7 @@ def level_at(state_dir: Path, feed: str, price: float, limit: int = 5) -> list[d
     """
     engine = _engine(state_dir)
     if engine is None:
-        return [{"error": "no level state yet — the structures service has not run"}]
+        return [{"error": "no level state yet - the structures service has not run"}]
     from ..structures import reactions
 
     vol = engine.reference(feed)
@@ -396,7 +396,7 @@ def level_at(state_dir: Path, feed: str, price: float, limit: int = 5) -> list[d
 def next_levels(state_dir: Path, feed: str, price: float, limit: int = 5) -> list[dict[str, Any]]:
     """Which levels price is likely to reach next, soonest first.
 
-    Ordered by *time*, not distance — a level on a fast timeframe can be
+    Ordered by *time*, not distance - a level on a fast timeframe can be
     reached long before a nearer one on a slow timeframe, because the clocks
     differ by more than the distances do.
 
@@ -406,7 +406,7 @@ def next_levels(state_dir: Path, feed: str, price: float, limit: int = 5) -> lis
     """
     engine = _engine(state_dir)
     if engine is None:
-        return [{"error": "no level state yet — the structures service has not run"}]
+        return [{"error": "no level state yet - the structures service has not run"}]
     from ..structures import timing
 
     vol = engine.reference(feed)
@@ -431,12 +431,12 @@ def zones(state_dir: Path, feed: str, limit: int = 15) -> list[dict[str, Any]]:
     """Levels combined across timeframes, strongest first.
 
     A price that is a level on 15m, 1h *and* 4h is a different object from one
-    that appears only on 15m — `depth` is how many agree, `span` how big a
+    that appears only on 15m - `depth` is how many agree, `span` how big a
     structure it is, `precision` how finely it is placed.
     """
     engine = _engine(state_dir)
     if engine is None:
-        return [{"error": "no level state yet — the structures service has not run"}]
+        return [{"error": "no level state yet - the structures service has not run"}]
     from .. import structures as sx
 
     vol = engine.reference(feed)
@@ -447,7 +447,7 @@ def zones(state_dir: Path, feed: str, limit: int = 15) -> list[dict[str, Any]]:
 
 
 def reserves(news_db: Path, country: str = "", limit: int = 20) -> list[dict[str, Any]]:
-    """IMF reserve observations. Values are already in USD — `scale` is provenance."""
+    """IMF reserve observations. Values are already in USD - `scale` is provenance."""
     sql = (
         "SELECT country, indicator, period, value, scale FROM observations"
         " WHERE indicator LIKE 'IRFCLDT1_IRFCL54%'"

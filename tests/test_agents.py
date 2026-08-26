@@ -1,6 +1,6 @@
 """The agents package: read-only access, role scoping, and the wake-up gate.
 
-Nothing here calls a model. What is worth testing is everything around it —
+Nothing here calls a model. What is worth testing is everything around it -
 which store a tool can touch, what a role can reach, when the model is woken,
 and what survives on the way to an alert.
 """
@@ -302,8 +302,8 @@ def test_what_counts_as_unusual_is_per_instrument():
     later = now + days * 86400
 
     # One of each, arriving now. A lone usdchf headline sits right at the
-    # threshold — it clears whenever the feed has been quieter than its
-    # average, which over the replay week happened three times — while a lone
+    # threshold - it clears whenever the feed has been quieter than its
+    # average, which over the replay week happened three times - while a lone
     # btc headline is nowhere near it.
     gate.observe("usdchf", later)
     gate.observe("btc", later)
@@ -552,7 +552,7 @@ def test_google_accepts_either_of_its_key_names(monkeypatch):
 
 
 def test_every_listed_provider_is_one_the_sdk_knows():
-    """`google-gla` was listed here and does not exist — a name nobody could use."""
+    """`google-gla` was listed here and does not exist - a name nobody could use."""
     from pydantic_ai.providers import infer_provider_class
 
     for name in providers.PROVIDERS:
@@ -587,7 +587,7 @@ def test_model_settings_follow_the_chosen_provider():
 
 
 def test_a_missing_client_names_the_command_that_installs_it(monkeypatch):
-    """Whether openai is installed here is not the point — the message is."""
+    """Whether openai is installed here is not the point - the message is."""
 
     def absent(_name):
         raise ImportError("no openai client")
@@ -614,7 +614,7 @@ def _signal_message(**payload):
         "shape": "level",
         "feed": "gold",
         "venue": "consensus",
-        "detail": "up from above at 4401 — p=80% vs 47% base, push +1.78v",
+        "detail": "up from above at 4401 - p=80% vs 47% base, push +1.78v",
         "score": 0.33,
     }
     return Message(topic=SIGNALS, payload={**base, **payload})
@@ -626,7 +626,7 @@ def test_agents_listen_to_what_structures_publishes():
 
 
 def test_a_structures_signal_wakes_the_model_on_its_own():
-    """It already cleared the numeric layer's guards — re-filtering discards that."""
+    """It already cleared the numeric layer's guards - re-filtering discards that."""
     triggers = service.interesting([_signal_message()], ag.Settings(spread_bps=1000.0))
     assert len(triggers) == 1
     assert "4401" in triggers[0].reason
@@ -635,8 +635,8 @@ def test_a_structures_signal_wakes_the_model_on_its_own():
 def test_the_window_keeps_no_messages_at_all():
     """Where the memory went, and why bounding it was only the stopgap.
 
-    A thirty-minute window over fourteen instruments held 101,297 messages —
-    199MB, about half the resident size when the box was OOM-killed — to derive
+    A thirty-minute window over fourteen instruments held 101,297 messages -
+    199MB, about half the resident size when the box was OOM-killed - to derive
     fifteen triggers. Nothing downstream ever wanted the messages, so the
     accumulator keeps none: its size tracks the number of *instruments*, not
     the traffic, and a busy session now costs no more than a quiet one.
@@ -701,7 +701,7 @@ def test_one_instrument_dislocating_at_four_venues_is_one_trigger():
 
 
 def test_different_instruments_are_kept_apart():
-    """Deduplication is per instrument — collapsing across them would hide news."""
+    """Deduplication is per instrument - collapsing across them would hide news."""
     window = [
         _signal_message(feed="gold", venue="OANDA"),
         _signal_message(feed="btc", venue="BINANCE"),
@@ -850,7 +850,7 @@ def test_a_spread_is_judged_against_history_that_excludes_it(tmp_path):
     """The question is whether *this* reading is unusual, so it cannot be in the window.
 
     An alert reported a venue "at the historical maximum" on a maximum of 8.49
-    against a current 8.5 — the current reading having been folded into its own
+    against a current 8.5 - the current reading having been folded into its own
     comparison, which makes the claim true by construction and worth nothing.
     """
     import sqlite3
@@ -935,7 +935,7 @@ def test_a_venue_with_only_one_quote_has_no_history_to_judge_it_by(tmp_path):
 def test_evidence_does_not_carry_tool_calls_to_the_channel():
     """A model asked to show its working cites the call it made.
 
-    Published to Telegram as `(from default_api.spreads(feed='btc'))` — and
+    Published to Telegram as `(from default_api.spreads(feed='btc'))` - and
     `default_api` is not even ours, it is the namespace the provider wraps our
     tools in. It means nothing to someone reading a notification, who cannot
     run it.
@@ -1051,7 +1051,7 @@ def test_the_budget_follows_how_much_was_asked():
 
     The model investigates what it is handed, so the calls it makes scale with
     the instruments in the window, and that count keeps growing. A fixed limit
-    turns each new instrument into an outage — which is what happened on
+    turns each new instrument into an outage - which is what happened on
     2026-08-14 and again on 2026-08-17.
     """
     from till_infinity.agents.analyst import budget

@@ -1,4 +1,4 @@
-"""Dead Letter Queue — catch poison messages after max retries.
+"""Dead Letter Queue - catch poison messages after max retries.
 
 After a message has been retried `max_attempts` times without success,
 it gets shunted to the DLQ instead of infinitely blocking the outbox.

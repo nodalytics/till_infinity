@@ -3,7 +3,7 @@
 The fastest path and the narrowest: the package is a binding onto a running
 Windows terminal, so this backend exists on Windows, and inside a Wine prefix
 that has a Windows Python in it. Everywhere else `broker.choose` never reaches
-this module — which is also why the import sits inside `connect` rather than at
+this module - which is also why the import sits inside `connect` rather than at
 the top of the file, so a Linux host can import the package for its types
 without the import failing.
 
@@ -16,7 +16,7 @@ reading.
 **A symbol has to be selected before it can be seen.** `symbol_info` returns
 None for anything not in Market Watch, which is indistinguishable from the
 broker not offering it. `symbol_select(name, True)` is therefore part of asking
-whether a symbol exists, not a separate setup step — without it, availability
+whether a symbol exists, not a separate setup step - without it, availability
 detection reports every instrument as missing on a fresh terminal.
 """
 
@@ -127,7 +127,7 @@ class NativeBroker(Broker):
         """Every symbol on the account, so resolution can scan rather than guess.
 
         `symbols_get()` with no argument returns the broker's whole tree,
-        including instruments not in Market Watch — which is the point, since a
+        including instruments not in Market Watch - which is the point, since a
         symbol has to be found before it can be selected.
         """
         try:
@@ -242,7 +242,7 @@ class NativeBroker(Broker):
         """The fill policy this symbol accepts, preferring the configured one.
 
         Brokers differ, and a policy the symbol does not allow is rejected with
-        "Unsupported filling mode" — a failure that looks like a bad order and
+        "Unsupported filling mode" - a failure that looks like a bad order and
         is really a bad constant. The symbol's own `filling_mode` mask is the
         authority; the setting only chooses between what it permits.
 
@@ -262,7 +262,7 @@ class NativeBroker(Broker):
         if not mask:
             return wanted
         # The mask is a bitfield of SYMBOL_FILLING_* flags, which are 1 and 2
-        # for FOK and IOC respectively — one off from the ORDER_FILLING_*
+        # for FOK and IOC respectively - one off from the ORDER_FILLING_*
         # constants, so they are checked rather than reused.
         allows_fok, allows_ioc = bool(mask & 1), bool(mask & 2)
         if wanted == mt5.ORDER_FILLING_IOC and allows_ioc:

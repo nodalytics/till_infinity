@@ -2,19 +2,19 @@
 
 The bus carries tens of quotes a second; a model call takes seconds and costs
 money. Something has to absorb that difference, and a queue is the wrong shape
-— by the time a backlog drained, the market would have moved on. So messages
+- by the time a backlog drained, the market would have moved on. So messages
 are gathered into a window and the window is judged as a whole.
 
 Two gates stand between a quote and an API call:
 
-1. `interesting()` — arithmetic, not a model. A spread inside its normal range
+1. `interesting()` - arithmetic, not a model. A spread inside its normal range
    and a calendar with nothing high-impact in it never cost a token.
 2. The analyst itself, which is told plainly that returning no findings is a
    correct answer.
 
 The first gate does **not** decide what is unusual by comparing against a
-constant. `structures` already answers that question properly — calibrated,
-per-venue, self-tuning — and a threshold here would be a worse duplicate of it,
+constant. `structures` already answers that question properly - calibrated,
+per-venue, self-tuning - and a threshold here would be a worse duplicate of it,
 wrong for every instrument but whichever one it was chosen on. A signal from
 `structures` is therefore a trigger on its own.
 
@@ -25,7 +25,7 @@ number somebody picked.
 
 Headlines are gated the same way and for the same reason. A headline is worth
 waking a model for when there is more news about an instrument than usual, and
-"usual" is per instrument — three hundred btc headlines a week against five for
+"usual" is per instrument - three hundred btc headlines a week against five for
 usdchf. See `Headlines`.
 
 What survives both is published to `alerts`, which `notify listen` delivers.
@@ -73,7 +73,7 @@ SPREAD_WARMUP = 60
 SPREAD_QUANTILE = 0.99
 
 #: ...and how much wider than that venue's *typical* spread. Both are needed.
-#: A quantile alone is degenerate on a steady venue — if every reading is 20bps
+#: A quantile alone is degenerate on a steady venue - if every reading is 20bps
 #: then the 99th percentile is 20bps and 20.1 clears it, so a hair above normal
 #: would wake a model. The multiple is what makes "wide" mean wide.
 SPREAD_MULTIPLE = 1.5
@@ -84,7 +84,7 @@ SPREAD_MULTIPLE = 1.5
 #: it is given, so the tool calls it makes scale with this number, and the
 #: number scales with how many instruments are tracked. Fourteen instruments
 #: across six venues produced forty-two tool calls against a limit of
-#: thirty-two, having produced fourteen against twelve a fortnight earlier —
+#: thirty-two, having produced fourteen against twelve a fortnight earlier -
 #: raising the limit each time is chasing rather than fixing.
 #:
 #: Deduplicating per instrument does most of the work: one dislocation seen at
@@ -106,7 +106,7 @@ NEWS_ALPHA = 0.01
 #: How long a feed's arrival rate remembers. Three days, which is short for a
 #: rate estimate and deliberate: the thing being estimated moves. Adding the
 #: crypto sources multiplied btc's headline volume roughly tenfold inside a
-#: week, and a rate still carrying the old number read that as news — **34.9
+#: week, and a rate still carrying the old number read that as news - **34.9
 #: windows a day** on the same replay that a three-day constant answers with
 #: 12.0. Seven days gets 18.3 of the way there.
 #:
@@ -115,15 +115,15 @@ NEWS_ALPHA = 0.01
 NEWS_TAU = 3 * 86400.0
 
 #: How much a feed's rate is pulled toward the average feed's, as a fraction of
-#: its own evidence. A quarter is weak — a feed with any history of its own
-#: barely moves — and it exists to give a feed with *no* history something
+#: its own evidence. A quarter is weak - a feed with any history of its own
+#: barely moves - and it exists to give a feed with *no* history something
 #: better than zero, which would make its first headline infinitely surprising.
 #:
 #: This replaces a per-feed warmup count, which was the same idea done badly:
 #: it left exactly the feeds worth hearing about deaf, since usdchf runs at five
 #: headlines a week and needed eleven days to clear it. Shrinking has no cliff.
 #:
-#: It changes nothing on the replay — every feed there has history of its own —
+#: It changes nothing on the replay - every feed there has history of its own -
 #: and that is the point. It exists for the feed that does not: an instrument
 #: added yesterday, or the first run after the news store is lost.
 NEWS_PRIOR = 0.25
@@ -133,7 +133,7 @@ NEWS_PRIOR = 0.25
 #: rate it cannot yet estimate.
 #:
 #: Pooled rather than per feed on purpose. The cold start this guards is the
-#: whole gate having no history — a missing news store, a first run — and that
+#: whole gate having no history - a missing news store, a first run - and that
 #: clears in hours at the rate headlines actually arrive. A per-feed version
 #: would take weeks to clear for the quiet feeds and would be silently gating
 #: the ones it is least safe to gate.
@@ -178,7 +178,7 @@ class Spreads:
         """Whether this spread is wide *for this venue*.
 
         Falls back to the configured threshold until there are enough readings
-        to place a quantile — a percentile from six observations would be worse
+        to place a quantile - a percentile from six observations would be worse
         than the constant it replaced.
         """
         seen = self._seen.get((feed, venue), [])
@@ -197,7 +197,7 @@ class Headlines:
     """How much is normally written about an instrument, and when that changes.
 
     A headline is worth waking a model for when there is more of it than usual
-    — and "usual" differs by two orders of magnitude across the instruments
+    - and "usual" differs by two orders of magnitude across the instruments
     tracked. Over seven days: **300 headlines about btc and five about usdchf**.
     A gate that fired on every routed headline would be 90 model calls a day,
     almost half of them btc doing nothing but being btc; one that demanded a
@@ -205,12 +205,12 @@ class Headlines:
     headline is most informative about precisely because it is so rarely
     mentioned.
 
-    So the comparison is per feed, against that feed's own arrival rate — the
+    So the comparison is per feed, against that feed's own arrival rate - the
     same argument the spread gate makes about venues. Treating arrivals as
     Poisson, the question is how unlikely this many headlines in ten minutes
     would be at the rate this feed normally runs at. A lone usdchf headline
     sits right at the threshold and clears it whenever the feed has been
-    quieter than its average — three times over the replay week — while btc
+    quieter than its average - three times over the replay week - while btc
     needs a cluster before it means anything.
 
     ## The rate has to move
@@ -220,8 +220,8 @@ class Headlines:
     volume roughly tenfold inside a week; the all-time rate still carried the
     old number, so the gate read the collection change as news and fired on
     **34.9 windows a day**, most of them btc. The rate is therefore a decaying
-    count with a three-day constant — recent arrivals count fully, a week-old
-    one barely — which brings the same replay to 10.3/day.
+    count with a three-day constant - recent arrivals count fully, a week-old
+    one barely - which brings the same replay to 10.3/day.
 
     Rates are also shrunk toward the average feed's, weakly. A feed with no
     history of its own would otherwise have a rate of zero, under which its
@@ -236,7 +236,7 @@ class Headlines:
     effect justifies at ten wakes a day.
 
     Nor anything about what a headline *says*. This measures how much is being
-    written, not whether it matters, which is deliberate — judging the content
+    written, not whether it matters, which is deliberate - judging the content
     is the analyst's job, and it is the thing being woken.
     """
 
@@ -282,7 +282,7 @@ class Headlines:
         """How unlikely this much news about this feed is. Lower is stranger.
 
         Separate from `unusual` so the threshold can be seen rather than only
-        its verdict — the interesting cases here sit within a factor of two of
+        its verdict - the interesting cases here sit within a factor of two of
         it, and a bare True/False hides that.
         """
         recent = sum(1 for at in self._seen.get(feed, ()) if when - at < self.window)
@@ -291,13 +291,13 @@ class Headlines:
         if sum(self._rate.values()) < self.warmup:
             # Two in ten minutes. Conservative, and deliberately so: the
             # alternative while nothing is known is to treat a first-ever
-            # headline as a surprise, which it is not — it is a cold start.
+            # headline as a surprise, which it is not - it is a cold start.
             return 0.0 if recent >= 2 else 1.0
         # Shrunk toward the typical feed, so one with no history of its own is
         # treated as ordinary rather than as silent.
         #
         # The **median**, not the mean. btc carries sixty times usdchf's volume,
-        # and a mean is that one feed's rate wearing everyone else's name — it
+        # and a mean is that one feed's rate wearing everyone else's name - it
         # pulled usdchf's estimate up by a factor of seven, which is exactly the
         # feed the shrinkage exists to protect.
         ordered = sorted(self._rate.values())
@@ -311,7 +311,7 @@ def because(error: BaseException, depth: int = 0) -> str:
     """Why it actually failed, rather than how many ways it did.
 
     A fallback model raises an `ExceptionGroup`, and `str()` on one of those is
-    **"All models from FallbackModel failed (2 sub-exceptions)"** — a sentence
+    **"All models from FallbackModel failed (2 sub-exceptions)"** - a sentence
     with no information in it. Production logged exactly that twenty-six times
     in a day while both models answered a direct call perfectly, and finding
     out why meant reproducing it by hand on the box.
@@ -351,7 +351,7 @@ def _poisson_tail(count: int, expected: float) -> float:
 class Window:
     """What a window of bus traffic amounts to, folded in as it arrives.
 
-    The list this replaces held every message until the window elapsed —
+    The list this replaces held every message until the window elapsed -
     101,297 of them, 199MB, to derive fifteen triggers. Nothing downstream
     ever wanted the messages: `interesting` reduces them to the widest spread,
     the loudest signal per instrument and the releases that printed, and
@@ -360,7 +360,7 @@ class Window:
 
     Bounding the list was the stopgap; this removes the question. Memory is now
     proportional to the number of *instruments*, not to the traffic, so a busy
-    session costs no more than a quiet one — and the spread spike that a bound
+    session costs no more than a quiet one - and the spread spike that a bound
     could drop from the front of a full window can no longer be lost.
 
     One accumulator, used by both paths: `interesting()` folds a sequence into
@@ -390,7 +390,7 @@ class Window:
     #: one instrument is one story, not four.
     stories: dict[str, Trigger] = field(default_factory=dict)
     #: The widest spread that was unusual *for its venue*, and the widest seen
-    #: at all — the second is for explaining a decline, not for triggering.
+    #: at all - the second is for explaining a decline, not for triggering.
     widest: Message | None = None
     widest_bps: float = 0.0
     widest_at: str = ""
@@ -412,7 +412,7 @@ class Window:
 
     def _signal(self, payload: dict) -> None:
         # A signal has already cleared the numeric layer's own guards, so it
-        # needs no second arithmetic gate — it arrives *because* something
+        # needs no second arithmetic gate - it arrives *because* something
         # passed one. Re-filtering would discard the work that made it worth
         # sending.
         feed = str(payload.get("feed") or "")
@@ -453,7 +453,7 @@ class Window:
         Publishers tag articles `VENUE:TICKER`; `news.symbols` maps that onto a
         feed using the symbols `prices` already collects. Of 3,058 articles 44%
         carry tags at all and 60% of those name a tracked instrument, so most
-        of what arrives is counted here and goes no further — correctly, since
+        of what arrives is counted here and goes no further - correctly, since
         a headline about `XRPUSD` or `DXY` cannot be joined to anything we hold.
         """
         self.articles += 1
@@ -474,7 +474,7 @@ class Window:
             title = str(payload.get("title") or "").strip()
             provider = str(payload.get("provider") or payload.get("source") or "").strip()
             self.stories[feed] = Trigger(
-                reason=f"{feed}: news flow picked up — {provider} “{title}”".strip(),
+                reason=f"{feed}: news flow picked up - {provider} “{title}”".strip(),
                 topic=ARTICLES,
                 payload={**payload, "feed": feed},
             )
@@ -522,8 +522,8 @@ class Window:
                 )
             )
         # Last, so the cap sheds a headline before it sheds a measurement. A
-        # story is the softest evidence here — prose about an instrument rather
-        # than the instrument doing something — and its value is in waking the
+        # story is the softest evidence here - prose about an instrument rather
+        # than the instrument doing something - and its value is in waking the
         # analyst when nothing else would, not in competing with a dislocation
         # for a place in a crowded window.
         found += [self.stories[feed] for feed in sorted(self.stories)]
@@ -556,7 +556,7 @@ class Window:
         )
 
     def seen(self) -> str:
-        """What arrived, for the prompt — counts rather than the messages."""
+        """What arrived, for the prompt - counts rather than the messages."""
         return ", ".join(f"{n} {topic}" for topic, n in sorted(self.topics.items())) or "nothing"
 
 
@@ -611,7 +611,7 @@ class Quiet:
 
     Exists because a gate that never fires and a gate that never runs look
     identical from outside, and this one looked like the second for seven hours
-    — the whole log held a single `agents started` line. It was in fact the
+    - the whole log held a single `agents started` line. It was in fact the
     first, declining correctly and saying so only at DEBUG, which production
     does not print.
 
@@ -623,7 +623,7 @@ class Quiet:
     messages: int = 0
     quotes: int = 0
     events: int = 0
-    #: The widest spread seen, and where — the near-miss on the quote gate.
+    #: The widest spread seen, and where - the near-miss on the quote gate.
     widest_bps: float = 0.0
     widest_at: str = ""
     spread_threshold: float = 0.0
@@ -675,7 +675,7 @@ def prompt_for(triggers: Sequence[Trigger], seen: str | Sequence[Message]) -> st
     """Turn a window into a question.
 
     The triggers are stated as what changed rather than as conclusions, and the
-    model is pointed at its tools instead of being handed the data — the store
+    model is pointed at its tools instead of being handed the data - the store
     holds far more than the window does, and the comparison it needs (is this
     spread unusual *for this venue*) is not in the messages at all.
 
@@ -705,7 +705,7 @@ class Watcher:
 
     Holds one piece of state worth naming: an LRU of alerts already sent, so a
     spread that stays wide for an hour is reported once rather than sixty
-    times. It is the same reasoning as the news announcer — being told is only
+    times. It is the same reasoning as the news announcer - being told is only
     useful the first time.
     """
 
@@ -736,7 +736,7 @@ class Watcher:
         self._warm_headlines()
         #: Folded in as messages arrive rather than kept. This is where the
         #: memory went: a thirty-minute window over fourteen instruments held
-        #: **101,297 messages — 199MB**, about half the resident size when the
+        #: **101,297 messages - 199MB**, about half the resident size when the
         #: box was OOM-killed, to derive fifteen triggers from. Nothing
         #: downstream wanted the messages, so none are kept.
         self._window = Window(
@@ -838,7 +838,7 @@ class Watcher:
     async def consider(self, window: Window | Sequence[Message]) -> Run | None:
         """Judge one window. Returns the run if the model was actually asked.
 
-        Takes the accumulator the watcher fills, or a plain sequence — folded
+        Takes the accumulator the watcher fills, or a plain sequence - folded
         into one on the way in, so a caller with a list of messages (a test, a
         replay) is not obliged to build one.
         """
@@ -849,7 +849,7 @@ class Watcher:
         triggers = window.triggers()
         if not triggers:
             # At INFO, and saying how close it came. This was DEBUG and said
-            # only that nothing crossed, which production never printed — so a
+            # only that nothing crossed, which production never printed - so a
             # gate declining correctly every thirty minutes was indistinguishable
             # from an agent loop that had never run at all.
             log.info("no wake: %s", window.quiet())

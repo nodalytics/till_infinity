@@ -1,7 +1,7 @@
 """Where headlines and events land: SQLite by default, JSONL alongside it.
 
 The two tables behave differently on purpose. A headline is written once and
-never touched again — `INSERT OR IGNORE` is the whole story. A calendar event
+never touched again - `INSERT OR IGNORE` is the whole story. A calendar event
 is the opposite: it sits there as a forecast for days, and when the print lands
 the row is *rewritten* with the actual. Polling the same window repeatedly is
 the point, so the upsert only fires when a field genuinely changed.
@@ -368,7 +368,7 @@ class SqliteStore(Store):
 class JsonlStore(Store):
     """``<dir>/news/<source>.jsonl`` and ``<dir>/calendar/<source>.jsonl``.
 
-    Append-only, so a calendar row cannot be rewritten when its print lands —
+    Append-only, so a calendar row cannot be rewritten when its print lands -
     the release simply appends a second, fuller copy. Use SQLite when you want
     one row per event.
     """

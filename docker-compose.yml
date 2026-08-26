@@ -2,7 +2,7 @@
 #
 # `till-infinity run` starts every service in one process against an in-process
 # bus, which is right for a laptop. This is the other shape: one process per
-# service over Redis, so they scale and fail independently — a collector
+# service over Redis, so they scale and fail independently - a collector
 # restarting does not take the levels model with it.
 #
 #   docker compose up -d                     everything except agents and trading
@@ -79,7 +79,7 @@ services:
   # The profile starts it; TRADING_LIVE in .env arms it. Without that it runs
   # the whole path against a paper book and reaches no account.
   #
-  # This container has no MetaTrader terminal in it and is not going to — the
+  # This container has no MetaTrader terminal in it and is not going to - the
   # package is Windows-only. On Linux it reaches MT5 through the bridge, so
   # TRADING_MT5_URL has to point at a `metatrader-terminal` instance, which runs
   # the terminal under Wine. Left unset, this stays on paper and says so.

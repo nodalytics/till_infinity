@@ -82,7 +82,7 @@ async def test_poll_once_covers_every_broker_and_counts_the_gaps(tmp_path):
 
 @pytest.mark.asyncio
 async def test_written_counts_survive_concurrency(tmp_path):
-    """`x += await f()` would lose updates here — every write must be counted."""
+    """`x += await f()` would lose updates here - every write must be counted."""
     settings = Settings(data_dir=tmp_path)
     source = FakeQuotes(settings, delay=0.01)
     feeds = [FEEDS["gold"], FEEDS["eurusd"], FEEDS["gbpusd"]]
@@ -181,7 +181,7 @@ async def test_socket_pushes_each_update_to_the_sink(tmp_path):
 
 @pytest.mark.asyncio
 async def test_socket_merges_partial_updates(tmp_path):
-    """A tick carries only the fields that moved — the rest must survive."""
+    """A tick carries only the fields that moved - the rest must survive."""
     source = socket_source(tmp_path)
     sink = Recorder()
     source._sink = sink

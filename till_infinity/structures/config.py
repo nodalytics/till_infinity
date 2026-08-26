@@ -27,7 +27,7 @@ INTERVALS: tuple[str, ...] = ("1m", "5m")
 DRIFT_INTERVALS: tuple[str, ...] = ("5m", "15m", "1h", "4h")
 
 #: Seconds between saves. An online model that resets on every restart has
-#: learned nothing, so persistence is not optional — only its frequency is.
+#: learned nothing, so persistence is not optional - only its frequency is.
 DEFAULT_SAVE_SECONDS = 300.0
 
 #: A deviation this large is not a market opinion, it is a broken quote, so it
@@ -72,7 +72,7 @@ class Settings(Restorable):
     cooldown: float = DEFAULT_COOLDOWN
     alert_direct: bool = True
     #: Whether an actionable level call reaches a person without an agent in
-    #: between. On by default, because it is the thing the system is *for* —
+    #: between. On by default, because it is the thing the system is *for* -
     #: with it off and agents disabled, level calls are published to a topic
     #: nobody is subscribed to and the channel receives only feed faults.
     alert_levels: bool = True
@@ -81,7 +81,7 @@ class Settings(Restorable):
     #: it deducted is a gross number, and the gap between gross and net is the
     #: whole difference between a figure and a decision.
     #:
-    #: Turning it off is for comparison, not for production — run the same
+    #: Turning it off is for comparison, not for production - run the same
     #: history both ways and the difference is exactly what the cost is worth.
     #: Worth knowing before doing so: the charge is not uniform, running from
     #: 0.003v on btc to 2.5v on gbpusd intraday, so switching it off does not

@@ -9,7 +9,7 @@ belong in it.
   importance   drop one feature, measure what accuracy is lost. Model-agnostic
                and honest, unlike reading coefficients off a fitted model,
                which measures the model as much as the feature.
-  generation   river can build features from features — pairwise products,
+  generation   river can build features from features - pairwise products,
                random Fourier bases, target statistics per group. Does any of
                it beat the raw nine?
 

@@ -1,8 +1,8 @@
 """Keeping what the models learned.
 
 An online model that resets on restart has learned nothing. Everything about
-this layer — a warmup before it will score, a quantile estimated from history,
-a per-venue distribution built over hours — assumes continuity across restarts,
+this layer - a warmup before it will score, a quantile estimated from history,
+a per-venue distribution built over hours - assumes continuity across restarts,
 so persistence is part of the design rather than a convenience.
 
 Pickle, because river models are ordinary Python objects with no serialisation
@@ -10,20 +10,20 @@ format of their own and no stable numeric export. That has one consequence
 worth stating plainly: **a state file is only loadable by compatible versions
 of river and Python.** So the file records the versions it was written with and
 refuses to load into a mismatch, which costs a warmup and is the correct trade
-— silently loading a half-restored model would give scores that look fine and
+- silently loading a half-restored model would give scores that look fine and
 mean nothing.
 
 The same applies to **our own classes**, and that one is easier to miss. These
 are slotted dataclasses, so adding a field does not raise on unpickling: the
 old objects come back without the new slot and fail later, at whatever line
-first reads it. That happened — a `regime` feature was added and a running
+first reads it. That happened - a `regime` feature was added and a running
 service died hours afterwards on state written before the change, with a
 message naming neither the field nor the cause.
 
 So the fingerprint includes a hash of the field names of every class that gets
 persisted. A field added, removed or renamed invalidates old state
 automatically, which is better than a version constant somebody has to remember
-to bump — nobody remembers, and the failure is silent until it is not.
+to bump - nobody remembers, and the failure is silent until it is not.
 
 Writes are atomic (temp file, then rename). A process killed mid-save leaves
 the previous state intact rather than a truncated file that fails to load.
@@ -54,7 +54,7 @@ def _schema() -> str:
     *was* the bug. It named seven classes and `Volatility` was not among them,
     so adding `_tick`, `_steps` and `_grid` to it left the hash unchanged. The
     old state was therefore accepted as compatible, and the service then
-    crashed reading a field the save predated — `AttributeError` on a
+    crashed reading a field the save predated - `AttributeError` on a
     `slots=True` dataclass, which has no `__dict__` to fall back on, so an
     absent field is missing rather than defaulted.
 
@@ -66,7 +66,7 @@ def _schema() -> str:
     A list is the wrong shape for this. Anyone adding a field to a persisted
     class would have to know the list exists, and the person who added those
     three did not. Walking means the guard covers classes nobody thought to
-    register — including ones added later.
+    register - including ones added later.
 
     The cost of a change here is a cold start, which is the policy `load`
     already states: slow but correct. That is the trade this hash exists to
@@ -135,18 +135,18 @@ def load(directory: Path | str) -> dict[str, Any] | None:
     try:
         payload = pickle.loads(path.read_bytes())
     except Exception as exc:
-        log.warning("structures: could not read %s (%s) — starting cold", path, exc)
+        log.warning("structures: could not read %s (%s) - starting cold", path, exc)
         return None
 
     if not isinstance(payload, dict):
-        log.warning("structures: %s is not model state — starting cold", path)
+        log.warning("structures: %s is not model state - starting cold", path)
         return None
 
     want = _fingerprint()
     for field in ("format", "river", "python", "schema"):
         if payload.get(field) != want[field]:
             log.warning(
-                "structures: %s was written with %s %s, this is %s — starting cold",
+                "structures: %s was written with %s %s, this is %s - starting cold",
                 path,
                 field,
                 payload.get(field),

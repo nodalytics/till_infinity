@@ -7,7 +7,7 @@ is a hairline on gold in a crisis and a canyon on EURUSD overnight. Fixed
 thresholds encode one market regime and quietly stop describing the next.
 
 So this module is small and load-bearing. It produces one number per
-instrument — the typical size of a move — and the rest of the package divides
+instrument - the typical size of a move - and the rest of the package divides
 by it.
 
 Exponentially weighted rather than a rolling window, because a window has an
@@ -35,7 +35,7 @@ HALF_LIFE = 60.0
 
 #: A floor, in basis points. Without one, an instrument that has not moved for
 #: an hour gets a near-zero volatility and every subsequent tick looks like a
-#: hundred-sigma event — division by something approaching zero.
+#: hundred-sigma event - division by something approaching zero.
 MIN_VOL_BPS = 0.05
 
 #: Observations before the tick estimate is trusted. The minimum of three
@@ -45,7 +45,7 @@ TICK_WARMUP = 30
 #: Where in the distribution of price changes the grid step is read off.
 #:
 #: Not the minimum, which is what this used to be. Both give the same answer on
-#: clean data — identical on all eight instruments tested — but the minimum is
+#: clean data - identical on all eight instruments tested - but the minimum is
 #: a one-observation estimator and behaves like one: a single spurious print a
 #: seventh the size of a real tick collapsed it on **every** instrument, 0.01
 #: to 0.0014, and that number widens a zone. The first percentile did not move
@@ -70,7 +70,7 @@ TICK_WINDOW = 500
 #: worst case as if it were the degenerate one.
 #:
 #: What separates them is the spread of multiples. Price on a real grid moves
-#: one step, then two, then five — many distinct multiples of the same base.
+#: one step, then two, then five - many distinct multiples of the same base.
 #: A series that only ever moves by one identical amount has not resolved a
 #: grid at all; it has jumped, and its jump is not a tick.
 TICK_MULTIPLES = 3
@@ -106,8 +106,8 @@ class Volatility(Restorable):
     _last: float = 0.0
     _seen: int = 0
     #: Rolling quantiles of the estimate itself. A number is not interpretable
-    #: on its own — "25bps" says nothing without knowing what this instrument
-    #: usually does — so the percentile is tracked alongside it.
+    #: on its own - "25bps" says nothing without knowing what this instrument
+    #: usually does - so the percentile is tracked alongside it.
     _low: stats.RollingQuantile = field(
         default_factory=lambda: stats.RollingQuantile(q=REGIME_LOW, window_size=REGIME_WINDOW)
     )
@@ -115,7 +115,7 @@ class Volatility(Restorable):
         default_factory=lambda: stats.RollingQuantile(q=REGIME_HIGH, window_size=REGIME_WINDOW)
     )
     _history: list[float] = field(default_factory=list)
-    #: The smallest non-zero price change seen — the venue's tick, measured
+    #: The smallest non-zero price change seen - the venue's tick, measured
     #: rather than configured. See `tick`.
     _tick: float = 0.0
     #: Distinct multiples of `_tick` observed, which is what tells a grid from
@@ -131,7 +131,7 @@ class Volatility(Restorable):
     # `__setstate__` comes from `Restorable`, which fills in fields a saved
     # state predates. This class is why that exists: `_tick`, `_steps` and
     # `_grid` were added, the restore raised on the first quote, and the
-    # throw landed inside the structures consumer — so the container stayed
+    # throw landed inside the structures consumer - so the container stayed
     # healthy and simply stopped producing for four hours. See state.py.
 
     @property
@@ -139,7 +139,7 @@ class Volatility(Restorable):
         """The smallest price change this instrument has been seen to make.
 
         Every price on a venue sits on a grid and every change is a multiple of
-        its step, so the smallest non-zero change observed *is* the step — once
+        its step, so the smallest non-zero change observed *is* the step - once
         enough have gone past for the smallest to be a single step rather than
         the smallest jump that happened to occur. Measured rather than
         configured, because the tick table belongs to the venue and changes
@@ -154,10 +154,10 @@ class Volatility(Restorable):
         is jumping" fit the data equally well, and taking the first would widen
         every zone on the instrument by that jump. So the estimate is withheld
         until price has been seen to move by several *different* multiples of
-        it — one step, then two, then five — which is what a grid being
+        it - one step, then two, then five - which is what a grid being
         resolved looks like and what a uniform jump never produces. See
-        `TICK_MULTIPLES`, and note that the tempting test — "the tick should be
-        small against a typical move" — rejects ADA, the instrument this exists
+        `TICK_MULTIPLES`, and note that the tempting test - "the tick should be
+        small against a typical move" - rejects ADA, the instrument this exists
         for.
 
         It is also withheld until `TICK_WARMUP` observations, because the
@@ -167,13 +167,13 @@ class Volatility(Restorable):
         that has *happened*, not the smallest that is possible, so an
         instrument whose prints are all several steps apart reads as coarser
         than it is. The error is always in that direction and it shrinks with
-        data, never growing — but a consumer should bound what it does with the
+        data, never growing - but a consumer should bound what it does with the
         number rather than trust it early. `Level.zone` clamps it at
         `MAX_ZONE_VOL` for exactly this reason.
 
         Both failures return zero, so anything built on this falls back rather
         than inventing a number, and the estimate can only shrink with more
-        data — biasing it towards the old behaviour rather than towards a
+        data - biasing it towards the old behaviour rather than towards a
         spuriously wide band. That is the safe direction for a value whose job
         is to widen one.
         """
@@ -271,8 +271,8 @@ class Book(Restorable):
 
     Per timeframe, not merely per instrument, and that distinction is
     load-bearing. A typical 4h move on gold is tens of times a typical 5m move,
-    so a single estimate — in practice dominated by whichever series updates
-    most often — makes every threshold expressed in volatility units wrong for
+    so a single estimate - in practice dominated by whichever series updates
+    most often - makes every threshold expressed in volatility units wrong for
     every timeframe but one.
 
     Concretely: with one estimate, gold's clustering tolerance came out at about

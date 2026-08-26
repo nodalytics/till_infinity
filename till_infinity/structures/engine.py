@@ -48,8 +48,8 @@ WINDOW = 500
 #: bars: fewer and real swings are missed, more and noise becomes a level.
 PIP_COUNT = 50
 
-#: Re-form levels this often, in bars. Every bar would be wasted work — the
-#: swings barely change — and never would let the set go stale.
+#: Re-form levels this often, in bars. Every bar would be wasted work - the
+#: swings barely change - and never would let the set go stale.
 REFORM_EVERY = 20
 
 #: Bars after a shape completes before its outcome is counted. Long enough for
@@ -57,7 +57,7 @@ REFORM_EVERY = 20
 SHAPE_HORIZON = 12
 
 #: The timeframes levels are built on. Defined in `confluence` and used here so
-#: there is one list rather than two that drift — which they did: confluence
+#: there is one list rather than two that drift - which they did: confluence
 #: spanned 4h while the engine never built it, so combining across timeframes
 #: was quietly looking for something that never existed.
 LEVEL_INTERVALS: tuple[str, ...] = confluence.TIMEFRAMES
@@ -75,7 +75,7 @@ SEED_BARS = WINDOW
 
 #: An untouched level this far from price, in volatility units, is not going to
 #: be tested soon and is only crowding the set. Touched levels are kept
-#: regardless of distance — a level price has reacted at is worth remembering
+#: regardless of distance - a level price has reacted at is worth remembering
 #: precisely because price left it.
 KEEP_VOL = 8.0
 
@@ -86,7 +86,7 @@ MAX_RESOLVED = 500
 #: treated as closed rather than quiet. Four, matching `GAP_FACTOR`, which makes
 #: the same judgement about a touch that spans a closure: long enough that an
 #: ordinary thin session still counts as trading, short enough that a weekend
-#: does not. Quotes are no use for this — venues keep answering polls with
+#: does not. Quotes are no use for this - venues keep answering polls with
 #: Friday's price all weekend, which is what let a shut market alert.
 STALE_BARS = 4.0
 
@@ -95,12 +95,12 @@ STALE_BARS = 4.0
 #:
 #: A level is a band price is meant to **enter**, react inside, and leave. That
 #: only means something if price can be *inside* it. When the venue's tick is a
-#: large fraction of a typical move, price cannot enter — it jumps across — and
+#: large fraction of a typical move, price cannot enter - it jumps across - and
 #: every crossing becomes a touch. Measured on the instance: `sol 3m` fits 2.5
 #: ticks in a zone and `audusd 1m` fits 2.7, against `btc 5m`'s 170. It is not
 #: a crypto problem; coarse pip quoting does the same thing a cheap coin does.
 #:
-#: Four, because `depth_vol` — how far into the zone price pushed — is a
+#: Four, because `depth_vol` - how far into the zone price pushed - is a
 #: feature, and a feature with two distinguishable values is not one. Four
 #: steps is the least that gives it any resolution, and it is also where the
 #: measurement separates: 2.5, 2.7, 2.7 and 3.5 on one side, 4.1 and up on the
@@ -108,14 +108,14 @@ STALE_BARS = 4.0
 #:
 #: Judged on the **floor** zone rather than the observed one, which is the
 #: conservative direction and deliberate. Wicks widen a real zone as touches
-#: accumulate, so an established level is roomier than this — but a *new* level
+#: accumulate, so an established level is roomier than this - but a *new* level
 #: gets the floor, and the question here is whether to form one at all.
 #:
 #: It declines eight of fifteen sampled pairs, which is more than the observed
 #: widths alone would suggest: sol at 1m, 3m and 5m, and audusd, nzdusd,
 #: eurusd, usdcad and usdchf at 1m. sol keeps 15m and coarser. The FX ones were
 #: assessed over a weekend, when those markets are shut and their measured
-#: behaviour says nothing, so they want re-checking on a weekday — see todo.md.
+#: behaviour says nothing, so they want re-checking on a weekday - see todo.md.
 #:
 #: Erring toward declining is the right direction here even so. Losing a good
 #: pair costs some alerts, visibly. Keeping a bad one poisons the sample: sol
@@ -125,14 +125,14 @@ STALE_BARS = 4.0
 #: bounds a zone from becoming absurdly *wide* on a coarse grid, which was
 #: making everything a touch. What remains is a zone two or three ticks
 #: *across*, which is the failure `MIN_ZONE_TICKS` was added for. There is no
-#: width that works, so the pair is declined instead — the same shape as
+#: width that works, so the pair is declined instead - the same shape as
 #: `trading()`: refuse rather than produce something meaningless.
 MIN_TICKS_PER_ZONE = 4.0
 
 #: Ceiling per (instrument, interval), strongest kept. Without one a long
 #: history accrues a level every few basis points, and at that density every
 #: price is "at a level" and the model predicts nothing. Fifteen is roughly
-#: what a person marks on one chart, which is the right order of magnitude —
+#: what a person marks on one chart, which is the right order of magnitude -
 #: the constraint is attention, not storage.
 MAX_LEVELS = 15
 
@@ -143,7 +143,7 @@ class Consensus(Restorable):
 
     Bars arrive one venue at a time and several venues report the same bar.
     Without this the series took whichever venue published last, and the winner
-    changed from bar to bar — so the swing detection was reading a series
+    changed from bar to bar - so the swing detection was reading a series
     stitched together from different venues, injecting exactly the cross-venue
     disagreement this project exists to *measure* rather than suffer.
 
@@ -190,7 +190,7 @@ class Quotes(Restorable):
 
     The same argument as `Consensus`, for the stream that needed it more. Bars
     got a median across venues and quotes did not, so `check` was called with
-    whichever venue published last — and venues do not agree on the price.
+    whichever venue published last - and venues do not agree on the price.
     Measured across a five second window: 6.12bps between venues on US500 and
     5.74 on BTCUSD, which in each instrument's own volatility units is **3.46**
     and **1.09**. `resolve_vol` is 1.5, so on spx500 two consecutive quotes
@@ -215,7 +215,7 @@ class Quotes(Restorable):
         seen[venue] = (when, mid)
         fresh = [value for last, value in seen.values() if when - last <= QUOTE_STALE]
         # One venue quoting is not a disagreement, and a median of nothing is an
-        # error — either way its own mid is the best answer available.
+        # error - either way its own mid is the best answer available.
         return statistics.median(fresh) if fresh else mid
 
 
@@ -273,6 +273,11 @@ class Call(Restorable):
         # call reads as the confidence in down when it is the confidence
         # against it. The base rate flips with it or the pair is not a
         # comparison. See reactions.Inference.probability.
+        zone_low, zone_high = self.level.zone(vol)
+        unit = vol.price_units(self.level.price, 1.0) or 1.0
+        wick_below = (self.level.price - zone_low) / unit
+        wick_above = (zone_high - self.level.price) / unit
+
         if clock is not None:
             hour_hold, hour_n = clock.hold_rate(self.feed, self.time)
             _, hour_vol_share = clock.volatility(self.feed, self.time)
@@ -281,7 +286,7 @@ class Call(Restorable):
 
         detail = (
             f"{self.inference.direction} from {self.inference.side} at "
-            f"{self.level.price:.5g} — p={self.inference.probability:.0%} "
+            f"{self.level.price:.5g} - p={self.inference.probability:.0%} "
             f"vs {self.inference.base_rate:.0%} base, "
             f"push {self.inference.expected_push:+.2f}v"
         )
@@ -304,16 +309,16 @@ class Call(Restorable):
                 "risk_vol": self.inference.risk_vol,
                 # The volatility unit itself, in basis points. Everything else
                 # here is measured in multiples of it, so a consumer that only
-                # sees the published signal — `trading` reads them off the bus
-                # and never touches this engine — cannot turn `risk_vol` or
+                # sees the published signal - `trading` reads them off the bus
+                # and never touches this engine - cannot turn `risk_vol` or
                 # `expected_push_vol` into a price without it. Carrying the
                 # multiples without the unit made those two fields unusable
                 # outside this process.
                 "vol_bps": vol.bps,
                 # The level's own hold rate on the side price arrived from,
                 # and the decisive interactions behind it. The strongest
-                # single signal a level carries — strength.md puts it at AUC
-                # 0.648 where the `strength` composite reaches 0.548 — and it
+                # single signal a level carries - strength.md puts it at AUC
+                # 0.648 where the `strength` composite reaches 0.548 - and it
                 # was computed on every touch and published nowhere.
                 #
                 # Unshrunk, with its count beside it, so a consumer can apply
@@ -331,6 +336,16 @@ class Call(Restorable):
                 "hour_hold": hour_hold,
                 "hour_n": hour_n,
                 "hour_vol_share": hour_vol_share,
+                # The level is a **range**, and an asymmetric one: the origin
+                # is where the leg in met the leg out, and each edge extends by
+                # how far the wick ran past it on that side. Published because
+                # a consumer that only sees `level` will place a stop inside
+                # the band where wicks routinely reach - which is the difference
+                # between being wrong and being swept.
+                "zone_low": zone_low,
+                "zone_high": zone_high,
+                "wick_below_vol": wick_below,
+                "wick_above_vol": wick_above,
             },
             direction=self.inference.direction,
             interval=self.interval,
@@ -359,7 +374,7 @@ def _bar_span(
 
     Both are aggregates, so they come from SQLite rather than from a list of
     rows in this process. `_eras` only ever needed the earliest timestamp per
-    interval — reading three hundred thousand rows to find six numbers was the
+    interval - reading three hundred thousand rows to find six numbers was the
     expensive half of a cold start.
     """
     where, params = _bar_query(feeds, intervals)
@@ -391,7 +406,7 @@ def _read_bars(
 
     A generator rather than a list, and the ordering is SQLite's rather than
     Python's. Materialising the whole warm cost over 330,000 dicts on fourteen
-    instruments — 410MB resident against a host with 908MB and no swap — and
+    instruments - 410MB resident against a host with 908MB and no swap - and
     OOM-killed the container on every cold start it attempted. Sixteen kills,
     never finishing. SQLite sorts in its own temp space and hands rows over one
     at a time; the engine only ever needed one at a time.
@@ -405,7 +420,7 @@ def _read_bars(
         with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10.0)) as conn:
             conn.row_factory = sqlite3.Row
             # Oldest first, and grouped so every venue on one bar arrives
-            # together — the consensus needs them adjacent to reach a quorum on
+            # together - the consensus needs them adjacent to reach a quorum on
             # that timestamp. `bars * 8` because several venues report each one.
             found = conn.execute(
                 "SELECT feed, venue, interval, ts, high, low, close FROM ("
@@ -439,17 +454,17 @@ class Engine:
     ) -> None:
         #: How swings are found: `pip` selects bar extremes, `run` takes the
         #: boundaries between runs of volatility. An experiment, not a setting
-        #: to tune in production — the point is to run both over one history
+        #: to tune in production - the point is to run both over one history
         #: and let the outcome machinery say which price respects more.
         if formation not in ("pip", "run", "both"):
-            raise ValueError(f"unknown formation {formation!r} — use 'pip', 'run' or 'both'")
+            raise ValueError(f"unknown formation {formation!r} - use 'pip', 'run' or 'both'")
         self.formation = formation
         self.run_threshold = run_threshold
         #: Whether the quoted spread is charged against every level call. On by
         #: default, because an uncharged edge is a gross number and acting on
         #: one is the mistake the cost exists to prevent.
         #:
-        #: Off is for answering "what would this have said without the cost" —
+        #: Off is for answering "what would this have said without the cost" -
         #: the two runs are directly comparable, since nothing else changes. It
         #: is deliberately not a threshold to tune: the cost is measured, and
         #: something measured is either charged or it is not.
@@ -485,10 +500,10 @@ class Engine:
         self._now: float = 0.0
         #: Touches that have resolved since anyone last looked, with the level
         #: they resolved at. Queued rather than pushed because the engine has
-        #: no journal and should not grow one — a resolution is a fact about
+        #: no journal and should not grow one - a resolution is a fact about
         #: price, and who wants to record it is not the engine's business.
         self._resolved: list[tuple[lv.Level, reactions.Touch]] = []
-        #: Recent quoted spreads per instrument, in basis points — the cost of
+        #: Recent quoted spreads per instrument, in basis points - the cost of
         #: taking any edge found here, measured all along and never charged.
         #: A window rather than a running value, so the cost can be a *median*.
         self._spread: dict[str, deque[float]] = {}
@@ -503,7 +518,7 @@ class Engine:
             # journal afterwards. A zero that was configured should not be
             # readable as a zero that went wrong.
             log.warning(
-                "structures: spread costs disabled — every level call will be "
+                "structures: spread costs disabled - every level call will be "
                 "judged on its gross push, and cost_vol will read 0.0 for that "
                 "reason rather than for want of quotes"
             )
@@ -528,11 +543,11 @@ class Engine:
         ]
 
     def swings(self, series: Series, vol: Volatility) -> list[pips.Point]:
-        """The turning points levels are drawn at — by whichever formation.
+        """The turning points levels are drawn at - by whichever formation.
 
         Pluggable so the two can be *compared* rather than argued about. Both
         return the same `Point`, carrying `confirmed`, so everything downstream
-        — `as_of`, `form`, the whole outcome machinery — is indifferent to
+        - `as_of`, `form`, the whole outcome machinery - is indifferent to
         which produced them. See [levels.md], "A level spans periods too".
         """
         if self.formation == "run":
@@ -548,7 +563,7 @@ class Engine:
         rather than pooled into one clustering. Pooling would let a bar extreme
         and a run boundary a hair apart form a level *between* them and lose
         which pass found it; merging keeps each pass's own clusters and folds
-        them only where one falls inside the other's zone — the same test a
+        them only where one falls inside the other's zone - the same test a
         rediscovered level already passes. `agree` then records that both found
         it, which is the whole reason for doing this rather than choosing.
         """
@@ -589,7 +604,7 @@ class Engine:
     def supports(self, feed: str, interval: str) -> bool:
         """Can this instrument carry a level at this resolution?
 
-        Judged on how many ticks fit inside a zone — see `MIN_TICKS_PER_ZONE`.
+        Judged on how many ticks fit inside a zone - see `MIN_TICKS_PER_ZONE`.
         Silent about what it cannot judge: an estimate that is not warm, or an
         instrument that has not yet printed a single-step move, is missing
         evidence rather than evidence of a problem, and suppressing on that
@@ -614,7 +629,7 @@ class Engine:
     def drop_unsupported(self) -> int:
         """Decline every pair whose grid is too coarse, now rather than later.
 
-        `reform` applies the same rule, but only when a series comes due —
+        `reform` applies the same rule, but only when a series comes due -
         `REFORM_EVERY` is twenty bars, so a 15m series carries levels it should
         not have for five hours after a restart, producing touches and calls
         from them the whole time. The gate was correct and slow, and a restart
@@ -631,7 +646,7 @@ class Engine:
             self._declined.add((feed, interval))
             dropped += 1
             log.info(
-                "levels: %s %s declines a level — the grid is too coarse for a "
+                "levels: %s %s declines a level - the grid is too coarse for a "
                 "zone to be entered rather than crossed",
                 feed,
                 interval,
@@ -648,7 +663,7 @@ class Engine:
             if key not in self._declined:
                 self._declined.add(key)
                 log.info(
-                    "levels: %s %s declines a level — the grid is too coarse "
+                    "levels: %s %s declines a level - the grid is too coarse "
                     "for a zone to be entered rather than crossed",
                     series.feed,
                     series.interval,
@@ -672,8 +687,8 @@ class Engine:
         """Drop levels that are not earning their place.
 
         A swing price never returned to is not a level, it is a swing. On real
-        history most of them are exactly that — warming from a fortnight of
-        gold produced 148 levels of which 135 had never been touched — and
+        history most of them are exactly that - warming from a fortnight of
+        gold produced 148 levels of which 135 had never been touched - and
         keeping them means every price is near something.
 
         Two rules, in this order. **Anything with a touch stays**, however far
@@ -756,14 +771,14 @@ class Engine:
         so every attribute added since a state file was written is simply
         absent from the restored object. That is not theoretical: adding
         `_touch_eras` took the whole structures service down on the next
-        deploy — restored models, then `AttributeError` on the first bar, five
+        deploy - restored models, then `AttributeError` on the first bar, five
         seconds after start. Nothing consumed the bus afterwards, so the
         symptom was dropped quotes and a silent journal rather than anything
         naming the cause.
 
         Filling the gaps from a default-constructed engine rather than from a
         hand-written list of names, because the hand-written list is the part
-        that goes stale — it would need editing every time a field is added,
+        that goes stale - it would need editing every time a field is added,
         which is precisely the thing nobody remembers to do. Anything the state
         carries wins; anything it lacks arrives at its default.
         """
@@ -774,8 +789,8 @@ class Engine:
 
         The finest one available *at that moment*, which is not the same as the
         finest one overall and is the whole subtlety here. Venues keep far less
-        fine history than coarse — Yahoo serves seven days of 1m against
-        decades of 1w — so a replay of a few hundred bars per interval covers
+        fine history than coarse - Yahoo serves seven days of 1m against
+        decades of 1w - so a replay of a few hundred bars per interval covers
         hours at 1m and years at 1w. Pinning the touch check to the globally
         finest series therefore leaves every earlier era untouched: on gold,
         1w and 4h opened *zero* touches across 20,159 replayed bars, and their
@@ -804,7 +819,7 @@ class Engine:
         """Era boundaries from the earliest time per interval.
 
         The half of `_eras` that does the work. Split out because the other
-        half — finding those earliest times — was reading three hundred
+        half - finding those earliest times - was reading three hundred
         thousand rows to produce six numbers, and SQLite can answer it with a
         GROUP BY.
         """
@@ -838,7 +853,7 @@ class Engine:
 
         **Forming and touching are separate jobs**, and this used to do both at
         one resolution. A daily level warmed from daily bars had its origins
-        quantised to the day — and since a cold start replays six-figure bar
+        quantised to the day - and since a cold start replays six-figure bar
         counts, that was most of what any level knew about itself.
 
         So: every bar forms levels for its own interval, and only the *finest*
@@ -847,7 +862,7 @@ class Engine:
         checked every interval on every quote and is why the live path never
         had this problem.
 
-        The trap the doc warns about is running both — keeping the per-interval
+        The trap the doc warns about is running both - keeping the per-interval
         check and adding a fine-grained pass on top, which would count every
         interaction twice. The `return []` below is what avoids it: a coarse
         bar forms and then stops, rather than also touching.
@@ -880,7 +895,7 @@ class Engine:
         # deliberately answers again on every venue that reports a bar, so the
         # median improves within a sweep rather than waiting; `Series.add`
         # handles the repeat by overwriting. A volatility estimate has no such
-        # handling — folding the same close in once per venue fed it a run of
+        # handling - folding the same close in once per venue fed it a run of
         # zero returns and dragged the estimate down by however many venues
         # report past quorum. Measured on the live feeds: six venues on EURUSD
         # and GBPUSD divided it by four, five on XAUUSD by three, four on
@@ -895,7 +910,7 @@ class Engine:
             vol.update(float(close))
         # Pivots are session structures priced at today's scale, so they use the
         # reference estimate rather than the bar interval that happened to
-        # deliver them — a 4h bar completing a day does not make it a 4h level.
+        # deliver them - a 4h bar completing a day does not make it a 4h level.
         self._roll_sessions(feed, when, high, low, float(close), self.reference(feed))
         self._resolve_shapes(series, vol)
         if not series.ready:
@@ -904,7 +919,7 @@ class Engine:
             self.reform(series, when)
 
         # Formed. Whether this bar also *touches* is a separate question, and
-        # the answer is no unless it is the finest series this instrument has —
+        # the answer is no unless it is the finest series this instrument has -
         # otherwise the same interaction would be counted once here and again
         # when the fine bars arrive.
         if interval != self.touch_interval(feed, when):
@@ -912,7 +927,7 @@ class Engine:
         if not fresh:
             # ...and once per bar, for the same reason the volatility estimate
             # is. `Consensus.observe` answers again on every venue row, and the
-            # median *moves* as venues arrive — on spx500, whose venues quote
+            # median *moves* as venues arrive - on spx500, whose venues quote
             # genuinely different absolute prices, it moves by more than four
             # volatility units within a single bar. Checking touches on each
             # row fed that jitter to the tracker as though it were price: a
@@ -920,11 +935,11 @@ class Engine:
             # at the same timestamp, having observed nothing but the median
             # rearranging itself. That is 45% of resolutions in this replay and
             # 46% in the production journal, and it is why two runs of the same
-            # replay disagree — venue arrival order is not stable.
+            # replay disagree - venue arrival order is not stable.
             return []
         calls: list[Call] = []
         # A bar is stamped with its **open** time, but it is not knowable until
-        # it closes — and quotes carry wall clock. Feeding both to one tracker
+        # it closes - and quotes carry wall clock. Feeding both to one tracker
         # mixed two clocks a bar apart: a touch opened by a quote and resolved
         # by the bar that closed after it recorded a *negative* duration, which
         # is 10% of resolved touches in the journal, every one of them 5m and
@@ -935,7 +950,7 @@ class Engine:
         # ...but never later than now, because the bar being delivered is
         # usually the one still forming. Stamping that one at its close puts it
         # up to a whole interval in the *future*, and a quote arriving in the
-        # meantime then resolves a touch before it started — the same negative
+        # meantime then resolves a touch before it started - the same negative
         # duration this line was written to remove, in the other direction.
         # Measured on production: it took negatives from 1.7% of outcomes to
         # 5.7%, at -98, -98, -98, -7 and -1 seconds rather than the clean one
@@ -956,7 +971,7 @@ class Engine:
     def observe_quote(self, payload: dict) -> list[Call]:
         """A quote moves price against existing levels without re-forming them.
 
-        Quotes are what make a touch detectable in time to matter — waiting for
+        Quotes are what make a touch detectable in time to matter - waiting for
         a 5m bar to close means reporting the interaction after it happened.
         """
         feed = str(payload.get("feed") or "")
@@ -973,7 +988,7 @@ class Engine:
         # distance that resolves a touch.
         agreed = self.quotes.observe(feed, str(payload.get("venue") or ""), when, float(mid))
         # Quotes feed the tick-level estimate, which is the common denominator
-        # every timeframe's levels are ranked against — so it takes the agreed
+        # every timeframe's levels are ranked against - so it takes the agreed
         # price too, or the disagreement between venues is counted as movement
         # and inflates the very denominator everything else is divided by.
         vol = self.vol.of(feed)
@@ -993,14 +1008,14 @@ class Engine:
         The same quantity on every instrument and timeframe, which is the only
         way it can be compared against an expected push measured the same way.
         A spread of 3bps is nothing on a violent daily chart and most of the
-        move on a quiet 3m one — in units, that difference is the answer rather
+        move on a quiet 3m one - in units, that difference is the answer rather
         than something a reader has to hold in their head.
 
         A **median** over a recent window, for the reason the consensus is also
         a median: a mean is dragged by the outlier it exists to ignore. The cost
         that matters is what this instrument normally costs to trade, not
         whatever the spread happened to be in the microsecond a level was
-        touched — one wide print during a release must not disqualify an edge
+        touched - one wide print during a release must not disqualify an edge
         that is ordinarily takeable. An exponential average was tried first and
         is not good enough here: at a 0.1 weight a single hundred-fold print
         moved the charged cost tenfold, which would silence a whole instrument
@@ -1027,8 +1042,8 @@ class Engine:
         level, to the journal and to `facto`, and only the first was being
         delivered.
         """
-        # The origin, not the extreme. The extreme is a wick — liquidity taken
-        # a fraction beyond the level at a price nobody traded around — while
+        # The origin, not the extreme. The extreme is a wick - liquidity taken
+        # a fraction beyond the level at a price nobody traded around - while
         # the origin is where the leg in ended and the leg out began, which is
         # the price the level is actually drawn at.
         level.observe_touch(done.origin or done.extreme, vol, when)
@@ -1045,8 +1060,8 @@ class Engine:
         """Is this instrument's market open, or have its bars simply stopped?
 
         Judged on **bars**, because quotes keep arriving after a market shuts.
-        On a Saturday morning the FX venues were still answering every poll —
-        quotes sixteen minutes old — while the last 3m bar was nine hours old.
+        On a Saturday morning the FX venues were still answering every poll -
+        quotes sixteen minutes old - while the last 3m bar was nine hours old.
         Those quotes carry Friday's closing price, and price that cannot move
         is not price arriving at a level.
 
@@ -1055,13 +1070,13 @@ class Engine:
         AUDUSD both alerted on a Saturday, with a `down 97%` on a market where
         nothing could go anywhere.
 
-        `GAP_FACTOR` is the same judgement applied at the other end — it throws
+        `GAP_FACTOR` is the same judgement applied at the other end - it throws
         away a touch that *spans* a closure, because the reopening gap is not a
         reaction. This stops one being opened inside a closure at all.
 
         Silent about instruments it cannot judge: no series, or none yet, means
-        no evidence of a closure rather than evidence of one, and crypto — which
-        genuinely trades all weekend — keeps printing bars and passes.
+        no evidence of a closure rather than evidence of one, and crypto - which
+        genuinely trades all weekend - keeps printing bars and passes.
         """
         interval = self.touch_interval(feed, when)
         series = self._series.get((feed, interval))
@@ -1073,7 +1088,7 @@ class Engine:
         """Deliver the touches `expire` closed on the clock rather than a price.
 
         `Tracker.expire` closes them, sets an outcome and folds them into the
-        kNN memory — and its return value was discarded, so that memory was the
+        kNN memory - and its return value was discarded, so that memory was the
         only place they reached. No `level.record`, no Kalman update, nothing in
         `_resolved`, so nothing in the journal and nothing in `facto`. Measured
         on a replay of the stored bars: 26.7% of all resolutions, and because
@@ -1083,7 +1098,7 @@ class Engine:
         Touches are keyed by (feed, price) and `expire` hands back only the
         touch, but a `Touch` carries its feed, interval and level price, so the
         level can be found again without the tracker holding a reference to it
-        — which matters, because the engine is pickled and a new field would
+        - which matters, because the engine is pickled and a new field would
         have to be migrated.
         """
         expired = self.tracker.expire(when)
@@ -1100,13 +1115,13 @@ class Engine:
                 # The level was re-formed or pruned while the touch was open.
                 # Nothing to credit it to; the kNN memory already has it.
                 continue
-            # `expire` cannot do this itself — it has the touch, not the level.
+            # `expire` cannot do this itself - it has the touch, not the level.
             level.record(touch.features.side, touch.outcome, touch.push_vol, when)
             if touch.outcome is lv.Outcome.BREAK and touch.broke_at:
                 level.broke_at = touch.broke_at
             # Held back, which the resolving path does and this one did not.
             # A touch that expired did so because price sat at the level and
-            # never went anywhere, so price is still there — and leaving the
+            # never went anywhere, so price is still there - and leaving the
             # level re-armed opened another touch against the same visit on the
             # very next observation, which produced another call and another
             # alert. On a market that has closed, where the price is frozen and
@@ -1114,7 +1129,7 @@ class Engine:
             # USDCNH and AUDUSD at the same levels on a Saturday morning.
             #
             # `True` rather than `contains(price)` because there is no current
-            # price here — expiry is a clock event. It is also the right answer:
+            # price here - expiry is a clock event. It is also the right answer:
             # the visit is not over, only this observation of it. `check`
             # re-arms it once price is REARM_VOL away, which is what "over"
             # means.
@@ -1144,7 +1159,7 @@ class Engine:
         opens a touch part way through a bar; the bar then arrives carrying a
         low and a high that describe the *whole* period, including the minutes
         before that touch existed. Applied to it, the touch resolves instantly
-        on movement that predates it — recording a large push, a duration of
+        on movement that predates it - recording a large push, a duration of
         zero, and `run_vol` of exactly 0.00 because no leg in was ever seen.
 
         That was **33.6% of production outcomes**, and 41.9% of 3m ones. See
@@ -1170,9 +1185,9 @@ class Engine:
                     None if within else high,
                 )
                 if done is not None:
-                    # The origin, not the extreme. The extreme is a wick —
+                    # The origin, not the extreme. The extreme is a wick -
                     # liquidity taken a fraction beyond the level at a price
-                    # nobody traded around — while the origin is where the leg
+                    # nobody traded around - while the origin is where the leg
                     # in ended and the leg out began, which is the price the
                     # level is actually drawn at.
                     self._deliver(level, done, vol, when)
@@ -1186,7 +1201,7 @@ class Engine:
             if not level.contains(price, vol):
                 # Out of the zone is not the same as away from the level. Price
                 # sitting on the edge crosses it constantly, and re-arming on
-                # each crossing counts a consolidation as dozens of turns — the
+                # each crossing counts a consolidation as dozens of turns - the
                 # residue of the same bug the `waiting` flag was added for,
                 # which the flag alone did not reach.
                 if abs(level.distance_vol(price, vol)) >= lv.REARM_VOL:
@@ -1273,7 +1288,7 @@ class Engine:
         return touched
 
     def _approach(self, level: lv.Level, price: float) -> lv.Side:
-        """Which side price came from — the previous bar, not the current one.
+        """Which side price came from - the previous bar, not the current one.
 
         Using the current price would be circular: inside the zone, price is by
         definition next to the level, and the question is where it came *from*.
@@ -1286,8 +1301,8 @@ class Engine:
     def reference(self, feed: str) -> Volatility:
         """The estimate levels from every timeframe are compared against.
 
-        Cross-timeframe questions — which level is nearest, is this one worth
-        acting on — need one denominator, or "three volatility units away" means
+        Cross-timeframe questions - which level is nearest, is this one worth
+        acting on - need one denominator, or "three volatility units away" means
         something different for each level and they cannot be ranked.
         """
         tick = self.vol.of(feed)
@@ -1327,7 +1342,7 @@ class Engine:
         """Warm the windows from stored history. Returns bars replayed.
 
         Without this the engine can only learn from the bus, which carries a
-        *notice* per sweep rather than a series — roughly one bar per venue per
+        *notice* per sweep rather than a series - roughly one bar per venue per
         minute. Levels need hundreds, so bootstrapping from the bus alone would
         take days while a backfilled store already holds the history.
 
@@ -1338,7 +1353,7 @@ class Engine:
         Bars are replayed in time order through the ordinary path, so levels
         form from confirmed swings exactly as they would live, and the touch
         statistics that make the directional inference work exist from the
-        first minute. Calls produced during the replay are discarded — they
+        first minute. Calls produced during the replay are discarded - they
         describe touches that happened days ago, and publishing them would
         alert on history.
         """
@@ -1360,7 +1375,7 @@ class Engine:
         replayed = 0
         feeds_seen: set[str] = set()
         # A cold start replays six-figure bar counts and says nothing until it
-        # finishes, which is minutes of a service that looks hung — and the one
+        # finishes, which is minutes of a service that looks hung - and the one
         # thing this project keeps relearning is that silence has to say which
         # kind it is. `on_progress` lets a terminal draw a bar; without one the
         # log carries it, because that is where a running service is read from.

@@ -1,7 +1,7 @@
 """Recording decisions, and closing the loop on them later.
 
 A decision journalled without what happened next is not something anyone can
-learn from — it is half a training example. So `decide()` returns the entry's
+learn from - it is half a training example. So `decide()` returns the entry's
 id and `outcome()` takes it, which is the only structure a later model needs to
 pair the two.
 
@@ -57,7 +57,7 @@ async def decide(
 ) -> str:
     """Record a choice and the reasoning behind it.
 
-    `context` should be the state the choice was made *from*, copied in — the
+    `context` should be the state the choice was made *from*, copied in - the
     numbers as they read at that moment, not a pointer to a table that will
     have moved on by the time anyone reads this back.
     """
@@ -139,7 +139,7 @@ def _inherited_tags(journal: Journal | None, parent: str) -> tuple[str, ...]:
     """Take the decision's tags when the outcome was not given its own.
 
     Without this an outcome is invisible to a tag filter, which loses exactly
-    the entry an analyst most needs — the one saying the thing it is looking at
+    the entry an analyst most needs - the one saying the thing it is looking at
     resolved itself last time.
     """
     if journal is None:
@@ -160,7 +160,7 @@ async def note(
     tags: Sequence[str] = (),
     bus: Bus | None = None,
 ) -> str:
-    """Human context — why a threshold changed, what a run was for."""
+    """Human context - why a threshold changed, what a run was for."""
     return await record(
         journal,
         Entry(title=title, kind=Kind.NOTE, actor=actor, rationale=rationale, tags=tuple(tags)),

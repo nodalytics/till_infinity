@@ -1,6 +1,6 @@
 # Logging
 
-`till_infinity.logging` owns configuration. Modules never configure anything —
+`till_infinity.logging` owns configuration. Modules never configure anything -
 they ask for a logger and use it:
 
 ```python
@@ -22,7 +22,7 @@ setup_logging(verbose=True, log_file="logs/till.log")
 ## Where records go
 
 Console records go to **stderr** through rich, so stdout stays clean for piped
-data — `till-infinity prices info | grep gold` is unaffected by log output.
+data - `till-infinity prices info | grep gold` is unaffected by log output.
 
 `--log-file` (or `log_file=`) adds a second handler writing **newline-delimited
 JSON**, rotated at 32 MB with 5 backups. That is the format you want when a
@@ -46,7 +46,7 @@ field you can filter on rather than a string you have to parse.
 | `setup_logging("ERROR")` | explicit level wins over both flags |
 | `TILL_LOG_LEVEL=DEBUG` | used when nothing else is passed |
 
-`setup_logging()` is idempotent — calling it again is a no-op unless you pass
+`setup_logging()` is idempotent - calling it again is a no-op unless you pass
 `force=True`. `reset_logging()` tears the configuration down, which is what the
 tests use.
 
@@ -54,7 +54,7 @@ tests use.
 
 httpx logs a line per request, and yfinance is worse. Those loggers
 (`httpx`, `httpcore`, `websockets`, `wsproto`, `yfinance`, `urllib3`, …) are
-pinned to WARNING so they cannot drown out our own records — except under
+pinned to WARNING so they cannot drown out our own records - except under
 `-v`, where you presumably want to see them.
 
 ## Environment

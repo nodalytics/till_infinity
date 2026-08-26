@@ -43,7 +43,7 @@ def _bars():
                 "high": float(high),
                 "low": float(low),
                 "close": float(close),
-                # Not consumed by the engine, which ignores it — carried so
+                # Not consumed by the engine, which ignores it - carried so
                 # experiments can ask whether volume at a touch says anything.
                 "volume": float(volume) if volume is not None else 0.0,
             }

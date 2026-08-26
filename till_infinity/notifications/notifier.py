@@ -2,7 +2,7 @@
 
 A notifier is bound to one *channel*, not one provider: sending to four
 Telegram chats means four notifiers sharing a token. That keeps a per-channel
-failure per-channel — a deleted webhook cannot take the other three with it.
+failure per-channel - a deleted webhook cannot take the other three with it.
 
 Both providers rate-limit with a 429 carrying the exact number of seconds to
 wait. Honouring that number is the difference between a delivered alert and a
@@ -29,7 +29,7 @@ class NotConfiguredError(NotifierError):
 
 
 class PermanentError(NotifierError):
-    """Bad token, unknown chat, deleted webhook — retrying cannot help."""
+    """Bad token, unknown chat, deleted webhook - retrying cannot help."""
 
 
 class TransientError(NotifierError):

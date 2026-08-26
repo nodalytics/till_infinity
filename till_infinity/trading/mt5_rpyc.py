@@ -20,8 +20,8 @@ The usual arrangement is the `mt5linux` package, which packages exactly this.
 
 ## What it costs, and what is done about it
 
-**Every attribute access is a round trip.** RPyC returns *netrefs* — handles to
-objects that still live on the other side — so reading `position.ticket`,
+**Every attribute access is a round trip.** RPyC returns *netrefs* - handles to
+objects that still live on the other side - so reading `position.ticket`,
 `.symbol`, `.volume` off a returned namedtuple is three calls over a socket,
 not three memory reads. `NativeBroker._position_from` touches eleven fields,
 and `spec` touches a dozen more.
@@ -29,7 +29,7 @@ and `spec` touches a dozen more.
 So results are **materialised** as they arrive: `_call` pulls each one across
 in full, once, and hands local data to the code above. On a list of positions
 that turns dozens of round trips into one. Where materialising is not possible
-the netref is passed through unchanged rather than failing — it still works,
+the netref is passed through unchanged rather than failing - it still works,
 just slowly, which is the right way round for a fallback.
 
 The module proxy itself is deliberately *not* materialised. It is the live
@@ -38,7 +38,7 @@ handle to the terminal, and copying it locally is neither possible nor wanted.
 **Compared with the HTTP bridge**, this is the lower-latency option and the
 more complete one: the whole MT5 API surface is available rather than the
 subset somebody wrapped in FastAPI, and there is no JSON round trip. What it
-gives up is the bridge's isolation — an RPyC server with `allow_all_attrs` is a
+gives up is the bridge's isolation - an RPyC server with `allow_all_attrs` is a
 remote-code-execution service, so it must never listen on a public interface.
 Bind it to localhost, or to a private network, and reach it over SSH or a
 tunnel if the terminal is on another host.
@@ -99,7 +99,7 @@ class RpycBroker(NativeBroker):
             ) from exc
 
         # The remote terminal still has to be initialised, exactly as a local
-        # one does — the proxy is a way of calling it, not a way of starting it.
+        # one does - the proxy is a way of calling it, not a way of starting it.
         kwargs: dict[str, Any] = {}
         if self.settings.terminal:
             kwargs["path"] = self.settings.terminal
@@ -115,7 +115,7 @@ class RpycBroker(NativeBroker):
             raise NotConnectedError(f"MT5 initialize failed on {host}: {message} ({code})")
 
         account = await self.account()
-        log.info("trading: attached to MT5 at %s:%d over rpyc — %s", host, port, account)
+        log.info("trading: attached to MT5 at %s:%d over rpyc - %s", host, port, account)
         return account
 
     async def close(self) -> None:
@@ -130,7 +130,7 @@ class RpycBroker(NativeBroker):
     async def _call(self, name: str, *args: Any, **kwargs: Any) -> Any:
         """Call the remote module and bring the answer across whole.
 
-        The materialisation is the point — see the module docstring. Without it
+        The materialisation is the point - see the module docstring. Without it
         every field read by the code above is its own socket round trip.
         """
         return self._local(await super()._call(name, *args, **kwargs))

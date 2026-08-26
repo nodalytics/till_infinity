@@ -6,8 +6,8 @@ treated as Anthropic's, which keeps `claude-opus-5` working as it always has.
 
 Two things are provider-shaped and everything else is not:
 
-**Reasoning.** Every provider spells it differently — Anthropic takes
-`anthropic_thinking`, OpenAI an effort level, Google a thinking config — so
+**Reasoning.** Every provider spells it differently - Anthropic takes
+`anthropic_thinking`, OpenAI an effort level, Google a thinking config - so
 `reasoning()` maps one `thinking` switch onto whichever key the provider wants.
 The settings objects are TypedDicts, which are plain dicts at runtime, so this
 needs no import from an SDK that may not be installed.
@@ -34,7 +34,7 @@ class Provider:
     name: str
     #: Environment variables that carry this provider's credential, in the
     #: order its client checks them. A tuple because more than one provider
-    #: accepts more than one name — Google reads GOOGLE_API_KEY or
+    #: accepts more than one name - Google reads GOOGLE_API_KEY or
     #: GEMINI_API_KEY, and a single name would report a working setup as broken.
     env: tuple[str, ...]
     #: uv extra that installs its client, when one is needed.
@@ -104,7 +104,7 @@ def provider_for(model: str) -> Provider:
 def ready(model: str) -> bool:
     """Whether this model can be used right now.
 
-    A provider we have never heard of is assumed usable — better to let it try
+    A provider we have never heard of is assumed usable - better to let it try
     and fail with the SDK's own message than to refuse something that works.
     """
     known = provider_for(model)

@@ -7,7 +7,7 @@ Two of today's results appear to contradict each other.
   features.md   nothing in `Features` predicts direction beyond `side`
 
 For a touch from above, "the level held" and "price went up" are the same
-event, so those cannot both be true — unless the record is not among the
+event, so those cannot both be true - unless the record is not among the
 features. It is not. `Features` carries `strength`, the composite that
 strength.md found loses to its own best term, and `experience`, a bare count.
 The record itself is never handed to the model.

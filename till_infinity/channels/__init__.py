@@ -1,4 +1,4 @@
-"""channels — async multi-producer / multi-consumer channels.
+"""channels - async multi-producer / multi-consumer channels.
 
 Inspired by Rust `async-channel` and Drakkar-Software/Async-Channel.
 Pluggable backends: in-memory (default) and Redis Streams.

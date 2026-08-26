@@ -4,12 +4,12 @@ Run: `python research/harness/vol.py`
 
 Every threshold in this project is denominated in volatility units.
 `resolve_vol` is 1.5 of them, `MIN_ZONE_VOL` is 0.35, `KEEP_VOL` is 8,
-`GRID_ZONE_VOL` is 0.75. If the denominator is wrong the whole scale is wrong —
+`GRID_ZONE_VOL` is 0.75. If the denominator is wrong the whole scale is wrong -
 and it had never been checked.
 
 `Volatility` is an exponentially weighted **mean absolute return**, so its claim
 is precise and testable: the next bar's absolute return should be about `bps`,
-on average. Walk-forward throughout — the estimate is read *before* the bar it
+on average. Walk-forward throughout - the estimate is read *before* the bar it
 is judged on.
 
 ## It is well calibrated, and mistuned
@@ -30,9 +30,9 @@ is judged on.
 | 1d | **model** | 363,390 | 0.98 | **0.446** |
 | 1d | flat 20 | 363,390 | 1.00 | 0.443 |
 
-**The level is right**: a ratio of 0.96–1.00 means the estimate really is the
+**The level is right**: a ratio of 0.96-1.00 means the estimate really is the
 size of a typical move, which is what it claims. Both beat naive persistence by
-a wide margin — using the last bar's move scores 0.199 to 0.340, and the gap
+a wide margin - using the last bar's move scores 0.199 to 0.340, and the gap
 *widened* on more data.
 
 **A flat twenty-bar mean still matches or beats it at every interval except
@@ -42,7 +42,7 @@ one.** The margins narrowed almost to nothing at 1m (0.587 vs 0.586) and 15m
 
 That is a weaker version of the original finding rather than a reversal. An
 exponentially weighted estimator that merely *ties* an unweighted window is
-still not earning its form — but "beaten everywhere" has become "beaten at 5m,
+still not earning its form - but "beaten everywhere" has become "beaten at 5m,
 level elsewhere", and the honest summary is that the two are hard to tell
 apart outside 5m, where the flat window is clearly better by 0.045.
 
@@ -56,7 +56,7 @@ apart outside 5m, where the flat window is clearly better by 0.045.
 
 A genuine interior optimum at **7 to 10 bars**, the same at every interval,
 worth +0.034 to +0.047 of correlation over the current 60. Calibration improves
-too: the ratio goes from 0.96–0.99 to 1.00.
+too: the ratio goes from 0.96-0.99 to 1.00.
 
 The first sweep stopped at h=10 and reported it as best, which was the edge of
 the grid rather than a maximum. Extending below it found the turn.
@@ -81,7 +81,7 @@ Correlation is the metric that improved. Levels and touches are what the
 estimate is *for*, so the replay was run at each half-life:
 
 **Measured on the 2026-08-15 dataset and not re-run**, unlike the rest of this
-document — the counts below are from six instruments over days. They are kept
+document - the counts below are from six instruments over days. They are kept
 because the conclusion drawn from them is "counts cannot answer this", which
 does not depend on the counts.
 
@@ -111,7 +111,7 @@ and setting the module global afterwards does nothing. It is set through
 Run: `python research/harness/halflife.py`
 
 The forecast is not what the estimate is for, so the edge machinery was run at
-each half-life — every call paired with the outcome of the touch it opened,
+each half-life - every call paired with the outcome of the touch it opened,
 scored on the things a gate consumes.
 
 | half_life | calls | direction | holds | push | separation |
@@ -131,21 +131,21 @@ The spread across all four was 3.1 points on 1,900 calls; it is 0.8 points on
 10,500. An effect that shrinks by four as the sample grows by five is an effect
 that was never there.
 
-`separation` — what a gate actually consumes — still favours the current 60
+`separation` - what a gate actually consumes - still favours the current 60
 (16.5pp against 13.7 to 16.2), which is the one column that has not flattened.
 
 So **no half-life is measurably better for calls**, more firmly than before,
 and the honest reading is that the volatility estimate is not the bottleneck.
-`holds` — the trivial rule from [features.md](features.md) — beats the model at
+`holds` - the trivial rule from [features.md](features.md) - beats the model at
 every half-life, by 3.8 to 4.3 points, which is the same result that section
 reached and is untouched by any of this.
 
 ### Why this was worth running anyway
 
 It is the loop the previous section deliberately left open, and it closed the
-other way. Had `HALF_LIFE` been changed to 10 on the forecast evidence — which
+other way. Had `HALF_LIFE` been changed to 10 on the forecast evidence - which
 was strong, consistent across five intervals, and improved calibration as well
-— the result would have been a better forecast and slightly worse calls, with
+- the result would have been a better forecast and slightly worse calls, with
 nothing in the system to say so.
 
 **Optimising a component against its own metric is not optimising the system.**
@@ -157,8 +157,8 @@ happens to predict.
 
 ## What to do
 
-1. **Leave `HALF_LIFE` at 60.** Not because it is right — the forecast says it
-   is not — but because nothing that depends on it gets better when it changes,
+1. **Leave `HALF_LIFE` at 60.** Not because it is right - the forecast says it
+   is not - but because nothing that depends on it gets better when it changes,
    and a change with no measured benefit is churn. Re-measured on five times
    the calls, the four half-lives are within 0.8 points on direction and 60
    still leads on separation. This is now a well-tested "leave it alone".

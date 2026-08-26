@@ -43,7 +43,7 @@ FEEDS: dict[str, Feed] = {
         _feed(
             "gold",
             # Spot gold is quoted per broker; TVC:GOLD is TradingView's own index.
-            # Yahoo has no spot XAUUSD — GC=F (COMEX continuous) is the free stand-in.
+            # Yahoo has no spot XAUUSD - GC=F (COMEX continuous) is the free stand-in.
             tradingview=(
                 "OANDA:XAUUSD",
                 "PEPPERSTONE:XAUUSD",
@@ -58,7 +58,7 @@ FEEDS: dict[str, Feed] = {
             "btc",
             # Bybit is quoted on the USDT pair for all three of BTC, ETH and
             # SOL. It carries BYBIT:BTCUSD and BYBIT:ETHUSD as well, but not
-            # BYBIT:SOLUSD — checked, it returns symbol_error — so the USDT
+            # BYBIT:SOLUSD - checked, it returns symbol_error - so the USDT
             # form is the one that is uniform across the crypto feeds.
             tradingview=(
                 "BINANCE:BTCUSDT",
@@ -72,7 +72,7 @@ FEEDS: dict[str, Feed] = {
         ),
         # ETH and SOL take the same venue list as BTC, and every one of the ten
         # was checked against the live socket before being added rather than
-        # assumed from the BTC set — the cost of guessing wrong here is a
+        # assumed from the BTC set - the cost of guessing wrong here is a
         # symbol_error every sweep, forever, exactly as noted under us100.
         # DERIV was the doubtful one and does carry both.
         _feed(
@@ -124,7 +124,7 @@ FEEDS: dict[str, Feed] = {
             yahoo=("GBPUSD=X",),
         ),
         # The rest of the majors. One venue list, because every one of these is
-        # quoted by all six brokers — checked, not assumed.
+        # quoted by all six brokers - checked, not assumed.
         _feed(
             "usdjpy",
             tradingview=(
@@ -188,8 +188,8 @@ FEEDS: dict[str, Feed] = {
         _feed(
             "usdcnh",
             # The **offshore** yuan, and that is deliberate. Onshore USDCNY is
-            # carried by exactly one of our venues (FX_IDC) — OANDA, SAXO,
-            # FOREXCOM and DERIV all return symbol_error for it — which is
+            # carried by exactly one of our venues (FX_IDC) - OANDA, SAXO,
+            # FOREXCOM and DERIV all return symbol_error for it - which is
             # below the three-venue quorum a consensus bar needs, so a `usdcny`
             # feed would form no levels at all and do it silently. CNH is the
             # rate that trades outside the mainland's daily band, all six
@@ -207,7 +207,7 @@ FEEDS: dict[str, Feed] = {
         _feed(
             "us100",
             # The Nasdaq 100. Brokers quote a CFD on it under half a dozen
-            # names — NAS100USD, NAS100, NSXUSD, US100 — so the venue list is
+            # names - NAS100USD, NAS100, NSXUSD, US100 - so the venue list is
             # less uniform than for FX. SAXO, DERIV and BLACKBULL were checked
             # and do not carry it; asking anyway would log a symbol_error every
             # sweep, forever, for a symbol nobody expects to appear.
@@ -248,7 +248,7 @@ DEFAULT_SOURCES: tuple[str, ...] = (TRADINGVIEW, YAHOO)
 #: first shipped would have deleted precisely nothing while reporting success.
 #:
 #: 1,000 is what the seed needs with room to spare. `Engine.seed` reads
-#: `bars * 8` rows per `(feed, interval)` — 4,000 — and those are shared across
+#: `bars * 8` rows per `(feed, interval)` - 4,000 - and those are shared across
 #: the dozen venue-and-source series that make up one instrument's timeframe,
 #: so each needs on the order of 333. Three times that is margin enough for a
 #: feed whose venues report unevenly, and it removes about a fifth of the table
@@ -258,7 +258,7 @@ DEFAULT_SOURCES: tuple[str, ...] = (TRADINGVIEW, YAHOO)
 #: knows nothing about the models that read it, and should not start now for a
 #: constant. If that window changes, this is the other number to look at.
 #:
-#: A count rather than a duration, and the same count for every interval — the
+#: A count rather than a duration, and the same count for every interval - the
 #: models consume a window of *bars*, and one number self-scales into roughly
 #: the horizon each timeframe's evidence survives anyway: 1,000 bars is about
 #: seventeen hours of 1m and about nineteen years of 1w.
@@ -320,7 +320,7 @@ SYMBOL_ALIASES: dict[str, str] = {
     "eurusd": "eurusd",
     "gbp": "gbpusd",
     "gbpusd": "gbpusd",
-    # The rest of the majors, under the desk names as well as the tickers —
+    # The rest of the majors, under the desk names as well as the tickers -
     # nobody asks for USDJPY out loud.
     "jpy": "usdjpy",
     "usdjpy": "usdjpy",
@@ -364,10 +364,10 @@ def resolve_symbols(values: Sequence[str] | None) -> tuple[Feed, ...]:
 
     Three forms are accepted, and they mix freely:
 
-    * a tracked instrument — ``gold``, ``xauusd``, ``btc``, ``eurusd`` — which
+    * a tracked instrument - ``gold``, ``xauusd``, ``btc``, ``eurusd`` - which
       brings along every broker configured for it;
     * ``VENUE:TICKER`` (``OANDA:XAUUSD``, ``YAHOO:GC=F``) for one exact series;
-    * a bare ticker (``AAPL``, ``BTC-USD``), which goes to Yahoo — TradingView
+    * a bare ticker (``AAPL``, ``BTC-USD``), which goes to Yahoo - TradingView
       needs the venue to resolve a symbol.
 
     With nothing passed, every feed in `DEFAULT_SYMBOLS` is tracked.

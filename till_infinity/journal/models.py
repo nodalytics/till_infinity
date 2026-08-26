@@ -5,7 +5,7 @@ moment**, with what was known then. A decision recorded without its reasoning
 is only a log line, and a log line teaches nobody anything later.
 
 `context` is the other half of that. It holds the state the decision was made
-from — the spreads as they read *then*, the calendar as it stood *then* —
+from - the spreads as they read *then*, the calendar as it stood *then* -
 copied in rather than referenced. That is deliberate and it is the whole point:
 the stores keep moving. Bars get corrected, an event's `actual` lands, a quote
 is superseded a second later. A journal entry that said "see the quotes table"
@@ -35,7 +35,7 @@ class Kind(StrEnum):
     OBSERVATION = "observation"
     #: What happened after an earlier entry. Links to it by `parent`.
     OUTCOME = "outcome"
-    #: Human context — why a threshold was changed, what a run was for.
+    #: Human context - why a threshold was changed, what a run was for.
     NOTE = "note"
 
     @classmethod
@@ -104,7 +104,7 @@ class Entry:
         )
 
     def __str__(self) -> str:
-        mark = {"decision": "→", "outcome": "✓", "observation": "·"}.get(str(self.kind), "—")
+        mark = {"decision": "→", "outcome": "✓", "observation": "·"}.get(str(self.kind), "-")
         who = f" [{self.actor}]" if self.actor else ""
         return f"{mark} {self.title}{who}"
 

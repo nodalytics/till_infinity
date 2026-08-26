@@ -227,8 +227,8 @@ def test_a_timeframe_outside_the_span_is_not_fused_in():
     """A level on a timeframe nothing builds on must not join a zone.
 
     The example used to be 1m, which is now in the span and so stopped being
-    an example of anything. 30m is in `ORDER` — it ranks, it is a real
-    duration — and is deliberately not in `TIMEFRAMES`, which is exactly the
+    an example of anything. 30m is in `ORDER` - it ranks, it is a real
+    duration - and is deliberately not in `TIMEFRAMES`, which is exactly the
     case this guards: ranking a timeframe is not the same as building on it.
     """
     vol = _vol()
@@ -249,7 +249,7 @@ def test_touch_history_is_pooled_across_timeframes():
 def test_a_zone_is_worth_its_best_member_and_not_more():
     """Averaging would let a weak 15m level drag down a strong 4h one.
 
-    Depth used to lift it instead — 15% per extra timeframe, so a 4-deep zone
+    Depth used to lift it instead - 15% per extra timeframe, so a 4-deep zone
     scored 45% above its best member. Measured against whether the level then
     held, breadth does not separate at all: four replays produced four
     different orderings, AUC 0.45-0.51, and a bootstrap over levels put the

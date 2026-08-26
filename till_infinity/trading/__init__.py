@@ -6,7 +6,7 @@
 
 The only part of this project that can lose money, and the only one that is
 written to fail closed: paper unless `TRADING_LIVE=1`, no order without a
-resolved symbol and a checked terminal, and every decision — taken or refused —
+resolved symbol and a checked terminal, and every decision - taken or refused -
 written to the journal beside the numbers it was made from.
 
 ```python
@@ -22,7 +22,7 @@ The pieces, in dependency order:
 | | |
 |---|---|
 | `config` | what to trade, on which terminal, and the arming switch |
-| `models` | sides, specs, ticks, intents, refusals — nothing broker-shaped |
+| `models` | sides, specs, ticks, intents, refusals - nothing broker-shaped |
 | `broker` | the port, and which of the four backends this host can run |
 | `symbols` | which instruments this broker actually offers, resolved once |
 | `sizing` | volatility units to price, price to lots |

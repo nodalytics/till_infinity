@@ -53,7 +53,7 @@ def _load_env() -> None:
     """Read `.env` before anything looks at the environment.
 
     Every setting here comes from an environment variable, which is right for
-    deployment and tedious for development — a dozen exports before a run, and
+    deployment and tedious for development - a dozen exports before a run, and
     one forgotten export produces a service that starts and silently does less.
     A `.env` file makes the whole configuration one reviewable thing.
 
@@ -260,7 +260,7 @@ def bars_command(
     once,
     publish,
 ):
-    """Keep candles current — sweep for newly closed bars, forever."""
+    """Keep candles current - sweep for newly closed bars, forever."""
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
     settings = _settings(db, data_dir, include_partial)
     if cycle is not None:
@@ -306,7 +306,7 @@ def bars_command(
     type=int,
     default=px.DEFAULT_RETAIN_BARS,
     show_default=True,
-    help="Bars to keep per series — per source, feed, venue, ticker and interval.",
+    help="Bars to keep per series - per source, feed, venue, ticker and interval.",
 )
 @click.option(
     "--vacuum",
@@ -324,7 +324,7 @@ def prune(db, data_dir, keep, vacuum, yes):
     half of 1m and about forty years of 1w, which is roughly how far back each
     one's evidence is worth anything anyway.
 
-    Deleting does not shrink the file — SQLite frees the pages for reuse, so
+    Deleting does not shrink the file - SQLite frees the pages for reuse, so
     growth stops but the size does not fall until it is rebuilt. `--vacuum`
     rebuilds it, and wants room for a second copy while it runs, which is
     exactly what is scarce when this is being reached for.
@@ -401,7 +401,7 @@ def info(store_kind, db, data_dir):
     "--poll",
     type=float,
     help=(
-        "Seconds between summary lines. The socket source streams — it writes on "
+        "Seconds between summary lines. The socket source streams - it writes on "
         "every update regardless; only the scanner and yahoo re-fetch on this "
         "interval. Default: PRICES_QUOTE_POLL (15)."
     ),
@@ -422,7 +422,7 @@ def quotes(
     all_ticks,
     publish,
 ):
-    """Stream live bid/ask across brokers — cross-broker spread and lead-lag."""
+    """Stream live bid/ask across brokers - cross-broker spread and lead-lag."""
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
     settings = _settings(db, data_dir, include_partial=False)
     if poll is not None:
@@ -496,7 +496,7 @@ def _clock() -> str:
 class _Ticker:
     """One line per tick: the tightest quote per instrument, and which way it moved.
 
-    Deliberately not one line per broker per update — that is thousands of lines
+    Deliberately not one line per broker per update - that is thousands of lines
     an hour and nobody reads it. This is a glance, and the database has the rest.
     """
 
@@ -549,7 +549,7 @@ def collect_command(
     once,
     publish,
 ):
-    """Run bars and quotes together — the everyday collector.
+    """Run bars and quotes together - the everyday collector.
 
     Candles are swept on the slower clock while quotes stream continuously.
     `--source` selects candle providers; quotes use the default socket transport.
@@ -766,7 +766,7 @@ def latest(limit, source, db):
 
     rows = run(go())
     if not rows:
-        console.print("no headlines stored yet — run `till-infinity news collect --once`")
+        console.print("no headlines stored yet - run `till-infinity news collect --once`")
         return
     table = Table(show_lines=False)
     for column in ("when", "source", "headline"):
@@ -790,7 +790,7 @@ def upcoming(limit, high, db):
 
     rows = run(go())
     if not rows:
-        console.print("no events stored yet — run `till-infinity news collect --once`")
+        console.print("no events stored yet - run `till-infinity news collect --once`")
         return
     table = Table()
     for column in ("when", "country", "impact", "event", "forecast", "previous"):
@@ -868,7 +868,7 @@ def notify_send(message, title, level, target, url, field, verbose):
     results = run(nt.notify(notification, targets=target or None))
     if not results:
         console.print(
-            "[yellow]no target configured[/] — set TELEGRAM_BOT_TOKEN and "
+            "[yellow]no target configured[/] - set TELEGRAM_BOT_TOKEN and "
             "TELEGRAM_CHAT_ID, or DISCORD_WEBHOOK_URL"
         )
         raise SystemExit(1)
@@ -929,7 +929,7 @@ def notify_chats(verbose):
 
     if not chats:
         console.print(
-            "no chats seen. Telegram's getUpdates only covers the last 24 hours — "
+            "no chats seen. Telegram's getUpdates only covers the last 24 hours - "
             "send the bot a message, or post in the group, then try again."
         )
         return
@@ -962,7 +962,7 @@ def notify_test(target):
     )
     results = run(nt.notify(notification, targets=target or None))
     if not results:
-        console.print("[yellow]no target configured[/] — see `till-infinity notify targets`")
+        console.print("[yellow]no target configured[/] - see `till-infinity notify targets`")
         raise SystemExit(1)
     for delivery in results:
         mark = "[green]✓[/]" if delivery.ok else "[red]✗[/]"
@@ -994,7 +994,7 @@ def notify_listen(target, redis_url, group, verbose, quiet, log_file):
 
     This is the consumer end of `--publish`: an agent puts an alert on the
     `alerts` topic and this turns it into Telegram and Discord messages. It
-    needs Redis to hear another process — an in-process bus only reaches
+    needs Redis to hear another process - an in-process bus only reaches
     publishers in this one.
     """
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
@@ -1002,7 +1002,7 @@ def notify_listen(target, redis_url, group, verbose, quiet, log_file):
     bus = Bus(redis_url=url)
     if url is None:
         console.print(
-            "[yellow]no redis configured[/] — listening on an in-process bus, "
+            "[yellow]no redis configured[/] - listening on an in-process bus, "
             "which only hears publishers inside this command. "
             "Set TILL_REDIS_URL or pass --redis to consume from a collector."
         )
@@ -1053,7 +1053,7 @@ agent_options = [
         "--model",
         "-m",
         help=(
-            "provider:model — openai:gpt-5, google:gemini-2.5-pro, xai:grok-4. "
+            "provider:model - openai:gpt-5, google:gemini-2.5-pro, xai:grok-4. "
             f"A bare name is Anthropic's. Default: {ag.DEFAULT_MODEL}."
         ),
     ),
@@ -1074,7 +1074,7 @@ def _agent_common(func):
 def _show(run: ag.Run) -> None:
     console.print(f"[bold]{escape(run.analysis.summary)}[/]")
     if not run.analysis.findings:
-        console.print("[dim]no findings — the data does not support an alert[/]")
+        console.print("[dim]no findings - the data does not support an alert[/]")
     for finding in run.analysis.findings:
         colour = {"critical": "red", "warning": "yellow"}.get(finding.level, "cyan")
         console.print(
@@ -1095,7 +1095,7 @@ def _show(run: ag.Run) -> None:
 def agents_ask(question, role_name, model, prices_db, news_db, verbose, quiet, log_file):
     """Ask a question about the stored data.
 
-    The analyst answers only from tool calls against the databases — it has no
+    The analyst answers only from tool calls against the databases - it has no
     prices of its own, and every store it reads is opened read-only.
     """
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
@@ -1159,7 +1159,7 @@ def agents_watch(
     bus = Bus(redis_url=url)
     if url is None:
         console.print(
-            "[yellow]no redis configured[/] — an in-process bus only hears "
+            "[yellow]no redis configured[/] - an in-process bus only hears "
             "publishers inside this command. Set TILL_REDIS_URL or pass --redis."
         )
     console.print(
@@ -1213,9 +1213,9 @@ def agents_providers():
         table.add_row(
             f"[bold]{name}[/]" + (" [dim](default)[/]" if name == "anthropic" else ""),
             escape(known.label),
-            escape(known.env_names or "—"),
+            escape(known.env_names or "-"),
             "[green]yes[/]" if ready else "[dim]no[/]",
-            escape(known.install or "—"),
+            escape(known.install or "-"),
         )
     console.print(table)
     console.print("[dim]Use as[/] --model openai:gpt-5 [dim]· a bare name is Anthropic's[/]")
@@ -1239,14 +1239,14 @@ def agents_roles():
 
 @main.group()
 def structures() -> None:
-    """Online models over the price data — what is unusual, what has changed."""
+    """Online models over the price data - what is unusual, what has changed."""
 
 
 def _warm_with_progress(watcher) -> int:
     """Replay stored bars with a bar to watch, because it is not quick.
 
     A cold start reads six-figure bar counts and, until this, printed nothing
-    until it had finished — minutes in which the only honest reading of the
+    until it had finished - minutes in which the only honest reading of the
     terminal was "possibly hung". The count is not known until the rows have
     been read, so the bar starts indeterminate and gains its length on the
     first update rather than guessing at a total.
@@ -1297,7 +1297,7 @@ def structures_watch(
 
     Consumes quotes and fast bars, measuring every venue against the median of
     the others. Findings go to `structures.signals` for an agent to weigh
-    against the calendar; the unambiguous ones — a feed that has stopped —
+    against the calendar; the unambiguous ones - a feed that has stopped -
     go straight to `alerts`.
     """
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
@@ -1321,7 +1321,7 @@ def structures_watch(
     bus = Bus(redis_url=url)
     if url is None:
         console.print(
-            "[yellow]no redis configured[/] — an in-process bus only hears "
+            "[yellow]no redis configured[/] - an in-process bus only hears "
             "publishers inside this command. Set TILL_REDIS_URL or pass --redis."
         )
 
@@ -1380,7 +1380,7 @@ def structures_info(state_dir):
     state = sx.load(settings.state_dir)
     if not state:
         console.print(
-            f"[yellow]no model state in {escape(str(settings.state_dir))}[/] — "
+            f"[yellow]no model state in {escape(str(settings.state_dir))}[/] - "
             "nothing learned yet, or it was written by another river/python version"
         )
         return
@@ -1391,7 +1391,7 @@ def structures_info(state_dir):
     for feed, count in sorted(getattr(detector, "seen", dict)().items()):
         table.add_row("anomaly", feed, f"{count:,}", "yes" if count >= detector.warmup else "no")
     for feed, count in sorted(getattr(state.get("drift"), "seen", dict)().items()):
-        table.add_row("drift", feed, f"{count:,}", "—")
+        table.add_row("drift", feed, f"{count:,}", "-")
     console.print(table)
 
 
@@ -1404,7 +1404,7 @@ def _load_engine(state_dir):
     engine = (state or {}).get("engine")
     if engine is None:
         console.print(
-            f"[yellow]no levels in {escape(str(settings.state_dir))}[/] — run "
+            f"[yellow]no levels in {escape(str(settings.state_dir))}[/] - run "
             "`till-infinity structures watch` first, or the state was written "
             "by another river/python version"
         )
@@ -1421,14 +1421,14 @@ def _state_colour(state: str) -> str:
 @click.option(
     "--min-timeframes", type=int, default=1, show_default=True, help="Hide thinner zones."
 )
-@click.option("--at", "price", type=float, help="Price to judge from — shows what is near it.")
+@click.option("--at", "price", type=float, help="Price to judge from - shows what is near it.")
 def structures_zones(state_dir, feed, min_timeframes, price):
     """Where several timeframes agree on the same price.
 
     A level found on the 5m and again on the 4h is one structure seen twice, not
     two structures. This groups them by **zone overlap** rather than a shared
     tolerance, because a tolerance has to be expressed in some timeframe's
-    volatility and they differ by more than an order of magnitude — on gold, one
+    volatility and they differ by more than an order of magnitude - on gold, one
     volatility unit is $0.74 on 5m and $9.87 on 4h.
 
     The position is fused inverse-variance, so a timeframe that is certain where
@@ -1453,7 +1453,7 @@ def structures_zones(state_dir, feed, min_timeframes, price):
         if not zones:
             continue
         vol = engine.reference(name)
-        table = Table(title=f"confluence — {name}")
+        table = Table(title=f"confluence - {name}")
         for column in ("price", "band", "timeframes", "span..precision", "touches", "str"):
             table.add_column(column, justify="right" if column in ("price", "str") else "left")
         for zone in sorted(zones, key=lambda z: -len(z.timeframes)):
@@ -1486,7 +1486,7 @@ def structures_zones(state_dir, feed, min_timeframes, price):
         console.print(
             "no zones match"
             + (
-                f" [dim]— nothing agreed on by {min_timeframes}+ timeframes[/]"
+                f" [dim]- nothing agreed on by {min_timeframes}+ timeframes[/]"
                 if min_timeframes > 1
                 else ""
             )
@@ -1509,14 +1509,14 @@ def structures_zones(state_dir, feed, min_timeframes, price):
     "--at",
     "price",
     type=float,
-    help="Price to judge from — shows the directional call at the nearest levels.",
+    help="Price to judge from - shows the directional call at the nearest levels.",
 )
 def structures_levels(state_dir, feed, interval, min_touches, pivots, price):
     """Show the key levels found, and what they do when price arrives.
 
     Touch counts are *effective* counts: evidence decays with age, so a level
     tested ten times last quarter reads lower than one tested ten times this
-    week. That is the point — a level is only as good as its recent behaviour.
+    week. That is the point - a level is only as good as its recent behaviour.
 
     With `--at`, the nearest levels are judged from that price: which way the
     history says it goes, against the base rate, and whether that clears the
@@ -1568,7 +1568,7 @@ def structures_levels(state_dir, feed, interval, min_touches, pivots, price):
 def _side_cell(stats) -> str:
     """Touches and mean push for one side, or a dash."""
     if not stats or not stats["touches"]:
-        return "[dim]—[/]"
+        return "[dim]-[/]"
     push = stats["mean_push_vol"]
     colour = "green" if push > 0 else "red" if push < 0 else "dim"
     return f"{stats['touches']:.1f}x [{colour}]{push:+.2f}v[/]"
@@ -1609,8 +1609,8 @@ def _judge_at(engine, feed: str | None, price: float) -> None:
 def structures_fit(db, factors):
     """Fit a factorisation machine on what actually happened, and score it.
 
-    Reads the journal for resolved level calls — the features a call was made
-    from, and the push that followed — and fits progressively: every example is
+    Reads the journal for resolved level calls - the features a call was made
+    from, and the push that followed - and fits progressively: every example is
     predicted before it is learned, so the evaluation is walk-forward by
     construction rather than by an arrangement that can be got wrong.
 
@@ -1671,7 +1671,7 @@ def structures_gaps(db, hours):
     """Did any interaction span a period nobody was watching?
 
     The check after a market close. A touch open at the Friday close used to
-    resolve on the Sunday reopen, and the recorded push was the *gap* — written
+    resolve on the Sunday reopen, and the recorded push was the *gap* - written
     into the level's own statistics and into `facto`'s targets as that level's
     reaction. `GAP_FACTOR` discards those now, so the expected answer here is
     **none**, and anything listed is the guard having failed.
@@ -1703,7 +1703,7 @@ def structures_gaps(db, hours):
         f"anything past {ceiling:.0f}s spans an unobserved period"
     )
     if not rows:
-        console.print("[green]none — the gap guard held[/]")
+        console.print("[green]none - the gap guard held[/]")
         return
 
     table = Table(title=f"{len(rows)} outcome(s) the guard did not catch")
@@ -1719,7 +1719,7 @@ def structures_gaps(db, hours):
         )
     console.print(table)
     console.print(
-        "[yellow]A crypto feed here means the collector stopped, not the market — "
+        "[yellow]A crypto feed here means the collector stopped, not the market - "
         "those never close.[/]"
     )
     raise SystemExit(1)
@@ -1867,7 +1867,7 @@ def journal_listen(db, redis_url, group, verbose, quiet, log_file):
 
     The journal is a service like the rest: agents and structures publish their
     decisions and this records them, so there is one writer rather than one per
-    process — and a service on another machine can record a decision at all.
+    process - and a service on another machine can record a decision at all.
     """
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
     url = redis_url or os.environ.get("TILL_REDIS_URL") or None
@@ -1875,7 +1875,7 @@ def journal_listen(db, redis_url, group, verbose, quiet, log_file):
     path = _journal_db(db)
     if url is None:
         console.print(
-            "[yellow]no redis configured[/] — an in-process bus only hears "
+            "[yellow]no redis configured[/] - an in-process bus only hears "
             "publishers inside this command. Set TILL_REDIS_URL or pass --redis."
         )
     console.print(f"recording to [bold]{escape(str(path))}[/] from {bus.backend}, Ctrl-C to stop")
@@ -1916,7 +1916,7 @@ def journal_info(db):
         table.add_column(column, justify="right" if column == "entries" else "left")
     for row in rows:
         table.add_row(
-            escape(row["actor"] or "—"),
+            escape(row["actor"] or "-"),
             escape(row["kind"]),
             f"{row['entries']:,}",
             _stamp(int(row["first"])),
@@ -1933,7 +1933,7 @@ def journal_info(db):
 @click.option("--hours", type=float, help="Only entries this recent.")
 @click.option("--limit", "-n", type=int, default=jr.MAX_ROWS, show_default=True)
 def journal_export(db, out, kind, hours, limit):
-    """Write the journal out as JSON lines, oldest first — training-set shaped."""
+    """Write the journal out as JSON lines, oldest first - training-set shaped."""
     setup_logging(quiet=out is None)
     try:
         written = jr.export(_journal_db(db), target=out, kind=kind, hours=hours, limit=limit)
@@ -1958,7 +1958,7 @@ def journal_export(db, out, kind, hours, limit):
 def run_command(
     redis_url, agents, notify, symbol, interval, duration, once, verbose, quiet, log_file
 ):
-    """Run every service together — the end-to-end path.
+    """Run every service together - the end-to-end path.
 
     Collectors publish, structures finds levels and anomalies, agents judge,
     notifications deliver, and the journal records. One bus, one process.
@@ -1986,7 +1986,7 @@ def run_command(
     bus_kind = "redis" if plan.redis_url else "in-process"
     console.print(f"[bold]till infinity[/] · {bus_kind} bus · {', '.join(plan.wanted())}")
     for name, why in st.check(plan).items():
-        console.print(f"  [yellow]{name} unavailable[/] — {escape(why)}")
+        console.print(f"  [yellow]{name} unavailable[/] - {escape(why)}")
 
     def event(name: str, note: str) -> None:
         colour = "red" if "stopped" in note else "green"
@@ -2054,7 +2054,7 @@ def _plan_option(func):
 def trading_doctor(symbols, plan, strategies, backend):
     """Say what this host can trade with, and how it is configured.
 
-    Touches no terminal, so it answers on a laptop with nothing installed —
+    Touches no terminal, so it answers on a laptop with nothing installed -
     which is the case it exists for. "Why is it on paper" has one answer per
     backend, and printing only the chosen one is how the other gets missed.
     """
@@ -2075,7 +2075,7 @@ def trading_doctor(symbols, plan, strategies, backend):
         table.add_row(name, mark, escape(why))
     console.print(table)
 
-    armed = "[red]LIVE — orders reach the account[/]" if settings.live else "[green]paper[/]"
+    armed = "[red]LIVE - orders reach the account[/]" if settings.live else "[green]paper[/]"
     console.print(f"\nmode: {armed}")
     console.print(f"plan: {escape(str(tp.get(settings.risk_plan)))}")
     console.print(f"strategies: {', '.join(settings.strategies)}")
@@ -2083,7 +2083,7 @@ def trading_doctor(symbols, plan, strategies, backend):
     console.print(f"timeframes: {', '.join(settings.intervals)}")
     if chosen == td.HTTP and not settings.account_equity:
         console.print(
-            "[dim]TRADING_ACCOUNT_EQUITY is not set — fine against a bridge with an "
+            "[dim]TRADING_ACCOUNT_EQUITY is not set - fine against a bridge with an "
             "account endpoint (metatrader-terminal has one), needed against one "
             "without it (the older mt5-api). `trading symbols` will say which.[/]"
         )
@@ -2120,7 +2120,7 @@ def trading_plans():
         )
     console.print(table)
     for name, plan in sorted(tp.catalogue().items()):
-        console.print(f"\n[bold]{name}[/] — {escape(plan.description)}")
+        console.print(f"\n[bold]{name}[/] - {escape(plan.description)}")
 
 
 @trading.command("symbols")
@@ -2129,7 +2129,7 @@ def trading_plans():
 def trading_symbols(symbols, backend):
     """Ask the broker which of these instruments it actually offers.
 
-    The question the desk asks first — "can we scalp SOL here" — and the one
+    The question the desk asks first - "can we scalp SOL here" - and the one
     that should be answered while nobody is waiting on it rather than by a
     rejected order three days later.
     """
@@ -2148,7 +2148,7 @@ def trading_symbols(symbols, backend):
     for feed in settings.symbols:
         spec = resolution.found.get(feed)
         if spec is None:
-            table.add_row(feed, "—", "—", "—", "—", f"[red]{escape(resolution.missing[feed])}[/]")
+            table.add_row(feed, "-", "-", "-", "-", f"[red]{escape(resolution.missing[feed])}[/]")
             continue
         table.add_row(
             feed,
@@ -2181,19 +2181,19 @@ def trading_run(
 
     Needs `structures` publishing to the same bus, which on one machine means
     `till-infinity run` and on several means Redis. On its own it will attach,
-    resolve what it can trade, and then wait for signals that never come — so
+    resolve what it can trade, and then wait for signals that never come - so
     it says what it is waiting for at start-up.
     """
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
     settings = _trading_settings(symbols, plan, strategies, backend, live)
     if settings.live:
-        console.print("[red]armed[/] — orders will reach the account")
+        console.print("[red]armed[/] - orders will reach the account")
 
     url = redis_url or os.environ.get("TILL_REDIS_URL") or None
     bus = Bus(redis_url=url)
     if bus.backend == "memory":
         console.print(
-            "[yellow]in-process bus[/] — nothing else is publishing to it. "
+            "[yellow]in-process bus[/] - nothing else is publishing to it. "
             "Use --redis, or run the whole stack with `till-infinity run`."
         )
 
@@ -2223,8 +2223,8 @@ def trading_run(
 def trading_report(db, mode, strategy):
     """Score the closed trades in the journal.
 
-    Reports R rather than money — a win of 40 risking 20 and a win of 40
-    risking 200 are not the same result — and refuses to characterise a sample
+    Reports R rather than money - a win of 40 risking 20 and a win of 40
+    risking 200 are not the same result - and refuses to characterise a sample
     too small to characterise, which is the honest state of this today.
     """
     setup_logging()
@@ -2233,7 +2233,7 @@ def trading_report(db, mode, strategy):
 
     if not report.overall.count:
         console.print(
-            f"[yellow]no closed {mode} trades in {escape(str(path))}[/] — "
+            f"[yellow]no closed {mode} trades in {escape(str(path))}[/] - "
             "nothing has been decided and resolved yet"
         )
         _decline_table(report)
@@ -2249,8 +2249,8 @@ def trading_report(db, mode, strategy):
         table.add_row(
             name,
             str(group.count),
-            f"{group.win_rate:.0%}" if group.enough else "—",
-            f"{group.win_rate - pooled:+.1%}" if group.enough else "—",
+            f"{group.win_rate:.0%}" if group.enough else "-",
+            f"{group.win_rate - pooled:+.1%}" if group.enough else "-",
             f"{group.mean_r:+.2f}",
             f"{group.total_r:+.1f}",
             f"{group.median_seconds / 60:.0f}m",
@@ -2264,7 +2264,7 @@ def trading_report(db, mode, strategy):
         instruments.add_row(
             name,
             str(group.count),
-            f"{group.win_rate:.0%}" if group.enough else "—",
+            f"{group.win_rate:.0%}" if group.enough else "-",
             f"{group.mean_r:+.2f}",
             f"{group.total_r:+.1f}",
         )
@@ -2273,7 +2273,7 @@ def trading_report(db, mode, strategy):
 
     if not report.enough:
         console.print(
-            f"\n[yellow]{report.overall.count} closed trades[/] — under {tr.ENOUGH}, "
+            f"\n[yellow]{report.overall.count} closed trades[/] - under {tr.ENOUGH}, "
             "so the rates above are printed as dashes rather than as findings. "
             "Nothing here says whether any strategy works yet."
         )

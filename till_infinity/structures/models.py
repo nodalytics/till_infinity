@@ -3,7 +3,7 @@
 A `Signal` is deliberately not an alert. It says "this reading is unusual, here
 is how unusual and here is what it was" and stops there. Deciding whether a
 human should be interrupted needs the calendar, and this layer cannot see the
-calendar — that is the agent's job, and the reason `structures` publishes
+calendar - that is the agent's job, and the reason `structures` publishes
 signals rather than conclusions.
 
 The exception is a signal that is unambiguous on its own, which can go straight
@@ -36,7 +36,7 @@ class Shape(StrEnum):
     LAGGING = "lagging"
     #: Liquidity: the spread is unusual for this venue *and* for the group.
     SPREAD = "spread"
-    #: The distribution itself moved — a regime change, not a single reading.
+    #: The distribution itself moved - a regime change, not a single reading.
     DRIFT = "drift"
     #: Price arrived at a key level, and its history says which way it goes.
     LEVEL = "level"
@@ -47,7 +47,7 @@ class Consensus(Restorable):
     """Where the venues agree, at one instant, for one instrument.
 
     The median rather than the mean, because the whole point is to be robust to
-    the one venue that has gone wrong — a mean is dragged by the outlier it is
+    the one venue that has gone wrong - a mean is dragged by the outlier it is
     meant to expose.
     """
 
@@ -70,12 +70,12 @@ class Signal(Restorable):
     features: dict[str, float] = field(default_factory=dict)
     interval: str = "tick"
     time: float = field(default_factory=_now)
-    #: "up", "down" or "" — set only by shapes that claim one. Carried
+    #: "up", "down" or "" - set only by shapes that claim one. Carried
     #: separately from `features` because a reader's first glance is the
     #: direction, and a float dict is not where a headline should live.
     direction: str = ""
     #: The other timeframes agreeing on this price, coarsest first, as
-    #: "1d+4h+1h". Empty means no other timeframe has a level here — which is
+    #: "1d+4h+1h". Empty means no other timeframe has a level here - which is
     #: information too, and is reported as such rather than left blank.
     confluence: tuple[str, ...] = ()
 

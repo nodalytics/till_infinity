@@ -1,8 +1,8 @@
 """Headlines from RSS.
 
-Five feeds, polled concurrently. Publishers disagree about everything —
+Five feeds, polled concurrently. Publishers disagree about everything -
 RSS 2.0 versus Atom, `guid` versus `id` versus bare link, tag soup in the
-description — so parsing is deliberately forgiving: anything with a title and
+description - so parsing is deliberately forgiving: anything with a title and
 something usable as an id becomes an Article, and the rest is skipped rather
 than raising.
 """

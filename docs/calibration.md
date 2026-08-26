@@ -11,8 +11,8 @@ conservative or aggressive, it is *wrong in a direction nobody can see*, and it
 will be wrong most confidently exactly where it stakes most.
 
 Nothing here is built. This says what to measure, against which fields, what
-would falsify a claim of good calibration, and — the part most likely to be got
-wrong — why the obvious fix makes the model worse while making the number
+would falsify a claim of good calibration, and - the part most likely to be got
+wrong - why the obvious fix makes the model worse while making the number
 better.
 
 ## 1. What the existing numbers cannot see
@@ -31,8 +31,8 @@ if example.predicted is not None:
 
 `example.predicted` is `expected_push_vol`. So the levels model is graded on the
 **size** of its call and never on the **confidence** of it.
-`Inference.probability_up` — the number `actionable` gates on through `edge`,
-the number the alert prints, the number a sizing rule would consume — is scored
+`Inference.probability_up` - the number `actionable` gates on through `edge`,
+the number the alert prints, the number a sizing rule would consume - is scored
 nowhere in this project. Not by MAE, not by either baseline, not by
 `Report.direction`.
 
@@ -43,7 +43,7 @@ accuracy at a single threshold, and accuracy and calibration are independent:
 - a model that says 99% on everything and is right 99% of the time is accurate
   and calibrated;
 - a model that says 99% on everything and is right 70% of the time is accurate
-  and badly calibrated — the sizing rule bets the farm on each one;
+  and badly calibrated - the sizing rule bets the farm on each one;
 - a model that says 51% on everything and is right 51% of the time is barely
   better than a coin and **perfectly calibrated**.
 
@@ -65,7 +65,7 @@ journal rows, joined by `parent`.
 | claim | parent `context["probability_up"]` |
 | outcome | child `context["push_vol"] > 0` |
 | join | child `parent` → parent `id` |
-| when | child `time` — the resolution, not the call |
+| when | child `time` - the resolution, not the call |
 | instrument | parent/child `tags[0]`, per `cli.FEED_TAGS` |
 | timeframe | child `context["interval"]` |
 
@@ -74,7 +74,7 @@ Three things about that pairing are load-bearing.
 **`probability_up`, not `probability` and not `confidence`.** All three exist
 and only one is a claim about the up/down label the outcome records.
 `probability` flips to face the claimed direction, so pairing it with
-`push_vol > 0` compares a down-facing number against an up-facing label — the
+`push_vol > 0` compares a down-facing number against an up-facing label - the
 exact shape [levels.md](levels.md) §7 says is "not a comparison". Worse,
 `confidence` on the journal row is not a probability at all: `emit` passes
 `confidence=min(1.0, signal.score)` and `score` is `abs(edge)`. A local decision
@@ -87,11 +87,11 @@ not change meaning, so it is the one field here with a stability guarantee.
 **Both parent kinds carry it.** `decide` writes `**signal.features`, which
 includes `probability_up`; `observe` writes `**inference.to_dict()`, which
 includes it too. So the calibration sample is *every* level call, actioned or
-not — which is the whole reason `_watch_calls` journals observations. Only about
+not - which is the whole reason `_watch_calls` journals observations. Only about
 one call in forty-three has ever cleared `|edge| >= 0.08`
 ([levels.md](levels.md) §8, measured pre-fix), so a curve built from decisions
 alone would be built from a two-percent tail. Build it from everything, and
-report the tail separately — see §3.
+report the tail separately - see §3.
 
 **"Up" means the resolution rule, not the clock.** The outcome is written by
 `Tracker._close`, which resolves at 1.5 volatility units either way, calls a
@@ -99,14 +99,14 @@ break provisional until it survives `TRAP_WINDOW`, and records chop at the
 horizon. So `probability_up` is a claim about *how this interaction resolves
 under that rule* and about nothing else. Change `resolve_vol` or `horizon` and
 every historical claim is calibrated against a label that no longer means the
-same thing — the same class of invalidation as the touch-count boundary in §4,
+same thing - the same class of invalidation as the touch-count boundary in §4,
 and a reason to record the tracker's settings beside any calibration run.
 
 ### The tie the label hides
 
 `push_vol` is the signed distance at the moment of closing, and `> 0` splits it.
-For a `reject` at 1.5v the sign is emphatic. For a `chop` — price arrived, sat,
-and did nothing until the horizon — the sign is the sign of a small number, and
+For a `reject` at 1.5v the sign is emphatic. For a `chop` - price arrived, sat,
+and did nothing until the horizon - the sign is the sign of a small number, and
 on the stored history chop was 74.3% of outcomes ([levels.md](levels.md) §7b).
 Those rows are not mislabelled, but their labels are close to coin flips no
 model could call, and they set a floor on the Brier score that has nothing to do
@@ -125,7 +125,7 @@ rather than either curve alone.
 Four candidates. Two earn their place, one earns a footnote, one is ceremony
 when reported alone and a trap when reported as a target.
 
-### The reliability curve — the artefact, not a summary of it
+### The reliability curve - the artefact, not a summary of it
 
 Bucket the calls by claimed `probability_up`, and in each bucket plot the mean
 claim against the realised up-rate. Perfect calibration is the diagonal.
@@ -146,7 +146,7 @@ decile picture is too sparse to read, and say which is which.
 
 **Three counters per bucket** is the whole implementation: `n`, `sum(p)`,
 `sum(y)`. Everything in this section falls out of those plus the global counts,
-folded one call at a time and keeping nothing — the same shape as
+folded one call at a time and keeping nothing - the same shape as
 `facto.evaluate`'s single pass and as the streamed `Window` in
 [agents.md](agents.md).
 
@@ -170,7 +170,7 @@ mean-of-squares on 20,000 synthetic pairs; identical to five decimals.
 It earns its place as the single headline number because it is a *proper*
 scoring rule: it is minimised by quoting your true belief, so a model cannot
 improve it by hedging. And it is directly comparable against the one baseline
-that matters here — always quoting the base rate, which scores exactly
+that matters here - always quoting the base rate, which scores exactly
 `ȳ(1 − ȳ)`. A model whose Brier score does not beat that has produced no usable
 probability at all, whatever its reliability curve looks like. That is the same
 "two baselines, always" instinct as [structures.md](structures.md), applied to a
@@ -186,7 +186,7 @@ Brier  =  REL  -  RES  +  UNC
 
 REL = (1/N) Σ_k n_k (p̄_k - ȳ_k)²      how far each bucket sits off the diagonal
 RES = (1/N) Σ_k n_k (ȳ_k - ȳ)²        how far the buckets separate from each other
-UNC = ȳ (1 - ȳ)                        the base rate's own variance — not ours to move
+UNC = ȳ (1 - ȳ)                        the base rate's own variance - not ours to move
 ```
 
 All three come from the same three counters. This is the reason to report a
@@ -198,7 +198,7 @@ metric read in isolation.
 
 `RES` is what stops that. It is the only term that rewards the model for
 distinguishing one call from another, and it is untouched by shrinkage in the
-sense that matters — see §6. So the pair to watch is `REL` against `RES`, and
+sense that matters - see §6. So the pair to watch is `REL` against `RES`, and
 the honest verdict sentence is of the form *"miscalibrated by X, informative by
 Y"*, never one without the other.
 
@@ -211,7 +211,7 @@ prints the three components without printing the residual is asserting an
 identity it has not checked. Print `Brier − (REL − RES + UNC)` as a fourth
 number; if it grows, the buckets are too wide for the spread inside them.
 
-### Expected calibration error — ceremony alone, a trap as a target
+### Expected calibration error - ceremony alone, a trap as a target
 
 ECE is the n-weighted mean of `|p̄_k − ȳ_k|` across buckets ([Guo et al.
 2017](https://proceedings.mlr.press/v70/guo17a/guo17a.pdf)). It is one line, it
@@ -221,7 +221,7 @@ It does not earn a place as a *target*, for two reasons.
 
 It is the same quantity `REL` already reports, in an absolute-value form that
 does not decompose, so it adds no information to a run that reports the
-decomposition — and if it is reported without `RES` beside it, it is gameable in
+decomposition - and if it is reported without `RES` beside it, it is gameable in
 exactly the degenerate way above. Zero ECE is what a model that has stopped
 saying anything looks like.
 
@@ -236,7 +236,7 @@ Print it. Never gate on it.
 ### Not worth building here
 
 **Log loss.** `river.metrics.LogLoss` exists and is proper, but it is dominated
-by its tail — one confident miss can outweigh a hundred ordinary calls — and it
+by its tail - one confident miss can outweigh a hundred ordinary calls - and it
 does not decompose into anything a person can act on. Brier answers the same
 question with a bounded contribution per call and a partition that names the
 defect. The shrinkage in §6 means `probability_up` never actually reaches 0 or 1
@@ -245,11 +245,11 @@ to carry a second scoring rule.
 
 **ROC AUC as a calibration number.** It cannot be one. AUC depends only on the
 *ranking* of the claims, so it is unchanged by any strictly monotone
-recalibration — halve every probability and the AUC is identical. It answers a
+recalibration - halve every probability and the AUC is identical. It answers a
 genuinely useful and different question, "is there any signal here to
 calibrate", and it is worth reporting exactly once, at the top, as the
 precondition. Note when you do that `river`'s implementation is an
-approximation over discretised thresholds — ten by default, and its own
+approximation over discretised thresholds - ten by default, and its own
 docstring shows ten thresholds returning 0.875 where the true answer is 0.75.
 Raise `n_thresholds`, and do not quote the last decimal.
 
@@ -309,14 +309,14 @@ model: "two touches at the same level minutes apart are nearly the same
 observation". A decile bucket holding 900 calls may hold thirty independent
 episodes. Binomial error bars on that bucket are too tight by roughly the square
 root of the cluster size, which is the difference between a point that sits off
-the diagonal by more than noise and one that does not — which is to say, the
+the diagonal by more than noise and one that does not - which is to say, the
 entire question. Report `n` **and** the number of distinct `(feed, interval,
 level_price)` triples in the bucket. `river.sketch.NUnique` does that in bounded
 memory if the exact count gets expensive.
 
 **A pooled curve can sit on the diagonal while every stratum misses it.** Two
 instruments miscalibrated in opposite directions average to something that looks
-correct, and the average is not a property of the model — it is a property of
+correct, and the average is not a property of the model - it is a property of
 how much of each instrument happened to be in the window. The rule is the one
 this project already applies to base rates: never report the pooled curve
 without the per-`(feed, interval)` curves beside it, and treat a pooled curve
@@ -324,17 +324,17 @@ that is better than all of its strata as evidence of pooling rather than of
 calibration.
 
 **And the pooled curve is mostly one afternoon of sol on 3m.** Weight per
-stratum rather than per row for the headline number — equal weight to each
-`(feed, interval)` with enough calls to qualify — and print the row counts so
+stratum rather than per row for the headline number - equal weight to each
+`(feed, interval)` with enough calls to qualify - and print the row counts so
 the reader can see what was reweighted. A model of everything that is 49% one
 instrument is a model of that instrument with a wide title.
 
 **Blocking, and what needs a batch pass.** The honest error bars here come from
 a block bootstrap over contiguous time blocks, which needs the sample retained
-and resampled — a batch pass, and the only thing in this document that is not
+and resampled - a batch pass, and the only thing in this document that is not
 foldable. That is acceptable for a periodic report and not for anything on the
 live path. The incremental substitute is to keep the counters **per time block**
-as well as pooled — hour buckets are natural given the arrival rate — and report
+as well as pooled - hour buckets are natural given the arrival rate - and report
 how much the curve moves between blocks. It is a weaker statement than a
 confidence interval and it is computable while the service runs, and instability
 across blocks is the thing you most want to catch anyway (see §7).
@@ -347,7 +347,7 @@ level's own beta-binomial toward that prior by `PRIOR_WEIGHT`, with the base
 rate itself shrunk toward the pooled rate by `BASE_WEIGHT`
 ([levels.md](levels.md) §7, "Certainty the evidence cannot support"). Every one
 of those pulls confident claims toward the middle, and every one of them was
-added for a reason that has nothing to do with calibration — three touches that
+added for a reason that has nothing to do with calibration - three touches that
 all went up is not 100%.
 
 The consequence is that this system already has a dial that trades one desirable
@@ -357,7 +357,7 @@ will make the model less useful the whole way.** Raise `PRIOR_WEIGHT` far enough
 and every call is the base rate: `REL` is zero, ECE is zero, the reliability
 curve is a single point sitting exactly on the diagonal, and the model has
 stopped saying anything. It would pass any calibration test written carelessly,
-and `actionable` would never fire again because `|edge|` would be zero — the
+and `actionable` would never fire again because `|edge|` would be zero - the
 model would be *reported as improved and be silent*, which is precisely the
 failure mode [handoff.md](handoff.md) warns about under "correct silence and
 broken silence are indistinguishable".
@@ -407,7 +407,7 @@ chosen by argument is honest; writing it down without saying which it is, is not
 **Enough to report at all.** Mirroring `facto.MIN_EXAMPLES`: 200 paired calls
 after the boundary, *and* at least 30 in each of at least four occupied deciles,
 *and* at least three `(feed, interval)` strata contributing 30 or more, *and* at
-least 50 distinct level prices overall. The last two exist because of §5 — 200
+least 50 distinct level prices overall. The last two exist because of §5 - 200
 calls from one afternoon of sol 3m satisfies the first two and is not a sample of
 anything. Below any of them, report the counts and decline. Declining is a
 result; a curve drawn from an unrepresentative sample is not.
@@ -424,8 +424,8 @@ weighted by distinct clusters rather than rows, with `RES > REL` by at least the
 Both of those are chosen, not measured. What would derive them is the sizing
 rule itself: given a stake function, the loss from a slope error is computable,
 and the tolerance is wherever that loss stops mattering against the spread
-already being charged. That calculation belongs with whoever owns the capital —
-the same boundary [todo.md](todo.md) item 3 draws around sizing — and until it
+already being charged. That calculation belongs with whoever owns the capital -
+the same boundary [todo.md](todo.md) item 3 draws around sizing - and until it
 exists these are placeholders that should be labelled as such wherever they are
 printed.
 
@@ -438,7 +438,7 @@ the headline number looks fine:
    The claim is about the model; a pooling artefact is a claim about the sample
    mix, and next month's mix will differ.
 2. **The curve holds on the bulk and breaks in the actionable tail.** Only calls
-   clearing `|edge| >= 0.08` ever reach a consumer — historically about one in
+   clearing `|edge| >= 0.08` ever reach a consumer - historically about one in
    forty-three. A curve fitted on everything and validated nowhere in particular
    says nothing about the slice that matters. Report the tail separately and
    accept that it will be thin for a long time.
@@ -464,7 +464,7 @@ here is very different.
 
 *Platt scaling* fits a logistic to the claims ([Platt
 1999](https://www.csie.ntu.edu.tw/~cjlin/papers/plattprob.pdf)): two parameters,
-and streaming — `river.linear_model.LogisticRegression` over the single feature
+and streaming - `river.linear_model.LogisticRegression` over the single feature
 `logit(p)`, learned one call at a time, which fits the house pattern exactly. If
 it is used, it must be fitted **progressively**, predicting each call before
 learning it, for the same reason `facto.evaluate` does: a recalibrator fitted on
@@ -474,8 +474,8 @@ rather than subtle.
 
 *Isotonic regression* fits an arbitrary monotone step function ([Zadrozny &
 Elkan 2002](https://dl.acm.org/doi/10.1145/775047.775151)) and assumes less. It
-is also a **batch** method, there is no implementation in `river` — the only ML
-dependency here — and it needs enough data per step to not simply memorise the
+is also a **batch** method, there is no implementation in `river` - the only ML
+dependency here - and it needs enough data per step to not simply memorise the
 sample. On this journal, with its clustering, it would fit the shape of one
 afternoon. Not now, and possibly not ever at this data volume.
 
@@ -485,7 +485,7 @@ compares on.
 
 **Which is honest here is not a close call: fix the model.** A recalibration
 layer is the right tool when the model's ranking is good and its scale is off
-for reasons you understand and cannot remove — a margin-based classifier that
+for reasons you understand and cannot remove - a margin-based classifier that
 was never trying to output a probability, which is what Platt scaling was
 invented for. That is not the situation. `probability_up` is a shrunk frequency
 estimate, built to be a probability, and every known reason it might be
@@ -518,7 +518,7 @@ Nothing here is built. The shape that would fit the repo:
   same line is the whole data change. `Example` gains a `claimed_up` beside
   `predicted`, and the `since` filter moves off the index build (§4).
 - **A `calibration.py` beside `facto.py`**, holding the per-bucket counters, the
-  decomposition and a `Report` with the same manners as `facto.Report` — an
+  decomposition and a `Report` with the same manners as `facto.Report` - an
   `enough` property, a `verdict` string that names the defect in words, and
   `to_dict`. It is a fold over examples, so it can run inside the same pass
   `evaluate` already makes.
@@ -538,7 +538,7 @@ the trade, not this model. The only journal available locally is a stale
 development copy holding 140 paired outcomes, entirely on the wrong side of the
 contamination boundary, concentrated on five instruments with 115 of 140 on 5m.
 Bucketing it puts 88 of 140 calls in the lowest decile and leaves several
-interior buckets holding one to four calls each, most of which realise 100% —
+interior buckets holding one to four calls each, most of which realise 100% -
 which is a picture of both problems this document is about, thinness and
 contamination, and is not evidence about anything. It is quoted as **shape only**
 and no figure from it should be repeated as a result.
@@ -552,10 +552,10 @@ honestly rather than quickly.
 
 - Brier decomposition into reliability, resolution and uncertainty: A. H. Murphy,
   [*A New Vector Partition of the Probability Score*](https://journals.ametsoc.org/view/journals/apme/12/4/1520-0450_1973_012_0595_anvpot_2_0_co_2.xml),
-  Journal of Applied Meteorology 12 (1973), 595–600.
+  Journal of Applied Meteorology 12 (1973), 595-600.
 - Sharpness subject to calibration: T. Gneiting, F. Balabdaoui & A. E. Raftery,
   [*Probabilistic Forecasts, Calibration and Sharpness*](https://rss.onlinelibrary.wiley.com/doi/abs/10.1111/j.1467-9868.2007.00587.x),
-  JRSS-B 69 (2007), 243–268.
+  JRSS-B 69 (2007), 243-268.
 - ECE and reliability diagrams as commonly reported: C. Guo, G. Pleiss, Y. Sun &
   K. Q. Weinberger, [*On Calibration of Modern Neural Networks*](https://proceedings.mlr.press/v70/guo17a/guo17a.pdf), ICML 2017.
 - Why the binned ECE estimate is biased: A. Kumar, P. Liang & T. Ma,

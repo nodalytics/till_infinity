@@ -2,12 +2,12 @@
 
 Two transports, because they are not equivalent:
 
-* **socket** (default) — TradingView's quote websocket. One connection carries
+* **socket** (default) - TradingView's quote websocket. One connection carries
   every symbol and the server *pushes* each change, so a write happens the
   moment a broker moves, not on a timer. It also covers venues the HTTP
   endpoint does not (DERIV 404s there) and fills in the last price, which the
   scanner returns as null for FX.
-* **scanner** — the keyless ``scanner.tradingview.com/symbol`` endpoint. Purely
+* **scanner** - the keyless ``scanner.tradingview.com/symbol`` endpoint. Purely
   request/response, so it has to be polled. Stateless and simple; use it when a
   long-lived socket is inconvenient.
 
@@ -124,7 +124,7 @@ def _number(value: Any) -> float | None:
 
 
 def parse_quote(payload: Any, *, now: float) -> Quote | None:
-    """Build a Quote from a field dict — the shape both transports return."""
+    """Build a Quote from a field dict - the shape both transports return."""
     if not isinstance(payload, dict) or "code" in payload:
         return None
     quote = Quote(
@@ -145,7 +145,7 @@ class QuoteSource:
     #: How the caller selects this source.
     name: str
     #: Which entry of ``Feed.symbols`` it reads, and the source recorded in
-    #: storage — so the same venue lands in the same series whichever
+    #: storage - so the same venue lands in the same series whichever
     #: transport fetched it.
     feed_key: str
     #: True when the provider pushes updates instead of answering polls.
@@ -179,7 +179,7 @@ class QuoteSource:
         return WriteResult()
 
     def _note_unavailable(self, symbol: Symbol, reason: str) -> None:
-        """Log a symbol the provider does not carry — once, not every tick."""
+        """Log a symbol the provider does not carry - once, not every tick."""
         if symbol.full not in self._unavailable:
             self._unavailable.add(symbol.full)
             log.warning("%s has no quote for %s (%s)", self.name, symbol.full, reason)
@@ -191,7 +191,7 @@ class TradingViewQuotes(QuoteSource):
     One connection serves every symbol. The reader task merges each ``qsd``
     update into a per-symbol field map and hands it straight to the sink, so
     storage tracks the market rather than the polling clock. Sampling the cache
-    (``quote()``) is then free — no network involved.
+    (``quote()``) is then free - no network involved.
     """
 
     name = "tradingview"
@@ -336,7 +336,7 @@ class TradingViewQuotes(QuoteSource):
         values = data.get("v")
         if not isinstance(values, dict):
             return
-        # Updates are partial — a tick may carry only the fields that moved.
+        # Updates are partial - a tick may carry only the fields that moved.
         merged = self._fields.setdefault(name, {})
         merged.update(values)
         if not any(field in values for field in ("bid", "ask", "lp")):
@@ -360,7 +360,7 @@ class TradingViewQuotes(QuoteSource):
     async def quote(self, symbol: Symbol) -> Quote | None:
         name = symbol.full
         if name not in self._keys:
-            # A symbol nobody prepared — subscribe now and wait for the first tick.
+            # A symbol nobody prepared - subscribe now and wait for the first tick.
             async with self._lock:
                 await self._ensure_live()
                 if name not in self._keys:
@@ -417,7 +417,7 @@ class TradingViewScannerQuotes(QuoteSource):
 
         if response.status_code == httpx.codes.NOT_FOUND:
             # The scanner does not carry every venue TradingView charts.
-            self._note_unavailable(symbol, "symbol_not_exists — try --source tradingview")
+            self._note_unavailable(symbol, "symbol_not_exists - try --source tradingview")
             return None
         if response.status_code != httpx.codes.OK:
             log.debug("scanner returned %s for %s", response.status_code, symbol.full)

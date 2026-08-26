@@ -29,7 +29,7 @@ Where a proposal below needs data we do not have, it says so.
 | behaviour | what we call it | where |
 |---|---|---|
 | Clean rejection / bounce | `REJECT`, with the wick kept separately from the origin | [levels.md](levels.md) §5b, §7 |
-| Liquidity sweep / stop raid | `TRAP` — a break taken back inside `TRAP_WINDOW` | [levels.md](levels.md) §7b |
+| Liquidity sweep / stop raid | `TRAP` - a break taken back inside `TRAP_WINDOW` | [levels.md](levels.md) §7b |
 | Back check of a broken level | `BACKCHECK` | [levels.md](levels.md) §7c |
 
 Two of these are worth spelling out, because the correspondence is exact and
@@ -55,14 +55,14 @@ or breaking, contacts coming closer together and each excursion shorter, until
 the level gives way with unusual force.
 
 **What we do now.** `CHOP`, which means "nothing happened" and exists so the
-model is shown non-events. Absorption is emphatically not a non-event — it is
-the state that most reliably precedes an expansion — and merging the two teaches
+model is shown non-events. Absorption is emphatically not a non-event - it is
+the state that most reliably precedes an expansion - and merging the two teaches
 the model that a build-up is noise.
 
 **The model.** Absorption is a *sequence* property, and every touch is currently
 scored alone. The quantities are already recorded:
 
-- contacts at one level within a window — the count is in the tracker;
+- contacts at one level within a window - the count is in the tracker;
 - the trend in `excursion_vol` across those contacts, which should be falling;
 - the trend in the gap between them, which should be shortening.
 
@@ -82,7 +82,7 @@ the bug is worst. See [handoff.md](handoff.md), "Why the channel is silent".
 
 ### 2. Compression on approach
 
-**The behaviour.** Tighter, overlapping candles beneath the level — the opposing
+**The behaviour.** Tighter, overlapping candles beneath the level - the opposing
 side exhausting before a momentum push.
 
 **What we do now.** `approach_vol` is the *speed* of arrival. Compression is
@@ -90,7 +90,7 @@ about the **contraction of range** on the way in, which is a different quantity:
 price can arrive slowly and widely, or slowly and tightly, and those are opposite
 setups.
 
-**The model.** A ratio, in the units everything else here uses — recent true
+**The model.** A ratio, in the units everything else here uses - recent true
 range over that timeframe's typical range, measured across the last few bars
 before contact. Below one is compressed. It is scale-free by construction, so it
 travels across instruments the way the other features do, and it is one more
@@ -115,7 +115,7 @@ the realised arrival rate within a horizon against what the square-root law
 predicts for that distance. If levels attract, arrivals beat the baseline; if
 they do not, this whole idea dies cheaply and correctly.
 
-Only if it survives is there a feature — an attraction term per level, probably
+Only if it survives is there a feature - an attraction term per level, probably
 strongest for round numbers, which is the one variant testable without volume
 data we do not have.
 
@@ -128,7 +128,7 @@ approach → contact → (absorb | reject | sweep | break) → resolution. We mo
 the endpoint and ignore the path.
 
 This is the honest home for the hidden Markov model discussed in
-[structures.md](structures.md) — not as a regime detector competing with BOCPD,
+[structures.md](structures.md) - not as a regime detector competing with BOCPD,
 but as a model of the *touch* itself, where the states are few, named in advance,
 and interpretable. The same look-ahead caution applies and applies harder: only
 the **filtered** estimate is admissible, because a smoothed one labels the
@@ -139,7 +139,7 @@ trying to predict.
 
 "Contacts coming closer together" is the definition of a self-exciting point
 process. A Hawkes process over touch arrivals at a level would give the grind a
-single fitted parameter — the excitation decay — rather than a hand-rolled
+single fitted parameter - the excitation decay - rather than a hand-rolled
 trend over the last k gaps.
 
 Filed as an idea rather than a proposal. It needs the arrival series to be
@@ -151,7 +151,7 @@ hand-rolled version in §1 should be tried before a fitted one is justified.
 1. **Absorption**, once touch counting is trusted. No new data, and it separates
    build-up from "nothing happened".
 2. **Compression on approach.** One ratio, one feature, immediately gradeable.
-3. **The magnet test.** Cheap, and the answer is interesting either way — a null
+3. **The magnet test.** Cheap, and the answer is interesting either way - a null
    result removes a piece of folklore from consideration.
 4. **Touch-lifecycle HMM.** Only after 1 and 2 say the path carries information
    the endpoint does not.

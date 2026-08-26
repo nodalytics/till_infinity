@@ -6,8 +6,8 @@ read correctly against a paper book that has no tickets at all. The translation
 happens once, at the edge, in each broker backend.
 
 One type is worth reading before the rest. `Refusal` is a first-class result,
-not an error path: the journal's own docstring makes the case — "a model
-trained only on the times we acted learns nothing about when not to" — and a
+not an error path: the journal's own docstring makes the case - "a model
+trained only on the times we acted learns nothing about when not to" - and a
 scalper declines far more often than it fires. Returning `None` for "no trade"
 would throw away the reason, which is the part worth keeping.
 """
@@ -32,7 +32,7 @@ class Side(StrEnum):
     def from_direction(cls, direction: str) -> Side | None:
         """Map a signal's direction onto a side, or None if it claims neither.
 
-        A signal with an empty direction is not a weak buy — it is a reading
+        A signal with an empty direction is not a weak buy - it is a reading
         that declined to call one, and turning that into a trade would invent
         a conviction nobody had.
         """
@@ -127,7 +127,7 @@ class Tick:
     def entry(self, side: Side) -> float:
         """What a market order of this side actually pays.
 
-        Buying lifts the ask and selling hits the bid — never the mid. Sizing a
+        Buying lifts the ask and selling hits the bid - never the mid. Sizing a
         scalp off the mid understates the stop distance by half the spread on
         entry and again on exit, which on a target of a few volatility units is
         not a rounding error.
@@ -168,7 +168,7 @@ class Intent:
     symbol: str
     side: Side
     volume: float
-    #: The quote this was sized from, not the fill — the fill is on the result.
+    #: The quote this was sized from, not the fill - the fill is on the result.
     entry: float
     stop: float
     target: float
@@ -226,8 +226,8 @@ class Intent:
 class Refusal:
     """Why we did not trade. Recorded, not raised.
 
-    `gate` is the short machine-readable name of what stopped it — "spread",
-    "daily_loss", "already_open" — so declines can be counted per gate over a
+    `gate` is the short machine-readable name of what stopped it - "spread",
+    "daily_loss", "already_open" - so declines can be counted per gate over a
     week without parsing prose. A gate that never fires is a gate that is not
     doing anything, and one that fires constantly is mis-set; neither is
     visible without the tally.

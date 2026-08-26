@@ -14,7 +14,7 @@ def test_every_service_in_the_order_has_a_runner(name):
 
 def test_the_entry_points_each_service_calls_exist():
     """`notifications` died on start for three deploys because `nt.listen` was
-    written, tested, and never exported — the stack referenced a name the
+    written, tested, and never exported - the stack referenced a name the
     package did not have, and only a running container said so."""
     from till_infinity import agents as ag
     from till_infinity import journal as jr

@@ -1,6 +1,6 @@
 """What gets sent, independent of where it goes.
 
-A notification is written once and rendered per destination — Telegram wants
+A notification is written once and rendered per destination - Telegram wants
 escaped HTML in a single string, Discord wants an embed object. Keeping the
 message provider-agnostic means an alert can be added without touching either
 transport.
@@ -45,7 +45,7 @@ COLOURS: dict[Level, int] = {
 MARKS: dict[Level, str] = {Level.INFO: "•", Level.WARNING: "▲", Level.CRITICAL: "■"}
 
 #: A glance-level icon per kind of finding. Severity is the wrong axis for the
-#: leading character — a stale feed and a level call can both be `warning`, and
+#: leading character - a stale feed and a level call can both be `warning`, and
 #: the reader wants to know *which* before reading a word of it.
 SHAPES: dict[str, str] = {
     "level": "📊",
@@ -67,8 +67,8 @@ SHAPES: dict[str, str] = {
 DIRECTIONS: dict[str, str] = {"up": "📈", "down": "📉"}
 
 #: The instrument's own symbol, shown next to the shape icon rather than
-#: instead of it. The two answer different questions — *what happened* and *to
-#: what* — and a phone notification is read at a glance, where "📈 ₿" separates
+#: instead of it. The two answer different questions - *what happened* and *to
+#: what* - and a phone notification is read at a glance, where "📈 ₿" separates
 #: from "📈 €" before a single word has been read.
 #:
 #: Currency signs where one exists, because that is what the instrument is
@@ -79,7 +79,7 @@ DIRECTIONS: dict[str, str] = {"up": "📈", "down": "📉"}
 #: with the yen at exactly the glance this exists for.
 #:
 #: The indices get their tickers instead. There is no symbol for an index, and
-#: `NDX` and `SPX` are what they are called — a flag would say only "American"
+#: `NDX` and `SPX` are what they are called - a flag would say only "American"
 #: and would say it twice.
 INSTRUMENTS: dict[str, str] = {
     "gold": "🥇",
@@ -106,7 +106,7 @@ ROUTING: frozenset[str] = frozenset({"shape", "instrument", "venue", "direction"
 
 @dataclass(frozen=True, slots=True)
 class Channel:
-    """One destination within a provider — a chat, or a webhook.
+    """One destination within a provider - a chat, or a webhook.
 
     A provider is not a destination: one bot posts to many chats, and a server
     has a webhook per channel. `min_level` lets a noisy feed and an on-call
@@ -129,7 +129,7 @@ class Channel:
     def masked(self) -> str:
         """Something recognisable that is safe to print.
 
-        A webhook URL is a credential — anyone holding it can post — so only
+        A webhook URL is a credential - anyone holding it can post - so only
         its host and a short tail are shown. A chat id identifies a room but
         grants nothing, so it is shown whole.
         """
@@ -164,7 +164,7 @@ class Notification:
     def mark(self) -> str:
         """The leading icons: what happened, and what it happened to.
 
-        Direction if claimed, else shape, else severity — then the instrument's
+        Direction if claimed, else shape, else severity - then the instrument's
         own symbol where there is one. An instrument nobody has a symbol for
         simply gets the first icon, rather than a placeholder standing in for
         an answer.
@@ -181,8 +181,8 @@ class Notification:
     def when(self) -> str:
         """The timestamp as it is shown, or empty if there is none.
 
-        **UTC, and it says so.** Every other time in this project is UTC —
-        bars, touches, the journal — and an alert that quietly rendered local
+        **UTC, and it says so.** Every other time in this project is UTC -
+        bars, touches, the journal - and an alert that quietly rendered local
         time would be the one place they disagreed, read by someone comparing
         it against a chart.
         """
@@ -191,7 +191,7 @@ class Notification:
         return datetime.fromtimestamp(self.at, UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     def as_text(self, *, escape: bool = False, limit: int | None = None) -> str:
-        """Flatten to plain text — the shape Telegram and logs both want."""
+        """Flatten to plain text - the shape Telegram and logs both want."""
         esc = html.escape if escape else (lambda text: text)
         lines = [f"{self.mark} <b>{esc(self.title)}</b>" if escape else f"{self.mark} {self.title}"]
         if self.body:
