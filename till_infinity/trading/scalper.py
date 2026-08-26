@@ -109,6 +109,65 @@ class LevelStrategy(Strategy):
             price_distance(entry, vol_bps, push_vol * self.target_multiple),
         )
 
+    def _anchored_stop(
+        self,
+        spec: SymbolSpec,
+        features: dict[str, float],
+        side: Side,
+        level: float,
+        risk_distance: float,
+        unit: float,
+    ) -> float:
+        """Where the stop goes, floored against the level *and* the fill.
+
+        `stop_for` anchors it beyond the level's zone, which is the right place
+        to decide the trade is wrong: the level is the thing being traded, and
+        the invalidation should not move because the spread did.
+
+        What that leaves open is the fill. `distances` floors the stop at
+        `min_stop_vol` measured **from the level**, and says nothing about how
+        far the entry ended up from it. Entry is market, so it lands wherever
+        price is when the call arrives, and it can land most of the way to a
+        level-anchored stop - hardest on `approach-scalp`, whose whole geometry
+        is entering away from the level it measures.
+
+        Sizing then uses `abs(entry - stop)`, correctly, because that is what
+        is actually lost. The two together are the failure: a fill one unit
+        above its own stop is sized as a one-unit trade, which is a large one,
+        and is then taken out by ordinary movement rather than by the thesis
+        breaking. That is the loss this was written after - a gold buy filled
+        1.0v above a stop sitting 5.9v below the level, sized 0.18 lots on the
+        short distance, stopped within minutes.
+
+        So the floor is applied twice, from both anchors. It can only ever push
+        the stop further from the fill, which only ever reduces size for the
+        same money at risk. It never moves a stop closer in.
+        """
+        edge = _number(features, "zone_low") if side is Side.BUY else _number(features, "zone_high")
+        return spec.round_price(
+            stop_for(level, side, risk_distance, zone_edge=edge, clearance=unit * 0.25)
+        )
+
+    def _floored_stop(
+        self, spec: SymbolSpec, side: Side, entry: float, anchored: float, unit: float
+    ) -> float:
+        """Push the stop out until it is `min_stop_vol` from the **fill** too.
+
+        Applied only after the `through` check has passed, and the order is not
+        a detail. A fill already on the far side of the level-anchored stop is
+        an invalidated trade, not a trade to re-stop; running this first would
+        quietly rebase the stop below such a fill and turn a refusal into a
+        position. An existing test says so, and caught exactly that.
+
+        Past that point this can only push the stop further from the fill,
+        which only ever reduces size for the same money at risk.
+        """
+        floor = self.settings.min_stop_vol * unit
+        if floor <= 0:
+            return anchored
+        against_fill = spec.round_price(entry - floor if side is Side.BUY else entry + floor)
+        return min(anchored, against_fill) if side is Side.BUY else max(anchored, against_fill)
+
     def target(self, context: Aim) -> float | Refusal:
         """Where to take profit. Overridden by anything not aiming at the push."""
         return context.spec.round_price(target_for(context.entry, context.side, context.push))
@@ -188,10 +247,7 @@ class LevelStrategy(Strategy):
         # quarter unit of clearance beyond it. Absent on an older signal, in
         # which case the stop falls back to the origin as before.
         unit = price_distance(level, vol_bps, 1.0)
-        edge = _number(features, "zone_low") if side is Side.BUY else _number(features, "zone_high")
-        stop = spec.round_price(
-            stop_for(level, side, risk_distance, zone_edge=edge, clearance=unit * 0.25)
-        )
+        stop = self._anchored_stop(spec, features, side, level, risk_distance, unit)
         aimed = self.target(
             Aim(
                 payload=payload,
@@ -214,6 +270,10 @@ class LevelStrategy(Strategy):
         # that has already been invalidated.
         if (side is Side.BUY and entry <= stop) or (side is Side.SELL and entry >= stop):
             return Refusal("through", f"price is already past the stop at {stop:.5g}", feed)
+
+        # Only now, with the trade known to be still valid, is the stop widened
+        # to clear the fill by a volatility unit. See `_floored_stop`.
+        stop = self._floored_stop(spec, side, entry, stop, unit)
 
         broker_says = respects_stops_level(spec, entry, stop, target)
         if broker_says:

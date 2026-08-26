@@ -2409,3 +2409,55 @@ def test_a_refinement_names_a_strategy_that_exists():
         if cls.refines:
             assert cls.refines in STRATEGIES, f"{name} refines unknown {cls.refines}"
             assert cls.refines != name
+
+
+# ------------------------------------------------- the stop clears the fill
+
+
+def test_the_stop_clears_the_fill_not_just_the_level():
+    """The failure this was written after.
+
+    `distances` floors the stop at `min_stop_vol` from the **level**, and
+    sizing measures from the **fill**. A fill that lands most of the way to a
+    level-anchored stop is therefore sized as a short-distance trade - a large
+    one - and taken out by ordinary movement. Live: a gold buy filled 1.0v
+    above a stop sitting 5.9v below the level, sized 0.18 lots, stopped in
+    minutes for -26.64.
+    """
+    # Price well above the level at 4400, so the level-anchored stop is far
+    # below the level but close underneath the fill.
+    got = take("level-scalp", tick=Tick("XAUUSD", bid=4399.0, ask=4400.0), min_stop_vol=2.0)
+    assert isinstance(got, Intent)
+    unit = price_distance(4400.0, 10.0, 1.0)
+    assert abs(got.entry - got.stop) >= 2.0 * unit - 1e-9
+
+
+def test_widening_the_stop_to_clear_the_fill_shrinks_the_position():
+    """It can only cost size, never add it - same money over a longer stop."""
+    tight = take("level-scalp", tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), min_stop_vol=0.5)
+    wide = take("level-scalp", tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), min_stop_vol=3.0)
+    assert isinstance(tight, Intent)
+    assert isinstance(wide, Intent)
+    assert abs(wide.entry - wide.stop) > abs(tight.entry - tight.stop)
+    # A longer stop for the same money can only mean fewer lots. Not asserting
+    # equal risk_money: the lot step is coarse and the minimum lot is a floor,
+    # so the money actually at risk moves around under rounding.
+    assert wide.volume <= tight.volume
+
+
+def test_the_fill_floor_never_rescues_an_invalidated_trade():
+    """Order of operations, not a detail.
+
+    A fill on the far side of the level-anchored stop is a trade that has
+    already been invalidated. Applying the fill floor before the `through`
+    check would rebase the stop below such a fill and turn the refusal into a
+    position - which is what happened on the first attempt at this.
+    """
+    got = take("level-scalp", tick=Tick("XAUUSD", bid=4389.5, ask=4390.5))
+    assert isinstance(got, Refusal)
+    assert got.gate == "through"
+    # Note the floor cannot be turned up to probe this in isolation:
+    # `min_stop_vol` feeds the level-anchored distance in `distances` as well,
+    # so raising it moves the anchored stop down past the fill and the trade
+    # stops being invalidated at all. The ordering is what protects this, not
+    # the size of the floor.

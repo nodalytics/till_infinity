@@ -654,6 +654,34 @@ answering both with one number lets the cheaper answer win silently.
 stop buys fewer lots, and a trade that can no longer make the minimum lot is
 refused. A stop inside the noise is not a cheaper trade, it is a worse one.
 
+### The stop clears the fill, not only the level
+
+Two rules above place the stop against the **level**: beyond the zone, and at
+least `min_stop_vol` away. Both are right, and neither says anything about
+where the fill landed.
+
+Entry is a market order, so it lands wherever price is when the call arrives -
+which can be most of the way to a level-anchored stop. `approach-scalp` feels
+this hardest, because entering away from the level it measures is its whole
+geometry. Sizing then measures `abs(entry - stop)`, correctly, because that is
+what is actually lost. Put together they are a trap: a fill one unit above its
+own stop is sized as a one-unit trade, which is a **large** one, and is then
+taken out by ordinary movement rather than by the thesis breaking.
+
+Live, on gold: a buy filled at 4620.8 against a stop at 4619.4 that sat a
+proper 5.9v below the level at 4627.7 but only 1.0v below the fill. Sized 0.18
+lots on the short distance. Stopped within minutes for -26.64.
+
+So the floor is applied from both anchors. It can only push the stop further
+from the fill, so it can only reduce size for the same money at risk, and it
+never moves a stop closer in.
+
+**It runs after the `through` check, and that order is not a detail.** A fill on
+the far side of the level-anchored stop is a trade that has already been
+invalidated, not one to re-stop. Applying the floor first quietly rebases the
+stop below such a fill and turns a refusal into a position - which is exactly
+what the first attempt at this did, and what an existing test caught.
+
 ## Sizing
 
 Two conversions, both of which have to be the right way round.

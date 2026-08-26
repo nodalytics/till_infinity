@@ -1884,6 +1884,47 @@ execution targets rather than one. That much leaves the single-account case
 behaving exactly as it does now, which is the property that makes it safe to
 build before either mode's policy is settled.
 
+## 6j. Limit entries, so the fill is chosen rather than accepted
+
+Every order this module sends is a market order. `Order` carries no type, and
+none of the four backends or the HTTP bridge know about a pending one, so the
+fill is wherever price happens to be when the call arrives.
+
+That is worst for `approach-scalp`, whose geometry is deliberately entering
+away from the level it measures. It buys up to a level above, and how good the
+trade is depends entirely on how far below that level the fill lands - which is
+currently not a decision at all. The stop now clears the fill by a volatility
+unit, which stops the size inflating on a bad fill, but a better fill would
+have been better than a safer bad one.
+
+The idea worth trying: **rest the entry where the stop would otherwise have
+been.** Instead of buying at market and stopping out a unit below, place the
+buy at that lower price and put the stop beyond the zone's outer wick. The
+trade that gets stopped out today is instead the trade that gets *filled*
+today, the reward-to-risk improves because the target has not moved, and the
+cost is the trades that never fill because price left without the pullback.
+That cost is real and is the thing to measure: a strategy that only fills on
+retracements is a different strategy, not a cheaper version of this one.
+
+What it needs before it can be built:
+
+* a type on `Order` - `BUY_LIMIT`/`SELL_LIMIT` in MT5 terms - and support in
+  `paper`, `mt5_native`, `mt5_rpyc`, `mt5_http` and the bridge itself;
+* an expiry, because a resting order with no deadline is a trade taken on
+  information that has gone stale. The natural one is the strategy's own hold;
+* pending orders in reconciliation. `positions` returns positions; a resting
+  order is neither an open position nor a closed one, and `_settle` currently
+  has no state for "asked for, not filled";
+* a decision about what the journal records. One `decide` at rest and an
+  `outcome` on fill or expiry keeps the pairing honest, but it means a decision
+  entry that may never become a trade, which the scoring in 6d has to expect.
+
+The cheaper half of this can be had first without touching the broker port: the
+strategy holds the intent and fires a market order when the bus quote reaches
+the price it wanted. That is a worse fill than a resting limit and it cannot be
+hit while the process is down, but it needs no new order type and would answer
+whether the pullback fills often enough to be worth the plumbing.
+
 ## 7. BOCPD
 
 Documented in [structures.md](structures.md) as a way to *grade* a regime change
