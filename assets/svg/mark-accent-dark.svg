@@ -2,6 +2,6 @@
      role="img" aria-label="Till Infinity">
   <title>Till Infinity</title>
   <desc>Two turns of unequal width, meeting at one origin.</desc>
-  <circle cx="17.5" cy="24" r="13" stroke="#14181A" stroke-width="2.5"/>
-  <circle cx="37.5" cy="24" r="7" fill="#14181A"/>
+  <circle cx="17.5" cy="24" r="13" stroke="#3FBF9C" stroke-width="2.5"/>
+  <circle cx="37.5" cy="24" r="7" fill="#3FBF9C"/>
 </svg>

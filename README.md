@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="Till Infinity" width="150">
+  <img src="docs/logo.svg" alt="Till Infinity" width="92">
 </p>
 
 <h1 align="center">Till Infinity</h1>

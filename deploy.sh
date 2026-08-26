@@ -90,6 +90,13 @@ docker run -d \
   --cpus 1.5 \
   -e TZ=UTC \
   --env-file /home/ubuntu/till.env \
+  `# Lets the container reach a service on the host, which the trading
+   # backend needs: MetaTrader 5 is an x86-64 Windows binary and this box is
+   # aarch64, so the terminal runs elsewhere and is reached through an SSH
+   # tunnel bound to the docker bridge. Without this the container cannot
+   # resolve the host at all and TRADING_MT5_URL has nowhere to point.
+   # Costs nothing when trading is off, which is the default.` \
+  --add-host=host.docker.internal:host-gateway \
   -v "$DATA:/app/.data" \
   --log-opt max-size=10m --log-opt max-file=3 \
   "$IMAGE:$TAG" run
