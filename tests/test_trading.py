@@ -1389,3 +1389,32 @@ async def test_the_paper_book_is_priced_off_the_real_venue():
     assert got is not None
     # The quote came from the venue and reached the paper book.
     assert (await trader.paper.quote("XAUUSD")).ask == 4402.0
+
+
+def test_every_instrument_prices_tracks_can_be_traded():
+    """The trading module must not silently cover fewer instruments than the
+    rest of the system. A feed with no broker names cannot be traded at all,
+    and the failure would look like "the broker does not carry it"."""
+    from till_infinity.prices.config import DEFAULT_SYMBOLS as PRICED
+
+    missing = [feed for feed in PRICED if feed not in td.INSTRUMENTS]
+    assert not missing, f"no broker names for {missing}"
+
+
+def test_the_index_names_include_the_spaced_forms():
+    """Deriv calls them `US Tech 100` and `US SP 500`.
+
+    The compact CFD forms — US100, NAS100, USTEC — matched nothing across its
+    798 symbols, so both instruments resolved to "no symbol found" while every
+    other one worked. Names are compared upper-cased.
+    """
+    assert "US TECH 100" in td.INSTRUMENTS["us100"]
+    assert "US SP 500" in td.INSTRUMENTS["spx500"]
+
+    from till_infinity.trading.symbols import matches
+
+    listing = ["US Tech 100", "US SP 500", "USDJPY", "USDJPYmicro"]
+    assert matches("us100", listing) == ["US Tech 100"]
+    assert matches("spx500", listing) == ["US SP 500"]
+    # Exact beats a longer variant: the plain pair, not the micro contract.
+    assert matches("usdjpy", listing) == ["USDJPY", "USDJPYmicro"]

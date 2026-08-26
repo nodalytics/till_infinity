@@ -49,8 +49,12 @@ INSTRUMENTS: dict[str, tuple[str, ...]] = {
     "usdchf": ("USDCHF",),
     "nzdusd": ("NZDUSD",),
     "usdcnh": ("USDCNH",),
-    "us100": ("US100", "NAS100", "USTEC", "NDX100", "USATECH"),
-    "spx500": ("US500", "SPX500", "SP500", "USA500"),
+    # The indices are where broker naming diverges most. The compact forms
+    # are the CFD convention; the spaced ones are Deriv's, and were found by
+    # scanning its 798 symbols after the compact names matched nothing at all.
+    # Names are matched upper-cased, so they are written that way.
+    "us100": ("US100", "NAS100", "USTEC", "NDX100", "USATECH", "US TECH 100"),
+    "spx500": ("US500", "SPX500", "SP500", "USA500", "US SP 500"),
 }
 
 #: Account-type suffixes, tried against every name above. Empty string first,
