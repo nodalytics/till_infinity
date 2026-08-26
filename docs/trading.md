@@ -169,7 +169,7 @@ settle - not a new indicator.
 
 ```bash
 uv run till-infinity trading strategies
-TRADING_STRATEGIES=level-scalp,approach-scalp
+TRADING_STRATEGIES=sweep-aware,fade-to-value,approach-scalp,level-scalp
 ```
 
 | strategy | takes | stop | target |
@@ -185,6 +185,39 @@ TRADING_STRATEGIES=level-scalp,approach-scalp
 
 Several may run together. The first one to want a trade gets it, and the
 one-position-per-instrument limit is what stops two of them doubling up.
+
+### The order they are listed in is a decision
+
+Because the first taker wins, `TRADING_STRATEGIES` is not a set. It is a
+priority list, and getting it backwards silently disables strategies rather
+than failing.
+
+**The rule: most selective first, the permissive one last.** A strategy that is
+another strategy plus extra refusals can only ever trade what the permissive
+one declined - and it declined those for reasons the stricter one would decline
+too. Listed second, it never fires at all, and nothing says so: the log shows
+it loaded, the config shows it enabled, and it books no trades forever.
+
+`sweep-aware` is exactly that shape - `level-scalp` with two extra refusals -
+so `level-scalp,sweep-aware` runs one strategy wearing two names. Reversed,
+the same pair splits the flow: `sweep-aware` takes the calls whose stop is not
+standing in front of resting liquidity, `level-scalp` takes the rest. Same
+signal stream, two comparable books, which is what makes
+`till-infinity trading report` worth reading.
+
+So `level-scalp` belongs last. It is the baseline every other strategy is a
+restriction of, and last is where a catch-all does its job instead of starving
+the others:
+
+```bash
+TRADING_STRATEGIES=sweep-aware,fade-to-value,approach-scalp,level-scalp
+```
+
+Ordering does **not** flip a trade's direction. Every strategy here reads the
+same directional call; they differ in which calls they act on, where the stop
+goes and where the target goes. `approach-scalp` enters on a call and exits at
+the next level where the others take the expected push, so what the order
+decides is the target geometry and the hold, not the side.
 
 ### Entry and anchor: two timeframe sets, not one
 

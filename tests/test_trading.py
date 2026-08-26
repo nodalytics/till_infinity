@@ -2367,3 +2367,45 @@ async def test_the_order_carries_the_strategys_magic():
     assert sent.magic == td.magic_for(made.magic, "level-scalp")
     assert sent.magic != made.magic
     assert td.strategy_for(made.magic, sent.magic) == "level-scalp"
+
+
+# ------------------------------------------------------- the order they run in
+
+
+async def test_a_strategy_listed_where_it_can_never_trade_is_reported(caplog):
+    """The failure nobody finds by looking.
+
+    `sweep-aware` is `level-scalp` plus extra refusals, so behind it there is
+    nothing left for it to take. It loads, it reports as enabled, and it books
+    no trades forever - every signal except its own results says it is working.
+    """
+    bus = Bus()
+    made = settings(strategies=("level-scalp", "sweep-aware"))
+    trader = Trader(bus, settings=made, broker=RecordingBroker(made))
+    with caplog.at_level("WARNING"):
+        await trader.start()
+
+    said = " ".join(r.getMessage() for r in caplog.records)
+    assert "sweep-aware" in said
+    assert "never trade" in said
+
+
+async def test_the_right_order_is_not_complained_about(caplog):
+    bus = Bus()
+    made = settings(strategies=("sweep-aware", "level-scalp"))
+    trader = Trader(bus, settings=made, broker=RecordingBroker(made))
+    with caplog.at_level("WARNING"):
+        await trader.start()
+
+    said = " ".join(r.getMessage() for r in caplog.records)
+    assert "never trade" not in said
+
+
+def test_a_refinement_names_a_strategy_that_exists():
+    """A typo in `refines` would silently disable the check it exists for."""
+    from till_infinity.trading.strategy import STRATEGIES
+
+    for name, cls in STRATEGIES.items():
+        if cls.refines:
+            assert cls.refines in STRATEGIES, f"{name} refines unknown {cls.refines}"
+            assert cls.refines != name

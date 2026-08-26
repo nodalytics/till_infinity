@@ -187,6 +187,7 @@ class Trader:
             )
 
         self._check_gates()
+        self._check_order()
         self._check_magics()
         self.guard.roll(self.equity)
         log.info(
@@ -194,6 +195,32 @@ class Trader:
             " + ".join(s.name for s in self.strategies),
             ", ".join(sorted(self.specs)),
         )
+
+    def _check_order(self) -> None:
+        """Warn when a strategy is listed where it can never trade.
+
+        `TRADING_STRATEGIES` is a priority list - the first taker wins - so a
+        strategy that is another plus extra refusals only ever sees what the
+        permissive one declined, and it declined those for reasons the stricter
+        one would decline too. It books nothing, forever, and every other
+        signal says it is running: it loaded, it is enabled, it just never
+        fires. That is the failure this catches, because it is the kind nobody
+        finds by looking.
+        """
+        order = [engine.name for engine in self.strategies]
+        for position, engine in enumerate(self.strategies):
+            parent = engine.refines
+            if not parent or parent not in order:
+                continue
+            if order.index(parent) < position:
+                log.warning(
+                    "trading: %s is %s plus extra refusals and is listed after "
+                    "it, so it can only see calls %s already declined and will "
+                    "never trade - put it first",
+                    engine.name,
+                    parent,
+                    parent,
+                )
 
     def _check_magics(self) -> None:
         """Print the strategy-to-magic map, and refuse a silent collision.

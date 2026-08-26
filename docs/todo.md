@@ -1778,6 +1778,46 @@ predictor. Every entry in the price-geometry family has been measured to a coin
 flip, here and elsewhere; the reason this project is not in that graveyard is
 that it is estimating a *quantity*, and that is the property to protect.
 
+## 6i. Support more than one MT5 terminal
+
+One `Broker`, one terminal, one account. Everything above it already assumes
+that: `symbols.resolve` scans one catalogue at start-up, sizing reads one
+equity, and the risk plan's limits are a fraction of that one number.
+
+Wanting several is ordinary - a second broker with better index pricing, a
+live account alongside the demo, or two terminals purely to split the order
+flow. What makes it more than a config change is that most of the interesting
+state is per-account and the module currently has one of each:
+
+**The magic no longer separates us from ourselves.** It separates our trades
+from a hand-placed one on the same terminal, which is a different problem.
+Running a second `trading` against the same account and band today makes both
+reconcile positions the other opened - see the last entry under *Watch rather
+than act*. Per-strategy magics did not change this: two processes running the
+same strategy stamp the same number by construction, because the number comes
+from the strategy name so that it survives a restart. A second deployment
+needs a different base, and nothing currently stops two from sharing one.
+
+**Risk is account-scoped, and the interesting limits are not.** `max_positions`
+and `daily_loss_fraction` are naturally per-account. `max_currency_exposure` is
+not: two terminals both long the dollar are one dollar trade, and a guard that
+only sees its own book would authorise it twice. That is the same argument
+`exposure.py` already makes about tickets, one level up - and the reason this
+is not just "instantiate the broker twice".
+
+**Which terminal should fill it.** Once more than one can, choosing becomes a
+decision with an answer worth measuring: the tighter spread at that instant,
+the account with room under its limits, or the venue whose symbol actually
+resolved. `speeds.py` and the slippage work in 6f are what would settle it,
+which is an argument for doing those first.
+
+The cheap first step is to stop pretending the single case is general: make
+`Broker` construction take an explicit account identity rather than reading
+one set of environment variables, and give the magic base a per-deployment
+default that two processes cannot collide on by accident. That is worth doing
+even if a second terminal is never added, because it turns a silent
+cross-reconciliation into something that cannot be configured by mistake.
+
 ## 7. BOCPD
 
 Documented in [structures.md](structures.md) as a way to *grade* a regime change

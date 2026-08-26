@@ -606,6 +606,9 @@ class SweepAware(LevelStrategy):
     """
 
     name: ClassVar[str] = "sweep-aware"
+    #: Every call `level-scalp` takes, minus the ones whose stop sits in front
+    #: of resting liquidity. Listed after it, this would never fire.
+    refines: ClassVar[str] = "level-scalp"
     description: ClassVar[str] = (
         "level-scalp, refusing setups whose stop sits in front of resting liquidity."
     )

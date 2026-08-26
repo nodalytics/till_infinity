@@ -46,6 +46,20 @@ class Strategy(ABC):
     #: before any of its logic runs.
     shape: ClassVar[str] = "level"
 
+    #: The strategy this one is a *stricter* version of, if it is one.
+    #:
+    #: `TRADING_STRATEGIES` is a priority list, not a set - the first taker
+    #: wins - so a strategy that is another plus extra refusals can only ever
+    #: see what the permissive one declined, and it declined those for reasons
+    #: this one would decline too. Listed after what it refines, it never
+    #: trades, and nothing about that looks wrong: it loads, it is enabled, and
+    #: it books nothing forever.
+    #:
+    #: Declaring the relationship is what lets start-up say so. It cannot be
+    #: inferred - "is a subset of" is not something one gate chain can work out
+    #: about another - so the strategy that knows states it.
+    refines: ClassVar[str] = ""
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.seen = 0
