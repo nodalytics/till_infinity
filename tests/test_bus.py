@@ -224,3 +224,45 @@ def test_a_hostile_payload_cannot_break_the_notifier():
     notification = from_message({"title": "x", "fields": ["not", "a", "dict"], "level": 99})
     assert notification.fields == {}
     assert notification.level.name == "CRITICAL"  # clamped, not crashed
+
+
+def test_every_new_bar_reaches_the_bus_not_only_the_newest():
+    """The live path used to see less than the store, silently.
+
+    One notice went out per sweep carrying only the newest bar, so any sweep
+    that wrote more than one - after a gap, a restart, or on an interval slower
+    than the sweep cadence - formed levels from a subset of the series and
+    counted touches on a subset of the interactions. Same shape as the
+    close-only bug, and just as quiet.
+    """
+    from till_infinity.prices.service import notices
+
+    bars = [
+        Bar(time=1_700_000_000 + i * 300, open=10.0, high=11.0, low=9.0, close=10.5, volume=3)
+        for i in range(4)
+    ]
+    out = notices(KEY, bars, WriteResult(inserted=3))
+    assert len(out) == 3, "three bars were written, three should be announced"
+    # Oldest first, so a consumer folds them in the order they happened.
+    assert [n["time"] for n in out] == [b.time for b in bars[1:]]
+
+
+def test_a_backfill_is_capped_rather_than_replayed_onto_the_bus():
+    """`structures` seeds from the store for bulk; this path is for keeping up."""
+    from till_infinity.prices.service import MAX_NOTICES, notices
+
+    bars = [
+        Bar(time=1_700_000_000 + i * 300, open=10.0, high=11.0, low=9.0, close=10.5, volume=3)
+        for i in range(50)
+    ]
+    out = notices(KEY, bars, WriteResult(inserted=50))
+    assert len(out) == MAX_NOTICES
+    # And it keeps the newest, which are the ones still worth acting on.
+    assert out[-1]["time"] == bars[-1].time
+
+
+def test_a_single_new_bar_still_announces_once():
+    from till_infinity.prices.service import notices
+
+    bar = Bar(time=1_700_000_000, open=10.0, high=11.0, low=9.0, close=10.5, volume=3)
+    assert len(notices(KEY, [bar], WriteResult(inserted=1))) == 1

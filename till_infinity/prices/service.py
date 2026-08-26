@@ -78,9 +78,54 @@ class Summary:
 ProgressHook = Callable[[JobResult], None]
 
 
+#: Most bars one sweep may announce for a single series.
+#:
+#: A sweep asks for hundreds of bars and usually writes one or two new ones, so
+#: this bites only after a gap - a restart, a dropped connection, an interval
+#: slower than the sweep cadence. In those cases the live path needs the bars it
+#: missed, but it does not need a backfill replayed onto the bus one message at
+#: a time: `structures` seeds itself from the store, which is the path built for
+#: bulk, and this one is for keeping up.
+#:
+#: When more than this are new the oldest are dropped and `sweep` says so,
+#: because a live path quietly seeing less than the store is the exact shape of
+#: the bug this was written to fix.
+MAX_NOTICES = 8
+
+
 def announce_bars(key: SeriesKey, candles: Sequence[Bar], result: WriteResult) -> dict[str, object]:
-    """What goes on the wire when a series moves - a notice, not the candles."""
+    """What goes on the wire when a series moves - a notice, not the candles.
+
+    The newest bar only. `notices` is what the sweep actually publishes; this
+    remains because a single-bar notice is what most callers mean.
+    """
     latest = max(candles, key=lambda bar: bar.time)
+    return _notice(key, latest, result)
+
+
+def notices(key: SeriesKey, candles: Sequence[Bar], result: WriteResult) -> list[dict[str, object]]:
+    """One notice per newly written bar, oldest first.
+
+    **This used to be one notice carrying only the newest bar**, whatever the
+    sweep had written. Everything else went to the store and never reached the
+    bus, so on any sweep that wrote more than one bar the live path formed
+    levels from a subset of the series and counted touches on a subset of the
+    interactions - silently, and differently from a replay of the same data.
+    That is the same shape as the close-only bug: the live path seeing less
+    than the store, with nothing saying so.
+
+    Republishing is safe where it overlaps. `Series.add` treats a bar it
+    already holds as a correction rather than a new one, and the touch check is
+    gated on the bar being new, so a bar delivered twice cannot count its
+    interaction twice.
+    """
+    if not candles:
+        return []
+    fresh = sorted(candles, key=lambda bar: bar.time)[-max(1, result.touched) :]
+    return [_notice(key, bar, result) for bar in fresh[-MAX_NOTICES:]]
+
+
+def _notice(key: SeriesKey, latest: Bar, result: WriteResult) -> dict[str, object]:
     return {
         "source": key.source,
         "feed": key.feed,
@@ -128,7 +173,18 @@ async def sweep(
         # subscriber that hears about a bar can always go and read it.
         result = await store.write(key, candles, INTERVALS[key.interval])
         if bus is not None and result.touched and candles:
-            await bus.publish(BARS, announce_bars(key, candles, result), source="prices")
+            batch = notices(key, candles, result)
+            dropped = min(result.touched, len(candles)) - len(batch)
+            if dropped > 0:
+                log.warning(
+                    "prices: %s wrote %d bars and announced %d - %d never reached the live path",
+                    key,
+                    result.touched,
+                    len(batch),
+                    dropped,
+                )
+            for payload in batch:
+                await bus.publish(BARS, payload, source="prices")
         return result
 
     async with AsyncExitStack() as stack:
