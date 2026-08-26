@@ -20,6 +20,7 @@ at start-up, against the terminal - see `symbols.py`.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -128,7 +129,86 @@ DEFAULT_API_PATH = "/api/v1"
 #: matters is that a hand-placed trade on the same terminal is never touched by
 #: something here. Zero would mean "everything on the account", which is the
 #: one value that must not be the default.
+#:
+#: This is the *base* of a band rather than a single number - see `MAGIC_BAND`.
 DEFAULT_MAGIC = 777_701
+
+#: How many magics one deployment occupies, starting at `Settings.magic`.
+#:
+#: The base itself means "ours, but we cannot say which strategy" - what a
+#: position opened before per-strategy magics existed carries, and what the
+#: panic close and reconciliation still have to recognise. Offsets 1 and above
+#: name the strategy that asked for the trade, which is the only way to tell,
+#: after a restart or from the terminal itself, which of several strategies
+#: running side by side opened a given position. The order comment carries the
+#: same name, but comments are advisory: brokers truncate and rewrite them,
+#: and MT5 caps them at 31 characters. Magic survives.
+MAGIC_BAND = 1_000
+
+#: Strategy name to offset within the band. **Append-only.** These numbers end
+#: up on positions held at a broker and in journal entries that outlive any one
+#: release, so reordering this tuple would silently reattribute history: a
+#: position opened by one strategy would start reading as another's. Add new
+#: names at the end and never move an existing one.
+#:
+#: Deriving the offset from the *configured* strategy list instead would be the
+#: same bug in a worse form - editing TRADING_STRATEGIES would renumber every
+#: open position, and a restart mid-trade could not say who owned what.
+MAGIC_ORDER: tuple[str, ...] = (
+    "level-scalp",
+    "confluence-scalp",
+    "momentum-scalp",
+    "approach-scalp",
+    "swing-level",
+    "sweep-aware",
+    "fade-to-value",
+    "council",
+)
+
+
+def magic_for(base: int, strategy: str) -> int:
+    """The magic one strategy stamps on its orders.
+
+    Names in `MAGIC_ORDER` get their fixed slot. Anything else - a strategy
+    registered by something outside this package - is hashed into the rest of
+    the band, deterministically, because Python's own `hash` is salted per
+    process and would hand the same strategy a different magic on every
+    restart. Collisions are possible in that tail and are reported at start-up
+    rather than left to be discovered in a report that quietly merges two
+    strategies' results.
+    """
+    if not strategy:
+        return base
+    if strategy in MAGIC_ORDER:
+        return base + 1 + MAGIC_ORDER.index(strategy)
+    fixed = len(MAGIC_ORDER)
+    digest = hashlib.blake2s(strategy.encode(), digest_size=4).digest()
+    span = MAGIC_BAND - 1 - fixed
+    return base + 1 + fixed + int.from_bytes(digest, "big") % span
+
+
+def strategy_for(base: int, magic: int) -> str:
+    """The strategy a magic names, or "" when it does not name one.
+
+    The inverse of `magic_for` for the fixed table only. A hashed offset has no
+    inverse, so a plugin strategy's positions read as ours-but-unattributed,
+    which is the honest answer rather than a guessed one.
+    """
+    offset = magic - base
+    if 1 <= offset <= len(MAGIC_ORDER):
+        return MAGIC_ORDER[offset - 1]
+    return ""
+
+
+def ours(base: int, magic: int) -> bool:
+    """Whether a position at the broker belongs to this system.
+
+    The band, not the base, because every strategy now stamps its own number.
+    A comparison against the base alone - which is what this replaced - would
+    make every position opened by a named strategy look like somebody else's,
+    so the trader would neither manage nor close its own trades.
+    """
+    return base <= magic < base + MAGIC_BAND
 
 
 def _env(name: str) -> str:

@@ -659,6 +659,52 @@ the open set is compared on every heartbeat and a vanished ticket is settled at
 its last known price. That is exact on paper and slightly stale against a real
 broker, and the journal entry says which, in `exit_source`.
 
+## Which strategy opened it
+
+Several strategies run side by side, and the position they leave at the broker
+has to say which one asked for it. Otherwise a report merges two books into one
+number, and the number is the one somebody decides on.
+
+The order comment carries the name, but a comment is advisory: MT5 caps it at
+31 characters and brokers truncate and rewrite it. **Magic is the field that
+survives.** So `TRADING_MAGIC` is not a single number any more, it is the base
+of a band:
+
+| magic | means |
+| --- | --- |
+| `base` | ours, strategy unknown - a trade opened before this existed, or by a plugin |
+| `base + 1 .. base + 8` | one fixed slot per name in `MAGIC_ORDER` |
+| the rest of the band | anything registered from outside the package, hashed |
+| outside the band | **not ours.** Never touched, never closed |
+
+With the default base of `777701` that reads `level-scalp=777702`,
+`sweep-aware=777707`, `fade-to-value=777708`, and so on. The map is printed at
+start-up.
+
+Three decisions in there are worth more than the numbers.
+
+**`MAGIC_ORDER` is append-only.** These numbers end up on positions held at a
+broker and in journal entries that outlive any one release. Reordering the
+tuple would silently reattribute history - a trade opened by one strategy would
+start reading as another's, and nothing would look wrong.
+
+**The offset does not come from the configured list.** Deriving it from
+`TRADING_STRATEGIES` would be the same bug in a worse form: editing that
+variable would renumber every open position, and a restart mid-trade could not
+say who owned what. It comes from the name.
+
+**Ownership is a band, not an equality.** This is the part that had to change
+in three places at once. The comparison used to be `magic == settings.magic`,
+and left alone it would have made every position opened by a named strategy
+look like somebody else's - so the trader would have stopped managing and
+closing its own trades. The HTTP bridge also stopped *sending* a magic in the
+positions query for the same reason: a query parameter can ask for one exact
+number, and one exact number is now the wrong question.
+
+Two strategies can only collide in the hashed tail, and start-up says so out
+loud when they do rather than leaving it to be found in a scorecard that looks
+fine.
+
 ## Announcements
 
 Gated three ways, because the three messages have very different volumes:

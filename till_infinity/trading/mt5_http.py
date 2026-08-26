@@ -37,11 +37,17 @@ Where the symbol list exists it is used, and that is the better path by a
 distance: the account's suffix is *found* rather than guessed from a list of
 twenty-odd that cannot be complete. See `symbols.resolve`.
 
-**The magic filter is applied here as well as there.** The bridge passes magic
+**The magic filter is applied here, and only here.** The bridge passes magic
 to `positions_get`, which does not take that keyword - it filters by symbol,
 group or ticket. Rather than depend on that being fixed, every position is
-checked against our magic locally. The cost is a few dictionaries; the failure
-it prevents is this system closing somebody's hand-placed trade.
+checked locally. The cost is a few dictionaries; the failure it prevents is
+this system closing somebody's hand-placed trade.
+
+The request no longer *sends* a magic either. Each strategy now stamps its
+own - see `config.MAGIC_BAND` - so asking the bridge for one exact number
+would hide every position except the unattributed ones, and the trader would
+stop managing trades it had just opened. Ownership is a band, and a band is
+not something the query parameter can express.
 """
 
 from __future__ import annotations
@@ -58,7 +64,7 @@ from tenacity import (
 
 from ..logging import get_logger
 from .broker import Broker, NotConnectedError, RejectedError, TransientError
-from .config import Settings
+from .config import Settings, ours
 from .models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
 
 log = get_logger(__name__)
@@ -231,7 +237,7 @@ class HttpBroker(Broker):
         return Tick(symbol=symbol, bid=bid, ask=ask, time=float(raw.get("time") or 0.0))
 
     async def positions(self) -> list[Position]:
-        raw = await self._get("/positions/", params={"magic": self.settings.magic})
+        raw = await self._get("/positions/")
         rows = raw if isinstance(raw, list) else raw.get("positions", [])
         return [_position_from(row) for row in rows if _ours(row, self.settings.magic)]
 
@@ -391,8 +397,8 @@ def _body(response: httpx.Response, method: str, path: str) -> Any:
         raise TransientError(f"{method} {path}: response was not JSON") from exc
 
 
-def _ours(row: dict[str, Any], magic: int) -> bool:
-    return int(row.get("magic") or 0) == magic
+def _ours(row: dict[str, Any], base: int) -> bool:
+    return ours(base, int(row.get("magic") or 0))
 
 
 def _spec_from(raw: dict[str, Any], symbol: str) -> SymbolSpec:

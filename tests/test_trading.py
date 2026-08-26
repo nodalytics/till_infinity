@@ -2238,3 +2238,86 @@ def test_a_trade_that_cannot_afford_a_real_stop_is_refused():
     got = take("level-scalp", equity=200.0, min_stop_vol=4.0)
     assert isinstance(got, Refusal)
     assert got.gate == "size"
+
+
+# --------------------------------------------------------------- magic band
+
+
+def test_each_strategy_stamps_its_own_magic():
+    """Two strategies running side by side must leave distinguishable trades.
+
+    The order comment says the same thing, but MT5 truncates it at 31
+    characters and brokers rewrite it, so magic is the field a report and a
+    restart can both rely on.
+    """
+    base = td.DEFAULT_MAGIC
+    magics = {name: td.magic_for(base, name) for name in td.MAGIC_ORDER}
+    assert len(set(magics.values())) == len(magics)
+    assert all(td.strategy_for(base, m) == name for name, m in magics.items())
+    assert all(td.ours(base, m) for m in magics.values())
+
+
+def test_the_base_magic_stays_ours_and_names_nobody():
+    """Positions opened before per-strategy magics existed carry the base.
+
+    They still have to be recognised, managed and closed; what is gone is the
+    attribution, and saying so is better than guessing a strategy.
+    """
+    base = td.DEFAULT_MAGIC
+    assert td.magic_for(base, "") == base
+    assert td.ours(base, base)
+    assert td.strategy_for(base, base) == ""
+
+
+def test_a_magic_does_not_move_when_the_strategy_list_changes():
+    """The number lands on a position held at a broker and outlives the run.
+
+    Deriving it from the configured list would renumber every open position
+    the moment TRADING_STRATEGIES was edited, and a restart mid-trade could
+    not say who owned what.
+    """
+    base = td.DEFAULT_MAGIC
+    alone = td.magic_for(base, "sweep-aware")
+    assert td.magic_for(base, "sweep-aware") == alone
+    # The same name, asked for in a differently-ordered world.
+    assert td.MAGIC_ORDER.index("sweep-aware") == td.MAGIC_ORDER.index("sweep-aware")
+    assert alone != td.magic_for(base, "level-scalp")
+
+
+def test_an_unregistered_strategy_is_hashed_stably_and_stays_ours():
+    """A plugin's magic must survive a restart. Python's `hash` is salted."""
+    base = td.DEFAULT_MAGIC
+    first = td.magic_for(base, "some-plugin-strategy")
+    assert first == td.magic_for(base, "some-plugin-strategy")
+    assert td.ours(base, first)
+    # Outside the fixed table, so it has no inverse and says so.
+    assert td.strategy_for(base, first) == ""
+
+
+def test_a_foreign_magic_is_never_ours():
+    """The whole point of the field: a hand-placed trade is left alone."""
+    base = td.DEFAULT_MAGIC
+    assert not td.ours(base, 0)
+    assert not td.ours(base, 12345)
+    assert not td.ours(base, base - 1)
+    assert not td.ours(base, base + td.MAGIC_BAND)
+
+
+async def test_the_order_carries_the_strategys_magic():
+    bus = Bus()
+    made = settings(live=True)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+
+    assert isinstance(got, Intent)
+    assert len(venue.sent) == 1
+    sent = venue.sent[0]
+    assert sent.magic == td.magic_for(made.magic, "level-scalp")
+    assert sent.magic != made.magic
+    assert td.strategy_for(made.magic, sent.magic) == "level-scalp"

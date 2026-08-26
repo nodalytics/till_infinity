@@ -39,7 +39,7 @@ from ..logging import get_logger
 from . import manage, plans, strategy
 from . import symbols as sym
 from .broker import Broker, BrokerError, build
-from .config import Settings
+from .config import Settings, magic_for, strategy_for
 from .context import Context
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .paper import PaperBroker
@@ -66,6 +66,11 @@ class Live:
     intent: Intent
     ref: str = ""
     seen: float = field(default_factory=time.time)
+    #: The strategy that asked for it. Empty when the position was adopted and
+    #: its magic names no strategy we know - an older trade, or one opened by a
+    #: plugin whose hashed offset has no inverse. Read from the position rather
+    #: than remembered, so it survives a restart.
+    by: str = ""
 
 
 class Trader:
@@ -182,11 +187,40 @@ class Trader:
             )
 
         self._check_gates()
+        self._check_magics()
         self.guard.roll(self.equity)
         log.info(
             "trading: %s on %s",
             " + ".join(s.name for s in self.strategies),
             ", ".join(sorted(self.specs)),
+        )
+
+    def _check_magics(self) -> None:
+        """Print the strategy-to-magic map, and refuse a silent collision.
+
+        Two strategies sharing a magic is not a cosmetic problem: their trades
+        become one indistinguishable book, a report merges their results, and
+        the merged number is the one somebody decides on. Only the hashed tail
+        can collide - names in `MAGIC_ORDER` have fixed slots - so this is rare
+        and worth saying out loud when it happens rather than discovering it in
+        a scorecard that looks fine.
+        """
+        seen: dict[int, str] = {}
+        for engine in self.strategies:
+            magic = magic_for(self.settings.magic, engine.name)
+            if magic in seen:
+                log.warning(
+                    "trading: %s and %s both stamp magic %d, so their trades "
+                    "cannot be told apart - rename one",
+                    seen[magic],
+                    engine.name,
+                    magic,
+                )
+                continue
+            seen[magic] = engine.name
+        log.info(
+            "trading: magics %s",
+            ", ".join(f"{name}={magic}" for magic, name in sorted(seen.items())),
         )
 
     def _check_gates(self) -> None:
@@ -349,7 +383,11 @@ class Trader:
             stop=intent.stop,
             target=intent.target,
             comment=f"till {by or 'scalp'}"[:31],
-            magic=self.settings.magic,
+            # The comment says the same thing, but comments are advisory: MT5
+            # caps them at 31 characters and brokers rewrite them. This is the
+            # field that still names the strategy after a restart, and the one
+            # a report can group by.
+            magic=magic_for(self.settings.magic, by),
             deviation=self.settings.deviation,
         )
         try:
@@ -363,8 +401,14 @@ class Trader:
             return Refusal("rejected", str(result), intent.feed)
 
         self.taken += 1
-        log.info("trading: %s %s - %s", self.settings.mode, result, intent.reason)
-        await self._announce_fill(intent, result.price, result.ticket)
+        log.info(
+            "trading: %s %s [%s] - %s",
+            self.settings.mode,
+            result,
+            by or "scalp",
+            intent.reason,
+        )
+        await self._announce_fill(intent, result.price, result.ticket, by)
         # Tracked from the broker's own position list rather than from the
         # result, because the ticket a fill reports is the order's and the one
         # that has to be closed is the position's. Reconciling picks it up.
@@ -505,7 +549,12 @@ class Trader:
             if intent is None or intent.symbol != position.symbol:
                 intent = _intent_from(position)
                 ref = ""
-            self.open[ticket] = Live(position=position, intent=intent, ref=ref)
+            self.open[ticket] = Live(
+                position=position,
+                intent=intent,
+                ref=ref,
+                by=strategy_for(self.settings.magic, position.magic),
+            )
             pending = None
         self._pending = None
 
@@ -541,9 +590,10 @@ class Trader:
         profit = position.profit if profit is None else profit
         self.guard.record(live.intent.feed, profit, self.equity)
         log.info(
-            "trading: closed #%d %s @ %.5g for %+.2f (%s) · %s",
+            "trading: closed #%d %s [%s] @ %.5g for %+.2f (%s) · %s",
             position.ticket,
             position.symbol,
+            live.by or "unattributed",
             price,
             profit,
             why,
@@ -571,9 +621,11 @@ class Trader:
                     # last snapshot we held because it could not be read.
                     "exit_source": "last seen" if why == "gone" else "broker",
                     "seconds": round(position.age),
+                    "strategy": live.by,
+                    "magic": position.magic,
                     **live.intent.to_context(),
                 },
-                tags=(live.intent.feed, str(live.intent.side), why),
+                tags=(live.intent.feed, str(live.intent.side), why, live.by or "unattributed"),
             )
 
     # ---------------------------------------------------------------- record
@@ -584,7 +636,14 @@ class Trader:
             f"{self.settings.mode}: {intent.title}",
             rationale=intent.reason or f"{by} took a level call",
             actor="trading",
-            context={"strategy": by, "mode": self.settings.mode, **intent.to_context()},
+            context={
+                "strategy": by,
+                # Recorded so a position found at the broker can be matched
+                # back to this entry by number alone, with nothing in memory.
+                "magic": magic_for(self.settings.magic, by),
+                "mode": self.settings.mode,
+                **intent.to_context(),
+            },
             tags=(intent.feed, str(intent.side), by or "scalp", self.settings.mode),
             confidence=intent.features.get("probability"),
         )
@@ -599,7 +658,7 @@ class Trader:
             tags=(intent.feed, "declined", refusal.gate),
         )
 
-    async def _announce_fill(self, intent: Intent, price: float, ticket: int) -> None:
+    async def _announce_fill(self, intent: Intent, price: float, ticket: int, by: str = "") -> None:
         if not (self.settings.notify and self.settings.notify_fills):
             return
         body = [
@@ -614,12 +673,17 @@ class Trader:
         await self.bus.publish(
             ALERTS,
             {
-                "title": f"{self.settings.mode}: {intent.side} {intent.feed} #{ticket}",
+                "title": (
+                    f"{self.settings.mode}: {intent.side} {intent.feed} #{ticket}"
+                    + (f" · {by}" if by else "")
+                ),
                 "body": "\n".join(line for line in body if line),
                 "level": "info",
                 "fields": {
                     "instrument": intent.feed,
                     "shape": "trade",
+                    "strategy": by,
+                    "magic": str(magic_for(self.settings.magic, by)),
                     "direction": "up" if intent.side.sign > 0 else "down",
                     "venue": self.broker.name,
                 },
@@ -634,7 +698,10 @@ class Trader:
         await self.bus.publish(
             ALERTS,
             {
-                "title": (f"{self.settings.mode}: {live.intent.feed} closed {profit:+.2f} ({why})"),
+                "title": (
+                    f"{self.settings.mode}: {live.intent.feed} closed {profit:+.2f} ({why})"
+                    + (f" · {live.by}" if live.by else "")
+                ),
                 "body": (
                     f"{live.position.side} {live.position.volume:g} @ "
                     f"{live.position.price_open:.5g} → {price:.5g}\n\n{self.guard.summary()}"
@@ -643,6 +710,8 @@ class Trader:
                 "fields": {
                     "instrument": live.intent.feed,
                     "shape": "trade",
+                    "strategy": live.by,
+                    "magic": str(live.position.magic),
                     "venue": self.broker.name,
                 },
                 "source": "trading",

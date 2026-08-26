@@ -61,6 +61,8 @@ from .config import (
     DEFAULT_SYMBOLS,
     HTTP,
     INSTRUMENTS,
+    MAGIC_BAND,
+    MAGIC_ORDER,
     NATIVE,
     OPTIONAL_SYMBOLS,
     PAPER,
@@ -68,7 +70,10 @@ from .config import (
     SUFFIXES,
     Settings,
     feed_for,
+    magic_for,
+    ours,
     resolve_symbols,
+    strategy_for,
 )
 from .context import Context, Release
 from .council import Council, CouncilStrategy, Opinion, Voice
@@ -113,6 +118,8 @@ __all__ = [
     "DEFAULT_SYMBOLS",
     "HTTP",
     "INSTRUMENTS",
+    "MAGIC_BAND",
+    "MAGIC_ORDER",
     "NATIVE",
     "OPTIONAL_SYMBOLS",
     "PAPER",
@@ -175,9 +182,12 @@ __all__ = [
     "feed_for",
     "listen",
     "lots",
+    "magic_for",
+    "ours",
     "price_distance",
     "price_it",
     "report",
     "resolve",
     "resolve_symbols",
+    "strategy_for",
 ]

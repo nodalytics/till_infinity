@@ -27,7 +27,7 @@ from typing import Any, ClassVar
 
 from ..logging import get_logger
 from .broker import Broker, NotConnectedError, RejectedError
-from .config import Settings
+from .config import Settings, ours
 from .models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
 
 log = get_logger(__name__)
@@ -150,7 +150,8 @@ class NativeBroker(Broker):
         return [
             _position_from(row, self._mt5)
             for row in rows
-            if int(getattr(row, "magic", 0)) == self.settings.magic
+            # The band, not the base: every strategy stamps its own magic.
+            if ours(self.settings.magic, int(getattr(row, "magic", 0)))
         ]
 
     # ---------------------------------------------------------------- writes
