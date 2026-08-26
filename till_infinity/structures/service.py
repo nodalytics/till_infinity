@@ -40,6 +40,7 @@ from .config import DRIFT_INTERVALS, Settings
 from .drift import Drift
 from .engine import Engine
 from .models import Shape, Signal
+from .sessions import Clock
 
 log = get_logger(__name__)
 
@@ -175,6 +176,10 @@ class Watcher:
         #: (which form the levels) and quotes (which detect the touch in time
         #: to matter — waiting for a 5m close reports it after the fact).
         self.engine = Engine(charge_spread=self.settings.charge_spread)
+        #: What the hour of the day has been worth, per instrument. Learns
+        #: from resolutions and from the volatility it sees; asserts
+        #: nothing until an hour has earned it.
+        self.clock = Clock()
         self._sent: OrderedDict[tuple[str, str, str], float] = OrderedDict()
         #: Level -> the journal entry recording why we called it. Kept so the
         #: result can be attached to the decision that predicted it, which is
@@ -232,6 +237,7 @@ class Watcher:
         self.detector = state.get("detector", self.detector)
         self.drift = state.get("drift", self.drift)
         self.engine = state.get("engine", self.engine)
+        self.clock = state.get("clock", self.clock)
         log.info("structures: restored models (%s)", self.detector.seen())
         # Restored levels were formed under whatever geometry was current when
         # the state was saved, which is not necessarily this one.
@@ -247,7 +253,12 @@ class Watcher:
     def save(self) -> None:
         try:
             store.save(
-                {"detector": self.detector, "drift": self.drift, "engine": self.engine},
+                {
+                    "detector": self.detector,
+                    "drift": self.drift,
+                    "engine": self.engine,
+                    "clock": self.clock,
+                },
                 self.settings.state_dir,
             )
         except Exception as exc:  # losing a save must not stop the watch
@@ -397,6 +408,21 @@ class Watcher:
             ref = self._awaiting.pop((level.feed, round(touch.level_price, 8)), None)
             if ref is None:
                 continue  # nothing predicted this; the result is a fact, not a label
+            # The hour learns from the same event the journal does. `reject`
+            # and `backcheck` are the level holding; `break` and `trap` are
+            # price getting through. Chop is neither and is not counted, which
+            # is the discipline the rest of the package applies to it.
+            # Named `resolved_as`, not `outcome`: `outcome` is the journal
+            # function imported at the top of this module, and shadowing it
+            # here made the very next call to it a TypeError. Caught by two
+            # existing tests within a minute, which is the argument for having
+            # them.
+            resolved_as = str(touch.outcome)
+            if resolved_as in ("reject", "backcheck", "break", "trap"):
+                self.clock.record(
+                    level.feed, touch.resolved, held=resolved_as in ("reject", "backcheck")
+                )
+
             went = "up" if touch.push_vol > 0 else "down"
             recorded = await outcome(
                 self.journal,
@@ -435,6 +461,17 @@ class Watcher:
             calls = self.engine.observe_bar(message.payload)
             await self._watch_calls(calls)
             signals = self._level_calls(calls)
+            feed = str(message.payload.get("feed") or "")
+            interval = str(message.payload.get("interval") or "")
+            if feed and interval:
+                # The one time-of-day effect the literature actually supports.
+                # Taken from the volatility estimate rather than recomputed, so
+                # the hour is described in the same units as everything else.
+                unit = self.engine.vol.of(feed, interval)
+                when = message.payload.get("time")
+                if unit.warm and isinstance(when, int | float) and when:
+                    self.clock.observe_vol(feed, float(when), unit.bps)
+
             seen = self.bars.observe(message.payload)
             if seen is not None:
                 feed, mid, interval = seen
@@ -467,7 +504,7 @@ class Watcher:
         # each was doing the same work dozens of times over the same levels.
         grouped: dict[str, list] = {}
         for call in worth:
-            signal = call.to_signal(self.engine.vol.of(call.feed, call.interval))
+            signal = call.to_signal(self.engine.vol.of(call.feed, call.interval), self.clock)
             if call.feed not in grouped:
                 grouped[call.feed] = self._zones(call.feed)
             zone = self._zone_for(grouped[call.feed], call.level)

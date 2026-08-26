@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..logging import get_logger
-from . import confluence, patterns, pips, pivots, reactions, runs
+from . import confluence, patterns, pips, pivots, reactions, runs, sessions
 from . import levels as lv
 from .models import Shape, Signal
 from .state import Restorable
@@ -268,11 +268,17 @@ class Call(Restorable):
     price: float
     time: float
 
-    def to_signal(self, vol) -> Signal:
+    def to_signal(self, vol, clock=None) -> Signal:
         # `probability`, not `probability_up`: quoting P(up) beside a *down*
         # call reads as the confidence in down when it is the confidence
         # against it. The base rate flips with it or the pair is not a
         # comparison. See reactions.Inference.probability.
+        if clock is not None:
+            hour_hold, hour_n = clock.hold_rate(self.feed, self.time)
+            _, hour_vol_share = clock.volatility(self.feed, self.time)
+        else:
+            hour_hold, hour_n, hour_vol_share = 0.0, 0.0, 1.0
+
         detail = (
             f"{self.inference.direction} from {self.inference.side} at "
             f"{self.level.price:.5g} — p={self.inference.probability:.0%} "
@@ -316,6 +322,15 @@ class Call(Restorable):
                 # looking like it.
                 "record_hold": self.inference.record_hold,
                 "record_n": self.inference.record_n,
+                # When, which nothing in this package has ever conditioned on.
+                # The hour is stamped unconditionally so the journal can pair
+                # it with outcomes; `hour_hold` and `hour_n` are what the clock
+                # has learned about it so far, shrunk, and are near the
+                # instrument's base rate until an hour has earned otherwise.
+                "hour": float(sessions.hour_of(self.time)),
+                "hour_hold": hour_hold,
+                "hour_n": hour_n,
+                "hour_vol_share": hour_vol_share,
             },
             direction=self.inference.direction,
             interval=self.interval,

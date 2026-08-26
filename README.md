@@ -9,8 +9,7 @@
 <h1 align="center">Till Infinity</h1>
 
 <p align="center">
-  Finding high-probability directional structures in price, backed by
-  fundamentals.
+  We price the market, and take a stance on the distance.
 </p>
 
 <p align="center">
@@ -37,26 +36,101 @@
 
 ## The idea
 
-A directional call is only worth making when the price structure and the
-fundamentals point the same way. Most setups see one or the other. This one is
-built to see both at once, and to write down why it thought so at the time.
+**A level is the market's fair price, and the turn is what that costs.**
 
-Five parts, in dependency order:
+Price does not stop at a level because the line is special. It stops because
+enough of the market agrees, for now, that the instrument is worth about that
+much — and a price away from it is a price somebody is prepared to trade back.
+The turn is the *consequence* of fair value, not the definition of it, and that
+distinction is what makes a level worth anything: it says the level is a claim
+about value that can be wrong, rather than a shape on a chart that either
+repeats or does not.
+
+Two things follow, and they are the whole system.
+
+**So we price the market, and take a stance relative to where that price
+lands.** That is the whole loop. Fair value comes out above the market and the
+stance is long; it comes out below and the stance is short. The distance
+between the two is what the trade is worth, and it is the only quantity that
+has to be estimated.
+
+That is a familiar instinct: volume profile and its point of control chase the
+same thing. The difference is where the estimate comes from. A POC is built
+from *where volume traded*; this is built from **where volatility turned**,
+which needs nothing but bars, works on any instrument, and does not depend on a
+venue willing to sell its tape.
+
+**And it asks for no forecast.** This is the part that matters most, because
+it is what the rest of the design exists to protect. Direction is never
+predicted here — it is *read off*. The question is not "which way will price
+go", which is what almost everything in this field is quietly asking and almost
+nothing answers. It is "what is this worth, and where is it trading" — a
+**valuation**, and the side is then arithmetic. Nothing has to be foreseen for
+the stance to be well defined.
+
+It also explains why so much of the received wisdom fails when it is tested.
+Break of structure, liquidity sweeps, premium and discount — measured as
+*direction predictors* they come out at a coin flip, here and elsewhere. They
+were never predictions of direction. Read as evidence about where fair value
+sits and how firmly it is held, the same observations have somewhere to go.
+
+**Volatility is not the unit, it is half the valuation.** A price five dollars
+from fair value is not a fact about anything until you know what five dollars
+means for that instrument this hour. Fair value is therefore not a point but a
+**distribution** — an estimate with a width — and volatility is that width.
+Distance only becomes *mispricing* when it is large against it: one unit away
+is noise and says nothing, three units is a statement.
+
+It does the work three times over. It decides whether the market is far enough
+from fair value to be worth a trade; it sets where being wrong starts, because
+the stop belongs outside the noise and not at a round number; and it sizes the
+position, since risk is distance times size and only one of those is chosen.
+Get volatility wrong and every one of the three is wrong with it — which is why
+it is estimated per instrument *and* per timeframe, and why a bug in its
+denominator was the most expensive one this project has had.
+
+**Locating it is the hard part, and the wick is not it.** A level is where the
+leg in and the leg out meet — an *origin* — and the wick beyond it is the
+zone's **width, not its position**. Price poking through is the market testing
+the claim, not revising it. The origin is tracked as a **Kalman state** rather
+than a line, because each touch is a noisy observation of where fair value
+sits, and the filter's variance *is* the zone.
+
+Everything is measured in **volatility units**, so gold and EURUSD, 3m and 1w
+are comparable without per-instrument tuning — and so "how far from fair value"
+means the same thing everywhere.
+
+### What is measured, and what is assumed
+
+Fair value is a thesis, and parts of it have been tested here rather than
+asserted.
+
+What holds up: **a level's own record predicts the next turn**. Its hold rate
+on the side price is arriving from separates 59% to 92% across four bands, an
+AUC of 0.648 — the strongest single thing a level knows about itself, and it
+strengthened when a measurement bug was fixed.
+
+What does not: **price is not drawn to a level.** Across 22,219 bars a level
+was reached within twenty bars 44.9% of the time against 49.5% for an arbitrary
+price the same distance away. So the distance is an *opportunity*, not a
+magnet — a target worth taking because the level is a place with statistics
+attached, not because price is pulled to it.
+
+Read together, those two say the same thing: the evidence is in what a level
+has done at the turn, and the distance is what that evidence is worth.
+
+### The parts
+
+Six, in dependency order:
 
 | | |
 |---|---|
 | `prices` | one instrument from **many venues**, because the disagreement between feeds carries information no single feed does |
-| `structures` | arithmetic, not judgement — online models over the venues, and the **key levels** price keeps turning at, answered per approach side |
+| `structures` | arithmetic, not judgement — the online models that estimate fair value, and the **key levels** price keeps turning at, answered per approach side |
 | `news` | the calendar and the headlines on the same clock, because a move with a release behind it is a different animal |
 | `agents` | a model over the stored data, told plainly that "nothing is happening" is a correct answer. The only part needing a credential |
 | `trading` | the only part that can lose money, and the only one armed by a switch of its own — MT5 on Windows, the same code over a Wine bridge on Linux |
 | `journal` | what was decided, **why at that moment**, and what followed. Prices can be recomputed forever; the reasoning cannot be reconstructed once lost |
-
-The load-bearing idea is that a level is **where volatility turns, not where
-price poked**: the leg in and the leg out meet at an *origin*, and the wick
-beyond it is the zone's width rather than its position. Everything is measured
-in **volatility units**, so gold and EURUSD, 3m and 1w, are comparable without
-per-instrument tuning.
 
 **[The full version, with the reasoning behind each choice →](docs/idea.md)**
 

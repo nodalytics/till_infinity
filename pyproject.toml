@@ -1,7 +1,7 @@
 [project]
 name = "till-infinity"
 version = "0.1.0"
-description = "Finding high-probability directional structures in price, backed by fundamentals"
+description = "Prices the market against a fair-value estimate from where volatility turns, and takes a stance on the distance"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
