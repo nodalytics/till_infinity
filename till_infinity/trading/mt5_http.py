@@ -253,16 +253,47 @@ class HttpBroker(Broker):
         }
         raw = await self._post("/trading/order", json=body)
         trade = raw.get("trade") or {}
-        ticket = trade.get("transaction_broker_id") or 0
+        # The terminal's own answer where the bridge returns it, and the stored
+        # row otherwise. Older builds returned only the row — and serialised it
+        # to `{}` — so every field here has to survive both being absent.
+        result = raw.get("result") or {}
+        ticket = result.get("order") or trade.get("transaction_broker_id") or 0
+        price = result.get("price") or trade.get("entry_price") or 0.0
+        retcode = int(result.get("retcode") or 0)
         return OrderResult(
-            ok=bool(raw.get("success")),
-            # The bridge stores the *order* ticket as a string. For a market
-            # fill it is the position ticket too, and the service reconciles
-            # against `positions()` regardless rather than trusting this.
+            # A retcode when there is one, `success` when there is not. The
+            # bridge raises on a bad retcode, so a 2xx already means filled —
+            # but reading the code when it is there means a future build that
+            # stops raising does not silently look like a fill.
+            ok=bool(raw.get("success")) and retcode in (0, TRADE_DONE, 10008),
             ticket=int(ticket) if str(ticket).isdigit() else 0,
-            price=float(trade.get("entry_price") or 0.0),
-            volume=float(trade.get("order_volume") or order.volume),
-            comment=str(trade.get("closing_reason") or ""),
+            price=float(price),
+            volume=float(result.get("volume") or trade.get("order_volume") or order.volume),
+            retcode=retcode,
+            comment=str(result.get("comment") or ""),
+        )
+
+    async def modify(self, ticket: int, stop: float, target: float = 0.0) -> OrderResult:
+        """Move a stop or target, by ticket.
+
+        `POST /positions/modify` takes the MT5 ticket. The older
+        `/trading/modify-sl-tp` takes a `trade_id` from the bridge's own
+        database and so cannot touch a position it did not record — which is
+        every position after the bridge restarts. Without the ticket route this
+        backend could not trail a stop at all.
+        """
+        body: dict[str, Any] = {"ticket": ticket, "sl": stop}
+        if target:
+            body["tp"] = target
+        raw = await self._post("/positions/modify", json=body)
+        result = raw.get("result") or {}
+        retcode = int(result.get("retcode") or 0)
+        return OrderResult(
+            ok=bool(raw.get("success")) and retcode in (0, TRADE_DONE, 10008),
+            ticket=ticket,
+            price=float(result.get("price") or 0.0),
+            retcode=retcode,
+            comment=str(result.get("comment") or ""),
         )
 
     async def close_position(self, ticket: int, volume: float = 0.0) -> OrderResult:

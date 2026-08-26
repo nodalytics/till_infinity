@@ -85,6 +85,15 @@ matters:
 | symbol list | `GET /symbols/` returns every name | none — suffixes must be probed |
 | symbol spec | `GET /symbols/info/{symbol}` | `GET /symbols/{symbol}` |
 | health | `GET /terminal/ping` | `GET /account/health` |
+| move a stop | `POST /positions/modify` by ticket | only by internal `trade_id` |
+| order reply | the terminal's `result` | the stored row, which serialised to `{}` |
+
+The last two were added to `metatrader-terminal` for this client. Trailing a
+stop over HTTP was impossible without a ticket route — the old one keys on a
+row in the bridge's own database, so a position it had not recorded could not
+be touched — and an order used to come back carrying no ticket, no retcode and
+no fill price, leaving the caller to infer what it had just opened. Both are
+read defensively, so an older bridge still works.
 
 The client probes and adapts rather than picking one. That last row is not
 cosmetic: `metatrader-terminal` has **no** bare `/symbols/{symbol}` route, so a

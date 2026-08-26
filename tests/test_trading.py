@@ -1188,3 +1188,95 @@ def test_a_terminal_is_configured_by_any_of_the_routes():
     assert settings(rpyc_host="127.0.0.1").configured
     assert settings(url="http://localhost:8000").configured
     assert not settings().configured
+
+
+# --------------------------------------------------- reading the bridge's replies
+
+
+def http_broker(**over):
+    from till_infinity.trading.mt5_http import HttpBroker
+
+    made = settings(url="http://bridge:8000", **over)
+    return HttpBroker(made)
+
+
+async def test_an_order_reply_is_read_from_the_terminals_own_result():
+    """The result carries the ticket and retcode; the stored row is a fallback."""
+    from till_infinity.trading.mt5_http import HttpBroker
+
+    broker = http_broker()
+    sent = {}
+
+    async def fake_post(path, **kwargs):
+        sent["path"] = path
+        sent["json"] = kwargs.get("json")
+        return {
+            "success": True,
+            "result": {"order": 98765, "retcode": 10009, "price": 4400.75, "volume": 0.05},
+            "trade": {"transaction_broker_id": "98765", "entry_price": 4400.75},
+        }
+
+    broker._post = fake_post
+    result = await HttpBroker.send(
+        broker,
+        td.Order(symbol="XAUUSD", side=Side.BUY, volume=0.05, stop=4395.0, target=4406.0),
+    )
+    assert result.ok
+    assert result.ticket == 98765
+    assert result.price == 4400.75
+    assert sent["path"] == "/trading/order"
+    assert sent["json"]["sl"] == 4395.0
+
+
+async def test_an_older_bridge_that_returns_only_the_row_still_works():
+    """Back-compat: earlier builds returned no `result` at all."""
+    from till_infinity.trading.mt5_http import HttpBroker
+
+    broker = http_broker()
+
+    async def fake_post(path, **kwargs):
+        return {"success": True, "trade": {"transaction_broker_id": "5", "entry_price": 1.5}}
+
+    broker._post = fake_post
+    result = await HttpBroker.send(
+        broker, td.Order(symbol="EURUSD", side=Side.SELL, volume=0.1, stop=1.6)
+    )
+    assert result.ok
+    assert result.ticket == 5
+    assert result.price == 1.5
+
+
+async def test_a_stop_is_moved_by_ticket_over_the_bridge():
+    """Without the ticket route this backend could not trail a stop at all."""
+    from till_infinity.trading.mt5_http import HttpBroker
+
+    broker = http_broker()
+    sent = {}
+
+    async def fake_post(path, **kwargs):
+        sent["path"] = path
+        sent["json"] = kwargs.get("json")
+        return {"success": True, "result": {"retcode": 10009}}
+
+    broker._post = fake_post
+    result = await HttpBroker.modify(broker, 42, 4398.0, 4410.0)
+    assert result.ok
+    assert result.ticket == 42
+    assert sent["path"] == "/positions/modify"
+    assert sent["json"] == {"ticket": 42, "sl": 4398.0, "tp": 4410.0}
+
+
+async def test_a_rejected_order_is_not_read_as_a_fill():
+    from till_infinity.trading.mt5_http import HttpBroker
+
+    broker = http_broker()
+
+    async def fake_post(path, **kwargs):
+        return {"success": True, "result": {"order": 0, "retcode": 10014, "price": 0.0}}
+
+    broker._post = fake_post
+    result = await HttpBroker.send(
+        broker, td.Order(symbol="XAUUSD", side=Side.BUY, volume=999.0, stop=4395.0)
+    )
+    assert not result.ok
+    assert result.retcode == 10014
