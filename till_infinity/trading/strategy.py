@@ -78,6 +78,23 @@ class Strategy(ABC):
         a trade.
         """
 
+    async def consider_async(
+        self,
+        payload: dict[str, Any],
+        *,
+        spec: SymbolSpec,
+        tick: Tick,
+        equity: float,
+    ) -> Verdict:
+        """The async door, for a strategy that genuinely blocks on the network.
+
+        Defaults to the synchronous one, so the four arithmetic strategies are
+        unchanged and `service` has a single call site. Only `council`
+        overrides it — making every strategy async would be a lie about what
+        the others cost.
+        """
+        return self.consider(payload, spec=spec, tick=tick, equity=equity)
+
     @abstractmethod
     def consider(
         self,
@@ -111,6 +128,7 @@ def build(names: Sequence[str] | None, settings: Settings) -> list[Strategy]:
     unknown instrument does: a typo that silently runs one strategy instead of
     two is only noticed by the trades that never happened.
     """
+    from . import council as _council  # noqa: F401 — registers `council`
     from . import scalper as _  # noqa: F401 — registers the built-ins
 
     chosen = tuple(names) if names else settings.strategies
@@ -124,6 +142,7 @@ def build(names: Sequence[str] | None, settings: Settings) -> list[Strategy]:
 
 def catalogue() -> dict[str, str]:
     """name -> what it does, for `trading strategies`."""
+    from . import council as _council  # noqa: F401
     from . import scalper as _  # noqa: F401
 
     return {name: cls.description for name, cls in sorted(STRATEGIES.items())}

@@ -159,7 +159,8 @@ open one right now" lead to different fixes.
 
 ## Strategies
 
-Four, and none of them claims an edge of its own. Every one reads the same
+Five. Four are arithmetic over the measured signal and claim no edge of their
+own; the fifth is a panel of agents that reasons its own way to an answer. Every one reads the same
 measured `LEVEL` signal `structures` publishes; they differ in which calls they
 act on and where they put the stop and target. Adding a strategy is a claim
 that a *subset* of those calls behaves differently — which the journal can
@@ -176,6 +177,7 @@ TRADING_STRATEGIES=level-scalp,approach-scalp
 | `confluence-scalp` | only calls another timeframe agrees on | 1.5× wider | the expected push |
 | `momentum-scalp` | only calls agreeing with three speeds of recent edge | beyond the level | the expected push |
 | `approach-scalp` | a call confirming direction toward another level | beyond the level | the next level, short of it |
+| `council` | whatever four agents agree on, or nothing | as the panel proposes, clamped | as the panel proposes, clamped |
 
 Several may run together. The first one to want a trade gets it, and the
 one-position-per-instrument limit is what stops two of them doubling up.
@@ -217,6 +219,68 @@ reverses is the one all three disagree with.
 It learns from **every** call published, including the ones it refuses.
 Accumulating only from calls that reached the gate would have the three lines
 agreeing with themselves by construction.
+
+### `council` — agents that reason their own way to a trade
+
+The other four read the measured signal and apply arithmetic. This one hands
+the same evidence to several models with **different reasoning modes** and lets
+them reach their own conclusion, including that there is no trade.
+
+```bash
+TRADING_STRATEGIES=level-scalp,council
+```
+
+**Why different modes rather than several copies.** Asking one model five times
+gives five answers with the same blind spots. Four told to reason in different
+ways fail differently — and only then does agreement mean anything. A committee
+that agrees because every member made the same mistake has confirmed nothing.
+
+| voice | argues from | its characteristic error |
+|---|---|---|
+| `trend` | continuation | late, buying exhaustion |
+| `contrarian` | exhaustion, mean reversion | standing in front of something that keeps going |
+| `quant` | the numbers only, against base rates | blind to context |
+| `skeptic` | refusal — must be convinced | abstaining when there was a trade |
+
+The skeptic matters most. Somebody whose job is to say no is the difference
+between a panel and a chorus.
+
+**They discuss, once.** First independently — a first round that could see its
+neighbours would collapse onto whoever answered first, which is the failure a
+committee exists to avoid. Then each sees what the others concluded and may
+revise. One round only, because the second is where a panel starts agreeing for
+social rather than evidential reasons, and because every round is four more
+model calls.
+
+There is no judge. A judge is another model with another blind spot; the
+resolution is arithmetic — a quorum on a side, and the median of what those who
+agreed proposed.
+
+**Abstaining is a real answer** and is removed from the count rather than
+counted as opposition. A panel that cannot say "I don't know" will always find
+a trade.
+
+**What they may and may not decide.** They choose the side and the stop and
+target *in volatility units* — the shape of the trade, in the project's own
+scale-free currency. They do not choose the size: that is `sizing.lots` against
+the risk budget, and it is not a matter of opinion. Their numbers are clamped
+to 0.4–4v on the stop and 0.5–8v on the target, because a model proposing a
+forty-unit stop is failing rather than being bold, and clamping makes the
+failure harmless instead of expensive.
+
+**Everything still passes the gates.** The council's intent goes through
+`Guard` exactly as any other — news blackout, drift pause, broker dislocation,
+exposure, reward-to-risk, spread, the daily stop. It decides what to propose,
+not what is allowed.
+
+**It costs money.** Four voices over two rounds is eight model calls per signal
+considered, so `TRADING_COUNCIL_DAILY_CALLS` is a ceiling rather than a tuning
+knob. Any failure — timeout, no credential, a malformed answer — reads as an
+abstention, because a model that timed out has not made a case for a trade.
+
+Like every other strategy here, it is **unvalidated**. It is a named strategy
+precisely so `trading report` scores it against the arithmetic ones rather than
+the question being settled by which sounds cleverer.
 
 ### The strategy that is not here
 

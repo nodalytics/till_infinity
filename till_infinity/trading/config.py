@@ -288,6 +288,25 @@ class Settings:
     #: at the third — which is the case the limit exists for.
     max_currency_exposure: float = 0.005
 
+    # ------------------------------------------------------- the council
+    #: Agents that reason their own way to a trade. Off unless `council` is in
+    #: TRADING_STRATEGIES, and it needs a model credential like `agents` does.
+    #:
+    #: Voices agreeing before anything is traded. Two of four is a majority of
+    #: those who spoke in the common case where two abstain.
+    council_quorum: int = 2
+    #: Mean conviction across the agreeing voices, below which the panel is not
+    #: confident enough to be worth the spread.
+    council_min_conviction: float = 0.55
+    #: Whether the voices see each other's answers and may revise, once. Off
+    #: makes each signal cost half as many model calls.
+    council_discuss: bool = True
+    council_timeout: float = 25.0
+    #: Model calls a day, across every voice and round. A cost ceiling, not a
+    #: quality setting: four voices over two rounds is eight calls per signal
+    #: considered. Zero removes the ceiling, which is rarely what anybody wants.
+    council_daily_calls: int = 400
+
     # -------------------------------------------- managing an open trade
     #: R multiple at which the stop moves to break even. Zero is off, which is
     #: the default — see `manage` for why this is an experiment rather than a
@@ -413,6 +432,11 @@ class Settings:
             max_spread_ratio=_float("TRADING_MAX_SPREAD_RATIO", 2.5),
             drift_pause=_float("TRADING_DRIFT_PAUSE_S", 900.0),
             max_currency_exposure=_float("TRADING_MAX_CURRENCY_EXPOSURE", 0.005),
+            council_quorum=_int("TRADING_COUNCIL_QUORUM", 2),
+            council_min_conviction=_float("TRADING_COUNCIL_MIN_CONVICTION", 0.55),
+            council_discuss=_flag("TRADING_COUNCIL_DISCUSS", "1"),
+            council_timeout=_float("TRADING_COUNCIL_TIMEOUT_S", 25.0),
+            council_daily_calls=_int("TRADING_COUNCIL_DAILY_CALLS", 400),
             break_even_at=_float("TRADING_BREAK_EVEN_AT", 0.0),
             break_even_ticks=_int("TRADING_BREAK_EVEN_TICKS", 2),
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),

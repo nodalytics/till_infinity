@@ -319,3 +319,27 @@ def test_a_level_alert_names_the_timeframes_that_agree():
 
     # Nothing agreeing is information too, not a blank.
     assert "this timeframe only" in body(())
+
+
+def test_a_trade_has_its_own_glyph():
+    """Every other shape is something noticed; this one moved money.
+
+    A reader scanning a phone should be able to tell the two apart before
+    reading a word, which is what the leading character is for.
+    """
+    from till_infinity.notifications.models import SHAPES
+
+    assert SHAPES["trade"] == "💰"
+    assert SHAPES["trade"] not in {v for k, v in SHAPES.items() if k != "trade"}
+
+
+def test_a_narrowed_filter_keeps_trades_off_a_findings_channel():
+    """The default `NOTIFY_SHAPES` on the deployed box does not list `trade`."""
+    from till_infinity.notifications.filters import Filter
+
+    findings_only = Filter(shapes=frozenset({"level", "drift", "agent"}))
+    assert findings_only.accept({"fields": {"shape": "level", "instrument": "gold"}})
+    assert not findings_only.accept({"fields": {"shape": "trade", "instrument": "gold"}})
+
+    with_trades = Filter(shapes=frozenset({"level", "trade"}))
+    assert with_trades.accept({"fields": {"shape": "trade", "instrument": "gold"}})

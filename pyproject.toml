@@ -134,6 +134,10 @@ max-returns = 8
 # is the design: each gate names itself and stops. Collapsing fifteen reasons
 # into fewer exits would trade a readable refusal for a lint score.
 "till_infinity/trading/scalper.py" = ["ARG002", "PLR0911"]
+# Same shape again: one return per refusal, each naming its own gate. And the
+# synchronous `consider` exists only to refuse — the council is async, so it
+# takes the port's arguments and uses none of them.
+"till_infinity/trading/council.py" = ["ARG002", "PLR0911"]
 # `Guard.allows` is the same shape: one return per gate, each naming itself.
 "till_infinity/trading/risk.py" = ["PLR0911"]
 # `import MetaTrader5 as mt5` is the name every MT5 example and the terminal's

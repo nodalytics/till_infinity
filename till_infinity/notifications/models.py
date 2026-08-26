@@ -55,6 +55,11 @@ SHAPES: dict[str, str] = {
     "dislocation": "⚡",
     "score": "🧭",
     "agent": "🤖",
+    #: Money actually moved. Deliberately the loudest glyph here: every other
+    #: shape is something noticed, and this is the only one that changed the
+    #: account. A reader scanning a phone should be able to tell a trade from
+    #: an observation without reading a word.
+    "trade": "💰",
 }
 
 #: The direction wins over the shape when there is one, because it is the whole

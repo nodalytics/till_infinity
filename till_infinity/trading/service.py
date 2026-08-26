@@ -296,7 +296,7 @@ class Trader:
         for engine in self.strategies:
             if not engine.wants(payload):
                 continue
-            verdict = engine.consider(payload, spec=spec, tick=tick, equity=self.equity)
+            verdict = await engine.consider_async(payload, spec=spec, tick=tick, equity=self.equity)
             if isinstance(verdict, Refusal):
                 self.refused += 1
                 # Deliberately not journalled. A strategy refusing on

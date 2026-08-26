@@ -31,7 +31,8 @@ The pieces, in dependency order:
 | `exposure` | what is at risk per currency, as opposed to per ticket |
 | `risk` | may this account take another trade right now |
 | `strategy` | the port a strategy implements, and the register |
-| `scalper` | the five level strategies |
+| `scalper` | the four arithmetic level strategies |
+| `council` | agents that reason their own way to a trade, and discuss it |
 | `speeds` | three EWMAs and their agreement, for `momentum-scalp` |
 | `book` | the levels seen so far, for the ones that trade toward a level |
 | `manage` | moving a stop after the trade is on. Off by default |
@@ -69,6 +70,7 @@ from .config import (
     resolve_symbols,
 )
 from .context import Context, Release
+from .council import Council, CouncilStrategy, Opinion, Voice
 from .exposure import Exposure
 from .manage import Move, advance
 from .models import (
@@ -120,6 +122,8 @@ __all__ = [
     "BrokerError",
     "ConfluenceScalp",
     "Context",
+    "Council",
+    "CouncilStrategy",
     "Exposure",
     "Guard",
     "Intent",
@@ -128,6 +132,7 @@ __all__ = [
     "MomentumScalp",
     "Move",
     "NotConnectedError",
+    "Opinion",
     "Order",
     "OrderResult",
     "PaperBroker",
@@ -150,6 +155,7 @@ __all__ = [
     "Trader",
     "TransientError",
     "Verdict",
+    "Voice",
     "advance",
     "available",
     "build",
