@@ -14,11 +14,20 @@ is not ours to choose.
 | backend | where it runs | how it talks to MT5 |
 |---|---|---|
 | `mt5` | Windows, or a Wine prefix with a Windows Python | `import MetaTrader5`, in-process |
-| `mt5-http` | anywhere, this Linux box included | HTTP to a bridge running MT5 under Wine |
+| `mt5-rpyc` | anywhere | a proxy of the module itself, over RPyC |
+| `mt5-http` | anywhere | HTTP to a bridge running MT5 under Wine |
 | `paper` | anywhere, no terminal at all | nothing; fills are simulated against the live quote |
 
-The HTTP bridge is `nodalytics/mt5-api`, which is exactly this: MT5 under Wine
-in a container, behind FastAPI. `mt5_http.py` speaks its routes.
+The middle two both put the terminal on another host and differ in what
+crosses the wire. RPyC carries the module: the same functions, arguments and
+namedtuples, so the native backend drives it unchanged. HTTP carries JSON
+through whatever subset somebody wrapped in FastAPI. RPyC is faster and more
+complete; the bridge is the one that can safely face a network, because an
+RPyC server with `allow_all_attrs` will run anything it is asked to.
+
+The HTTP bridge is `nodalytics/metatrader-terminal` — MT5 under Wine in a
+container, behind FastAPI. `mt5_http.py` speaks its routes, and those of the
+earlier `mt5-api` variant, which are not the same; see that module.
 
 ## Why selection is automatic, and why it is still announced
 
@@ -44,7 +53,7 @@ from importlib.util import find_spec
 from typing import ClassVar, Self
 
 from ..logging import get_logger
-from .config import BACKENDS, HTTP, NATIVE, PAPER, Settings
+from .config import BACKENDS, HTTP, NATIVE, PAPER, RPYC, Settings
 from .models import Account, Order, OrderResult, Position, SymbolSpec, Tick
 
 log = get_logger(__name__)
@@ -187,9 +196,12 @@ def available() -> dict[str, str]:
     else:
         reasons[NATIVE] = (
             f"the MetaTrader5 package is Windows-only and this is {platform.system()} "
-            f"— use the mt5-http bridge"
+            f"— reach a terminal over rpyc or the http bridge"
         )
 
+    reasons[RPYC] = (
+        "" if find_spec("rpyc") is not None else "rpyc is not installed (uv sync --extra rpyc)"
+    )
     reasons[HTTP] = "" if find_spec("httpx") is not None else "httpx is not installed"
     reasons[PAPER] = ""
     return reasons
@@ -199,9 +211,10 @@ def choose(settings: Settings) -> str:
     """Which backend to use, given the host and the configuration.
 
     Order: an explicit `TRADING_BACKEND` wins outright, then the native package
-    if it imports, then the HTTP bridge if a URL is set, then paper. The native
-    package is preferred over a configured bridge because if both are present
-    the in-process call is strictly faster and one fewer thing to be down.
+    if it imports, then RPyC if a host is set, then the HTTP bridge if a URL
+    is, then paper. Each step is preferred over the next because it is closer
+    to the terminal: in-process beats a module proxy beats a JSON wrapper, in
+    latency and in how much of the API survives the trip.
     """
     reasons = available()
     wanted = (settings.backend or "auto").lower()
@@ -216,18 +229,29 @@ def choose(settings: Settings) -> str:
             raise BrokerError(f"backend {wanted!r} cannot run here: {blocked}")
         if wanted == HTTP and not settings.url:
             raise BrokerError("backend 'mt5-http' needs TRADING_MT5_URL")
+        if wanted == RPYC and not settings.rpyc_host:
+            raise BrokerError("backend 'mt5-rpyc' needs TRADING_RPYC_HOST")
         return wanted
 
     if not reasons[NATIVE]:
         log.info("trading: using the native MetaTrader5 package")
         return NATIVE
+    if settings.rpyc_host and not reasons[RPYC]:
+        log.info(
+            "trading: %s — using the module over rpyc at %s",
+            reasons[NATIVE],
+            settings.rpyc_host,
+        )
+        return RPYC
     if settings.url and not reasons[HTTP]:
         log.info("trading: %s — using the bridge at %s", reasons[NATIVE], settings.url)
         return HTTP
     log.warning(
         "trading: no terminal available (%s%s), running on paper",
         reasons[NATIVE],
-        "" if settings.url else "; TRADING_MT5_URL is not set",
+        ""
+        if (settings.url or settings.rpyc_host)
+        else "; neither TRADING_RPYC_HOST nor TRADING_MT5_URL is set",
     )
     return PAPER
 
@@ -244,6 +268,10 @@ def build(settings: Settings, backend: str | None = None) -> Broker:
         from .mt5_native import NativeBroker
 
         return NativeBroker(settings)
+    if chosen == RPYC:
+        from .mt5_rpyc import RpycBroker
+
+        return RpycBroker(settings)
     if chosen == HTTP:
         from .mt5_http import HttpBroker
 

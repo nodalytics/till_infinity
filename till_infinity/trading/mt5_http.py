@@ -1,31 +1,47 @@
-"""MT5 over HTTP, via the `nodalytics/mt5-api` bridge.
+"""MT5 over HTTP, via a FastAPI bridge running the terminal under Wine.
 
 This is the backend that makes Linux work. The bridge runs the Windows
 terminal under Wine in a container and puts FastAPI in front of it, so the only
 Windows-only thing in the system is the container, and this process talks to it
 over a socket like anything else.
 
-The routes below are the bridge's as it stands, not an idealised version of
-them, and two of its quirks are worth knowing because they shape the code:
+## Two bridges, one client
 
-**Symbol specs come from `/symbols/{symbol}`, not `/symbols/info/{symbol}`.**
-The `info` route declares a narrow response model — name, path, volume limits,
-`price_digits` — which drops `trade_tick_value` and `trade_tick_size`. Those
-two are exactly what position sizing needs, and the bare route returns the
-terminal's whole symbol dict unfiltered.
+There are two of these in the wild and they are not the same API:
+
+* **`metatrader-terminal`** — the published one, and the more complete;
+* **`mt5-api`** — an earlier variant, which may only exist locally.
+
+They share the `/api/v1` prefix, the `X-API-Key` header, `POST /trading/order`
+and `POST /positions/close`, and they differ in exactly the places that matter
+here. Rather than pick one and be broken against the other, this client
+**probes what it is talking to** at connect and adapts. Three differences:
+
+| | `metatrader-terminal` | `mt5-api` |
+|---|---|---|
+| account | `GET /terminal/account/info` | none — falls back to `TRADING_ACCOUNT_EQUITY` |
+| symbol list | `GET /symbols/` returns every name | none — suffixes have to be probed |
+| symbol spec | `GET /symbols/info/{symbol}` | `GET /symbols/{symbol}` |
+
+That last one is not cosmetic. `metatrader-terminal` has **no** bare
+`/symbols/{symbol}` route, so a client hard-wired to it 404s on every symbol
+and concludes the broker carries none of them — which is a total failure that
+looks exactly like a broker naming problem. And on `mt5-api` the `info` route
+is the one that cannot be used, because its response model narrows the payload
+to name, path, volume limits and `price_digits`, dropping `trade_tick_value`
+and `trade_tick_size` — precisely what position sizing needs. Each project's
+working route is the other's broken one, so both are tried and the answer is
+judged by whether it actually carries a tick value.
+
+Where the symbol list exists it is used, and that is the better path by a
+distance: the account's suffix is *found* rather than guessed from a list of
+twenty-odd that cannot be complete. See `symbols.resolve`.
 
 **The magic filter is applied here as well as there.** The bridge passes magic
 to `positions_get`, which does not take that keyword — it filters by symbol,
 group or ticket. Rather than depend on that being fixed, every position is
 checked against our magic locally. The cost is a few dictionaries; the failure
 it prevents is this system closing somebody's hand-placed trade.
-
-**There is no account endpoint.** The bridge exposes health, last error and
-retcodes, but nothing carrying balance or equity, so `account()` asks for
-`/account/info` in case a later version grew one and otherwise falls back to
-`TRADING_ACCOUNT_EQUITY`. Risk sizing needs a number; guessing one silently
-would size every trade off a fiction, so the fallback is logged the first time
-it is used and the setting is documented as required for this backend.
 """
 
 from __future__ import annotations
@@ -60,6 +76,11 @@ class HttpBroker(Broker):
         super().__init__(settings)
         self._client: httpx.AsyncClient | None = None
         self._warned_equity = False
+        #: The spec route this bridge answers on, learned on the first symbol
+        #: asked for and reused. Both are tried until one works.
+        self._spec_route = ""
+        #: Whether this bridge can list its symbols. None until asked.
+        self._can_list: bool | None = None
 
     # ------------------------------------------------------------- lifecycle
 
@@ -85,20 +106,38 @@ class HttpBroker(Broker):
             self._client = None
 
     async def healthy(self) -> bool:
-        try:
-            body = await self._get("/account/health")
-        except Exception as exc:
-            log.warning("trading: bridge health check failed: %s", exc)
-            return False
-        return str(body.get("status", "")).lower() == "healthy"
+        """Whichever health route this bridge has. Never raises.
+
+        `mt5-api` answers `/account/health` with a status field;
+        `metatrader-terminal` answers `/terminal/ping`. A client that knew only
+        one would report a healthy bridge as down and refuse to start.
+        """
+        for path in ("/account/health", "/terminal/ping"):
+            try:
+                body = await self._get(path)
+            except Exception:
+                continue
+            if not isinstance(body, dict):
+                continue
+            status = str(body.get("status", "")).lower()
+            # A ping with no status field is itself the answer.
+            if status in ("healthy", "ok", "") or body.get("ping"):
+                return status not in ("unhealthy", "disconnected")
+        log.warning("trading: no health route answered on %s", self.settings.url)
+        return False
 
     # ----------------------------------------------------------------- reads
 
     async def account(self) -> Account:
-        try:
-            raw = await self._get("/account/info")
-        except Exception:
-            raw = {}
+        raw: dict[str, Any] = {}
+        for path in ("/terminal/account/info", "/account/info"):
+            try:
+                found = await self._get(path)
+            except Exception:
+                continue
+            if isinstance(found, dict) and found.get("equity") is not None:
+                raw = found
+                break
         if raw.get("equity") is None:
             if not self._warned_equity:
                 log.warning(
@@ -118,14 +157,68 @@ class HttpBroker(Broker):
             leverage=int(raw.get("leverage") or 0),
         )
 
-    async def spec(self, symbol: str) -> SymbolSpec | None:
-        try:
-            raw = await self._get(f"/symbols/{symbol}")
-        except RejectedError:
-            return None  # 404 — the broker has no such symbol. An answer, not a fault.
-        if not raw or not raw.get("name"):
+    async def catalogue(self) -> list[str] | None:
+        """Every symbol the bridge will list, or None if it does not list them.
+
+        `metatrader-terminal` answers `GET /symbols/` with the whole set, which
+        lets resolution scan instead of guessing suffixes. `mt5-api` has no
+        such route, and None is the honest answer there.
+        """
+        if self._can_list is False:
             return None
-        return _spec_from(raw, symbol)
+        try:
+            found = await self._get("/symbols/")
+        except Exception:
+            self._can_list = False
+            return None
+        names = (
+            [str(item) for item in found if isinstance(item, str)]
+            if isinstance(found, list)
+            else []
+        )
+        self._can_list = bool(names)
+        return names or None
+
+    async def spec(self, symbol: str) -> SymbolSpec | None:
+        """The instrument's trading rules, from whichever route this bridge has.
+
+        Both are tried, and the answer is accepted only when it carries a tick
+        value — `mt5-api`'s `info` route returns a 200 with a narrowed payload
+        rather than an error, so status alone cannot tell a usable spec from an
+        unusable one. Sizing off a spec with no tick value is refused later
+        anyway; discovering it here means the *other* route still gets a turn.
+        """
+        routes = (
+            [self._spec_route]
+            if self._spec_route
+            else [
+                f"/symbols/{symbol}",
+                f"/symbols/info/{symbol}",
+            ]
+        )
+        narrowed: dict[str, Any] | None = None
+        for route in routes:
+            path = route.format(symbol=symbol) if "{symbol}" in route else route
+            try:
+                raw = await self._get(path)
+            except RejectedError:
+                continue  # 404 — this route, or this symbol. The next one says which.
+            except Exception:
+                continue
+            if not isinstance(raw, dict) or not raw.get("name"):
+                continue
+            if raw.get("trade_tick_value") is None:
+                narrowed = raw  # usable only if nothing better answers
+                continue
+            self._spec_route = route.replace(symbol, "{symbol}")
+            return _spec_from(raw, symbol)
+        if narrowed is not None:
+            log.warning(
+                "trading: %s came back without a tick value, so it cannot be sized",
+                symbol,
+            )
+            return _spec_from(narrowed, symbol)
+        return None
 
     async def quote(self, symbol: str) -> Tick | None:
         try:

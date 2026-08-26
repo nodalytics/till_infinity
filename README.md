@@ -287,14 +287,16 @@ Configuring a terminal does not arm it. On paper the whole path still runs —
 symbols resolved, positions sized, stops placed, fills simulated against the
 live bid/ask, outcomes journalled — and the mode is printed at start-up.
 
-**Windows and Linux both work, by different routes.** The `MetaTrader5` package
-is a binding onto a running Windows terminal, so there is no Linux wheel and
-never will be. On Windows it is used in-process; everywhere else the same code
-reaches MT5 over HTTP through
-[`nodalytics/mt5-api`](https://github.com/nodalytics/mt5-api), which runs the
-terminal under Wine. The backend is chosen from what the host can reach and is
-always announced, because falling back to paper quietly is how a strategy runs
-for a week against nothing.
+**Windows and Linux both work, by three different routes.** The `MetaTrader5`
+package is a binding onto a running Windows terminal, so there is no Linux
+wheel and never will be. On Windows it is used in-process. Everywhere else the
+same code reaches a terminal either by proxying the module itself over **RPyC**
+out of a Wine prefix — the `mt5linux` arrangement, and the faster and more
+complete of the two — or over **HTTP** through
+[`metatrader-terminal`](https://github.com/nodalytics/metatrader-terminal),
+which is the one that can safely face a network. The backend is chosen from
+what the host can reach and is always announced, because falling back to paper
+quietly is how a strategy runs for a week against nothing.
 
 Four strategies, none claiming an edge of its own — they read the same measured
 signal and differ in which calls they act on and where the stop and target go:

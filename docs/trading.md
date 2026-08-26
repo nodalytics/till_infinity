@@ -37,14 +37,69 @@ be one. So there are three backends and the host decides which:
 | backend | runs on | reaches MT5 by |
 |---|---|---|
 | `mt5` | Windows, or a Wine prefix with a Windows Python | `import MetaTrader5`, in-process |
-| `mt5-http` | anywhere, this Linux box included | HTTP to a bridge running MT5 under Wine |
+| `mt5-rpyc` | anywhere | a proxy of the module itself, over RPyC |
+| `mt5-http` | anywhere | HTTP to a bridge running MT5 under Wine |
 | `paper` | anywhere, no terminal at all | nothing; fills simulated against the quote |
 
-The bridge is [`nodalytics/mt5-api`](https://github.com/nodalytics/mt5-api) —
-MT5 under Wine in a container, behind FastAPI. `mt5_http.py` speaks its actual
-routes, including its quirks: specs come from `/symbols/{symbol}` rather than
-`/symbols/info/{symbol}`, because the `info` route's response model drops
-`trade_tick_value` and `trade_tick_size`, which are exactly what sizing needs.
+The middle two both put the terminal on another host and differ in what crosses
+the wire.
+
+**RPyC carries the module.** A Windows Python inside the Wine prefix serves the
+`MetaTrader5` module, and this process gets a proxy of it — same functions,
+same arguments, same namedtuples — so the native backend drives it with no
+changes at all. `mt5_rpyc.py` is connection handling on top of `mt5_native.py`
+and no trading logic of its own, which is the point: a second copy would be a
+second place for the filling-mode logic to drift.
+
+```bash
+# in the Wine prefix, once — the mt5linux package packages exactly this
+wine python -m rpyc.utils.server --port 18812 ThreadedServer
+
+TRADING_RPYC_HOST=127.0.0.1 uv run till-infinity trading doctor
+```
+
+Its cost is round trips: RPyC returns *netrefs*, handles to objects still
+living on the other side, so reading eleven fields off a position is eleven
+socket calls rather than eleven memory reads. Results are therefore
+materialised as they arrive — one round trip instead of dozens — falling back
+to the netref when a value will not copy, because slow still works.
+
+**Never expose the RPyC server.** `allow_all_attrs` makes it a
+remote-code-execution service by design. Bind it to localhost or a private
+network and tunnel over SSH if the terminal is elsewhere. The HTTP bridge is
+the one that can safely face a network; RPyC is the faster and more complete
+one behind a boundary you control.
+
+### Two bridges, one client
+
+There are two of these and they are **not the same API**:
+[`metatrader-terminal`](https://github.com/nodalytics/metatrader-terminal), the
+published and more complete one, and `mt5-api`, an earlier variant that may
+only exist locally. They share the `/api/v1` prefix, the `X-API-Key` header,
+`POST /trading/order` and `POST /positions/close`, and differ exactly where it
+matters:
+
+| | `metatrader-terminal` | `mt5-api` |
+|---|---|---|
+| account | `GET /terminal/account/info` | none — falls back to `TRADING_ACCOUNT_EQUITY` |
+| symbol list | `GET /symbols/` returns every name | none — suffixes must be probed |
+| symbol spec | `GET /symbols/info/{symbol}` | `GET /symbols/{symbol}` |
+| health | `GET /terminal/ping` | `GET /account/health` |
+
+The client probes and adapts rather than picking one. That last row is not
+cosmetic: `metatrader-terminal` has **no** bare `/symbols/{symbol}` route, so a
+client hard-wired to it 404s on every symbol and concludes the broker carries
+none — a total failure that looks exactly like a naming problem. And on
+`mt5-api` the `info` route is the unusable one, because its response model
+narrows the payload and drops `trade_tick_value` and `trade_tick_size`, which
+are precisely what sizing needs. Each project's working route is the other's
+broken one, so both are tried and the answer is accepted only when it carries a
+tick value — a 200 with a narrowed body is not an error, so status alone cannot
+tell them apart.
+
+Where the symbol list exists it is used, and that is much the better path: the
+account's suffix is found rather than guessed from a list that cannot be
+complete.
 
 Selection is automatic, in a fixed order — explicit `TRADING_BACKEND`, then the
 native package, then the bridge, then paper — because a config file that has to

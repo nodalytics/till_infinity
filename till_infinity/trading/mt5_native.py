@@ -174,7 +174,7 @@ class NativeBroker(Broker):
             # punctuation; the reasoning lives in the journal, not here.
             "comment": order.comment[:31],
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": self._filling(order.symbol),
+            "type_filling": await self._filling(order.symbol),
         }
         return _result_from(await self._call("order_send", request))
 
@@ -201,7 +201,7 @@ class NativeBroker(Broker):
             "magic": self.settings.magic,
             "comment": "till: close",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": self._filling(position.symbol),
+            "type_filling": await self._filling(position.symbol),
         }
         return _result_from(await self._call("order_send", request))
 
@@ -238,13 +238,17 @@ class NativeBroker(Broker):
             return None
         return await self._call("symbol_info", symbol)
 
-    def _filling(self, symbol: str) -> int:
+    async def _filling(self, symbol: str) -> int:
         """The fill policy this symbol accepts, preferring the configured one.
 
         Brokers differ, and a policy the symbol does not allow is rejected with
         "Unsupported filling mode" — a failure that looks like a bad order and
         is really a bad constant. The symbol's own `filling_mode` mask is the
         authority; the setting only chooses between what it permits.
+
+        Async because the lookup is a call into the terminal, and over RPyC
+        that is a socket round trip. Building it into the request dict
+        synchronously blocked the event loop on the network for every order.
         """
         mt5 = self._require()
         wanted = {
@@ -253,7 +257,7 @@ class NativeBroker(Broker):
             "RETURN": mt5.ORDER_FILLING_RETURN,
         }.get(self.settings.filling, mt5.ORDER_FILLING_IOC)
 
-        info = mt5.symbol_info(symbol)
+        info = await self._call("symbol_info", symbol)
         mask = int(getattr(info, "filling_mode", 0) or 0)
         if not mask:
             return wanted

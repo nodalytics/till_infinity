@@ -103,8 +103,11 @@ OPTIONAL_SYMBOLS: tuple[str, ...] = tuple(k for k in INSTRUMENTS if k not in DEF
 #: Backends, in the order `auto` tries them. See `broker.choose`.
 PAPER = "paper"
 NATIVE = "mt5"
+RPYC = "mt5-rpyc"
 HTTP = "mt5-http"
-BACKENDS: tuple[str, ...] = (NATIVE, HTTP, PAPER)
+#: In the order `auto` prefers them: in-process, then the module proxy, then
+#: the HTTP wrapper, then no terminal at all. See `broker.choose`.
+BACKENDS: tuple[str, ...] = (NATIVE, RPYC, HTTP, PAPER)
 
 DEFAULT_API_PATH = "/api/v1"
 
@@ -150,12 +153,22 @@ class Settings:
     # ------------------------------------------------------------- the venue
     #: "auto", or one of BACKENDS. Auto is resolved in `broker.choose`.
     backend: str = "auto"
-    #: The mt5-api bridge, for hosts where the MetaTrader5 package cannot run.
+    #: The HTTP bridge, for hosts where the MetaTrader5 package cannot run.
     url: str = ""
     api_key: str = ""
     api_path: str = DEFAULT_API_PATH
     timeout: float = 15.0
     retries: int = 3
+
+    #: An RPyC server exposing the MetaTrader5 module from inside a Wine
+    #: prefix — the `mt5linux` arrangement. Faster than the bridge and with the
+    #: whole API surface rather than the wrapped subset.
+    #:
+    #: An RPyC server with `allow_all_attrs` runs whatever it is asked to, so
+    #: this must never point at one listening on a public interface. Localhost,
+    #: a private network, or an SSH tunnel.
+    rpyc_host: str = ""
+    rpyc_port: int = 18812
 
     #: Native terminal credentials. Blank means "whatever terminal is already
     #: logged in", which is the normal case on a desktop.
@@ -340,8 +353,13 @@ class Settings:
 
     @property
     def configured(self) -> bool:
-        """Whether a real terminal has been pointed at, either way."""
-        return bool(self.url) or self.backend == NATIVE or bool(self.login)
+        """Whether a real terminal has been pointed at, by any route."""
+        return (
+            bool(self.url)
+            or bool(self.rpyc_host)
+            or self.backend in (NATIVE, RPYC)
+            or bool(self.login)
+        )
 
     @property
     def mode(self) -> str:
@@ -357,6 +375,8 @@ class Settings:
             url=_env("TRADING_MT5_URL"),
             api_key=_env("TRADING_MT5_API_KEY"),
             api_path=_env("TRADING_MT5_API_PATH") or DEFAULT_API_PATH,
+            rpyc_host=_env("TRADING_RPYC_HOST"),
+            rpyc_port=_int("TRADING_RPYC_PORT", 18812),
             timeout=_float("TRADING_TIMEOUT", 15.0),
             retries=_int("TRADING_RETRIES", 3),
             login=_int("TRADING_MT5_LOGIN", 0),

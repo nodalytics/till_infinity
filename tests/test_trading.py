@@ -1142,3 +1142,49 @@ async def test_paper_and_live_are_not_averaged_together(tmp_path):
     assert tr.build(tmp_path / "j.db", mode="paper").overall.count == 1
     assert tr.build(tmp_path / "j.db", mode="live").overall.count == 1
     assert tr.build(tmp_path / "j.db").overall.count == 2
+
+
+# ------------------------------------------------- reaching a Windows terminal
+
+
+def test_rpyc_is_preferred_over_the_http_bridge():
+    """Closer to the terminal: a module proxy beats a JSON wrapper."""
+    made = settings(backend="auto", rpyc_host="127.0.0.1", url="http://localhost:8000")
+    assert td.choose(made) == td.RPYC
+
+
+def test_the_http_bridge_is_used_when_only_it_is_configured():
+    made = settings(backend="auto", rpyc_host="", url="http://localhost:8000")
+    assert td.choose(made) == td.HTTP
+
+
+def test_an_rpyc_backend_without_a_host_is_an_error_not_a_fallback():
+    made = settings(backend="mt5-rpyc", rpyc_host="")
+    with pytest.raises(td.BrokerError, match="TRADING_RPYC_HOST"):
+        td.choose(made)
+
+
+def test_the_rpyc_backend_reuses_the_native_trading_logic():
+    """Thirty lines of connection handling and no order building of its own.
+
+    A second copy is a second place for the filling-mode logic to drift.
+    """
+    from till_infinity.trading.mt5_native import NativeBroker
+    from till_infinity.trading.mt5_rpyc import RpycBroker
+
+    assert issubclass(RpycBroker, NativeBroker)
+    for shared in ("send", "close_position", "modify", "spec", "positions", "_filling"):
+        assert getattr(RpycBroker, shared) is getattr(NativeBroker, shared)
+
+
+async def test_an_rpyc_broker_with_no_server_reports_it_rather_than_hanging():
+    made = settings(backend="mt5-rpyc", rpyc_host="127.0.0.1", rpyc_port=1, timeout=1.0)
+    broker = td.build(made)
+    with pytest.raises(td.NotConnectedError, match="could not reach"):
+        await broker.connect()
+
+
+def test_a_terminal_is_configured_by_any_of_the_routes():
+    assert settings(rpyc_host="127.0.0.1").configured
+    assert settings(url="http://localhost:8000").configured
+    assert not settings().configured

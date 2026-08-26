@@ -36,6 +36,9 @@ redis = ["redis>=5.0.0"]
 # marker keeps `uv sync --all-extras` working in CI on Linux, where this
 # resolves to nothing and the bridge backend is used instead.
 mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
+# Talking to a Windows terminal from anywhere, by proxying the module itself
+# out of a Wine prefix. No platform marker: this half runs on the Linux side.
+rpyc = ["rpyc>=6.0.0"]
 
 [project.scripts]
 till-infinity = "till_infinity.cli:main"

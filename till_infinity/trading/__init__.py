@@ -23,7 +23,7 @@ The pieces, in dependency order:
 |---|---|
 | `config` | what to trade, on which terminal, and the arming switch |
 | `models` | sides, specs, ticks, intents, refusals — nothing broker-shaped |
-| `broker` | the port, and which of the three backends this host can run |
+| `broker` | the port, and which of the four backends this host can run |
 | `symbols` | which instruments this broker actually offers, resolved once |
 | `sizing` | volatility units to price, price to lots |
 | `plans` | risk limits as named, internally consistent bundles |
@@ -62,6 +62,7 @@ from .config import (
     NATIVE,
     OPTIONAL_SYMBOLS,
     PAPER,
+    RPYC,
     SUFFIXES,
     Settings,
     feed_for,
@@ -109,6 +110,7 @@ __all__ = [
     "OPTIONAL_SYMBOLS",
     "PAPER",
     "PLANS",
+    "RPYC",
     "STRATEGIES",
     "SUFFIXES",
     "Account",

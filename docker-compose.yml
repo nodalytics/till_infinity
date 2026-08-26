@@ -81,7 +81,7 @@ services:
   #
   # This container has no MetaTrader terminal in it and is not going to — the
   # package is Windows-only. On Linux it reaches MT5 through the bridge, so
-  # TRADING_MT5_URL has to point at a `nodalytics/mt5-api` instance, which runs
+  # TRADING_MT5_URL has to point at a `metatrader-terminal` instance, which runs
   # the terminal under Wine. Left unset, this stays on paper and says so.
   trading:
     <<: *common
