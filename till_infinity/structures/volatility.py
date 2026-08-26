@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 
 from river import stats
 
+from .garch import Garch
 from .state import Restorable
 
 #: Bars of history before the estimate is trusted. Below this the variance of
@@ -127,6 +128,16 @@ class Volatility(Restorable):
     _grid: stats.RollingQuantile = field(
         default_factory=lambda: stats.RollingQuantile(q=TICK_QUANTILE, window_size=TICK_WINDOW)
     )
+    #: The same series, read by a model that has somewhere to return to.
+    #:
+    #: **Additional, not a replacement.** `bps` is unchanged and every
+    #: threshold in this package still divides by it. This is fed the same
+    #: prices and kept alongside so the two can be recorded against outcomes
+    #: and compared - given how much depends on this number, swapping it on the
+    #: strength of the reasoning would be the mistake this repository keeps
+    #: writing down. See `garch.py` for what it adds and why it is written on
+    #: absolute returns rather than squared ones.
+    _garch: Garch = field(default_factory=Garch)
 
     # `__setstate__` comes from `Restorable`, which fills in fields a saved
     # state predates. This class is why that exists: `_tick`, `_steps` and
@@ -211,6 +222,8 @@ class Volatility(Restorable):
         self._mean_abs = (
             move if self._seen == 1 else self._mean_abs + alpha * (move - self._mean_abs)
         )
+        # Same input, second opinion. Cheap: three multiplications.
+        self._garch.update(price)
         current = self.bps
         self._low.update(current)
         self._high.update(current)
@@ -222,6 +235,21 @@ class Volatility(Restorable):
     @property
     def bps(self) -> float:
         return max(self._mean_abs, self.floor_bps)
+
+    @property
+    def garch_bps(self) -> float:
+        """The mean-reverting estimate of the same quantity, in bps."""
+        return self._garch.bps
+
+    @property
+    def stretch(self) -> float:
+        """How far the current scale sits above its own long-run level.
+
+        1.0 when there is no view yet. Above 1 the instrument is livelier than
+        it usually is and the model expects that to fade. The exponentially
+        weighted estimate cannot express this at all, because it has no usual.
+        """
+        return self._garch.stretch
 
     @property
     def warm(self) -> bool:
@@ -296,7 +324,10 @@ class Book(Restorable):
         key = (feed, interval)
         found = self._by_key.get(key)
         if found is None:
-            found = self._by_key[key] = Volatility(half_life=self.half_life)
+            found = self._by_key[key] = Volatility(
+                half_life=self.half_life,
+                _garch=Garch(half_life=self.half_life),
+            )
         return found
 
     def update(self, feed: str, price: float, interval: str = "") -> float:

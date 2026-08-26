@@ -1129,3 +1129,56 @@ def test_a_bar_with_real_extremes_is_not_reported(caplog):
             }
         )
     assert not [r for r in caplog.records if "no high/low" in r.getMessage()]
+
+
+def test_the_mean_reverting_estimate_reduces_to_the_existing_one():
+    """`a + b = 1` removes the constant, and the model becomes the EW mean.
+
+    The equivalence is the argument that this adds one property and changes
+    nothing else, so it is a test rather than a claim in a docstring.
+    """
+    from till_infinity.structures.garch import Garch
+    from till_infinity.structures.volatility import Volatility
+
+    plain = Volatility(half_life=30.0)
+    same = Garch(half_life=30.0, persistence=1.0)
+    prices = [100.0 + (i % 7) * 0.4 - (i % 3) * 0.25 for i in range(200)]
+    for price in prices:
+        plain.update(price)
+        same.update(price)
+    assert same.bps == pytest.approx(plain.bps, rel=1e-9)
+
+
+def test_a_shock_fades_toward_the_long_run_level():
+    """What an exponentially weighted mean cannot do: have a destination."""
+    from till_infinity.structures.garch import Garch
+
+    model = Garch(half_life=10.0, persistence=0.9, long_half_life=200.0)
+    for i in range(500):
+        model.update(100.0 + (i % 2) * 0.05)  # a steady, quiet series
+    calm = model.bps
+
+    model.update(130.0)  # one violent bar
+    assert model.bps > calm * 2
+
+    for i in range(300):
+        model.update(130.0 + (i % 2) * 0.065)  # quiet again, at the new price
+    # Back near where it started, rather than wherever the shock left it.
+    assert model.bps < calm * 2
+    assert model.stretch < 2.0
+
+
+def test_the_long_run_level_is_not_just_the_estimate_again():
+    """If the anchor moved at the speed of the estimate there would be nothing
+    to revert to."""
+    from till_infinity.structures.garch import Garch
+
+    model = Garch(half_life=10.0, long_half_life=5_000.0)
+    for i in range(400):
+        model.update(100.0 + (i % 2) * 0.02)
+    quiet_long = model.long_run_bps
+    for i in range(60):
+        model.update(100.0 + (i % 2) * 2.0)  # a loud stretch
+    assert model.bps > model.long_run_bps
+    assert model.long_run_bps == pytest.approx(quiet_long, rel=0.9)
+    assert model.stretch > 1.5

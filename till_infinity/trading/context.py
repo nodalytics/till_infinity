@@ -80,6 +80,16 @@ class Context:
     #: together. Much shorter than `drift_pause`: a widening passes, a regime
     #: change does not.
     wide_pause: float = 300.0
+    #: Seconds an instrument must have been seen before a widening counts.
+    #:
+    #: `structures` scores spread with a per-venue model that needs history
+    #: before it means anything, and a newly added instrument has none - so its
+    #: first minutes produce anomalies that are a statement about the detector
+    #: rather than about the market. Caught the day fourteen instruments were
+    #: added at once: two of them were flagged wide on three venues within two
+    #: minutes of first being quoted, which would have stood the trader aside
+    #: on precisely the symbols that had just been switched on.
+    wide_warmup: float = 900.0
     #: How many distinct venues must be flagged wide at once before the market
     #: is treated as wide rather than one venue being wide.
     #:
@@ -98,6 +108,8 @@ class Context:
     _drifted: dict[str, float] = field(default_factory=dict)
     #: feed -> {venue: when it was last flagged wide}.
     _wide: dict[str, dict[str, float]] = field(default_factory=lambda: defaultdict(dict))
+    #: feed -> when anything was first heard about it, for `wide_warmup`.
+    _first_seen: dict[str, float] = field(default_factory=dict)
     #: This broker's own spread by instrument and hour. Only consulted when
     #: there is no peer group to judge against - see `dislocation`.
     spreads: Spreads = field(default_factory=Spreads)
@@ -146,6 +158,7 @@ class Context:
             return
         when = payload.get("time")
         at = float(when) if isinstance(when, int | float) and when else time.time()
+        self._first_seen.setdefault(feed, at)
 
         if shape == "drift":
             self._drifted[feed] = at
@@ -268,6 +281,11 @@ class Context:
         if not seen:
             return 0
         when = now if now is not None else time.time()
+        # An instrument nobody has watched for long enough cannot be judged
+        # unusual. See `wide_warmup`.
+        first = self._first_seen.get(feed)
+        if first is not None and when - first < self.wide_warmup:
+            return 0
         fresh = sum(1 for last in seen.values() if when - last <= self.wide_pause)
         return fresh if fresh >= self.wide_venues else 0
 

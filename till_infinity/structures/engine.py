@@ -322,6 +322,13 @@ class Call(Restorable):
                 # multiples without the unit made those two fields unusable
                 # outside this process.
                 "vol_bps": vol.bps,
+                # The same quantity read by a mean-reverting model, and how far
+                # the current scale sits above its own long-run level. Recorded
+                # rather than used: nothing divides by these yet, and the point
+                # of carrying them is that the journal can say whether they
+                # would have been the better number. See `garch.py`.
+                "garch_bps": vol.garch_bps,
+                "vol_stretch": vol.stretch,
                 # The level's own hold rate on the side price arrived from,
                 # and the decisive interactions behind it. The strongest
                 # single signal a level carries - strength.md puts it at AUC

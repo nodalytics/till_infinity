@@ -2744,7 +2744,7 @@ def test_one_wide_venue_is_not_the_market_going_wide():
     what the detector is for - so standing aside on each would stop trading
     altogether.
     """
-    ctx = Context(wide_venues=3)
+    ctx = Context(wide_venues=3, wide_warmup=0.0)
     ctx.observe_signal(_wide("gold", "CAPITALCOM", 100.0))
     ctx.observe_signal(_wide("gold", "CAPITALCOM", 120.0))
     ctx.observe_signal(_wide("gold", "CAPITALCOM", 140.0))
@@ -2753,7 +2753,7 @@ def test_one_wide_venue_is_not_the_market_going_wide():
 
 
 def test_several_venues_wide_at_once_is_the_market():
-    ctx = Context(wide_venues=3, wide_pause=300.0)
+    ctx = Context(wide_venues=3, wide_pause=300.0, wide_warmup=0.0)
     for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
         ctx.observe_signal(_wide("gold", venue, 100.0))
     assert ctx.widened("gold", now=150.0) == 3
@@ -2763,7 +2763,7 @@ def test_several_venues_wide_at_once_is_the_market():
 
 def test_a_wide_market_refuses_the_trade():
     made = settings()
-    ctx = Context(wide_venues=3, wide_pause=300.0)
+    ctx = Context(wide_venues=3, wide_pause=300.0, wide_warmup=0.0)
     guard = Guard(made, context=ctx)
     guard.roll(10_000.0)
     for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
@@ -2778,7 +2778,7 @@ def test_a_wide_market_refuses_the_trade():
 
 def test_a_wide_market_on_another_instrument_does_not_refuse_this_one():
     made = settings()
-    ctx = Context(wide_venues=3, wide_pause=300.0)
+    ctx = Context(wide_venues=3, wide_pause=300.0, wide_warmup=0.0)
     guard = Guard(made, context=ctx)
     guard.roll(10_000.0)
     for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
@@ -2787,3 +2787,25 @@ def test_a_wide_market_on_another_instrument_does_not_refuse_this_one():
     got = take("level-scalp")
     assert isinstance(got, Intent)
     assert guard.allows(got, positions=[], tick=None, now=150.0) is None
+
+
+def test_a_freshly_added_instrument_is_not_judged_unusual_yet():
+    """`structures` scores spread per venue with a model that needs history.
+
+    A newly added instrument has none, so its first minutes produce anomalies
+    that describe the detector rather than the market. Caught live the day
+    fourteen instruments were switched on at once: two were flagged wide on
+    three venues within two minutes of first being quoted, which would have
+    stood the trader aside on exactly the symbols just enabled.
+    """
+    ctx = Context(wide_venues=3, wide_pause=300.0, wide_warmup=900.0)
+    for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
+        ctx.observe_signal(_wide("chfjpy", venue, 100.0))
+
+    # Two minutes in: three venues agree, and it still does not count.
+    assert ctx.widened("chfjpy", now=220.0) == 0
+
+    # Once the instrument has been watched long enough, the same evidence does.
+    for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
+        ctx.observe_signal(_wide("chfjpy", venue, 1_100.0))
+    assert ctx.widened("chfjpy", now=1_150.0) == 3
