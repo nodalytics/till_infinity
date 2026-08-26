@@ -35,6 +35,7 @@ from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
 from . import confluence as cf
 from . import store
+from .activity import Book as ActivityBook
 from .anomaly import Detector
 from .config import DRIFT_INTERVALS, Settings
 from .drift import Drift
@@ -180,6 +181,12 @@ class Watcher:
         #: from resolutions and from the volatility it sees; asserts
         #: nothing until an hour has earned it.
         self.clock = Clock()
+        #: How busy each instrument's bars usually are, so a touch can be
+        #: stamped with whether this one was unusual. Decides nothing.
+        self.activity = ActivityBook()
+        #: The most recent activity share per series, so a call can be
+        #: stamped without threading the bar's volume down three layers.
+        self._busy: dict[tuple[str, str], float] = {}
         self._sent: OrderedDict[tuple[str, str, str], float] = OrderedDict()
         #: Level -> the journal entry recording why we called it. Kept so the
         #: result can be attached to the decision that predicted it, which is
@@ -238,6 +245,7 @@ class Watcher:
         self.drift = state.get("drift", self.drift)
         self.engine = state.get("engine", self.engine)
         self.clock = state.get("clock", self.clock)
+        self.activity = state.get("activity", self.activity)
         log.info("structures: restored models (%s)", self.detector.seen())
         # Restored levels were formed under whatever geometry was current when
         # the state was saved, which is not necessarily this one.
@@ -258,6 +266,7 @@ class Watcher:
                     "drift": self.drift,
                     "engine": self.engine,
                     "clock": self.clock,
+                    "activity": self.activity,
                 },
                 self.settings.state_dir,
             )
@@ -472,6 +481,12 @@ class Watcher:
                 if unit.warm and isinstance(when, int | float) and when:
                     self.clock.observe_vol(feed, float(when), unit.bps)
 
+                volume = message.payload.get("volume")
+                if isinstance(volume, int | float) and volume > 0:
+                    self._busy[(feed, interval)] = self.activity.update(
+                        feed, interval, float(volume)
+                    )
+
             seen = self.bars.observe(message.payload)
             if seen is not None:
                 feed, mid, interval = seen
@@ -508,6 +523,7 @@ class Watcher:
                 self.engine.vol.of(call.feed, call.interval),
                 self.clock,
                 self.engine.levels(call.feed, call.interval),
+                self._busy.get((call.feed, call.interval), 1.0),
             )
             if call.feed not in grouped:
                 grouped[call.feed] = self._zones(call.feed)

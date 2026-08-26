@@ -1042,3 +1042,46 @@ async def test_a_resolution_is_published_as_ground_truth(tmp_path):
     assert message.payload["direction"] == "up"
     assert message.payload["push_vol"] == 1.8
     assert message.payload["seconds"] == 600
+
+
+def test_a_live_bar_carries_its_extremes():
+    """It carried only the close, and the engine falls back to high=low=close.
+
+    Every bar arriving on the bus therefore looked like a doji. Levels formed
+    on the live path were built from closing prices alone, session pivots were
+    computed from closes rather than session highs and lows, and a bar that
+    pierced a level intrabar and closed away from it registered no touch. The
+    stored history was always correct, so a restart re-warmed into a healthy
+    state and the defect only reappeared as live bars accumulated.
+    """
+    from till_infinity.prices.models import Bar, SeriesKey, Symbol, WriteResult
+    from till_infinity.prices.service import announce_bars
+
+    key = SeriesKey("tradingview", "gold", Symbol("OANDA", "XAUUSD"), "5m")
+    bar = Bar(time=1_700_000_000, open=4400.0, high=4412.0, low=4395.0, close=4408.0, volume=1234)
+    out = announce_bars(key, [bar], WriteResult(inserted=1, updated=0))
+
+    assert out["high"] == 4412.0
+    assert out["low"] == 4395.0
+    assert out["open"] == 4400.0
+    assert out["volume"] == 1234
+    # The thing that made it silent: reading it the old way still "works".
+    assert float(out.get("high") or out["close"]) != out["close"]
+
+
+def test_activity_is_a_ratio_because_the_underlying_count_is_not_comparable():
+    """Tick volume counts price changes, differently per venue, and spot FX
+    reports none at all. Only "against this instrument's own normal" travels."""
+    from till_infinity.structures.activity import Book
+
+    book = Book()
+    for _ in range(40):
+        book.update("gold", "5m", 1000)
+    assert book.update("gold", "5m", 1000) == pytest.approx(1.0, abs=0.05)
+    assert book.update("gold", "5m", 3000) > 2.5
+    assert book.update("gold", "5m", 250) < 0.4
+    # An instrument that reports nothing contributes a constant rather than a
+    # hole, so it cannot skew whatever it is compared against.
+    assert book.update("eurusd", "5m", None) == 1.0
+    # And a cold estimator says "ordinary" rather than inventing a ratio.
+    assert Book().update("btc", "1m", 99_999) == 1.0

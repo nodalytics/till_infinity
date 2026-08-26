@@ -268,7 +268,7 @@ class Call(Restorable):
     price: float
     time: float
 
-    def to_signal(self, vol, clock=None, peers=None) -> Signal:
+    def to_signal(self, vol, clock=None, peers=None, busy: float = 1.0) -> Signal:
         # `probability`, not `probability_up`: quoting P(up) beside a *down*
         # call reads as the confidence in down when it is the confidence
         # against it. The base rate flips with it or the pair is not a
@@ -362,6 +362,11 @@ class Call(Restorable):
                 "sweep_n": swept_n,
                 "liquidity_beyond_vol": beyond_vol,
                 "liquidity_beyond_n": float(beyond_n),
+                # How busy the market was, as a share of this instrument's own
+                # typical bar on this timeframe. A ratio because the underlying
+                # count is tick volume on most feeds and absent on some, so
+                # only "relative to normal" means the same thing everywhere.
+                "activity": busy,
             },
             direction=self.inference.direction,
             interval=self.interval,

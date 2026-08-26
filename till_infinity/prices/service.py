@@ -90,6 +90,19 @@ def announce_bars(key: SeriesKey, candles: Sequence[Bar], result: WriteResult) -
         "inserted": result.inserted,
         "updated": result.updated,
         "time": latest.time,
+        "open": latest.open,
+        # The extremes, which used to be left off. `structures` reads them with
+        # a fallback of `high = low = close`, so every bar arriving live looked
+        # like a doji: levels formed on the live path were built from closing
+        # prices alone, and the leg extremes that place an origin existed only
+        # in the replayed history. A notice is still a notice - these are four
+        # floats, not the candle series.
+        "high": latest.high,
+        "low": latest.low,
+        #: Activity, not size: TradingView's `v` counts price changes rather
+        #: than contracts, and spot FX has no real volume at all. Consumers
+        #: must treat it as a ratio against the instrument's own typical bar.
+        "volume": latest.volume,
         "close": latest.close,
         "closed": latest.is_closed(INTERVALS[key.interval], time.time()),
     }
