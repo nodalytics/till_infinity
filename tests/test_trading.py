@@ -1345,6 +1345,7 @@ class RecordingBroker(td.Broker):
     def __init__(self, made):
         super().__init__(made)
         self.sent: list = []
+        self.modified: list = []
         self._book = td.PaperBroker(made)
 
     async def connect(self):
@@ -1371,6 +1372,10 @@ class RecordingBroker(td.Broker):
 
     async def close_position(self, ticket, volume=0.0):
         return await self._book.close_position(ticket, volume)
+
+    async def modify(self, ticket, stop, target=0.0):
+        self.modified.append((ticket, stop, target))
+        return await self._book.modify(ticket, stop, target)
 
     def observe(self, tick):
         return self._book.observe(tick)
@@ -2589,3 +2594,77 @@ def test_the_peer_test_still_wins_when_there_is_a_peer_group():
             }
         )
     assert ctx.dislocation("gold", wide, now=when) == ""
+
+
+# --------------------------------------------------- money, and letting it run
+
+
+def test_an_amount_says_which_money_it_is():
+    """A bare "+12.56" does not say what it is 12.56 of, and it is not
+    guessable from the instrument - a gold trade on a euro account pays euros.
+    """
+    bus = Bus()
+    trader = Trader(bus, settings=settings())
+    trader.currency = "USD"
+    assert trader.money(12.56) == "+$12.56"
+    assert trader.money(-26.64) == "-$26.64"
+    assert trader.money(12.56, signed=False) == "$12.56"
+
+    trader.currency = "EUR"
+    assert trader.money(12.56) == "+€12.56"
+
+    # An unrecognised code is written out rather than guessed at.
+    trader.currency = "SGD"
+    assert trader.money(12.56) == "+12.56 SGD"
+
+    # And an account that never reported one still prints a number.
+    trader.currency = ""
+    assert trader.money(12.56) == "+12.56"
+
+
+async def test_a_working_trade_is_kept_past_its_hold_and_protected():
+    """The hold releases capital from a thesis that is not playing out. It was
+    also closing the ones that were - out at 4623 on a fall that ran to 4592.
+    """
+    bus = Bus()
+    made = settings(live=True, hold_extends_at=0.5, break_even_ticks=2)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    assert isinstance(got, Intent)
+
+    live = next(iter(trader.open.values()))
+    risk = abs(live.intent.entry - live.intent.stop)
+    # Comfortably past the 0.5R threshold, but short of the target - otherwise
+    # the paper book simply fills the target and there is nothing to expire.
+    at = live.intent.entry + risk * 0.8
+    venue.observe(Tick("XAUUSD", bid=at, ask=at))
+    live.seen -= (live.intent.hold or made.max_hold) + 60
+
+    await trader._expire()
+
+    assert trader.open, "a trade 0.8R in front was closed on the clock"
+    # And it was protected on the way past: the stop is at or beyond entry.
+    assert venue.modified, "kept without moving the stop to break even"
+
+
+async def test_a_trade_going_nowhere_still_closes_on_the_clock():
+    bus = Bus()
+    made = settings(live=True, hold_extends_at=1.0)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    assert isinstance(got, Intent)
+
+    live = next(iter(trader.open.values()))
+    live.seen -= (live.intent.hold or made.max_hold) + 60
+    await trader._expire()
+    assert not trader.open, "a flat trade should still be released"

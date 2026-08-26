@@ -57,6 +57,20 @@ log = get_logger(__name__)
 #: learns from outcomes will attach to.
 TOPICS: tuple[str, ...] = (SIGNALS, QUOTES, EVENTS, RESOLUTIONS)
 
+#: Symbols for the account currencies a retail terminal actually issues. Any
+#: code not here is written out beside the number instead - `12.56 SGD` reads
+#: fine, and a guessed symbol on the wrong currency does not.
+CURRENCY_SYMBOLS: dict[str, str] = {
+    "USD": "$",
+    "EUR": "€",
+    "GBP": "£",
+    "JPY": "¥",
+    "AUD": "A$",
+    "CAD": "C$",
+    "NZD": "NZ$",
+    "CHF": "CHF ",
+}
+
 
 @dataclass(slots=True)
 class Live:
@@ -104,6 +118,11 @@ class Trader:
         self.specs: dict[str, SymbolSpec] = {}
         self.open: dict[int, Live] = {}
         self.equity = 0.0
+        #: The account's currency, for anything that prints an amount. A bare
+        #: "+12.56" does not say what it is 12.56 of, and the answer is not
+        #: guessable from the instrument - a gold trade on a euro-denominated
+        #: account pays euros.
+        self.currency = ""
         self.taken = 0
         self.refused = 0
         self._symbol_of: dict[str, str] = {}
@@ -154,6 +173,7 @@ class Trader:
         """Attach, resolve what can be traded, and open the day."""
         account = await self.broker.connect()
         self.equity = account.equity or account.balance
+        self.currency = account.currency or ""
         log.info(
             "trading: %s via %s - %s",
             self.settings.mode.upper(),
@@ -537,7 +557,18 @@ class Trader:
         return moved
 
     async def _expire(self) -> None:
-        """Close anything that has outstayed the hold its strategy asked for."""
+        """Close anything that has outstayed the hold its strategy asked for.
+
+        Unless it is working. The hold exists to release capital from a thesis
+        that is not playing out, and it was closing trades that were - a
+        position a point in front at the thirty minute mark went out at market
+        and the rest of the move happened without us. Observed on gold: out at
+        4623 on a fall that carried to 4592.
+
+        So a trade far enough in front is protected and kept instead. See
+        `_worth_keeping`, which moves the stop to break even first, so an
+        extension can scratch but cannot turn a winner into a loser.
+        """
         now = time.time()
         closed = False
         for ticket, live in list(self.open.items()):
@@ -547,12 +578,100 @@ class Trader:
             age = now - live.seen
             if age < limit:
                 continue
+            if await self._worth_keeping(live, age, limit):
+                continue
             log.info("trading: closing #%d after %.0fs, past its %.0fs hold", ticket, age, limit)
             with contextlib.suppress(BrokerError):
                 await self.execution.close_position(ticket)
             closed = True
         if closed:
             await self._reconcile()
+
+    def money(self, amount: float, *, signed: bool = True) -> str:
+        """An amount with the account's currency attached.
+
+        `$` for dollars, `EUR 12.56` for anything without a well-known symbol -
+        an unrecognised code is written out rather than guessed at, because a
+        wrong symbol is worse than a verbose one.
+        """
+        symbol = CURRENCY_SYMBOLS.get(self.currency.upper(), "")
+        sign = f"{amount:+,.2f}" if signed else f"{amount:,.2f}"
+        if symbol:
+            # The sign goes outside the symbol: +$12.56, not $+12.56.
+            return f"{sign[0]}{symbol}{sign[1:]}" if signed else f"{symbol}{sign}"
+        return f"{sign} {self.currency}".rstrip() if self.currency else sign
+
+    async def _worth_keeping(self, live: Live, age: float, limit: float) -> bool:
+        """Whether a trade past its hold is working well enough to keep.
+
+        Three conditions, and all of them have to hold.
+
+        **It has to be in front**, by `hold_extends_at` times the risk it was
+        sized for. Measured from the current price rather than from the best
+        seen: the question is whether to keep the position now, and the best
+        price is history the trade may already have given back.
+
+        **It has to be protectable.** The stop is moved to break even plus the
+        spread cushion before the extension is granted, so the worst outcome
+        after this point is a scratch. That is what makes the rule safe to run
+        without the trailing rules in `manage.py` being switched on, and if the
+        move is refused the trade is closed on the clock as before rather than
+        held unprotected.
+
+        **It has to end.** `max_hold_multiple` caps total age, because a
+        position kept indefinitely accrues swap, crosses sessions it was never
+        measured in, and eventually sits over a weekend.
+        """
+        at = self.settings.hold_extends_at
+        if at <= 0:
+            return False
+        if age >= limit * max(1.0, self.settings.max_hold_multiple):
+            return False
+
+        position, intent = live.position, live.intent
+        risk = abs(intent.entry - intent.stop)
+        if risk <= 0:
+            return False
+        tick = await self._tick(position.symbol)
+        if tick is None:
+            return False
+        # The price this position would be closed at, not the mid: a long exits
+        # on the bid, and crediting it the mid would extend trades that are not
+        # actually in front once the spread is paid.
+        out = tick.bid if position.side is Side.BUY else tick.ask
+        gained = (out - position.price_open) * position.side.sign
+        if gained < risk * at:
+            return False
+
+        spec = self.specs.get(intent.feed)
+        if spec is None:
+            return False
+        cushion = spec.tick_size * max(0, self.settings.break_even_ticks)
+        safe = spec.round_price(position.price_open + position.side.sign * cushion)
+        # Never backwards: if the stop is already better than break even - the
+        # trailing rules are on and have moved it - leave it where it is.
+        if not manage.better(safe, position.stop, position.side):
+            safe = position.stop
+        elif not await self._protect(position.ticket, safe, position.target):
+            return False
+
+        log.info(
+            "trading: keeping #%d past its %.0fs hold - %.1fR in front, stop at %.5g",
+            position.ticket,
+            limit,
+            gained / risk,
+            safe,
+        )
+        return True
+
+    async def _protect(self, ticket: int, stop: float, target: float) -> bool:
+        """Move a stop, saying whether it actually moved."""
+        try:
+            result = await self.execution.modify(ticket, stop, target)
+        except BrokerError as exc:
+            log.warning("trading: could not protect #%d: %s", ticket, exc)
+            return False
+        return bool(result.ok)
 
     async def _reconcile(
         self, ref_for: tuple[int, Intent, str] | None = None
@@ -711,7 +830,8 @@ class Trader:
             f"{intent.side} {intent.volume:g} lots @ {price:.5g}",
             "",
             f"stop {intent.stop:.5g} · target {intent.target:.5g} · {intent.reward_to_risk:.1f}R",
-            f"risking {intent.risk_money:.2f} ({intent.risk_money / self.equity:.2%})"
+            f"risking {self.money(intent.risk_money, signed=False)} "
+            f"({intent.risk_money / self.equity:.2%})"
             if self.equity
             else "",
             intent.reason,
@@ -728,8 +848,11 @@ class Trader:
                 "fields": {
                     "instrument": intent.feed,
                     "shape": "trade",
+                    # Part of the repeat key. Without it a fill and its own
+                    # close read as the same finding, and a trade that closed
+                    # inside the cooldown lost its close alert entirely.
+                    "event": "open",
                     "strategy": by,
-                    "magic": str(magic_for(self.settings.magic, by)),
                     "direction": "up" if intent.side.sign > 0 else "down",
                     "venue": self.broker.name,
                 },
@@ -745,8 +868,8 @@ class Trader:
             ALERTS,
             {
                 "title": (
-                    f"{self.settings.mode}: {live.intent.feed} closed {profit:+.2f} ({why})"
-                    + (f" · {live.by}" if live.by else "")
+                    f"{self.settings.mode}: {live.intent.feed} closed "
+                    f"{self.money(profit)} ({why})" + (f" · {live.by}" if live.by else "")
                 ),
                 "body": (
                     f"{live.position.side} {live.position.volume:g} @ "
@@ -756,8 +879,8 @@ class Trader:
                 "fields": {
                     "instrument": live.intent.feed,
                     "shape": "trade",
+                    "event": "close",
                     "strategy": live.by,
-                    "magic": str(live.position.magic),
                     "venue": self.broker.name,
                 },
                 "source": "trading",
@@ -783,6 +906,7 @@ class Trader:
                 "fields": {
                     "instrument": intent.feed,
                     "shape": "trade",
+                    "event": "declined",
                     "venue": self.broker.name,
                 },
                 "source": "trading",

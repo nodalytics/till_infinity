@@ -601,6 +601,39 @@ If you turn these on, **switch the mt5-api trailing handler off**. It runs on
 its own twenty-second timer, and two things moving the same stop on different
 clocks race - with the loser looking like a broker fault.
 
+## The hold releases what is not working, not what is
+
+`_expire` closes a position that has outstayed the hold its strategy asked
+for. It used to do that on **age alone**, without asking what the trade was
+doing - so a position a point in front at the thirty-minute mark went out at
+market and the rest of the move happened without us. Observed on gold: out at
+4623 on a fall that carried to 4592.
+
+That is a defect in the hold's own intent rather than a strategy choice. The
+hold exists to release capital from a thesis that is not playing out. Capping
+one that is playing out is a different rule, and not one anything here argued
+for.
+
+So a trade past its hold is kept instead of closed when three things are true:
+
+* **it is in front** by `hold_extends_at` times the risk it was sized for,
+  measured from the price it would actually close at rather than the mid, and
+  from the current price rather than the best seen - the best price is history
+  the trade may already have given back;
+* **it can be protected** - the stop moves to break even plus the spread
+  cushion *before* the extension is granted, so the worst outcome after that
+  point is a scratch. If the broker refuses the move the trade closes on the
+  clock as before, rather than being held unprotected;
+* **it ends** - `max_hold_multiple` caps total age, because a position kept
+  indefinitely accrues swap, crosses sessions it was never measured in, and
+  eventually sits over a weekend.
+
+Off by default (`hold_extends_at = 0`), like the rules in `manage.py` and for
+the same reason: which side of the trade-off wins is an empirical question the
+journal has not answered yet. Unlike those, this one cannot cost a winner - it
+only declines to cut one - and its downside is bounded at a scratch by the
+break-even move it requires.
+
 ## Ground truth on the bus
 
 `structures.resolutions` carries what a touch actually did - held, broke,

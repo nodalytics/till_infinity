@@ -119,12 +119,20 @@ def advance(
     return Move(ticket=position.ticket, stop=stop, reason=reason)
 
 
-def _better(candidate: float, current: float, side: Side) -> bool:
+def better(candidate: float, current: float, side: Side) -> bool:
     """Whether `candidate` is a tighter stop than `current` for this side.
 
     Higher is better for a long, lower for a short. A stop of zero means the
     position has none, so anything beats it.
+
+    Public because the hold extension in `service` asks the same question - it
+    must not move a stop backwards either, and there should be one answer to
+    "is this stop better" rather than two that can drift apart.
     """
     if not current:
         return True
     return candidate > current if side is Side.BUY else candidate < current
+
+
+#: The private name this had before `service` needed it too.
+_better = better

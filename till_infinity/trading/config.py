@@ -360,6 +360,24 @@ class Settings:
     #: this default is a property of the trade being taken, not of the module.
     max_hold: float = 1_800.0
 
+    #: R in front at which the hold stops applying. Zero keeps the old rule:
+    #: the clock closes everything, whatever it is doing.
+    #:
+    #: The hold exists to release capital from a thesis that is not playing
+    #: out. It was closing trades that were, which is a different thing: a
+    #: position a point in front at the thirty minute mark is closed at market
+    #: and the rest of the move happens without us. Observed on gold - out at
+    #: 4623 on a fall that carried to 4592.
+    #:
+    #: A trade allowed to outlive its hold is **first moved to break even**, so
+    #: the extension cannot turn a winner into a loser. That is what makes this
+    #: safe to run without the trailing rules in `manage.py` being on.
+    hold_extends_at: float = 0.0
+    #: Total age cap, as a multiple of the strategy's own hold. Extending has
+    #: to end somewhere: a position held indefinitely accrues swap, crosses
+    #: sessions it was never measured in, and eventually sits over a weekend.
+    max_hold_multiple: float = 4.0
+
     # ------------------------------------------------- standing aside
     #: **Seconds** either side of a high-impact release to stop entering, like
     #: every other duration here. The first version of this said "minutes" and
@@ -581,6 +599,8 @@ class Settings:
             min_edge=_float("TRADING_MIN_EDGE", 0.15),
             loss_cooldown=_float("TRADING_LOSS_COOLDOWN_S", 900.0),
             max_hold=_float("TRADING_MAX_HOLD_S", 1_800.0),
+            hold_extends_at=_float("TRADING_HOLD_EXTENDS_AT", 0.0),
+            max_hold_multiple=_float("TRADING_MAX_HOLD_MULTIPLE", 4.0),
             news_before=_float("TRADING_NEWS_BEFORE_S", 600.0),
             news_after=_float("TRADING_NEWS_AFTER_S", 900.0),
             max_dislocation_bps=_float("TRADING_MAX_DISLOCATION_BPS", 8.0),

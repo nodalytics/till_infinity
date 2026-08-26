@@ -77,8 +77,20 @@ class Filter:
             max_per_hour=int(number("NOTIFY_MAX_PER_HOUR", DEFAULT_MAX_PER_HOUR)),
         )
 
-    def key(self, payload: dict[str, Any]) -> tuple[str, str, str]:
-        """What makes two alerts "the same finding" for the repeat check."""
+    def key(self, payload: dict[str, Any]) -> tuple[str, str, str, str]:
+        """What makes two alerts "the same finding" for the repeat check.
+
+        `event` is part of it, and leaving it out was a real fault rather than
+        an omission. Opening a trade and closing it share a shape, an
+        instrument and a venue, so a position opened and closed inside the
+        cooldown had its **close** dropped as a repeat of its own fill.
+
+        The bias that produced is the reason this is worth a paragraph. A trade
+        that closes within fifteen minutes is usually one that was stopped out,
+        so the alerts that vanished were disproportionately the losses, and the
+        channel read as a record of wins. A filter that silently changes what a
+        feed appears to say is worse than one that is merely too quiet.
+        """
         fields = payload.get("fields") or {}
         # The source is `agents/analyst`, not `agents`, so the fallback takes
         # the part before the slash: a filter naming `agents` should match every
@@ -88,6 +100,7 @@ class Filter:
             str(fields.get("shape") or source),
             str(fields.get("instrument") or ""),
             str(fields.get("venue") or ""),
+            str(fields.get("event") or ""),
         )
 
     def rejects(self, payload: dict[str, Any], when: float | None = None) -> str:
@@ -98,7 +111,7 @@ class Filter:
         which finding was dropped and on what grounds.
         """
         when = time.time() if when is None else when
-        shape, feed, _venue = self.key(payload)
+        shape, feed, _venue, _event = self.key(payload)
 
         if self.shapes and shape.lower() not in self.shapes:
             return f"shape {shape!r} not in {sorted(self.shapes)}"

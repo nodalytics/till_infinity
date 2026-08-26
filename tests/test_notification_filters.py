@@ -343,3 +343,27 @@ def test_a_narrowed_filter_keeps_trades_off_a_findings_channel():
 
     with_trades = Filter(shapes=frozenset({"level", "trade"}))
     assert with_trades.accept({"fields": {"shape": "trade", "instrument": "gold"}})
+
+
+def test_a_close_is_not_dropped_as_a_repeat_of_its_own_fill():
+    """The bias this was written for.
+
+    A fill and its close share a shape, an instrument and a venue, so before
+    `event` joined the key a position opened and closed inside the cooldown had
+    its close silently dropped. Trades that close that fast are usually the
+    ones that were stopped out, so what vanished was disproportionately the
+    losses and the channel read as a record of wins.
+    """
+    quiet = Filter(cooldown=900.0)
+
+    def trade(event):
+        return {
+            "title": f"gold {event}",
+            "fields": {"shape": "trade", "instrument": "gold", "venue": "mt5-http", "event": event},
+        }
+
+    assert quiet.accept(trade("open"), when=0.0)
+    # Four minutes later, well inside the cooldown.
+    assert quiet.accept(trade("close"), when=240.0)
+    # And a second fill on the same instrument is still held back.
+    assert not quiet.accept(trade("open"), when=300.0)
