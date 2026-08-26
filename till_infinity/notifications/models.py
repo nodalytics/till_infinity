@@ -83,6 +83,7 @@ DIRECTIONS: dict[str, str] = {"up": "📈", "down": "📉"}
 #: and would say it twice.
 INSTRUMENTS: dict[str, str] = {
     "gold": "🥇",
+    "silver": "🥈",
     "btc": "₿",
     "eth": "Ξ",
     "sol": "◎",

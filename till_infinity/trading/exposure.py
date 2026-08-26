@@ -47,6 +47,7 @@ LEGS: dict[str, tuple[str, str]] = {
     "usdchf": ("USD", "CHF"),
     "usdcnh": ("USD", "CNH"),
     "gold": ("XAU", "USD"),
+    "silver": ("XAG", "USD"),
     "btc": ("BTC", "USD"),
     "eth": ("ETH", "USD"),
     "sol": ("SOL", "USD"),

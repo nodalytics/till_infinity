@@ -1830,3 +1830,151 @@ async def test_a_working_trader_reports_what_it_passed_over(caplog):
     said = " ".join(caplog.messages)
     assert "passed over" in said
     assert "interval" in said
+
+
+# ------------------------------------------- standing in front of a sweep
+
+
+def test_a_level_that_is_usually_run_is_refused():
+    """A level run four times in ten is telling you about itself directly."""
+    got = take("sweep-aware", signal(features={"sweep_rate": 0.5, "sweep_n": 10.0}))
+    assert isinstance(got, Refusal)
+    assert got.gate == "swept_often"
+
+
+def test_a_high_sweep_rate_with_no_history_behind_it_is_not_believed():
+    """Two interactions cannot establish a rate."""
+    got = take("sweep-aware", signal(features={"sweep_rate": 1.0, "sweep_n": 2.0}))
+    assert isinstance(got, Intent)
+
+
+def test_a_stop_in_front_of_resting_liquidity_is_refused():
+    """A run at those orders takes this one on the way."""
+    got = take(
+        "sweep-aware",
+        signal(features={"risk_vol": 1.0, "liquidity_beyond_vol": 1.0}),
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "in_front"
+
+
+def test_a_stop_in_open_ground_is_allowed():
+    got = take(
+        "sweep-aware",
+        signal(features={"risk_vol": 1.0, "liquidity_beyond_vol": 6.0}),
+    )
+    assert isinstance(got, Intent)
+
+
+def test_nothing_within_reach_is_not_a_reason_to_refuse():
+    """Zero means no target, which is the good case rather than a missing one."""
+    got = take("sweep-aware", signal(features={"liquidity_beyond_vol": 0.0}))
+    assert isinstance(got, Intent)
+
+
+def test_sweep_aware_refuses_rather_than_widening_the_stop():
+    """Widening would keep the trade and change what it costs."""
+    plain = take("level-scalp", signal(features={"liquidity_beyond_vol": 1.0}))
+    guarded = take("sweep-aware", signal(features={"risk_vol": 1.0, "liquidity_beyond_vol": 1.0}))
+    assert isinstance(plain, Intent)
+    assert isinstance(guarded, Refusal)
+
+
+# ----------------------------------------------- pricing the distance
+
+
+def fade(**over):
+    return td.STRATEGIES["fade-to-value"](settings(**over))
+
+
+def test_fair_value_is_the_best_evidenced_level_not_the_nearest():
+    """An estimate that moved every time price drifted would not be an estimate."""
+    engine = fade()
+    # A nearby level nobody has traded, and a far one with real history.
+    engine.observe(signal(features={"level": 4402.0, "record_n": 2.0}))
+    engine.observe(signal(features={"level": 4380.0, "record_n": 40.0}))
+    unit = 4400.0 * 10.0 / 10_000
+    value = engine.fair_value("gold", unit, 4400.0)
+    assert value is not None
+    assert value.price == 4380.0
+
+
+def test_a_price_below_fair_value_is_a_long():
+    engine = fade()
+    engine.observe(signal(features={"level": 4425.0, "record_n": 40.0}))
+    engine.observe(signal())
+    got = engine.consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert got.side is Side.BUY
+    assert got.target < 4425.0  # short of fair value
+    assert "below fair value" in got.reason
+
+
+def test_a_price_above_fair_value_is_a_short():
+    engine = fade()
+    engine.observe(signal(features={"level": 4375.0, "record_n": 40.0}))
+    engine.observe(signal())
+    got = engine.consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert got.side is Side.SELL
+    assert got.target > 4375.0
+    assert "above fair value" in got.reason
+
+
+def test_a_price_at_fair_value_has_nothing_to_say():
+    """Inside one volatility unit the distance is the noise of the estimate."""
+    engine = fade()
+    engine.observe(signal(features={"level": 4402.0, "record_n": 40.0}))
+    engine.observe(signal())
+    got = engine.consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "at_value"
+
+
+def test_a_level_with_too_little_history_is_not_a_valuation():
+    engine = fade()
+    # The only level it knows of has been touched once, so there is nothing to
+    # price against. The triggering call is deliberately not observed either.
+    engine.observe(signal(features={"level": 4425.0, "record_n": 1.0}))
+    got = engine.consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "no_value"
+
+
+def test_the_fade_stop_sits_beyond_the_level_price_is_standing_at():
+    """That is where this reading of value is wrong."""
+    engine = fade()
+    engine.observe(signal(features={"level": 4425.0, "record_n": 40.0}))
+    engine.observe(signal())
+    got = engine.consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    # The triggering level is 4400; the stop is below it, not below fair value.
+    assert got.stop < 4400.0
+    assert got.stop > 4375.0 - 40
+
+
+def test_the_side_is_arithmetic_once_the_valuation_exists():
+    """Nothing is forecast: the same signal gives opposite sides on the
+    valuation alone."""
+    up, down = fade(), fade()
+    up.observe(signal(features={"level": 4425.0, "record_n": 40.0}))
+    down.observe(signal(features={"level": 4375.0, "record_n": 40.0}))
+    for engine in (up, down):
+        engine.observe(signal())
+    tick = Tick("XAUUSD", bid=4399.5, ask=4400.5)
+    long = up.consider(signal(), spec=GOLD, tick=tick, equity=10_000.0)
+    short = down.consider(signal(), spec=GOLD, tick=tick, equity=10_000.0)
+    assert long.side is Side.BUY
+    assert short.side is Side.SELL
+    # Identical signal, identical direction field on it: only the valuation differs.
+    assert signal()["direction"] == "up"

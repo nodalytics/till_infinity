@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..logging import get_logger
-from . import confluence, patterns, pips, pivots, reactions, runs, sessions
+from . import confluence, patterns, pips, pivots, reactions, runs, sessions, sweeps
 from . import levels as lv
 from .models import Shape, Signal
 from .state import Restorable
@@ -268,11 +268,18 @@ class Call(Restorable):
     price: float
     time: float
 
-    def to_signal(self, vol, clock=None) -> Signal:
+    def to_signal(self, vol, clock=None, peers=None) -> Signal:
         # `probability`, not `probability_up`: quoting P(up) beside a *down*
         # call reads as the confidence in down when it is the confidence
         # against it. The base rate flips with it or the pair is not a
         # comparison. See reactions.Inference.probability.
+        swept, swept_n = sweeps.sweep_rate(self.level, self.inference.side)
+        beyond_vol, beyond_n = (
+            sweeps.liquidity_beyond(self.level, peers, self.inference.side, vol)
+            if peers
+            else (0.0, 0)
+        )
+
         zone_low, zone_high = self.level.zone(vol)
         unit = vol.price_units(self.level.price, 1.0) or 1.0
         wick_below = (self.level.price - zone_low) / unit
@@ -346,6 +353,15 @@ class Call(Restorable):
                 "zone_high": zone_high,
                 "wick_below_vol": wick_below,
                 "wick_above_vol": wick_above,
+                # Whether this level has a history of being run rather than
+                # respected, and what is resting beyond it for price to run it
+                # toward. Neither gates anything here: they go to the journal
+                # beside the outcome so the question can be answered from our
+                # own resolutions. See `sweeps`.
+                "sweep_rate": swept,
+                "sweep_n": swept_n,
+                "liquidity_beyond_vol": beyond_vol,
+                "liquidity_beyond_n": float(beyond_n),
             },
             direction=self.inference.direction,
             interval=self.interval,

@@ -159,8 +159,9 @@ open one right now" lead to different fixes.
 
 ## Strategies
 
-Six. Five are arithmetic over the measured signal and claim no edge of their
-own; the sixth is a panel of agents that reasons its own way to an answer. Every one reads the same
+Eight. Seven are arithmetic over the measured signal and claim no edge of
+their own; the eighth is a panel of agents that reasons its own way to an
+answer. Every one reads the same
 measured `LEVEL` signal `structures` publishes; they differ in which calls they
 act on and where they put the stop and target. Adding a strategy is a claim
 that a *subset* of those calls behaves differently - which the journal can
@@ -178,6 +179,8 @@ TRADING_STRATEGIES=level-scalp,approach-scalp
 | `momentum-scalp` | only calls agreeing with three speeds of recent edge | beyond the level | the expected push |
 | `approach-scalp` | a call confirming direction toward another level | beyond the level | the next level, short of it |
 | `swing-level` | a 4h/1d/1w level, triggered as low as 15m | beyond the level, 1.5x | the expected push |
+| `sweep-aware` | the plain call, unless the stop is in front of liquidity | beyond the zone | the expected push |
+| `fade-to-value` | the distance from spot to the best-evidenced level | beyond the triggering level | short of fair value |
 | `council` | whatever four agents agree on, or nothing | as the panel proposes, clamped | as the panel proposes, clamped |
 
 Several may run together. The first one to want a trade gets it, and the
@@ -266,6 +269,50 @@ reverses is the one all three disagree with.
 It learns from **every** call published, including the ones it refuses.
 Accumulating only from calls that reached the gate would have the three lines
 agreeing with themselves by construction.
+
+### `fade-to-value` - the thesis, plainly
+
+Every other strategy reacts *at* a level. This one asks the question the README
+opens with, and takes the difference.
+
+**Fair value is the best-evidenced level within reach, not the nearest one.** A
+price the instrument has turned at forty times is a claim about value; one it
+clipped twice is barely a claim at all. Taking the closest level regardless
+would make the valuation a function of where price happens to be standing,
+which is not an estimate of anything.
+
+**The stance is arithmetic.** Fair value above the market is a long, below it is
+a short. Nothing is forecast.
+
+**The distance has to clear the noise.** Fair value is a distribution and
+volatility is its width, so inside `fade_min_distance_vol` there is nothing to
+say. And the target stops short of fair value, for the reason `approach-scalp`
+does: price is not drawn to a level, so the last stretch into the zone is the
+part that was measured and did not survive.
+
+The stop goes beyond the level price is standing *at*, outside its zone - if
+price settles through that, the estimate that said it was cheap here is what
+failed.
+
+### `sweep-aware` - refusing to stand in front of the door
+
+`level-scalp` places its stop outside the zone and stops thinking about it.
+This one asks whether that stop sits between price and the next obvious pool of
+resting orders, using two numbers `structures.sweeps` publishes:
+
+- `sweep_rate` - the share of this level's decisive interactions, on this side,
+  that were `TRAP`. A level run four times in ten is telling you about itself
+  directly.
+- `liquidity_beyond_vol` - how far to the next level out, on the side a sweep
+  would travel.
+
+Their ratio is what gets judged. A 1.2v stop with liquidity 1.0v beyond sits
+*past* the pool, which is the worst place to stand.
+
+**It refuses rather than widening the stop.** Widening keeps the trade and
+changes what it costs, which sizes a worse trade smaller rather than declining
+it - and sizing already assumes the stop is where the thesis is wrong, not
+where it is convenient.
 
 ### `council` - agents that reason their own way to a trade
 

@@ -92,9 +92,12 @@ from .risk import Guard
 from .scalper import (
     ApproachScalp,
     ConfluenceScalp,
+    FadeToValue,
     LevelScalp,
     LevelStrategy,
     MomentumScalp,
+    SweepAware,
+    SwingLevel,
 )
 from .service import Trader, listen
 from .sizing import Sizing, lots, price_distance
@@ -125,6 +128,7 @@ __all__ = [
     "Council",
     "CouncilStrategy",
     "Exposure",
+    "FadeToValue",
     "Guard",
     "Intent",
     "LevelScalp",
@@ -149,6 +153,8 @@ __all__ = [
     "Sizing",
     "Speeds",
     "Strategy",
+    "SweepAware",
+    "SwingLevel",
     "SymbolSpec",
     "Tick",
     "Trade",

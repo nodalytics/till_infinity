@@ -40,6 +40,7 @@ from ..structures import confluence
 #: signals, and those only exist for feeds `prices` collects.
 INSTRUMENTS: dict[str, tuple[str, ...]] = {
     "gold": ("XAUUSD", "GOLD", "XAUUSD.spot"),
+    "silver": ("XAGUSD", "SILVER"),
     "btc": ("BTCUSD", "BTCUSDT", "BITCOIN"),
     "eth": ("ETHUSD", "ETHUSDT", "ETHEREUM"),
     "sol": ("SOLUSD", "SOLUSDT", "SOLANA"),
@@ -307,6 +308,35 @@ class Settings:
     #: at the third - which is the case the limit exists for.
     max_currency_exposure: float = 0.005
 
+    # ------------------------------------------- standing in front of a sweep
+    #: A level run this often, from this side, is refused by `sweep-aware`.
+    #: `TRAP` is the recorded outcome: through and back.
+    sweep_max_rate: float = 0.35
+    #: Decisive interactions before that rate is believed at all. Below it the
+    #: level has not said anything about itself yet.
+    sweep_min_history: float = 6.0
+    #: How far a stop may reach toward the liquidity resting beyond, as a share
+    #: of the distance to it. At 1.0 the stop sits exactly on the pool; the
+    #: default keeps it well short of one.
+    sweep_max_exposure: float = 0.8
+
+    # ------------------------------------------------ pricing the distance
+    #: Decisive interactions a level needs before `fade-to-value` will treat it
+    #: as an estimate of fair value rather than a place price once went.
+    fade_min_touches: float = 4.0
+    #: How far out to look for fair value. Beyond this the level is not what
+    #: the current move is priced against.
+    fade_max_distance_vol: float = 8.0
+    #: How far from fair value a price has to be before the distance is a
+    #: statement rather than the noise of the estimate itself. Fair value is a
+    #: distribution and volatility is its width; inside one unit there is
+    #: nothing to say.
+    fade_min_distance_vol: float = 1.5
+    #: Stop this far short of fair value, for the reason `approach-scalp` does:
+    #: price is not drawn to a level, so the last stretch into the zone is the
+    #: part that was measured and did not survive.
+    fade_buffer_vol: float = 0.25
+
     # ------------------------------------------------------- the council
     #: Agents that reason their own way to a trade. Off unless `council` is in
     #: TRADING_STRATEGIES, and it needs a model credential like `agents` does.
@@ -451,6 +481,13 @@ class Settings:
             max_spread_ratio=_float("TRADING_MAX_SPREAD_RATIO", 2.5),
             drift_pause=_float("TRADING_DRIFT_PAUSE_S", 900.0),
             max_currency_exposure=_float("TRADING_MAX_CURRENCY_EXPOSURE", 0.005),
+            sweep_max_rate=_float("TRADING_SWEEP_MAX_RATE", 0.35),
+            sweep_min_history=_float("TRADING_SWEEP_MIN_HISTORY", 6.0),
+            sweep_max_exposure=_float("TRADING_SWEEP_MAX_EXPOSURE", 0.8),
+            fade_min_touches=_float("TRADING_FADE_MIN_TOUCHES", 4.0),
+            fade_max_distance_vol=_float("TRADING_FADE_MAX_DISTANCE_VOL", 8.0),
+            fade_min_distance_vol=_float("TRADING_FADE_MIN_DISTANCE_VOL", 1.5),
+            fade_buffer_vol=_float("TRADING_FADE_BUFFER_VOL", 0.25),
             council_quorum=_int("TRADING_COUNCIL_QUORUM", 2),
             council_min_conviction=_float("TRADING_COUNCIL_MIN_CONVICTION", 0.55),
             council_discuss=_flag("TRADING_COUNCIL_DISCUSS", "1"),

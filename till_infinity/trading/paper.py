@@ -44,6 +44,9 @@ log = get_logger(__name__)
 #: of gold, one coin of BTC, 100,000 units of a currency pair.
 PAPER_SPECS: dict[str, tuple[float, int]] = {
     "gold": (100.0, 2),
+    # 5,000 ounces is the standard silver contract, and it is quoted to three
+    # decimals rather than gold's two.
+    "silver": (5_000.0, 3),
     "btc": (1.0, 2),
     "eth": (1.0, 2),
     "sol": (1.0, 3),

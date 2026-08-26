@@ -19,6 +19,7 @@ def test_the_defaults_are_the_tracked_instruments():
         "usdcad",
         "usdchf",
         "nzdusd",
+        "silver",
         "usdcnh",
         "gold",
         "btc",

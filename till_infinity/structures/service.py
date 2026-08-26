@@ -504,7 +504,11 @@ class Watcher:
         # each was doing the same work dozens of times over the same levels.
         grouped: dict[str, list] = {}
         for call in worth:
-            signal = call.to_signal(self.engine.vol.of(call.feed, call.interval), self.clock)
+            signal = call.to_signal(
+                self.engine.vol.of(call.feed, call.interval),
+                self.clock,
+                self.engine.levels(call.feed, call.interval),
+            )
             if call.feed not in grouped:
                 grouped[call.feed] = self._zones(call.feed)
             zone = self._zone_for(grouped[call.feed], call.level)

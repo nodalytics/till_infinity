@@ -1685,6 +1685,75 @@ into `min_reward_to_risk`, which is currently a constant nobody derived. It is
 the same shape of question as the spread charge in §3, and the same answer: it
 is measurable from what is already written down.
 
+## 6g. Let the agents price the market too
+
+The thesis is that we price the market and take a stance on the distance. The
+arithmetic side does that: `structures` estimates fair value from where
+volatility turned, and `fade-to-value` trades the gap.
+
+The agents do not. `agents` reports findings and the `council` strategy votes on
+a side, which is the old shape - an opinion about direction rather than a
+valuation. Fundamental analysis is a valuation exercise more naturally than a
+directional one, and an analyst that has read the calendar, the reserves and the
+headlines is being asked the wrong question when it is asked which way price
+goes.
+
+**What to build.** Have a role output a *price*, with a width, and a horizon:
+"gold is worth about X, give or take Y, over the next Z hours". Then the same
+arithmetic applies to it as to a level - distance from spot, scaled by the
+width, is the stance - and the same journal pairing makes it scoreable against
+what the market subsequently paid.
+
+Two things fall out for free. A model quoting a number can be **scored on
+calibration**, which is a far better question than whether it was directionally
+right, and it is the question `calibration.md` already wants to ask. And an
+agent valuation and a level valuation can be *compared*: where they agree the
+distance is worth more, and where they disagree that is worth knowing on its
+own.
+
+The `council` should follow: a voice that answers "buy at 0.7 conviction" is
+harder to score than one that answers "worth 4,415, give or take 30".
+
+## 6h. Structures: what would actually improve the estimate
+
+The fair-value estimate comes from one input - where volatility turned - and
+the honest question is what else would sharpen it. Roughly in order of expected
+value against effort:
+
+**Volume, if it can be had.** A point of control is fair value derived from
+where volume traded, and it is the closest independent estimate of the same
+quantity this project models. Two problems. Our bars carry `tick_volume` from
+TradingView, which counts *price changes* rather than contracts - a proxy for
+activity, not size, and one that varies by venue in ways that would leak into a
+cross-venue median. Real volume exists on the crypto venues and on futures
+(GC=F, SI=F, NQ=F, ES=F) and not on spot FX at all, so a volume term would be
+available for some instruments and not others, which the level model currently
+never has to deal with.
+
+The measurable first step is small: record `tick_volume` on the touch features
+alongside everything else, and ask whether touches on high-activity bars
+resolve differently. If they do not, the expensive version is answered before
+it is built.
+
+**Where the estimate is thin.** `Level.filter.sigma` is the width of the
+estimate and nothing consumes it as a *confidence*. A level whose variance has
+not converged is a worse valuation than one that has, and the zone already uses
+it geometrically without anything reading it as evidence.
+
+**Time, now that it is instrumented.** `sessions.Clock` records how hours
+behave; nothing weights by it yet. That is deliberate - it should earn a weight
+from our own resolutions first - but the wiring is the cheap part and is done.
+
+**Cross-instrument.** Gold and silver are the same trade most days, and
+`exposure` already knows they share a dollar leg. A level on one is weak
+evidence about the other, and the correlation is measurable from the bars we
+already store rather than assumed.
+
+**What not to add.** Anything that turns the estimate into a direction
+predictor. Every entry in the price-geometry family has been measured to a coin
+flip, here and elsewhere; the reason this project is not in that graveyard is
+that it is estimating a *quantity*, and that is the property to protect.
+
 ## 7. BOCPD
 
 Documented in [structures.md](structures.md) as a way to *grade* a regime change

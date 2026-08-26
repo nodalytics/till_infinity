@@ -55,6 +55,21 @@ FEEDS: dict[str, Feed] = {
             yahoo=("GC=F",),
         ),
         _feed(
+            "silver",
+            # Spot silver, quoted per broker exactly as gold is. Yahoo has no
+            # spot XAGUSD either, so SI=F (COMEX continuous) is the same
+            # free stand-in GC=F is for gold.
+            tradingview=(
+                "OANDA:XAGUSD",
+                "PEPPERSTONE:XAGUSD",
+                "FOREXCOM:XAGUSD",
+                "SAXO:XAGUSD",
+                "TVC:SILVER",
+                "DERIV:XAGUSD",
+            ),
+            yahoo=("SI=F",),
+        ),
+        _feed(
             "btc",
             # Bybit is quoted on the USDT pair for all three of BTC, ETH and
             # SOL. It carries BYBIT:BTCUSD and BYBIT:ETHUSD as well, but not
@@ -275,6 +290,7 @@ DEFAULT_SYMBOLS: tuple[str, ...] = (
     "nzdusd",
     "usdcnh",
     "gold",
+    "silver",
     "btc",
     "eth",
     "sol",
@@ -303,6 +319,9 @@ SYMBOL_ALIASES: dict[str, str] = {
     "xauusd": "gold",
     "xau": "gold",
     "gold": "gold",
+    "xagusd": "silver",
+    "xag": "silver",
+    "silver": "silver",
     "btc": "btc",
     "btcusd": "btc",
     "btcusdt": "btc",

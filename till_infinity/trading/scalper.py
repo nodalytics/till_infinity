@@ -560,3 +560,260 @@ class SwingLevel(LevelStrategy):
     #: More room than a scalp, because the level is placed on slower data and
     #: the noise around it is proportionally larger.
     stop_multiple: ClassVar[float] = 1.5
+
+
+@register
+class SweepAware(LevelStrategy):
+    """The plain call, refused when the stop is standing in front of the door.
+
+    `level-scalp` places its stop outside the level's zone and stops thinking
+    about it. This one asks the further question: is that stop sitting between
+    price and the next obvious pool of resting orders. If it is, a run at those
+    orders takes this one on the way, and the trade is closed by a move that
+    was never about it.
+
+    Two pieces of evidence, both published by `structures.sweeps` and both
+    derived from what is already recorded rather than declared:
+
+    * `sweep_rate` - the share of this level's decisive interactions, on this
+      side, that were `TRAP`: price through and back. A level that has been run
+      four times in ten is telling you about itself directly, and no geometry
+      has to be inferred to hear it.
+    * `liquidity_beyond_vol` - how far to the next level out, on the side a
+      sweep would travel. Close liquidity beyond is a reason for price to run
+      this one; nothing within reach means the stop is not in front of an
+      obvious target.
+
+    The ratio of the two is what gets judged. A stop at 1.2v with liquidity at
+    1.0v beyond sits *past* the pool, which is the worst place to stand; the
+    same stop with the next level six units away is standing in open ground.
+
+    **It refuses rather than adjusting.** Widening the stop to clear the pool
+    would keep the trade and change what it costs, which sizes a worse trade
+    smaller rather than declining it - and the sizing already assumes the stop
+    is where the thesis is wrong, not where it is convenient.
+
+    Unvalidated, like everything else here. The prior from elsewhere is
+    discouraging for anything in this family, which is a reason to measure it
+    against `level-scalp` on the same signals rather than to skip it.
+    """
+
+    name: ClassVar[str] = "sweep-aware"
+    description: ClassVar[str] = (
+        "level-scalp, refusing setups whose stop sits in front of resting liquidity."
+    )
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+
+    def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
+        feed = str(payload.get("feed") or "")
+        settings = self.settings
+
+        swept = _number(features, "sweep_rate")
+        swept_n = _number(features, "sweep_n")
+        if swept_n >= settings.sweep_min_history and swept >= settings.sweep_max_rate:
+            return Refusal(
+                "swept_often",
+                f"this level has been run {swept:.0%} of {swept_n:.0f} decisive "
+                f"interactions from this side",
+                feed,
+            )
+
+        beyond = _number(features, "liquidity_beyond_vol")
+        if beyond <= 0:
+            return None  # nothing within reach to be run toward
+
+        risk_vol = abs(_number(features, "risk_vol")) * self.stop_multiple
+        exposure = risk_vol / beyond
+        if exposure >= settings.sweep_max_exposure:
+            return Refusal(
+                "in_front",
+                f"a {risk_vol:.2f}v stop reaches {exposure:.0%} of the way to "
+                f"liquidity {beyond:.2f}v beyond",
+                feed,
+            )
+        return None
+
+
+@register
+class FadeToValue(LevelStrategy):
+    """Price the market, then take the stance the distance implies.
+
+    The thesis in its plainest form. Every other strategy here reacts *at* a
+    level: price arrives, the level's record says what usually happens, the
+    trade is taken there. This one asks the question the README opens with -
+    what is this worth, and where is it trading - and takes the difference.
+
+    **Fair value is the best-evidenced level within reach**, not the nearest
+    one. A price the instrument has turned at forty times is a claim about
+    value; one it clipped twice is barely a claim at all, and taking the
+    closest level regardless would make the estimate a function of where price
+    happens to be standing. The book is scanned and the level with the most
+    decisive history wins, provided it has enough to speak.
+
+    **The stance is arithmetic.** Fair value above the market is a long, below
+    it is a short. Nothing is forecast: the side falls out of the valuation,
+    which is the property the whole design exists to protect.
+
+    **The distance has to clear the noise before it is a mispricing.** Fair
+    value is a distribution and volatility is its width, so a price one unit
+    away is inside the estimate and says nothing. `fade_min_distance_vol` is
+    where a distance starts being a statement.
+
+    **And it stops short of the target**, for the reason `approach-scalp` does:
+    price is not drawn to a level. The distance is an opportunity because the
+    level is a place with statistics attached, not because anything pulls price
+    to it, and the last stretch into the zone is exactly the part that was
+    measured and did not survive.
+
+    The stop goes beyond the level price is *at* - the one that triggered the
+    signal - because that is where this reading of value is wrong. If price
+    settles through the level it just arrived at, the estimate that said it was
+    cheap here was the thing that failed.
+    """
+
+    name: ClassVar[str] = "fade-to-value"
+    description: ClassVar[str] = (
+        "Takes the distance from spot to the best-evidenced level. The thesis, plainly."
+    )
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
+    context: ClassVar[tuple[str, ...]] = ("1h", "4h", "1d")
+    hold_seconds: ClassVar[float] = 2_700.0
+
+    def __init__(self, settings) -> None:
+        super().__init__(settings)
+        self.book = Book()
+
+    def observe(self, payload: dict[str, Any]) -> None:
+        """Remember every level published; the valuation is built from them."""
+        if not self.wants(payload):
+            return
+        features = _features(payload)
+        price = _number(features, "level")
+        vol_bps = _number(features, "vol_bps")
+        if price <= 0 or vol_bps <= 0:
+            return
+        self.book.observe(
+            str(payload.get("feed") or ""),
+            Seen(
+                price=price,
+                interval=str(payload.get("interval") or ""),
+                probability=_number(features, "probability"),
+                strength=_number(features, "strength"),
+                touches=_number(features, "record_n") or _number(features, "own_touches"),
+                when=float(payload.get("time") or time.time()),
+            ),
+            vol_bps,
+        )
+
+    def fair_value(self, feed: str, unit: float, spot: float) -> Seen | None:
+        """The best-evidenced level within reach, or None.
+
+        Evidence rather than proximity, and the difference is the whole point:
+        an estimate of value that changed every time price drifted toward a
+        different line would not be an estimate of anything.
+        """
+        candidates = [
+            seen
+            for seen in self.book.levels(feed)
+            if seen.touches >= self.settings.fade_min_touches
+            and abs(seen.price - spot) / unit <= self.settings.fade_max_distance_vol
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda s: (s.touches, -abs(s.price - spot)))
+
+    def consider(
+        self, payload: dict[str, Any], *, spec: SymbolSpec, tick: Tick, equity: float
+    ) -> Verdict:
+        self.seen += 1
+        feed = str(payload.get("feed") or "")
+        settings = self.settings
+
+        if not self.wants(payload):
+            return Refusal("shape", f"{payload.get('shape')} is not a level call", feed)
+        interval = str(payload.get("interval") or "")
+        if interval not in self.intervals:
+            return Refusal("interval", f"{interval} is not traded here", feed)
+
+        features = _features(payload)
+        vol_bps = _number(features, "vol_bps")
+        here = _number(features, "level")
+        if vol_bps <= 0 or here <= 0:
+            return Refusal("volatility", "the call carries no volatility unit", feed)
+
+        spot = tick.mid
+        unit = price_distance(spot, vol_bps, 1.0)
+        if unit <= 0:
+            return Refusal("volatility", "no volatility unit to price against", feed)
+
+        value = self.fair_value(feed, unit, spot)
+        if value is None:
+            return Refusal(
+                "no_value",
+                f"no level with {settings.fade_min_touches:.0f}+ interactions within "
+                f"{settings.fade_max_distance_vol:.1f}v of {spot:.5g}",
+                feed,
+            )
+
+        distance = (value.price - spot) / unit
+        if abs(distance) < settings.fade_min_distance_vol:
+            return Refusal(
+                "at_value",
+                f"{abs(distance):.2f}v from fair value at {value.price:.5g}, inside the "
+                f"{settings.fade_min_distance_vol:.2f}v that makes it a statement",
+                feed,
+            )
+
+        # The stance is arithmetic once the valuation exists.
+        side = Side.BUY if distance > 0 else Side.SELL
+        entry = tick.entry(side)
+
+        # Stop beyond the level price is standing at, outside its zone: that is
+        # where this reading of value is wrong.
+        risk_vol = abs(_number(features, "risk_vol")) or 1.0
+        edge = _number(features, "zone_low") if side is Side.BUY else _number(features, "zone_high")
+        stop = spec.round_price(
+            stop_for(here, side, risk_vol * unit, zone_edge=edge, clearance=unit * 0.25)
+        )
+        # Short of fair value, because price is not drawn to it. See magnet.md.
+        target = spec.round_price(value.price - side.sign * settings.fade_buffer_vol * unit)
+
+        if (side is Side.BUY and entry <= stop) or (side is Side.SELL and entry >= stop):
+            return Refusal("through", f"price is already past {stop:.5g}", feed)
+        if (target - entry) * side.sign <= 0:
+            return Refusal("at_value", "the buffer puts the target behind price", feed)
+
+        broker_says = respects_stops_level(spec, entry, stop, target)
+        if broker_says:
+            return Refusal("stops_level", broker_says, feed)
+
+        sized = lots(
+            spec,
+            equity=equity,
+            risk_fraction=settings.risk_fraction,
+            stop_distance=abs(entry - stop),
+            max_risk_money=settings.max_risk_money,
+        )
+        if not sized.ok:
+            return Refusal("size", sized.reason, feed)
+
+        self.wanted += 1
+        return Intent(
+            feed=feed,
+            symbol=spec.symbol,
+            side=side,
+            volume=sized.volume,
+            entry=entry,
+            stop=stop,
+            target=target,
+            reason=(
+                f"{abs(distance):.2f}v {'below' if side is Side.BUY else 'above'} fair "
+                f"value {value.price:.5g} ({value.touches:.0f} interactions)"
+            ),
+            interval=interval,
+            confluence=_confluence(payload),
+            features={**features, "distance_vol": distance, "fair_value": value.price},
+            risk_money=sized.risk_money,
+            hold=self.hold_seconds,
+        )
