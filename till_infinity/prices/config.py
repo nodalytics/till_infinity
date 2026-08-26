@@ -283,6 +283,199 @@ FEEDS: dict[str, Feed] = {
             ),
             yahoo=("^FTSE",),
         ),
+        _feed(
+            "us30",
+            # The Dow. Quoted tighter than gold on the account this was
+            # measured against - 0.28bps - which makes it the most liquid
+            # instrument here, not a diversifier.
+            tradingview=(
+                "OANDA:US30USD",
+                "PEPPERSTONE:US30",
+                "FOREXCOM:DJI",
+                "CAPITALCOM:US30",
+                "BLACKBULL:US30",
+                "TVC:DJI",
+            ),
+            yahoo=("^DJI", "YM=F"),
+        ),
+        _feed(
+            "us2000",
+            # The Russell 2000. Small caps, so it diverges from the other US
+            # indices more often than they diverge from each other.
+            tradingview=(
+                "OANDA:US2000USD",
+                "PEPPERSTONE:US2000",
+                "CAPITALCOM:RTY",
+                "TVC:RUT",
+            ),
+            yahoo=("^RUT", "RTY=F"),
+        ),
+        _feed(
+            "jp225",
+            # The Nikkei, quoted in yen. One of the few indices whose second
+            # leg is neither the dollar nor the euro.
+            tradingview=(
+                "OANDA:JP225USD",
+                "PEPPERSTONE:JPN225",
+                "FOREXCOM:JPXJPY",
+                "CAPITALCOM:J225",
+                "TVC:NI225",
+            ),
+            yahoo=("^N225", "NIY=F"),
+        ),
+        _feed(
+            "fra40",
+            tradingview=(
+                "OANDA:FR40EUR",
+                "PEPPERSTONE:FRA40",
+                "CAPITALCOM:FR40",
+                "FOREXCOM:FRXEUR",
+                "TVC:CAC40",
+            ),
+            yahoo=("^FCHI",),
+        ),
+        _feed(
+            "eu50",
+            tradingview=(
+                "OANDA:EU50EUR",
+                "PEPPERSTONE:EUSTX50",
+                "CAPITALCOM:EU50",
+                "TVC:SX5E",
+            ),
+            yahoo=("^STOXX50E",),
+        ),
+        _feed(
+            "aus200",
+            # Three venues, which is exactly the consensus quorum. One of them
+            # going quiet leaves this instrument with no cross-venue check at
+            # all - the fail-open that `trading.spreads` now covers.
+            tradingview=(
+                "OANDA:AU200AUD",
+                "PEPPERSTONE:AUS200",
+                "CAPITALCOM:AU200",
+            ),
+            yahoo=("^AXJO",),
+        ),
+        _feed(
+            "hk50",
+            tradingview=(
+                "OANDA:HK33HKD",
+                "PEPPERSTONE:HK50",
+                "CAPITALCOM:HK50",
+                "FOREXCOM:HKXHKD",
+                "TVC:HSI",
+            ),
+            yahoo=("^HSI",),
+        ),
+        _feed(
+            "wti",
+            # Energy, which is the one driver nothing else here carries.
+            tradingview=(
+                "OANDA:WTICOUSD",
+                "CAPITALCOM:OIL_CRUDE",
+                "FOREXCOM:USOIL",
+                "TVC:USOIL",
+            ),
+            yahoo=("CL=F",),
+        ),
+        _feed(
+            "brent",
+            tradingview=(
+                "OANDA:BCOUSD",
+                "CAPITALCOM:OIL_BRENT",
+                "FOREXCOM:UKOIL",
+                "TVC:UKOIL",
+            ),
+            yahoo=("BZ=F",),
+        ),
+        # The crosses. Every one of these has **no dollar leg**, which is the
+        # reason to carry them: everything else here is long or short the
+        # dollar by construction, so a book of majors and metals is one trade
+        # wearing several tickets. See `trading.exposure`.
+        _feed(
+            "eurgbp",
+            tradingview=(
+                "OANDA:EURGBP",
+                "PEPPERSTONE:EURGBP",
+                "FOREXCOM:EURGBP",
+                "CAPITALCOM:EURGBP",
+                "FX_IDC:EURGBP",
+                "SAXO:EURGBP",
+            ),
+            yahoo=("EURGBP=X",),
+        ),
+        _feed(
+            "eurjpy",
+            tradingview=(
+                "OANDA:EURJPY",
+                "PEPPERSTONE:EURJPY",
+                "FOREXCOM:EURJPY",
+                "CAPITALCOM:EURJPY",
+                "FX_IDC:EURJPY",
+                "SAXO:EURJPY",
+            ),
+            yahoo=("EURJPY=X",),
+        ),
+        _feed(
+            "gbpjpy",
+            tradingview=(
+                "OANDA:GBPJPY",
+                "PEPPERSTONE:GBPJPY",
+                "FOREXCOM:GBPJPY",
+                "CAPITALCOM:GBPJPY",
+                "FX_IDC:GBPJPY",
+                "SAXO:GBPJPY",
+            ),
+            yahoo=("GBPJPY=X",),
+        ),
+        _feed(
+            "eurchf",
+            tradingview=(
+                "OANDA:EURCHF",
+                "PEPPERSTONE:EURCHF",
+                "FOREXCOM:EURCHF",
+                "CAPITALCOM:EURCHF",
+                "FX_IDC:EURCHF",
+                "SAXO:EURCHF",
+            ),
+            yahoo=("EURCHF=X",),
+        ),
+        _feed(
+            "audjpy",
+            tradingview=(
+                "OANDA:AUDJPY",
+                "PEPPERSTONE:AUDJPY",
+                "FOREXCOM:AUDJPY",
+                "CAPITALCOM:AUDJPY",
+                "FX_IDC:AUDJPY",
+                "SAXO:AUDJPY",
+            ),
+            yahoo=("AUDJPY=X",),
+        ),
+        _feed(
+            "chfjpy",
+            tradingview=(
+                "OANDA:CHFJPY",
+                "PEPPERSTONE:CHFJPY",
+                "FOREXCOM:CHFJPY",
+                "CAPITALCOM:CHFJPY",
+                "FX_IDC:CHFJPY",
+                "SAXO:CHFJPY",
+            ),
+            yahoo=("CHFJPY=X",),
+        ),
+        _feed(
+            "euraud",
+            tradingview=(
+                "OANDA:EURAUD",
+                "PEPPERSTONE:EURAUD",
+                "FOREXCOM:EURAUD",
+                "CAPITALCOM:EURAUD",
+                "FX_IDC:EURAUD",
+                "SAXO:EURAUD",
+            ),
+            yahoo=("EURAUD=X",),
+        ),
     )
 }
 
@@ -332,6 +525,22 @@ DEFAULT_SYMBOLS: tuple[str, ...] = (
     "spx500",
     "ger40",
     "uk100",
+    "us30",
+    "us2000",
+    "jp225",
+    "fra40",
+    "eu50",
+    "aus200",
+    "hk50",
+    "wti",
+    "brent",
+    "eurgbp",
+    "eurjpy",
+    "gbpjpy",
+    "eurchf",
+    "audjpy",
+    "chfjpy",
+    "euraud",
 )
 
 #: What people actually type, mapped to the feed it means.
@@ -366,6 +575,43 @@ SYMBOL_ALIASES: dict[str, str] = {
     "ftse100": "uk100",
     "ukx": "uk100",
     "footsie": "uk100",
+    "us30": "us30",
+    "dow": "us30",
+    "dowjones": "us30",
+    "dji": "us30",
+    "wallstreet": "us30",
+    "ym": "us30",
+    "us2000": "us2000",
+    "russell": "us2000",
+    "rut": "us2000",
+    "jp225": "jp225",
+    "nikkei": "jp225",
+    "japan225": "jp225",
+    "n225": "jp225",
+    "fra40": "fra40",
+    "cac": "fra40",
+    "cac40": "fra40",
+    "france40": "fra40",
+    "eu50": "eu50",
+    "stoxx": "eu50",
+    "stoxx50": "eu50",
+    "europe50": "eu50",
+    "aus200": "aus200",
+    "asx": "aus200",
+    "asx200": "aus200",
+    "australia200": "aus200",
+    "hk50": "hk50",
+    "hsi": "hk50",
+    "hangseng": "hk50",
+    "hongkong50": "hk50",
+    "wti": "wti",
+    "usoil": "wti",
+    "crude": "wti",
+    "oil": "wti",
+    "cl": "wti",
+    "brent": "brent",
+    "ukoil": "brent",
+    "bco": "brent",
     "xauusd": "gold",
     "xau": "gold",
     "gold": "gold",

@@ -61,6 +61,23 @@ INSTRUMENTS: dict[str, tuple[str, ...]] = {
     "spx500": ("US500", "SPX500", "SP500", "USA500", "US SP 500"),
     "ger40": ("GER40", "DE40", "DE30", "DAX40", "GERMANY40", "GERMANY 40"),
     "uk100": ("UK100", "FTSE100", "UKX", "UK 100"),
+    "us30": ("US30", "DJ30", "DOW30", "WALL STREET 30", "WALLSTREET30"),
+    "us2000": ("US2000", "RUSSELL2000", "RUT", "US SMALL CAP 2000"),
+    "jp225": ("JP225", "JPN225", "NIKKEI225", "JAPAN 225"),
+    "fra40": ("FRA40", "FR40", "CAC40", "FRANCE 40"),
+    "eu50": ("EU50", "EUSTX50", "STOXX50", "EUROPE 50"),
+    "aus200": ("AUS200", "AU200", "ASX200", "AUSTRALIA 200"),
+    "hk50": ("HK50", "HK33", "HSI", "HONG KONG 50"),
+    "wti": ("WTI", "USOIL", "CRUDE", "XTIUSD", "US OIL"),
+    "brent": ("BRENT", "UKOIL", "XBRUSD", "UK BRENT OIL"),
+    # The crosses. No dollar leg - see `exposure.LEGS`.
+    "eurgbp": ("EURGBP",),
+    "eurjpy": ("EURJPY",),
+    "gbpjpy": ("GBPJPY",),
+    "eurchf": ("EURCHF",),
+    "audjpy": ("AUDJPY",),
+    "chfjpy": ("CHFJPY",),
+    "euraud": ("EURAUD",),
 }
 
 #: Account-type suffixes, tried against every name above. Empty string first,

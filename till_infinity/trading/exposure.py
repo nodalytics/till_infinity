@@ -60,6 +60,29 @@ LEGS: dict[str, tuple[str, str]] = {
     # made them count against the one limit they genuinely diversify.
     "ger40": ("GER40", "EUR"),
     "uk100": ("UK100", "GBP"),
+    "fra40": ("FRA40", "EUR"),
+    "eu50": ("EU50", "EUR"),
+    "jp225": ("JP225", "JPY"),
+    "aus200": ("AUS200", "AUD"),
+    "hk50": ("HK50", "HKD"),
+    # Dollar-quoted like the rest of the US book, so these add to the crowded
+    # leg rather than diversifying it. Carried for liquidity, not for balance.
+    "us30": ("US30", "USD"),
+    "us2000": ("US2000", "USD"),
+    "wti": ("WTI", "USD"),
+    "brent": ("BRENT", "USD"),
+    # The crosses, and the reason they are here. Every other instrument in this
+    # table has the dollar on one side by construction, so the currency limit
+    # binds on the dollar long before it binds on anything else. These are the
+    # only positions that consume a different budget entirely - getting a leg
+    # wrong here would quietly delete the one property they were added for.
+    "eurgbp": ("EUR", "GBP"),
+    "eurjpy": ("EUR", "JPY"),
+    "gbpjpy": ("GBP", "JPY"),
+    "eurchf": ("EUR", "CHF"),
+    "audjpy": ("AUD", "JPY"),
+    "chfjpy": ("CHF", "JPY"),
+    "euraud": ("EUR", "AUD"),
 }
 
 #: What a calendar row's `country` means, in currency terms. The field carries

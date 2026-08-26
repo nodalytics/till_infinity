@@ -29,6 +29,22 @@ def test_the_defaults_are_the_tracked_instruments():
         "spx500",
         "ger40",
         "uk100",
+        "us30",
+        "us2000",
+        "jp225",
+        "fra40",
+        "eu50",
+        "aus200",
+        "hk50",
+        "wti",
+        "brent",
+        "eurgbp",
+        "eurjpy",
+        "gbpjpy",
+        "eurchf",
+        "audjpy",
+        "chfjpy",
+        "euraud",
     }
     assert {feed.name for feed in resolve_symbols(None)} == tracked
     assert set(DEFAULT_SYMBOLS) == tracked

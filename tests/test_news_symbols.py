@@ -33,10 +33,19 @@ def test_an_instrument_we_do_not_price_maps_to_nothing():
 
 
 def test_a_near_miss_is_not_a_match():
-    """`EURJPY` is not `eurusd`, however much of the alphabet they share."""
-    assert feed_for("FX:EURJPY") == ""
-    assert feed_for("FX:EURGBP") == ""
-    assert feed_for("FX:EURCHF") == ""
+    """A shared prefix is not a match, however much of the alphabet is shared.
+
+    This used to use EURJPY, EURGBP and EURCHF as the near misses, and they are
+    tracked instruments now - so the examples moved to crosses that are still
+    not carried rather than the assertion being softened. `eurusd` is the one
+    they must not be mistaken for.
+    """
+    assert feed_for("FX:EURSEK") == ""
+    assert feed_for("FX:EURNOK") == ""
+    assert feed_for("FX:EURMXN") == ""
+    # And the ones that are tracked resolve to themselves, not to eurusd.
+    assert feed_for("FX:EURJPY") == "eurjpy"
+    assert feed_for("FX:EURGBP") == "eurgbp"
 
 
 def test_a_short_ticker_cannot_claim_a_longer_one():

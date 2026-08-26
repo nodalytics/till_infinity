@@ -845,8 +845,24 @@ def test_a_us_release_hits_every_instrument_with_a_dollar_leg():
     assert "gold" in affected
     assert "btc" in affected
     assert "eurusd" in affected
-    # Everything except the two indices that are not quoted in dollars.
-    assert set(ex.LEGS) - set(affected) == {"ger40", "uk100"}
+    # Everything except the instruments with no dollar leg at all: the
+    # non-dollar indices, and every cross.
+    assert set(ex.LEGS) - set(affected) == {
+        "ger40",
+        "uk100",
+        "fra40",
+        "eu50",
+        "jp225",
+        "aus200",
+        "hk50",
+        "eurgbp",
+        "eurjpy",
+        "gbpjpy",
+        "eurchf",
+        "audjpy",
+        "chfjpy",
+        "euraud",
+    }
 
 
 def test_the_european_indices_do_not_load_the_dollar():
@@ -2668,3 +2684,40 @@ async def test_a_trade_going_nowhere_still_closes_on_the_clock():
     live.seen -= (live.intent.hold or made.max_hold) + 60
     await trader._expire()
     assert not trader.open, "a flat trade should still be released"
+
+
+def test_the_crosses_consume_a_different_budget_from_everything_else():
+    """The reason they were added, and the thing a wrong leg would delete.
+
+    Every other instrument here has the dollar on one side by construction, so
+    `max_currency_exposure` binds on USD long before it binds on anything else.
+    A cross is the only position that can be opened when the dollar budget is
+    already full.
+    """
+    crosses = ("eurgbp", "eurjpy", "gbpjpy", "eurchf", "audjpy", "chfjpy", "euraud")
+    for feed in crosses:
+        base, quote = ex.legs(feed)
+        assert base and quote, f"{feed} is unmapped, so it escapes the limit entirely"
+        assert "USD" not in (base, quote), f"{feed} was mapped onto the dollar"
+
+    # A full dollar book plus a cross: the cross adds nothing to USD.
+    positions = [
+        td.Position(ticket=1, symbol="XAUUSD", side=Side.BUY, volume=0.1, price_open=4400.0),
+        td.Position(ticket=2, symbol="EURUSD", side=Side.BUY, volume=0.1, price_open=1.1),
+    ]
+    feed_of = {"XAUUSD": "gold", "EURUSD": "eurusd", "GBPJPY": "gbpjpy"}
+    before = abs(ex.measure(positions, {1: 25.0, 2: 25.0}, feed_of).of("USD"))
+    positions.append(
+        td.Position(ticket=3, symbol="GBPJPY", side=Side.BUY, volume=0.1, price_open=195.0)
+    )
+    after = ex.measure(positions, {1: 25.0, 2: 25.0, 3: 25.0}, feed_of)
+    assert abs(after.of("USD")) == pytest.approx(before)
+    assert abs(after.of("JPY")) > 0
+
+
+def test_every_tracked_instrument_can_be_exposure_mapped():
+    """An unmapped feed is not merely unmeasured - it is *exempt* from the
+    currency limit, which is the one failure mode that looks like nothing.
+    """
+    unmapped = [f for f in td.INSTRUMENTS if ex.legs(f) == ("", "")]
+    assert not unmapped, f"no currency legs for {unmapped}"

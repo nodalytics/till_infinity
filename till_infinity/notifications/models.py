@@ -99,6 +99,22 @@ INSTRUMENTS: dict[str, str] = {
     "spx500": "SPX",
     "ger40": "DAX",
     "uk100": "FTSE",
+    "us30": "DOW",
+    "us2000": "RUT",
+    "jp225": "N225",
+    "fra40": "CAC",
+    "eu50": "SX5E",
+    "aus200": "ASX",
+    "hk50": "HSI",
+    "wti": "WTI",
+    "brent": "BRENT",
+    "eurgbp": "EURGBP",
+    "eurjpy": "EURJPY",
+    "gbpjpy": "GBPJPY",
+    "eurchf": "EURCHF",
+    "audjpy": "AUDJPY",
+    "chfjpy": "CHFJPY",
+    "euraud": "EURAUD",
 }
 
 #: Keys the notification filter routes on. Rendered nowhere: every publisher
