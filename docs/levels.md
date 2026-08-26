@@ -102,6 +102,72 @@ Signed throughout: **positive is up**, negative is down, regardless of which
 side price arrived from. A consumer wants to know which way to lean, not
 whether the level "won".
 
+### Five readings of that one number
+
+`vol_bps` - an exponentially weighted mean absolute return over closes - is
+still the number every threshold in this package divides by. Four more are
+computed beside it, published on every level signal, and **used by nothing**.
+That is deliberate: given how much depends on this single quantity, changing it
+on the strength of an argument is precisely the mistake
+[edge.md](edge.md) records.
+
+| reads | measures | adds |
+| --- | --- | --- |
+| `volatility.py` | closes | mean absolute deviation | the baseline |
+| `garch.py` | closes | conditional scale | a level to revert toward |
+| `ranges.py` | whole bars | standard deviation | the path, not just the endpoint |
+| `har.py` | whole bars | a forecast | what the *next* bar will do |
+| `consensus_vol.py` | all four | combined | one scale, scored, averaged |
+
+**`garch.py`** is written on absolute returns rather than squared ones - the
+Taylor-Schwert form. The ordinary version squares everything, which would have
+undone the first decision `volatility.py` made: it tracks mean absolute return
+because returns are fat-tailed and a variance is dominated by its worst
+observation. The one thing it adds is a destination. An exponentially weighted
+mean is a random walk over its own history; volatility is famous for clustering
+*and* reverting, and only the clustering was modelled. Its constant is pinned
+to a slowly decayed long-run scale rather than fitted, which is what makes it
+work online. At `a + b = 1` the constant vanishes and it reduces exactly to the
+estimator already here - that equivalence is a test, not a claim.
+
+**`ranges.py`** uses information that was already in hand. `announce_bars` has
+carried the open, high and low since the doji bug was fixed, and the estimate
+was still reading closes alone. A bar that ran twenty basis points up, twenty
+back down and finished flat reads as *no movement at all* close-to-close -
+which is the opposite of the truth and exactly the bar a level cares about.
+Measured on a synthetic series of such bars: **0.000bps close-to-close against
+10.5bps from Yang-Zhang.** Yang-Zhang leads the four because it is the only one
+unbiased across an opening gap *and* independent of drift, and every instrument
+here gaps.
+
+**`har.py`** answers a different question from the rest - how big is the *next*
+move - which is why it is the only one that can be wrong in a way a description
+of the past cannot. Realised volatility has long memory that decays far too
+slowly for one exponential; the heterogeneous autoregressive form captures it
+with three lags and a straight line. The horizons are in **bars** rather than
+days, keeping the 1:5:22 spacing, because the same instrument runs on eight
+timeframes at once - the ratio is what matters, not the calendar.
+
+**`consensus_vol.py`** exists because averaging the four as they stand would be
+wrong in a way that looks right. `volatility.py` reports a mean absolute
+deviation and the range estimators report a standard deviation; for a normal
+those differ by `sqrt(pi/2)`, about 1.253. A naive average would shift every
+threshold in this package by roughly a fifth while appearing perfectly
+sensible. Everything is converted onto the mean-absolute convention, because
+that is the scale the existing thresholds were tuned against. It is a
+*convention*, not a correction - returns are not normal, which is the reason
+mean absolute deviation was chosen in the first place.
+
+And nothing is combined before it can be scored. Each member is judged against
+what the next bar actually did, with a symmetric relative error so a 40bps
+instrument and a 0.4bps one contribute comparably, scored *before* the bar is
+folded in so each is judged on the forecast it actually had to make. The
+combination is then a plain average - not for simplicity, but because the
+simple average routinely beats optimally fitted weights out of sample, since
+the weights are estimated with error and that error does not vanish.
+Inverse-error weighting is implemented and **off**, so equal weights can be
+beaten before being replaced.
+
 ---
 
 ## 1. Finding the swings: Perceptually Important Points

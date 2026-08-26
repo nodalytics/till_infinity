@@ -262,6 +262,51 @@ have caught, listed under the next heading.
 outcomes. `structures.resolutions` now carries ground truth on the bus and
 `trading report` will score it, but there are no closed trades to score yet.
 
+## Silent faults found on 2026-08-26, and what they have in common
+
+Five, all live, none of which produced an error or a failing test. Every one
+was a component quietly doing less than it appeared to, which is the shape
+worth learning rather than the individual bugs.
+
+**Losses were being hidden from the channel.** The notification cooldown keyed
+on `(shape, instrument, venue)`, and a fill and its own close share all three -
+so a position opened and closed inside fifteen minutes had its close dropped as
+a repeat of its fill. A trade that closes that fast is usually one that was
+stopped out, so what disappeared was disproportionately the losses and the
+channel read as a record of wins. A filter that silently changes what a feed
+appears to *say* is worse than one that is merely too quiet.
+
+**The hold was cutting winners.** `_expire` closed on age alone without asking
+what the trade was doing, so a position a point in front at the thirty-minute
+mark went out at market and the rest of the move happened without us. Out at
+4623 on a gold fall that carried to 4592.
+
+**Stops cleared the level but not the fill.** `min_stop_vol` floored the stop's
+distance from the *level*; sizing measured from the *fill*. A market entry can
+land most of the way to a level-anchored stop, and the position is then sized
+as a short-distance trade - a large one - and taken out by ordinary movement. A
+gold buy filled 1.0v above a stop sitting 5.9v below the level, sized 0.18
+lots, stopped in minutes for -26.64.
+
+**The live path saw less than the store.** `announce_bars` published one notice
+per sweep carrying only the newest bar. After a gap, a restart, or on any
+interval slower than the sweep cadence, the rest went to the store and never
+reached the bus - so levels formed from a subset of the series and touches were
+counted on a subset of the interactions, differently from a replay of the same
+data.
+
+**A log announced a decision nobody made.** The wide-market gate's
+"standing aside" line sat outside the check that decides whether to stand
+aside, so it fired once per venue report across a dozen instruments while no
+trade was ever refused. This one is the most dangerous of the five, because it
+is what gets believed later when somebody reads the logs to work out what
+happened.
+
+The pattern: **each looked like it was working from every angle except its own
+output.** The tests passed, the container was healthy, the logs were busy. What
+found them was asking what a specific number should have been and checking, or
+in one case a user asking why a particular signal did not trade.
+
 ## Things that cost time, so they do not cost it twice
 
 **Verify by running, not by reading.** Every bug that mattered was found by
