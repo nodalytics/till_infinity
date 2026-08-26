@@ -132,8 +132,11 @@ max-returns = 8
 "till_infinity/trading/paper.py" = ["ARG002"]
 # The gate chain in `LevelStrategy.consider` is one return per refusal, which
 # is the design: each gate names itself and stops. Collapsing fifteen reasons
-# into fewer exits would trade a readable refusal for a lint score.
-"till_infinity/trading/scalper.py" = ["ARG002", "PLR0911"]
+# into fewer exits would trade a readable refusal for a lint score. The branch
+# count is the same fact counted differently - two of the checks have already
+# been extracted to methods on their own merits, and further extraction would
+# be done to satisfy the counter rather than to make anything clearer.
+"till_infinity/trading/scalper.py" = ["ARG002", "PLR0911", "PLR0912"]
 # Same shape again: one return per refusal, each naming its own gate. And the
 # synchronous `consider` exists only to refuse - the council is async, so it
 # takes the port's arguments and uses none of them.

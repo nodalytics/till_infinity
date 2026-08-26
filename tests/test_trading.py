@@ -2832,3 +2832,53 @@ def test_the_wide_log_does_not_announce_a_decision_nobody_made(caplog):
         assert ctx.widened("gold", now=1_150.0) == 3
         said = [r.getMessage() for r in caplog.records if "standing aside" in r.getMessage()]
         assert len(said) == 1, "one widening should be one line, not one per venue"
+
+
+# ------------------------------------------- stopped out before the move came
+
+
+def test_the_stop_clears_the_sweep_zone_not_the_touch_zone():
+    """A stop at the average sweep depth is exceeded by about half of sweeps.
+
+    The touch zone's far edge is built from the mean wick, which is the right
+    centre for "is price at this level" and the wrong edge for "how far past it
+    does price go". From the account the difference looks like being stopped
+    out and then watching the move happen.
+    """
+    shallow = take("level-scalp", signal(features={"zone_low": 4396.0}))
+    deep = take(
+        "level-scalp",
+        signal(features={"zone_low": 4396.0, "sweep_low": 4392.0}),
+    )
+    assert isinstance(shallow, Intent)
+    assert isinstance(deep, Intent)
+    assert deep.stop < shallow.stop, "the wider band should push the stop further out"
+    # And the size comes down to keep the money at risk the same.
+    assert deep.volume <= shallow.volume
+
+
+def test_an_older_signal_without_a_sweep_zone_still_works():
+    """A producer that predates the wider band degrades to the previous
+    behaviour rather than to no zone at all."""
+    got = take("level-scalp", signal(features={"zone_low": 4396.0}))
+    assert isinstance(got, Intent)
+    assert got.stop < 4400.0
+
+
+def test_a_fill_that_has_left_the_level_behind_is_refused():
+    """The call was measured at the level and the push runs from there, so a
+    fill well past it has already spent part of the move."""
+    # Level at 4400, price 3v past it in the trade's direction.
+    got = take(
+        "level-scalp",
+        tick=Tick("XAUUSD", bid=4412.0, ask=4413.0),
+        max_chase_vol=1.0,
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate in {"chase", "through"}
+
+
+def test_arriving_before_the_level_is_not_a_chase():
+    """Price short of the level is the setup behaving as advertised."""
+    got = take("level-scalp", tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), max_chase_vol=1.0)
+    assert isinstance(got, Intent)

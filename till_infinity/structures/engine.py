@@ -40,6 +40,17 @@ from .volatility import Volatility
 
 log = get_logger(__name__)
 
+#: Sigmas of wick spread a stop has to clear beyond the level's own average.
+#:
+#: One would be roughly the depth 84% of sweeps stay inside if the depths were
+#: normal, which they are not - they are bounded below at zero with a long
+#: right tail, so real coverage at one sigma is higher than that. Two produces
+#: stops wide enough that the size the risk budget then allows is uninteresting
+#: on the tighter instruments. This is the setting most worth measuring against
+#: outcomes rather than reasoning about.
+SWEEP_SIGMAS = 1.0
+
+
 #: Bars kept per instrument. Enough to hold the swings that matter on a 5m
 #: chart without the window itself becoming the thing being modelled.
 WINDOW = 500
@@ -281,6 +292,10 @@ class Call(Restorable):
         )
 
         zone_low, zone_high = self.level.zone(vol)
+        # The wider band a stop has to clear. See `Level.sweep_zone`: the touch
+        # zone is built from the average wick, and a stop at the average sweep
+        # depth is exceeded by about half of all sweeps by construction.
+        sweep_low, sweep_high = self.level.sweep_zone(vol, SWEEP_SIGMAS)
         unit = vol.price_units(self.level.price, 1.0) or 1.0
         wick_below = (self.level.price - zone_low) / unit
         wick_above = (zone_high - self.level.price) / unit
@@ -370,6 +385,14 @@ class Call(Restorable):
                 "zone_high": zone_high,
                 "wick_below_vol": wick_below,
                 "wick_above_vol": wick_above,
+                # And the wider band a **stop** has to clear. The two are not
+                # the same question: the touch zone is built from the average
+                # wick, which is the right centre for "is price at this level"
+                # and the wrong edge for "how far past it does price go" - a
+                # stop there is exceeded by about half of all sweeps by
+                # construction. See `Level.sweep_zone`.
+                "sweep_low": sweep_low,
+                "sweep_high": sweep_high,
                 # Whether this level has a history of being run rather than
                 # respected, and what is resting beyond it for price to run it
                 # toward. Neither gates anything here: they go to the journal

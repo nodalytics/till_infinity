@@ -109,6 +109,38 @@ class LevelStrategy(Strategy):
             price_distance(entry, vol_bps, push_vol * self.target_multiple),
         )
 
+    def _chasing(
+        self, feed: str, side: Side, level: float, entry: float, vol_bps: float
+    ) -> Refusal | None:
+        """Refuse a fill that has already left the level behind.
+
+        Entry is a market order, so it lands wherever price is when the call
+        arrives, and nothing used to look at that. The call was measured *at*
+        the level and the push it predicts runs from there, so a fill well past
+        it has already spent part of the move - and the stop, being anchored to
+        the level, ends up sitting close underneath the fill. Both halves of
+        "stopped out before the move came" meet at this number.
+
+        Only counted when the fill is past the level in the trade's own
+        direction. Arriving before it is the setup behaving as advertised.
+        """
+        limit = self.settings.max_chase_vol
+        if limit <= 0:
+            return None
+        unit = price_distance(entry, vol_bps, 1.0)
+        if unit <= 0:
+            return None
+        if (entry - level) * side.sign <= 0:
+            return None
+        gone = abs(entry - level) / unit
+        if gone <= limit:
+            return None
+        return Refusal(
+            "chase",
+            f"the fill is {gone:.2f}v past the level at {level:.5g}, over the {limit:.2f}v limit",
+            feed,
+        )
+
     def _anchored_stop(
         self,
         spec: SymbolSpec,
@@ -143,7 +175,20 @@ class LevelStrategy(Strategy):
         the stop further from the fill, which only ever reduces size for the
         same money at risk. It never moves a stop closer in.
         """
-        edge = _number(features, "zone_low") if side is Side.BUY else _number(features, "zone_high")
+        # The **sweep** zone, not the touch zone, and they are different
+        # questions. The touch zone's far edge is built from the average wick,
+        # which is right for "is price at this level" and wrong for "how far
+        # past it does price go" - a stop there is exceeded by about half of
+        # all sweeps by construction, which from the account looks like being
+        # stopped out and then watching the move happen.
+        #
+        # Falls back to the touch zone on a signal that predates the wider one,
+        # so an older producer degrades to the previous behaviour rather than
+        # to no zone at all.
+        if side is Side.BUY:
+            edge = _number(features, "sweep_low") or _number(features, "zone_low")
+        else:
+            edge = _number(features, "sweep_high") or _number(features, "zone_high")
         return spec.round_price(
             stop_for(level, side, risk_distance, zone_edge=edge, clearance=unit * 0.25)
         )
@@ -242,6 +287,18 @@ class LevelStrategy(Strategy):
             return Refusal("push", "the call expects no push", feed)
 
         entry = tick.entry(side)
+
+        # How far the fill is from the level the trade is about. Entry is a
+        # market order, so this is wherever price happened to be when the call
+        # arrived - and nothing used to look at it. A call measured at the
+        # level does not describe a price two volatility units away from it:
+        # the push it predicts is measured from the level, so buying late
+        # spends part of the move before the trade starts, and the stop, which
+        # is anchored to the level, ends up close underneath the fill.
+        chased = self._chasing(feed, side, level, entry, vol_bps)
+        if chased is not None:
+            return chased
+
         risk_distance, push_distance = self.distances(level, entry, vol_bps, risk_vol, push_vol)
         # The far edge of the level's own band on the side the stop sits, and a
         # quarter unit of clearance beyond it. Absent on an older signal, in

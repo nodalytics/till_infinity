@@ -425,6 +425,20 @@ class Settings:
     #: at the third - which is the case the limit exists for.
     max_currency_exposure: float = 0.005
 
+    #: How far past the level a fill may land before the trade is refused.
+    #:
+    #: Entry is a market order, so it lands wherever price is when the call
+    #: arrives, and nothing looked at that. The call was measured *at* the
+    #: level and the push it predicts is measured from there, so a fill well
+    #: past it has already spent part of the move - and the stop, anchored to
+    #: the level, ends up sitting close underneath the fill. Both halves of
+    #: "stopped out before the move came" meet here.
+    #:
+    #: Only counted when the fill is past the level in the trade's own
+    #: direction. Arriving before it is the setup behaving as described.
+    #: Zero disables.
+    max_chase_vol: float = 1.0
+
     #: The least a stop may sit from the level, in volatility units.
     #:
     #: Fair value is a distribution and volatility is its width, so a stop
@@ -625,6 +639,7 @@ class Settings:
             drift_pause=_float("TRADING_DRIFT_PAUSE_S", 900.0),
             max_currency_exposure=_float("TRADING_MAX_CURRENCY_EXPOSURE", 0.005),
             min_stop_vol=_float("TRADING_MIN_STOP_VOL", 1.0),
+            max_chase_vol=_float("TRADING_MAX_CHASE_VOL", 1.0),
             sweep_max_rate=_float("TRADING_SWEEP_MAX_RATE", 0.35),
             sweep_min_history=_float("TRADING_SWEEP_MIN_HISTORY", 6.0),
             sweep_max_exposure=_float("TRADING_SWEEP_MAX_EXPOSURE", 0.8),

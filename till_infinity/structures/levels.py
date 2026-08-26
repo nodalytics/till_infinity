@@ -347,6 +347,19 @@ class SideStats(Restorable):
     #: price turned and the wick is how far it was pushed to get there, so the
     #: level occupies the span between them rather than a band centred on one.
     wick_vol: float = 0.0
+    #: Sum, sum-of-squares and count of wick depth, for its **dispersion**.
+    #:
+    #: `wick_vol` above is a mean, and a mean is the wrong statistic for the
+    #: job it was quietly doing. The zone's far edge is where a stop goes, and
+    #: a stop at the average sweep depth is exceeded by about half of all
+    #: sweeps by construction - which is what being stopped out before the move
+    #: looks like from the account. Kept as sums rather than folded into the
+    #: exponential mean so the two answer separate questions: `wick_vol` still
+    #: says where the level *is*, and these say how far past it price goes when
+    #: it goes past.
+    wick_sum: float = 0.0
+    wick_sq: float = 0.0
+    wick_n: float = 0.0
     #: Sum and sum-of-squares of the signed push, for mean and dispersion.
     push_sum: float = 0.0
     push_sq: float = 0.0
@@ -368,12 +381,41 @@ class SideStats(Restorable):
         self.chops *= factor
         self.push_sum *= factor
         self.push_sq *= factor
+        self.wick_sum *= factor
+        self.wick_sq *= factor
+        self.wick_n *= factor
         self.ups *= factor
 
     def observe_wick(self, depth_vol: float) -> None:
         """Fold in how far the wick ran past the origin, exponentially."""
         depth_vol = max(0.0, depth_vol)
         self.wick_vol = depth_vol if not self.wick_vol else self.wick_vol * 0.8 + depth_vol * 0.2
+        self.wick_sum += depth_vol
+        self.wick_sq += depth_vol * depth_vol
+        self.wick_n += 1.0
+
+    @property
+    def wick_sd_vol(self) -> float:
+        """Spread of wick depth, in volatility units. Zero until there are two."""
+        if self.wick_n < 2:
+            return 0.0
+        mean = self.wick_sum / self.wick_n
+        var = max(self.wick_sq / self.wick_n - mean * mean, 0.0)
+        return math.sqrt(var)
+
+    def wick_deep_vol(self, sigmas: float) -> float:
+        """How far past the origin a sweep reaches before it is unusual.
+
+        Mean plus `sigmas` of spread, which is the depth a stop has to clear to
+        stop being the average sweep's target. Falls back to the exponential
+        mean while there is too little to measure a spread from - it is not
+        better to invent a wide stop from two observations than to use the
+        number that was already there.
+        """
+        spread = self.wick_sd_vol
+        if spread <= 0 or self.wick_n < 2:
+            return self.wick_vol
+        return max(self.wick_vol, self.wick_sum / self.wick_n + sigmas * spread)
 
     def record(self, outcome: Outcome, push_vol: float) -> None:
         self.touches += 1
@@ -569,6 +611,34 @@ class Level(Restorable):
         down = max(half, vol.price_units(self.price, below.wick_vol) if below else 0.0)
         up = max(half, vol.price_units(self.price, above.wick_vol) if above else 0.0)
         return self.price - min(down, ceiling), self.price + min(up, ceiling)
+
+    def sweep_zone(self, vol: Volatility, sigmas: float) -> tuple[float, float]:
+        """The band a **stop** has to clear, which is wider than the touch band.
+
+        `zone` answers "is price at this level", and for that a band built from
+        the average wick is right - widening it would make every passing tick an
+        interaction and the level's own statistics would stop meaning anything.
+
+        A stop asks a different question: *how far past this level does price
+        go when it goes past*. Answering it with the same average puts the stop
+        at the depth roughly half of all sweeps exceed, which from the account
+        looks like being stopped out and then watching the move happen. This is
+        the same construction with the far edge pushed out by `sigmas` of the
+        wick's own spread instead.
+
+        Clamped by the same ceiling as `zone`: past that width a level predicts
+        nothing, and that stays true whichever question is being asked.
+        """
+        low, high = self.zone(vol)
+        ceiling = vol.price_units(self.price, MAX_ZONE_VOL)
+        below = self.sides.get(Side.ABOVE)
+        above = self.sides.get(Side.BELOW)
+        down = vol.price_units(self.price, below.wick_deep_vol(sigmas)) if below else 0.0
+        up = vol.price_units(self.price, above.wick_deep_vol(sigmas)) if above else 0.0
+        return (
+            min(low, self.price - min(down, ceiling)),
+            max(high, self.price + min(up, ceiling)),
+        )
 
     def contains(self, price: float, vol: Volatility) -> bool:
         low, high = self.zone(vol)
