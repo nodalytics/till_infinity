@@ -2209,9 +2209,7 @@ def test_a_model_asking_for_a_wide_stop_still_gets_it():
     """The floor only ever widens: it is a minimum, not a target."""
     made = settings()
     engine = td.STRATEGIES["level-scalp"](made)
-    stop, _ = engine.distances(
-        level=4400.0, entry=4400.0, vol_bps=10.0, risk_vol=3.0, push_vol=2.0
-    )
+    stop, _ = engine.distances(level=4400.0, entry=4400.0, vol_bps=10.0, risk_vol=3.0, push_vol=2.0)
     unit = 4400.0 * 10.0 / 10_000
     assert stop / unit == pytest.approx(3.0, abs=0.01)
 
