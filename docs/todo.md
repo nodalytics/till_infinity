@@ -4,6 +4,50 @@ Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
+## 0m. Momentum has one detector, and levels have a whole discipline
+
+Raised 2026-08-27, after `structures/cusum.py` went in and momentum became the
+**primary** entry confirmation, with candlestick patterns demoted to a
+fallback. The reasoning for that demotion is sound and is recorded in
+`trading/candles.py`: candles are bar-quantised and single-broker, while the
+accumulator reads the consensus quote stream across six venues. One measures
+the market, the other measures a vendor.
+
+But it leaves an imbalance nobody should be comfortable with. Levels are
+served by `pips`, `runs`, `confluence`, `pivots`, `sweeps`, `facto` and a
+documented argument about which of them price respects more often. Volatility
+is served by five estimators and `consensus_vol` to ensemble them, precisely
+because trusting one number was judged too fragile. **Momentum is now load-
+bearing and is served by exactly one estimator, chosen on its first day, with
+no measurement behind its threshold.**
+
+`MOVE_VOL`, `THRESHOLD` and the `max_against_vol` values are all guesses. They
+are stated as such in the code, which is honest and is not the same as being
+right.
+
+What the parallel would look like, roughly in order of what it would change:
+
+* **An ensemble, as `consensus_vol` is for volatility.** The single most
+  transferable idea, because the argument for it is already written down and
+  already accepted for a different quantity.
+* **An efficiency ratio** - net displacement over the sum of absolute moves.
+  It separates a run from chop at the same net distance, which CUSUM alone
+  cannot: twelve up-ticks and a hundred ticks of noise ending in the same
+  place accumulate identically.
+* **Run persistence**, measured rather than assumed. The gates ask whether a
+  run is still going; nothing here has established how long runs *last*, which
+  is the empirical question underneath that.
+* **Cross-venue agreement**, the momentum analogue of level confluence. A run
+  visible on one venue and absent on five is that venue, not the market - the
+  same reasoning that produced the dislocation detector.
+* **Velocity**, in volatility units per second rather than per bar, so a fast
+  move and a slow one of equal size are distinguishable. `speeds.py` is close
+  to this and is windowed, which is the thing CUSUM was adopted to avoid.
+
+Not urgent while confirmation stays off, and it becomes urgent the moment it
+is switched on for real, because at that point every refused entry is being
+refused by a number nobody has checked.
+
 ## 0. The outcome rate - **answered on 2026-08-14**, and it was the consensus
 
 *Read this before the rest of item 0, which is the trail that led here and is
