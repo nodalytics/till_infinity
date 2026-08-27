@@ -1968,6 +1968,62 @@ there is enough: compare the round trip against the edge the gate required. The
 edge gate currently does not know what trading costs, which is the largest
 unmeasured assumption in the module.
 
+## 6l. Three clocks, and the stop is on the fastest one
+
+Measured on 2026-08-27 against 16 live trades and the journal behind them.
+This is the most consequential thing found so far and nothing has been changed
+for it, because it is a change to sizing on a live account.
+
+**Every loss came in at between -0.90R and -1.18R**, which is the stop being
+hit at full size, and they arrived in 23, 24, 41, 54, 55, 127, 272 and 307
+seconds. The wins took 42, 86, 175, 254 and 266. Losses arrive in under a
+minute; wins take four. A thesis about where fair value sits does not resolve
+in 23 seconds, so what is being measured there is not the model being wrong.
+
+**Every stop from 19:36 onward sits at exactly 1.00 volatility units** - pinned
+to `min_stop_vol`, on every trade, because the sweep-zone widening added the
+day before turns out to be inert: `wick_deep_vol` falls back to the mean
+whenever a side has fewer than two recorded wicks, and these levels have
+`own_touches` between 0 and 8. It fired on 2 of 17 decisions. Not wrong,
+starved.
+
+### The mismatch
+
+Three quantities, on three different clocks:
+
+| quantity | measured over |
+| --- | --- |
+| `vol_bps`, and therefore the stop | **one bar** of the entry interval |
+| `expected_push_vol` | the resolution **horizon**, up to an hour |
+| `max_hold` | a fixed **thirty minutes** of wall clock |
+
+A stop at one unit of *one-minute* volatility, on a trade held for thirty
+one-minute bars, faces the accumulated wandering of thirty bars. Volatility
+grows with the square root of time, which was checked rather than assumed -
+measured on our own instruments, the ratio of observed growth to sqrt(t) is
+1.04, 1.12 and 0.89 on gold at 5m, 15m and 60m, and 0.99 and 0.98 on the Dow.
+So thirty bars is about 5.5 units of noise against an expected push of about
+1.3. Noise beats signal four to one over the holding period, and the stop is
+not merely likely to be hit first - it is close to certain.
+
+### The two halves of the fix
+
+They are the same correction seen from either end and should be done together.
+
+**Scale the stop to the hold** - `min_stop_vol * sqrt(hold_bars)` - which
+widens the stop by that factor and shrinks position size by the same, holding
+the money at risk constant while giving the trade room to be right.
+
+**Express the hold in bars of the entry interval** rather than in fixed
+seconds. A strategy triggering on 1m and holding thirty minutes is asking a
+one-minute signal to survive a thirty-minute walk; on 15m the same setting is
+two bars. One number cannot mean both.
+
+Doing both also makes `reward_to_risk` honest for the first time. It currently
+compares a horizon-scale push against a one-bar stop, which flatters every
+trade that passes it - and `reward_to_risk` is already the largest single
+refusal reason at 143, so the gate is both busy and measuring the wrong ratio.
+
 ## 7. BOCPD
 
 Documented in [structures.md](structures.md) as a way to *grade* a regime change
