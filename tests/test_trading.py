@@ -4578,3 +4578,56 @@ async def test_the_level_under_decision_is_excluded_from_its_own_window():
     assert payload["features"]["efficiency"] == pytest.approx(1.0), (
         "the level being decided leaked into the window that judges it"
     )
+
+
+# ------------------------------------------- the partial close must be partial
+
+
+class _Records:
+    """An HTTP client that records what was actually sent."""
+
+    def __init__(self):
+        self.sent = []
+
+    async def request(self, method, path, **kwargs):
+        self.sent.append((method, path, kwargs.get("params") or {}))
+
+        class _Reply:
+            status_code = 200
+            text = ""
+
+            @staticmethod
+            def json():
+                return {"success": True, "result": {"price": 1.0, "volume": 1.0, "retcode": 0}}
+
+            @staticmethod
+            def raise_for_status():
+                return None
+
+        return _Reply()
+
+
+async def _closed_with(volume):
+    from till_infinity.trading.mt5_http import HttpBroker
+
+    broker = HttpBroker(settings())
+    client = _Records()
+    broker._client = client
+    await broker.close_position(42, volume)
+    return client.sent[-1][2]
+
+
+async def test_a_partial_close_sends_the_volume():
+    """It did not. The argument was accepted and dropped, so every partial
+    close was a full close that reported success - the scale-out shut whole
+    positions while logging that it had taken half off.
+    """
+    params = await _closed_with(1.5)
+    assert params.get("volume") == 1.5, "the volume never reached the broker"
+
+
+async def test_a_full_close_still_sends_no_volume():
+    """Absent means all of it, which is what the bridge already did."""
+    params = await _closed_with(0.0)
+    assert "volume" not in params
+    assert params["ticket"] == 42

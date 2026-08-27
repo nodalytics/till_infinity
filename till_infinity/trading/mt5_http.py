@@ -337,7 +337,22 @@ class HttpBroker(Broker):
         return float(closing[-1].get("price") or 0.0), profit
 
     async def close_position(self, ticket: int, volume: float = 0.0) -> OrderResult:
-        raw = await self._post("/positions/close", params={"ticket": ticket})
+        """Close a position, or `volume` of it when a part is asked for.
+
+        **The volume has to be sent.** This method took the argument and threw
+        it away, posting only the ticket - so every partial close was a full
+        close that reported success, and the scale-out rule silently shut whole
+        positions while logging that it had taken half off. Caught on the first
+        live scale-out, by the broker's own deal history showing one close of
+        3.0 lots where the log claimed 1.5.
+
+        Zero means all of it, which is what the bridge does with the parameter
+        absent, so the full-close path is unchanged.
+        """
+        params: dict[str, Any] = {"ticket": ticket}
+        if volume > 0:
+            params["volume"] = volume
+        raw = await self._post("/positions/close", params=params)
         result = raw.get("result") or {}
         return OrderResult(
             ok=bool(raw.get("success")),
