@@ -1379,9 +1379,12 @@ class Trader:
             if self._too_wide_to_leave(live, age, limit):
                 continue
             log.info("trading: closing #%d after %.0fs, past its %.0fs hold", ticket, age, limit)
-            live.closed_by = "hold"
-            with contextlib.suppress(BrokerError):
+            try:
                 await self.execution.close_position(ticket)
+            except BrokerError as exc:
+                log.warning("trading: could not close #%d on its clock: %s", ticket, exc)
+                continue
+            live.closed_by = "hold"
             closed = True
         if closed:
             await self._reconcile()
@@ -1461,7 +1464,6 @@ class Trader:
         gained = (best - live.position.price_open) * live.intent.side.sign
         if gained >= risk * self.settings.stale_move:
             return False
-        live.closed_by = "stale"
         log.info(
             "trading: closing #%d flat - %.0fs old and never left the entry (%.2fR)",
             live.position.ticket,
@@ -1473,6 +1475,12 @@ class Trader:
         except BrokerError as exc:
             log.warning("trading: could not close stale #%d: %s", live.position.ticket, exc)
             return False
+        # Only once the broker has taken it. Naming the exit before the close
+        # succeeds means a refused close still stamps the reason, and whatever
+        # ends the trade later - a stop, a target - is then recorded as this.
+        # A us30 position found it: its close was refused through the index's
+        # daily break and the label was already on.
+        live.closed_by = "stale"
         return True
 
     def _maybe_rearm(self, live: Live, price: float) -> None:

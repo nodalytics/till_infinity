@@ -4908,3 +4908,33 @@ def test_the_push_ceiling_can_be_switched_off():
         min_base_rate=0.0,
     )
     assert not (isinstance(got, Refusal) and got.gate == "push")
+
+
+class _Refuses:
+    """A broker that will not close, as a market in its daily break will not."""
+
+    async def close_position(self, ticket, volume=0.0):
+        raise td.broker.BrokerError("POST /positions/close: 400")
+
+
+async def test_a_refused_stale_close_does_not_stamp_the_exit():
+    """Naming the exit before the close succeeds means a refused close still
+    labels the trade, and whatever ends it later - a stop, a target - is
+    recorded as this. A us30 position found it: its close was refused through
+    the index's daily break and the label was already on.
+    """
+    trader = Trader(Bus(), settings=settings(stale_after=300.0))
+    trader.paper = _Refuses()
+    live = _live()
+    trader._best[live.position.ticket] = 4400.4
+    assert await trader._stale(live, age=900.0) is False
+    assert live.closed_by == "", "a refused close stamped the exit anyway"
+
+
+async def test_a_successful_stale_close_does_stamp_it():
+    trader = Trader(Bus(), settings=settings(stale_after=300.0))
+    trader.paper = _Closes()
+    live = _live()
+    trader._best[live.position.ticket] = 4400.4
+    assert await trader._stale(live, age=900.0) is True
+    assert live.closed_by == "stale"
