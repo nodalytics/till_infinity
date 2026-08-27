@@ -4537,3 +4537,44 @@ def test_sizing_scales_the_fraction_so_every_cap_still_binds():
 
     source = inspect.getsource(LevelStrategy.consider)
     assert "risk_fraction=settings.risk_fraction * self.trend_scale(features)" in source
+
+
+async def test_trend_context_reaches_the_features_once_there_is_history():
+    """The ordering test asserts the source; this asserts the arrival.
+
+    A measure that is computed correctly and never lands is inert, and the
+    only symptom is a null in the journal that reads exactly like a cold
+    start. That is how the `pressure_vol` bug survived its own test.
+    """
+    trader = Trader(Bus(), settings=settings(trend_sizing=0.3))
+    await trader.start()
+
+    seen = []
+    for price in (4400.0, 4401.0, 4402.0, 4403.0, 4404.0):
+        payload = signal()
+        payload["level"] = price
+        await trader.on_signal(payload)
+        seen.append(payload.get("features", {}).get("efficiency"))
+
+    assert seen[0] is None, "no opinion should be offered before there is history"
+    assert seen[-1] is not None, "trend context never reached the features"
+    assert seen[-1] == pytest.approx(1.0), "a straight climb should read as a trend"
+
+
+async def test_the_level_under_decision_is_excluded_from_its_own_window():
+    """Feed a straight climb, then one reversal. The reversal must not yet be
+    inside the window it is judged against - so the reading it sees is still
+    the trend that preceded it."""
+    trader = Trader(Bus(), settings=settings(trend_sizing=0.3))
+    await trader.start()
+    for price in (4400.0, 4401.0, 4402.0, 4403.0):
+        payload = signal()
+        payload["level"] = price
+        await trader.on_signal(payload)
+
+    payload = signal()
+    payload["level"] = 4300.0  # a violent reversal
+    await trader.on_signal(payload)
+    assert payload["features"]["efficiency"] == pytest.approx(1.0), (
+        "the level being decided leaked into the window that judges it"
+    )
