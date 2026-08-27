@@ -104,8 +104,21 @@ def lots(
     risk_fraction: float,
     stop_distance: float,
     max_risk_money: float = 0.0,
+    slippage: float = 0.0,
 ) -> Sizing:
-    """Lots to trade so that being stopped costs the risk budget."""
+    """Lots to trade so that being stopped costs the risk budget.
+
+    `slippage` is how much further than the placed stop a stopped trade
+    actually costs, as a fraction of the stop distance. It inflates the
+    distance sized against, so a stop that fills 9% past still loses the
+    budgeted money rather than 9% more of it.
+
+    Measured at 0.087 across the stopped trades in the journal, of which
+    two-thirds is the exit rather than the entry: a broker stop is a market
+    order once triggered and fills through the spread. Sizing against the stop
+    we *place* rather than the one we *get* breaches the risk budget on every
+    loss, quietly and by a constant.
+    """
     if equity <= 0:
         return Sizing(reason="no equity to size against")
     if stop_distance <= 0:
@@ -119,7 +132,9 @@ def lots(
     if max_risk_money > 0:
         budget = min(budget, max_risk_money)
 
-    loss_per_lot = (stop_distance / spec.tick_size) * spec.tick_value
+    # The distance a stop actually costs, not the one it is drawn at.
+    realised = stop_distance * (1.0 + max(0.0, slippage))
+    loss_per_lot = (realised / spec.tick_size) * spec.tick_value
     if loss_per_lot <= 0:
         return Sizing(reason=f"{spec.symbol} prices a lot at nothing")
 

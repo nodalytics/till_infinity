@@ -684,6 +684,26 @@ class Settings:
     #: taken by ordinary movement while the trade is still working, which is
     #: being stopped by noise in profit. `trail_vol` acts as the floor.
     trail_sigmas: float = 0.5
+    #: How much further than the placed stop a stopped trade actually costs,
+    #: as a fraction of the risk distance. Zero sizes as before.
+    #:
+    #: **Measured, not assumed.** Across the stopped trades in the journal the
+    #: realised loss is 1.09R against the 1.00R they were sized for, and the
+    #: decomposition puts most of it on the way out: entry slippage averages
+    #: +0.025R, exit slippage +0.062R. A broker stop is a market order once
+    #: triggered, so it fills through the spread and any gap - that half is a
+    #: property of stops, not a defect to remove.
+    #:
+    #: What *is* a defect is sizing against the stop we place rather than the
+    #: stop we get, which quietly breaches the risk budget on every loss. This
+    #: inflates the distance used for sizing so the money lost matches the
+    #: money budgeted.
+    #:
+    #: It does not improve returns. Positions get about 8% smaller and losses
+    #: land where they were supposed to. The gain is that the risk limits mean
+    #: what they say.
+    stop_slippage: float = 0.0
+
     #: Refuse a trade when the market around this level is choppier than this.
     #: Zero is off. See `structures.trend`.
     #:
@@ -946,6 +966,7 @@ class Settings:
             break_even_ticks=_int("TRADING_BREAK_EVEN_TICKS", 2),
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
+            stop_slippage=_float("TRADING_STOP_SLIPPAGE", 0.0),
             min_efficiency=_float("TRADING_MIN_EFFICIENCY", 0.0),
             trend_sizing=_float("TRADING_TREND_SIZING", 0.0),
             require_turn_vol=_float("TRADING_REQUIRE_TURN_VOL", 0.0),

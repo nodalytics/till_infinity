@@ -513,6 +513,7 @@ class LevelStrategy(Strategy):
             risk_fraction=settings.risk_fraction * self.trend_scale(features),
             stop_distance=abs(entry - stop),
             max_risk_money=settings.max_risk_money,
+            slippage=settings.stop_slippage,
         )
         if not sized.ok:
             return Refusal("size", sized.reason, feed)
@@ -1464,6 +1465,7 @@ class FadeToValue(LevelStrategy):
             risk_fraction=settings.risk_fraction * self.trend_scale(features),
             stop_distance=abs(entry - stop),
             max_risk_money=settings.max_risk_money,
+            slippage=settings.stop_slippage,
         )
         if not sized.ok:
             return Refusal("size", sized.reason, feed)

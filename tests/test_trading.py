@@ -4683,3 +4683,50 @@ def test_the_same_intent_passes_once_the_floor_is_zero():
 def test_a_good_reward_to_risk_passes_either_way():
     for floor in (0.0, 1.2):
         assert _rr_verdict(floor, target=4410.5) is None
+
+
+# --------------------------------------- sizing for the stop we get, not place
+
+
+def test_slippage_shrinks_the_position():
+    """A stop that fills past its price costs more than the budget unless the
+    size accounts for it."""
+    plain = lots(GOLD, equity=10_000.0, risk_fraction=0.01, stop_distance=5.0)
+    padded = lots(GOLD, equity=10_000.0, risk_fraction=0.01, stop_distance=5.0, slippage=0.09)
+    assert padded.volume < plain.volume
+
+
+def test_the_realised_loss_lands_on_the_budget():
+    """The whole point. Sized with the measured slippage, a stop that fills 9%
+    past the placed price costs what the trade was budgeted to lose - not 9%
+    more, which is what every stop has been doing.
+    """
+    equity, fraction, stop = 10_000.0, 0.01, 5.0
+    budget = equity * fraction
+    sized = lots(GOLD, equity=equity, risk_fraction=fraction, stop_distance=stop, slippage=0.09)
+    # What it actually costs when the stop fills 9% beyond where it was drawn.
+    per_lot_at_real_distance = (stop * 1.09 / GOLD.tick_size) * GOLD.tick_value
+    realised = sized.volume * per_lot_at_real_distance
+    assert realised == pytest.approx(budget, rel=0.05)
+
+
+def test_without_slippage_the_loss_overshoots():
+    """The behaviour being corrected, pinned so it cannot come back unnoticed."""
+    equity, fraction, stop = 10_000.0, 0.01, 5.0
+    sized = lots(GOLD, equity=equity, risk_fraction=fraction, stop_distance=stop)
+    per_lot_at_real_distance = (stop * 1.09 / GOLD.tick_size) * GOLD.tick_value
+    realised = sized.volume * per_lot_at_real_distance
+    assert realised > equity * fraction * 1.05
+
+
+def test_slippage_defaults_to_off():
+    a = lots(GOLD, equity=10_000.0, risk_fraction=0.01, stop_distance=5.0)
+    b = lots(GOLD, equity=10_000.0, risk_fraction=0.01, stop_distance=5.0, slippage=0.0)
+    assert a.volume == b.volume
+
+
+def test_a_negative_slippage_cannot_inflate_the_position():
+    """Sizing up on a setting is not a direction this should ever go."""
+    plain = lots(GOLD, equity=10_000.0, risk_fraction=0.01, stop_distance=5.0)
+    silly = lots(GOLD, equity=10_000.0, risk_fraction=0.01, stop_distance=5.0, slippage=-0.5)
+    assert silly.volume == plain.volume
