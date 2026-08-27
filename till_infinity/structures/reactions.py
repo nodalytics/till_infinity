@@ -71,6 +71,19 @@ DEFAULT_K = 12
 #: oldest touches describe a market that no longer exists anyway.
 MEMORY = 4_000
 
+#: Seconds after first contact at which the path is sampled.
+#:
+#: Wall clock rather than bars, so a 1m touch and a 1h touch are comparable at
+#: the same horizon - the question "which way had it gone after five minutes"
+#: means the same thing on both, where "after five bars" does not. The
+#: magnitude is in volatility units of the touch's own interval, so the two
+#: axes are normalised differently and on purpose.
+#:
+#: Stops at an hour because that is `Tracker`'s own horizon: past it a touch is
+#: discarded rather than resolved, so there would be nothing to attach a later
+#: sample to.
+PATH_OFFSETS: tuple[int, ...] = (60, 300, 900, 1800, 3600)
+
 #: How many of a series' own resolved touches it takes before its base rate
 #: mostly stops leaning on the pooled one. Higher than `PRIOR_WEIGHT` on
 #: purpose: a base rate is the reference everything else is measured against,
@@ -377,6 +390,22 @@ class Touch(Restorable):
     #: Whether this touch would have been published as a call.
     actionable: bool = False
 
+    #: Where price actually went afterwards, at fixed offsets from first
+    #: contact, in volatility units and signed - positive is up.
+    #:
+    #: **Recorded because every other measure of "what happened" is signed by
+    #: the outcome.** `push_vol` is the resolved push, and its sign is fixed by
+    #: which side price arrived from together with how the touch resolved: a
+    #: reject from above pushes up by construction. Decomposed within each
+    #: outcome that relationship is 0% or 100% at every one of the eight
+    #: cells, which makes it an identity rather than a forecast - and it means
+    #: no rule for choosing a **side** can be scored against it, because the
+    #: answer is already in the question.
+    #:
+    #: This is the raw path instead. It knows nothing about rejects, traps or
+    #: breaks, and it is what any side rule has to be tested against.
+    path: dict[str, float] = field(default_factory=dict)
+
     @property
     def open(self) -> bool:
         return self.outcome is Outcome.OPEN
@@ -414,6 +443,7 @@ class Touch(Restorable):
             "probability_up": round(self.probability_up, 4),
             "base_rate_up": round(self.base_rate_up, 4),
             "actionable": self.actionable,
+            **{f"path_{k}": round(v, 4) for k, v in self.path.items()},
             "resolved": self.resolved,
             **self.features.to_dict(),
         }
@@ -879,6 +909,31 @@ class Tracker(Restorable):
         seconds = SECONDS.get(touch.interval, 0.0)
         return seconds * self.horizon_bars if seconds else self.horizon
 
+    def _walk(
+        self, touch: Touch | None, level: Level, price: float, vol: Volatility, when: float
+    ) -> None:
+        """Note where price was, at each offset it has just passed.
+
+        Written once per offset and never revised: the point is where price was
+        *then*, and letting a later quote overwrite it would turn a path into a
+        smear. An offset that no quote lands on is simply absent, which is
+        honest - a gap in the record is not a zero.
+        """
+        if touch is None or not level.price:
+            return
+        elapsed = when - touch.started
+        if elapsed < PATH_OFFSETS[0]:
+            return
+        unit = vol.price_units(level.price, 1.0)
+        if unit <= 0:
+            return
+        for offset in PATH_OFFSETS:
+            if elapsed < offset:
+                break
+            key = str(offset)
+            if key not in touch.path:
+                touch.path[key] = (price - level.price) / unit
+
     def trap_window_for(self, touch: Touch) -> float:
         """How long a break on this touch's timeframe stays provisional."""
         seconds = SECONDS.get(touch.interval, 0.0)
@@ -932,6 +987,8 @@ class Tracker(Restorable):
         drawn at.
         """
         touch = self._live(level, when)
+        if touch is not None:
+            self._walk(touch, level, price, vol, when)
         if touch is None:
             return None
 

@@ -1454,3 +1454,65 @@ def test_a_label_never_goes_into_the_float_dict():
         assert round(value, 6) is not None, key
     d = sig.to_dict()
     assert d["features"]["vol_bps"] == pytest.approx(4.2)
+
+
+def test_the_path_is_recorded_independently_of_the_outcome():
+    """The whole reason it exists.
+
+    `push_vol` is signed by (outcome, approach side): decomposed within each
+    outcome the relationship is 0% or 100% at all eight cells, so it is an
+    identity and no side rule can be scored against it. The path knows nothing
+    about rejects, traps or breaks - it is just where price was.
+    """
+    from till_infinity.structures.reactions import PATH_OFFSETS, Features, Touch
+    from till_infinity.structures.levels import Side
+
+    t = Touch(
+        feed="gold",
+        level_price=4400.0,
+        features=Features(
+            side=Side.ABOVE,
+            approach_vol=1.0,
+            depth_vol=0.5,
+            strength=0.7,
+            run_vol=1.2,
+            experience=4.0,
+        ),
+        started=0.0,
+        entry=4400.0,
+        extreme=4400.0,
+    )
+    # Price a unit above the level at the first offset, a unit below at the next.
+    t.path = {str(PATH_OFFSETS[0]): +1.0, str(PATH_OFFSETS[1]): -1.0}
+    d = t.to_dict()
+    assert d[f"path_{PATH_OFFSETS[0]}"] == pytest.approx(1.0)
+    assert d[f"path_{PATH_OFFSETS[1]}"] == pytest.approx(-1.0)
+    # And it carries no outcome of its own.
+    assert d["outcome"] == "open"
+
+
+def test_a_missing_sample_is_absent_rather_than_zero():
+    """A gap in the record is not a price of zero, and writing one would make
+    a quiet stretch look like a return to the level."""
+    from till_infinity.structures.reactions import PATH_OFFSETS, Features, Touch
+    from till_infinity.structures.levels import Side
+
+    t = Touch(
+        feed="gold",
+        level_price=4400.0,
+        features=Features(
+            side=Side.ABOVE,
+            approach_vol=1.0,
+            depth_vol=0.5,
+            strength=0.7,
+            run_vol=1.2,
+            experience=4.0,
+        ),
+        started=0.0,
+        entry=4400.0,
+        extreme=4400.0,
+    )
+    t.path = {str(PATH_OFFSETS[0]): +0.5}
+    d = t.to_dict()
+    assert f"path_{PATH_OFFSETS[0]}" in d
+    assert f"path_{PATH_OFFSETS[-1]}" not in d

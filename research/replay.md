@@ -113,6 +113,59 @@ refinement on top of entry and stop placement, not the lever - and
 [edge.md](../docs/edge.md) is the standing caution about reaching for a
 dynamic rule before the constant has been got right.
 
+## The side question, and why the journal could not answer it
+
+Six of seven strategies take their side from the direction the call carries.
+That is the half of the signal this repository has measured down to nothing
+three separate times: a coin flip below the edge step ([edge.md](../docs/edge.md)
+§1), 50.7% on sweep direction over 73,000 ranges (`sweeps.py`), and - flattest
+of all - **"assume the level holds" beating the published direction at every
+gate except the highest**, recorded on `reactions.MIN_EDGE`.
+
+So a side replay was built before any of it was changed. It reported the
+approach side predicting the sign of the push at 92% from above and 95% from
+below.
+
+**That would be an extraordinary edge, and it contradicts all three
+measurements, which is the reason to check it rather than publish it.**
+Decomposed within each outcome:
+
+| outcome | from above | from below |
+| --- | ---: | ---: |
+| reject | 99.9% up | 0.0% up |
+| trap | 100.0% up | 0.0% up |
+| break | 0.0% up | 100.0% up |
+| backcheck | 100.0% up | 0.0% up |
+
+Zero or one hundred at every one of the eight cells. `push_vol` is signed by
+`(outcome, approach side)` **by construction** - a reject from above pushes up
+because that is what a reject from above *is*. The 92% is a definition
+restated.
+
+So the `hold` rule scoring 93.9% is re-deriving the outcome rather than
+predicting it, and **no rule for choosing a side can be scored against
+`push_vol` at all**. Had the code been written first, a side rule would have
+shipped on a tautology and looked like it worked.
+
+The stop replay above is unaffected: it scores on `abs(push) >= target` and
+never touches the sign.
+
+### What was added because of it
+
+`Touch.path` - where price actually was at fixed offsets after first contact,
+in volatility units, signed. Sampled at 60, 300, 900, 1800 and 3600 seconds,
+written once per offset and never revised, and absent rather than zero when no
+quote lands on one.
+
+Wall clock rather than bars, so a 1m touch and a 1h touch are comparable at the
+same horizon - "which way had it gone after five minutes" means the same thing
+on both, where "after five bars" does not. It stops at an hour because that is
+`Tracker`'s own horizon, past which a touch is discarded rather than resolved.
+
+The path knows nothing about rejects, traps or breaks. It is the only thing
+recorded here that a side rule can honestly be tested against, and it needs a
+few days of accumulation before it can be.
+
 ## What this cannot say
 
 Spread and slippage are not recorded on a resolution, so this scores the thesis

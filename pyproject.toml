@@ -143,6 +143,12 @@ max-returns = 8
 "till_infinity/trading/council.py" = ["ARG002", "PLR0911"]
 # `Guard.allows` is the same shape: one return per gate, each naming itself.
 "till_infinity/trading/risk.py" = ["PLR0911"]
+# `Tracker.update` advances one touch through its states - first contact, wick,
+# origin, break, trap window, resolution - and the branch count is one per
+# transition. Splitting it would put half a state machine in another method and
+# make the order the transitions happen in harder to read, not easier, which is
+# the opposite of what the rule is for.
+"till_infinity/structures/reactions.py" = ["PLR0912"]
 # `import MetaTrader5 as mt5` is the name every MT5 example and the terminal's
 # own documentation uses; renaming it would make this file harder to check
 # against them.
