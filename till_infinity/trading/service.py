@@ -92,6 +92,10 @@ class Live:
     #: How many times this setup has already been taken. Zero on a first
     #: entry, and the guard that stops `reentry_max` compounding.
     attempt: int = 0
+    #: Which of our own rules closed this, when one of them did. The price
+    #: cannot say: a stale close and a hold-clock close both land wherever the
+    #: market happens to be, and both used to read as "hold".
+    closed_by: str = ""
 
 
 @dataclass(slots=True)
@@ -1113,6 +1117,7 @@ class Trader:
             if await self._worth_keeping(live, age, limit):
                 continue
             log.info("trading: closing #%d after %.0fs, past its %.0fs hold", ticket, age, limit)
+            live.closed_by = "hold"
             with contextlib.suppress(BrokerError):
                 await self.execution.close_position(ticket)
             closed = True
@@ -1152,6 +1157,7 @@ class Trader:
         gained = (best - live.position.price_open) * live.intent.side.sign
         if gained >= risk * self.settings.stale_move:
             return False
+        live.closed_by = "stale"
         log.info(
             "trading: closing #%d flat - %.0fs old and never left the entry (%.2fR)",
             live.position.ticket,
@@ -1704,20 +1710,37 @@ def _vol_of(payload: dict[str, Any]) -> float:
 
 
 def _exit_kind(live: Live, price: float) -> str:
-    """Which of the three ways a trade ended, decided by where it ended.
+    """How a trade ended: what closed it, or where it ended if nothing did.
 
     `reason` records how the position left the book - closed by us, or gone
     between polls - not what took it. Stop and target were therefore
     distinguishable only by the sign of the profit, which is a guess dressed as
     a fact: a trade closed on the hold clock while slightly ahead looks like a
     target, and one closed slightly behind looks like a stop.
+
+    **What we closed ourselves, we know**, and it is asked first. The price
+    cannot distinguish a stale close from a hold-clock close - both land
+    wherever the market happens to be - so both used to read as "hold" and the
+    question "is the stale exit helping" had no answer in the record. Every
+    rule that closes a position names itself on the way out.
+
+    **Falling through to "hold" is a claim, and it needs the evidence for one.**
+    An adopted position carries a placeholder intent with no stop and no
+    target, so every comparison below is skipped and the trade would be filed
+    as having run its clock - which is not something we know. It reads
+    "unknown" instead. Scoring can exclude what is unknown; it cannot exclude
+    what is confidently mislabelled.
     """
+    if live.closed_by:
+        return live.closed_by
     intent = live.intent
     sign = intent.side.sign
     if intent.stop and (price - intent.stop) * sign <= 0:
         return "stop"
     if intent.target and (price - intent.target) * sign >= 0:
         return "target"
+    if not intent.stop and not intent.target:
+        return "unknown"
     return "hold"
 
 

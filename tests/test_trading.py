@@ -4130,3 +4130,40 @@ def test_a_trailing_modify_holds_the_same_clearance():
         vol_bps=0.0,
     )
     assert kept is None, "a stop inside the broker's minimum was proposed"
+
+
+# --------------------------------------------------------- classifying an exit
+
+
+def _kind(price, **over):
+    return td.service._exit_kind(_live(**over), price)
+
+
+def test_a_stop_is_classified_by_where_it_ended():
+    assert _kind(4395.0) == "stop"       # through the 4395.6 stop
+    assert _kind(4407.0) == "target"     # past the 4406.66 target
+
+
+def test_what_closed_it_wins_over_where_it_ended():
+    """A stale close and a hold-clock close both land wherever the market is.
+
+    The price cannot tell them apart, so a rule that closes a position has to
+    say so - otherwise "is the stale exit helping" has no answer in the record.
+    """
+    assert _kind(4401.0, closed_by="stale") == "stale"
+    assert _kind(4401.0, closed_by="hold") == "hold"
+
+
+def test_an_adopted_position_is_unknown_rather_than_held():
+    """A placeholder intent has no stop and no target, so every comparison is
+    skipped and the trade would be filed as having run its clock - which is not
+    something we know. Scoring can exclude what is unknown; it cannot exclude
+    what is confidently mislabelled."""
+    adopted = intent(stop=0.0, target=0.0)
+    assert _kind(4401.0, intent=adopted) == "unknown"
+
+
+def test_a_real_intent_closed_between_its_levels_is_a_hold():
+    """Still a claim, but an evidenced one: it had both levels and reached
+    neither."""
+    assert _kind(4401.0) == "hold"
