@@ -375,10 +375,18 @@ class Trader:
         edge floor at or under it is configuration that looks like a limit and
         is not one. This module shipped with exactly that - 0.08 against an
         upstream 0.10 - and nothing would have said so.
+
+        **Zero is exempt, and the distinction is the point.** A floor of zero
+        is a gate deliberately switched off, which is what the measurement in
+        `research/harness/gates.py` argued for; a floor of 0.08 is a gate
+        somebody believes in that does nothing. Warning about both taught the
+        reader to ignore the warning, which is worse than not having it - and
+        it started doing exactly that the day the edge floor was turned off on
+        purpose.
         """
         from ..structures.reactions import MIN_EDGE
 
-        if self.settings.min_edge <= MIN_EDGE:
+        if 0 < self.settings.min_edge <= MIN_EDGE:
             log.warning(
                 "trading: min_edge %.3f is at or below the %.3f structures already "
                 "requires, so it can never refuse anything",

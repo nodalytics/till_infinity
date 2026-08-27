@@ -4435,3 +4435,37 @@ async def test_a_woken_signal_is_marked_as_post_pullback():
     from till_infinity.trading import service as svc
 
     assert "after_pullback" in inspect.getsource(svc.Trader._arrived)
+
+
+def _gate_warnings(monkeypatch, **over):
+    """What `_check_gates` actually logs.
+
+    Not via caplog: this package's `get_logger` does not propagate to the root
+    logger, so a caplog assertion that *no* warning appeared passes whether the
+    code is right or not - which is how the first version of this test passed
+    while its partner failed.
+    """
+    from till_infinity.trading import service as svc
+
+    said = []
+    monkeypatch.setattr(svc.log, "warning", lambda msg, *a, **k: said.append(msg % a if a else msg))
+    trader = Trader(Bus(), settings=settings())
+    # Set *after* construction on purpose. A risk plan fills in every tunable
+    # the environment has not, `min_edge` among them, so a value set on the
+    # settings beforehand is overwritten during construction and the test would
+    # be measuring the plan's number rather than the one it chose.
+    for key, value in over.items():
+        setattr(trader.settings, key, value)
+    trader._check_gates()
+    return [m for m in said if "min_edge" in m]
+
+
+def test_a_gate_deliberately_off_does_not_warn(monkeypatch):
+    """Zero is a gate switched off, which is what the measurement argued for."""
+    assert _gate_warnings(monkeypatch, min_edge=0.0) == []
+
+
+def test_a_gate_that_believes_in_itself_but_cannot_fire_still_warns(monkeypatch):
+    """0.08 against an upstream 0.10 is a limit that does nothing, and the
+    reason this warning exists at all."""
+    assert _gate_warnings(monkeypatch, min_edge=0.08)
