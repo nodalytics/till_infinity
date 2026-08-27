@@ -281,12 +281,12 @@ def strategy(name, **over):
     return td.STRATEGIES[name](settings(**over))
 
 
-def take(name, payload=None, *, tick=None, equity=10_000.0, **over):
+def take(name, payload=None, *, tick=None, equity=10_000.0, spec=None, **over):
     engine = strategy(name, **over)
     engine.observe(payload or signal())
     return engine.consider(
         payload or signal(),
-        spec=GOLD,
+        spec=spec or GOLD,
         tick=tick or Tick("XAUUSD", bid=4399.5, ask=4400.5),
         equity=equity,
     )
@@ -3357,3 +3357,31 @@ async def test_the_wait_uses_the_spread_of_the_wick_not_only_its_mean():
     assert wide is not None
     # A level whose wicks vary asks to be met deeper.
     assert wide < tight
+
+
+def test_the_stop_clears_the_brokers_own_minimum():
+    """`stops_level` is not a suggestion - a closer stop is refused outright,
+    and the refusal arrives after the decision has been made.
+
+    Live: Wall Street 30 asks for 300 points - 3.00 in price - against gold's
+    20, and our stops on it landed near 2.7, so orders were accepted or
+    rejected depending on where volatility happened to be. A refusal is not a
+    safer trade, it is no trade.
+    """
+    wide = td.SymbolSpec(
+        symbol="XAUUSD",
+        digits=2,
+        point=0.01,
+        tick_size=0.01,
+        tick_value=1.0,
+        volume_min=0.01,
+        volume_max=100.0,
+        volume_step=0.01,
+        contract_size=100.0,
+        stops_level=300.0,  # 3.00 in price, like the Dow
+    )
+    got = take("level-scalp", spec=wide)
+    assert isinstance(got, Intent)
+    assert abs(got.entry - got.stop) >= 3.0, "the stop has to clear the broker's floor"
+    # And the order the broker would see is one it will accept.
+    assert not td.sizing.respects_stops_level(wide, got.entry, got.stop, got.target)

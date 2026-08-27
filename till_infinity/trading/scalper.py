@@ -246,6 +246,22 @@ class LevelStrategy(Strategy):
         which only ever reduces size for the same money at risk.
         """
         floor = self.stop_floor_vol(interval) * unit
+        # The broker has a floor of its own and it is not a suggestion: a stop
+        # closer than `stops_level` is refused outright, and the refusal
+        # arrives after the decision has been made.
+        #
+        # Wall Street 30 asks for 300 points - 3.00 in price - against gold's
+        # 20, and our stops on it land near 2.7, so the order is accepted or
+        # rejected depending on where volatility happens to be. Taking the
+        # broker's minimum as a floor here turns that coin flip into a trade
+        # with a slightly wider stop, which is the outcome worth having: the
+        # alternative is a refusal, and a refusal is not a safer trade, it is
+        # no trade.
+        #
+        # A small margin over the minimum, because the minimum is checked
+        # against the price at the moment the order lands, not the moment it
+        # was built.
+        floor = max(floor, spec.min_stop_distance * 1.1)
         if floor <= 0:
             return anchored
         against_fill = spec.round_price(entry - floor if side is Side.BUY else entry + floor)
