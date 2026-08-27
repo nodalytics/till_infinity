@@ -2941,7 +2941,7 @@ async def test_a_parked_signal_fires_when_price_comes_to_it():
 async def test_a_parked_signal_that_never_comes_back_expires():
     """A resting order with no deadline is a trade taken on stale information."""
     bus = Bus()
-    made = settings(live=True, pullback_fraction=1.0, pullback_window=0.001)
+    made = settings(live=True, pullback_fraction=1.0, pullback_bars=0.001)
     venue = RecordingBroker(made)
     trader = Trader(bus, settings=made, broker=venue)
     await trader.start()

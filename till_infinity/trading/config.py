@@ -463,9 +463,6 @@ class Settings:
     #: is a real cost: a strategy that only fills on retracements is a
     #: different strategy, not a cheaper version of this one.
     pullback_fraction: float = 0.0
-    #: How much of the strategy's hold a parked signal may wait, as a multiple.
-    #: A resting order with no deadline is a trade taken on stale information.
-    pullback_window: float = 0.5
     #: Bars of the **entry interval** a parked signal may wait. Replaces the
     #: fraction above wherever the interval is known: a fraction of the hold
     #: makes the wait a property of the strategy rather than of the market, so
@@ -734,7 +731,6 @@ class Settings:
             stop_hold_scaling=_float("TRADING_STOP_HOLD_SCALING", 0.0),
             max_stop_scale=_float("TRADING_MAX_STOP_SCALE", 3.0),
             pullback_fraction=_float("TRADING_PULLBACK_FRACTION", 0.0),
-            pullback_window=_float("TRADING_PULLBACK_WINDOW", 0.5),
             pullback_bars=_float("TRADING_PULLBACK_BARS", 10.0),
             pullback_sigmas=_float("TRADING_PULLBACK_SIGMAS", 0.5),
             pullback_min_wicks=_float("TRADING_PULLBACK_MIN_WICKS", 2.0),

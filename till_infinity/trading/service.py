@@ -608,11 +608,15 @@ class Trader:
         # wall-clock time for retracements that happen on completely different
         # clocks. Bars of the entry interval is the same correction the hold
         # itself got, applied to the other end.
+        # Bars of the interval that produced the call, falling back to the hold
+        # itself when the interval is unknown - which is a real bound rather
+        # than a second setting nobody would ever tune. There was one, and it
+        # became unreachable the moment bars were preferred: the interval is
+        # always known in practice, so the fraction it scaled was dead config
+        # that still looked live.
         bars = SECONDS.get(intent.interval, 0.0)
         window = (
-            bars * self.settings.pullback_bars
-            if bars
-            else (intent.hold or self.settings.max_hold) * self.settings.pullback_window
+            bars * self.settings.pullback_bars if bars else (intent.hold or self.settings.max_hold)
         )
         self._waiting[intent.feed] = Waiting(
             payload=payload,
