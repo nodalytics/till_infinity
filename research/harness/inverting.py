@@ -88,8 +88,10 @@ def main():
 
     over = [r for r in rows if r["ratio"] > 1.0]
     under = [r for r in rows if r["ratio"] <= 1.0]
-    print(f"risk exceeds expected push on {len(over):,} of {len(rows):,} "
-          f"({len(over) / len(rows):.0%})\n")
+    print(
+        f"risk exceeds expected push on {len(over):,} of {len(rows):,} "
+        f"({len(over) / len(rows):.0%})\n"
+    )
 
     print(f"{'subset':>26s} {'n':>8s} {'R with':>8s} {'R against':>10s} {'better':>8s}")
     print("-" * 65)
@@ -102,8 +104,58 @@ def main():
             continue
         w = sum(r_of(r["push"], r["excursion"]) for r in group) / len(group)
         a = sum(r_of(r["excursion"], r["push"]) for r in group) / len(group)
-        print(f"{name:>26s} {len(group):>8,} {w:>8.3f} {a:>10.3f} "
-              f"{'against' if a > w else 'with':>8s}")
+        print(
+            f"{name:>26s} {len(group):>8,} {w:>8.3f} {a:>10.3f} "
+            f"{'against' if a > w else 'with':>8s}"
+        )
+
+    print("\npolicies, scored over the same population")
+    print("total R is what matters here - a policy that trades less can win on")
+    print("the mean and still make less money.\n")
+    print(f"{'policy':>40s} {'trades':>8s} {'mean R':>8s} {'total R':>9s}")
+    print("-" * 69)
+
+    band = 0.1  # what counts as "about equal"
+
+    def score(rows, choose):
+        """`choose` returns 'with', 'against' or 'skip' for a call."""
+        taken = []
+        for r in rows:
+            side = choose(r)
+            if side == "with":
+                taken.append(r_of(r["push"], r["excursion"]))
+            elif side == "against":
+                taken.append(r_of(r["excursion"], r["push"]))
+        return taken
+
+    policies = [
+        ("always with the model", lambda _r: "with"),
+        (
+            "the three-way rule as proposed",
+            lambda r: (
+                "skip"
+                if abs(r["ratio"] - 1.0) <= band
+                else ("with" if r["ratio"] < 1.0 else "against")
+            ),
+        ),
+        (
+            "with, but skip when risk > push",
+            lambda r: "with" if r["ratio"] < 1.0 else "skip",
+        ),
+        (
+            "with, skip only the bad tail (RR<0.55)",
+            lambda r: "with" if r["ratio"] < 1.8 else "skip",
+        ),
+        (
+            "with, skip the ambiguous band only",
+            lambda r: "skip" if abs(r["ratio"] - 1.0) <= band else "with",
+        ),
+    ]
+    for name, choose in policies:
+        taken = score(rows, choose)
+        if not taken:
+            continue
+        print(f"{name:>40s} {len(taken):>8,} {sum(taken) / len(taken):>8.3f} {sum(taken):>9,.0f}")
 
     print("\nby how far risk exceeds the push")
     ordered = sorted(rows, key=lambda r: r["ratio"])
@@ -116,8 +168,10 @@ def main():
             continue
         w = sum(r_of(r["push"], r["excursion"]) for r in chunk) / len(chunk)
         a = sum(r_of(r["excursion"], r["push"]) for r in chunk) / len(chunk)
-        print(f"{chunk[0]['ratio']:>7.2f}-{chunk[-1]['ratio']:<8.2f} "
-              f"{len(chunk):>8,} {w:>8.3f} {a:>10.3f}")
+        print(
+            f"{chunk[0]['ratio']:>7.2f}-{chunk[-1]['ratio']:<8.2f} "
+            f"{len(chunk):>8,} {w:>8.3f} {a:>10.3f}"
+        )
 
 
 if __name__ == "__main__":

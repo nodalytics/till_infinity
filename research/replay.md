@@ -753,3 +753,41 @@ before going 3v in favour scores the same as one that did the reverse, and
 those are different trades - one is stopped and one is not. It is optimistic
 about both sides equally, which keeps the comparison fair without either
 number being a P&L.
+
+### The three-way rule, scored as a policy
+
+Push above risk take the model's side, push below risk take the other, push
+about equal stay out. Scored over the same 47,668 resolutions, against the
+alternatives it should be compared with. **Total R rather than mean, because a
+policy that trades less can win on the mean and still make less money.**
+
+| policy | trades | mean R | total R |
+| --- | ---: | ---: | ---: |
+| always with the model | 47,668 | 0.908 | **43,284** |
+| the three-way rule as proposed | 42,756 | −0.056 | **−2,402** |
+| with, skip when risk > push | 22,836 | 0.955 | 21,818 |
+| with, skip only the bad tail (RR<0.55) | 35,893 | **0.963** | 34,550 |
+| with, skip the ambiguous band only | 42,756 | 0.896 | 38,290 |
+
+**The three-way rule turns a winning population into a losing one** - +43,284R
+becomes −2,402R. Half its trades are inversions and each loses about a full R,
+which swamps whatever the selection gains.
+
+**And no filter beats taking everything.** The bad-tail filter has the best
+mean R of any policy here, 0.963 against 0.908, and still makes less in total
+because it declines a quarter of the trades. That reverses the recommendation
+recorded above: a floor at 0.55 is defensible on trade quality and costs money
+on the account, and this book is signal-constrained rather than slot-
+constrained - it took 40 trades in a day against a `max_positions` that never
+binds. Filtering only pays when the slots are scarce.
+
+### The number that should worry us more than any of this
+
+Every row above is positive. The with-the-model trade returns **+0.908R** at a
+0.5v stop across 47,668 resolutions, and the live account is losing roughly
+0.5R per trade. The replay's edge has never once been realised.
+
+That gap is execution - the 1.09R stop cost, the spread, and the distance
+between a 0.5v/0.75v rule on paper and what the strategies actually place - and
+it is larger than every gate, filter and side-selection question on this page
+put together. No amount of choosing better calls fixes it.
