@@ -799,6 +799,42 @@ Two strategies can only collide in the hashed tail, and start-up says so out
 loud when they do rather than leaving it to be found in a scorecard that looks
 fine.
 
+## What the gates are actually for
+
+Three numbers describe a call and they do different jobs. Measured over the
+first nineteen closed live trades - a small sample, and one coherent story
+across three cuts rather than three findings:
+
+| gate | job | what the trades said |
+| --- | --- | --- |
+| `min_edge` | **floor** | inert above the step; ranking by it puts the losers on top |
+| `min_probability` | selection | winners 0.838, losers 0.816; sorting by it puts winners on top |
+| `min_base_rate` | selection | below 0.55: eight trades, one winner, -6.74R |
+
+`edge = probability - base_rate`, so wanting a high conditional **and** a high
+baseline means wanting their difference to be small. A large edge is by
+construction a large departure from a weak baseline, which is the worse trade -
+and is exactly what ranking by edge selects.
+
+That takes nothing away from [edge.md](edge.md), which measured edge as a
+floor: below about 0.10 the mean realised push is zero, located twice over
+10,483 calls. The floor stays and is still the only thing keeping coin flips
+out. What is new is that above it, edge does not rank - which edge.md itself
+allowed for, saying the accuracy either side of the step "is not a number to
+quote".
+
+**The base rate is read in the direction claimed.** `base_rate_up` is always
+the *up* rate, so a sell has to flip it. Comparing it raw across a set that was
+fifteen sells and four buys described the direction mix rather than the levels
+and produced a reading exactly backwards from the truth. There is a test for
+the flip because the mistake is silent.
+
+**Adaptive thresholds were tested and lost.** Walk-forward, raising the bar
+after a loss and lowering it after a win came out *worse than no floor at all*
+- it tightens after the market punishes you and loosens after it rewards you,
+which is backwards unless outcomes are serially correlated. Third time this
+repository has measured a dynamic rule losing to a constant.
+
 ## When the whole market goes wide
 
 `structures` already scores spread per venue and publishes an anomaly whenever

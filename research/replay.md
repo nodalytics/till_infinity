@@ -113,6 +113,85 @@ refinement on top of entry and stop placement, not the lever - and
 [edge.md](../docs/edge.md) is the standing caution about reaching for a
 dynamic rule before the constant has been got right.
 
+## Edge is a good floor and a bad ranking
+
+Nineteen closed trades, scored against what the gates would have kept. The
+sample is small and the story is coherent across three independent cuts, which
+is worth more than any one of them.
+
+| group | n | edge | probability | base (directional) | mean R |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| winners | 6 | 0.240 | 0.838 | 0.579 | +1.48 |
+| losers | 13 | **0.276** | 0.816 | 0.549 | -1.00 |
+
+**The winners have the smaller edge.** Sorting by edge puts the losers on top:
+
+| gate | taken | won | mean R | total R |
+| --- | ---: | ---: | ---: | ---: |
+| everything | 19 | 6 | -0.21 | -4.07 |
+| probability >= 0.85 | 9 | 5 | +0.41 | **+3.72** |
+| base(dir) >= 0.55 | 11 | 5 | +0.24 | +2.67 |
+| base(dir) <= 0.55 | 8 | 1 | -0.84 | **-6.74** |
+| edge >= 0.25 | 12 | 3 | -0.48 | -5.74 |
+| edge >= 0.30 | 4 | 0 | -1.02 | -4.09 |
+
+### Why this is consistent rather than contradictory
+
+`edge = probability - base_rate`. Wanting a **high conditional** and a **high
+baseline** means wanting their *difference* to be small - so a large edge is,
+by construction, a large departure from a weak baseline. That is the worse
+trade, and it is exactly what an edge ranking selects for.
+
+None of this touches [edge.md](../docs/edge.md), which measured edge as a
+**floor**: below roughly 0.10 the mean realised push is zero, located twice at
+0.0968 and 0.11 over 10,483 calls. That finding stands and the floor stays.
+What this adds is that above the floor, edge does not rank - and edge.md said
+as much in its own words, that the accuracy either side of the step "is not a
+number to quote".
+
+So the settled shape is: **edge as an inert floor at the measured step, with
+probability and base rate doing the selecting.**
+
+### A reading that was wrong, and how
+
+The first pass compared `base_rate_up` directly and concluded the losers had
+the *lower* base rates. `base_rate_up` is always the **up** rate, and the
+sample was fifteen sells against four buys, so the raw average described the
+direction mix rather than the levels. Read in the direction actually claimed
+it reverses: winners 0.579, losers 0.549. The flip has a test of its own
+because the mistake is silent - the number looks perfectly reasonable either
+way.
+
+### Adaptive thresholds were tested and lost
+
+Walk-forward, each rule using only trades already closed when it decided:
+
+| rule | taken | won | mean R | total R |
+| --- | ---: | ---: | ---: | ---: |
+| no floor | 19 | 6 | -0.21 | -4.07 |
+| fixed 0.85 | 9 | 5 | +0.41 | +3.72 |
+| adaptive +/-0.02 per trade | 14 | 4 | -0.31 | **-4.29** |
+| adaptive +/-0.05 | 12 | 4 | -0.19 | -2.28 |
+| track winners' median probability | 13 | 5 | +0.05 | +0.59 |
+
+**The step-adaptive rule is worse than no floor at all.** Raising the bar after
+a loss and lowering it after a win tightens right after the market punishes you
+and loosens right after it rewards you, which is backwards unless outcomes are
+serially correlated, and nothing here says they are.
+
+This is the third time this repository has measured a dynamic rule losing to a
+constant, for the same reason each time: the dynamic version estimates its
+parameter from noisy data and inherits the noise.
+
+### What is actually deployed
+
+`min_probability` at **0.75**, not the 0.85 optimum. 0.85 was chosen by looking
+at the outcomes it would be scored on, on nineteen trades, and 0.90 already
+reverses the pattern - so it is the optimum of a small sample rather than a
+number. 0.75 refuses only the weak tail and cannot be overfitted to nineteen
+trades. `min_base_rate` at 0.55. Both off by default in the library: nineteen
+trades is a hypothesis, and the code should not assert it.
+
 ## Half the stopped trades were right
 
 `research/harness/shadows.py`, run against the production journal and price
