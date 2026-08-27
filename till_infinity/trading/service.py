@@ -46,6 +46,7 @@ from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
 from .paper import PaperBroker
 from .risk import Guard
+from .sizing import price_distance
 
 log = get_logger(__name__)
 
@@ -569,6 +570,35 @@ class Trader:
 
         # Already there, or better: nothing to wait for.
         if (intent.entry - want) * intent.side.sign <= 0:
+            return None
+
+        # Is the better price worth the risk of not getting it?
+        #
+        # Parking trades a fill in hand for a fill that may not arrive, and the
+        # trade that expires unfilled is a trade the strategy wanted. When the
+        # fill on offer is already close to the level there is little left to
+        # win and the whole spread of outcomes is downside - so the improvement
+        # has to be worth something before the trade is put at risk for it.
+        unit_now = price_distance(intent.entry, _vol_of(payload), 1.0)
+        if unit_now > 0:
+            better_by = abs(intent.entry - want) / unit_now
+            if better_by < self.settings.pullback_min_gain:
+                return None
+
+        # Will price come back at all?
+        #
+        # `sweep_rate` is how often this level has been run through and
+        # recovered - the level's own record of doing the thing being waited
+        # for. A level that has never been swept is not one to wait for a sweep
+        # on, and waiting anyway is how a signal becomes an expiry. Absent or
+        # unmeasured passes, because an unknown rate is not a low one.
+        swept = features.get("sweep_rate")
+        seen_sweeps = features.get("sweep_n") or 0.0
+        if (
+            swept is not None
+            and seen_sweeps >= self.settings.pullback_min_wicks
+            and float(swept) < self.settings.pullback_min_sweep_rate
+        ):
             return None
 
         # How long to wait, in bars of the timeframe that produced the call.

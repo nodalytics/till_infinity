@@ -3426,3 +3426,49 @@ def test_the_base_rate_is_read_in_the_direction_claimed():
 def test_no_base_rate_floor_leaves_every_call_alone():
     got = take("level-scalp", signal(features={"base_rate_up": 0.10}))
     assert isinstance(got, Intent)
+
+
+async def test_the_cap_does_not_override_the_level_s_own_depth():
+    """Reported live: the pullback enters earlier than the wick asks for.
+
+    `pullback_fraction` was a ceiling on the wait, and for a buy the code takes
+    the shallower of (wick asks, cap allows) - so whenever the level's measured
+    wick asked to be met deeper than the cap, the cap won and the measured
+    depth was computed and then discarded. At 1.0 the wick governs and the
+    sweep edge is the clamp, which is the only clamp that means anything: it is
+    where the stop lives.
+    """
+
+    async def trigger_at(fraction):
+        bus = Bus()
+        made = settings(live=True, pullback_fraction=fraction, pullback_sigmas=0.5)
+        trader = Trader(bus, settings=made, broker=RecordingBroker(made))
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        await trader.handle(
+            Message(
+                topic=SIGNALS,
+                payload=signal(
+                    features={
+                        "sweep_low": 4396.0,
+                        "wick_below_vol": 1.0,
+                        "wick_below_sd": 0.4,
+                        "wick_n": 8.0,
+                        "expected_push_vol": 3.0,
+                    }
+                ),
+            )
+        )
+        held = trader._waiting.get("gold")
+        return held.trigger if held else None
+
+    capped = await trigger_at(0.5)
+    freed = await trigger_at(1.0)
+    assert capped is not None
+    assert freed is not None
+    # Freed waits deeper - the level's own wick is allowed to decide.
+    assert freed < capped
+    # And never past the sweep edge, where the stop lives.
+    assert freed >= 4396.0

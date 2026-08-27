@@ -481,6 +481,17 @@ class Settings:
     #: place offers nothing to wait for, and the signal expires unfilled - which
     #: is not a trade avoided but a trade the strategy wanted and did not get.
     pullback_min_wicks: float = 2.0
+    #: The least a parked fill must improve on the one in hand, in volatility
+    #: units, before the trade is put at risk of not happening. Parking trades
+    #: a fill you have for one you may not get; when the offer is already near
+    #: the level there is little to win and the whole spread of outcomes is
+    #: downside.
+    pullback_min_gain: float = 0.25
+    #: How often the level must have been swept before waiting for a sweep is
+    #: worth doing. `sweep_rate` is the level's own record of being run through
+    #: and recovering - the thing the wait is betting on. An unmeasured rate
+    #: passes, because unknown is not the same as low.
+    pullback_min_sweep_rate: float = 0.10
 
     #: How long a stopped trade is watched to see if its target arrived, as a
     #: multiple of the hold it would have had. Zero switches the watch off.
@@ -727,6 +738,8 @@ class Settings:
             pullback_bars=_float("TRADING_PULLBACK_BARS", 10.0),
             pullback_sigmas=_float("TRADING_PULLBACK_SIGMAS", 0.5),
             pullback_min_wicks=_float("TRADING_PULLBACK_MIN_WICKS", 2.0),
+            pullback_min_gain=_float("TRADING_PULLBACK_MIN_GAIN", 0.25),
+            pullback_min_sweep_rate=_float("TRADING_PULLBACK_MIN_SWEEP_RATE", 0.10),
             sweep_max_rate=_float("TRADING_SWEEP_MAX_RATE", 0.35),
             sweep_min_history=_float("TRADING_SWEEP_MIN_HISTORY", 6.0),
             sweep_max_exposure=_float("TRADING_SWEEP_MAX_EXPOSURE", 0.8),
