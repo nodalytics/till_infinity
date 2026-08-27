@@ -389,6 +389,16 @@ class Touch(Restorable):
     base_rate_up: float = 0.0
     #: Whether this touch would have been published as a call.
     actionable: bool = False
+    #: The other timeframes with a level at this price, coarsest first, as
+    #: "1d+4h+1h". Empty means none, which is the common case - 7,198 of 7,966
+    #: published calls have no other timeframe agreeing.
+    #:
+    #: Recorded for the same reason the edge is: it was on the signal and not
+    #: on the resolution, so "does agreement across timeframes predict the
+    #: outcome" could only be asked of the two dozen touches that were traded,
+    #: where it is noise. Attached here it becomes answerable from the whole
+    #: population.
+    confluence: str = ""
 
     #: Where price actually went afterwards, at fixed offsets from first
     #: contact, in volatility units and signed - positive is up.
@@ -443,6 +453,8 @@ class Touch(Restorable):
             "probability_up": round(self.probability_up, 4),
             "base_rate_up": round(self.base_rate_up, 4),
             "actionable": self.actionable,
+            "confluence": self.confluence,
+            "confluence_n": float(len([x for x in self.confluence.split("+") if x])),
             **{f"path_{k}": round(v, 4) for k, v in self.path.items()},
             "resolved": self.resolved,
             **self.features.to_dict(),
@@ -933,6 +945,20 @@ class Tracker(Restorable):
             key = str(offset)
             if key not in touch.path:
                 touch.path[key] = (price - level.price) / unit
+
+    def note_confluence(self, feed: str, price: float, timeframes: str) -> None:
+        """Tell an open touch which other timeframes agree with its level.
+
+        Written back rather than set at `begin`, because confluence is worked
+        out from the zone after the call exists and the touch is opened before
+        that. A narrow accessor rather than reaching into `_open` from the
+        service, so the key stays this class's business.
+        """
+        if not timeframes:
+            return
+        touch = self._open.get((feed, round(price, 8)))
+        if touch is not None and not touch.confluence:
+            touch.confluence = timeframes
 
     def trap_window_for(self, touch: Touch) -> float:
         """How long a break on this touch's timeframe stays provisional."""

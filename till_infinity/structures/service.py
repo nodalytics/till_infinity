@@ -586,6 +586,11 @@ class Watcher:
                 loners.append(signal)
                 continue
             signal = replace(signal, confluence=zone.timeframes)
+            # And onto the touch, so the resolution carries it too. It was on
+            # the signal and not on the outcome, so "does agreement across
+            # timeframes predict what happens" could only be asked of the two
+            # dozen touches that were traded - where it is noise.
+            self.engine.tracker.note_confluence(call.feed, call.level.price, zone.timeframes)
             # One zone, one message. Three timeframes agreeing on a price is one
             # structure seen three times, and sending it three times says the
             # opposite of what it means - it reads as three findings when it is

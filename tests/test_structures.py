@@ -1516,3 +1516,79 @@ def test_a_missing_sample_is_absent_rather_than_zero():
     d = t.to_dict()
     assert f"path_{PATH_OFFSETS[0]}" in d
     assert f"path_{PATH_OFFSETS[-1]}" not in d
+
+
+def test_a_resolution_carries_the_timeframes_that_agreed():
+    """Confluence was on the signal and not on the outcome.
+
+    So "does agreement across timeframes predict what happens" could only be
+    asked of the two dozen touches that were traded, where it is noise - while
+    7,198 of 7,966 published calls have no agreement at all and the question is
+    really about the whole population.
+    """
+    from till_infinity.structures.levels import Side
+    from till_infinity.structures.reactions import Features, Touch
+
+    t = Touch(
+        feed="gold",
+        level_price=4400.0,
+        features=Features(
+            side=Side.ABOVE,
+            approach_vol=1.0,
+            depth_vol=0.5,
+            strength=0.7,
+            run_vol=1.2,
+            experience=4.0,
+        ),
+        started=0.0,
+        entry=4400.0,
+        extreme=4400.0,
+    )
+    t.confluence = "1d+4h+1h"
+    d = t.to_dict()
+    assert d["confluence"] == "1d+4h+1h"
+    assert d["confluence_n"] == pytest.approx(3.0)
+    # And the common case is honest about being empty rather than absent.
+    assert Touch(
+        feed="gold",
+        level_price=1.0,
+        features=Features(
+            side=Side.ABOVE,
+            approach_vol=1.0,
+            depth_vol=0.0,
+            strength=0.0,
+            run_vol=0.0,
+            experience=0.0,
+        ),
+        started=0.0,
+        entry=1.0,
+        extreme=1.0,
+    ).to_dict()["confluence_n"] == pytest.approx(0.0)
+
+
+def test_confluence_is_written_back_only_once():
+    """The first zone to claim a touch names it; a later one does not rename
+    it, because the touch opened under the first."""
+    from till_infinity.structures.levels import Side
+    from till_infinity.structures.reactions import Features, Touch, Tracker
+
+    tracker = Tracker()
+    t = Touch(
+        feed="gold",
+        level_price=4400.0,
+        features=Features(
+            side=Side.ABOVE,
+            approach_vol=1.0,
+            depth_vol=0.0,
+            strength=0.0,
+            run_vol=0.0,
+            experience=0.0,
+        ),
+        started=0.0,
+        entry=4400.0,
+        extreme=4400.0,
+    )
+    tracker._open[("gold", 4400.0)] = t
+    tracker.note_confluence("gold", 4400.0, "1h+15m")
+    tracker.note_confluence("gold", 4400.0, "1d+4h")
+    assert t.confluence == "1h+15m"
