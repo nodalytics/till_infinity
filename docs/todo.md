@@ -4,6 +4,32 @@ Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
+## 0q. Every deploy resets the hold clock on open positions
+
+Noticed 2026-08-27 while a us30 position retried a refused close: its age went
+from 436s back to 311s across a container restart.
+
+`Live.seen` is set when a position is adopted during reconciliation, so a
+restart gives every open position a fresh clock. `max_hold`, `hold_seconds`
+and `stale_after` all measure from it, and all of them therefore start again.
+
+Mostly harmless, and not always: on the day this was found the service was
+deployed about fifteen times, so anything open across that window had its hold
+extended repeatedly. Two consequences worth knowing:
+
+* **A position can evade its hold indefinitely** during a busy day of
+  shipping, which is precisely when nobody is watching the holds.
+* **The journal cannot be trusted on duration across a restart.** `seconds` on
+  an outcome measures from the last adoption, not from the fill, so any
+  analysis of how long trades are held is wrong by however many deploys
+  intervened - and it will be wrong quietly, in the direction of looking
+  shorter.
+
+The fix is to persist the fill time per ticket rather than stamping it at
+adoption; the broker already reports `opened` on a position, which is the
+honest source and needs no storage at all. Small, and worth doing before any
+question about hold length is asked of the data.
+
 ## 0p. `structures` published an expected push of 10,229 volatility units
 
 Found live 2026-08-27. A brent 1m call arrived with `expected_push_vol` of
