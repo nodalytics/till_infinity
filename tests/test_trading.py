@@ -3684,3 +3684,74 @@ def test_a_consensus_threshold_of_zero_means_off():
     built, agreed = trader._agree(base, others)
     assert agreed == ["sweep-aware"]
     assert built.stop == pytest.approx(4390.0)
+
+
+# --------------------------------- was it the stops, or was it the theses
+
+
+def test_thesis_only_gives_the_trade_room_and_takes_less_of_it():
+    """Six of twelve stopped trades later reached their target, so either the
+    stops are wrong or the theses are. Every fix so far has assumed the first.
+    This tests it by taking the stop out of the decision."""
+    normal = take("level-scalp")
+    roomy = take("thesis-only")
+    assert isinstance(normal, Intent)
+    assert isinstance(roomy, Intent)
+
+    assert abs(roomy.entry - roomy.stop) > abs(normal.entry - normal.stop) * 3
+    # The same money at risk over a wider stop buys proportionally fewer lots.
+    assert roomy.volume < normal.volume
+    # The target is untouched: moving both would make it a different trade
+    # rather than the same trade with more room.
+    assert roomy.target == pytest.approx(normal.target)
+
+
+def test_thesis_only_still_has_a_circuit_breaker():
+    """Not stopless. A genuinely stopless trade on a leveraged account is how
+    accounts die, and `lots` derives size from the stop - with no stop there is
+    no size."""
+    got = take("thesis-only")
+    assert isinstance(got, Intent)
+    assert got.stop > 0
+    assert got.volume > 0
+    assert got.risk_money > 0
+
+
+def test_thesis_only_risks_the_same_money_as_the_others():
+    """The comparison is only fair if the bet is the same size."""
+    normal = take("level-scalp")
+    roomy = take("thesis-only")
+    assert isinstance(normal, Intent)
+    assert isinstance(roomy, Intent)
+    # Within lot-rounding of each other - the stop distance changes, the money
+    # does not.
+    assert roomy.risk_money == pytest.approx(normal.risk_money, rel=0.5)
+
+
+def test_snap_holds_for_as_long_as_the_interaction_lasts():
+    """Measured over 53,372 resolutions: the median touch resolves in 18
+    seconds, 53% inside 30 and 72% inside 120. Every other strategy holds for
+    a fraction of an hour, which is about a hundred times the event."""
+    from till_infinity.trading.scalper import LevelScalp, Snap
+
+    made = settings()
+    fast, slow = Snap(made), LevelScalp(made)
+    assert fast.hold_seconds == pytest.approx(120.0)
+    assert fast.hold_for("1m", made.max_hold) < slow.hold_for("1m", made.max_hold) / 10
+
+
+def test_snap_differs_from_level_scalp_in_exactly_one_respect():
+    """The comparison only says something if one thing changes."""
+    from till_infinity.trading.scalper import LevelScalp, Snap
+
+    assert Snap.entries == LevelScalp.entries
+    assert Snap.context == LevelScalp.context
+    # Same stop, same target, same size - only the clock is different.
+    quick = take("snap")
+    usual = take("level-scalp")
+    assert isinstance(quick, Intent)
+    assert isinstance(usual, Intent)
+    assert quick.stop == pytest.approx(usual.stop)
+    assert quick.target == pytest.approx(usual.target)
+    assert quick.volume == pytest.approx(usual.volume)
+    assert quick.hold < usual.hold

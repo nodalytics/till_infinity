@@ -399,6 +399,24 @@ class Settings:
     #: target, because unreached targets are what a wide stop costs. Money at
     #: risk is unchanged - a wider stop is re-sized into fewer lots.
     consensus_min: int = 2
+    #: Where `thesis-only` puts its stop, in volatility units.
+    #:
+    #: Far enough that it is a circuit breaker rather than a trade decision.
+    #: Over 49,338 resolutions the 90th percentile of excursion past a level is
+    #: 3.68v on 1m, so 4 sits just beyond the range where a stop decides
+    #: anything while still firing before a loss becomes interesting.
+    #:
+    #: **Bounded by the account, not only by the argument.** At 8v the minimum
+    #: lot risks more than the risk budget allows on a ten-thousand-unit
+    #: account - the refusal reads "25.00 does not cover the minimum 0.01 lot,
+    #: which risks 35.70" - so the experiment would simply not have traded. A
+    #: wider stop is available on a larger account and is the honest place to
+    #: run the full version.
+    #:
+    #: The trade is correspondingly small either way: the same money at risk
+    #: spread over a stop four times wider buys a quarter of the lots, which is
+    #: the price of giving a trade room.
+    thesis_stop_vol: float = 4.0
 
     #: The floor on |edge|, and it has to sit **above** `reactions.MIN_EDGE`
     #: or it is configuration that can never fire - every signal reaching the
@@ -766,6 +784,7 @@ class Settings:
             probability_percentile=_float("TRADING_PROBABILITY_PERCENTILE", 0.0),
             evaluate_all=_flag("TRADING_EVALUATE_ALL", "0"),
             consensus_min=_int("TRADING_CONSENSUS_MIN", 2),
+            thesis_stop_vol=_float("TRADING_THESIS_STOP_VOL", 4.0),
             min_edge=_float("TRADING_MIN_EDGE", 0.15),
             loss_cooldown=_float("TRADING_LOSS_COOLDOWN_S", 900.0),
             max_hold=_float("TRADING_MAX_HOLD_S", 1_800.0),

@@ -755,6 +755,125 @@ class ApproachScalp(LevelStrategy):
 
 
 @register
+class Snap(LevelStrategy):
+    """Enter at the touch, leave when it has resolved. Seconds, not minutes.
+
+    Every other strategy here holds for a fraction of an hour. Measured over
+    53,372 resolutions, that is roughly a hundred times longer than the event
+    it is trading:
+
+    | resolved within | share | median push |
+    | --- | ---: | ---: |
+    | 30s | 53.1% | 2.47v |
+    | 60s | 63.5% | 2.41v |
+    | 120s | 72.2% | 2.33v |
+    | 300s | 84.1% | 2.24v |
+
+    **The median touch resolves in eighteen seconds**, and the fast ones carry
+    the *larger* push - 2.47v inside thirty seconds against 2.24v for
+    everything. Holding longer does not get more of the move; it gets less of
+    it, on a resolution that has already happened, while remaining exposed to
+    whatever comes next.
+
+    That reframes two failures this session kept producing. A trade stopped
+    before its move arrived and a trade that gave back profit are both what
+    holding a twenty-second event for thirty minutes looks like from the
+    account. This strategy holds for `hold_seconds` instead and lets the clock
+    be the exit rather than the accident.
+
+    **It is the same call as `level-scalp` with one difference**, deliberately,
+    so the comparison says something. Same entries, same anchors, same stop
+    rule, same target. Only the hold changes.
+
+    A caveat on the measurement it rests on: about a tenth of recorded
+    resolutions carry a negative duration, from bar timestamps being compared
+    against quote clocks - a bug the tracker documents. The very fastest tail
+    is therefore partly artefact. The median at eighteen seconds and the
+    thirty- and sixty-second shares sit well clear of it.
+    """
+
+    name: ClassVar[str] = "snap"
+    description: ClassVar[str] = (
+        "The level call held for as long as the interaction actually lasts - "
+        "the median touch resolves in 18 seconds. Same trade as level-scalp "
+        "with a two-minute clock instead of a thirty-minute one."
+    )
+    #: Two minutes covers 72% of resolutions. Longer buys a smaller share of a
+    #: smaller push; shorter starts cutting theses off before they resolve.
+    hold_seconds: ClassVar[float] = 120.0
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+
+
+@register
+class ThesisOnly(LevelStrategy):
+    """The same call, with the stop moved out of the way. An experiment.
+
+    Six of twelve stopped trades later reached the target they were aiming at,
+    by between 3.7R and 25.7R - so the direction the level model produces is
+    largely right and something in the execution is giving back money the
+    thesis earned. That is a hypothesis, and every fix for it so far has been
+    another adjustment to where the stop goes. This tests it directly by taking
+    the stop out of the decision entirely and letting the trade end on its
+    target or on the clock.
+
+    **It is not stopless, and the difference matters.** A genuinely stopless
+    trade on a leveraged account is how accounts die, and it would also break
+    sizing - `lots` derives position size *from* the stop distance, so with no
+    stop there is no size. What this does is move the stop far enough out that
+    it stops being a trade decision and becomes a circuit breaker: at
+    `thesis_stop_vol` volatility units it should almost never be reached, and
+    when it is, something has gone wrong that no thesis anticipated.
+
+    Money at risk is therefore unchanged and bounded exactly as everywhere
+    else. What changes is that the position is much smaller, because the same
+    risk spread over a stop several times wider buys proportionally fewer lots
+    - which is the honest price of giving a trade room, and is itself part of
+    what the comparison will show.
+
+    **What it is for.** Run beside the others on the same signals it becomes a
+    controlled comparison: same calls, same gates, same sizing rule, one
+    difference. If it beats them, the stops were the problem and the fixes have
+    been treating a symptom. If it loses, the theses were wrong and no amount
+    of room would have saved them - which is worth knowing before another
+    session is spent moving stops around.
+    """
+
+    name: ClassVar[str] = "thesis-only"
+    description: ClassVar[str] = (
+        "The level call with the stop moved out of the way - a circuit breaker "
+        "rather than a trade decision. Exits on target or on the clock. An "
+        "experiment to test whether the stops or the theses are wrong."
+    )
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+
+    def distances(
+        self,
+        level: float,
+        entry: float,
+        vol_bps: float,
+        risk_vol: float,
+        push_vol: float,
+        interval: str = "",
+    ) -> tuple[float, float]:
+        """A stop far enough away to be a circuit breaker, and the usual target.
+
+        The target is untouched on purpose. Moving both would make this a
+        different trade rather than the same trade with more room, and the
+        comparison would say nothing.
+        """
+        return (
+            price_distance(level, vol_bps, self.settings.thesis_stop_vol),
+            price_distance(entry, vol_bps, push_vol * self.target_multiple),
+        )
+
+    def stop_floor_vol(self, interval: str) -> float:
+        """The circuit breaker is the floor here, not `min_stop_vol`."""
+        return max(self.settings.thesis_stop_vol, self.settings.min_stop_vol)
+
+
+@register
 class SwingLevel(LevelStrategy):
     """A slower trade: anchored on the daily, triggered as low as it can be.
 
