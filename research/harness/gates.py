@@ -21,6 +21,33 @@ import sys
 from .replay import score
 
 
+def _facing(d):
+    """`base_rate_up` turned to face the trade the call implies.
+
+    **The gate does not compare the raw number and neither should this.**
+    `LevelStrategy.quality` uses `base_up` for a buy and `1 - base_up` for a
+    sell, so deciles of the raw value describe a different quantity - a raw
+    0.60 is a strong buy and a weak sell, and pooling them measures neither.
+    An earlier version of this file did exactly that, and a floor was set from
+    it that refused 99 signals out of 99.
+
+    The direction comes from the approach side, which is recorded and is not
+    an identity with the outcome: a touch approached from *above* that rejects
+    is price falling to the level and turning up, so the trade is a buy;
+    approached from below, a sell. Both sides carry every outcome, so this is a
+    real join rather than a restatement.
+    """
+    raw = d.get("base_rate_up")
+    if raw is None:
+        return None
+    side = d.get("side")
+    if side == "above":
+        return float(raw)
+    if side == "below":
+        return 1.0 - float(raw)
+    return None
+
+
 def load(db):
     con = sqlite3.connect(db)
     q = "select context from entries where actor='structures' and kind='outcome'"
@@ -34,7 +61,8 @@ def load(db):
                 "push": float(d["push_vol"]),
                 "excursion": abs(float(d["excursion_vol"])),
                 "probability": d.get("probability_up"),
-                "base_rate": d.get("base_rate_up"),
+                "base_rate_raw": d.get("base_rate_up"),
+                "base_rate": _facing(d),
                 "edge": d.get("edge"),
             }
         )

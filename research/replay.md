@@ -501,3 +501,37 @@ target rule, not the trades this book actually took, and 8% coverage is thin.
 It is enough to conclude that two of these three floors are not earning their
 refusals; it is not enough to conclude that probability is *anti*-predictive,
 and the slight negative slopes should not be traded on.
+
+
+### Correction, same day: the base-rate result above was on the wrong quantity
+
+The table above buckets **raw `base_rate_up`**. The gate does not compare that
+number - `LevelStrategy.quality` uses `base_up` for a buy and `1 - base_up` for
+a sell - so a raw 0.60 is a strong buy and a weak sell, and pooling them
+measures neither.
+
+Acting on it raised the floor from 0.51 to 0.56, which **refused 99 signals out
+of 99** and stopped trading entirely.
+
+Turned to face the trade, the standout decile is not standout, and the column
+is not monotonic:
+
+| decile | base rate (facing) | mean R |
+| --- | --- | ---: |
+| 1 | 0.214-0.381 | 0.900 |
+| 2-4 | 0.382-0.480 | ~0.99 |
+| 5-7 | 0.480-0.558 | 0.879-0.941 |
+| 8-10 | 0.558-0.810 | ~1.00 |
+
+Deciles 2 to 4 sit *below* an even chance and return about 0.99, better than
+deciles 5 to 7 above them. A floor in the middle removes good trades and keeps
+worse ones, and 0.51 sat exactly there. Spread across all ten deciles is 0.130
+on 437 per cell, which is around two standard errors - thin ground for
+refusing anything.
+
+So the base-rate floor is off as well, and the honest summary of all three
+gates is that none of them earns its refusals.
+
+This is the second time raw versus direction-adjusted `base_rate_up` has
+produced a confident, backwards reading here. The adjustment now lives in
+`gates._facing` with the reasoning attached.

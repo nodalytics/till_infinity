@@ -915,55 +915,65 @@ The flip is a hook on the shared `consider`, not an override of it.
 while reading from the configuration as though it ran all of them, and a test
 asserts the gates still run before the side is flipped.
 
-## The three direction gates, and what measuring them did to two of them
+## The three direction gates, measured - and none of them survived
 
 Measured on 2026-08-27 (`research/harness/gates.py`, written up in
-[replay.md](../research/replay.md)). The question each gate has to answer is
-not whether its number means something - they are model outputs and they do -
-but whether trades above the floor do better than trades below it. A gate that
-does not separate is not neutral: it costs every trade it refuses and returns
-nothing.
+[replay.md](../research/replay.md)). The question is not whether these numbers
+mean something - they are model outputs and they do - but whether trades above
+a floor do better than trades below it. A gate that does not separate is not
+neutral: it costs every trade it refuses and returns nothing.
 
 Mean R at a 0.5v stop, by decile, over the 4,378 resolutions carrying these
-fields:
+fields. **Base rate is shown turned to face the trade**, which is what the gate
+compares - `base_up` for a buy, `1 - base_up` for a sell:
 
-| decile | probability | base rate | edge |
+| decile | probability | base rate (facing) | edge |
 | --- | ---: | ---: | ---: |
-| lowest | 0.978 | 0.913 | 1.024 |
-| 5 | 0.978 | 1.021 | 1.041 |
-| 9 | 0.957 | **0.848** | 0.904 |
-| highest | **0.913** | **1.130** | 0.901 |
+| 1 (lowest) | 0.978 | 0.900 | 1.024 |
+| 2 | 0.934 | 0.995 | 0.888 |
+| 4 | 0.987 | 0.986 | 0.944 |
+| 6 | 0.942 | **0.879** | 0.945 |
+| 8 | 1.003 | 1.002 | 1.038 |
+| 10 (highest) | 0.913 | 1.009 | 0.901 |
+| spread | 0.090 | 0.130 | 0.153 |
 
-**Probability and edge are off.** Both slope slightly the wrong way, across
-spreads indistinguishable from noise. The probability floor at 0.75 was
-refusing trades for a number that does not predict what it was being asked to
-predict, and this was the second time that showed up - the strength
-measurement found the same flatness from the other direction. The edge floor
-was inert besides, sitting at or below the structures threshold that produced
-the number, which the service warns about on every start.
+**None of the three separates outcomes, and all three are now off.**
+Probability and edge both slope slightly the wrong way across spreads
+indistinguishable from noise. Base rate has the largest spread of the three at
+0.130 and it is **not monotonic**: deciles 2 to 4, which sit *below* an even
+chance at 0.38 to 0.48, return about 0.99 - better than deciles 5 to 7 at 0.88
+to 0.94. A floor anywhere in the middle removes good trades and keeps worse
+ones. The old 0.51 floor sat exactly there.
 
-**The base-rate floor went up rather than away, and why is the useful part.**
-Its top decile - above 0.563 - returns 1.130, the only cell in the table that
-stands out. Its ninth decile, 0.519 to 0.563, is the worst at 0.848. The floor
-was set at **0.51**: it was admitting the single worst decile and calling that
-a filter. It is 0.56 now. A base-rate floor is worth having above 0.563 and
-worth nothing below it.
+### The correction that produced this, because it is the instructive part
 
-What this does not license: these are touch resolutions under a fixed
-stop-and-target rule rather than the trades this book took, and 8% coverage is
-thin. It is enough to conclude two floors were not earning their refusals. It
-is not enough to conclude probability is *anti*-predictive, and the negative
-slopes should not be traded on.
+The first version of this measurement bucketed **raw `base_rate_up`** and found
+a top decile returning 1.130 - the standout cell in the table. On the strength
+of it the floor was raised from 0.51 to 0.56.
+
+It refused 99 signals out of 99. Nothing traded.
+
+The raw value is not what the gate compares. A raw 0.60 is a strong buy *and a
+weak sell*, so pooling both into one decile measures neither, and a threshold
+read off that distribution has no defined meaning against a gate that
+direction-adjusts. Turned to face the trade, the standout decile is not
+standout: 1.009 against a 0.90-1.00 field.
+
+This is the second time raw versus direction-adjusted `base_rate_up` has
+produced a confident and backwards reading in this repository. The harness now
+does the adjustment in `_facing` with the reason attached, and the join is a
+real one rather than a restatement - the approach side is recorded, both sides
+carry every outcome, and a touch approached from above that rejects is price
+falling to a level and turning up, which is a buy.
 
 **What replaces them is confirmation, not another direction gate.** The
-momentum filter and the candlestick fallback both ask about *timing* - has the
-level finished being tested - which is a different question from whether the
-level is any good, and is the one the record says was being got wrong.
+momentum filter and its candlestick fallback ask about *timing* - has the level
+finished being tested - which is a different question from whether the level is
+any good, and is the one the record says was being got wrong.
 
-**Watch what volume does.** With three floors gone and only base rate
-tightened, trade count should rise. If it rises without the loss rate falling,
-the gates were removing volume rather than losses, which is itself the answer
-to whether they were doing anything.
+**Watch what volume does.** With all three floors gone, trade count should rise
+sharply. If it rises without the loss rate falling, the gates were removing
+volume rather than losses, which is itself the answer.
 
 ## The probability floor is per direction - kept, and now inert
 
