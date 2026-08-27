@@ -3259,8 +3259,11 @@ async def test_the_fraction_is_a_ceiling_on_the_wait():
     )
     held = trader._waiting.get("gold")
     assert held is not None
-    # Never past the sweep edge, and never past what the fraction permits.
-    assert held.trigger >= 4396.0
+    # Bounded in volatility units rather than at the sweep edge. A wick that
+    # runs deeper than the zone is allowed to be met there - that pullback is
+    # the sweep - but not arbitrarily deep.
+    unit = price_distance(4400.0, 10.0, 1.0)
+    assert held.trigger >= 4400.0 - made.pullback_max_vol * unit
 
 
 async def test_how_far_in_front_a_trade_got_is_written_down(tmp_path):
@@ -3428,47 +3431,42 @@ def test_no_base_rate_floor_leaves_every_call_alone():
     assert isinstance(got, Intent)
 
 
-async def test_the_cap_does_not_override_the_level_s_own_depth():
+async def test_a_deep_pullback_is_not_clamped_at_the_sweep_edge():
     """Reported live: the pullback enters earlier than the wick asks for.
 
-    `pullback_fraction` was a ceiling on the wait, and for a buy the code takes
-    the shallower of (wick asks, cap allows) - so whenever the level's measured
-    wick asked to be met deeper than the cap, the cap won and the measured
-    depth was computed and then discarded. At 1.0 the wick governs and the
-    sweep edge is the clamp, which is the only clamp that means anything: it is
-    where the stop lives.
+    It clamped at the sweep edge twice - directly, and again through a fraction
+    whose ceiling *was* the edge - so a level whose wicks run deeper than its
+    own zone had the extra depth discarded and was met shallow. That threw away
+    the best fill the setup offers: a pullback past the zone is the sweep, and
+    buying the sweep is the whole idea.
+
+    The edge was not a safe stopping point either, which was the stated reason
+    and was wrong - the stop sits beyond it, and the fill floor keeps the stop
+    clear of wherever the entry lands.
     """
-
-    async def trigger_at(fraction):
-        bus = Bus()
-        made = settings(live=True, pullback_fraction=fraction, pullback_sigmas=0.5)
-        trader = Trader(bus, settings=made, broker=RecordingBroker(made))
-        await trader.start()
-        await trader.handle(
-            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    bus = Bus()
+    made = settings(live=True, pullback_fraction=1.0, pullback_sigmas=0.5)
+    trader = Trader(bus, settings=made, broker=RecordingBroker(made))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(
+        Message(
+            topic=SIGNALS,
+            payload=signal(
+                features={
+                    "sweep_low": 4396.0,
+                    "wick_below_vol": 1.0,
+                    "wick_below_sd": 0.4,
+                    "wick_n": 8.0,
+                    "expected_push_vol": 3.0,
+                }
+            ),
         )
-        await trader.handle(
-            Message(
-                topic=SIGNALS,
-                payload=signal(
-                    features={
-                        "sweep_low": 4396.0,
-                        "wick_below_vol": 1.0,
-                        "wick_below_sd": 0.4,
-                        "wick_n": 8.0,
-                        "expected_push_vol": 3.0,
-                    }
-                ),
-            )
-        )
-        held = trader._waiting.get("gold")
-        return held.trigger if held else None
-
-    capped = await trigger_at(0.5)
-    freed = await trigger_at(1.0)
-    assert capped is not None
-    assert freed is not None
-    # Freed waits deeper - the level's own wick is allowed to decide.
-    assert freed < capped
-    # And never past the sweep edge, where the stop lives.
-    assert freed >= 4396.0
+    )
+    held = trader._waiting.get("gold")
+    assert held is not None
+    assert held.trigger < 4396.0, "a wick past the zone should be met past the zone"
+    unit = price_distance(4400.0, 10.0, 1.0)
+    assert held.trigger >= 4400.0 - made.pullback_max_vol * unit

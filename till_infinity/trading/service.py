@@ -559,14 +559,30 @@ class Trader:
             # as not - which for a retracement is the difference between being
             # met and being missed.
             depth = float(wick) + float(spread) * self.settings.pullback_sigmas
-            asked = level - intent.side.sign * depth * unit
-            # Never past the sweep edge - beyond that is where the stop lives,
-            # and an entry at the stop is not an entry.
-            deep = max(asked, float(edge)) if intent.side is Side.BUY else min(asked, float(edge))
+            # Bounded in volatility units rather than at the sweep edge.
+            #
+            # It used to clamp at the edge, twice over - once here and again
+            # through a fraction whose ceiling *was* the edge - so a level
+            # whose wicks run deeper than its own zone had the extra depth
+            # discarded and was met shallow. That threw away the best fill the
+            # setup offers: a deep pullback is the sweep, and buying the sweep
+            # is the whole idea.
+            #
+            # The edge is not a safe stopping point either, which was the
+            # stated reason and was wrong. The stop sits *beyond* the edge with
+            # clearance, and `_floored_stop` guarantees it clears the **fill**
+            # by `min_stop_vol` - so a deeper entry gets a proportionally
+            # further stop on its own. An entry that really has gone too far is
+            # refused by the `through` gate when the signal is reconsidered,
+            # which is a check that already exists and is better placed.
+            depth = min(depth, self.settings.pullback_max_vol)
+            deep = level - intent.side.sign * depth * unit
 
-        ceiling = intent.entry + (float(edge) - intent.entry) * min(fraction, 1.0)
-        # Whichever asks for less, so the fraction caps the wait.
-        want = max(deep, ceiling) if intent.side is Side.BUY else min(deep, ceiling)
+        ceiling = intent.entry + (float(edge) - intent.entry) * fraction
+        # Whichever asks for more depth, now that neither is clamped at the
+        # edge. The fraction is still a floor on the wait for a level with no
+        # wick history, where `deep` is the edge itself.
+        want = min(deep, ceiling) if intent.side is Side.BUY else max(deep, ceiling)
 
         # Already there, or better: nothing to wait for.
         if (intent.entry - want) * intent.side.sign <= 0:
