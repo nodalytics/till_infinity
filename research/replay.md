@@ -412,3 +412,47 @@ And one compromise is built into the scoring: when both the stop and the target
 were reached, the record cannot say which came first, so it counts as a stop.
 That biases every number here downward, which is the direction a bias should
 point when the alternative is flattering a rule you are about to trade.
+
+## Does signal strength deserve a gate?
+
+`strength` reaches the Telegram alerts and sits on every recorded touch, which
+makes it read like a decision input. It is not one. The gate chain in
+`LevelStrategy.quality` runs probability, then edge, then base rate, and never
+looks at it; its only route into a trade is as one of the features `facto`
+learns from, diluted there with everything else. Whether that omission is a gap
+or a correct call is measurable, and `research/harness/strength.py` measures it
+against 54,547 resolutions.
+
+**It barely varies.** The median touch scores 0.943 and p75 is 0.987, so 68% of
+everything lands in the top bucket. A gate on a feature that is near-constant
+refuses almost nothing or almost everything, with little in between.
+
+**Raw, it looks mildly useful** - 0.947 mean R in the top bucket against 0.799
+in the one below it, at a 0.5v stop. That reading does not survive a control:
+
+| probability | strength 0.2-0.4 | 0.4-0.6 | 0.6-0.8 | 0.8+ |
+| --- | ---: | ---: | ---: | ---: |
+| 0.50-0.60 | 1.050 | 1.018 | 1.083 | 0.936 |
+| 0.60-0.70 | 1.016 | 1.075 | 0.927 | **0.771** |
+| 0.70-0.80 | 0.886 | 0.992 | 1.025 | 0.883 |
+| 0.80-1.00 | - | 1.030 | 0.996 | 0.919 |
+
+**Inside a single probability band the relationship inverts.** The strongest
+bucket is the *worst* one in four bands out of five. The raw appearance of an
+edge is confounding: strength correlates with probability, probability is
+already gated, and once it is held fixed what strength adds is negative.
+
+So a `min_strength` floor would refuse the trades that do slightly better and
+keep the ones that do slightly worse. **Strength stays out of the gate chain**,
+and the reason is now recorded rather than incidental.
+
+The inversion has a plausible mechanism worth stating but not claiming: a
+high-strength level is an *obvious* one, obvious levels are crowded, and crowded
+levels are what gets swept - which is the premise `sweep-aware` already trades.
+This measurement is consistent with that story and does not establish it.
+
+One caveat on the table above. The 0.20-0.40 bucket carries a mean absolute
+push of 43v against 2-3v everywhere else, which is not a real feature of that
+bucket but a handful of contaminated push values sitting in a small sample.
+It does not touch the within-band conclusion, which is computed on R - where
+the stop and target bound every trade's contribution - rather than on push.

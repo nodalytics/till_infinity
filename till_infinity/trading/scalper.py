@@ -887,6 +887,71 @@ class ThesisOnly(LevelStrategy):
 
 
 @register
+class Runner(LevelStrategy):
+    """The same call with the target moved out of the way, so the trail decides.
+
+    Every other strategy here closes at the push the level model predicted.
+    That number is a *median* estimate of where price goes, and closing there
+    keeps the half of the distribution below it while giving away the half
+    above. Measured over 54,529 resolutions the tail is where the money is:
+
+    | push reached | volatility units |
+    | --- | ---: |
+    | median | 2.24v |
+    | p75 | 3.37v |
+    | p90 | 4.93v |
+    | p99 | 9.55v |
+
+    Replayed against those resolutions at a 0.5v stop, letting the move run and
+    exiting on a trail returned **+8.4R against +1.7R** for the same entries
+    closed at a fixed target - roughly five times as much from identical calls,
+    entirely in how they were exited.
+
+    **`trail_vol` already half-does this and cannot finish the job.** The trail
+    protects a runner once it is running, but the *target* still closes the
+    trade at the modelled push, so on most trades the target is hit first and
+    the trail never gets the chance to do anything. Raising the target is what
+    lets the mechanism that already exists actually operate.
+
+    So the target here sits at `target_multiple` times the modelled push rather
+    than at it. It is deliberately not removed: `lots` and the reward-to-risk
+    gate both need a target to exist, and a trade with no defined objective
+    cannot be sized or refused. Placed near the ninetieth percentile of the
+    push distribution, it stops being the thing that ends the trade in the
+    ordinary case and becomes what `thesis-only` did for the stop - an outer
+    bound rather than a decision.
+
+    **What ends the trade instead** is the trail, tightened here because it now
+    carries the exit rather than assisting it, and the clock. The risk this
+    takes is the obvious one and it should be stated: a trail that has not been
+    reached gives back everything between the peak and the stop, so this will
+    show more round trips through profit than the fixed target does. That is
+    the trade being made - a worse win rate for a longer right tail - and it is
+    exactly what running it beside the others will measure.
+
+    **One difference from `level-scalp`**, like `snap` and `thesis-only` before
+    it: same entries, same anchors, same gates, same stop. Only the exit moves.
+    """
+
+    name: ClassVar[str] = "runner"
+    description: ClassVar[str] = (
+        "The level call with the target moved out past the push distribution, "
+        "so the trail ends the trade rather than the cap. Trades the tail."
+    )
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+    #: Three times the modelled push. With the push capped near 1.3v that lands
+    #: around 4v - close to the ninetieth percentile of what touches actually
+    #: reach, so it bounds the trade without being what normally ends it.
+    target_multiple: ClassVar[float] = 3.0
+    #: Tighter than the shared default because the trail is the exit here, not
+    #: a safety net behind a target that fires first.
+    trail_vol: ClassVar[float] = 1.0
+    #: Protect the trade as soon as it has paid for its own risk.
+    break_even_at: ClassVar[float] = 1.0
+
+
+@register
 class SwingLevel(LevelStrategy):
     """A slower trade: anchored on the daily, triggered as low as it can be.
 

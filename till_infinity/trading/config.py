@@ -190,6 +190,7 @@ MAGIC_ORDER: tuple[str, ...] = (
     # noticed, and their two trades are unattributable in the record.
     "snap",
     "thesis-only",
+    "runner",
 )
 
 
