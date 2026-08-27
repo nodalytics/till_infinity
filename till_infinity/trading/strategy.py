@@ -32,6 +32,7 @@ from typing import Any, ClassVar
 
 from ..logging import get_logger
 from .config import Settings
+from .floors import Floors
 from .models import SymbolSpec, Tick, Verdict
 
 log = get_logger(__name__)
@@ -64,6 +65,9 @@ class Strategy(ABC):
         self.settings = settings
         self.seen = 0
         self.wanted = 0
+        #: The bar each direction has to clear, kept per direction because the
+        #: two do not have the same distribution. See `floors.py`.
+        self.floors = Floors(percentile=settings.probability_percentile)
 
     #: Seconds a trade from this strategy may stay open. Zero takes the
     #: configured `max_hold`. A strategy whose thesis needs time to play out

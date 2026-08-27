@@ -363,6 +363,21 @@ class Settings:
     #: Zero disables. Measured over the first nineteen closed trades: the eight
     #: with a directional base under 0.55 produced one winner and -6.74R.
     min_base_rate: float = 0.0
+    #: Where to sit in each direction's *own* distribution of claimed
+    #: probability, in [0, 1]. Zero uses `min_probability` alone.
+    #:
+    #: One absolute number produced a one-sided book: over 7,498 calls the two
+    #: directions are offered almost evenly - 48% up, 52% down - but down
+    #: arrives more confident, median 0.880 against 0.824, so a single floor at
+    #: 0.75 passed 96% of sells and 80% of buys and the book came out 21 sells
+    #: to 4 buys with no rule saying it should.
+    #:
+    #: Off by default, and the reason is worth stating: this repository has
+    #: measured dynamic thresholds losing to matched constants three times. The
+    #: fixed-pair version is in `floors.by_direction` and is what the evidence
+    #: favours; this exists for when the distributions drift far enough that a
+    #: fixed pair stops meaning what it meant.
+    probability_percentile: float = 0.0
 
     #: The floor on |edge|, and it has to sit **above** `reactions.MIN_EDGE`
     #: or it is configuration that can never fire - every signal reaching the
@@ -727,6 +742,7 @@ class Settings:
             max_spread_fraction=_float("TRADING_MAX_SPREAD_FRACTION", 0.25),
             min_probability=_float("TRADING_MIN_PROBABILITY", 0.58),
             min_base_rate=_float("TRADING_MIN_BASE_RATE", 0.0),
+            probability_percentile=_float("TRADING_PROBABILITY_PERCENTILE", 0.0),
             min_edge=_float("TRADING_MIN_EDGE", 0.15),
             loss_cooldown=_float("TRADING_LOSS_COOLDOWN_S", 900.0),
             max_hold=_float("TRADING_MAX_HOLD_S", 1_800.0),

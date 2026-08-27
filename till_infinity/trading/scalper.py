@@ -299,10 +299,18 @@ class LevelStrategy(Strategy):
         features = _features(payload)
 
         probability = _number(features, "probability")
-        if probability < settings.min_probability:
+        # The bar for *this* direction. A single absolute number let 96% of
+        # sells through and refused one buy in five, because the two
+        # directions' probabilities do not sit in the same place - see
+        # `floors.py`. Falls back to the absolute floor until each direction
+        # has a distribution, and can never sit below it.
+        claimed = "up" if side is Side.BUY else "down"
+        self.floors.observe(claimed, probability)
+        bar = self.floors.floor(claimed, settings.min_probability)
+        if probability < bar:
             return Refusal(
                 "probability",
-                f"{probability:.0%} against a {settings.min_probability:.0%} floor",
+                f"{probability:.0%} against a {bar:.0%} floor for {claimed} calls",
                 feed,
             )
 

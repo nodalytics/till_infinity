@@ -3470,3 +3470,62 @@ async def test_a_deep_pullback_is_not_clamped_at_the_sweep_edge():
     assert held.trigger < 4396.0, "a wick past the zone should be met past the zone"
     unit = price_distance(4400.0, 10.0, 1.0)
     assert held.trigger >= 4400.0 - made.pullback_max_vol * unit
+
+
+# ------------------------------------- one threshold, two distributions
+
+
+def test_the_floor_is_per_direction_because_the_distributions_differ():
+    """A single absolute number produced a one-sided book.
+
+    Over 7,498 published calls the two directions are offered almost evenly -
+    48% up, 52% down - but down arrives more confident, median 0.880 against
+    0.824. So one floor at 0.75 passed 96% of sells and 80% of buys, and the
+    book came out 21 sells to 4 buys with no rule saying it should.
+    """
+    from till_infinity.trading.floors import WARMUP, Floors
+
+    book = Floors(percentile=0.5)
+    # Two directions with genuinely different distributions.
+    for i in range(WARMUP + 50):
+        book.observe("up", 0.70 + (i % 10) * 0.01)
+        book.observe("down", 0.85 + (i % 10) * 0.01)
+
+    up = book.floor("up", 0.60)
+    down = book.floor("down", 0.60)
+    assert down > up, "the more confident direction should have to clear more"
+    assert book.counts()["up"] >= WARMUP
+
+
+def test_a_cold_direction_falls_back_to_the_absolute_floor():
+    """A quantile of forty observations is a statement about forty
+    observations."""
+    from till_infinity.trading.floors import Floors
+
+    book = Floors(percentile=0.8)
+    for _ in range(40):
+        book.observe("up", 0.90)
+    assert book.floor("up", 0.75) == pytest.approx(0.75)
+
+
+def test_the_percentile_never_opens_a_door_the_absolute_floor_shut():
+    """It exists to correct an asymmetry, not to relax anything."""
+    from till_infinity.trading.floors import WARMUP, Floors
+
+    book = Floors(percentile=0.1)
+    for _ in range(WARMUP + 10):
+        book.observe("up", 0.62)  # a weak direction
+    assert book.floor("up", 0.80) == pytest.approx(0.80)
+
+
+def test_the_floor_does_not_move_with_outcomes():
+    """Raising a bar after a loss and lowering it after a win was the rule
+    that lost to having no rule. What is tracked is what the model *says*, not
+    what happened next, so a losing streak cannot tighten it."""
+    import inspect
+
+    from till_infinity.trading.floors import Floors
+
+    src = inspect.getsource(Floors)
+    for word in ("profit", "outcome", "won", "loss"):
+        assert word not in src.lower(), f"the floor must not see {word}"
