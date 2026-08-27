@@ -535,3 +535,61 @@ gates is that none of them earns its refusals.
 This is the second time raw versus direction-adjusted `base_rate_up` has
 produced a confident, backwards reading here. The adjustment now lives in
 `gates._facing` with the reasoning attached.
+
+## Can momentum choose which of the two directional bets to take?
+
+Every scalping strategy here is one of two wagers. `level-scalp` and its
+refinements bet the level **holds**; `inverse` bets it **fails**. Nothing chose
+between them - `inverse` runs as a control precisely because the choice had
+never been made on evidence. The proposal: momentum makes it. Price drifting
+into a level is a level being tested; price *running* into one is a move in
+progress and more likely to go through.
+
+`research/harness/regime.py` tests it against 54,547 resolutions, using
+`approach_vol` - how far price ran on its way in.
+
+| approach (v) | n | break share | R with the level |
+| --- | ---: | ---: | ---: |
+| 0.00-0.15 | 5,454 | 8.2% | 0.861 |
+| 0.78-1.00 | 5,454 | 8.0% | 0.943 |
+| 1.61-2.09 | 5,454 | 6.3% | 0.946 |
+| 2.09-3.04 | 5,454 | 6.6% | 0.865 |
+| 3.04-40.76 | 5,461 | **4.5%** | 0.875 |
+
+**The effect is real and points the other way.** Break share nearly halves
+across the range, and it falls monotonically through the top half. A *harder*
+run into a level is more likely to be rejected, not less - which is the
+opposite of the premise. Read charitably it says a violent approach is
+exhaustion, or that the level is where resting interest sits and a fast move
+reaches it and bounces; neither reading is established here.
+
+**And the effect is not tradeable as it stands.** R with the level is flat
+across every decile - 0.861 to 0.946 with no trend, including in the deciles
+where breaks are rarest. The outcome *classes* shift without the money
+changing, so even the real relationship does not convert into a better trade
+under this stop-and-target rule.
+
+So momentum is not a regime classifier on this evidence, and it does not
+select between the two bets. It stays what it was built as: a **timing**
+filter, which is a different question and the one the record says was being
+got wrong.
+
+### The two bets were never fifty-fifty, which reframes `inverse`
+
+| outcome | share |
+| --- | ---: |
+| reject | 69.4% |
+| trap | 16.7% |
+| backcheck | 7.7% |
+| break | **5.5%** |
+
+Levels hold about seven times in ten and break about one time in twenty. So
+"the level fails" is not the other half of a coin - it is the tail. `inverse`
+is therefore not betting on breaks; it is betting the *direction the model
+names* is wrong, which is a different claim and one this table cannot settle.
+
+A caveat on all of the above: `approach_vol` is a single-touch measure taken at
+the level, where momentum is adverse to the with-level trade by construction.
+It is not the accumulator in `structures/cusum.py`, and a momentum measure over
+a longer horizon - is this a pullback inside a trend, or a range being tested -
+is a different question that this does not answer.
