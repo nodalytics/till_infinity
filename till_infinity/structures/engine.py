@@ -354,12 +354,6 @@ class Call(Restorable):
                 # journal can say whether the combination beat the estimate
                 # already in use - see `consensus_vol.py`.
                 "ensemble_bps": vol.ensemble_bps,
-                # Which kind of market this call was made in, learned from the
-                # scale-free readings rather than cut at asserted thresholds.
-                # Empty until the clustering is warm. Recorded so a per-regime
-                # scoreboard can be kept - the replay says regime separates
-                # outcomes, and that it is small next to the stop and entry.
-                "market": market,
                 # The level's own hold rate on the side price arrived from,
                 # and the decisive interactions behind it. The strongest
                 # single signal a level carries - strength.md puts it at AUC
@@ -415,6 +409,7 @@ class Call(Restorable):
                 "activity": busy,
             },
             direction=self.inference.direction,
+            market=market,
             interval=self.interval,
             time=self.time,
         )

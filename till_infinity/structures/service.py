@@ -358,6 +358,7 @@ class Watcher:
                     "interval": signal.interval,
                     "venue": signal.venue,
                     "direction": signal.direction,
+                    "market": signal.market,
                     "confluence": "+".join(signal.confluence),
                     **signal.features,
                 },

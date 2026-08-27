@@ -74,6 +74,15 @@ class Signal(Restorable):
     #: separately from `features` because a reader's first glance is the
     #: direction, and a float dict is not where a headline should live.
     direction: str = ""
+    #: Which kind of market this was found in, learned online. Empty until the
+    #: classifier is warm.
+    #:
+    #: Here rather than in `features` for a reason that cost a production
+    #: outage: `features` is a float dict and every value in it is rounded on
+    #: the way out, so a string put there raises on the first signal - and the
+    #: raise lands in the structures consumer, which stops while the container
+    #: goes on reporting healthy.
+    market: str = ""
     #: The other timeframes agreeing on this price, coarsest first, as
     #: "1d+4h+1h". Empty means no other timeframe has a level here - which is
     #: information too, and is reported as such rather than left blank.

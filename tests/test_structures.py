@@ -1423,3 +1423,34 @@ def test_the_regime_features_only_call_methods_the_clock_has():
     }
     assert set(features) == set(sx.regimes.FEATURES)
     assert all(isinstance(v, float) for v in features.values())
+
+
+def test_a_label_never_goes_into_the_float_dict():
+    """The second production outage of the day, and the same shape as the first.
+
+    `Signal.features` is a float dict and every value is rounded on the way
+    out, so a string put there raises on the first signal - `type str doesn't
+    define __round__` - and the raise lands in the structures consumer, which
+    stops while the container goes on reporting healthy.
+
+    Labels belong beside `direction`, which is on the Signal for exactly this
+    reason and has been all along.
+    """
+    from till_infinity.structures.models import Shape, Signal
+
+    sig = Signal(
+        shape=Shape.LEVEL,
+        feed="gold",
+        venue="consensus",
+        score=0.4,
+        interval="5m",
+        direction="up",
+        market="quiet",
+        features={"vol_bps": 4.2},
+    )
+    assert sig.market == "quiet"
+    # Everything in features must survive being rounded.
+    for key, value in sig.features.items():
+        assert round(value, 6) is not None, key
+    d = sig.to_dict()
+    assert d["features"]["vol_bps"] == pytest.approx(4.2)
