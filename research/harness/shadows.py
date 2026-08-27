@@ -28,7 +28,6 @@ import json
 import sqlite3
 import sys
 
-from till_infinity.prices.models import Interval
 from till_infinity.prices.store import SqliteStore
 
 
@@ -59,14 +58,21 @@ def losses(db):
     return out
 
 
+#: Interval names smallest first. `SeriesKey.interval` is the name, and the
+#: seconds live on `Interval` rather than being derivable from the string, so
+#: the ordering is written out rather than computed from a method that does not
+#: exist - which is what the first draft of this assumed.
+FINENESS = ("1m", "3m", "5m", "15m", "1h", "4h", "1d", "1w")
+
+
 async def after(store, feed, when, horizon):
     """Highs and lows on the finest series available, after `when`."""
     best = None
     for info in await store.series():
-        key = info.key if hasattr(info, "key") else None
-        if key is None or key.feed != feed:
+        key = info.key
+        if key.feed != feed or key.interval not in FINENESS:
             continue
-        if best is None or Interval.seconds_of(key.interval) < Interval.seconds_of(best.interval):
+        if best is None or FINENESS.index(key.interval) < FINENESS.index(best.interval):
             best = key
     if best is None:
         return []

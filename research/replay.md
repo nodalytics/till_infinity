@@ -113,6 +113,57 @@ refinement on top of entry and stop placement, not the lever - and
 [edge.md](../docs/edge.md) is the standing caution about reaching for a
 dynamic rule before the constant has been got right.
 
+## Half the stopped trades were right
+
+`research/harness/shadows.py`, run against the production journal and price
+store on 2026-08-27. Every losing trade, followed forward through recorded
+prices to ask whether the target it was aiming at arrived after the stop.
+
+| when | feed | strategy | verdict | best R |
+| --- | --- | --- | --- | ---: |
+| 12:51 | gold | - | **would have won** | +25.65 |
+| 19:38 | us30 | sweep-aware | **would have won** | +17.50 |
+| 03:23 | gold | sweep-aware | **would have won** | +13.74 |
+| 23:40 | gold | sweep-aware | **would have won** | +13.05 |
+| 02:51 | us100 | sweep-aware | **would have won** | +6.52 |
+| 01:54 | gold | sweep-aware | **would have won** | +3.70 |
+| 14:42 | gold | approach-scalp | still lost | +1.55 |
+| 22:18 | gold | sweep-aware | still lost | +1.38 |
+| 06:16 | us30 | sweep-aware | still lost | +0.87 |
+| 04:29 | silver | fade-to-value | still lost | +0.37 |
+| 18:34 | us100 | fade-to-value | still lost | +0.35 |
+| 04:36 | us30 | fade-to-value | still lost | -4.84 |
+
+**Six of twelve stopped trades later reached their target**, and not
+marginally - between 3.7R and 25.7R after the stop took them out. Of the six
+that did not, four still went positive first, and exactly one was wrong from
+the start.
+
+So the direction the level model produces is largely right, and the execution
+is giving back money the thesis earned. A stop one volatility unit from a fill
+that itself sits up to a unit from the level is not protecting the trade; it is
+a tollbooth on the way to being right.
+
+### Why this does not contradict the stop replay above
+
+The replay says tighter stops win. This says our stops are too tight. Both are
+measurements and both are correct, because they are measuring stops in
+different places: the replay places the stop **at the level**, where the median
+excursion is zero and a tight stop is rarely reached, and production places it
+at the level while the *entry* lands wherever price was when the call arrived.
+
+The distance between the fill and the level is the noise the trade has to
+survive before its thesis is tested, and nothing was measuring it. That is the
+same conclusion the stop-scaling reversal reached from the other direction, now
+with twelve worked examples rather than an argument.
+
+### The worked case
+
+The us30 short at 19:38 filled at 53519 and stopped at 53525. Fourteen minutes
+later price ran to 53529.8 - through the stop - and then dropped to 53439,
+**eighty points through the entry**. The thesis was right, the stop was six
+points away, and the move needed it to survive eleven.
+
 ## The side question, and why the journal could not answer it
 
 Six of seven strategies take their side from the direction the call carries.
