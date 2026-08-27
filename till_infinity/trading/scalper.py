@@ -310,6 +310,31 @@ class LevelStrategy(Strategy):
         if edge < settings.min_edge:
             return Refusal("edge", f"{edge:.3f} against a {settings.min_edge:.3f} floor", feed)
 
+        # How often this level holds *at all*, in the direction being claimed.
+        #
+        # `base_rate_up` is always the up rate, so it has to be flipped for a
+        # sell before it means anything - comparing it raw across a set that is
+        # mostly sells describes the direction mix rather than the levels, which
+        # is a mistake this was written after making.
+        #
+        # It is gated because the losses concentrate below it: over the first
+        # nineteen closed trades, the eight with a directional base under 0.55
+        # produced one winner and -6.74R. The reading is that a level which
+        # does not usually hold is not made trustworthy by a model claiming
+        # something unusual about it - which is also why the *edge* is a poor
+        # ranking here, since a large edge is exactly a large departure from a
+        # weak baseline.
+        if settings.min_base_rate > 0:
+            base_up = _number(features, "base_rate_up")
+            base = base_up if side is Side.BUY else 1.0 - base_up
+            if base_up and base < settings.min_base_rate:
+                return Refusal(
+                    "base_rate",
+                    f"the level holds {base:.0%} of the time this way, "
+                    f"against a {settings.min_base_rate:.0%} floor",
+                    feed,
+                )
+
         if self.needs_context and not self.anchored(payload):
             return Refusal(
                 "unanchored",

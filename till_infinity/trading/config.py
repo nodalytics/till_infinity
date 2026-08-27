@@ -352,6 +352,17 @@ class Settings:
     #: decide whether to *tell someone*. Deciding whether to put money on it is
     #: a different question and gets its own number.
     min_probability: float = 0.58
+    #: How often the level must hold in the claimed direction, unconditionally.
+    #:
+    #: Separate from `min_probability`, which is the *conditional* - what the
+    #: model thinks about this touch. This is the baseline it is measured
+    #: against, and the two are not the same question: a level that holds 45%
+    #: of the time and is claimed at 80% is a bigger departure than one that
+    #: holds 65% and is claimed at 85%, and the first is the worse trade.
+    #:
+    #: Zero disables. Measured over the first nineteen closed trades: the eight
+    #: with a directional base under 0.55 produced one winner and -6.74R.
+    min_base_rate: float = 0.0
 
     #: The floor on |edge|, and it has to sit **above** `reactions.MIN_EDGE`
     #: or it is configuration that can never fire - every signal reaching the
@@ -694,6 +705,7 @@ class Settings:
             min_reward_to_risk=_float("TRADING_MIN_RR", 1.2),
             max_spread_fraction=_float("TRADING_MAX_SPREAD_FRACTION", 0.25),
             min_probability=_float("TRADING_MIN_PROBABILITY", 0.58),
+            min_base_rate=_float("TRADING_MIN_BASE_RATE", 0.0),
             min_edge=_float("TRADING_MIN_EDGE", 0.15),
             loss_cooldown=_float("TRADING_LOSS_COOLDOWN_S", 900.0),
             max_hold=_float("TRADING_MAX_HOLD_S", 1_800.0),

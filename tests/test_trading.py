@@ -3385,3 +3385,44 @@ def test_the_stop_clears_the_brokers_own_minimum():
     assert abs(got.entry - got.stop) >= 3.0, "the stop has to clear the broker's floor"
     # And the order the broker would see is one it will accept.
     assert not td.sizing.respects_stops_level(wide, got.entry, got.stop, got.target)
+
+
+def test_a_level_that_does_not_usually_hold_is_refused():
+    """The losses concentrate below this line.
+
+    Over the first nineteen closed trades, the eight with a directional base
+    rate under 0.55 produced one winner and -6.74R. A level that does not
+    usually hold is not made trustworthy by a model claiming something unusual
+    about it.
+    """
+    weak = take("level-scalp", signal(features={"base_rate_up": 0.40}), min_base_rate=0.55)
+    assert isinstance(weak, Refusal)
+    assert weak.gate == "base_rate"
+
+    strong = take("level-scalp", signal(features={"base_rate_up": 0.70}), min_base_rate=0.55)
+    assert isinstance(strong, Intent)
+
+
+def test_the_base_rate_is_read_in_the_direction_claimed():
+    """`base_rate_up` is always the *up* rate, so a sell has to flip it.
+
+    Comparing it raw across a set that is mostly sells describes the direction
+    mix rather than the levels - a mistake made once already while reading
+    these numbers.
+    """
+    # A 0.30 up-rate is a 0.70 down-rate: weak for a buy, strong for a sell.
+    buy = take("level-scalp", signal(features={"base_rate_up": 0.30}), min_base_rate=0.55)
+    assert isinstance(buy, Refusal)
+    assert buy.gate == "base_rate"
+
+    sell = take(
+        "level-scalp",
+        signal(direction="down", features={"base_rate_up": 0.30}),
+        min_base_rate=0.55,
+    )
+    assert isinstance(sell, Intent)
+
+
+def test_no_base_rate_floor_leaves_every_call_alone():
+    got = take("level-scalp", signal(features={"base_rate_up": 0.10}))
+    assert isinstance(got, Intent)
