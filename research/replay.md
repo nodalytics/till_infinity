@@ -113,6 +113,59 @@ refinement on top of entry and stop placement, not the lever - and
 [edge.md](../docs/edge.md) is the standing caution about reaching for a
 dynamic rule before the constant has been got right.
 
+## One threshold, two distributions, and a one-sided book
+
+Twenty-five trades in, the book was **21 sells to 4 buys**. The signals were
+not: over 7,498 published level calls `structures` offered 48.1% up and 51.9%
+down. The model is not biased about *what* it says. It is more confident when
+it says down.
+
+| direction | n | median claimed probability | passes 0.75 | passes 0.85 |
+| --- | ---: | ---: | ---: | ---: |
+| up | 3,608 | 0.824 | 79.9% | 38.7% |
+| down | 3,890 | **0.880** | **95.9%** | **61.5%** |
+
+A single absolute floor on two distributions that sit in different places
+admits the weakest fifth of one direction and the weakest twentieth of the
+other. That is the whole mechanism, and it needs no market explanation - the
+gate produced the skew on its own.
+
+It also predicts what the outcomes showed: the four buys averaged **-0.69R**
+against the sells' -0.09R, which is what happens when one side is admitted
+further down its own quality distribution than the other.
+
+### Why a percentile here, having measured three of them losing
+
+`edge.md` found a rolling quantile losing to a matched constant four times out
+of four, and a walk-forward adaptive probability floor came out **worse than no
+floor at all**. Three nulls is a strong prior against a fourth.
+
+The distinction is the one edge.md draws itself. `edge` was **already
+scale-free**, so normalising it per cell destroyed a comparability it had. A
+directional probability is *not* comparable across directions - the two groups
+demonstrably sit in different places - and a constant that means "the top
+fifth" for one means "the top half" for the other. That is the case where a
+quantile is the honest form rather than the clever one.
+
+Two properties keep it on the right side of the prior:
+
+* **It cannot see outcomes.** What is tracked is the distribution of what the
+  model *says*, never what happened next, so a losing streak cannot tighten it
+  and a winning one cannot loosen it. That was precisely the rule that lost to
+  having no rule, and there is a test asserting the source contains no
+  reference to profit or loss.
+* **It can only raise the bar.** The percentile is floored at the absolute
+  `min_probability`, so it corrects an asymmetry rather than opening a door
+  that was being held shut.
+
+The matched-constant version - two fixed floors, one per direction - is written
+down beside it in `floors.by_direction`, because that is the shape the evidence
+keeps favouring. The percentile is for when the distributions drift far enough
+that a fixed pair stops meaning what it meant.
+
+Deployed at 0.3, which keeps the top 70% of each direction and equalises by
+**tightening the over-represented side** rather than loosening the other.
+
 ## Edge is a good floor and a bad ranking
 
 Nineteen closed trades, scored against what the gates would have kept. The

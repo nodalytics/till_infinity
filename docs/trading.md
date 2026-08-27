@@ -799,6 +799,53 @@ Two strategies can only collide in the hashed tail, and start-up says so out
 loud when they do rather than leaving it to be found in a scorecard that looks
 fine.
 
+## Managing a trade once it is on
+
+Three rules, and all three were switched on only after something in the record
+asked for them.
+
+**Break-even** at `break_even_at` R in front moves the stop to the entry plus a
+spread cushion, so a trade that was won cannot become one that was lost. It
+earned its keep within two minutes of being enabled - a uk100 short went 4.4R
+in front, the stop moved, and it closed for +69.
+
+**Trailing** keeps the stop behind the best price the trade has seen, and the
+distance is **the level's own** rather than a flat number. `trail_vol` is in
+volatility units so it already adapts across instruments - 2v on gold is not 2v
+on the FTSE - but it did not adapt to how far *this level's* pullbacks run, and
+that is what a trail has to survive. A level whose wicks reach 3v takes out a
+2v trail on an ordinary retracement while the move is still going, which is
+being stopped by noise in profit. The wick mean plus a share of its spread is
+the floor now, with `trail_vol` as the minimum.
+
+**The hold extension** keeps a trade past its clock if it is working, after
+moving the stop to break even first - see below.
+
+**All three announce themselves.** Fills and closes were announced and stop
+moves were not, so the channel showed a trade opening at one risk and closing
+at another with nothing in between to explain it. A stop move gets its own
+event kind so it neither suppresses nor is suppressed by the fill and the close
+it sits between.
+
+## The probability floor is per direction
+
+One absolute number produced a one-sided book: 21 sells to 4 buys, from signals
+that were offered 48% up and 52% down. The model is not biased about what it
+says - it is **more confident when it says down**, median 0.880 against 0.824 -
+so a single floor at 0.75 passed 96% of sells and 80% of buys. The gate made
+the skew, not the market.
+
+`floors.py` sits at the same *percentile* of each direction's own distribution
+instead. It can only ever raise the bar above the absolute floor, and it cannot
+see outcomes - what it tracks is the distribution of what the model says, never
+what happened next, because a floor that tightens after a loss was measured
+losing to having no floor at all.
+
+The matched-constant version - two fixed numbers, one per direction - is beside
+it in `floors.by_direction` and is what this repository's evidence generally
+favours. See [replay.md](../research/replay.md) for why a quantile is
+defensible in this one case and was not in the others.
+
 ## What the gates are actually for
 
 Three numbers describe a call and they do different jobs. Measured over the
