@@ -61,8 +61,28 @@ docker container prune -f >/dev/null 2>&1 || true
 docker image prune -af >/dev/null 2>&1 || true
 df -h / | awk 'NR==2 {print "  " $4 " free of " $2}'
 
+# Retried, because the prune above occasionally leaves containerd with a
+# dangling content lease and the very next pull dies on it:
+#
+#   Error response from daemon: lease does not exist: not found
+#
+# It is transient - the same pull succeeds immediately afterwards - but the
+# deploy job fails, and a failed deploy is the quietest failure here: the
+# previous image keeps running and keeps reporting healthy, so the only symptom
+# is that a change nobody doubted is not actually live. That went unnoticed for
+# twenty minutes once.
 echo "pulling $IMAGE:$TAG"
-docker pull "$IMAGE:$TAG"
+for attempt in 1 2 3; do
+  if docker pull "$IMAGE:$TAG"; then
+    break
+  fi
+  if [[ "$attempt" == 3 ]]; then
+    echo "pull failed three times - leaving the running container alone" >&2
+    exit 1
+  fi
+  echo "pull failed, retrying ($attempt of 3)"
+  sleep 5
+done
 
 # Stop the old one *after* the pull succeeds, so a registry problem leaves the
 # previous version running rather than nothing at all.
