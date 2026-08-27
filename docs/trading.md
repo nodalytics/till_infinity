@@ -827,6 +827,56 @@ at another with nothing in between to explain it. A stop move gets its own
 event kind so it neither suppresses nor is suppressed by the fill and the close
 it sits between.
 
+## Sizing for the stop we get, not the stop we place
+
+Stopped trades cost **1.09R** against the 1.00R they were sized for, and the
+number held steady across 13, 25 and 27 stops - the most stable measurement in
+the journal. The decomposition says where it comes from, and it is not where a
+day of entry work assumed:
+
+| | mean |
+| --- | ---: |
+| entry slippage - filled worse than decided | +0.025R |
+| exit slippage - closed beyond the stop | **+0.062R** |
+| together | +0.087R |
+
+**The exit is two and a half times the entry.** Candlestick confirmation, the
+momentum filter and the pullback all target the entry, which is the smaller
+half.
+
+The exit half is not a defect to remove. A broker stop is a market order once
+triggered, so it fills through the spread and any gap; that is what a stop is.
+The defect is *sizing* against the stop we place rather than the one we get,
+which breaches the risk budget on every loss - quietly, and by a constant.
+
+`stop_slippage` inflates the distance `lots` sizes against, so a stop filling
+9% past its price costs the money it was budgeted to cost.
+
+**This does not improve returns and should not be read as if it does.**
+Positions get about 8% smaller and losses land where they were meant to. What
+it buys is that `max_risk_money`, the daily loss fraction and every per-trade
+budget mean what they say, instead of being exceeded by 9% whenever a trade
+loses - which is the direction that matters.
+
+### `risk_money` changed meaning, and it is easy to trip over
+
+It is now the loss a stop is **expected to cost**, computed from the inflated
+distance - not the loss at the drawn stop. The two differ by the slippage.
+
+That is the more useful definition, because it can be compared straight
+against the risk budget. But it no longer reconciles against `volume x
+stop_distance x tick_value`, so anyone checking the number against the stop on
+the chart will find it does not add up, and will be right that it does not.
+
+### Two sizing factors now compound
+
+`trend_sizing` and `stop_slippage` are independent and multiply. In deep chop
+that is roughly 0.75 x 0.92, so about **0.69x** the position the same signal
+would have taken before either existed. Both factors are individually
+measured; nobody chose 0.69. If sizes look too small, `trend_sizing` is the
+dial to turn first - it has the larger effect and the thinner evidence behind
+it.
+
 ## Three more, about execution rather than direction
 
 Added together because they answer one question - what to do with a position

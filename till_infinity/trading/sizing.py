@@ -87,8 +87,19 @@ class Sizing:
     """The answer, or the reason there is not one."""
 
     volume: float = 0.0
+    #: What being stopped is **expected to cost**, not what it costs at the
+    #: drawn stop. Once `slippage` is non-zero these differ: the figure is
+    #: computed from the inflated distance, because a broker stop fills through
+    #: the spread and the money that leaves the account is what a risk budget
+    #: is about.
+    #:
+    #: The practical consequence, which is easy to trip over: this no longer
+    #: reconciles against `volume x stop_distance x tick_value`. It reconciles
+    #: against the budget - which is the comparison worth being able to make
+    #: directly, and the reason it is defined this way round.
     risk_money: float = 0.0
-    #: What one lot loses if the stop is hit. The number the volume divides.
+    #: What one lot loses if the stop is hit, at the same inflated distance.
+    #: The number the volume divides.
     loss_per_lot: float = 0.0
     reason: str = ""
 
