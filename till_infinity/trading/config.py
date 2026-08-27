@@ -684,6 +684,27 @@ class Settings:
     #: taken by ordinary movement while the trade is still working, which is
     #: being stopped by noise in profit. `trail_vol` acts as the floor.
     trail_sigmas: float = 0.5
+    #: Refuse a trade when the market around this level is choppier than this.
+    #: Zero is off. See `structures.trend`.
+    #:
+    #: Measured 2026-08-27: levels in the most trending decile break 1.4% of
+    #: the time and return 1.149R, against 11.3% and 0.807R in the chop. A
+    #: trend does *not* run levels over - it makes them hold harder and pay
+    #: more, so this is a pullback-in-trend effect and the obvious reading of
+    #: "trade the trend" has the sign backwards.
+    min_efficiency: float = 0.0
+
+    #: How far either side of 1 the trend context may move position size.
+    #: Zero is off. 0.3 gives 0.7x in flat chop and 1.3x in a clean trend.
+    #:
+    #: Preferred to the floor above, and shipped alongside it so the two can be
+    #: compared. The relationship is continuous and monotonic across the top
+    #: deciles, so a threshold throws away the middle; and a gate that turns
+    #: out to be wrong shows up as nothing happening, which is the failure this
+    #: repository keeps finding late. Bounded because 0.34R between extreme
+    #: deciles justifies leaning, not doubling.
+    trend_sizing: float = 0.0
+
     #: Volatility units the move must have turned back **in the trade's
     #: favour**, after a pullback, before the entry is taken. Zero is off.
     #:
@@ -925,6 +946,8 @@ class Settings:
             break_even_ticks=_int("TRADING_BREAK_EVEN_TICKS", 2),
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
+            min_efficiency=_float("TRADING_MIN_EFFICIENCY", 0.0),
+            trend_sizing=_float("TRADING_TREND_SIZING", 0.0),
             require_turn_vol=_float("TRADING_REQUIRE_TURN_VOL", 0.0),
             require_candle=_flag("TRADING_REQUIRE_CANDLE", "0"),
             candle_tolerance_vol=_float("TRADING_CANDLE_TOLERANCE_VOL", 0.25),

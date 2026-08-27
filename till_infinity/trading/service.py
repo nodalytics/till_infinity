@@ -38,6 +38,7 @@ from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
 from ..structures.cusum import Cusum
 from ..structures.levels import SECONDS
+from ..structures.trend import Trend
 from . import manage, plans, strategy
 from . import symbols as sym
 from .broker import Broker, BrokerError, build
@@ -217,6 +218,10 @@ class Trader:
         #: accumulation is the state and mixing instruments into it would
         #: measure nothing.
         self._push: dict[str, Cusum] = {}
+        #: Trend context per feed and interval. Keyed on both because the
+        #: efficiency of 1m levels and of 15m levels on one instrument are
+        #: different markets, and pooling them measures neither.
+        self._trend: dict[tuple[str, str], Trend] = {}
         #: Best price each open trade has seen, for the trailing stop. Tracked
         #: from the quote stream rather than read from the broker, because
         #: `price_current` is a snapshot and a trail anchored to snapshots
@@ -517,6 +522,7 @@ class Trader:
         # computed in a strategy because it is an accumulation over the whole
         # quote stream and a strategy sees one signal at a time.
         self._hand_over_pressure(feed, payload)
+        self._hand_over_trend(feed, payload)
 
         tick = await self._tick(spec.symbol)
         if tick is None:
@@ -694,6 +700,28 @@ class Trader:
         return wanted_by
 
     # --------------------------------------------------------------- trading
+
+    def _hand_over_trend(self, feed: str, payload: dict[str, Any]) -> None:
+        """Attach the trend context, then fold this level into it.
+
+        **Read before observe, and the order is the whole correctness of it.**
+        The level being decided must not be inside the window it is judged
+        against, or the measure describes the decision instead of predicting
+        it - which is the trap `push_vol` fell into, where a quantity signed by
+        the outcome was scored against the outcome.
+        """
+        level = payload.get("level")
+        if not isinstance(level, int | float):
+            return
+        interval = str(payload.get("interval") or "")
+        context = self._trend.setdefault((feed, interval), Trend())
+
+        ratio = context.efficiency
+        if ratio is not None:
+            features = payload.setdefault("features", {})
+            if isinstance(features, dict):
+                features["efficiency"] = ratio
+        context.observe(float(level))
 
     def _hand_over_pressure(self, feed: str, payload: dict[str, Any]) -> None:
         """Put the accumulated run where the strategies will actually see it.

@@ -4469,3 +4469,71 @@ def test_a_gate_that_believes_in_itself_but_cannot_fire_still_warns(monkeypatch)
     """0.08 against an upstream 0.10 is a limit that does nothing, and the
     reason this warning exists at all."""
     assert _gate_warnings(monkeypatch, min_edge=0.08)
+
+
+# ----------------------------------------------------- trend context: gate and size
+
+
+def _chop(ratio, floor=0.3):
+    from till_infinity.trading.scalper import LevelScalp
+
+    engine = LevelScalp(
+        settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0, min_efficiency=floor)
+    )
+    return engine.quality("gold", {"probability": 0.9, "edge": 1.0, "efficiency": ratio}, Side.BUY)
+
+
+def test_chop_is_refused():
+    got = _chop(0.05)
+    assert got is not None
+    assert got.gate == "chop"
+
+
+def test_a_trend_is_not_refused():
+    assert _chop(0.9) is None
+
+
+def test_an_unknown_context_is_not_refused():
+    """A feed without enough history trades as it did before this existed -
+    silence is not evidence of chop."""
+    from till_infinity.trading.scalper import LevelScalp
+
+    engine = LevelScalp(
+        settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0, min_efficiency=0.3)
+    )
+    assert engine.quality("gold", {"probability": 0.9, "edge": 1.0}, Side.BUY) is None
+
+
+def test_the_chop_gate_is_off_by_default():
+    assert _chop(0.01, floor=0.0) is None
+
+
+def _scale(ratio, span=0.3):
+    from till_infinity.trading.scalper import LevelScalp
+
+    engine = LevelScalp(settings(trend_sizing=span))
+    return engine.trend_scale({} if ratio is None else {"efficiency": ratio})
+
+
+def test_size_leans_with_the_trend():
+    assert _scale(1.0) == pytest.approx(1.3)
+    assert _scale(0.0) == pytest.approx(0.7)
+    assert _scale(0.5) == pytest.approx(1.0)
+
+
+def test_size_is_unchanged_without_a_reading_or_a_span():
+    assert _scale(None) == 1.0
+    assert _scale(1.0, span=0.0) == 1.0
+
+
+def test_sizing_scales_the_fraction_so_every_cap_still_binds():
+    """Applied to `risk_fraction`, not to the lot count. A multiplier that
+    bypassed `max_risk_money` would be a way to exceed the risk budget through
+    a setting nobody reads as a risk setting.
+    """
+    import inspect
+
+    from till_infinity.trading.scalper import LevelStrategy
+
+    source = inspect.getsource(LevelStrategy.consider)
+    assert "risk_fraction=settings.risk_fraction * self.trend_scale(features)" in source

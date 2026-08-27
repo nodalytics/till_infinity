@@ -94,6 +94,22 @@ class LevelStrategy(Strategy):
         """Extra conditions beyond the shared ones. None means take it."""
         return None
 
+    def trend_scale(self, features: dict[str, float]) -> float:
+        """Size multiplier from the trend context. 1.0 when off or unknown.
+
+        Applied to `risk_fraction` rather than to the lot count, so every cap
+        downstream still binds - `max_risk_money`, the volume step, the broker
+        limits. A multiplier that bypassed those would be a way to exceed the
+        risk budget through a setting nobody reads as a risk setting.
+        """
+        span = self.settings.trend_sizing
+        if span <= 0:
+            return 1.0
+        ratio = features.get("efficiency")
+        if ratio is None:
+            return 1.0
+        return 1.0 + span * (2.0 * float(ratio) - 1.0)
+
     def orient(self, side: Side) -> Side:
         """Which way to actually trade, given the side the call named.
 
@@ -161,6 +177,18 @@ class LevelStrategy(Strategy):
                     "momentum",
                     f"{against:.2f}v of momentum still running against a {side}, "
                     f"limit {self.max_against_vol:.2f}v",
+                    feed,
+                )
+
+        # Trend context. Refuses the chop rather than selecting the trend,
+        # which is the same thing said from the side that loses money.
+        if settings.min_efficiency > 0:
+            ratio = features.get("efficiency")
+            if ratio is not None and float(ratio) < settings.min_efficiency:
+                return Refusal(
+                    "chop",
+                    f"the market here is oscillating - efficiency {float(ratio):.2f} "
+                    f"against a {settings.min_efficiency:.2f} floor",
                     feed,
                 )
 
@@ -482,7 +510,7 @@ class LevelStrategy(Strategy):
         sized = lots(
             spec,
             equity=equity,
-            risk_fraction=settings.risk_fraction,
+            risk_fraction=settings.risk_fraction * self.trend_scale(features),
             stop_distance=abs(entry - stop),
             max_risk_money=settings.max_risk_money,
         )
@@ -1433,7 +1461,7 @@ class FadeToValue(LevelStrategy):
         sized = lots(
             spec,
             equity=equity,
-            risk_fraction=settings.risk_fraction,
+            risk_fraction=settings.risk_fraction * self.trend_scale(features),
             stop_distance=abs(entry - stop),
             max_risk_money=settings.max_risk_money,
         )
