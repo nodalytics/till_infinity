@@ -564,9 +564,9 @@ class Watcher:
                     "vol_stretch": vol.stretch,
                     "regime": vol.regime,
                     "activity": busy,
-                    "hour_vol_share": self.clock.vol_share(call.feed, call.time)
-                    if self.clock
-                    else 0.0,
+                    "hour_vol_share": (
+                        self.clock.volatility(call.feed, call.time)[1] if self.clock else 1.0
+                    ),
                     "forecast_ratio": vol.forecast_ratio,
                     "sweep_rate": 0.0,
                 }

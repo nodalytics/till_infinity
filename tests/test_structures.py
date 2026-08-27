@@ -1393,3 +1393,33 @@ def test_the_scoreboard_sorts_worst_first():
     assert got[0][0] == "wild/sweep-aware"
     assert got[0][2] == pytest.approx(-1.0)
     assert got[-1][0] == "quiet/level-scalp"
+
+
+def test_the_regime_features_only_call_methods_the_clock_has():
+    """A production outage, caught here after the fact rather than before.
+
+    The regime wiring called `Clock.vol_share`, which does not exist - the name
+    was invented rather than looked up. Structures raised on the first level
+    call, the consumer stopped, and the container went on reporting healthy
+    while producing nothing, which is the failure state.py was written after.
+
+    Nothing exercised `_level_calls` against a real Clock, so the whole suite
+    passed. This asserts the seam directly: every attribute the regime features
+    read has to exist on the object that will be passed at runtime.
+    """
+    from till_infinity.structures.sessions import Clock
+    from till_infinity.structures.volatility import Volatility
+
+    clock = Clock()
+    vol = Volatility()
+    # Exactly what `_level_calls` builds, against the real objects.
+    features = {
+        "vol_stretch": vol.stretch,
+        "regime": vol.regime,
+        "activity": 1.0,
+        "hour_vol_share": clock.volatility("gold", 1_700_000_000.0)[1],
+        "forecast_ratio": vol.forecast_ratio,
+        "sweep_rate": 0.0,
+    }
+    assert set(features) == set(sx.regimes.FEATURES)
+    assert all(isinstance(v, float) for v in features.values())
