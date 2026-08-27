@@ -3650,3 +3650,37 @@ def test_agreement_never_moves_a_stop_closer_or_a_target_further():
     assert agreed == ["level-scalp"]
     assert built.stop == pytest.approx(4393.0), "kept the wider stop"
     assert built.target == pytest.approx(4406.0), "kept the nearer target"
+
+
+def test_a_consensus_threshold_of_zero_means_off():
+    """It meant "always on", and shipped that way.
+
+    The guard was `len(agreed) + 1 < consensus_min`, which with zero is never
+    true - so a setting documented as disabling the feature enabled it
+    unconditionally, and it fired in production within minutes of being
+    deployed disabled.
+    """
+    bus = Bus()
+    base = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.05,
+        entry=4400.0,
+        stop=4396.0,
+        target=4410.0,
+    )
+    others = [("sweep-aware", replace(base, stop=4390.0, target=4404.0))]
+
+    for off in (0, 1):
+        made = settings(live=True, evaluate_all=True, consensus_min=off)
+        trader = Trader(bus, settings=made, broker=RecordingBroker(made))
+        built, agreed = trader._agree(base, others)
+        assert agreed == [], f"consensus_min={off} should disable it"
+        assert built is base, "the trade must be untouched when it is off"
+
+    made = settings(live=True, evaluate_all=True, consensus_min=2)
+    trader = Trader(bus, settings=made, broker=RecordingBroker(made))
+    built, agreed = trader._agree(base, others)
+    assert agreed == ["sweep-aware"]
+    assert built.stop == pytest.approx(4390.0)

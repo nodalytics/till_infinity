@@ -542,8 +542,16 @@ class Trader:
         Money at risk is unchanged: a wider stop is re-sized into fewer lots by
         `lots`, so the account never notices the difference.
         """
+        least = self.settings.consensus_min
+        # `< 2` and not `<= 0`: a consensus of one is the trade itself, and a
+        # threshold of zero read as "off" in the setting's own description
+        # while the arithmetic made it "always on" - `len(agreed) + 1 < 0` is
+        # never true. It shipped that way and fired in production within
+        # minutes of being deployed disabled.
+        if least < 2:
+            return taken, []
         agreed = [(n, i) for n, i in others if i.side is taken.side]
-        if len(agreed) + 1 < self.settings.consensus_min:
+        if len(agreed) + 1 < least:
             return taken, []
 
         sign = taken.side.sign
