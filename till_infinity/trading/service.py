@@ -42,6 +42,7 @@ from . import symbols as sym
 from .broker import Broker, BrokerError, build
 from .config import Settings, magic_for, strategy_for
 from .context import Context
+from .manage import Move
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
 from .paper import PaperBroker
@@ -808,7 +809,52 @@ class Trader:
             if result.ok:
                 moved += 1
                 log.info("trading: %s", move)
+                await self._announce_move(live, move)
         return moved
+
+    async def _announce_move(self, live: Live, move: Move) -> None:
+        """Say when a stop moves, because it changes what the trade can lose.
+
+        Fills and closes were announced and this was not, so the channel showed
+        a trade opening at one risk and closing at another with nothing in
+        between to explain it - and the moment a trade stops being able to lose
+        is the most reassuring thing that happens to it.
+        """
+        if not (self.settings.notify and self.settings.notify_fills):
+            return
+        risk = abs(live.intent.entry - live.intent.stop)
+        gained = (move.stop - live.position.price_open) * live.intent.side.sign
+        await self.bus.publish(
+            ALERTS,
+            {
+                "title": (
+                    f"{self.settings.mode}: {live.intent.feed} stop to {move.stop:.5g}"
+                    + (f" · {live.by}" if live.by else "")
+                ),
+                "body": (
+                    f"{move.reason}\n\n"
+                    f"{live.position.side} {live.position.volume:g} @ "
+                    f"{live.position.price_open:.5g}\n"
+                    + (
+                        f"locked in {self.money(gained / risk * live.intent.risk_money)}"
+                        if risk
+                        else ""
+                    )
+                ),
+                "level": "info",
+                "fields": {
+                    "instrument": live.intent.feed,
+                    "shape": "trade",
+                    # Its own event, so it neither suppresses nor is suppressed
+                    # by the fill and the close it sits between.
+                    "event": "protect",
+                    "strategy": live.by,
+                    "venue": self.broker.name,
+                },
+                "source": "trading",
+            },
+            source="trading",
+        )
 
     async def _expire(self) -> None:
         """Close anything that has outstayed the hold its strategy asked for.

@@ -96,7 +96,30 @@ def advance(
             proposed, reason = level, f"break even at {gained / risk:.1f}R"
 
     if settings.trail_vol > 0 and vol_bps > 0:
-        behind = price_distance(best, vol_bps, settings.trail_vol)
+        # How far behind, in the level's own terms rather than a flat number.
+        #
+        # `trail_vol` is already in volatility units, so it adapts across
+        # instruments and regimes - 2v on gold is not 2v on the FTSE. What it
+        # does not adapt to is how far *this level's* pullbacks run, and that
+        # is the thing a trail has to survive: a level whose wicks reach 3v
+        # will take out a 2v trail on an ordinary retracement while the move is
+        # still going, which is being stopped by noise in profit.
+        #
+        # Same correction the pullback depth got, from the same numbers. The
+        # side is the one price would retrace *into*, which is the side the
+        # trade came from.
+        features = intent.features or {}
+        wick = (
+            features.get("wick_below_vol" if position.side is Side.BUY else "wick_above_vol") or 0.0
+        )
+        spread_vol = (
+            features.get("wick_below_sd" if position.side is Side.BUY else "wick_above_sd") or 0.0
+        )
+        seen = features.get("wick_n") or 0.0
+        room = settings.trail_vol
+        if seen >= 2:
+            room = max(room, float(wick) + float(spread_vol) * settings.trail_sigmas)
+        behind = price_distance(best, vol_bps, room)
         level = best - sign * behind
         # Only once the trail is actually in front of the original stop -
         # otherwise a trade that has barely moved gets a tighter stop than it
@@ -104,7 +127,7 @@ def advance(
         # judged.
         if _better(level, proposed, position.side) and _better(level, intent.stop, position.side):
             proposed = level
-            reason = f"trailing {settings.trail_vol:.2f}v behind {best:.5g}"
+            reason = f"trailing {room:.2f}v behind {best:.5g}"
 
     if not reason:
         return None

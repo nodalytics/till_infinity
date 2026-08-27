@@ -614,6 +614,11 @@ class Settings:
     break_even_ticks: int = 2
     #: Volatility units to trail behind the best price seen. Zero is off.
     trail_vol: float = 0.0
+    #: How much of the level's own wick spread the trail must clear, on top of
+    #: its mean. A trail inside the retracement this level routinely makes is
+    #: taken by ordinary movement while the trade is still working, which is
+    #: being stopped by noise in profit. `trail_vol` acts as the floor.
+    trail_sigmas: float = 0.5
 
     # ------------------------------------------- trading toward a level
     #: Nearest and furthest a target level may be, in volatility units. Closer
@@ -760,6 +765,7 @@ class Settings:
             break_even_at=_float("TRADING_BREAK_EVEN_AT", 0.0),
             break_even_ticks=_int("TRADING_BREAK_EVEN_TICKS", 2),
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
+            trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
             approach_min_vol=_float("TRADING_APPROACH_MIN_VOL", 0.8),
             approach_max_vol=_float("TRADING_APPROACH_MAX_VOL", 6.0),
             approach_buffer_vol=_float("TRADING_APPROACH_BUFFER_VOL", 0.25),
