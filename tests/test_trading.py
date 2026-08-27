@@ -4039,3 +4039,31 @@ async def test_the_stale_exit_is_off_by_default():
     live = _live()
     trader._best[live.position.ticket] = 4400.4
     assert await trader._stale(live, age=9_000.0) is False
+
+
+# ------------------------------------------------------------- the inverted control
+
+
+def test_inverse_flips_the_side():
+    from till_infinity.trading.scalper import Inverse, LevelScalp
+
+    assert Inverse(settings()).orient(Side.BUY) is Side.SELL
+    assert Inverse(settings()).orient(Side.SELL) is Side.BUY
+    # And nothing else does, or every strategy would be a control.
+    assert LevelScalp(settings()).orient(Side.BUY) is Side.BUY
+
+
+def test_inverse_gates_on_the_side_the_call_named():
+    """It must select the same signals to be a comparison.
+
+    Gating on the flipped side would pick a different set of calls, and then
+    a difference in results would say nothing about direction.
+    """
+    import inspect
+
+    from till_infinity.trading.scalper import LevelStrategy
+
+    source = inspect.getsource(LevelStrategy.consider)
+    gate = source.index("self.quality(")
+    flip = source.index("self.orient(")
+    assert gate < flip, "the gates must run before the side is flipped"

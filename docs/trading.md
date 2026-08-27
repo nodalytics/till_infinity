@@ -827,6 +827,94 @@ at another with nothing in between to explain it. A stop move gets its own
 event kind so it neither suppresses nor is suppressed by the fill and the close
 it sits between.
 
+## Three more, about execution rather than direction
+
+Added together because they answer one question - what to do with a position
+once it exists - and none of them needs a view on where price is going. All
+three are off by default.
+
+**Scaling out** takes `scale_out_fraction` of the position off at
+`scale_out_at` R and lets the rest run. The push distribution is wide - median
+2.24v, p75 3.37v, p90 4.93v - and a single exit has to choose which half of it
+to serve. Banking part at the modelled push and running the remainder serves
+both, and it is the honest form of `runner`, which bets the whole position on
+the tail and will pay for that in win rate.
+
+It reads the **best** price the trade has seen, not the current one. A trade
+that touched 1.2R and fell back to 0.4R has already earned the partial;
+reading the current price would make the retracement that makes banking
+worthwhile the same thing that cancels it.
+
+The volume arithmetic is where this rule breaks if it breaks, and the failure
+is not a refusal. A minimum-lot position cannot be halved, and a broker asked
+to close 0.005 of a 0.01 lot may close the lot instead - a scale-out that has
+silently become a full exit while still reading as a scale-out in the log. So
+the slice rounds *down* to the volume step, both halves must clear
+`volume_min`, and if either would not, nothing comes off and the position runs
+whole.
+
+**The stale exit** closes a trade that has gone nowhere. The median touch
+resolves in eighteen seconds and 84% inside five minutes, against holds here
+measured in half hours. A position still sitting at its entry long past
+`stale_after` is not waiting for its thesis - it is giving noise time to reach
+the stop, which is a losing trade arrived at slowly. Closing flat costs the
+spread instead. Measured from the best price again, which is the conservative
+direction: a trade that reached `stale_move` R and retraced has started, so
+only the ones that never moved at all qualify. Skipped once a position has
+been scaled, because banking part has already dealt with what this protects
+against.
+
+**Re-entry** takes a stopped-out setup again, up to `reentry_max` times. Six
+of twelve stopped trades in the sample later reached the target they were
+aiming at, by 3.7R to 25.7R - the level survived being crossed, which is what
+a sweep looks like from the outside, and the stop settled only that *that
+fill* was early.
+
+What re-arms is the **signal**, not the intent. The payload goes back through
+`on_signal` and therefore every gate, so a setup whose probability has decayed
+or whose instrument has gone wide is refused exactly like a new one.
+Resurrecting the intent would re-enter on reasoning the stop had already
+contradicted.
+
+It requires `pullback_fraction` to be above zero, and that guard is what makes
+it safe rather than a way to lose twice quickly. At the moment a stop fills,
+price is by definition at the worst point the trade has seen; re-entering at
+market buys the extreme. With the pullback on, the re-armed signal parks and
+waits for price to come back to the level - the entry the thesis wanted in the
+first place. With it off, the rule declines to fire rather than firing badly.
+
+Re-arms are queued and drained by the loop rather than entered from inside
+`_settle`, which runs during reconciliation. Opening a position from inside
+the walk over the position set is how that walk starts disagreeing with the
+broker.
+
+## The control that trades against the model
+
+`inverse` takes the calls the model likes best and trades the opposite side.
+
+It exists because the account has been going down, and two explanations fit
+that equally well from outside: the direction is right and the execution gives
+it back, or the direction is wrong and better execution loses money faster.
+Everything built here has assumed the first. Nothing had tested the second.
+
+The gates run **unchanged, on the side the call named**, so it selects the same
+signals `level-scalp` selects; only the trade is flipped. That is what makes it
+a comparison rather than a different strategy. Same entries, anchors, stop rule
+and target.
+
+If it loses roughly what the others lose, direction is not the problem and the
+execution work is aimed correctly. If it wins, the direction model is worse
+than nothing and the entries, stops and trails have been polishing a sign
+error. It is not a prediction that the model is backwards - anti-correlation
+strong enough to trade is rare and usually a measurement artefact - but a
+control expected to lose is still worth running, because the alternative is
+continuing to assume the answer.
+
+The flip is a hook on the shared `consider`, not an override of it.
+`fade-to-value` came to run none of the shared gates by overriding `consider`,
+while reading from the configuration as though it ran all of them, and a test
+asserts the gates still run before the side is flipped.
+
 ## The probability floor is per direction
 
 One absolute number produced a one-sided book: 21 sells to 4 buys, from signals

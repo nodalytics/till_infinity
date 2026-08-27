@@ -191,6 +191,7 @@ MAGIC_ORDER: tuple[str, ...] = (
     "snap",
     "thesis-only",
     "runner",
+    "inverse",
 )
 
 

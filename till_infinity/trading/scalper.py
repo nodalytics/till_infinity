@@ -94,6 +94,16 @@ class LevelStrategy(Strategy):
         """Extra conditions beyond the shared ones. None means take it."""
         return None
 
+    def orient(self, side: Side) -> Side:
+        """Which way to actually trade, given the side the call named.
+
+        Identity for everything except `inverse`. A hook rather than an
+        override of `consider`, because an override is how `fade-to-value`
+        came to run none of the shared gates while reading, from the
+        configuration, as though it ran all of them.
+        """
+        return side
+
     def quality(self, feed: str, features: dict[str, float], side: Side) -> Refusal | None:
         """The gates every strategy here should clear, wherever it decides.
 
@@ -359,6 +369,13 @@ class LevelStrategy(Strategy):
         bad = self.quality(feed, features, side)
         if bad is not None:
             return bad
+
+        # Deliberately after the gates and before everything else. A strategy
+        # that trades against the call still wants the calls the model likes
+        # best - gating on the flipped side would select a different set of
+        # signals and stop being a comparison. Everything downstream reads
+        # `side`, so the trade this builds is a correct one on the other side.
+        side = self.orient(side)
 
         if self.needs_context and not self.anchored(payload):
             return Refusal(
@@ -949,6 +966,58 @@ class Runner(LevelStrategy):
     trail_vol: ClassVar[float] = 1.0
     #: Protect the trade as soon as it has paid for its own risk.
     break_even_at: ClassVar[float] = 1.0
+
+
+@register
+class Inverse(LevelStrategy):
+    """The same call, taken the other way. A control, not a conviction.
+
+    Every strategy here trades the direction the level model names, and the
+    account has been going down while doing it. Two explanations fit that
+    equally well from the outside: the direction is right and the execution
+    gives it back, or the direction is wrong and better execution would only
+    lose money faster. Everything built this session has assumed the first.
+    Nothing has tested the second.
+
+    This tests it directly. It takes the calls the model likes *best* - the
+    gates run unchanged, on the side the call named, so it selects the same
+    signals `level-scalp` selects - and then trades the opposite side. Same
+    entries, same anchors, same stop rule, same target. One difference, and it
+    is the one that matters.
+
+    **What each outcome would mean.** If this loses roughly what the others
+    lose, direction is not the problem and the execution work is aimed
+    correctly. If it wins, the direction model is worse than nothing and the
+    entries, stops and trails have been polishing a sign error - which would
+    be the single most valuable thing this repo could learn, and the cheapest
+    way to learn it is to have run the control from the start.
+
+    **It is not a prediction that the model is backwards.** Anti-correlation
+    strong enough to trade is rare and usually turns out to be a measurement
+    artefact. The expected result is that it loses, and a control that is
+    expected to lose is still worth running, because the alternative is
+    continuing to assume the answer.
+
+    A caveat that will matter when this is scored. The gates are
+    direction-aware - the probability floor is a per-direction percentile, the
+    base-rate floor reads `base_rate_up` - so this is not a clean sign flip of
+    the whole system. It inverts the *trade* while keeping the *selection*,
+    which is the comparison that isolates direction. A version that also
+    inverted the selection would be a different strategy and a different
+    question.
+    """
+
+    name: ClassVar[str] = "inverse"
+    description: ClassVar[str] = (
+        "The calls the model likes best, traded the other way. A control on "
+        "whether the direction or the execution is what loses money."
+    )
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+
+    def orient(self, side: Side) -> Side:
+        """The other one. This is the whole strategy."""
+        return side.opposite
 
 
 @register
