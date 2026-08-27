@@ -42,7 +42,7 @@ from . import symbols as sym
 from .broker import Broker, BrokerError, build
 from .config import Settings, magic_for, strategy_for
 from .context import Context
-from .manage import Move
+from .manage import Move, Take
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
 from .paper import PaperBroker
@@ -50,6 +50,12 @@ from .risk import Guard
 from .sizing import lots, price_distance
 
 log = get_logger(__name__)
+
+#: Where a re-armed signal carries its attempt count. Kept on the payload
+#: rather than in a table keyed by feed, so it survives the round trip through
+#: `_park` and back into `on_signal` without anything having to remember it,
+#: and so a signal that never comes back never leaves a counter behind.
+ATTEMPT = "_attempt"
 
 #: Everything the trader listens to, and why each one is needed.
 #:
@@ -75,6 +81,17 @@ class Live:
     #: plugin whose hashed offset has no inverse. Read from the position rather
     #: than remembered, so it survives a restart.
     by: str = ""
+    #: True once part of this position has been banked, so the scale-out
+    #: happens once rather than on every pass of the manage loop.
+    scaled: bool = False
+    #: The signal that produced this trade, kept so a stopped-out setup can be
+    #: put back through the strategies rather than resurrected as a stale
+    #: intent. Empty for adopted positions, which therefore never re-arm -
+    #: correctly, since nothing here knows what they were.
+    signal: dict[str, Any] = field(default_factory=dict)
+    #: How many times this setup has already been taken. Zero on a first
+    #: entry, and the guard that stops `reentry_max` compounding.
+    attempt: int = 0
 
 
 @dataclass(slots=True)
@@ -179,6 +196,15 @@ class Trader:
         #: The order just sent, waiting to be matched to the position it
         #: became. Held for exactly one reconcile - see `_reconcile`.
         self._pending: tuple[int, Intent, str] | None = None
+        #: The signal behind each feed's most recent trade, so a stopped-out
+        #: setup can be put back through the strategies rather than rebuilt
+        #: from an intent that has already been proved wrong once.
+        self._last_signal: dict[str, dict[str, Any]] = {}
+        #: Signals waiting to be re-armed after a stop. Drained by the loop
+        #: rather than re-entered from inside `_settle`, which runs during
+        #: reconciliation - taking a trade there would mutate the position set
+        #: being reconciled, from inside the walk over it.
+        self._rearm: list[dict[str, Any]] = []
         #: Best price each open trade has seen, for the trailing stop. Tracked
         #: from the quote stream rather than read from the broker, because
         #: `price_current` is a snapshot and a trail anchored to snapshots
@@ -449,6 +475,10 @@ class Trader:
         spec = self.specs.get(feed)
         if spec is None:
             return None  # not traded here; not worth a refusal record
+        # Kept whether or not this becomes a trade, because what re-arms after
+        # a stop is the signal put back through every gate - not the intent,
+        # which has already been proved wrong once at this price.
+        self._last_signal[feed] = payload
 
         tick = await self._tick(spec.symbol)
         if tick is None:
@@ -891,6 +921,7 @@ class Trader:
         await self._reconcile()
         await self._manage()
         await self._expire()
+        await self._rearm_stopped()
         self._say_what_it_is_doing()
 
     def _mark_best(self, symbol: str, bid: float, ask: float) -> None:
@@ -910,14 +941,25 @@ class Trader:
                 self._best[ticket] = min(seen, price)
 
     async def _manage(self) -> int:
-        """Move stops on open trades, if either rule is switched on."""
-        if not (self.settings.break_even_at > 0 or self.settings.trail_vol > 0):
+        """Move stops on open trades, and bank part of the ones in front."""
+        rules = (
+            self.settings.break_even_at > 0
+            or self.settings.trail_vol > 0
+            or self.settings.scale_out_at > 0
+        )
+        if not rules:
             return 0
         moved = 0
         for ticket, live in list(self.open.items()):
             spec = self.specs.get(live.intent.feed)
             best = self._best.get(ticket)
             if spec is None or best is None:
+                continue
+            if not live.scaled and await self._bank(live, spec, best):
+                moved += 1
+                # The position is a different size now, and the stop rules
+                # below read `live.position.volume`. Left to the next pass
+                # rather than moving a stop against a stale volume.
                 continue
             move = manage.advance(
                 live.position,
@@ -939,6 +981,66 @@ class Trader:
                 log.info("trading: %s", move)
                 await self._announce_move(live, move)
         return moved
+
+    async def _bank(self, live: Live, spec: SymbolSpec, best: float) -> bool:
+        """Take part of a winner off, once. True if any came off.
+
+        The failure this guards against is not the broker refusing - it is the
+        broker *partially* succeeding and this not noticing, leaving `scaled`
+        false and the loop taking another slice off on the next pass until the
+        position is gone. So the flag is set on a confirmed close and the
+        position is re-read from the broker rather than adjusted by arithmetic
+        here, because what came off is the broker's answer, not ours.
+        """
+        take = manage.partial(live.position, live.intent, spec, self.settings, best=best)
+        if take is None:
+            return False
+        try:
+            result = await self.execution.close_position(take.ticket, take.volume)
+        except BrokerError as exc:
+            log.warning("trading: could not bank part of #%d: %s", take.ticket, exc)
+            return False
+        if not result.ok:
+            log.warning("trading: banking part of #%d refused: %s", take.ticket, result.comment)
+            return False
+        live.scaled = True
+        log.info("trading: %s", take)
+        for position in await self._positions(fresh=True):
+            if position.ticket == take.ticket:
+                live.position = position
+                break
+        await self._announce_bank(live, take)
+        return True
+
+    async def _announce_bank(self, live: Live, take: Take) -> None:
+        """Say when part of a position is banked - it changes size and risk."""
+        if not (self.settings.notify and self.settings.notify_fills):
+            return
+        await self.bus.publish(
+            ALERTS,
+            {
+                "title": (
+                    f"{self.settings.mode}: {live.intent.feed} part banked"
+                    + (f" · {live.by}" if live.by else "")
+                ),
+                "body": (
+                    f"{take.reason}\n\n"
+                    f"took {take.volume:g} off, {live.position.volume:g} still running"
+                ),
+                "level": "info",
+                "fields": {
+                    "instrument": live.intent.feed,
+                    "shape": "trade",
+                    # Its own event for the same reason `protect` is: it sits
+                    # between the fill and the close without replacing either.
+                    "event": "bank",
+                    "strategy": live.by,
+                    "venue": self.broker.name,
+                },
+                "source": "trading",
+            },
+            source="trading",
+        )
 
     async def _announce_move(self, live: Live, move: Move) -> None:
         """Say when a stop moves, because it changes what the trade can lose.
@@ -1005,6 +1107,8 @@ class Trader:
                 continue
             age = now - live.seen
             if age < limit:
+                if await self._stale(live, age):
+                    closed = True
                 continue
             if await self._worth_keeping(live, age, limit):
                 continue
@@ -1014,6 +1118,107 @@ class Trader:
             closed = True
         if closed:
             await self._reconcile()
+
+    async def _stale(self, live: Live, age: float) -> bool:
+        """Close a trade that has gone nowhere long past when it should have.
+
+        The median touch resolves in eighteen seconds and 84% of them inside
+        five minutes, against holds here measured in half hours. A position
+        still sitting at its entry well past that is not the event it was
+        opened for - and what it is doing while it waits is not waiting for the
+        thesis, it is giving noise time to reach the stop. That is a losing
+        trade arrived at slowly, and closing it flat costs the spread instead.
+
+        **Measured from the best price, not the current one**, and that is the
+        conservative direction: a trade that reached 0.4R and came back has
+        started, so it is left alone. Only a trade that never went anywhere at
+        all qualifies. The rule is meant to catch the dead ones, and a rule
+        that also caught the retracing ones would be closing winners on the way
+        through their pullback.
+
+        Not applied once a position has been scaled or protected - if part is
+        banked or the stop is at break even, the thing this protects against
+        has already been dealt with by something better.
+        """
+        after = self.settings.stale_after
+        if after <= 0 or age < after or live.scaled:
+            return False
+        risk = abs(live.intent.entry - live.intent.stop)
+        if risk <= 0:
+            return False
+        best = self._best.get(live.position.ticket)
+        if best is None:
+            return False
+        gained = (best - live.position.price_open) * live.intent.side.sign
+        if gained >= risk * self.settings.stale_move:
+            return False
+        log.info(
+            "trading: closing #%d flat - %.0fs old and never left the entry (%.2fR)",
+            live.position.ticket,
+            age,
+            gained / risk,
+        )
+        try:
+            await self.execution.close_position(live.position.ticket)
+        except BrokerError as exc:
+            log.warning("trading: could not close stale #%d: %s", live.position.ticket, exc)
+            return False
+        return True
+
+    def _maybe_rearm(self, live: Live, price: float) -> None:
+        """Queue a stopped-out setup for one more attempt, if it has one left.
+
+        Only a stop qualifies. A trade closed on its target got what it asked
+        for, and one closed on the clock was not refuted by anything - taking
+        either again would be trading the same idea twice rather than
+        re-taking one that a sweep interrupted.
+
+        Queued rather than re-entered here: `_settle` runs inside
+        reconciliation, and opening a position from within the walk over the
+        position set is how that walk starts disagreeing with the broker.
+        """
+        if self.settings.reentry_max <= 0 or not live.signal:
+            return
+        if live.attempt >= self.settings.reentry_max:
+            return
+        if _exit_kind(live, price) != "stop":
+            return
+        again = dict(live.signal)
+        again[ATTEMPT] = live.attempt + 1
+        self._rearm.append(again)
+
+    async def _rearm_stopped(self) -> None:
+        """Put stopped-out setups back through the strategies, once each.
+
+        Six of twelve stopped trades in the sample later reached the target
+        they were aiming at, by between 3.7R and 25.7R. The level survived
+        being crossed - which is what a sweep looks like from the outside - and
+        the stop settled only that *that fill* was too early, not that the idea
+        was wrong.
+
+        **It re-runs the signal, not the trade.** The payload goes back through
+        `on_signal` and therefore through every gate, so a setup whose
+        probability has since decayed, whose instrument has gone wide, or whose
+        level has stopped being a level is refused exactly like a new one. The
+        alternative - resurrecting the intent - would re-enter on the strength
+        of reasoning that the stop already contradicted.
+
+        **It requires the pullback to be switched on**, and that is the guard
+        that makes the rule safe rather than a way to lose twice quickly. At
+        the moment a stop fills, price is by definition at the worst point the
+        trade has seen; re-entering at market there buys the extreme. With
+        `pullback_fraction` above zero the re-armed signal parks and waits for
+        price to come back to the level, which is the entry the thesis wanted
+        in the first place. Without it, this does nothing.
+        """
+        queued, self._rearm = self._rearm, []
+        if not queued or self.settings.pullback_fraction <= 0:
+            return
+        for payload in queued:
+            feed = str(payload.get("feed") or "")
+            log.info("trading: re-arming %s after a stop (attempt %d)", feed, payload.get(ATTEMPT))
+            with contextlib.suppress(Exception):
+                await self.on_signal(payload, observe=False)
 
     def _reach(self, live: Live) -> float:
         """Furthest this trade got in front, in units of its own risk."""
@@ -1181,11 +1386,14 @@ class Trader:
             if intent is None or intent.symbol != position.symbol:
                 intent = _intent_from(position)
                 ref = ""
+            signal = self._last_signal.get(intent.feed, {})
             self.open[ticket] = Live(
                 position=position,
                 intent=intent,
                 ref=ref,
                 by=strategy_for(self.settings.magic, position.magic),
+                signal=signal,
+                attempt=int(signal.get(ATTEMPT, 0) or 0),
             )
             pending = None
         self._pending = None
@@ -1221,6 +1429,7 @@ class Trader:
         position = live.position
         profit = position.profit if profit is None else profit
         self.guard.record(live.intent.feed, profit, self.equity)
+        self._maybe_rearm(live, price)
         log.info(
             "trading: closed #%d %s [%s] @ %.5g for %+.2f (%s) · %s",
             position.ticket,

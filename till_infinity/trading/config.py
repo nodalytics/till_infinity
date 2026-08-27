@@ -682,6 +682,45 @@ class Settings:
     #: taken by ordinary movement while the trade is still working, which is
     #: being stopped by noise in profit. `trail_vol` acts as the floor.
     trail_sigmas: float = 0.5
+    #: R multiple at which part of the position comes off. Zero is off.
+    #:
+    #: The push distribution is wide - median 2.24v, p90 4.93v - and a single
+    #: exit has to choose which half of it to serve. Taking part off at the
+    #: modelled push and letting the rest run serves both: the common case is
+    #: banked before it can be given back, and the tail is still owned. It is
+    #: the honest version of `runner`, which bets the whole position on the
+    #: tail and will pay for that in win rate.
+    scale_out_at: float = 0.0
+    #: How much of the position comes off there. Half by default.
+    #:
+    #: Bounded to (0, 1): at 1.0 this is a target, not a scale-out, and the
+    #: remainder that makes the idea work would not exist.
+    scale_out_fraction: float = 0.5
+    #: Seconds after which a trade that has gone nowhere is closed flat. Zero
+    #: is off.
+    #:
+    #: The median touch resolves in **eighteen seconds** and 84% inside five
+    #: minutes, so a position still sitting at its entry well past that is not
+    #: the event it was opened for. Holding it does not wait for the thesis; it
+    #: waits for noise to reach the stop, which is a losing trade arrived at
+    #: slowly. Closing flat costs the spread and keeps the rest.
+    stale_after: float = 0.0
+    #: How far the trade must have travelled by `stale_after` to count as
+    #: having started, in R. Deliberately generous - this is meant to catch
+    #: trades that did nothing at all, not trades that are merely behind.
+    stale_move: float = 0.25
+    #: How many times one stopped-out setup may be taken again. Zero is off.
+    #:
+    #: Six of twelve stopped trades later reached the target they were aiming
+    #: at, by between 3.7R and 25.7R. That says the level survived being
+    #: crossed, which is what a sweep looks like from the outside, and that the
+    #: only thing the stop settled was that *this fill* was too early.
+    #:
+    #: What re-arms is the **signal**, not the intent, parked at the level and
+    #: put back through every gate on arrival - so a setup that stopped being
+    #: worth taking is refused like any other. Bounded because a level that
+    #: keeps taking money is not a level worth arguing with.
+    reentry_max: int = 0
 
     # ------------------------------------------- trading toward a level
     #: Nearest and furthest a target level may be, in volatility units. Closer
@@ -833,6 +872,11 @@ class Settings:
             break_even_ticks=_int("TRADING_BREAK_EVEN_TICKS", 2),
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
+            scale_out_at=_float("TRADING_SCALE_OUT_AT", 0.0),
+            scale_out_fraction=_float("TRADING_SCALE_OUT_FRACTION", 0.5),
+            stale_after=_float("TRADING_STALE_AFTER_S", 0.0),
+            stale_move=_float("TRADING_STALE_MOVE", 0.25),
+            reentry_max=_int("TRADING_REENTRY_MAX", 0),
             approach_min_vol=_float("TRADING_APPROACH_MIN_VOL", 0.8),
             approach_max_vol=_float("TRADING_APPROACH_MAX_VOL", 6.0),
             approach_buffer_vol=_float("TRADING_APPROACH_BUFFER_VOL", 0.25),

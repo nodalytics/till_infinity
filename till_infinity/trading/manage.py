@@ -56,6 +56,81 @@ class Move:
         return f"#{self.ticket} stop to {self.stop:.5g} ({self.reason})"
 
 
+@dataclass(frozen=True, slots=True)
+class Take:
+    """Part of a position that should come off now, and why."""
+
+    ticket: int
+    volume: float
+    reason: str
+
+    def __str__(self) -> str:
+        return f"#{self.ticket} take {self.volume:g} off ({self.reason})"
+
+
+def partial(
+    position: Position,
+    intent: Intent,
+    spec: SymbolSpec,
+    settings: Settings,
+    *,
+    best: float,
+) -> Take | None:
+    """How much of this position to bank now, or None to leave it whole.
+
+    Measured from `best` rather than the current price, deliberately and
+    unlike nothing else here: the question a scale-out answers is whether the
+    trade *reached* the level where banking was the plan. A trade that touched
+    1.2R and retraced to 0.4R has already earned the partial, and reading the
+    current price instead would mean the retracement that makes banking
+    valuable is the same thing that cancels it.
+
+    **The volume arithmetic is where this goes wrong if it goes wrong.** A
+    position of the minimum lot cannot be halved, and a broker asked to close
+    0.005 of a 0.01 lot either refuses or - worse - closes the lot. So the
+    slice is rounded down to the volume step, and both halves must survive:
+    if what comes off or what stays behind lands under `volume_min`, nothing
+    is taken and the position runs whole. That is the honest outcome, because
+    a scale-out that silently closes everything is not a smaller version of
+    this rule, it is a different and much worse one.
+    """
+    at = settings.scale_out_at
+    if at <= 0:
+        return None
+    fraction = settings.scale_out_fraction
+    if not 0.0 < fraction < 1.0:
+        return None
+
+    risk = abs(intent.entry - intent.stop)
+    if risk <= 0:
+        return None
+    gained = (best - position.price_open) * position.side.sign
+    if gained < risk * at:
+        return None
+
+    step = spec.volume_step or 0.01
+    slice_ = _down_to_step(position.volume * fraction, step)
+    stays = _down_to_step(position.volume - slice_, step)
+    if slice_ < spec.volume_min or stays < spec.volume_min:
+        # Not divisible into two tradeable halves. Runs whole.
+        return None
+    return Take(position.ticket, slice_, f"banking {fraction:.0%} at {gained / risk:.1f}R")
+
+
+def _down_to_step(volume: float, step: float) -> float:
+    """`volume` rounded down to a whole number of steps.
+
+    Down rather than nearest, so neither half of a scale-out can be rounded up
+    into more than the position holds.
+    """
+    if step <= 0:
+        return volume
+    # Floats: 0.03 / 0.01 is 2.9999... and floor would take it to 2. The
+    # epsilon is a hair under one step, so a value that is a whole number of
+    # steps stays one.
+    return int(volume / step + 1e-9) * step
+
+
 def advance(
     position: Position,
     intent: Intent,

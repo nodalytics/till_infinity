@@ -19,6 +19,7 @@ from till_infinity import trading as td
 from till_infinity.bus import ALERTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from till_infinity.journal import Journal, read
 from till_infinity.trading import exposure as ex
+from till_infinity.trading import manage
 from till_infinity.trading import plans as tp
 from till_infinity.trading import report as tr
 from till_infinity.trading.book import Book, Seen
@@ -3819,3 +3820,222 @@ def test_every_registered_strategy_has_a_magic_slot():
     for name in STRATEGIES:
         magic = td.magic_for(td.DEFAULT_MAGIC, name)
         assert td.strategy_for(td.DEFAULT_MAGIC, magic) == name
+
+
+# ------------------------------------------------------- scaling out of a winner
+
+
+def _scaling(**over):
+    made = {"scale_out_at": 1.0, "scale_out_fraction": 0.5}
+    made.update(over)
+    return settings(**made)
+
+
+def test_scale_out_waits_for_the_r_multiple():
+    """Nothing comes off a trade that has not reached the level it banks at."""
+    got = manage.partial(
+        position(volume=1.0),
+        intent(volume=1.0),
+        GOLD,
+        _scaling(),
+        best=4402.0,  # 0.3R in front of a 4.9-wide stop
+    )
+    assert got is None
+
+
+def test_scale_out_banks_part_once_it_is_there():
+    take = manage.partial(
+        position(volume=1.0),
+        intent(volume=1.0),
+        GOLD,
+        _scaling(),
+        best=4405.5,  # past 1R
+    )
+    assert take is not None
+    assert take.volume == pytest.approx(0.5)
+
+
+def test_scale_out_reads_the_best_price_not_the_current_one():
+    """A trade that reached the level and retraced has earned the partial.
+
+    Reading the current price would mean the retracement that makes banking
+    worth doing is the same thing that cancels it.
+    """
+    live = position(volume=1.0, price_current=4400.1)
+    assert manage.partial(live, intent(volume=1.0), GOLD, _scaling(), best=4405.5) is not None
+
+
+def test_scale_out_never_closes_the_whole_position():
+    """A minimum-lot position cannot be halved, so it must run whole.
+
+    The failure this guards against is not a refusal - it is a broker asked to
+    close 0.005 of a 0.01 lot closing the lot instead, which turns a scale-out
+    into a full exit that still looks like a scale-out in the log.
+    """
+    spec = replace(GOLD, volume_min=0.01, volume_step=0.01)
+    got = manage.partial(position(volume=0.01), intent(volume=0.01), spec, _scaling(), best=4405.5)
+    assert got is None
+
+
+def test_scale_out_leaves_a_tradeable_remainder():
+    """Both halves have to survive the volume step, not just the one banked."""
+    spec = replace(GOLD, volume_min=0.02, volume_step=0.01)
+    got = manage.partial(position(volume=0.03), intent(volume=0.03), spec, _scaling(), best=4405.5)
+    assert got is None
+
+
+def test_scale_out_rounds_down_to_the_volume_step():
+    """Never up: the two halves together cannot exceed the position."""
+    spec = replace(GOLD, volume_min=0.01, volume_step=0.01)
+    take = manage.partial(position(volume=0.07), intent(volume=0.07), spec, _scaling(), best=4405.5)
+    assert take is not None
+    assert take.volume == pytest.approx(0.03)
+    assert take.volume + 0.04 <= 0.07 + 1e-9
+
+
+def test_scale_out_off_by_default():
+    assert manage.partial(position(), intent(), GOLD, settings(), best=4405.5) is None
+
+
+@pytest.mark.parametrize("fraction", [0.0, 1.0, 1.5, -0.5])
+def test_scale_out_refuses_a_fraction_that_is_not_a_fraction(fraction):
+    """At 1.0 it is a target, not a scale-out - there is no remainder to run."""
+    got = manage.partial(
+        position(volume=1.0),
+        intent(volume=1.0),
+        GOLD,
+        _scaling(scale_out_fraction=fraction),
+        best=4405.5,
+    )
+    assert got is None
+
+
+# ------------------------------------------- re-arming a setup a sweep interrupted
+
+
+def _live(**over):
+    made = {
+        "position": position(volume=1.0),
+        "intent": intent(volume=1.0),
+        "signal": {"feed": "gold"},
+        "attempt": 0,
+    }
+    made.update(over)
+    return td.service.Live(**made)
+
+
+def _rearms(trader, live, price):
+    trader._maybe_rearm(live, price)
+    return trader._rearm
+
+
+def test_a_stop_re_arms_the_signal():
+    trader = Trader(Bus(), settings=settings(reentry_max=1))
+    queued = _rearms(trader, _live(), price=4395.0)  # through the 4395.6 stop
+    assert len(queued) == 1
+    assert queued[0][td.service.ATTEMPT] == 1
+
+
+def test_a_target_does_not_re_arm():
+    """It got what it asked for. Taking it again is a second trade, not a retry."""
+    trader = Trader(Bus(), settings=settings(reentry_max=1))
+    assert _rearms(trader, _live(), price=4407.0) == []
+
+
+def test_the_hold_clock_does_not_re_arm():
+    """Nothing refuted it, so there is nothing to re-take."""
+    trader = Trader(Bus(), settings=settings(reentry_max=1))
+    assert _rearms(trader, _live(), price=4401.0) == []
+
+
+def test_re_entry_is_bounded():
+    """A level that keeps taking money is not one to keep arguing with."""
+    trader = Trader(Bus(), settings=settings(reentry_max=1))
+    assert _rearms(trader, _live(attempt=1), price=4395.0) == []
+
+
+def test_re_entry_is_off_by_default():
+    trader = Trader(Bus(), settings=settings())
+    assert _rearms(trader, _live(), price=4395.0) == []
+
+
+def test_an_adopted_position_never_re_arms():
+    """Nothing here knows what it was, so there is no signal to put back."""
+    trader = Trader(Bus(), settings=settings(reentry_max=1))
+    assert _rearms(trader, _live(signal={}), price=4395.0) == []
+
+
+async def test_re_arming_needs_the_pullback_switched_on():
+    """At a stop, price is at the worst point the trade has seen.
+
+    Re-entering at market there buys the extreme. The pullback is what makes
+    the re-armed signal wait for the level instead, so without it the rule
+    declines to fire rather than firing badly.
+    """
+    trader = Trader(Bus(), settings=settings(reentry_max=1, pullback_fraction=0.0))
+    trader._rearm = [{"feed": "gold", td.service.ATTEMPT: 1}]
+    await trader._rearm_stopped()
+    assert trader._rearm == []  # dropped, not carried forward
+
+
+# ------------------------------------------------- closing a trade that never started
+
+
+class _Closes:
+    """Execution that records what it was asked to close."""
+
+    def __init__(self):
+        self.closed = []
+
+    async def close_position(self, ticket, volume=0.0):
+        self.closed.append((ticket, volume))
+        return td.models.OrderResult(ok=True, ticket=ticket)
+
+
+def _stale_trader(**over):
+    made = {"stale_after": 300.0, "stale_move": 0.25}
+    made.update(over)
+    trader = Trader(Bus(), settings=settings(**made))
+    trader.paper = _Closes()
+    return trader
+
+
+async def test_a_trade_that_never_moved_is_closed_flat():
+    trader = _stale_trader()
+    live = _live()
+    trader._best[live.position.ticket] = 4400.4  # 0.08R in 900 seconds
+    assert await trader._stale(live, age=900.0) is True
+    assert trader.execution.closed == [(1, 0.0)]
+
+
+async def test_a_trade_that_started_is_left_alone():
+    """Measured from the best price, so a trade that reached 0.4R and retraced
+    has started - the rule is for the dead ones, not the retracing ones."""
+    trader = _stale_trader()
+    live = _live(position=position(volume=1.0, price_current=4400.05))
+    trader._best[live.position.ticket] = 4402.5  # 0.5R at its best
+    assert await trader._stale(live, age=900.0) is False
+    assert trader.execution.closed == []
+
+
+async def test_a_young_trade_is_left_alone():
+    trader = _stale_trader()
+    live = _live()
+    trader._best[live.position.ticket] = 4400.4
+    assert await trader._stale(live, age=60.0) is False
+
+
+async def test_a_scaled_trade_is_never_stale():
+    """Part is already banked, so the thing this protects against is handled."""
+    trader = _stale_trader()
+    live = _live(scaled=True)
+    trader._best[live.position.ticket] = 4400.4
+    assert await trader._stale(live, age=900.0) is False
+
+
+async def test_the_stale_exit_is_off_by_default():
+    trader = Trader(Bus(), settings=settings())
+    trader.paper = _Closes()
+    live = _live()
+    trader._best[live.position.ticket] = 4400.4
+    assert await trader._stale(live, age=9_000.0) is False
