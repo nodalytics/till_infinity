@@ -22,6 +22,7 @@ constant would put the stop somewhere nobody chose, and would do it silently.
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -93,8 +94,39 @@ class LevelStrategy(Strategy):
         """Extra conditions beyond the shared ones. None means take it."""
         return None
 
+    def stop_floor_vol(self, interval: str) -> float:
+        """The stop floor in volatility units, scaled to how long it must last.
+
+        `min_stop_vol` is denominated in **one bar** of the entry interval,
+        because that is what `vol_bps` measures. The trade is held for many
+        bars, and volatility grows with the square root of time - measured on
+        our own instruments, not assumed - so a one-bar stop on a thirty-bar
+        trade sits inside the noise it has to survive and is taken by ordinary
+        wandering rather than by the level failing.
+
+        Scaled by `sqrt(hold_bars)`, capped by `max_stop_scale`. The cap is
+        there because the uncapped number is large enough that
+        `reward_to_risk` refuses nearly everything - possibly the honest
+        answer, but not one to arrive at without deciding to.
+        """
+        floor = self.settings.min_stop_vol
+        share = self.settings.stop_hold_scaling
+        if floor <= 0 or share <= 0:
+            return floor
+        bars = self.hold_bars_for(interval, self.settings.max_hold)
+        scale = min(math.sqrt(max(bars, 1.0)), max(self.settings.max_stop_scale, 1.0))
+        # Interpolated rather than switched, so the setting can be walked up
+        # from the old behaviour while the shadow watch collects evidence.
+        return floor * (1.0 + (scale - 1.0) * min(share, 1.0))
+
     def distances(
-        self, level: float, entry: float, vol_bps: float, risk_vol: float, push_vol: float
+        self,
+        level: float,
+        entry: float,
+        vol_bps: float,
+        risk_vol: float,
+        push_vol: float,
+        interval: str = "",
     ) -> tuple[float, float]:
         """Stop distance from the level, target distance from the entry.
 
@@ -103,7 +135,7 @@ class LevelStrategy(Strategy):
         by ordinary movement rather than by the thesis failing - see
         `Settings.min_stop_vol` for the two live trades that made the case.
         """
-        wide = max(risk_vol * self.stop_multiple, self.settings.min_stop_vol)
+        wide = max(risk_vol * self.stop_multiple, self.stop_floor_vol(interval))
         return (
             price_distance(level, vol_bps, wide),
             price_distance(entry, vol_bps, push_vol * self.target_multiple),
@@ -194,7 +226,13 @@ class LevelStrategy(Strategy):
         )
 
     def _floored_stop(
-        self, spec: SymbolSpec, side: Side, entry: float, anchored: float, unit: float
+        self,
+        spec: SymbolSpec,
+        side: Side,
+        entry: float,
+        anchored: float,
+        unit: float,
+        interval: str = "",
     ) -> float:
         """Push the stop out until it is `min_stop_vol` from the **fill** too.
 
@@ -207,7 +245,7 @@ class LevelStrategy(Strategy):
         Past that point this can only push the stop further from the fill,
         which only ever reduces size for the same money at risk.
         """
-        floor = self.settings.min_stop_vol * unit
+        floor = self.stop_floor_vol(interval) * unit
         if floor <= 0:
             return anchored
         against_fill = spec.round_price(entry - floor if side is Side.BUY else entry + floor)
@@ -299,7 +337,9 @@ class LevelStrategy(Strategy):
         if chased is not None:
             return chased
 
-        risk_distance, push_distance = self.distances(level, entry, vol_bps, risk_vol, push_vol)
+        risk_distance, push_distance = self.distances(
+            level, entry, vol_bps, risk_vol, push_vol, interval
+        )
         # The far edge of the level's own band on the side the stop sits, and a
         # quarter unit of clearance beyond it. Absent on an older signal, in
         # which case the stop falls back to the origin as before.
@@ -330,7 +370,7 @@ class LevelStrategy(Strategy):
 
         # Only now, with the trade known to be still valid, is the stop widened
         # to clear the fill by a volatility unit. See `_floored_stop`.
-        stop = self._floored_stop(spec, side, entry, stop, unit)
+        stop = self._floored_stop(spec, side, entry, stop, unit, interval)
 
         broker_says = respects_stops_level(spec, entry, stop, target)
         if broker_says:

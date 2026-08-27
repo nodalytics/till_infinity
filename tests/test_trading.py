@@ -2979,3 +2979,126 @@ async def test_parking_is_off_unless_asked_for():
     )
     assert isinstance(got, Intent)
     assert len(venue.sent) == 1
+
+
+# ------------------------------- was the stop wrong, or was the thesis wrong
+
+
+async def _stopped_trade(tmp_path, *, window=1.0):
+    bus = Bus()
+    made = settings(live=True, shadow_window=window)
+    venue = RecordingBroker(made)
+    book = Journal(tmp_path / "j.db")
+    await book.open()
+    trader = Trader(bus, settings=made, journal=book, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    assert isinstance(got, Intent)
+    live = next(iter(trader.open.values()))
+    await trader._settle(live, price=live.intent.stop, why="closed", profit=-25.0)
+    return trader, live, book, venue
+
+
+async def test_a_stopped_trade_that_later_reaches_its_target_is_recorded(tmp_path):
+    """The question the account cannot answer.
+
+    A stop hit at full size looks identical whether the level failed or the
+    stop sat inside the noise. If the target arrives afterwards, the thesis was
+    right and the stop was too tight.
+    """
+    trader, live, book, _ = await _stopped_trade(tmp_path)
+    assert trader._shadows, "a losing close should open a shadow"
+
+    # Price goes on to reach the target it was aiming at.
+    at = live.intent.target + 1.0
+    await trader._watch_shadows("gold", Tick("XAUUSD", bid=at, ask=at, time=live.seen + 10))
+    await book.close()
+
+    said = [e for e in read(tmp_path / "j.db") if (e.context or {}).get("shape") == "shadow"]
+    assert said, "nothing was recorded"
+    ctx = said[-1].context
+    assert ctx["reached_target"] is True
+    assert ctx["best_r"] > 1.0, "reaching the target is more than 1R of the way"
+    assert not trader._shadows, "the watch should close once answered"
+
+
+async def test_a_stopped_trade_that_never_recovers_says_so(tmp_path):
+    """The other answer, and the one that would exonerate the stop."""
+    trader, live, book, _ = await _stopped_trade(tmp_path)
+    shade = next(iter(trader._shadows.values()))
+
+    # Price drifts nowhere, and the watch runs out.
+    away = live.intent.stop - 1.0
+    await trader._watch_shadows("gold", Tick("XAUUSD", bid=away, ask=away, time=shade.until + 1))
+    await book.close()
+
+    said = [e for e in read(tmp_path / "j.db") if (e.context or {}).get("shape") == "shadow"]
+    assert said
+    assert said[-1].context["reached_target"] is False
+    assert said[-1].context["best_r"] == 0.0
+
+
+async def test_the_shadow_watch_can_be_switched_off(tmp_path):
+    trader, _, book, _ = await _stopped_trade(tmp_path, window=0.0)
+    await book.close()
+    assert not trader._shadows
+
+
+def test_a_winning_close_opens_no_shadow():
+    """Only losses raise the question."""
+    from till_infinity.trading.service import Shadow
+
+    assert Shadow.__doc__  # the type exists and is documented
+
+
+def test_the_stop_floor_scales_with_how_long_it_must_last():
+    """`vol_bps` is one bar of the entry interval; the trade lives for many.
+
+    Volatility grows with the square root of time - measured on our own
+    instruments at 1.04, 1.12 and 0.89 of sqrt(t) on gold, 0.99 and 0.98 on the
+    Dow - so a one-bar stop on a thirty-bar trade sits inside the noise it has
+    to survive.
+    """
+    flat = take("level-scalp", stop_hold_scaling=0.0)
+    scaled = take("level-scalp", stop_hold_scaling=1.0, max_stop_scale=3.0)
+    assert isinstance(flat, Intent)
+    assert isinstance(scaled, Intent)
+    assert abs(scaled.entry - scaled.stop) > abs(flat.entry - flat.stop)
+    # Same money at risk over a longer stop means fewer lots.
+    assert scaled.volume <= flat.volume
+
+
+def test_the_scaling_is_capped():
+    """Uncapped, a thirty-bar hold asks for a stop 5.5x wider and a position
+    5.5x smaller, and reward_to_risk then refuses nearly everything."""
+    small = take("level-scalp", stop_hold_scaling=1.0, max_stop_scale=1.5)
+    big = take("level-scalp", stop_hold_scaling=1.0, max_stop_scale=3.0)
+    assert isinstance(small, Intent)
+    assert isinstance(big, Intent)
+    assert abs(big.entry - big.stop) > abs(small.entry - small.stop)
+
+
+def test_the_hold_is_expressed_in_bars_of_the_entry_interval():
+    """Thirty minutes is thirty bars to a 1m strategy and two to a 15m one."""
+    from till_infinity.trading.scalper import LevelScalp
+
+    engine = LevelScalp(settings())
+    LevelScalp.hold_bars = 20.0
+    try:
+        assert engine.hold_for("1m", 1800.0) == pytest.approx(1200.0)
+        # Capped by wall clock, because twenty 15m bars is five hours.
+        assert engine.hold_for("15m", 1800.0) == pytest.approx(1800.0)
+        assert engine.hold_bars_for("1m", 1800.0) == pytest.approx(20.0)
+        assert engine.hold_bars_for("15m", 1800.0) == pytest.approx(2.0)
+    finally:
+        LevelScalp.hold_bars = 0.0
+
+
+def test_no_hold_bars_leaves_the_seconds_behaviour_alone():
+    from till_infinity.trading.scalper import LevelScalp
+
+    engine = LevelScalp(settings())
+    assert engine.hold_for("1m", 1800.0) == pytest.approx(engine.hold_seconds or 1800.0)

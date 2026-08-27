@@ -71,6 +71,45 @@ class Strategy(ABC):
     #: different kind of trade.
     hold_seconds: ClassVar[float] = 0.0
 
+    #: The same limit expressed in **bars of the entry interval**, which is the
+    #: clock everything else about the trade is measured on.
+    #:
+    #: A fixed number of seconds cannot mean one thing across eight timeframes.
+    #: Thirty minutes is thirty bars to a strategy triggering on 1m and two to
+    #: one triggering on 15m, so the same setting asks a one-minute signal to
+    #: survive a thirty-minute walk and a fifteen-minute signal to survive
+    #: almost none of one. Zero keeps the seconds-only behaviour.
+    #:
+    #: `hold_seconds` remains as the ceiling: bars are the right unit and wall
+    #: clock is the right cap, because a 4h strategy holding twenty bars is
+    #: three days and that is not a scalp whatever the arithmetic says.
+    hold_bars: ClassVar[float] = 0.0
+
+    def hold_for(self, interval: str, ceiling: float) -> float:
+        """Seconds this strategy may hold a trade triggered on `interval`."""
+        from ..structures.levels import SECONDS
+
+        seconds = SECONDS.get(interval, 0.0)
+        want = self.hold_seconds or ceiling
+        if self.hold_bars <= 0 or seconds <= 0:
+            return want
+        return min(self.hold_bars * seconds, want)
+
+    def hold_bars_for(self, interval: str, ceiling: float) -> float:
+        """How many bars of `interval` the hold above actually covers.
+
+        The number the stop has to survive, which is why it is derived from the
+        capped hold rather than from `hold_bars` directly - a hold cut short by
+        the ceiling is fewer bars of noise, and pretending otherwise would size
+        the stop for time the trade will not be given.
+        """
+        from ..structures.levels import SECONDS
+
+        seconds = SECONDS.get(interval, 0.0)
+        if seconds <= 0:
+            return 1.0
+        return max(self.hold_for(interval, ceiling) / seconds, 1.0)
+
     #: Where a trade may be **triggered**. The lower timeframes: the entry is
     #: what decides the stop, and a tighter stop on faster data is the whole
     #: reason to drop down to it.

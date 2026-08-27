@@ -101,6 +101,38 @@ class Waiting:
     until: float
 
 
+@dataclass(slots=True)
+class Shadow:
+    """A trade that was stopped, watched to see whether it was right anyway.
+
+    The single question the journal could not answer. A stop hit at full size
+    looks identical whether the level failed or the stop was simply inside the
+    noise, and the account cannot tell them apart - so the argument about stop
+    width has had nothing to settle it but reasoning.
+
+    This settles it. When a trade closes at a loss the target it was aiming at
+    is kept, and price is watched for as long as the trade would have been
+    held. If the target arrives, the thesis was right and the stop was too
+    tight. If it does not, the stop was not the problem and widening it would
+    only have made the same loss larger.
+
+    Costs nothing to run: the quotes are already on the bus and being consumed.
+    """
+
+    feed: str
+    side: Side
+    entry: float
+    stop: float
+    target: float
+    ref: str
+    by: str
+    #: When the watch gives up, which is the hold the trade would have had.
+    until: float
+    #: Furthest price reached in the trade's favour since it was stopped.
+    best: float = 0.0
+    stopped_at: float = 0.0
+
+
 class Trader:
     """Watches the bus, trades what it likes, records everything."""
 
@@ -153,6 +185,8 @@ class Trader:
         #: because the per-instrument position limit would refuse the second
         #: anyway and holding several would only decide which to drop later.
         self._waiting: dict[str, Waiting] = {}
+        #: Stopped trades still being watched. See `Shadow`.
+        self._shadows: dict[int, Shadow] = {}
         #: Why signals did not become trades, counted per gate. Strategy-level
         #: refusals are far too many to journal - hundreds a day, and mostly
         #: the filter working - but counting them is what separates "the market
@@ -318,10 +352,12 @@ class Trader:
             self._quote(message.payload)
             feed = str(message.payload.get("feed") or "")
             symbol = self._symbol_of.get(feed)
-            if feed in self._waiting and symbol:
+            if symbol and (feed in self._waiting or self._shadows):
                 got = await self._tick(symbol)
                 if got is not None:
-                    return await self._arrived(feed, got)
+                    await self._watch_shadows(feed, got)
+                    if feed in self._waiting:
+                        return await self._arrived(feed, got)
             return None
         if message.topic == EVENTS:
             self.context.observe_event(message.payload)
@@ -691,6 +727,65 @@ class Trader:
         """An amount with the account's currency attached. See `models.money`."""
         return money(amount, self.currency, signed=signed)
 
+    async def _watch_shadows(self, feed: str, tick: Tick) -> None:
+        """Follow stopped trades to see whether the target arrived anyway.
+
+        Recorded, never traded. The point is to answer the one question the
+        account cannot: a stop hit at full size looks the same whether the
+        level failed or the stop sat inside the noise, and until this existed
+        the argument about stop width had nothing but reasoning to settle it.
+        """
+        for ticket, shade in list(self._shadows.items()):
+            if shade.feed != feed:
+                continue
+            price = tick.bid if shade.side is Side.BUY else tick.ask
+            sign = shade.side.sign
+            if (price - shade.best) * sign > 0:
+                shade.best = price
+
+            hit = (price - shade.target) * sign >= 0
+            done = hit or tick.time >= shade.until
+            if not done:
+                continue
+            self._shadows.pop(ticket, None)
+
+            risk = abs(shade.entry - shade.stop)
+            reach = abs(shade.best - shade.entry) / risk if risk else 0.0
+            went = (shade.best - shade.entry) * sign
+            log.info(
+                "trading: stopped #%d [%s] would have %s - best %.5g against a "
+                "target of %.5g (%.2fR of the way)",
+                ticket,
+                shade.by or "unattributed",
+                "WON" if hit else "still lost",
+                shade.best,
+                shade.target,
+                reach if went > 0 else 0.0,
+            )
+            await observe(
+                self.journal,
+                f"stopped {shade.feed} {'reached' if hit else 'never reached'} its target",
+                rationale=(
+                    f"best {shade.best:.5g} against target {shade.target:.5g} "
+                    f"in the {self.settings.shadow_window:.1f}x hold after the stop"
+                ),
+                actor="trading",
+                context={
+                    "shape": "shadow",
+                    "feed": shade.feed,
+                    "strategy": shade.by,
+                    "ticket": ticket,
+                    "reached_target": hit,
+                    # How far the trade got, in units of the risk it was
+                    # stopped for. Above 1 means the stop cost a winner.
+                    "best_r": round(reach if went > 0 else 0.0, 3),
+                    "stopped_at": round(shade.stopped_at, 8),
+                    "best": round(shade.best, 8),
+                    "target": round(shade.target, 8),
+                },
+                tags=(shade.feed, "shadow", shade.by or "unattributed"),
+            )
+
     async def _worth_keeping(self, live: Live, age: float, limit: float) -> bool:
         """Whether a trade past its hold is working well enough to keep.
 
@@ -835,6 +930,20 @@ class Trader:
             why,
             self.guard.summary(),
         )
+        if profit < 0 and self.settings.shadow_window > 0 and live.intent.target:
+            hold = live.intent.hold or self.settings.max_hold
+            self._shadows[position.ticket] = Shadow(
+                feed=live.intent.feed,
+                side=live.intent.side,
+                entry=live.intent.entry,
+                stop=live.intent.stop,
+                target=live.intent.target,
+                ref=live.ref,
+                by=live.by,
+                until=time.time() + hold * self.settings.shadow_window,
+                best=price,
+                stopped_at=price,
+            )
         await self._announce_close(live, price, profit, why)
         if live.ref:
             await outcome(

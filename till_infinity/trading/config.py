@@ -456,6 +456,41 @@ class Settings:
     #: A resting order with no deadline is a trade taken on stale information.
     pullback_window: float = 0.5
 
+    #: How long a stopped trade is watched to see if its target arrived, as a
+    #: multiple of the hold it would have had. Zero switches the watch off.
+    #:
+    #: The one question the account cannot answer on its own: a stop hit at
+    #: full size looks identical whether the level failed or the stop sat
+    #: inside the noise. Recorded, never traded.
+    shadow_window: float = 1.0
+
+    #: How much of the square-root-of-time scaling to apply to the stop floor.
+    #:
+    #: `vol_bps` is the volatility of **one bar** of the entry interval, so a
+    #: stop at `min_stop_vol` units is sized for one bar - while the trade is
+    #: held for many. Volatility grows with the square root of time, which was
+    #: measured on our own instruments rather than assumed: observed growth
+    #: over sqrt(t) came to 1.04, 1.12 and 0.89 on gold at 5m, 15m and 60m, and
+    #: 0.99 and 0.98 on the Dow. Thirty one-minute bars therefore carry about
+    #: 5.5 units of wandering, against an expected push near 1.3.
+    #:
+    #: 1.0 applies the scaling in full, 0.0 restores the one-bar stop, and
+    #: values between are the honest position while `shadow_window` collects
+    #: the evidence: a wider stop cannot create edge - for a driftless walk it
+    #: buys win rate and pays for it in R - so what it fixes is paying spread
+    #: to be stopped by noise, not the direction being wrong.
+    #:
+    #: Off by default, like every other rule here that changes what gets
+    #: traded. A wider stop cannot create edge - it buys win rate and pays for
+    #: it in R - so this is enabled to stop paying spread to be taken out by
+    #: noise, and `shadow_window` is what says whether that was the problem.
+    stop_hold_scaling: float = 0.0
+    #: Ceiling on that multiplier. Uncapped, a thirty-bar hold asks for a stop
+    #: 5.5 times wider and a position 5.5 times smaller, and `reward_to_risk`
+    #: then refuses nearly everything - which may be the honest answer but is
+    #: not one to arrive at by accident.
+    max_stop_scale: float = 3.0
+
     #: The least a stop may sit from the level, in volatility units.
     #:
     #: Fair value is a distribution and volatility is its width, so a stop
@@ -657,6 +692,9 @@ class Settings:
             max_currency_exposure=_float("TRADING_MAX_CURRENCY_EXPOSURE", 0.005),
             min_stop_vol=_float("TRADING_MIN_STOP_VOL", 1.0),
             max_chase_vol=_float("TRADING_MAX_CHASE_VOL", 1.0),
+            shadow_window=_float("TRADING_SHADOW_WINDOW", 1.0),
+            stop_hold_scaling=_float("TRADING_STOP_HOLD_SCALING", 0.0),
+            max_stop_scale=_float("TRADING_MAX_STOP_SCALE", 3.0),
             pullback_fraction=_float("TRADING_PULLBACK_FRACTION", 0.0),
             pullback_window=_float("TRADING_PULLBACK_WINDOW", 0.5),
             sweep_max_rate=_float("TRADING_SWEEP_MAX_RATE", 0.35),
