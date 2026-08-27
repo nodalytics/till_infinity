@@ -648,3 +648,53 @@ What this does not establish: the window of twelve is a guess, the efficiency
 ratio is one measure of trend among several, and this is a fixed
 stop-and-target rule on touch resolutions rather than the trades the book
 took. It is strong enough to build on and not strong enough to trust blind.
+
+## Re-verifying the `reward_to_risk` gate, and softening its own finding
+
+[magnitude.md](magnitude.md) measured on 2026-08-17 that this gate selects
+losing trades out of a winning population, and `docs/todo.md` 0f has said
+"remove it" since - "ahead of everything else in this file". It is still live,
+at 1.0 in structures and 1.2 in trading, and it is the largest single source of
+refusals in production. Before removing a live gate on a ten-day-old replay,
+`research/harness/rr_gate.py` re-runs the question on different data by a
+different method: production signals joined to production outcomes through the
+journal's own parent link, no replay and no reconstruction.
+
+**The first cut looked damning and was measuring the wrong thing.** Mean
+|push| by rule:
+
+| rule | n | mean push |
+| --- | ---: | ---: |
+| no gate | 47,676 | 4.869 |
+| RR >= 1.2 (live) | 7,255 | 2.679 |
+| what it rejects | 40,421 | 5.263 |
+
+Rejected calls move twice as far as kept ones. But **|push| is distance, not
+profit** - it counts a large move *against* the trade as a good outcome, and no
+gate should be removed on a number that cannot tell those apart.
+
+**In R, the effect is real, monotonic, and much smaller:**
+
+| rule | n | mean R | mean push |
+| --- | ---: | ---: | ---: |
+| no gate | 47,676 | **0.908** | 4.869 |
+| RR >= 1.0 | 8,583 | 0.886 | 2.645 |
+| RR >= 1.2 (live) | 7,255 | **0.868** | 2.679 |
+| RR >= 2.0 | 4,420 | 0.834 | 2.875 |
+
+At the live threshold it keeps 0.868R and rejects 0.915R. So the original
+direction holds - the gate does select worse trades, and monotonically worse as
+the threshold rises - but the magnitude is **0.047R**, the same order as the
+direction gates removed the same day and called noise.
+
+**The case for removing it is volume, not quality.** It refuses 85% of calls -
+40,421 of 47,676 - to gain nothing, and to lose a twentieth of an R. A filter
+that discards six trades in seven has to earn that, and this one is slightly
+negative before the cost of the trades never taken.
+
+**The stated mechanism did not reproduce.** magnitude.md attributes the effect
+to a high ratio being a small `risk_vol` - a tight stop inside the noise - and
+predicts the top decile excursing less. It excurses *more*: 0.960v against
+0.812v in the bottom decile. The ratio's distribution is also badly behaved,
+the bottom decile being all zeros and the top reaching 12,772, so decile
+comparisons on it are weak. The effect is confirmed; the explanation is not.
