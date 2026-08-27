@@ -3529,3 +3529,41 @@ def test_the_floor_does_not_move_with_outcomes():
     src = inspect.getsource(Floors)
     for word in ("profit", "outcome", "won", "loss"):
         assert word not in src.lower(), f"the floor must not see {word}"
+
+
+def test_every_strategy_clears_the_same_gates():
+    """One of them was not, and it was the one taking most of the trades.
+
+    `FadeToValue` overrides `consider` entirely and therefore ran none of the
+    shared chain - so the probability floor, the per-direction percentile, the
+    edge floor and the base-rate floor applied to three strategies and not to
+    the fourth. The exemption was invisible from the configuration, which read
+    as though every gate protected every strategy.
+    """
+    weak = signal(features={"probability": 0.30, "base_rate_up": 0.20})
+    for name in ("level-scalp", "sweep-aware", "approach-scalp", "fade-to-value"):
+        got = take(name, weak, min_probability=0.75, min_base_rate=0.55)
+        assert isinstance(got, Refusal), f"{name} took a call it should have refused"
+
+
+def test_the_shared_gates_live_in_one_place():
+    """A copied block is two implementations that can drift; this is one."""
+    import inspect
+
+    from till_infinity.trading.scalper import FadeToValue, LevelStrategy
+
+    assert hasattr(LevelStrategy, "quality")
+    # Both paths call it rather than repeating it.
+    assert "self.quality(" in inspect.getsource(LevelStrategy.consider)
+    assert "self.quality(" in inspect.getsource(FadeToValue.consider)
+
+
+def test_fade_to_value_is_still_exempt_from_the_chase_gate():
+    """Not an oversight. Chasing means filling far from the level the call was
+    measured at, and being far from fair value is this strategy's entire
+    premise - the gate would refuse every trade it ever wanted."""
+    import inspect
+
+    from till_infinity.trading.scalper import FadeToValue
+
+    assert "_chasing(" not in inspect.getsource(FadeToValue.consider)

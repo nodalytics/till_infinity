@@ -94,6 +94,64 @@ class LevelStrategy(Strategy):
         """Extra conditions beyond the shared ones. None means take it."""
         return None
 
+    def quality(self, feed: str, features: dict[str, float], side: Side) -> Refusal | None:
+        """The gates every strategy here should clear, wherever it decides.
+
+        Extracted because one of them was not clearing them. `FadeToValue`
+        overrides `consider` entirely and therefore ran none of this - so the
+        probability floor, the per-direction percentile, the edge floor and the
+        base-rate floor applied to three strategies and not to the fourth. The
+        exemption was invisible from the configuration, which read as though
+        every gate protected every strategy, and the exempt one was first in
+        the running order taking most of the trades.
+
+        A shared method rather than a copied block, so the two paths cannot
+        drift apart again.
+        """
+        settings = self.settings
+
+        probability = _number(features, "probability")
+        # The bar for *this* direction. A single absolute number let 96% of
+        # sells through and refused one buy in five, because the two
+        # directions' probabilities do not sit in the same place - see
+        # `floors.py`. Falls back to the absolute floor until each direction
+        # has a distribution, and can never sit below it.
+        claimed = "up" if side is Side.BUY else "down"
+        self.floors.observe(claimed, probability)
+        bar = self.floors.floor(claimed, settings.min_probability)
+        if probability < bar:
+            return Refusal(
+                "probability",
+                f"{probability:.0%} against a {bar:.0%} floor for {claimed} calls",
+                feed,
+            )
+
+        edge = abs(_number(features, "edge"))
+        if edge < settings.min_edge:
+            return Refusal("edge", f"{edge:.3f} against a {settings.min_edge:.3f} floor", feed)
+
+        # How often this level holds *at all*, in the direction being claimed.
+        #
+        # `base_rate_up` is always the up rate, so it has to be flipped for a
+        # sell before it means anything - comparing it raw across a set that is
+        # mostly sells describes the direction mix rather than the levels, which
+        # is a mistake this was written after making.
+        #
+        # Gated because the losses concentrate below it: over the first
+        # nineteen closed trades the eight with a directional base under 0.55
+        # produced one winner and -6.74R.
+        if settings.min_base_rate > 0:
+            base_up = _number(features, "base_rate_up")
+            base = base_up if side is Side.BUY else 1.0 - base_up
+            if base_up and base < settings.min_base_rate:
+                return Refusal(
+                    "base_rate",
+                    f"the level holds {base:.0%} of the time this way, "
+                    f"against a {settings.min_base_rate:.0%} floor",
+                    feed,
+                )
+        return None
+
     def stop_floor_vol(self, interval: str) -> float:
         """The stop floor in volatility units, scaled to how long it must last.
 
@@ -298,50 +356,9 @@ class LevelStrategy(Strategy):
 
         features = _features(payload)
 
-        probability = _number(features, "probability")
-        # The bar for *this* direction. A single absolute number let 96% of
-        # sells through and refused one buy in five, because the two
-        # directions' probabilities do not sit in the same place - see
-        # `floors.py`. Falls back to the absolute floor until each direction
-        # has a distribution, and can never sit below it.
-        claimed = "up" if side is Side.BUY else "down"
-        self.floors.observe(claimed, probability)
-        bar = self.floors.floor(claimed, settings.min_probability)
-        if probability < bar:
-            return Refusal(
-                "probability",
-                f"{probability:.0%} against a {bar:.0%} floor for {claimed} calls",
-                feed,
-            )
-
-        edge = abs(_number(features, "edge"))
-        if edge < settings.min_edge:
-            return Refusal("edge", f"{edge:.3f} against a {settings.min_edge:.3f} floor", feed)
-
-        # How often this level holds *at all*, in the direction being claimed.
-        #
-        # `base_rate_up` is always the up rate, so it has to be flipped for a
-        # sell before it means anything - comparing it raw across a set that is
-        # mostly sells describes the direction mix rather than the levels, which
-        # is a mistake this was written after making.
-        #
-        # It is gated because the losses concentrate below it: over the first
-        # nineteen closed trades, the eight with a directional base under 0.55
-        # produced one winner and -6.74R. The reading is that a level which
-        # does not usually hold is not made trustworthy by a model claiming
-        # something unusual about it - which is also why the *edge* is a poor
-        # ranking here, since a large edge is exactly a large departure from a
-        # weak baseline.
-        if settings.min_base_rate > 0:
-            base_up = _number(features, "base_rate_up")
-            base = base_up if side is Side.BUY else 1.0 - base_up
-            if base_up and base < settings.min_base_rate:
-                return Refusal(
-                    "base_rate",
-                    f"the level holds {base:.0%} of the time this way, "
-                    f"against a {settings.min_base_rate:.0%} floor",
-                    feed,
-                )
+        bad = self.quality(feed, features, side)
+        if bad is not None:
+            return bad
 
         if self.needs_context and not self.anchored(payload):
             return Refusal(
@@ -985,6 +1002,22 @@ class FadeToValue(LevelStrategy):
 
         # The stance is arithmetic once the valuation exists.
         side = Side.BUY if distance > 0 else Side.SELL
+
+        # The same gates every other strategy clears. This overrides `consider`
+        # entirely, so it used to run none of them - and being first in the
+        # running order, it was taking most of the trades through the only
+        # ungated path in the system while the other three were refused by
+        # floors it never saw.
+        #
+        # The chase gate is deliberately *not* applied here and the difference
+        # is real rather than an oversight: chasing means filling far from the
+        # level the call was measured at, and this strategy's whole premise is
+        # being far from fair value. That gate would refuse every trade it ever
+        # wanted, by construction.
+        bad = self.quality(feed, features, side)
+        if bad is not None:
+            return bad
+
         entry = tick.entry(side)
 
         # Stop beyond the level price is standing at, outside its zone: that is
