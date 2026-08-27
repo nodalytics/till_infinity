@@ -698,3 +698,58 @@ predicts the top decile excursing less. It excurses *more*: 0.960v against
 0.812v in the bottom decile. The ratio's distribution is also badly behaved,
 the bottom decile being all zeros and the top reaching 12,772, so decile
 comparisons on it are weak. The effect is confirmed; the explanation is not.
+
+## Taking the other side when risk exceeds the expected push
+
+The proposal: if a call's `risk_vol` is larger than its `expected_push_vol` it
+has negative expectancy as modelled, so trade the opposite side.
+
+The arithmetic never carried the argument - a bad expectancy in one direction
+is not a good one in the other, because the push estimate belongs to the
+direction the model named. The premise needs the model to be *anti-predictive*
+on that subset, which is a fact about the data.
+`research/harness/inverting.py` tests it over 47,668 resolutions joined to
+their signals.
+
+| subset | n | R with | R against |
+| --- | ---: | ---: | ---: |
+| risk > expected push | 24,831 | 0.864 | **−0.984** |
+| risk <= expected push | 22,837 | 0.955 | −0.990 |
+| everything | 47,668 | 0.908 | −0.987 |
+
+**Inverting is dead everywhere, not merely unhelpful.** The against-side loses
+essentially a full R in every bucket, and the mechanism is plain: levels reject
+69% of the time, so price leaves the level in the direction the model named and
+the opposite trade is underwater by that distance immediately. It is stopped
+almost always.
+
+**The premise behind the idea is right, though, and the with-side shows it:**
+
+| risk / expected push | n | R with |
+| --- | ---: | ---: |
+| 0.00-0.00 | 5,958 | 0.998 |
+| 0.78-1.04 | 5,958 | 0.967 |
+| 1.04-1.31 | 5,958 | **1.017** |
+| 1.78-3.39 | 5,958 | 0.793 |
+| 3.39+ | 5,962 | **0.693** |
+
+Calls whose risk badly exceeds the expected push do perform worse - 0.693
+against ~0.98 - a 0.3R spread, second only to trend context among everything
+measured here.
+
+**So the remedy is refusing those trades, not reversing them - and this is the
+`reward_to_risk` gate again.** The ratio is exactly `1 / reward_to_risk`, and
+the numbers say the gate was set about twice too tight rather than being wrong
+in principle. Damage starts near ratio 1.8, which is RR 0.55. The 1.2 floor
+that was live corresponds to ratio 0.83 and cut through the best region: the
+0.78-1.04 and 1.04-1.31 buckets return 0.967 and 1.017.
+
+That is a correction to the removal recorded above. Taking the floor off was
+right for 1.2 and overshot; a floor near 0.5-0.55 refuses the bad tail and
+keeps everything 1.2 was discarding.
+
+A limit on the mirror scoring: it ignores ordering. A touch that ran 2v against
+before going 3v in favour scores the same as one that did the reverse, and
+those are different trades - one is stopped and one is not. It is optimistic
+about both sides equally, which keeps the comparison fair without either
+number being a P&L.
