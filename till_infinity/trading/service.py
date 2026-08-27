@@ -40,6 +40,7 @@ from ..structures.levels import SECONDS
 from . import manage, plans, strategy
 from . import symbols as sym
 from .broker import Broker, BrokerError, build
+from .candles import confirms
 from .config import Settings, magic_for, strategy_for
 from .context import Context
 from .manage import Move, Take
@@ -48,6 +49,7 @@ from .models import money as money  # noqa: PLC0414
 from .paper import PaperBroker
 from .risk import Guard
 from .sizing import lots, price_distance
+from .strategy import Strategy
 
 log = get_logger(__name__)
 
@@ -521,7 +523,11 @@ class Trader:
                 return stopped
 
             if park:
-                parked = self._park(payload, verdict, engine.name, tick)
+                unconfirmed = await self._rejected_at(verdict)
+                if unconfirmed is not None:
+                    await self._record_refusal(verdict, unconfirmed, engine.name)
+                    return unconfirmed
+                parked = self._park(payload, verdict, engine.name, tick, engine)
                 if parked is not None:
                     await self._also_wanted(payload, spec, tick, engine.name)
                     return parked
@@ -657,7 +663,61 @@ class Trader:
 
     # --------------------------------------------------------------- trading
 
-    def _park(self, payload: dict[str, Any], intent: Intent, by: str, tick: Tick) -> Refusal | None:
+    async def _rejected_at(self, intent: Intent) -> Refusal | None:
+        """Refuse a trade the level has not visibly rejected yet.
+
+        A level says where a trade is worth taking and is silent about when.
+        The gap between those is where this book has been losing money: an
+        `inverse` buy on gold took its stop at 4591 and then ran to its target
+        at 4604, and 23 of the first 32 trades were stopped, several of them
+        later reaching the price they were aiming at. Entering because price is
+        *near* a level, while the level is still being tested, is a bet on the
+        test being over.
+
+        A candlestick pattern is evidence that it is: the auction reached the
+        price, found nothing, and closed away from it inside one bar. So the
+        last closed bar has to show a hammer, a shooting star or an engulfing
+        reversal that touched the level and closed on the trade's side.
+
+        **An unavailable answer is a refusal, not an exception.** If the broker
+        serves no bars for this instrument the trade is unconfirmed, and
+        unconfirmed is exactly what the gate is for. Treating a missing
+        confirmation as a pass would make the gate silently inactive on every
+        instrument whose bars fail, which is the failure mode that looks like
+        working code.
+        """
+        if not self.settings.require_candle:
+            return None
+        bars = await self.execution.bars(intent.symbol, intent.interval, count=3)
+        if len(bars) < 2:
+            return Refusal("unconfirmed", "no bars to confirm the level with", intent.feed)
+        level = float(intent.features.get("level") or intent.entry)
+        vol_bps = self._vol_bps.get(intent.feed, 0.0)
+        tolerance = price_distance(level, vol_bps, self.settings.candle_tolerance_vol)
+        found = confirms(bars, level, intent.side is Side.BUY, tolerance)
+        if not found:
+            return Refusal(
+                "unconfirmed",
+                f"no rejection at {level:.5g} on the last {intent.interval} bar",
+                intent.feed,
+            )
+        log.info(
+            "trading: %s %s confirmed by a %s at %.5g",
+            intent.side,
+            intent.feed,
+            found,
+            level,
+        )
+        return None
+
+    def _park(
+        self,
+        payload: dict[str, Any],
+        intent: Intent,
+        by: str,
+        tick: Tick,
+        engine: Strategy | None = None,
+    ) -> Refusal | None:
         """Hold this signal back if a better fill is worth waiting for.
 
         The target is where the stop would otherwise have sat - the far edge of
@@ -673,7 +733,13 @@ class Trader:
         strategy, not a cheaper version of this one. Which is why this is off
         unless asked for, and why the journal records what it refused.
         """
-        fraction = self.settings.pullback_fraction
+        # A strategy that insists on a resting entry says so itself. Depending
+        # on the deployment's setting would make "does this wait for its price"
+        # a property of how the box is tuned rather than of the strategy, and a
+        # swing entry that quietly became a market order because a global was
+        # zeroed is not the same trade.
+        own = getattr(engine, "pullback_fraction", 0.0) if engine is not None else 0.0
+        fraction = own or self.settings.pullback_fraction
         if fraction <= 0:
             return None
         features = intent.features or {}

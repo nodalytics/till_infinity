@@ -63,7 +63,8 @@ from tenacity import (
 )
 
 from ..logging import get_logger
-from .broker import Broker, NotConnectedError, RejectedError, TransientError
+from .broker import Broker, BrokerError, NotConnectedError, RejectedError, TransientError
+from .candles import Bar
 from .config import Settings, ours
 from .models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
 
@@ -367,6 +368,57 @@ class HttpBroker(Broker):
                     raise TransientError(f"{method} {path}: {exc}") from exc
                 return _body(response, method, path)
         raise AssertionError("unreachable")
+
+    #: Our interval names against MT5's. Anything absent simply has no bars,
+    #: which reads downstream as an unconfirmed trade rather than an error.
+    TIMEFRAMES: ClassVar[dict[str, str]] = {
+        "1m": "M1",
+        "3m": "M3",
+        "5m": "M5",
+        "15m": "M15",
+        "30m": "M30",
+        "1h": "H1",
+        "4h": "H4",
+        "1d": "D1",
+        "1w": "W1",
+    }
+
+    async def bars(self, symbol: str, interval: str, count: int = 3) -> list[Bar]:
+        """Recent closed candles, oldest first.
+
+        **The forming bar is dropped**, and that is the whole reason this is
+        not a thin wrapper. The bridge returns the current, incomplete bar as
+        the last element - its close is simply the current price - so a pattern
+        read from it is a statement about this instant that the next tick can
+        withdraw. One extra bar is requested and the last is discarded.
+        """
+        timeframe = self.TIMEFRAMES.get(interval)
+        if not timeframe:
+            return []
+        try:
+            raw = await self._get(
+                "/symbols/rates/pos",
+                params={"symbol": symbol, "timeframe": timeframe, "num_bars": count + 1},
+            )
+        except BrokerError as exc:
+            log.debug("trading: no bars for %s %s: %s", symbol, interval, exc)
+            return []
+        if not isinstance(raw, list) or len(raw) < 2:
+            return []
+        out = []
+        for row in raw[:-1]:  # drop the forming bar
+            try:
+                out.append(
+                    Bar(
+                        open=float(row["open"]),
+                        high=float(row["high"]),
+                        low=float(row["low"]),
+                        close=float(row["close"]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
 
     async def _get(self, path: str, **kwargs: Any) -> Any:
         return await self._request("GET", path, **kwargs)

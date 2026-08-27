@@ -50,7 +50,7 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from importlib.util import find_spec
-from typing import ClassVar, Self
+from typing import Any, ClassVar, Self
 
 from ..logging import get_logger
 from .config import BACKENDS, HTTP, NATIVE, PAPER, RPYC, Settings
@@ -132,6 +132,16 @@ class Broker(ABC):
 
     @abstractmethod
     async def quote(self, symbol: str) -> Tick | None: ...
+
+    async def bars(self, symbol: str, interval: str, count: int = 3) -> list[Any]:
+        """Recent **closed** candles, oldest first. Empty when unavailable.
+
+        Empty rather than raising, because every caller of this is a
+        confirmation and an unavailable confirmation is an unconfirmed trade,
+        not a failed one. A broker that cannot serve bars should cost the
+        trades that needed them and nothing else.
+        """
+        return []
 
     @abstractmethod
     async def positions(self) -> list[Position]:

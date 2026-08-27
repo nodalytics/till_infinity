@@ -192,6 +192,7 @@ MAGIC_ORDER: tuple[str, ...] = (
     "thesis-only",
     "runner",
     "inverse",
+    "high-timeframe",
 )
 
 
@@ -683,6 +684,26 @@ class Settings:
     #: taken by ordinary movement while the trade is still working, which is
     #: being stopped by noise in profit. `trail_vol` acts as the floor.
     trail_sigmas: float = 0.5
+    #: Require a candlestick rejection at the level before entering. Off by
+    #: default.
+    #:
+    #: The record this answers to: an `inverse` buy on gold took its stop at
+    #: 4591 and then ran to its target at 4604, and it was not alone - 23 of
+    #: the first 32 trades were stopped, several of which later reached the
+    #: price they were aiming at. The direction was not the thing that was
+    #: wrong. The trade was entered because price was *near* a level, while
+    #: the level had not finished being tested.
+    #:
+    #: A pattern is a claim about that: the auction reached a price, was
+    #: rejected, and closed away from it inside one bar. It is confirmation of
+    #: timing, and it costs the entries that never get confirmed - which is a
+    #: real cost, not a free filter, and is what running it as a setting rather
+    #: than a rewrite is meant to measure.
+    require_candle: bool = False
+    #: How close to the level the bar must come, in volatility units, to count
+    #: as having tested it.
+    candle_tolerance_vol: float = 0.25
+
     #: Multiple of the broker's own `stops_level` a stop must clear.
     #:
     #: The broker's minimum is not checked when the order is built, it is
@@ -887,6 +908,8 @@ class Settings:
             break_even_ticks=_int("TRADING_BREAK_EVEN_TICKS", 2),
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
+            require_candle=_flag("TRADING_REQUIRE_CANDLE", "0"),
+            candle_tolerance_vol=_float("TRADING_CANDLE_TOLERANCE_VOL", 0.25),
             stops_level_margin=_float("TRADING_STOPS_LEVEL_MARGIN", 1.25),
             scale_out_at=_float("TRADING_SCALE_OUT_AT", 0.0),
             scale_out_fraction=_float("TRADING_SCALE_OUT_FRACTION", 0.5),

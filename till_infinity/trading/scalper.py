@@ -1027,6 +1027,85 @@ class Inverse(LevelStrategy):
 
 
 @register
+class HighTimeframe(LevelStrategy):
+    """A swing trade: a high timeframe must agree, and it holds for days.
+
+    Everything else in this module is a scalp wearing different clothes. This
+    one is not, and the line is **not where it triggers - it is what has to
+    agree**. A 1h, 4h, 1d or 1w level must be in the picture, enforced rather
+    than preferred; the trigger itself may come from lower down, because a
+    faster trigger is a tighter stop for the identical idea and that is risk
+    reduction rather than a different trade.
+
+    **The hold does not shrink with the trigger, and that is the point.**
+    `hold_bars` is deliberately unset here. It is the right unit everywhere
+    else - twelve bars means one thing on 1m and another on 4h - but here the
+    thesis lives on the context timeframe while the entry may be taken far
+    below it, so bars of the *entry* would close a four-hour idea a few minutes
+    after opening it and call that a full hold. The clock is wall clock, capped
+    at three days, after which a position has crossed sessions it was never
+    measured in and is accruing swap.
+
+    **The floor on triggers is 15m, and it is a judgement rather than a rule
+    the request asked for.** Lower timeframes are allowed in principle, but the
+    stop is derived from the entry interval's volatility, so a 1m-triggered
+    trade held for days carries a one-minute stop against three days of noise -
+    not a tight trade but a certain one. 15m is the lowest that leaves the stop
+    meaningful over that horizon. Moving it lower needs the stop anchored to
+    the context timeframe instead, which is a change to how stops are placed
+    rather than a setting.
+
+    **It rests its entry rather than paying the spread to chase.** A swing
+    thesis measured on 4h is not made or lost by filling this minute, so it
+    states `pullback_fraction` itself and waits for price to come back to the
+    level - the nearest thing to a limit order the market path here supports -
+    instead of inheriting whatever the deployment happens to be tuned to.
+
+    **Protection is scaled to the horizon rather than inherited.** A 1R
+    break-even is right for a trade that resolves in eighteen seconds and wrong
+    for one measured in sessions, where ordinary retracement passes 1R before
+    the thesis has begun and a stop moved that early is a scratch waiting to
+    happen.
+
+    A caution about scoring it. Every measurement behind the scalpers here -
+    the eighteen-second median resolution, the push distribution, the
+    6-of-12 stopped-then-reached - was taken on touches whose horizon is
+    minutes. None of it transfers. This needs its own record, and it will build
+    one slowly, because a trade every few days is the design rather than a
+    shortcoming.
+    """
+
+    name: ClassVar[str] = "high-timeframe"
+    description: ClassVar[str] = (
+        "A swing trade: 1h/4h/1d/1w must agree, triggered from 15m or above, "
+        "entry rested at the level and held up to three days."
+    )
+    #: Triggers. Lower than the context on purpose - a faster trigger is a
+    #: tighter stop for the same idea - but floored at 15m, because the stop is
+    #: derived from this interval and has to survive a multi-day hold.
+    entries: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+    #: The agreement that makes this a swing trade rather than a scalp with
+    #: patience. Every one of these is an hour or more, and one of them must be
+    #: there.
+    context: ClassVar[tuple[str, ...]] = ("1h", "4h", "1d", "1w")
+    needs_context: ClassVar[bool] = True
+    #: Wall clock only. See the note above on why bars of the entry interval
+    #: are the wrong clock for a thesis that lives on the context timeframe.
+    hold_seconds: ClassVar[float] = 3 * 24 * 3_600.0
+    #: A quarter wider than the scalpers, because a level placed on slower data
+    #: carries proportionally more noise around it.
+    stop_multiple: ClassVar[float] = 1.25
+    #: Later than the scalpers protect. Over days, 1R of retracement is
+    #: ordinary and a stop moved there is a scratch waiting to happen.
+    break_even_at: ClassVar[float] = 1.5
+    #: Wide enough to survive a session's pullback rather than a minute's.
+    trail_vol: ClassVar[float] = 3.0
+    #: Waits for the level rather than chasing. Stated here so it holds
+    #: whatever the deployment's own pullback is set to.
+    pullback_fraction: ClassVar[float] = 1.0
+
+
+@register
 class SwingLevel(LevelStrategy):
     """A slower trade: anchored on the daily, triggered as low as it can be.
 

@@ -4140,8 +4140,8 @@ def _kind(price, **over):
 
 
 def test_a_stop_is_classified_by_where_it_ended():
-    assert _kind(4395.0) == "stop"       # through the 4395.6 stop
-    assert _kind(4407.0) == "target"     # past the 4406.66 target
+    assert _kind(4395.0) == "stop"  # through the 4395.6 stop
+    assert _kind(4407.0) == "target"  # past the 4406.66 target
 
 
 def test_what_closed_it_wins_over_where_it_ended():
@@ -4167,3 +4167,128 @@ def test_a_real_intent_closed_between_its_levels_is_a_hold():
     """Still a claim, but an evidenced one: it had both levels and reached
     neither."""
     assert _kind(4401.0) == "hold"
+
+
+# ------------------------------------------------------------- the swing trade
+
+
+def _htf():
+    from till_infinity.trading.scalper import HighTimeframe
+
+    return HighTimeframe(settings())
+
+
+def test_the_swing_trade_requires_a_high_timeframe():
+    """Not a preference. A 1h idea held for days on nothing but 15m agreement
+    is a fast trade wearing a swing's patience."""
+    engine = _htf()
+    assert engine.needs_context is True
+    assert all(t in ("1h", "4h", "1d", "1w") for t in engine.context)
+
+
+def test_the_swing_trade_never_triggers_below_15m():
+    """The stop comes from the entry interval, so a 1m stop against a
+    three-day hold is not a tight trade but a certain one."""
+    fast = {"1m", "3m", "5m"}
+    assert not fast & set(_htf().entries)
+
+
+def test_the_swing_hold_does_not_shrink_with_a_fast_trigger():
+    """The thesis lives on the context timeframe, so bars of the *entry* would
+    close a four-hour idea minutes after opening it."""
+    engine = _htf()
+    assert engine.hold_bars == 0.0
+    # A 15m trigger gets the same three days a 4h trigger does.
+    assert engine.hold_for("15m", 1_800.0) == engine.hold_for("4h", 1_800.0)
+    assert engine.hold_for("15m", 1_800.0) > 24 * 3_600.0
+
+
+def test_the_swing_trade_is_not_capped_by_the_scalpers_hold():
+    """max_hold is 1800s because that suits a one-minute thesis. Applied here
+    it would close the trade inside the first bar."""
+    assert _htf().hold_for("4h", 1_800.0) > 1_800.0
+
+
+def test_the_swing_trade_rests_its_entry_whatever_the_deployment_says():
+    """Stated by the strategy, so it does not become a market order because a
+    global happened to be zeroed."""
+    assert _htf().pullback_fraction == 1.0
+
+
+def test_a_scalper_still_defers_to_the_deployment():
+    from till_infinity.trading.scalper import LevelScalp
+
+    assert LevelScalp(settings()).pullback_fraction == 0.0
+
+
+def test_the_per_strategy_pullback_reaches_park():
+    """The value existing on the class is not the same as `_park` reading it.
+
+    `_park` used to take the strategy's *name*, so it had no way to ask the
+    strategy anything - the setting could sit on the class looking effective
+    while the global decided every fill.
+    """
+    import inspect
+
+    from till_infinity.trading.service import Trader
+
+    source = inspect.getsource(Trader._park)
+    assert "pullback_fraction" in source
+    assert "engine" in inspect.signature(Trader._park).parameters
+
+
+# ------------------------------------------- refusing an unconfirmed entry
+
+
+class _Bars:
+    """A broker stub that serves the bars it is given."""
+
+    def __init__(self, candles):
+        self.candles = candles
+
+    async def bars(self, *_a, **_k):
+        return self.candles
+
+
+def _with_bars(candles, **over):
+    trader = Trader(Bus(), settings=settings(require_candle=True, **over))
+    trader.paper = _Bars(candles)
+    return trader
+
+
+def _candle(o, h, lo, c):
+    from till_infinity.trading.candles import Bar
+
+    return Bar(open=o, high=h, low=lo, close=c)
+
+
+async def test_an_unconfirmed_entry_is_refused():
+    """Price near a level is not the level having been tested."""
+    dull = [_candle(4400, 4401, 4399, 4400.5), _candle(4400.5, 4402, 4400, 4401.5)]
+    trader = _with_bars(dull)
+    got = await trader._rejected_at(intent(features={"level": 4395.0}))
+    assert got is not None
+    assert got.gate == "unconfirmed"
+
+
+async def test_a_rejection_at_the_level_is_allowed():
+    confirmed = [
+        _candle(4400, 4401, 4399, 4400.5),
+        _candle(4400, 4400.5, 4394, 4400.2),  # hammer into 4395
+    ]
+    trader = _with_bars(confirmed)
+    assert await trader._rejected_at(intent(features={"level": 4395.0})) is None
+
+
+async def test_missing_bars_are_a_refusal_not_a_pass():
+    """The failure mode that looks like working code: a gate that silently
+    stops applying on every instrument whose bars fail."""
+    trader = _with_bars([])
+    got = await trader._rejected_at(intent(features={"level": 4395.0}))
+    assert got is not None
+    assert got.gate == "unconfirmed"
+
+
+async def test_the_gate_is_off_by_default():
+    trader = Trader(Bus(), settings=settings())
+    assert await trader._rejected_at(intent(features={"level": 4395.0})) is None

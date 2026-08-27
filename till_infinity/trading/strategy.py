@@ -101,6 +101,12 @@ class Strategy(ABC):
     break_even_at: ClassVar[float] = 0.0
     trail_vol: ClassVar[float] = 0.0
 
+    #: How far this strategy insists price come back before it will fill,
+    #: overriding the deployment's own `pullback_fraction`. Zero means use the
+    #: configured value; a strategy that always wants a resting entry says so
+    #: here rather than depending on how the deployment happens to be tuned.
+    pullback_fraction: ClassVar[float] = 0.0
+
     def hold_for(self, interval: str, ceiling: float) -> float:
         """Seconds this strategy may hold a trade triggered on `interval`."""
         from ..structures.levels import SECONDS
