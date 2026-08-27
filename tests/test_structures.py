@@ -1464,8 +1464,8 @@ def test_the_path_is_recorded_independently_of_the_outcome():
     identity and no side rule can be scored against it. The path knows nothing
     about rejects, traps or breaks - it is just where price was.
     """
-    from till_infinity.structures.reactions import PATH_OFFSETS, Features, Touch
     from till_infinity.structures.levels import Side
+    from till_infinity.structures.reactions import PATH_OFFSETS, Features, Touch
 
     t = Touch(
         feed="gold",
@@ -1494,8 +1494,8 @@ def test_the_path_is_recorded_independently_of_the_outcome():
 def test_a_missing_sample_is_absent_rather_than_zero():
     """A gap in the record is not a price of zero, and writing one would make
     a quiet stretch look like a return to the level."""
-    from till_infinity.structures.reactions import PATH_OFFSETS, Features, Touch
     from till_infinity.structures.levels import Side
+    from till_infinity.structures.reactions import PATH_OFFSETS, Features, Touch
 
     t = Touch(
         feed="gold",
