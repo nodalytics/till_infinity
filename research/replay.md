@@ -113,6 +113,57 @@ refinement on top of entry and stop placement, not the lever - and
 [edge.md](../docs/edge.md) is the standing caution about reaching for a
 dynamic rule before the constant has been got right.
 
+## Two sides at once loses to one, and not because of the parameters
+
+Proposed: open both directions at the level and profit from whichever moves
+further. The account is `RETAIL_HEDGING`, so it is possible - on a netting
+account the second order would simply close the first - and it was tested over
+54,529 resolutions before anything was built.
+
+**With a fixed target on both sides**, it loses to the one-sided trade
+everywhere:
+
+| stop | target | straddle R | one side R |
+| ---: | ---: | ---: | ---: |
+| 0.5 | 0.75 | +0.038 | **+0.852** |
+| 1.0 | 1.50 | -0.026 | **+0.731** |
+| 2.0 | 3.00 | -0.370 | **+0.175** |
+
+**Letting the winner run** - the steelman, and where a straddle should earn its
+keep - is far better in absolute terms and still never wins:
+
+| stop | straddle, winner runs | one side, runs |
+| ---: | ---: | ---: |
+| 0.5 | 8.460 | 8.449 |
+| 1.0 | 3.618 | **4.089** |
+| 2.0 | 1.334 | **2.002** |
+
+### Why, and why no parameter fixes it
+
+In options a straddle works because the premium is **bounded** and the upside is
+**convex** - the most that can be lost is what was paid. With stop orders there
+is neither. The losing side's stop is a *certainty* rather than a probability,
+so a full 1R is paid on every trade before the winner earns anything, and the
+winner is capped by its own target unless it is allowed to run - at which point
+it is the one-sided trade with a guaranteed loss attached.
+
+At a 0.5v stop the two draw level, because a stop that tight takes both sides
+often enough that the structures converge. It is competitive there by being the
+same thing.
+
+### The useful thing that fell out of it
+
+The push distribution, over the same resolutions:
+
+    median 2.24v    p75 3.37v    p90 4.93v    p99 9.55v
+
+**Letting the winner run beats a fixed target by a wide margin.** One side at a
+0.5v stop scores **+8.4R** running against **+1.7R** with a 1.5x target on the
+same stop. The median push is 2.24v and the targets in use are near 1.3v, so
+the model is capping its winners at roughly half the move it expects to
+happen - which is a larger lever than the two-sided idea it was found while
+disproving.
+
 ## One threshold, two distributions, and a one-sided book
 
 Twenty-five trades in, the book was **21 sells to 4 buys**. The signals were
