@@ -3802,3 +3802,20 @@ def test_the_strategys_own_numbers_beat_the_global_ones():
     move = manage.advance(position, intent, spec, made, best=4402.4, vol_bps=10.0)
     assert move is not None, "the strategy's own threshold should have fired"
     assert move.stop >= 4400.0
+
+
+def test_every_registered_strategy_has_a_magic_slot():
+    """A strategy without one still trades and cannot be scored.
+
+    It stamps a hashed magic from the tail of the band, and the hash has no
+    inverse - so every position it opens reads as "unattributed" on close.
+    `snap` and `thesis-only` ran live for an hour that way, and their trades
+    are unattributable in the record.
+    """
+    from till_infinity.trading.strategy import STRATEGIES
+
+    missing = [n for n in STRATEGIES if n not in td.MAGIC_ORDER]
+    assert not missing, f"no magic slot for {missing} - their trades cannot be attributed"
+    for name in STRATEGIES:
+        magic = td.magic_for(td.DEFAULT_MAGIC, name)
+        assert td.strategy_for(td.DEFAULT_MAGIC, magic) == name

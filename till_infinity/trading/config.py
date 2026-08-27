@@ -182,6 +182,14 @@ MAGIC_ORDER: tuple[str, ...] = (
     "sweep-aware",
     "fade-to-value",
     "council",
+    # Appended, never inserted. A strategy added without a slot here still
+    # trades - it stamps a hashed magic from the tail of the band - but that
+    # hash has no inverse, so every position it opens reads as
+    # "unattributed" on close and the strategy cannot be scored at all.
+    # Both of these ran live for an hour before the missing entries were
+    # noticed, and their two trades are unattributable in the record.
+    "snap",
+    "thesis-only",
 )
 
 
