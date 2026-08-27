@@ -94,6 +94,19 @@ class LevelStrategy(Strategy):
         """Extra conditions beyond the shared ones. None means take it."""
         return None
 
+    def _parked_stop(self, features: dict[str, float], level: float, vol_bps: float) -> float:
+        """The tightened stop distance for an entry that waited, or 0.
+
+        Zero for a market entry, which is most of them, and the caller takes
+        the smaller of this and the ordinary distance - so this can only ever
+        tighten a stop, never widen one. A setting that could widen would be a
+        way to increase risk through a field named for reducing it.
+        """
+        want = self.settings.parked_stop_vol
+        if want <= 0 or not features.get("after_pullback"):
+            return 0.0
+        return price_distance(level, vol_bps, want)
+
     def trend_scale(self, features: dict[str, float]) -> float:
         """Size multiplier from the trend context. 1.0 when off or unknown.
 
@@ -344,6 +357,7 @@ class LevelStrategy(Strategy):
         unit: float,
         interval: str = "",
         spread: float = 0.0,
+        floor_vol: float = 0.0,
     ) -> float:
         """Push the stop out until it is `min_stop_vol` from the **fill** too.
 
@@ -356,7 +370,20 @@ class LevelStrategy(Strategy):
         Past that point this can only push the stop further from the fill,
         which only ever reduces size for the same money at risk.
         """
-        floor = self.stop_floor_vol(interval) * unit
+        # A parked entry brings its own floor, because `min_stop_vol` is written
+        # for a fill that may be anywhere near the level and a parked fill is
+        # at it. Without this the floor below would push the tightened stop
+        # straight back out and the setting would do nothing - visibly
+        # configured, silently inert, which is the failure this repository
+        # spent a day finding.
+        # A parked entry brings its own floor, and it is **capped at the
+        # ordinary one** so it can only ever lower it. Guarding the anchored
+        # distance alone was not enough: a large `parked_stop_vol` came
+        # straight back through here and widened the stop, which a test caught
+        # by asking for 99v and getting a position too small to place. A
+        # setting named for reducing risk must not have a path that raises it.
+        ordinary = self.stop_floor_vol(interval)
+        floor = (min(floor_vol, ordinary) if floor_vol else ordinary) * unit
         # The broker has a floor of its own and it is not a suggestion: a stop
         # closer than `stops_level` is refused outright, and the refusal
         # arrives after the decision has been made.
@@ -471,6 +498,13 @@ class LevelStrategy(Strategy):
         risk_distance, push_distance = self.distances(
             level, entry, vol_bps, risk_vol, push_vol, interval
         )
+        # A stop that waited for its price can afford to be tighter, and only
+        # that one can. See `Settings.parked_stop_vol` for why this is not a
+        # general setting: the replay's tight stop is measured from the level,
+        # and a parked entry is the only kind that is actually there.
+        tight = self._parked_stop(features, level, vol_bps)
+        if tight:
+            risk_distance = min(risk_distance, tight)
         # The far edge of the level's own band on the side the stop sits, and a
         # quarter unit of clearance beyond it. Absent on an older signal, in
         # which case the stop falls back to the origin as before.
@@ -501,7 +535,16 @@ class LevelStrategy(Strategy):
 
         # Only now, with the trade known to be still valid, is the stop widened
         # to clear the fill by a volatility unit. See `_floored_stop`.
-        stop = self._floored_stop(spec, side, entry, stop, unit, interval, tick.spread)
+        stop = self._floored_stop(
+            spec,
+            side,
+            entry,
+            stop,
+            unit,
+            interval,
+            tick.spread,
+            floor_vol=self.settings.parked_stop_vol if tight else 0.0,
+        )
 
         broker_says = respects_stops_level(spec, entry, stop, target)
         if broker_says:

@@ -704,6 +704,29 @@ class Settings:
     #: what they say.
     stop_slippage: float = 0.0
 
+    #: Stop distance, in volatility units, for an entry that waited for the
+    #: level. Zero keeps the ordinary stop. Only ever tightens, never widens.
+    #:
+    #: **The replay's best cell and this repository's own counter-argument are
+    #: both right, and they reconcile here.** Scored over resolved touches, a
+    #: 0.5v stop with a 1.5v target returns +1.785R against +0.630R for the
+    #: 1.05v/2.53v pair production actually places. But `min_stop_vol` exists
+    #: because a stop inside one volatility unit sits inside the width of the
+    #: estimate it protects and is taken by ordinary movement - with two live
+    #: trades cited for it.
+    #:
+    #: They measure from different places. **The replay measures from the
+    #: level, and a market entry is not at the level.** A 0.5v stop from the
+    #: level is a real stop; the same stop from a fill already 0.3v past it is
+    #: 0.2v of room and dies to noise. So the tighter stop is worth exactly
+    #: what the entry is worth.
+    #:
+    #: A parked entry is the case where the fill *is* at the level - that is
+    #: what waiting for it buys - so the grid's number applies there and
+    #: nowhere else. Applied to any other entry it would be the mistake
+    #: `min_stop_vol` was written to prevent.
+    parked_stop_vol: float = 0.0
+
     #: Refuse a trade when the market around this level is choppier than this.
     #: Zero is off. See `structures.trend`.
     #:
@@ -967,6 +990,7 @@ class Settings:
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
             stop_slippage=_float("TRADING_STOP_SLIPPAGE", 0.0),
+            parked_stop_vol=_float("TRADING_PARKED_STOP_VOL", 0.0),
             min_efficiency=_float("TRADING_MIN_EFFICIENCY", 0.0),
             trend_sizing=_float("TRADING_TREND_SIZING", 0.0),
             require_turn_vol=_float("TRADING_REQUIRE_TURN_VOL", 0.0),

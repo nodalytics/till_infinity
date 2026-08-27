@@ -4730,3 +4730,67 @@ def test_a_negative_slippage_cannot_inflate_the_position():
     plain = lots(GOLD, equity=10_000.0, risk_fraction=0.01, stop_distance=5.0)
     silly = lots(GOLD, equity=10_000.0, risk_fraction=0.01, stop_distance=5.0, slippage=-0.5)
     assert silly.volume == plain.volume
+
+
+# ------------------------------------ a tighter stop, only where it is earned
+
+
+def _parked_engine(**over):
+    from till_infinity.trading.scalper import LevelScalp
+
+    made = {"min_probability": 0.0, "min_edge": 0.0, "min_base_rate": 0.0}
+    made.update(over)
+    return LevelScalp(settings(**made))
+
+
+def test_a_parked_entry_gets_the_tighter_stop():
+    engine = _parked_engine(parked_stop_vol=0.5)
+    got = engine._parked_stop({"after_pullback": 1.0}, level=4400.0, vol_bps=10.0)
+    assert got == pytest.approx(price_distance(4400.0, 10.0, 0.5))
+
+
+def test_a_market_entry_does_not():
+    """The replay's tight stop is measured from the level, and a market entry
+    is not there. Applied to one it would be the mistake `min_stop_vol` was
+    written to prevent."""
+    engine = _parked_engine(parked_stop_vol=0.5)
+    assert engine._parked_stop({}, level=4400.0, vol_bps=10.0) == 0.0
+
+
+def test_the_tighter_stop_is_off_by_default():
+    engine = _parked_engine()
+    assert engine._parked_stop({"after_pullback": 1.0}, level=4400.0, vol_bps=10.0) == 0.0
+
+
+def _stop_distance(parked, **over):
+    """How far the placed stop actually ends up from the entry, in price."""
+    payload = signal()
+    if parked:
+        payload["features"]["after_pullback"] = 1.0
+    got = take("level-scalp", payload, min_probability=0.0, min_edge=0.0, min_base_rate=0.0, **over)
+    assert not isinstance(got, Refusal), getattr(got, "detail", got)
+    return abs(got.entry - got.stop)
+
+
+def test_a_parked_entry_actually_places_a_tighter_stop():
+    """The behavioural check. `min_stop_vol` would otherwise push the
+    tightened stop straight back out and leave the setting visibly configured
+    and silently inert - which is the failure this repository spent a day
+    finding, so it is asserted on the placed stop rather than on the source.
+    """
+    ordinary = _stop_distance(parked=False, parked_stop_vol=0.5)
+    tighter = _stop_distance(parked=True, parked_stop_vol=0.5)
+    assert tighter < ordinary
+
+
+def test_a_market_entry_is_untouched_by_the_setting():
+    with_setting = _stop_distance(parked=False, parked_stop_vol=0.5)
+    without = _stop_distance(parked=False)
+    assert with_setting == pytest.approx(without)
+
+
+def test_the_setting_can_only_tighten_never_widen():
+    """A setting named for reducing risk must not become a way to raise it."""
+    wide = _stop_distance(parked=True, parked_stop_vol=99.0)
+    ordinary = _stop_distance(parked=False)
+    assert wide <= ordinary + 1e-9
