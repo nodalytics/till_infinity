@@ -273,6 +273,7 @@ class Trader:
 
     async def start(self) -> None:
         """Attach, resolve what can be traded, and open the day."""
+        self._warm_trend()
         account = await self.broker.connect()
         self.equity = account.equity or account.balance
         self.currency = account.currency or ""
@@ -700,6 +701,65 @@ class Trader:
         return wanted_by
 
     # --------------------------------------------------------------- trading
+
+    def _warm_trend(self) -> None:
+        """Rebuild the trend windows from the journal before trading starts.
+
+        Without this the measure is not merely cold, it is effectively
+        unavailable. A reading needs three prior levels on the **same feed and
+        interval** and the window wants twelve, while production publishes on
+        the order of twenty-seven signals in fifteen minutes across every feed
+        and interval there is - so a given pair may see one an hour. Every
+        deploy would reset that to nothing, and on a day of frequent deploys
+        the context would never once be available to size a trade.
+
+        The replay that measured this effect ran over resolutions accumulated
+        across days, which hid the problem completely: there, twelve prior
+        levels per pair is ordinary.
+
+        Failure here is not fatal. A cold start is what happened before this
+        existed, and a trading service that will not boot because it could not
+        read history is worse than one that starts without an opinion.
+        """
+        path = getattr(self.journal, "path", None)
+        if path is None:
+            return
+        try:
+            from ..journal import read as read_journal
+
+            rows = read_journal(path, kind="outcome", actor="structures", limit=6000)
+        except Exception as exc:
+            log.debug("trading: could not warm the trend context: %s", exc)
+            return
+
+        warmed = 0
+        # Oldest first, because the window is a bounded deque and keeps what
+        # was appended *last*. Fed newest-first it would retain the twelve
+        # oldest levels of the batch and discard everything recent, which is
+        # the exact opposite of the intent and would still produce a
+        # confident-looking number.
+        #
+        # Not for the reason it first appears: efficiency is order-invariant.
+        # Reversing a sequence flips the sign of the net displacement but not
+        # its magnitude, and leaves the distance travelled untouched, so the
+        # ratio is identical either way. Only which levels survive the deque
+        # depends on the order.
+        for entry in reversed(rows):
+            context = getattr(entry, "context", None) or {}
+            feed, interval = context.get("feed"), context.get("interval")
+            level = context.get("level")
+            if not feed or not interval or not isinstance(level, int | float):
+                continue
+            self._trend.setdefault((str(feed), str(interval)), Trend()).observe(float(level))
+            warmed += 1
+        if warmed:
+            ready = sum(1 for t in self._trend.values() if t.efficiency is not None)
+            log.info(
+                "trading: trend context warmed from %d levels - %d of %d pairs ready",
+                warmed,
+                ready,
+                len(self._trend),
+            )
 
     def _hand_over_trend(self, feed: str, payload: dict[str, Any]) -> None:
         """Attach the trend context, then fold this level into it.

@@ -63,6 +63,18 @@ class Trend(Restorable):
     window: int = WINDOW
     seen: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
 
+    def __post_init__(self) -> None:
+        """Give the deque the window it was actually asked for.
+
+        `default_factory` cannot see the instance, so it always built a
+        twelve-deep window whatever `window` said - the parameter existed, was
+        accepted, and did nothing. A caller asking for twenty-four got twelve
+        and no error, which is the shape of bug that survives because every
+        test that would catch it passes for the wrong reason.
+        """
+        if self.seen.maxlen != self.window:
+            self.seen = deque(self.seen, maxlen=max(1, self.window))
+
     def observe(self, level: float) -> None:
         """Fold in a level. Call *after* reading, never before."""
         self.seen.append(float(level))

@@ -85,3 +85,25 @@ def test_the_level_being_judged_is_not_in_its_own_window():
 
     source = inspect.getsource(svc.Trader._hand_over_trend)
     assert source.index("context.efficiency") < source.index("context.observe(")
+
+
+def test_efficiency_is_order_invariant():
+    """Worth pinning, because it is the reason a plausible explanation for
+    feeding history oldest-first is wrong. Reversing flips the sign of the net
+    displacement but not its magnitude, and leaves the distance travelled
+    alone, so the ratio does not move. Order matters only for which levels
+    survive a bounded window.
+    """
+    forwards = _fed([100, 103, 101, 104, 102])
+    backwards = _fed([102, 104, 101, 103, 100])
+    assert forwards.efficiency == backwards.efficiency
+
+
+def test_a_bounded_window_keeps_the_last_fed_not_the_first():
+    """Which is why warming from history has to run oldest-first: fed
+    backwards it would retain the stalest levels and discard everything
+    recent, while still producing a confident-looking number."""
+    t = Trend(window=3)
+    for p in (1.0, 2.0, 3.0, 50.0, 51.0, 52.0):
+        t.observe(p)
+    assert list(t.seen) == [50.0, 51.0, 52.0]
