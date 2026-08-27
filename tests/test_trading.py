@@ -3168,3 +3168,77 @@ def test_a_level_signal_says_which_instrument_and_timeframe_it_is_about():
     sig = Signal(shape=Shape.LEVEL, feed="gold", venue="consensus", score=0.4, interval="5m")
     assert sig.feed == "gold"
     assert sig.interval == "5m"
+
+
+async def test_how_far_to_wait_comes_from_the_level_not_a_constant():
+    """A fixed fraction asks every level for the same retracement.
+
+    Levels do not retrace the same amount, and the wick this one has actually
+    been pushed to is recorded on the signal - the measured answer to exactly
+    this question. A deeply-swept level is worth waiting deeper for; a shallow
+    one is not, and asking it to retrace as far just means never filling.
+    """
+    bus = Bus()
+    made = settings(live=True, pullback_fraction=1.0)
+    shallow = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=shallow)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(
+        Message(
+            topic=SIGNALS,
+            payload=signal(
+                features={"sweep_low": 4396.0, "wick_below_vol": 0.2, "expected_push_vol": 3.0}
+            ),
+        )
+    )
+    thin = trader._waiting.get("gold")
+
+    bus2 = Bus()
+    deepr = RecordingBroker(made)
+    other = Trader(bus2, settings=made, broker=deepr)
+    await other.start()
+    await other.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await other.handle(
+        Message(
+            topic=SIGNALS,
+            payload=signal(
+                features={"sweep_low": 4396.0, "wick_below_vol": 1.0, "expected_push_vol": 3.0}
+            ),
+        )
+    )
+    fat = other._waiting.get("gold")
+
+    assert thin is not None
+    assert fat is not None
+    # The deeply-wicked level asks to be met lower.
+    assert fat.trigger < thin.trigger
+
+
+async def test_the_fraction_is_a_ceiling_on_the_wait():
+    """A level with no wick history still has to park somewhere sensible."""
+    bus = Bus()
+    made = settings(live=True, pullback_fraction=0.5)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(
+        Message(
+            topic=SIGNALS,
+            payload=signal(
+                # A wick so deep it would ask for more than the fraction allows.
+                features={"sweep_low": 4396.0, "wick_below_vol": 9.0, "expected_push_vol": 3.0}
+            ),
+        )
+    )
+    held = trader._waiting.get("gold")
+    assert held is not None
+    # Never past the sweep edge, and never past what the fraction permits.
+    assert held.trigger >= 4396.0

@@ -516,7 +516,36 @@ class Trader:
         if not edge:
             return None
 
-        want = intent.entry + (float(edge) - intent.entry) * min(fraction, 1.0)
+        # How far to wait is the **level's** business, not a constant.
+        #
+        # A fixed fraction asks every level for the same retracement, and levels
+        # do not retrace the same amount: the wick this one has actually been
+        # pushed to, on the side price is arriving from, is recorded on the
+        # signal and is the measured answer to exactly this question. A level
+        # that gets swept deeply is worth waiting deeper for; a level that
+        # barely gets touched is not, and asking it to retrace as far as the
+        # deep one just means never filling.
+        #
+        # `pullback_fraction` becomes the **ceiling** on that wait rather than
+        # the wait itself, so a level with no wick history yet still parks
+        # somewhere sensible instead of not parking at all.
+        level = float(features.get("level") or 0.0)
+        wick = features.get("wick_below_vol" if intent.side is Side.BUY else "wick_above_vol")
+        unit = abs(intent.entry - intent.stop) / intent.stop_vol if intent.stop_vol else 0.0
+        deep = float(edge)
+        if wick and unit > 0 and level > 0:
+            # From the level, not from the fill: the wick is measured from the
+            # level and adding it to a fill that has already drifted would ask
+            # for a retracement nobody has ever observed here.
+            asked = level - intent.side.sign * float(wick) * unit
+            # Never past the sweep edge - beyond that is where the stop lives,
+            # and an entry at the stop is not an entry.
+            deep = max(asked, float(edge)) if intent.side is Side.BUY else min(asked, float(edge))
+
+        ceiling = intent.entry + (float(edge) - intent.entry) * min(fraction, 1.0)
+        # Whichever asks for less, so the fraction caps the wait.
+        want = max(deep, ceiling) if intent.side is Side.BUY else min(deep, ceiling)
+
         # Already there, or better: nothing to wait for.
         if (intent.entry - want) * intent.side.sign <= 0:
             return None
