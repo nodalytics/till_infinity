@@ -2899,7 +2899,8 @@ async def test_a_signal_is_parked_rather_than_chased():
     )
     got = await trader.handle(
         Message(
-            topic=SIGNALS, payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0})
+            topic=SIGNALS,
+            payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0, "wick_n": 6.0}),
         )
     )
     assert isinstance(got, Refusal)
@@ -2919,7 +2920,8 @@ async def test_a_parked_signal_fires_when_price_comes_to_it():
     )
     await trader.handle(
         Message(
-            topic=SIGNALS, payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0})
+            topic=SIGNALS,
+            payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0, "wick_n": 6.0}),
         )
     )
     assert venue.sent == []
@@ -2948,7 +2950,8 @@ async def test_a_parked_signal_that_never_comes_back_expires():
     )
     await trader.handle(
         Message(
-            topic=SIGNALS, payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0})
+            topic=SIGNALS,
+            payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0, "wick_n": 6.0}),
         )
     )
     assert "gold" in trader._waiting
@@ -2974,7 +2977,8 @@ async def test_parking_is_off_unless_asked_for():
     )
     got = await trader.handle(
         Message(
-            topic=SIGNALS, payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0})
+            topic=SIGNALS,
+            payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0, "wick_n": 6.0}),
         )
     )
     assert isinstance(got, Intent)
@@ -3190,7 +3194,12 @@ async def test_how_far_to_wait_comes_from_the_level_not_a_constant():
         Message(
             topic=SIGNALS,
             payload=signal(
-                features={"sweep_low": 4396.0, "wick_below_vol": 0.2, "expected_push_vol": 3.0}
+                features={
+                    "sweep_low": 4396.0,
+                    "wick_below_vol": 0.2,
+                    "expected_push_vol": 3.0,
+                    "wick_n": 6.0,
+                }
             ),
         )
     )
@@ -3207,7 +3216,12 @@ async def test_how_far_to_wait_comes_from_the_level_not_a_constant():
         Message(
             topic=SIGNALS,
             payload=signal(
-                features={"sweep_low": 4396.0, "wick_below_vol": 1.0, "expected_push_vol": 3.0}
+                features={
+                    "sweep_low": 4396.0,
+                    "wick_below_vol": 1.0,
+                    "expected_push_vol": 3.0,
+                    "wick_n": 6.0,
+                }
             ),
         )
     )
@@ -3234,7 +3248,12 @@ async def test_the_fraction_is_a_ceiling_on_the_wait():
             topic=SIGNALS,
             payload=signal(
                 # A wick so deep it would ask for more than the fraction allows.
-                features={"sweep_low": 4396.0, "wick_below_vol": 9.0, "expected_push_vol": 3.0}
+                features={
+                    "sweep_low": 4396.0,
+                    "wick_below_vol": 9.0,
+                    "expected_push_vol": 3.0,
+                    "wick_n": 6.0,
+                }
             ),
         )
     )
@@ -3274,3 +3293,67 @@ async def test_how_far_in_front_a_trade_got_is_written_down(tmp_path):
     ctx = entries[-1].context
     assert ctx["best_r"] == pytest.approx(1.5, rel=0.05)
     assert ctx["profit"] < 0, "a trade that was 1.5R up and still lost"
+
+
+async def test_a_level_nobody_has_pushed_is_not_worth_waiting_for():
+    """Parking asks price to come back somewhere it has been before.
+
+    A level with no wick history has no such place, so waiting is a bet with
+    nothing behind it - and the signal that expires unfilled is not a trade
+    avoided, it is a trade the strategy wanted and did not get.
+    """
+    bus = Bus()
+    made = settings(live=True, pullback_fraction=1.0, pullback_min_wicks=2.0)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.handle(
+        Message(
+            topic=SIGNALS,
+            payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0, "wick_n": 0.0}),
+        )
+    )
+    # Taken at market rather than parked and left to expire.
+    assert isinstance(got, Intent)
+    assert "gold" not in trader._waiting
+    assert len(venue.sent) == 1
+
+
+async def test_the_wait_uses_the_spread_of_the_wick_not_only_its_mean():
+    """Half of all wicks are deeper than the mean by definition, so waiting at
+    the mean is waiting at a depth exceeded as often as not."""
+
+    async def trigger_for(sd):
+        bus = Bus()
+        made = settings(live=True, pullback_fraction=1.0, pullback_sigmas=1.0)
+        trader = Trader(bus, settings=made, broker=RecordingBroker(made))
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        await trader.handle(
+            Message(
+                topic=SIGNALS,
+                payload=signal(
+                    features={
+                        "sweep_low": 4396.0,
+                        "wick_below_vol": 0.5,
+                        "wick_below_sd": sd,
+                        "wick_n": 8.0,
+                        "expected_push_vol": 3.0,
+                    }
+                ),
+            )
+        )
+        held = trader._waiting.get("gold")
+        return held.trigger if held else None
+
+    tight = await trigger_for(0.0)
+    wide = await trigger_for(0.6)
+    assert tight is not None
+    assert wide is not None
+    # A level whose wicks vary asks to be met deeper.
+    assert wide < tight

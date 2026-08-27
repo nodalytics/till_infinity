@@ -299,6 +299,17 @@ class Call(Restorable):
         unit = vol.price_units(self.level.price, 1.0) or 1.0
         wick_below = (self.level.price - zone_low) / unit
         wick_above = (zone_high - self.level.price) / unit
+        # How *spread out* the wicks are, not only how deep on average.
+        #
+        # `SideStats` has tracked this since the sweep zone was built and it
+        # has never left the object: only the mean reached a consumer, so
+        # anything asking "how far does this level get pushed" got a number
+        # that half of pushes exceed. A consumer waiting for a retracement
+        # needs the spread to know whether the mean means anything.
+        below = self.level.sides.get(lv.Side.ABOVE)
+        above = self.level.sides.get(lv.Side.BELOW)
+        wick_below_sd = below.wick_sd_vol if below else 0.0
+        wick_above_sd = above.wick_sd_vol if above else 0.0
 
         if clock is not None:
             hour_hold, hour_n = clock.hold_rate(self.feed, self.time)
@@ -385,6 +396,12 @@ class Call(Restorable):
                 "zone_high": zone_high,
                 "wick_below_vol": wick_below,
                 "wick_above_vol": wick_above,
+                "wick_below_sd": wick_below_sd,
+                "wick_above_sd": wick_above_sd,
+                # How many wicks are behind those two numbers. A mean and a
+                # spread from one observation are not a mean and a spread, and
+                # a consumer cannot tell without being told.
+                "wick_n": float(below.wick_n if below else 0.0),
                 # And the wider band a **stop** has to clear. The two are not
                 # the same question: the touch zone is built from the average
                 # wick, which is the right centre for "is price at this level"

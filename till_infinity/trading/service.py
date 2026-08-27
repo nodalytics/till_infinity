@@ -36,6 +36,7 @@ from typing import Any
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
+from ..structures.levels import SECONDS
 from . import manage, plans, strategy
 from . import symbols as sym
 from .broker import Broker, BrokerError, build
@@ -531,13 +532,33 @@ class Trader:
         # somewhere sensible instead of not parking at all.
         level = float(features.get("level") or 0.0)
         wick = features.get("wick_below_vol" if intent.side is Side.BUY else "wick_above_vol")
+        spread = (
+            features.get("wick_below_sd" if intent.side is Side.BUY else "wick_above_sd") or 0.0
+        )
+        seen = features.get("wick_n") or 0.0
+
+        # Nothing to wait for on a level nobody has pushed.
+        #
+        # Parking asks price to come back somewhere it has been before. A level
+        # with no wick history has no such place, so waiting is a bet with
+        # nothing behind it - and the trade that expires unfilled is not a
+        # trade avoided, it is a trade the strategy wanted and did not get.
+        if seen < self.settings.pullback_min_wicks:
+            return None
+
         unit = abs(intent.entry - intent.stop) / intent.stop_vol if intent.stop_vol else 0.0
         deep = float(edge)
         if wick and unit > 0 and level > 0:
             # From the level, not from the fill: the wick is measured from the
             # level and adding it to a fill that has already drifted would ask
             # for a retracement nobody has ever observed here.
-            asked = level - intent.side.sign * float(wick) * unit
+            # Mean plus a share of the spread, rather than the mean alone.
+            # Half of all wicks are deeper than the mean by definition, so
+            # waiting at it is waiting at a depth that gets exceeded as often
+            # as not - which for a retracement is the difference between being
+            # met and being missed.
+            depth = float(wick) + float(spread) * self.settings.pullback_sigmas
+            asked = level - intent.side.sign * depth * unit
             # Never past the sweep edge - beyond that is where the stop lives,
             # and an entry at the stop is not an entry.
             deep = max(asked, float(edge)) if intent.side is Side.BUY else min(asked, float(edge))
@@ -550,13 +571,25 @@ class Trader:
         if (intent.entry - want) * intent.side.sign <= 0:
             return None
 
-        hold = intent.hold or self.settings.max_hold
+        # How long to wait, in bars of the timeframe that produced the call.
+        #
+        # A fraction of the hold makes the wait a property of the strategy
+        # rather than of the market, so a 1m call and a 1h call wait the same
+        # wall-clock time for retracements that happen on completely different
+        # clocks. Bars of the entry interval is the same correction the hold
+        # itself got, applied to the other end.
+        bars = SECONDS.get(intent.interval, 0.0)
+        window = (
+            bars * self.settings.pullback_bars
+            if bars
+            else (intent.hold or self.settings.max_hold) * self.settings.pullback_window
+        )
         self._waiting[intent.feed] = Waiting(
             payload=payload,
             feed=intent.feed,
             trigger=want,
             side=intent.side,
-            until=tick.time + hold * self.settings.pullback_window,
+            until=tick.time + window,
         )
         self._was_parked[intent.feed] = True
         log.info(

@@ -455,6 +455,21 @@ class Settings:
     #: How much of the strategy's hold a parked signal may wait, as a multiple.
     #: A resting order with no deadline is a trade taken on stale information.
     pullback_window: float = 0.5
+    #: Bars of the **entry interval** a parked signal may wait. Replaces the
+    #: fraction above wherever the interval is known: a fraction of the hold
+    #: makes the wait a property of the strategy rather than of the market, so
+    #: a 1m call and a 1h call would wait the same wall clock for retracements
+    #: that happen on completely different clocks.
+    pullback_bars: float = 10.0
+    #: How much of the wick's own spread to add to its mean when choosing where
+    #: to wait. Half of all wicks are deeper than the mean by definition, so
+    #: waiting at the mean is waiting at a depth exceeded as often as not.
+    pullback_sigmas: float = 0.5
+    #: Wicks a level must have behind it before waiting for one is worth doing.
+    #: Parking asks price to return somewhere it has been; a level with no such
+    #: place offers nothing to wait for, and the signal expires unfilled - which
+    #: is not a trade avoided but a trade the strategy wanted and did not get.
+    pullback_min_wicks: float = 2.0
 
     #: How long a stopped trade is watched to see if its target arrived, as a
     #: multiple of the hold it would have had. Zero switches the watch off.
@@ -697,6 +712,9 @@ class Settings:
             max_stop_scale=_float("TRADING_MAX_STOP_SCALE", 3.0),
             pullback_fraction=_float("TRADING_PULLBACK_FRACTION", 0.0),
             pullback_window=_float("TRADING_PULLBACK_WINDOW", 0.5),
+            pullback_bars=_float("TRADING_PULLBACK_BARS", 10.0),
+            pullback_sigmas=_float("TRADING_PULLBACK_SIGMAS", 0.5),
+            pullback_min_wicks=_float("TRADING_PULLBACK_MIN_WICKS", 2.0),
             sweep_max_rate=_float("TRADING_SWEEP_MAX_RATE", 0.35),
             sweep_min_history=_float("TRADING_SWEEP_MIN_HISTORY", 6.0),
             sweep_max_exposure=_float("TRADING_SWEEP_MAX_EXPOSURE", 0.8),
