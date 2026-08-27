@@ -3755,3 +3755,50 @@ def test_snap_differs_from_level_scalp_in_exactly_one_respect():
     assert quick.target == pytest.approx(usual.target)
     assert quick.volume == pytest.approx(usual.volume)
     assert quick.hold < usual.hold
+
+
+def test_a_fast_strategy_protects_faster_than_a_slow_one():
+    """A bar runs almost to the target, stops short, and gives it back.
+
+    The global numbers are built for a half-hour thesis - a 1R threshold and a
+    2v trail - and on a two-minute trade that is most of its life spent
+    unprotected, missing exactly the case a fast strategy exists for.
+    """
+    from till_infinity.trading.scalper import LevelScalp, Snap
+
+    assert Snap.break_even_at < 1.0
+    assert Snap.trail_vol < 2.0
+    # level-scalp states none, so it uses whatever the deployment configured.
+    assert LevelScalp.break_even_at == 0.0
+    assert LevelScalp.trail_vol == 0.0
+
+    quick = take("snap")
+    assert isinstance(quick, Intent)
+    assert quick.break_even_at == pytest.approx(Snap.break_even_at)
+    assert quick.trail_vol == pytest.approx(Snap.trail_vol)
+
+
+def test_the_strategys_own_numbers_beat_the_global_ones():
+    """A global threshold cannot fit both a thirty-minute thesis and a
+    two-minute one."""
+    from till_infinity.trading import manage
+
+    spec = GOLD
+    made = settings(break_even_at=1.0, break_even_ticks=0, trail_vol=2.0)
+    intent = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.05,
+        entry=4400.0,
+        stop=4396.0,
+        target=4410.0,
+        # This strategy protects at half an R rather than a whole one.
+        break_even_at=0.5,
+        trail_vol=0.75,
+    )
+    position = td.Position(ticket=1, symbol="XAUUSD", side=Side.BUY, volume=0.05, price_open=4400.0)
+    # Up 0.6R - past the strategy's threshold, short of the global one.
+    move = manage.advance(position, intent, spec, made, best=4402.4, vol_bps=10.0)
+    assert move is not None, "the strategy's own threshold should have fired"
+    assert move.stop >= 4400.0

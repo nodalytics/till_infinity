@@ -72,7 +72,11 @@ def advance(
     because a broker's `price_current` is a snapshot and a trailing stop
     anchored to snapshots trails whatever the last poll happened to catch.
     """
-    if not (settings.break_even_at > 0 or settings.trail_vol > 0):
+    # The strategy's own numbers win where it states them. A global threshold
+    # cannot fit both a thirty-minute thesis and a two-minute one.
+    even_at = intent.break_even_at or settings.break_even_at
+    trail_at = intent.trail_vol or settings.trail_vol
+    if not (even_at > 0 or trail_at > 0):
         return None
 
     risk = abs(intent.entry - intent.stop)
@@ -87,7 +91,7 @@ def advance(
     proposed = position.stop
     reason = ""
 
-    if settings.break_even_at > 0 and gained >= risk * settings.break_even_at:
+    if even_at > 0 and gained >= risk * even_at:
         # The cushion covers the spread: a long exits on the bid, so a stop
         # exactly at the entry books a small loss rather than a scratch.
         cushion = spec.tick_size * max(0, settings.break_even_ticks)
@@ -95,7 +99,7 @@ def advance(
         if _better(level, proposed, position.side):
             proposed, reason = level, f"break even at {gained / risk:.1f}R"
 
-    if settings.trail_vol > 0 and vol_bps > 0:
+    if trail_at > 0 and vol_bps > 0:
         # How far behind, in the level's own terms rather than a flat number.
         #
         # `trail_vol` is already in volatility units, so it adapts across
@@ -116,7 +120,7 @@ def advance(
             features.get("wick_below_sd" if position.side is Side.BUY else "wick_above_sd") or 0.0
         )
         seen = features.get("wick_n") or 0.0
-        room = settings.trail_vol
+        room = trail_at
         if seen >= 2:
             room = max(room, float(wick) + float(spread_vol) * settings.trail_sigmas)
         behind = price_distance(best, vol_bps, room)

@@ -469,6 +469,8 @@ class LevelStrategy(Strategy):
             stop_vol=abs(entry - stop) / unit if unit else 0.0,
             stop_scale=self.stop_floor_vol(interval) / (self.settings.min_stop_vol or 1.0),
             hold=self.hold_for(interval, self.settings.max_hold),
+            break_even_at=self.break_even_at,
+            trail_vol=self.trail_vol,
         )
 
 
@@ -801,6 +803,17 @@ class Snap(LevelStrategy):
     #: Two minutes covers 72% of resolutions. Longer buys a smaller share of a
     #: smaller push; shorter starts cutting theses off before they resolve.
     hold_seconds: ClassVar[float] = 120.0
+    #: Protect early and trail close, because the trade is over in seconds.
+    #:
+    #: The global numbers are built for a half-hour thesis: a 1R threshold and
+    #: a 2v trail. On a two-minute trade that is most of its life spent
+    #: unprotected, and it misses the case this is for - a bar that runs almost
+    #: to the target, stops just short, and gives it all back. Half an R is
+    #: reached inside the first few seconds of a real move, and a trail under a
+    #: volatility unit keeps most of a spike that never quite closed the
+    #: distance.
+    break_even_at: ClassVar[float] = 0.5
+    trail_vol: ClassVar[float] = 0.75
     entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
     context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
 
@@ -1188,4 +1201,6 @@ class FadeToValue(LevelStrategy):
             stop_vol=abs(entry - stop) / unit if unit else 0.0,
             stop_scale=self.stop_floor_vol(interval) / (self.settings.min_stop_vol or 1.0),
             hold=self.hold_for(interval, self.settings.max_hold),
+            break_even_at=self.break_even_at,
+            trail_vol=self.trail_vol,
         )

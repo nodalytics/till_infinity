@@ -186,6 +186,12 @@ class Intent:
     #: derivation that can be got wrong, and quietly is.
     stop_vol: float = 0.0
     stop_scale: float = 1.0
+    #: The strategy's own protection speed, zero meaning "use the settings".
+    #: Carried on the intent rather than looked up later, for the same reason
+    #: `hold` is: by the time a stop is being moved, the strategy that wanted
+    #: the trade is a name in a log line.
+    break_even_at: float = 0.0
+    trail_vol: float = 0.0
     #: Seconds this trade may stay open, as its strategy asked. Zero defers to
     #: the configured default. Carried on the intent rather than looked up from
     #: the strategy later, because by the time a position is being timed out

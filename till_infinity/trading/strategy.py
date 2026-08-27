@@ -89,6 +89,18 @@ class Strategy(ABC):
     #: three days and that is not a scalp whatever the arithmetic says.
     hold_bars: ClassVar[float] = 0.0
 
+    #: How quickly this strategy protects a trade, overriding the deployment's
+    #: own settings. Zero on either means "use the configured value".
+    #:
+    #: These were global, and a global number cannot fit both a strategy that
+    #: holds thirty minutes and one that holds two. A fast trade spends most of
+    #: its life waiting for a 1R threshold it may never announce, and a trail
+    #: wide enough for a half-hour thesis is most of the move for a
+    #: twenty-second one - so the fast strategy is unprotected for exactly the
+    #: window it exists to trade.
+    break_even_at: ClassVar[float] = 0.0
+    trail_vol: ClassVar[float] = 0.0
+
     def hold_for(self, interval: str, ceiling: float) -> float:
         """Seconds this strategy may hold a trade triggered on `interval`."""
         from ..structures.levels import SECONDS
