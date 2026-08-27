@@ -4655,3 +4655,31 @@ def test_a_day_with_no_trades_says_so():
     guard = Guard(settings())
     guard.roll(10_000.0, now=1_000.0)
     assert "no trades" in guard.summary()
+
+
+def _rr_verdict(floor, target):
+    """Whether the guard allows an intent with this target, at this floor."""
+    guard = Guard(settings(min_reward_to_risk=floor))
+    guard.roll(10_000.0, now=1_000.0)
+    return guard.allows(intent(target=target), positions=[], now=1_100.0)
+
+
+def test_a_poor_reward_to_risk_is_refused_while_the_floor_stands():
+    """entry 4400.5, stop 4395.6 - so risk 4.9. A target 2.45 away is 0.5 RR."""
+    got = _rr_verdict(1.2, target=4402.95)
+    assert got is not None
+    assert got.gate == "reward_to_risk"
+
+
+def test_the_same_intent_passes_once_the_floor_is_zero():
+    """Zero is off explicitly, not by nothing being below zero. A gate that
+    reads as enforced while doing nothing is the failure this repository spent
+    a day finding - and this one refused 40,421 of 47,676 calls to gain
+    nothing, measured over the production journal.
+    """
+    assert _rr_verdict(0.0, target=4402.95) is None
+
+
+def test_a_good_reward_to_risk_passes_either_way():
+    for floor in (0.0, 1.2):
+        assert _rr_verdict(floor, target=4410.5) is None

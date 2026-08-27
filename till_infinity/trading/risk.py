@@ -163,12 +163,24 @@ class Guard:
             left = self.settings.loss_cooldown - (when - lost)
             return self._no("cooldown", intent.feed, f"{left:.0f}s left after a loss")
 
-        if intent.reward_to_risk < self.settings.min_reward_to_risk:
+        # Zero is off, explicitly, like every other floor here. Relying on
+        # "nothing is below zero" would leave the gate looking enforced in a
+        # reading of the code while doing nothing, and this repository has
+        # spent a day finding checks that were quietly inert.
+        #
+        # Re-verified 2026-08-27 over 47,676 production touches joined to the
+        # signals that produced them: 0.908R ungated against 0.868R at the 1.2
+        # floor that was live, monotonically worse as the floor rises. The
+        # quality difference is 0.047R and the volume difference is everything
+        # - it refused 40,421 of 47,676 calls to gain nothing. See
+        # research/replay.md and todo 0f, whose original figures were computed
+        # on realised push rather than R and overstated this fivefold.
+        floor = self.settings.min_reward_to_risk
+        if floor > 0 and intent.reward_to_risk < floor:
             return self._no(
                 "reward_to_risk",
                 intent.feed,
-                f"{intent.reward_to_risk:.2f} against a "
-                f"{self.settings.min_reward_to_risk:.2f} floor",
+                f"{intent.reward_to_risk:.2f} against a {floor:.2f} floor",
             )
 
         if tick is not None and intent.reward > 0:
