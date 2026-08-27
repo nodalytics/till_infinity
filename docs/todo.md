@@ -4,6 +4,53 @@ Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
+## 0n. Trend context is the strongest thing measured here, and nothing uses it
+
+Found 2026-08-27, written up in [replay.md](../research/replay.md), built by
+`research/harness/trend.py`. **This is the highest-value unbuilt item on the
+list.**
+
+An efficiency ratio over the last twelve level prices on a feed - net
+displacement over distance travelled, computed from strictly prior resolutions
+- separates outcomes better than anything else tried:
+
+| efficiency | break share | R with the level |
+| --- | ---: | ---: |
+| 0.017-0.096 (chop) | 11.3% | 0.807 |
+| 0.985-1.000 (trend) | **1.4%** | **1.149** |
+
+0.34R between the extremes, monotonic across the top three deciles, and it
+holds inside every interval - which is what rules out composition - while
+strengthening as the timeframe slows, +0.081 on 1m to +0.245 on 15m.
+
+For scale: every direction gate measured the same day spread 0.09 to 0.15
+across its entire range, and all three were switched off as a result. This is
+more than twice that and points somewhere.
+
+**The mechanism is not the obvious one, and building the obvious thing would
+get it backwards.** A trend does not run levels over - breaks are *rarest* in
+the most trending decile. What a trend does is make a level hold harder and
+pay more, so this is a pullback-in-trend effect, not a breakout effect.
+
+**Two shapes, and the second is probably better.** A gate refusing entries
+below an efficiency floor is the obvious form. But the effect is continuous and
+monotonic, so *sizing* risk with trend context uses the whole curve instead of
+a cliff edge, and does not throw away the trades in the middle. Sizing has the
+further advantage of being reversible in a way a gate is not: a gate that is
+wrong shows up as nothing happening, which is the failure mode this repository
+keeps finding late.
+
+It also lands well for `high-timeframe`, which triggers at 15m and above -
+exactly where the effect is largest.
+
+Three things that stop this being a finished answer. The window of twelve is a
+guess. The efficiency ratio is one trend measure among several, and picking it
+first because it was easy to compute is not the same as picking it because it
+was best - see 0m, which this partly pays down. And it is a fixed
+stop-and-target rule over touch resolutions rather than the trades the book
+actually took, which is the same caveat that applies to every replay result
+here.
+
 ## 0m. Momentum has one detector, and levels have a whole discipline
 
 Raised 2026-08-27, after `structures/cusum.py` went in and momentum became the
