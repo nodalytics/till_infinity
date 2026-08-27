@@ -508,9 +508,7 @@ class Trader:
         # Hand the strategies the accumulated run. Injected here rather than
         # computed in a strategy because it is an accumulation over the whole
         # quote stream and a strategy sees one signal at a time.
-        running = self._push.get(feed)
-        if running is not None:
-            payload["pressure_vol"] = running.pressure
+        self._hand_over_pressure(feed, payload)
 
         tick = await self._tick(spec.symbol)
         if tick is None:
@@ -689,52 +687,104 @@ class Trader:
 
     # --------------------------------------------------------------- trading
 
+    def _hand_over_pressure(self, feed: str, payload: dict[str, Any]) -> None:
+        """Put the accumulated run where the strategies will actually see it.
+
+        Into `features`, not the top level. `_features` reads
+        `payload["features"]` and nothing else, so a top-level key is invisible
+        to every strategy - the gate reads zero and refuses nothing while
+        looking configured. That is what the first version of this did, and
+        the test written to catch exactly that asserted the wrong dictionary
+        and passed alongside it.
+        """
+        running = self._push.get(feed)
+        if running is None:
+            return
+        features = payload.setdefault("features", {})
+        if isinstance(features, dict):
+            features["pressure_vol"] = running.pressure
+
     async def _rejected_at(self, intent: Intent) -> Refusal | None:
-        """Refuse a trade the level has not visibly rejected yet.
+        """Refuse a trade nothing has confirmed yet. Either witness will do.
 
         A level says where a trade is worth taking and is silent about when.
-        The gap between those is where this book has been losing money: an
-        `inverse` buy on gold took its stop at 4591 and then ran to its target
-        at 4604, and 23 of the first 32 trades were stopped, several of them
-        later reaching the price they were aiming at. Entering because price is
-        *near* a level, while the level is still being tested, is a bet on the
-        test being over.
+        The gap between those is where this book loses money: an `inverse` buy
+        on gold took its stop at 4591 and then ran to its target at 4604, and
+        23 of the first 32 trades were stopped, several later reaching the
+        price they were aiming at. Entering because price is *near* a level,
+        while the level is still being tested, is a bet that the test is over.
 
-        A candlestick pattern is evidence that it is: the auction reached the
-        price, found nothing, and closed away from it inside one bar. So the
-        last closed bar has to show a hammer, a shooting star or an engulfing
-        reversal that touched the level and closed on the trade's side.
+        Two ways to see that it is, and **either is enough**:
 
-        **An unavailable answer is a refusal, not an exception.** If the broker
-        serves no bars for this instrument the trade is unconfirmed, and
-        unconfirmed is exactly what the gate is for. Treating a missing
-        confirmation as a pass would make the gate silently inactive on every
-        instrument whose bars fail, which is the failure mode that looks like
-        working code.
+        **The move turned.** After price has come back to the level, momentum
+        crossing back in the trade's favour says the run against it has ended.
+        Only meaningful after a pullback - momentum at a level is adverse by
+        construction, because price arriving at support is falling, which is
+        what arriving means.
+
+        **A candle rejected the level.** The last closed bar reached the level
+        and closed away from it - a hammer, a shooting star, an engulfing
+        reversal.
+
+        These are the same claim measured differently. A hammer *is* a momentum
+        reversal compressed into one bar; the accumulator reads the same event
+        tick by tick. The candle is stronger evidence and has to wait for a
+        close, which on a 4h chart is a long time to hold an opinion. Requiring
+        both would refuse a fast turn for not yet having a bar to show for
+        itself, and refuse a clean rejection for happening inside one bar
+        rather than across several. So it is a disjunction, and the trade is
+        confirmed by whichever arrives.
         """
-        if not self.settings.require_candle:
+        wants_turn = self.settings.require_turn_vol > 0
+        wants_candle = self.settings.require_candle
+        if not (wants_turn or wants_candle):
             return None
+
+        asked: list[str] = []
+        # The turn. Skipped entirely before a pullback, where the reading means
+        # the opposite thing - so on a straight-to-market entry this witness is
+        # not merely unsatisfied, it is not applicable.
+        if wants_turn and intent.features.get("after_pullback"):
+            asked.append("turn")
+            pressure = float(intent.features.get("pressure_vol") or 0.0)
+            turned = pressure if intent.side is Side.BUY else -pressure
+            if turned >= self.settings.require_turn_vol:
+                log.info(
+                    "trading: %s %s confirmed - turned %.2fv after the pullback",
+                    intent.side,
+                    intent.feed,
+                    turned,
+                )
+                return None
+
+        if wants_candle:
+            asked.append("candle")
+            found = await self._candle_at(intent)
+            if found:
+                log.info("trading: %s %s confirmed by a %s", intent.side, intent.feed, found)
+                return None
+
+        if not asked:
+            return None
+        witnesses = "/".join(asked)
+        return Refusal("unconfirmed", f"nothing confirmed the level ({witnesses})", intent.feed)
+
+    async def _candle_at(self, intent: Intent) -> str:
+        """The pattern rejecting this level on the last closed bar, or "".
+
+        An unavailable answer is an empty one, not an exception: if the broker
+        serves no bars the trade is unconfirmed, which is exactly what the gate
+        is for. Treating missing data as a pass would make this silently
+        inactive on every instrument whose bars fail, which is the failure mode
+        that looks like working code.
+        """
         bars = await self.execution.bars(intent.symbol, intent.interval, count=3)
         if len(bars) < 2:
-            return Refusal("unconfirmed", "no bars to confirm the level with", intent.feed)
+            return ""
         level = float(intent.features.get("level") or intent.entry)
         vol_bps = self._vol_bps.get(intent.feed, 0.0)
         tolerance = price_distance(level, vol_bps, self.settings.candle_tolerance_vol)
-        found = confirms(bars, level, intent.side is Side.BUY, tolerance)
-        if not found:
-            return Refusal(
-                "unconfirmed",
-                f"no rejection at {level:.5g} on the last {intent.interval} bar",
-                intent.feed,
-            )
-        log.info(
-            "trading: %s %s confirmed by a %s at %.5g",
-            intent.side,
-            intent.feed,
-            found,
-            level,
-        )
-        return None
+        return confirms(bars, level, intent.side is Side.BUY, tolerance)
 
     def _park(
         self,
@@ -927,7 +977,9 @@ class Trader:
         # Marked as post-pullback, which is what lets `require_turn_vol` apply
         # here and only here. The same momentum reading means "arriving at the
         # level" before the wait and "the fall has not finished" after it.
-        held.payload["after_pullback"] = 1.0
+        woken = held.payload.setdefault("features", {})
+        if isinstance(woken, dict):
+            woken["after_pullback"] = 1.0
         return await self.on_signal(held.payload, observe=False, park=False)
 
     async def take(self, intent: Intent, by: str = "") -> Intent | Refusal:

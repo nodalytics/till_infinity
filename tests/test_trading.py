@@ -4262,38 +4262,6 @@ def _candle(o, h, lo, c):
     return Bar(open=o, high=h, low=lo, close=c)
 
 
-async def test_an_unconfirmed_entry_is_refused():
-    """Price near a level is not the level having been tested."""
-    dull = [_candle(4400, 4401, 4399, 4400.5), _candle(4400.5, 4402, 4400, 4401.5)]
-    trader = _with_bars(dull)
-    got = await trader._rejected_at(intent(features={"level": 4395.0}))
-    assert got is not None
-    assert got.gate == "unconfirmed"
-
-
-async def test_a_rejection_at_the_level_is_allowed():
-    confirmed = [
-        _candle(4400, 4401, 4399, 4400.5),
-        _candle(4400, 4400.5, 4394, 4400.2),  # hammer into 4395
-    ]
-    trader = _with_bars(confirmed)
-    assert await trader._rejected_at(intent(features={"level": 4395.0})) is None
-
-
-async def test_missing_bars_are_a_refusal_not_a_pass():
-    """The failure mode that looks like working code: a gate that silently
-    stops applying on every instrument whose bars fail."""
-    trader = _with_bars([])
-    got = await trader._rejected_at(intent(features={"level": 4395.0}))
-    assert got is not None
-    assert got.gate == "unconfirmed"
-
-
-async def test_the_gate_is_off_by_default():
-    trader = Trader(Bus(), settings=settings())
-    assert await trader._rejected_at(intent(features={"level": 4395.0})) is None
-
-
 # --------------------------------------------- refusing a run that is still running
 
 
@@ -4367,7 +4335,11 @@ async def test_the_pressure_feature_actually_reaches_the_strategies():
 
     payload = signal()
     await trader.on_signal(payload)
-    assert "pressure_vol" in payload, "pressure never reached the strategies"
+    # Into `features`, the only place `_features` looks. A top-level key is
+    # invisible to every strategy while looking injected - which is what an
+    # earlier version did, and an earlier version of this test asserted the
+    # wrong dictionary and passed.
+    assert "pressure_vol" in payload.get("features", {}), "pressure never reached features"
 
 
 async def test_a_feed_with_no_signal_yet_accumulates_nothing():
@@ -4382,51 +4354,77 @@ async def test_a_feed_with_no_signal_yet_accumulates_nothing():
     assert trader._push == {}
 
 
-# ------------------------------------------- requiring the turn, not just its absence
+# --------------------------------- confirmation: either the turn or a candle
 
 
-def _turn(pressure, side=Side.BUY, after=1.0, want=0.5):
-    from till_infinity.trading.scalper import LevelScalp
-
-    engine = LevelScalp(
-        settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0, require_turn_vol=want)
-    )
-    features = {
-        "probability": 0.9,
-        "edge": 1.0,
-        "pressure_vol": pressure,
-        "after_pullback": after,
-    }
-    return engine.quality("gold", features, side)
+def _confirming(candles=None, **over):
+    trader = Trader(Bus(), settings=settings(**over))
+    trader.paper = _Bars(candles or [])
+    return trader
 
 
-def test_a_pullback_that_has_not_turned_is_refused():
+def _asks(pressure=0.0, after=1.0, level=4395.0):
+    return intent(features={"level": level, "pressure_vol": pressure, "after_pullback": after})
+
+
+async def test_a_pullback_that_has_not_turned_is_refused():
     """Price came back to the level and kept going. The level may still be
     right; this fill is early, which is the whole complaint."""
-    got = _turn(pressure=-1.0, side=Side.BUY)
+    trader = _confirming(require_turn_vol=0.5)
+    got = await trader._rejected_at(_asks(pressure=-1.0))
     assert got is not None
-    assert got.gate == "no-turn"
+    assert got.gate == "unconfirmed"
 
 
-def test_a_pullback_that_has_turned_is_taken():
-    assert _turn(pressure=1.0, side=Side.BUY) is None
+async def test_a_pullback_that_has_turned_is_taken():
+    trader = _confirming(require_turn_vol=0.5)
+    assert await trader._rejected_at(_asks(pressure=1.0)) is None
 
 
-def test_the_turn_is_not_required_before_the_pullback():
+async def test_the_turn_is_not_asked_for_before_a_pullback():
     """Momentum at a level is adverse by construction - price arriving at
-    support is falling, which is what arriving means. Applying this on arrival
-    would refuse every support buy the system exists to take.
-    """
-    assert _turn(pressure=-5.0, side=Side.BUY, after=0.0) is None
+    support is falling, which is what arriving means. Asking this on arrival
+    would refuse every support buy the system exists to take."""
+    trader = _confirming(require_turn_vol=0.5)
+    assert await trader._rejected_at(_asks(pressure=-5.0, after=0.0)) is None
 
 
-def test_the_turn_requirement_mirrors_for_a_sell():
-    assert _turn(pressure=1.0, side=Side.SELL) is not None
-    assert _turn(pressure=-1.0, side=Side.SELL) is None
+async def test_a_candle_confirms_when_momentum_has_not():
+    """Either witness is enough. Requiring both would refuse a clean rejection
+    for happening inside one bar rather than across several."""
+    hammer = [_candle(4400, 4401, 4399, 4400.5), _candle(4400, 4400.5, 4394, 4400.2)]
+    trader = _confirming(candles=hammer, require_turn_vol=0.5, require_candle=True)
+    assert await trader._rejected_at(_asks(pressure=-1.0)) is None
 
 
-def test_the_turn_requirement_is_off_by_default():
-    assert _turn(pressure=-5.0, side=Side.BUY, want=0.0) is None
+async def test_momentum_confirms_when_no_candle_has():
+    """And the other way: a fast turn is not refused for lacking a bar to show
+    for itself yet."""
+    dull = [_candle(4400, 4401, 4399, 4400.5), _candle(4400.5, 4402, 4400, 4401.5)]
+    trader = _confirming(candles=dull, require_turn_vol=0.5, require_candle=True)
+    assert await trader._rejected_at(_asks(pressure=1.0)) is None
+
+
+async def test_neither_witness_is_a_refusal():
+    dull = [_candle(4400, 4401, 4399, 4400.5), _candle(4400.5, 4402, 4400, 4401.5)]
+    trader = _confirming(candles=dull, require_turn_vol=0.5, require_candle=True)
+    got = await trader._rejected_at(_asks(pressure=-1.0))
+    assert got is not None
+    assert got.gate == "unconfirmed"
+
+
+async def test_missing_bars_are_not_a_pass():
+    """The failure mode that looks like working code: a gate that silently
+    stops applying on every instrument whose bars fail."""
+    trader = _confirming(candles=[], require_candle=True)
+    got = await trader._rejected_at(_asks(after=0.0))
+    assert got is not None
+    assert got.gate == "unconfirmed"
+
+
+async def test_confirmation_is_off_by_default():
+    trader = _confirming()
+    assert await trader._rejected_at(_asks(pressure=-5.0)) is None
 
 
 async def test_a_woken_signal_is_marked_as_post_pullback():
@@ -4434,6 +4432,6 @@ async def test_a_woken_signal_is_marked_as_post_pullback():
     requirement is inert while looking configured."""
     import inspect
 
-    from till_infinity.trading.service import Trader
+    from till_infinity.trading import service as svc
 
-    assert "after_pullback" in inspect.getsource(Trader._arrived)
+    assert "after_pullback" in inspect.getsource(svc.Trader._arrived)

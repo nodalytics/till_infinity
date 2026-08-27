@@ -164,22 +164,6 @@ class LevelStrategy(Strategy):
                     feed,
                 )
 
-        # And the stricter half: after a pullback, the turn has to have begun.
-        # Gated on `after_pullback` because momentum at a level is adverse by
-        # construction - price arriving at support is falling - so this same
-        # check on arrival would refuse every support buy.
-        want_turn = self.min_with_vol or settings.require_turn_vol
-        if want_turn > 0 and _number(features, "after_pullback"):
-            pressure = _number(features, "pressure_vol")
-            turned = pressure if side is Side.BUY else -pressure
-            if turned < want_turn:
-                return Refusal(
-                    "no-turn",
-                    f"price came back but has not turned - {turned:.2f}v with a {side}, "
-                    f"want {want_turn:.2f}v",
-                    feed,
-                )
-
         if settings.min_base_rate > 0:
             base_up = _number(features, "base_rate_up")
             base = base_up if side is Side.BUY else 1.0 - base_up
