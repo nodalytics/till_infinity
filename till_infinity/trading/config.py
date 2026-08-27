@@ -684,6 +684,23 @@ class Settings:
     #: taken by ordinary movement while the trade is still working, which is
     #: being stopped by noise in profit. `trail_vol` acts as the floor.
     trail_sigmas: float = 0.5
+    #: Volatility units the move must have turned back **in the trade's
+    #: favour**, after a pullback, before the entry is taken. Zero is off.
+    #:
+    #: The stricter half of the momentum filter. `max_against_vol` refuses an
+    #: entry while a run is still going against it; this requires the turn to
+    #: have actually started. One removes the worst entries, the other insists
+    #: on the better ones.
+    #:
+    #: **Only applied after a pullback, and that is not a detail.** Momentum at
+    #: a level is adverse by construction - price arriving at support is
+    #: falling, which is what arriving means - so requiring favourable momentum
+    #: on arrival would refuse every support buy this system exists to take.
+    #: After the pullback the same measurement means something else entirely:
+    #: that the fall has not finished. The pullback is what separates the two
+    #: readings, so the requirement rides on it.
+    require_turn_vol: float = 0.0
+
     #: Require a candlestick rejection at the level before entering. Off by
     #: default.
     #:
@@ -908,6 +925,7 @@ class Settings:
             break_even_ticks=_int("TRADING_BREAK_EVEN_TICKS", 2),
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
+            require_turn_vol=_float("TRADING_REQUIRE_TURN_VOL", 0.0),
             require_candle=_flag("TRADING_REQUIRE_CANDLE", "0"),
             candle_tolerance_vol=_float("TRADING_CANDLE_TOLERANCE_VOL", 0.25),
             stops_level_margin=_float("TRADING_STOPS_LEVEL_MARGIN", 1.25),

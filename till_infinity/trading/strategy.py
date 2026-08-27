@@ -113,6 +113,11 @@ class Strategy(ABC):
     #: and this is the number that decides how much of it is too much.
     max_against_vol: ClassVar[float] = 0.0
 
+    #: This strategy's own `require_turn_vol`. Zero means use the configured
+    #: value, so a strategy that wants the turn regardless of how the
+    #: deployment is tuned says so here.
+    min_with_vol: ClassVar[float] = 0.0
+
     #: How far this strategy insists price come back before it will fill,
     #: overriding the deployment's own `pullback_fraction`. Zero means use the
     #: configured value; a strategy that always wants a resting entry says so

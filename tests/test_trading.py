@@ -4380,3 +4380,60 @@ async def test_a_feed_with_no_signal_yet_accumulates_nothing():
         Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
     )
     assert trader._push == {}
+
+
+# ------------------------------------------- requiring the turn, not just its absence
+
+
+def _turn(pressure, side=Side.BUY, after=1.0, want=0.5):
+    from till_infinity.trading.scalper import LevelScalp
+
+    engine = LevelScalp(
+        settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0, require_turn_vol=want)
+    )
+    features = {
+        "probability": 0.9,
+        "edge": 1.0,
+        "pressure_vol": pressure,
+        "after_pullback": after,
+    }
+    return engine.quality("gold", features, side)
+
+
+def test_a_pullback_that_has_not_turned_is_refused():
+    """Price came back to the level and kept going. The level may still be
+    right; this fill is early, which is the whole complaint."""
+    got = _turn(pressure=-1.0, side=Side.BUY)
+    assert got is not None
+    assert got.gate == "no-turn"
+
+
+def test_a_pullback_that_has_turned_is_taken():
+    assert _turn(pressure=1.0, side=Side.BUY) is None
+
+
+def test_the_turn_is_not_required_before_the_pullback():
+    """Momentum at a level is adverse by construction - price arriving at
+    support is falling, which is what arriving means. Applying this on arrival
+    would refuse every support buy the system exists to take.
+    """
+    assert _turn(pressure=-5.0, side=Side.BUY, after=0.0) is None
+
+
+def test_the_turn_requirement_mirrors_for_a_sell():
+    assert _turn(pressure=1.0, side=Side.SELL) is not None
+    assert _turn(pressure=-1.0, side=Side.SELL) is None
+
+
+def test_the_turn_requirement_is_off_by_default():
+    assert _turn(pressure=-5.0, side=Side.BUY, want=0.0) is None
+
+
+async def test_a_woken_signal_is_marked_as_post_pullback():
+    """The gate keys off `after_pullback`. If `_arrived` never sets it the
+    requirement is inert while looking configured."""
+    import inspect
+
+    from till_infinity.trading.service import Trader
+
+    assert "after_pullback" in inspect.getsource(Trader._arrived)

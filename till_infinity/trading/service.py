@@ -923,6 +923,11 @@ class Trader:
         log.info("trading: %s reached %.5g - reconsidering", feed, held.trigger)
         # Asked again rather than resurrected: a setup that stopped being worth
         # taking while it waited is refused on arrival like any other.
+        #
+        # Marked as post-pullback, which is what lets `require_turn_vol` apply
+        # here and only here. The same momentum reading means "arriving at the
+        # level" before the wait and "the fall has not finished" after it.
+        held.payload["after_pullback"] = 1.0
         return await self.on_signal(held.payload, observe=False, park=False)
 
     async def take(self, intent: Intent, by: str = "") -> Intent | Refusal:
