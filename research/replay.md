@@ -791,3 +791,55 @@ That gap is execution - the 1.09R stop cost, the spread, and the distance
 between a 0.5v/0.75v rule on paper and what the strategies actually place - and
 it is larger than every gate, filter and side-selection question on this page
 put together. No amount of choosing better calls fixes it.
+
+## Locating the execution gap
+
+The replay says +0.908R per touch; the live account loses roughly 0.5R per
+trade. `research/harness/settings_grid.py` takes that apart.
+
+**First, the quoted number was for a trade we do not place.** Every positive
+figure in this file was measured at a 0.5v stop and 0.75v target. Production
+places a median **1.05v stop and 2.53v target** - twice the stop and three
+times the target. Scored at what we actually place:
+
+| stop \ target | 0.75v | 1.50v | 2.53v | 5.00v |
+| --- | ---: | ---: | ---: | ---: |
+| 0.50v | 0.902 | **1.785** | 1.567 | 0.445 |
+| 1.00v | 0.340 | 0.781 | 0.672 | 0.111 |
+| **1.05v (live)** | 0.313 | 0.734 | **0.630** | 0.096 |
+| 2.00v | 0.127 | 0.346 | 0.290 | 0.004 |
+
+So the honest replay figure for our configuration is **+0.630R**, not +0.908R.
+Quoting the tighter pair as evidence for the wider one was wrong and is
+corrected everywhere above by this section.
+
+**Second, the hold is not the explanation.** 97.7% of touches resolve inside
+`max_hold` and 99% inside the scalper hold, so trades being cut off before
+they resolve accounts for almost nothing. Only `snap`, at 120 seconds, misses
+a real share - 28%.
+
+**Third, what remains.** +0.630R against roughly −0.5R realised is still a gap
+of over 1R, and the candidates in order of size are: the gate stack that
+selected those 40 trades - `reward_to_risk` at 1.2 selects worse calls, and
+probability, edge and base rate were measured flat - plus a 1.09R stop cost,
+the spread, and a 40-trade sample whose error bars are wide. **The
+configuration that produced those trades no longer exists**, which makes the
+gap real but not currently measurable against anything.
+
+### The parameter finding, and why it is not a free 2.8x
+
+The grid's best cell is a **0.5v stop with a 1.5v target at +1.785R**, against
++0.630R for what we place. That is the largest single number on this page.
+
+It cannot be taken at face value, and the reason is in this repository
+already. `min_stop_vol` exists because a stop inside one volatility unit sits
+inside the width of the estimate it protects and is taken by ordinary
+movement - with two live trades cited for it. Both things are true because
+they measure from different places: **the replay measures from the level, and
+we do not enter at the level.** A 0.5v stop from the level is a real stop; a
+0.5v stop from a fill already 0.3v past it is 0.2v of room and dies to noise.
+
+So the tighter stop is worth what the entry is worth. With
+`pullback_fraction` at 1.0 the entry waits for the level, which is exactly the
+condition under which the grid's number applies - and that is the argument for
+tightening, rather than the grid alone.
