@@ -36,6 +36,7 @@ from typing import Any
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
+from ..structures.cusum import Cusum
 from ..structures.levels import SECONDS
 from . import manage, plans, strategy
 from . import symbols as sym
@@ -211,6 +212,11 @@ class Trader:
         #: reconciliation - taking a trade there would mutate the position set
         #: being reconciled, from inside the walk over it.
         self._rearm: list[dict[str, Any]] = []
+        #: Accumulated directional pressure per feed, fed from the quote
+        #: stream. One per feed rather than one shared, because the
+        #: accumulation is the state and mixing instruments into it would
+        #: measure nothing.
+        self._push: dict[str, Cusum] = {}
         #: Best price each open trade has seen, for the trailing stop. Tracked
         #: from the quote stream rather than read from the broker, because
         #: `price_current` is a snapshot and a trail anchored to snapshots
@@ -446,6 +452,20 @@ class Trader:
         when = message_time(payload)
         tick = Tick(symbol=symbol, bid=float(bid), ask=float(ask), time=when)
         self._spread_of[feed] = tick.spread
+        # Accumulate directional pressure. Fed from the quote stream rather
+        # than from signals, because signals arrive when a level is touched
+        # and the run that matters is the one that happened on the way there.
+        #
+        # The unit comes from the last signal for this feed, so a feed that has
+        # never published one accumulates nothing and the filter reads zero -
+        # no refusal. That is the right failure direction, but it is a real
+        # blind window and worth naming: the filter is inert on a feed until
+        # its first signal arrives. Signals are frequent enough that the window
+        # is short, and the alternative is inventing a second volatility
+        # estimate here that would disagree with the one everything else uses.
+        unit = price_distance(tick.mid, self._vol_bps.get(feed, 0.0), 1.0)
+        if unit > 0:
+            self._push.setdefault(feed, Cusum()).push(tick.mid, unit, when=when)
         # The paper book holds its own stops, so it has to see the market. When
         # the execution venue *is* the broker they are the same object and this
         # runs once.
@@ -485,6 +505,12 @@ class Trader:
         # a stop is the signal put back through every gate - not the intent,
         # which has already been proved wrong once at this price.
         self._last_signal[feed] = payload
+        # Hand the strategies the accumulated run. Injected here rather than
+        # computed in a strategy because it is an accumulation over the whole
+        # quote stream and a strategy sees one signal at a time.
+        running = self._push.get(feed)
+        if running is not None:
+            payload["pressure_vol"] = running.pressure
 
         tick = await self._tick(spec.symbol)
         if tick is None:

@@ -4292,3 +4292,91 @@ async def test_missing_bars_are_a_refusal_not_a_pass():
 async def test_the_gate_is_off_by_default():
     trader = Trader(Bus(), settings=settings())
     assert await trader._rejected_at(intent(features={"level": 4395.0})) is None
+
+
+# --------------------------------------------- refusing a run that is still running
+
+
+def _momentum(pressure, side=Side.BUY, limit=1.5):
+    """The gate's verdict for this much accumulated pressure."""
+    from till_infinity.trading.scalper import SweepAware
+
+    engine = SweepAware(settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0))
+    assert engine.max_against_vol == limit
+    features = {"probability": 0.9, "edge": 1.0, "pressure_vol": pressure}
+    return engine.quality("gold", features, side)
+
+
+def test_a_buy_is_refused_while_price_is_still_falling():
+    """Taking the other side of a run that has not finished is how a correct
+    level becomes a stopped trade."""
+    got = _momentum(pressure=-3.0, side=Side.BUY)
+    assert got is not None
+    assert got.gate == "momentum"
+
+
+def test_a_sell_is_refused_while_price_is_still_rising():
+    got = _momentum(pressure=3.0, side=Side.SELL)
+    assert got is not None
+    assert got.gate == "momentum"
+
+
+def test_momentum_with_the_trade_is_not_refused():
+    """The gate is about the run being *against* the trade. A buy into upward
+    pressure is the level and the flow agreeing."""
+    assert _momentum(pressure=3.0, side=Side.BUY) is None
+
+
+def test_a_small_run_against_is_tolerated():
+    """Some movement against is what arriving at a level looks like. The gate
+    is for a run still in progress, not for any adverse tick."""
+    assert _momentum(pressure=-0.5, side=Side.BUY) is None
+
+
+def test_strategies_that_did_not_ask_are_unaffected():
+    """It is a filter strategies opt into, not a new global gate."""
+    from till_infinity.trading.scalper import LevelScalp
+
+    engine = LevelScalp(settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0))
+    assert engine.max_against_vol == 0.0
+    features = {"probability": 0.9, "edge": 1.0, "pressure_vol": -99.0}
+    assert engine.quality("gold", features, Side.BUY) is None
+
+
+def test_the_inverse_control_carries_the_filter():
+    """Fading a live run is the worst version of what it does, and would
+    confound the direction test it exists for."""
+    from till_infinity.trading.scalper import Inverse
+
+    assert Inverse(settings()).max_against_vol > 0
+
+
+async def test_the_pressure_feature_actually_reaches_the_strategies():
+    """The gate reads `pressure_vol` from the features. If the service never
+    injects it, the filter is inert while looking configured - the failure mode
+    that passes every unit test of the gate itself.
+    """
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+    # A signal first, because the accumulator's volatility unit comes from one
+    # and a feed that has never published is deliberately not accumulated.
+    await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    for bid, ask in ((4399.5, 4400.5), (4409.5, 4410.5)):
+        await trader.handle(Message(topic=QUOTES, payload={"feed": "gold", "bid": bid, "ask": ask}))
+    assert "gold" in trader._push, "the quote stream never fed the accumulator"
+
+    payload = signal()
+    await trader.on_signal(payload)
+    assert "pressure_vol" in payload, "pressure never reached the strategies"
+
+
+async def test_a_feed_with_no_signal_yet_accumulates_nothing():
+    """Documented rather than hidden: the unit comes from a signal, so the
+    filter is inert on a feed until its first one. Reading zero means no
+    refusal, which is the right direction to fail in."""
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    assert trader._push == {}

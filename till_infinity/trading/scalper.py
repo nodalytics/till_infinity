@@ -150,6 +150,20 @@ class LevelStrategy(Strategy):
         # Gated because the losses concentrate below it: over the first
         # nineteen closed trades the eight with a directional base under 0.55
         # produced one winner and -6.74R.
+        # Momentum still running against the trade. Read from the feature the
+        # service injects rather than computed here, because it is an
+        # accumulation over the quote stream and a strategy sees one signal.
+        if self.max_against_vol > 0:
+            pressure = _number(features, "pressure_vol")
+            against = -pressure if side is Side.BUY else pressure
+            if against > self.max_against_vol:
+                return Refusal(
+                    "momentum",
+                    f"{against:.2f}v of momentum still running against a {side}, "
+                    f"limit {self.max_against_vol:.2f}v",
+                    feed,
+                )
+
         if settings.min_base_rate > 0:
             base_up = _number(features, "base_rate_up")
             base = base_up if side is Side.BUY else 1.0 - base_up
@@ -1021,6 +1035,12 @@ class Inverse(LevelStrategy):
     entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
     context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
 
+    #: Fading a run that is still running is the worst version of what this
+    #: does. The control is meant to test the *direction* the model produces,
+    #: not to stand in front of momentum, and without this the two are
+    #: confounded - a loss could be either.
+    max_against_vol: ClassVar[float] = 1.5
+
     def orient(self, side: Side) -> Side:
         """The other one. This is the whole strategy."""
         return side.opposite
@@ -1103,6 +1123,20 @@ class HighTimeframe(LevelStrategy):
     #: Waits for the level rather than chasing. Stated here so it holds
     #: whatever the deployment's own pullback is set to.
     pullback_fraction: ClassVar[float] = 1.0
+    #: Higher than the scalpers', and partly redundant on purpose.
+    #:
+    #: This strategy already waits for a pullback and, where confirmation is
+    #: on, for a rejection at the level - both of which are evidence the run
+    #: against it has turned, which is most of what the filter is for. What is
+    #: left is the case neither covers: price pulling back *within* a large
+    #: move that has not finished, which at this horizon is a real and
+    #: expensive way to be right about a level and wrong about a week.
+    #:
+    #: So the threshold is doubled rather than shared. 1.5v is a meaningful run
+    #: on a 3m chart and ordinary noise on a 4h one, and applying the scalpers'
+    #: number here would refuse most entries for movement this timeframe does
+    #: not consider movement.
+    max_against_vol: ClassVar[float] = 3.0
 
 
 @register
@@ -1190,6 +1224,12 @@ class SweepAware(LevelStrategy):
     )
     entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
     context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+    #: A sweep *is* momentum - a run through a level, taking the stops behind
+    #: it. This strategy refuses when its stop sits in front of that liquidity,
+    #: which is a statement about geometry; whether the run is still going is a
+    #: separate question and it was not asking it. Nine of its twelve trades
+    #: were stopped, more than any other strategy here.
+    max_against_vol: ClassVar[float] = 1.5
 
     def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
         feed = str(payload.get("feed") or "")

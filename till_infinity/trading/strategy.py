@@ -101,6 +101,18 @@ class Strategy(ABC):
     break_even_at: ClassVar[float] = 0.0
     trail_vol: ClassVar[float] = 0.0
 
+    #: How much accumulated momentum *against* this trade it will tolerate,
+    #: in volatility units. Zero is off, which is every strategy that has not
+    #: asked for it.
+    #:
+    #: A level call is a claim that price has arrived somewhere it will turn.
+    #: It says nothing about whether the move that brought price here has
+    #: finished, and taking the other side of a run that is still running is
+    #: how a correct level becomes a stopped trade - the thing 23 of the first
+    #: 32 trades did. `structures.cusum` measures that run without a window,
+    #: and this is the number that decides how much of it is too much.
+    max_against_vol: ClassVar[float] = 0.0
+
     #: How far this strategy insists price come back before it will fill,
     #: overriding the deployment's own `pullback_fraction`. Zero means use the
     #: configured value; a strategy that always wants a resting entry says so
