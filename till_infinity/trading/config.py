@@ -378,6 +378,27 @@ class Settings:
     #: favours; this exists for when the distributions drift far enough that a
     #: fixed pair stops meaning what it meant.
     probability_percentile: float = 0.0
+    #: Ask every strategy about every signal, and record what each would have
+    #: done. One of them still trades.
+    #:
+    #: The running order decides who trades and also who is ever *asked*, so
+    #: the strategies never see the same signals and their records are not
+    #: comparable - one scored +1.01R over two trades and another -0.75R over
+    #: ten, on two different streams. Trading them in parallel would fix the
+    #: comparison and multiply the risk, since two strategies on one signal is
+    #: one idea found twice. Evaluating in parallel fixes it for free.
+    evaluate_all: bool = False
+    #: How many strategies must want the same side before the trade is rebuilt
+    #: from what they collectively asked for. Zero or one disables it.
+    #:
+    #: Agreement does **not** size the trade up. Two strategies on one signal
+    #: is one idea found twice, so betting more on it doubles a position on a
+    #: single thesis. What agreement buys instead is a better-built trade: the
+    #: furthest stop any of them wanted, because being stopped before the move
+    #: arrived is the failure measured most this session, and the nearest
+    #: target, because unreached targets are what a wide stop costs. Money at
+    #: risk is unchanged - a wider stop is re-sized into fewer lots.
+    consensus_min: int = 2
 
     #: The floor on |edge|, and it has to sit **above** `reactions.MIN_EDGE`
     #: or it is configuration that can never fire - every signal reaching the
@@ -743,6 +764,8 @@ class Settings:
             min_probability=_float("TRADING_MIN_PROBABILITY", 0.58),
             min_base_rate=_float("TRADING_MIN_BASE_RATE", 0.0),
             probability_percentile=_float("TRADING_PROBABILITY_PERCENTILE", 0.0),
+            evaluate_all=_flag("TRADING_EVALUATE_ALL", "0"),
+            consensus_min=_int("TRADING_CONSENSUS_MIN", 2),
             min_edge=_float("TRADING_MIN_EDGE", 0.15),
             loss_cooldown=_float("TRADING_LOSS_COOLDOWN_S", 900.0),
             max_hold=_float("TRADING_MAX_HOLD_S", 1_800.0),

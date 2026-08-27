@@ -3567,3 +3567,86 @@ def test_fade_to_value_is_still_exempt_from_the_chase_gate():
     from till_infinity.trading.scalper import FadeToValue
 
     assert "_chasing(" not in inspect.getsource(FadeToValue.consider)
+
+
+# ------------------------------------------- agreement builds, it does not bet
+
+
+def test_agreement_rebuilds_the_trade_rather_than_sizing_it_up():
+    """Two strategies on one signal is one idea found twice.
+
+    Sizing up on agreement doubles a position on a single thesis, which is what
+    the per-instrument limit exists to prevent. What agreement buys is a
+    better-built trade: the furthest stop any of them wanted, because being
+    stopped before the move arrived is the failure measured most, and the
+    nearest target, because unreached targets are what a wide stop costs.
+    """
+    bus = Bus()
+    made = settings(live=True, evaluate_all=True, consensus_min=2)
+    trader = Trader(bus, settings=made, broker=RecordingBroker(made))
+
+    base = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.05,
+        entry=4400.0,
+        stop=4396.0,
+        target=4410.0,
+        risk_money=20.0,
+    )
+    others = [
+        # Agrees, and would have used a wider stop and a nearer target.
+        ("sweep-aware", replace(base, stop=4393.0, target=4406.0)),
+        # Disagrees on side - must be ignored entirely.
+        ("fade-to-value", replace(base, side=Side.SELL, stop=4404.0, target=4390.0)),
+    ]
+    built, agreed = trader._agree(base, others)
+    assert agreed == ["sweep-aware"], "only the side that agreed counts"
+    assert built.stop == pytest.approx(4393.0), "the safest stop on offer"
+    assert built.target == pytest.approx(4406.0), "the most reachable target"
+    # Deliberately the worst reward-to-risk of the versions available, which
+    # min_reward_to_risk then judges on its merits.
+    assert (built.target - built.entry) / (built.entry - built.stop) < (
+        (base.target - base.entry) / (base.entry - base.stop)
+    )
+
+
+def test_one_strategy_alone_is_not_a_consensus():
+    bus = Bus()
+    made = settings(live=True, evaluate_all=True, consensus_min=2)
+    trader = Trader(bus, settings=made, broker=RecordingBroker(made))
+    base = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.05,
+        entry=4400.0,
+        stop=4396.0,
+        target=4410.0,
+    )
+    built, agreed = trader._agree(base, [])
+    assert agreed == []
+    assert built is base
+
+
+def test_agreement_never_moves_a_stop_closer_or_a_target_further():
+    """It can only ever make the trade safer, never more flattering."""
+    bus = Bus()
+    made = settings(live=True, evaluate_all=True, consensus_min=2)
+    trader = Trader(bus, settings=made, broker=RecordingBroker(made))
+    base = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.05,
+        entry=4400.0,
+        stop=4393.0,
+        target=4406.0,
+    )
+    # An agreeing strategy with a tighter stop and a further target.
+    others = [("level-scalp", replace(base, stop=4398.0, target=4420.0))]
+    built, agreed = trader._agree(base, others)
+    assert agreed == ["level-scalp"]
+    assert built.stop == pytest.approx(4393.0), "kept the wider stop"
+    assert built.target == pytest.approx(4406.0), "kept the nearer target"

@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
@@ -47,7 +47,7 @@ from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
 from .paper import PaperBroker
 from .risk import Guard
-from .sizing import price_distance
+from .sizing import lots, price_distance
 
 log = get_logger(__name__)
 
@@ -489,9 +489,129 @@ class Trader:
             if park:
                 parked = self._park(payload, verdict, engine.name, tick)
                 if parked is not None:
+                    await self._also_wanted(payload, spec, tick, engine.name)
                     return parked
+            others = await self._also_wanted(payload, spec, tick, engine.name)
+            verdict, agreed = self._agree(verdict, others)
+            if agreed:
+                sized = lots(
+                    spec,
+                    equity=self.equity,
+                    risk_fraction=self.settings.risk_fraction,
+                    stop_distance=abs(verdict.entry - verdict.stop),
+                    max_risk_money=self.settings.max_risk_money,
+                )
+                if not sized.ok:
+                    return Refusal("size", sized.reason, feed)
+                verdict = replace(verdict, volume=sized.volume, risk_money=sized.risk_money)
+                log.info(
+                    "trading: %s %s agreed by %s - stop %.5g target %.5g, %g lots",
+                    verdict.side,
+                    verdict.feed,
+                    " + ".join([engine.name, *agreed]),
+                    verdict.stop,
+                    verdict.target,
+                    verdict.volume,
+                )
             return await self.take(verdict, engine.name)
         return None
+
+    def _agree(self, taken: Intent, others: list[tuple[str, Intent]]) -> tuple[Intent, list[str]]:
+        """Rebuild a trade from what the strategies that agreed with it wanted.
+
+        Agreement is worth something, and the useful thing to do with it is
+        **not** to bet more. Two strategies on one signal is one idea found
+        twice, so sizing up on agreement doubles a position on a single
+        thesis - which is what the per-instrument limit exists to prevent.
+
+        What agreement can buy is a better-built trade. Among the strategies
+        that wanted the same side:
+
+        * the **furthest** stop, because being stopped before the move arrived
+          is the failure this session measured most - six of twelve stopped
+          trades later reached their target;
+        * the **nearest** target, because the same measurement said unreached
+          targets are what a wide stop costs.
+
+        That is the combination most likely to resolve as a win, and it is
+        deliberately the *worst* reward-to-risk of the ones on offer - which
+        `min_reward_to_risk` then judges on its merits. If the safest version
+        of a trade cannot clear the floor, that is worth knowing rather than
+        trading the flattering version instead.
+
+        Money at risk is unchanged: a wider stop is re-sized into fewer lots by
+        `lots`, so the account never notices the difference.
+        """
+        agreed = [(n, i) for n, i in others if i.side is taken.side]
+        if len(agreed) + 1 < self.settings.consensus_min:
+            return taken, []
+
+        sign = taken.side.sign
+        stop = min((i.stop for _, i in agreed), default=taken.stop, key=lambda p: p * sign)
+        stop = taken.stop if (taken.stop - stop) * sign < 0 else stop
+        target = min((i.target for _, i in agreed), default=taken.target, key=lambda p: p * sign)
+        target = taken.target if (target - taken.target) * sign > 0 else target
+        return replace(taken, stop=stop, target=target), [n for n, _ in agreed]
+
+    async def _also_wanted(
+        self, payload: dict[str, Any], spec: SymbolSpec, tick: Tick, taken_by: str
+    ) -> list[tuple[str, Intent]]:
+        """Ask every other strategy what it would have done with this signal.
+
+        The running order decides who trades, and it also decides **who is ever
+        asked** - so the strategies never see the same signals and their
+        records are not comparable. `level-scalp` scored +1.01R over two
+        trades and `fade-to-value` -0.75R over ten, on two different streams,
+        which is not a comparison however it is printed.
+
+        Trading them in parallel would fix the comparison and multiply the risk
+        - two strategies on one signal is one idea found twice, which is what
+        the per-instrument limit exists to prevent. So they are *evaluated* in
+        parallel and one of them trades: every other strategy is asked, and
+        what it wanted is written down beside what actually happened.
+
+        Nothing here places an order. It costs one arithmetic pass per
+        strategy per signal, and it buys the only honest way to rank them.
+        """
+        wanted_by: list[tuple[str, Intent]] = []
+        if not self.settings.evaluate_all:
+            return wanted_by
+        for engine in self.strategies:
+            if engine.name == taken_by or not engine.wants(payload):
+                continue
+            try:
+                verdict = await engine.consider_async(
+                    payload, spec=spec, tick=tick, equity=self.equity
+                )
+            except Exception as exc:
+                # A shadow evaluation must never break a real trade.
+                log.debug("trading: %s could not be evaluated: %s", engine.name, exc)
+                continue
+            wanted = isinstance(verdict, Intent)
+            if wanted:
+                wanted_by.append((engine.name, verdict))
+            await observe(
+                self.journal,
+                f"{engine.name} would have {'taken' if wanted else 'passed'} {payload.get('feed')}",
+                rationale=(verdict.reason if wanted else f"{verdict.gate}: {verdict.detail}"),
+                actor="trading",
+                context={
+                    "shape": "considered",
+                    "strategy": engine.name,
+                    "taken_by": taken_by,
+                    "wanted": wanted,
+                    "gate": "" if wanted else verdict.gate,
+                    # The prices it would have used, so the same scoring that
+                    # runs over real trades can run over these.
+                    "entry": round(verdict.entry, 8) if wanted else 0.0,
+                    "stop": round(verdict.stop, 8) if wanted else 0.0,
+                    "target": round(verdict.target, 8) if wanted else 0.0,
+                    "feed": str(payload.get("feed") or ""),
+                    "interval": str(payload.get("interval") or ""),
+                },
+                tags=(str(payload.get("feed") or ""), engine.name, "considered"),
+            )
+        return wanted_by
 
     # --------------------------------------------------------------- trading
 
