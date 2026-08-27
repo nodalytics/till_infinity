@@ -341,8 +341,27 @@ class Watcher:
                 signal.title,
                 rationale=signal.detail,
                 actor="structures",
-                context={"shape": str(signal.shape), "score": signal.score, **signal.features},
-                tags=(signal.feed, signal.venue, str(signal.shape)),
+                context={
+                    "shape": str(signal.shape),
+                    "score": signal.score,
+                    # The three that identify *what* this is about. They were
+                    # on the Signal all along and simply were not written down,
+                    # so every recorded call was anonymous as to instrument and
+                    # timeframe - which made "how does volatility scale across
+                    # intervals" unanswerable from our own record, and it is a
+                    # question we went looking for an answer to.
+                    #
+                    # `feed` was recoverable from the first tag and `interval`
+                    # was nowhere at all. Both are here now, because a tag is
+                    # for filtering and a context is for measuring.
+                    "feed": signal.feed,
+                    "interval": signal.interval,
+                    "venue": signal.venue,
+                    "direction": signal.direction,
+                    "confluence": "+".join(signal.confluence),
+                    **signal.features,
+                },
+                tags=(signal.feed, signal.venue, str(signal.shape), signal.interval),
                 confidence=min(1.0, signal.score),
             )
             if ref and signal.shape is Shape.LEVEL:
@@ -450,6 +469,20 @@ class Watcher:
                     "seconds": round(touch.resolved - touch.started),
                     "level": round(level.price, 8),
                     "interval": level.interval,
+                    # Which instrument this happened on. The resolution had the
+                    # timeframe and not the instrument, so a scoring pass could
+                    # group by one and not the other - and pooling gold with
+                    # EURUSD describes neither.
+                    "feed": level.feed,
+                    # What was believed when the touch opened, carried so the
+                    # belief and the outcome can be joined. Only published
+                    # calls ever recorded an edge, and publication requires
+                    # passing the threshold, so the below-threshold half of the
+                    # distribution has never been observable. See `Touch.edge`.
+                    "edge": round(touch.edge, 4),
+                    "probability_up": round(touch.probability_up, 4),
+                    "base_rate_up": round(touch.base_rate_up, 4),
+                    "actionable": touch.actionable,
                     **touch.features.to_dict(),
                 },
             )

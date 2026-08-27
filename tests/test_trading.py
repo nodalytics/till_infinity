@@ -3102,3 +3102,69 @@ def test_no_hold_bars_leaves_the_seconds_behaviour_alone():
 
     engine = LevelScalp(settings())
     assert engine.hold_for("1m", 1800.0) == pytest.approx(engine.hold_seconds or 1800.0)
+
+
+# ------------------------------------------- recording what will be asked for
+
+
+async def test_a_trade_records_what_it_cost_and_whether_it_was_waited_for(tmp_path):
+    """Questions we could not answer, asked of trades already taken.
+
+    Three gates judge spread and none wrote down the number they judged.
+    Parked and unparked fills were indistinguishable once filled, so the
+    pullback could not be evaluated at all. And the stop in volatility units
+    had to be re-derived from entry, stop and vol_bps every time.
+    """
+    bus = Bus()
+    made = settings(live=True)
+    venue = RecordingBroker(made)
+    async with Journal(tmp_path / "j.db") as book:
+        trader = Trader(bus, settings=made, journal=book, broker=venue)
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+        assert isinstance(got, Intent)
+
+    entries = [e for e in read(tmp_path / "j.db") if (e.context or {}).get("strategy")]
+    assert entries
+    ctx = entries[0].context
+    assert ctx["spread_at_entry"] == pytest.approx(1.0), "the quoted spread, written down"
+    assert ctx["waited"] is False, "this one was taken at market"
+    assert ctx["stop_vol"] > 0, "the stop in the units the rules are written in"
+    assert ctx["stop_scale"] >= 1.0
+    assert ctx["hold_seconds"] > 0
+
+
+def test_how_a_trade_ended_is_decided_by_where_it_ended():
+    """`reason` says how the position left the book, not what took it - so
+    stop and target were distinguishable only by the sign of the profit."""
+    from till_infinity.trading.service import Live, _exit_kind
+
+    intent = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.05,
+        entry=4400.0,
+        stop=4395.0,
+        target=4410.0,
+    )
+    live = Live(position=None, intent=intent)
+    assert _exit_kind(live, 4394.0) == "stop"
+    assert _exit_kind(live, 4411.0) == "target"
+    # Ahead, but neither - the clock took it, and calling that a target would
+    # be the guess this exists to remove.
+    assert _exit_kind(live, 4402.0) == "hold"
+
+
+def test_a_level_signal_says_which_instrument_and_timeframe_it_is_about():
+    """It said neither, which made "how does volatility scale across
+    intervals" unanswerable from our own record - a question we went looking
+    for an answer to and could not get one."""
+    from till_infinity.structures.models import Shape, Signal
+
+    sig = Signal(shape=Shape.LEVEL, feed="gold", venue="consensus", score=0.4, interval="5m")
+    assert sig.feed == "gold"
+    assert sig.interval == "5m"

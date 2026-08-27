@@ -400,7 +400,9 @@ class LevelStrategy(Strategy):
             confluence=_confluence(payload),
             features=features,
             risk_money=sized.risk_money,
-            hold=self.hold_seconds,
+            stop_vol=abs(entry - stop) / unit if unit else 0.0,
+            stop_scale=self.stop_floor_vol(interval) / (self.settings.min_stop_vol or 1.0),
+            hold=self.hold_for(interval, self.settings.max_hold),
         )
 
 
@@ -982,5 +984,7 @@ class FadeToValue(LevelStrategy):
             confluence=_confluence(payload),
             features={**features, "distance_vol": distance, "fair_value": value.price},
             risk_money=sized.risk_money,
-            hold=self.hold_seconds,
+            stop_vol=abs(entry - stop) / unit if unit else 0.0,
+            stop_scale=self.stop_floor_vol(interval) / (self.settings.min_stop_vol or 1.0),
+            hold=self.hold_for(interval, self.settings.max_hold),
         )

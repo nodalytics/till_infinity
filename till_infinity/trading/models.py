@@ -179,6 +179,13 @@ class Intent:
     #: copied rather than pointed at.
     features: dict[str, float] = field(default_factory=dict)
     risk_money: float = 0.0
+    #: The stop in the units the rules that placed it are written in, and the
+    #: multiplier `stop_hold_scaling` applied to reach it. Both are derivable
+    #: from `entry`, `stop` and `vol_bps`, which is exactly why they are stored
+    #: - every later question about stop width otherwise begins with a
+    #: derivation that can be got wrong, and quietly is.
+    stop_vol: float = 0.0
+    stop_scale: float = 1.0
     #: Seconds this trade may stay open, as its strategy asked. Zero defers to
     #: the configured default. Carried on the intent rather than looked up from
     #: the strategy later, because by the time a position is being timed out

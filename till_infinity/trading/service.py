@@ -187,6 +187,10 @@ class Trader:
         self._waiting: dict[str, Waiting] = {}
         #: Stopped trades still being watched. See `Shadow`.
         self._shadows: dict[int, Shadow] = {}
+        #: feed -> the spread when it was last quoted, for the record.
+        self._spread_of: dict[str, float] = {}
+        #: feed -> this fill was waited for. Consumed when the trade is taken.
+        self._was_parked: dict[str, bool] = {}
         #: Why signals did not become trades, counted per gate. Strategy-level
         #: refusals are far too many to journal - hundreds a day, and mostly
         #: the filter working - but counting them is what separates "the market
@@ -406,6 +410,7 @@ class Trader:
             return
         when = message_time(payload)
         tick = Tick(symbol=symbol, bid=float(bid), ask=float(ask), time=when)
+        self._spread_of[feed] = tick.spread
         # The paper book holds its own stops, so it has to see the market. When
         # the execution venue *is* the broker they are the same object and this
         # runs once.
@@ -524,6 +529,7 @@ class Trader:
             side=intent.side,
             until=tick.time + hold * self.settings.pullback_window,
         )
+        self._was_parked[intent.feed] = True
         log.info(
             "trading: %s %s parked - waiting for %.5g rather than filling at %.5g [%s]",
             intent.side,
@@ -968,6 +974,12 @@ class Trader:
                     "seconds": round(position.age),
                     "strategy": live.by,
                     "magic": position.magic,
+                    # Which of the three ways it ended. `reason` says how the
+                    # position left the book - closed, or gone between polls -
+                    # and not what took it, so stop and target were
+                    # indistinguishable except by the sign of the profit, which
+                    # is a guess dressed as a fact.
+                    "exit_kind": _exit_kind(live, price),
                     # What was asked for against what the terminal actually
                     # filled at. `position.price_open` is the broker's own
                     # record, so this survives a restart and does not depend on
@@ -1002,6 +1014,23 @@ class Trader:
             actor="trading",
             context={
                 "strategy": by,
+                # What the spread actually was when this was sent. Three gates
+                # judge spread and none of them wrote down the number they
+                # judged, so "what did execution cost" could be argued about
+                # but not answered.
+                "spread_at_entry": round(self._spread_of.get(intent.feed, 0.0), 8),
+                # Whether this fill was waited for rather than taken. Without
+                # it the pullback cannot be evaluated at all: parked and
+                # unparked trades are indistinguishable once filled.
+                "waited": bool(self._was_parked.pop(intent.feed, False)),
+                # The stop in the units the rules are written in, and the
+                # multiplier the hold scaling applied. Both were recoverable
+                # from entry, stop and vol_bps by arithmetic - which is another
+                # way of saying every future question about them started with
+                # a derivation that could be got wrong.
+                "stop_vol": round(intent.stop_vol, 4),
+                "stop_scale": round(intent.stop_scale, 4),
+                "hold_seconds": round(intent.hold or self.settings.max_hold, 1),
                 # Recorded so a position found at the broker can be matched
                 # back to this entry by number alone, with nothing in memory.
                 "magic": magic_for(self.settings.magic, by),
@@ -1160,6 +1189,24 @@ def _vol_of(payload: dict[str, Any]) -> float:
         return 0.0
     value = features.get("vol_bps")
     return float(value) if isinstance(value, int | float) and value > 0 else 0.0
+
+
+def _exit_kind(live: Live, price: float) -> str:
+    """Which of the three ways a trade ended, decided by where it ended.
+
+    `reason` records how the position left the book - closed by us, or gone
+    between polls - not what took it. Stop and target were therefore
+    distinguishable only by the sign of the profit, which is a guess dressed as
+    a fact: a trade closed on the hold clock while slightly ahead looks like a
+    target, and one closed slightly behind looks like a stop.
+    """
+    intent = live.intent
+    sign = intent.side.sign
+    if intent.stop and (price - intent.stop) * sign <= 0:
+        return "stop"
+    if intent.target and (price - intent.target) * sign >= 0:
+        return "target"
+    return "hold"
 
 
 def message_time(payload: dict[str, Any]) -> float:
