@@ -593,3 +593,58 @@ the level, where momentum is adverse to the with-level trade by construction.
 It is not the accumulator in `structures/cusum.py`, and a momentum measure over
 a longer horizon - is this a pullback inside a trend, or a range being tested -
 is a different question that this does not answer.
+
+## Pullback inside a trend, or a level inside a range
+
+`regime.py` asked whether momentum *into* a level predicts the level failing,
+and found the opposite with no money in it. But that measure is taken over the
+approach itself and cannot see the thing the question was about: whether the
+market is trending through this area or oscillating inside it. The journal's
+own `regime` is no help - it is where *volatility* sits in its recent history,
+not direction.
+
+`research/harness/trend.py` builds the missing measure from what is recorded.
+Successive `level` prices on one feed trace where price has been, and over a
+window of twelve:
+
+    efficiency = |net displacement| / sum of absolute steps
+
+One is a trend, zero is a range. Only resolutions **before** the one being
+classified count, which keeps it a prediction rather than a restatement.
+
+| efficiency | n | break share | R with the level |
+| --- | ---: | ---: | ---: |
+| 0.000-0.000 | 5,414 | 7.8% | 0.876 |
+| 0.017-0.096 | 5,414 | 11.3% | 0.807 |
+| 0.197-0.329 | 5,414 | 8.6% | 0.843 |
+| 0.655-0.985 | 5,414 | 3.2% | 1.049 |
+| 0.985-1.000 | 5,417 | **1.4%** | **1.149** |
+
+**The intuition is right and the mechanism is backwards from the obvious one.**
+A trend does not run levels over - in the most trending decile only 1.4% of
+levels break, against 11.3% in the chop. What a trend does is make the levels
+*hold harder and pay more*: 1.149R against 0.807R, a difference of 0.34R
+between the extremes.
+
+That is a pullback inside a trend, and it is the best-evidenced setup this
+repository has found. For scale, every direction gate measured the same day
+spread 0.09 to 0.15 across its whole range and none of it survived contact
+with a control. This is 0.34R, monotonic across the top three deciles.
+
+**It holds inside every interval**, which is what rules out a composition
+artefact, and it strengthens as the timeframe slows:
+
+| interval | ranging | trending | difference |
+| --- | ---: | ---: | ---: |
+| 1m | 0.749 | 0.830 | +0.081 |
+| 3m | 0.922 | 1.023 | +0.101 |
+| 5m | 0.872 | 1.091 | +0.219 |
+| 15m | 0.904 | 1.149 | **+0.245** |
+
+Comparing the top three deciles against the bottom three, which is why these
+numbers are smaller than the 0.34R above.
+
+What this does not establish: the window of twelve is a guess, the efficiency
+ratio is one measure of trend among several, and this is a fixed
+stop-and-target rule on touch resolutions rather than the trades the book
+took. It is strong enough to build on and not strong enough to trust blind.
