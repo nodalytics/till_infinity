@@ -1316,7 +1316,7 @@ class Engine:
             features = reactions.features_for(
                 level, side, price, vol, approach_vol=self._speed(feed, interval, vol), when=when
             )
-            self.tracker.begin(level, price, features, when)
+            touch = self.tracker.begin(level, price, features, when)
             inference = reactions.infer(
                 level,
                 side,
@@ -1326,6 +1326,14 @@ class Engine:
                 price=price,
                 cost_vol=self.cost_of(feed, vol),
             )
+            # Kept on the touch so the resolution can be scored against what
+            # was believed at the time - including the touches that were never
+            # published, which is the half of the distribution nothing has ever
+            # been able to look at. See `Touch.edge`.
+            touch.edge = inference.edge
+            touch.probability_up = inference.probability_up
+            touch.base_rate_up = inference.base_rate_up
+            touch.actionable = inference.actionable
             calls.append(
                 Call(
                     feed=feed,

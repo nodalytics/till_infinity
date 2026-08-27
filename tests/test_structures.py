@@ -1230,3 +1230,62 @@ def test_nothing_earns_a_weight_before_it_has_been_scored():
     book = Ensemble(weighted=True)
     book.observe({"a": 10.0, "b": 20.0})
     assert book.bps == pytest.approx(15.0)
+
+
+def test_every_touch_carries_the_edge_it_had_not_only_published_ones():
+    """The half of the distribution nothing could look at.
+
+    Publication requires `edge >= MIN_EDGE`, so every edge ever recorded was
+    already above the threshold and "does a larger edge resolve better" could
+    only be asked of the calls that passed. Attaching it to the touch makes
+    every interaction evidence, including the ones nobody was told about -
+    which answers the question without trading a single below-threshold call.
+    """
+    from till_infinity.structures.reactions import Touch
+
+    t = Touch(
+        feed="gold", level_price=4400.0, features=None, started=0.0, entry=4400.0, extreme=4400.0
+    )
+    assert hasattr(t, "edge")
+    assert hasattr(t, "actionable")
+    # Defaults are honest zeros rather than a guess.
+    assert t.edge == 0.0
+    assert t.actionable is False
+
+
+def test_a_resolution_carries_the_belief_beside_the_outcome():
+    """The edge and what actually happened have to travel together.
+
+    Recorded separately they cannot be joined: the signal is published only
+    when it passes, and the resolution is recorded always, so a scoring pass
+    would silently only ever see the touches that were published.
+    """
+    from till_infinity.structures.reactions import Features, Touch
+
+    t = Touch(
+        feed="gold",
+        level_price=4400.0,
+        features=Features(
+            side=Side.ABOVE,
+            approach_vol=1.0,
+            depth_vol=0.5,
+            strength=0.7,
+            run_vol=1.2,
+            experience=4.0,
+        ),
+        started=0.0,
+        entry=4400.0,
+        extreme=4400.0,
+    )
+    t.edge = -0.043  # below the publication threshold
+    t.probability_up = 0.47
+    t.base_rate_up = 0.513
+    t.actionable = False
+    t.push_vol = -1.8
+
+    d = t.to_dict()
+    assert d["edge"] == pytest.approx(-0.043)
+    assert d["actionable"] is False
+    assert d["push_vol"] == pytest.approx(-1.8)
+    # A below-threshold touch is now evidence, which it never was before.
+    assert abs(d["edge"]) < 0.10

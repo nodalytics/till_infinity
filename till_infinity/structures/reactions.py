@@ -360,6 +360,23 @@ class Touch(Restorable):
     #: breakout entry would have been offered before it was taken back.
     excursion_vol: float = 0.0
 
+    #: What the model thought when this touch opened, kept so the resolution
+    #: can be scored against it.
+    #:
+    #: Only *published* calls carried an edge before, and publication requires
+    #: `edge >= MIN_EDGE` - so every edge ever recorded was already above the
+    #: threshold, and the question "does a larger edge resolve better" could
+    #: only ever be asked of the half of the distribution that passed. Attached
+    #: to the touch instead, every interaction becomes evidence, including the
+    #: ones nobody was told about. Answering it that way costs nothing and
+    #: risks nothing, where sampling below the threshold by *trading* it means
+    #: paying spread to re-run a measurement that has already been made.
+    edge: float = 0.0
+    probability_up: float = 0.0
+    base_rate_up: float = 0.0
+    #: Whether this touch would have been published as a call.
+    actionable: bool = False
+
     @property
     def open(self) -> bool:
         return self.outcome is Outcome.OPEN
@@ -393,6 +410,10 @@ class Touch(Restorable):
             "outcome": str(self.outcome),
             "push_vol": round(self.push_vol, 4),
             "excursion_vol": round(self.excursion_vol, 4),
+            "edge": round(self.edge, 4),
+            "probability_up": round(self.probability_up, 4),
+            "base_rate_up": round(self.base_rate_up, 4),
+            "actionable": self.actionable,
             "resolved": self.resolved,
             **self.features.to_dict(),
         }
