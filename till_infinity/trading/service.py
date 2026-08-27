@@ -758,6 +758,15 @@ class Trader:
         if closed:
             await self._reconcile()
 
+    def _reach(self, live: Live) -> float:
+        """Furthest this trade got in front, in units of its own risk."""
+        best = self._best.get(live.position.ticket)
+        risk = abs(live.intent.entry - live.intent.stop)
+        if best is None or risk <= 0:
+            return 0.0
+        gained = (best - live.position.price_open) * live.intent.side.sign
+        return max(gained / risk, 0.0)
+
     def money(self, amount: float, *, signed: bool = True) -> str:
         """An amount with the account's currency attached. See `models.money`."""
         return money(amount, self.currency, signed=signed)
@@ -1009,6 +1018,14 @@ class Trader:
                     # indistinguishable except by the sign of the profit, which
                     # is a guess dressed as a fact.
                     "exit_kind": _exit_kind(live, price),
+                    # How far in front the trade ever got, in units of the risk
+                    # it was sized for. The service has tracked the best price
+                    # all along - the trailing rules need it - and never wrote
+                    # it down, so "we were up and gave it back" was something
+                    # you could watch happen and not something you could
+                    # measure afterwards. Above 1 means a trade that was a
+                    # winner by its own risk and did not end as one.
+                    "best_r": round(self._reach(live), 3),
                     # What was asked for against what the terminal actually
                     # filled at. `position.price_open` is the broker's own
                     # record, so this survives a restart and does not depend on

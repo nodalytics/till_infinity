@@ -3242,3 +3242,35 @@ async def test_the_fraction_is_a_ceiling_on_the_wait():
     assert held is not None
     # Never past the sweep edge, and never past what the fraction permits.
     assert held.trigger >= 4396.0
+
+
+async def test_how_far_in_front_a_trade_got_is_written_down(tmp_path):
+    """Watching a trade give back profit is not the same as measuring it.
+
+    The service has tracked the best price all along - the trailing rules need
+    it - and never recorded it, so "we were up and it ended a loss" was
+    something you could see happen and not something you could count.
+    """
+    bus = Bus()
+    made = settings(live=True)
+    venue = RecordingBroker(made)
+    async with Journal(tmp_path / "j.db") as book:
+        trader = Trader(bus, settings=made, journal=book, broker=venue)
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+        assert isinstance(got, Intent)
+
+        live = next(iter(trader.open.values()))
+        risk = abs(live.intent.entry - live.intent.stop)
+        # It ran 1.5R in front, then came back and stopped out.
+        trader._best[live.position.ticket] = live.intent.entry + risk * 1.5
+        await trader._settle(live, price=live.intent.stop, why="closed", profit=-25.0)
+
+    entries = [e for e in read(tmp_path / "j.db") if (e.context or {}).get("best_r") is not None]
+    assert entries
+    ctx = entries[-1].context
+    assert ctx["best_r"] == pytest.approx(1.5, rel=0.05)
+    assert ctx["profit"] < 0, "a trade that was 1.5R up and still lost"
