@@ -242,8 +242,14 @@ class Guard:
         return Refusal(gate=gate, detail=detail, feed=feed)
 
     def summary(self) -> str:
-        rate = f"{self.wins}/{self.trades}" if self.trades else "0/0"
+        """The day in one line.
+
+        Worded "won 0 of 1" rather than "0/1 won", because the second put the
+        word *won* immediately after the count in an alert announcing a loss -
+        "0/1 won, -$18.07 realised" - and it read as a win at a glance. The
+        numbers were right and the sentence was not, which is worse than being
+        wrong in a way people notice.
+        """
+        rate = f"won {self.wins} of {self.trades}" if self.trades else "no trades"
         state = f" · HALTED ({self.halted})" if self.halted else ""
-        return (
-            f"{self.day or '-'}: {rate} won, {money(self.realised, self.currency)} realised{state}"
-        )
+        return f"{self.day or '-'}: {rate}, {money(self.realised, self.currency)} realised{state}"

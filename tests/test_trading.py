@@ -4552,7 +4552,11 @@ async def test_trend_context_reaches_the_features_once_there_is_history():
     seen = []
     for price in (4400.0, 4401.0, 4402.0, 4403.0, 4404.0):
         payload = signal()
-        payload["level"] = price
+        # Into `features`, where a real signal carries it and where every
+        # strategy reads it. The first version of this test set it at the top
+        # of the payload, matching the bug rather than the wire format, and
+        # passed while production injected nothing on every signal for hours.
+        payload.setdefault("features", {})["level"] = price
         await trader.on_signal(payload)
         seen.append(payload.get("features", {}).get("efficiency"))
 
@@ -4569,11 +4573,11 @@ async def test_the_level_under_decision_is_excluded_from_its_own_window():
     await trader.start()
     for price in (4400.0, 4401.0, 4402.0, 4403.0):
         payload = signal()
-        payload["level"] = price
+        payload.setdefault("features", {})["level"] = price
         await trader.on_signal(payload)
 
     payload = signal()
-    payload["level"] = 4300.0  # a violent reversal
+    payload.setdefault("features", {})["level"] = 4300.0  # a violent reversal
     await trader.on_signal(payload)
     assert payload["features"]["efficiency"] == pytest.approx(1.0), (
         "the level being decided leaked into the window that judges it"
@@ -4631,3 +4635,23 @@ async def test_a_full_close_still_sends_no_volume():
     params = await _closed_with(0.0)
     assert "volume" not in params
     assert params["ticket"] == 42
+
+
+def test_the_day_summary_does_not_read_as_a_win_when_it_is_a_loss():
+    """ "0/1 won, -$18.07 realised" put the word *won* next to the count in an
+    alert announcing a loss, and read as a win at a glance. The numbers were
+    right and the sentence was not, which is worse than being wrong in a way
+    people notice.
+    """
+    guard = Guard(settings())
+    guard.roll(10_000.0, now=1_000.0)
+    guard.record("gold", -18.07, 10_000.0)
+    line = guard.summary()
+    assert "won 0 of 1" in line
+    assert "0/1 won" not in line
+
+
+def test_a_day_with_no_trades_says_so():
+    guard = Guard(settings())
+    guard.roll(10_000.0, now=1_000.0)
+    assert "no trades" in guard.summary()

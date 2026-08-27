@@ -770,7 +770,17 @@ class Trader:
         it - which is the trap `push_vol` fell into, where a quantity signed by
         the outcome was scored against the outcome.
         """
-        level = payload.get("level")
+        # Out of `features`, which is where every strategy reads it from and
+        # therefore where it actually is. Read from the top of the payload
+        # this returned early on every signal, so no reading was ever injected
+        # *and* the window never grew - the measure was inert twice over while
+        # the warm start reported 121 of 140 pairs ready.
+        #
+        # The third time today a value has been read from or written to the
+        # wrong level of this payload. `features` is the contract; the top
+        # level carries routing.
+        features = payload.get("features")
+        level = features.get("level") if isinstance(features, dict) else None
         if not isinstance(level, int | float):
             return
         interval = str(payload.get("interval") or "")
@@ -778,9 +788,7 @@ class Trader:
 
         ratio = context.efficiency
         if ratio is not None:
-            features = payload.setdefault("features", {})
-            if isinstance(features, dict):
-                features["efficiency"] = ratio
+            features["efficiency"] = ratio
         context.observe(float(level))
 
     def _hand_over_pressure(self, feed: str, payload: dict[str, Any]) -> None:
