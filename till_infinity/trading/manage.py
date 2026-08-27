@@ -216,7 +216,13 @@ def advance(
         return None
     # A broker refuses a stop closer to price than `stops_level`, and a
     # rejected modify on every heartbeat is noise that hides real failures.
-    if spec.stops_level > 0 and abs(best - stop) < spec.min_stop_distance:
+    #
+    # Held to the same clearance the entry stop is, and for the same reason:
+    # the minimum is checked against the price when the modify lands, and
+    # `best` is by definition the most favourable price seen rather than the
+    # current one, so the true distance is this or smaller - never larger.
+    room = spec.min_stop_distance * settings.stops_level_margin
+    if spec.stops_level > 0 and abs(best - stop) < room:
         return None
     return Move(ticket=position.ticket, stop=stop, reason=reason)
 

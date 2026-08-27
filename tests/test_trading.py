@@ -4067,3 +4067,66 @@ def test_inverse_gates_on_the_side_the_call_named():
     gate = source.index("self.quality(")
     flip = source.index("self.orient(")
     assert gate < flip, "the gates must run before the side is flipped"
+
+
+# ------------------------------------------- clearing the broker's own minimum
+
+
+EURGBP = SymbolSpec(symbol="EURGBP", digits=5, point=1e-05, tick_size=1e-05, stops_level=20.0)
+
+
+def _floor_for(spread, margin=1.25, anchored=0.85750):
+    """The stop a buy at 0.85754 ends up with, given a near-entry anchor."""
+    from till_infinity.trading.scalper import LevelScalp
+
+    engine = LevelScalp(settings(stops_level_margin=margin, min_stop_vol=0.0))
+    return engine._floored_stop(EURGBP, Side.BUY, 0.85754, anchored, unit=1e-05, spread=spread)
+
+
+def test_the_stop_clears_the_broker_minimum_by_more_than_a_rounding():
+    """The refusal that prompted this: 22 points against a 20-point floor.
+
+    A 1.1 multiple of a 20-point minimum is two points of clearance, and the
+    minimum is checked against the price when the order *lands*, not when it
+    was built. Two points is what a quiet cross moves in between.
+    """
+    stop = _floor_for(spread=1e-05)
+    clearance = (0.85754 - stop) / EURGBP.min_stop_distance
+    assert clearance > 1.2, f"only {clearance:.2f}x the broker minimum"
+
+
+def test_the_spread_is_part_of_the_clearance():
+    """A buy fills at the ask and its stop is measured against the bid, so one
+    spread of the margin is gone before the market has moved at all."""
+    tight = 0.85754 - _floor_for(spread=0.0)
+    wide = 0.85754 - _floor_for(spread=5e-05)
+    assert wide > tight
+    assert wide - tight == pytest.approx(5e-05, abs=1e-06)
+
+
+def test_the_clearance_is_configurable_and_scales():
+    near = 0.85754 - _floor_for(spread=0.0, margin=1.1)
+    far = 0.85754 - _floor_for(spread=0.0, margin=1.5)
+    assert far > near
+
+
+def test_the_floor_never_pulls_a_wide_stop_in():
+    """It may only push the stop away from the fill. A floor that tightened a
+    stop would raise the position size for the same money at risk."""
+    wide = 0.85000  # far below anything the floor would ask for
+    assert _floor_for(spread=1e-05, anchored=wide) == wide
+
+
+def test_a_trailing_modify_holds_the_same_clearance():
+    """The same minimum applies to a modify, checked against the price when it
+    lands - and `best` is the most favourable price seen, so the real distance
+    is this or smaller."""
+    kept = manage.advance(
+        position(symbol="EURGBP", price_open=0.85754, stop=0.85700),
+        intent(feed="eurgbp", symbol="EURGBP", entry=0.85754, stop=0.85700),
+        EURGBP,
+        settings(break_even_at=0.1, stops_level_margin=1.25),
+        best=0.85760,
+        vol_bps=0.0,
+    )
+    assert kept is None, "a stop inside the broker's minimum was proposed"

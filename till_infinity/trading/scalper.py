@@ -301,6 +301,7 @@ class LevelStrategy(Strategy):
         anchored: float,
         unit: float,
         interval: str = "",
+        spread: float = 0.0,
     ) -> float:
         """Push the stop out until it is `min_stop_vol` from the **fill** too.
 
@@ -329,7 +330,12 @@ class LevelStrategy(Strategy):
         # A small margin over the minimum, because the minimum is checked
         # against the price at the moment the order lands, not the moment it
         # was built.
-        floor = max(floor, spec.min_stop_distance * 1.1)
+        # Two terms, because the gap has two causes. The multiple absorbs
+        # movement between deciding and sending; the spread absorbs the part
+        # that is not movement at all - a buy fills at the ask and its stop is
+        # measured against the bid, so one spread of the clearance is gone
+        # before anything has happened.
+        floor = max(floor, spec.min_stop_distance * self.settings.stops_level_margin + spread)
         if floor <= 0:
             return anchored
         against_fill = spec.round_price(entry - floor if side is Side.BUY else entry + floor)
@@ -453,7 +459,7 @@ class LevelStrategy(Strategy):
 
         # Only now, with the trade known to be still valid, is the stop widened
         # to clear the fill by a volatility unit. See `_floored_stop`.
-        stop = self._floored_stop(spec, side, entry, stop, unit, interval)
+        stop = self._floored_stop(spec, side, entry, stop, unit, interval, tick.spread)
 
         broker_says = respects_stops_level(spec, entry, stop, target)
         if broker_says:

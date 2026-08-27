@@ -683,6 +683,20 @@ class Settings:
     #: taken by ordinary movement while the trade is still working, which is
     #: being stopped by noise in profit. `trail_vol` acts as the floor.
     trail_sigmas: float = 0.5
+    #: Multiple of the broker's own `stops_level` a stop must clear.
+    #:
+    #: The broker's minimum is not checked when the order is built, it is
+    #: checked against the price at the moment the order lands - so a stop that
+    #: satisfies it exactly at decision time is refused if the market moves a
+    #: point in between. This was 1.1 hard-coded, and a eurgbp buy was refused
+    #: with a stop of 0.00022 against a minimum of 0.00020: the margin was
+    #: doing its job and 10% of a 20-point floor is two points, which a quiet
+    #: cross covers between deciding and sending.
+    #:
+    #: The cost of raising it is a wider stop, which for the same money at
+    #: risk buys a smaller position. That is the trade: a slightly smaller
+    #: trade against no trade at all.
+    stops_level_margin: float = 1.25
     #: R multiple at which part of the position comes off. Zero is off.
     #:
     #: The push distribution is wide - median 2.24v, p90 4.93v - and a single
@@ -873,6 +887,7 @@ class Settings:
             break_even_ticks=_int("TRADING_BREAK_EVEN_TICKS", 2),
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
+            stops_level_margin=_float("TRADING_STOPS_LEVEL_MARGIN", 1.25),
             scale_out_at=_float("TRADING_SCALE_OUT_AT", 0.0),
             scale_out_fraction=_float("TRADING_SCALE_OUT_FRACTION", 0.5),
             stale_after=_float("TRADING_STALE_AFTER_S", 0.0),
