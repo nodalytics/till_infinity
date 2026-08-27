@@ -66,6 +66,44 @@ survive before its thesis is even tested.
 * **The chase gate is doing the right job.** It refuses precisely the entries
   the replay cannot model - the ones already past the level.
 
+## Not every instrument suits this model
+
+The same replay, split by instrument, at a 1.0v stop:
+
+| tier | instruments | mean R | rejects |
+| --- | --- | ---: | ---: |
+| strong | sol +1.06, gbpjpy +0.99, btc +0.99, eurchf +0.84, us100 +0.83, usdcnh +0.82 | +0.8 to +1.1 | 65-81% |
+| middling | eurgbp, eth, spx500, gbpusd, usdcad, chfjpy | +0.68 to +0.80 | 60-75% |
+| weak | audjpy +0.53, audusd +0.56, nzdusd +0.56, eurusd +0.57, usdjpy +0.60, gold +0.61 | +0.53 to +0.61 | 56-61% |
+
+Roughly a factor of two between the ends, and **the dollar majors are the worst
+of it - with gold near the bottom**, which is uncomfortable given gold is the
+instrument this has traded most.
+
+The mechanism is in the last column: **reject rate tracks the return almost
+exactly.** sol and btc reject 79-81% of touches, nzdusd and usdjpy 56-58%.
+Levels hold better on crypto and the crosses than on the majors, which is what
+you would expect of the most arbitraged instruments on the book - there, a
+level is more often just a price.
+
+Two readings worth keeping:
+
+**The indices tolerate a wide stop and nothing else does.** At a 2.0v stop
+spx500 holds +0.442 and us100 +0.377 while everything else collapses toward
+zero. That is the one place the stop-widening argument survives, and it
+suggests the right stop is per-instrument rather than global.
+
+**This is the level-holding family only.** `fade-to-value` needs the valuation
+and `approach-scalp` needs the next level in the book, neither of which is on a
+resolution, so this says nothing about either - and `fade-to-value` is first in
+the running order.
+
+Not acted on. The instrument is only on a resolution from 2026-08-27, so this
+was recovered from the tags of data gathered to answer a different question,
+and eight of the weak-tier instruments had been trading for less than a day
+when it was measured. It wants confirming prospectively before the instrument
+list is cut.
+
 ## On regime
 
 Regime separates, and it is a real effect: quiet outperforms wild at every stop
