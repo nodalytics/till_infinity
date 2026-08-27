@@ -4,6 +4,36 @@ Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
+## 0r. Nothing can tell a shut market from a refused order
+
+Found 2026-08-27. A us30 position could not be closed for twenty minutes -
+`POST /positions/close: 400`, retried on every pass. The cause was the index's
+daily break, and the evidence was not the error, which carries no retcode: it
+was that **the quote had not moved in thirty minutes**, bid and ask and
+timestamp all identical to half an hour earlier.
+
+**`spec.tradable` said `True` throughout.** That flag reports whether the
+instrument is enabled, not whether it is currently trading, so nothing
+upstream had any reason to hold back.
+
+These are different situations and deserve different handling. A shut market
+means wait - retrying is pointless, and the log fills with warnings that look
+like a fault. A refused order means something about *this order* is wrong and
+is worth surfacing loudly. Today they are indistinguishable, so the loud
+handling is applied to both and the real refusals - the eurgbp stops-level
+miss, the brent target - are harder to see for the noise.
+
+A staleness check on the quote is cheap and reliable: this feed was thirty
+minutes old against a normal sub-second. It would let `_stale` and `_expire`
+defer quietly instead of retrying, and would let a genuine rejection stand out
+again.
+
+Two smaller things it would also fix. The bridge's bare 400 has now hidden
+three distinct causes in one day - a stops-level miss, an impossible target,
+and a shut market - and each took a separate investigation to identify. And
+the wide-spread guard added the same evening keys off the spread, which a
+frozen feed may not widen at all.
+
 ## 0q. Every deploy resets the hold clock on open positions
 
 Noticed 2026-08-27 while a us30 position retried a refused close: its age went
