@@ -1249,7 +1249,14 @@ class Trader:
         position is re-read from the broker rather than adjusted by arithmetic
         here, because what came off is the broker's answer, not ours.
         """
-        take = manage.partial(live.position, live.intent, spec, self.settings, best=best)
+        # The exit price a market order would get right now: a long leaves on
+        # the bid. Passed alongside `best` because banking wants the price that
+        # exists and the trailing rules want the one that did.
+        tick = await self._tick(live.position.symbol)
+        now = tick.exit(live.position.side) if tick is not None else 0.0
+        take = manage.partial(
+            live.position, live.intent, spec, self.settings, best=best, current=now
+        )
         if take is None:
             return False
         try:

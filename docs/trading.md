@@ -890,10 +890,22 @@ to serve. Banking part at the modelled push and running the remainder serves
 both, and it is the honest form of `runner`, which bets the whole position on
 the tail and will pay for that in win rate.
 
-It reads the **best** price the trade has seen, not the current one. A trade
-that touched 1.2R and fell back to 0.4R has already earned the partial;
-reading the current price would make the retracement that makes banking
-worthwhile the same thing that cancels it.
+It reads the **current** price, after a first version read the best price and
+was wrong about it. The original argument was that a trade which touched 1.2R
+and retraced had already *earned* the partial. Production showed what that
+means: a us30 position logged `banking 50% at 1.5R` and booked **−1.14**,
+because the trigger read a high-water mark while the close executed at market
+whenever the manage loop next ran - by which time price was back through the
+entry.
+
+The point of banking is to capture a gain that is *there*. A high-water mark
+is a gain that *was* there, and arming a market order against it prices an
+offer nobody is making any more. The log line then describes an event that did
+not happen, which is worse than not banking at all.
+
+Break-even and trailing still read `best`, and correctly: they protect a trade
+against giving back what it made, which is a different question from realising
+it.
 
 The volume arithmetic is where this rule breaks if it breaks, and the failure
 is not a refusal. A minimum-lot position cannot be halved, and a broker asked

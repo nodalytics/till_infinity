@@ -75,15 +75,26 @@ def partial(
     settings: Settings,
     *,
     best: float,
+    current: float = 0.0,
 ) -> Take | None:
     """How much of this position to bank now, or None to leave it whole.
 
-    Measured from `best` rather than the current price, deliberately and
-    unlike nothing else here: the question a scale-out answers is whether the
-    trade *reached* the level where banking was the plan. A trade that touched
-    1.2R and retraced to 0.4R has already earned the partial, and reading the
-    current price instead would mean the retracement that makes banking
-    valuable is the same thing that cancels it.
+    **Measured from the current price, after the first version read `best` and
+    was wrong.** The original argument was that a trade which touched 1.2R and
+    retraced had already *earned* the partial, so the retracement should not
+    cancel it. Production showed what that means in practice: a us30 position
+    logged "banking 50% at 1.5R" and booked **-1.14**, because the trigger read
+    a high-water mark while the close executed at market whenever the manage
+    loop next ran, by which time price was back through the entry.
+
+    The point of banking is to capture a gain that is *there*. A high-water
+    mark is a gain that was there. Reading it arms a market order at a price
+    nobody is offering any more, and the log line then describes an event that
+    did not happen - which is worse than not banking at all.
+
+    `best` is still taken, because break-even and trailing genuinely do want
+    the high-water mark: they protect a trade against giving back what it made,
+    which is a different question from realising it.
 
     **The volume arithmetic is where this goes wrong if it goes wrong.** A
     position of the minimum lot cannot be halved, and a broker asked to close
@@ -104,8 +115,15 @@ def partial(
     risk = abs(intent.entry - intent.stop)
     if risk <= 0:
         return None
-    gained = (best - position.price_open) * position.side.sign
+    # The price a market order would actually get, falling back to the
+    # high-water mark only when no current price was supplied.
+    now = current or best
+    gained = (now - position.price_open) * position.side.sign
     if gained < risk * at:
+        return None
+    # Never bank into a loss. The threshold above already implies this, but it
+    # implied it before too - through a number that had stopped being true.
+    if gained <= 0:
         return None
 
     step = spec.volume_step or 0.01

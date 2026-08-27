@@ -4794,3 +4794,41 @@ def test_the_setting_can_only_tighten_never_widen():
     wide = _stop_distance(parked=True, parked_stop_vol=99.0)
     ordinary = _stop_distance(parked=False)
     assert wide <= ordinary + 1e-9
+
+
+def test_the_scale_out_reads_the_price_that_exists_now():
+    """A us30 position logged "banking 50% at 1.5R" and booked -1.14, because
+    the trigger read a high-water mark while the close executed at market. The
+    point of banking is to capture a gain that is there.
+    """
+    live = position(volume=1.0, price_open=4400.0)
+    # Touched well past 1R, then fell back through the entry.
+    got = manage.partial(live, intent(volume=1.0), GOLD, _scaling(), best=4410.0, current=4399.0)
+    assert got is None
+
+
+def test_it_still_banks_when_the_gain_is_actually_there():
+    live = position(volume=1.0, price_open=4400.0)
+    got = manage.partial(live, intent(volume=1.0), GOLD, _scaling(), best=4410.0, current=4405.5)
+    assert got is not None
+
+
+def test_it_never_banks_into_a_loss():
+    live = position(volume=1.0, price_open=4400.0)
+    assert (
+        manage.partial(
+            live,
+            intent(volume=1.0),
+            GOLD,
+            _scaling(scale_out_at=0.0001),
+            best=4410.0,
+            current=4390.0,
+        )
+        is None
+    )
+
+
+def test_without_a_current_price_it_falls_back_to_the_high_water_mark():
+    """Rather than refusing to bank at all when a quote is briefly missing."""
+    live = position(volume=1.0, price_open=4400.0)
+    assert manage.partial(live, intent(volume=1.0), GOLD, _scaling(), best=4405.5) is not None
