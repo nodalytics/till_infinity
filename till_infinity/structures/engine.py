@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..logging import get_logger
-from . import confluence, patterns, pips, pivots, reactions, runs, sessions, sweeps
+from . import confluence, patterns, pips, pivots, reactions, regimes, runs, sessions, sweeps
 from . import levels as lv
 from .models import Shape, Signal
 from .state import Restorable
@@ -279,7 +279,7 @@ class Call(Restorable):
     price: float
     time: float
 
-    def to_signal(self, vol, clock=None, peers=None, busy: float = 1.0) -> Signal:
+    def to_signal(self, vol, clock=None, peers=None, busy: float = 1.0, market: str = "") -> Signal:
         # `probability`, not `probability_up`: quoting P(up) beside a *down*
         # call reads as the confidence in down when it is the confidence
         # against it. The base rate flips with it or the pair is not a
@@ -354,6 +354,12 @@ class Call(Restorable):
                 # journal can say whether the combination beat the estimate
                 # already in use - see `consensus_vol.py`.
                 "ensemble_bps": vol.ensemble_bps,
+                # Which kind of market this call was made in, learned from the
+                # scale-free readings rather than cut at asserted thresholds.
+                # Empty until the clustering is warm. Recorded so a per-regime
+                # scoreboard can be kept - the replay says regime separates
+                # outcomes, and that it is small next to the stop and entry.
+                "market": market,
                 # The level's own hold rate on the side price arrived from,
                 # and the decisive interactions behind it. The strongest
                 # single signal a level carries - strength.md puts it at AUC
@@ -546,6 +552,9 @@ class Engine:
         #: property of the producer, so it either happens always or never, and
         #: per-bar it would be thousands of identical lines a day.
         self._flat_bars: set[tuple[str, str, str]] = set()
+        #: What kind of market this is, learned online. Labels only - it
+        #: records and does not decide. See `regimes.py`.
+        self.regimes = regimes.Regimes()
         #: And quotes are per venue for exactly the same reason, which they were
         #: not given until the bar fix made the omission visible.
         self.quotes = Quotes()

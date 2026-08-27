@@ -1289,3 +1289,106 @@ def test_a_resolution_carries_the_belief_beside_the_outcome():
     assert d["push_vol"] == pytest.approx(-1.8)
     # A below-threshold touch is now evidence, which it never was before.
     assert abs(d["edge"]) < 0.10
+
+
+def test_regime_labels_are_ordered_rather_than_arbitrary():
+    """A k-means cluster id is a memory address, not a meaning.
+
+    The cluster called 2 today may be the one called 0 after a restart, and a
+    per-regime scoreboard keyed on the id would silently pool unrelated
+    conditions. Sorting by how energetic the centre is makes the names mean the
+    same thing across restarts even as the centres move.
+    """
+    from till_infinity.structures.regimes import NAMES, WARMUP, Regimes
+
+    book = Regimes()
+    # Two clearly separated conditions, fed alternately.
+    for i in range(WARMUP * 2):
+        calm = {
+            "vol_stretch": 0.5,
+            "regime": 0.1,
+            "activity": 0.6,
+            "hour_vol_share": 0.05,
+            "forecast_ratio": 0.9,
+            "sweep_rate": 0.0,
+        }
+        loud = {
+            "vol_stretch": 2.5,
+            "regime": 0.95,
+            "activity": 2.4,
+            "hour_vol_share": 0.3,
+            "forecast_ratio": 1.4,
+            "sweep_rate": 0.4,
+        }
+        book.observe(calm if i % 2 else loud)
+
+    assert book.warm
+    quiet = book.observe(
+        {
+            "vol_stretch": 0.5,
+            "regime": 0.1,
+            "activity": 0.6,
+            "hour_vol_share": 0.05,
+            "forecast_ratio": 0.9,
+            "sweep_rate": 0.0,
+        }
+    )
+    wild = book.observe(
+        {
+            "vol_stretch": 2.5,
+            "regime": 0.95,
+            "activity": 2.4,
+            "hour_vol_share": 0.3,
+            "forecast_ratio": 1.4,
+            "sweep_rate": 0.4,
+        }
+    )
+    assert quiet in NAMES and wild in NAMES
+    assert NAMES.index(quiet) < NAMES.index(wild), "the calmer condition should rank calmer"
+
+
+def test_a_cold_classifier_says_nothing():
+    """A label from twenty points is a statement about the first twenty points."""
+    from till_infinity.structures.regimes import Regimes
+
+    book = Regimes()
+    for _ in range(20):
+        book.observe(
+            {
+                "vol_stretch": 1.0,
+                "regime": 0.4,
+                "activity": 1.0,
+                "hour_vol_share": 0.1,
+                "forecast_ratio": 1.0,
+                "sweep_rate": 0.0,
+            }
+        )
+    assert not book.warm
+    assert (
+        book.observe(
+            {
+                "vol_stretch": 1.0,
+                "regime": 0.4,
+                "activity": 1.0,
+                "hour_vol_share": 0.1,
+                "forecast_ratio": 1.0,
+                "sweep_rate": 0.0,
+            }
+        )
+        == ""
+    )
+
+
+def test_the_scoreboard_sorts_worst_first():
+    """The useful question of a scoreboard like this is which pairing to stop,
+    and a list sorted best-first buries it."""
+    from till_infinity.structures.regimes import Regimes
+
+    book = Regimes()
+    book.record("quiet", "level-scalp", 1.2)
+    book.record("quiet", "level-scalp", 0.8)
+    book.record("wild", "sweep-aware", -1.0)
+    got = book.standings()
+    assert got[0][0] == "wild/sweep-aware"
+    assert got[0][2] == pytest.approx(-1.0)
+    assert got[-1][0] == "quiet/level-scalp"

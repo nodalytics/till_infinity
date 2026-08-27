@@ -552,11 +552,31 @@ class Watcher:
         # each was doing the same work dozens of times over the same levels.
         grouped: dict[str, list] = {}
         for call in worth:
+            vol = self.engine.vol.of(call.feed, call.interval)
+            busy = self._busy.get((call.feed, call.interval), 1.0)
+            # Fold the reading in and take the label back. Done here rather
+            # than inside `to_signal` because the classifier is one model
+            # across the whole book - a Call has no business holding it, and
+            # per-call state would make the partition per-instrument, which is
+            # the opposite of what the scale-free features are for.
+            market = self.engine.regimes.observe(
+                {
+                    "vol_stretch": vol.stretch,
+                    "regime": vol.regime,
+                    "activity": busy,
+                    "hour_vol_share": self.clock.vol_share(call.feed, call.time)
+                    if self.clock
+                    else 0.0,
+                    "forecast_ratio": vol.forecast_ratio,
+                    "sweep_rate": 0.0,
+                }
+            )
             signal = call.to_signal(
-                self.engine.vol.of(call.feed, call.interval),
+                vol,
                 self.clock,
                 self.engine.levels(call.feed, call.interval),
-                self._busy.get((call.feed, call.interval), 1.0),
+                busy,
+                market,
             )
             if call.feed not in grouped:
                 grouped[call.feed] = self._zones(call.feed)
