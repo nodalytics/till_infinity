@@ -704,6 +704,30 @@ class Settings:
     #: what they say.
     stop_slippage: float = 0.0
 
+    #: Defer the hold-clock close while the spread is this multiple of the
+    #: trade's own risk distance or wider. Zero closes on the clock regardless.
+    #:
+    #: **Found live.** An aus200 position was quoted `bid 8998 / ask 9051` out
+    #: of ASX hours - a 53-point spread against a normal 1 to 2, and against
+    #: the trade's own 8.89-point risk. A long is marked at the bid, so it
+    #: showed -61 on a 19 budget while its true mid had not even reached the
+    #: stop. The hold clock was minutes from closing it at market and turning
+    #: that arithmetic into a realised loss.
+    #:
+    #: `max_spread_fraction` already refuses to *enter* on a wide spread.
+    #: Nothing protected a position already open when liquidity went away,
+    #: which is the harder half - entry can always wait, an open position
+    #: cannot.
+    #:
+    #: Measured against the trade's own risk rather than a baseline spread,
+    #: because that is self-calibrating: it asks whether crossing the spread
+    #: costs a meaningful share of what the trade was willing to lose, which is
+    #: the question that matters and needs no history to answer.
+    #:
+    #: Bounded by `max_hold_multiple` like every other extension here, so a
+    #: permanently wide instrument cannot hold a position open forever.
+    hold_max_spread: float = 0.0
+
     #: Stop distance, in volatility units, for an entry that waited for the
     #: level. Zero keeps the ordinary stop. Only ever tightens, never widens.
     #:
@@ -990,6 +1014,7 @@ class Settings:
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
             stop_slippage=_float("TRADING_STOP_SLIPPAGE", 0.0),
+            hold_max_spread=_float("TRADING_HOLD_MAX_SPREAD", 0.0),
             parked_stop_vol=_float("TRADING_PARKED_STOP_VOL", 0.0),
             min_efficiency=_float("TRADING_MIN_EFFICIENCY", 0.0),
             trend_sizing=_float("TRADING_TREND_SIZING", 0.0),

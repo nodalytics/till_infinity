@@ -4832,3 +4832,44 @@ def test_without_a_current_price_it_falls_back_to_the_high_water_mark():
     """Rather than refusing to bank at all when a quote is briefly missing."""
     live = position(volume=1.0, price_open=4400.0)
     assert manage.partial(live, intent(volume=1.0), GOLD, _scaling(), best=4405.5) is not None
+
+
+# ------------------------------- not paying the spread to leave on the clock
+
+
+def _hold_guard(spread, age=2_000.0, limit=1_800.0, **over):
+    made = {"hold_max_spread": 0.5, "max_hold_multiple": 4.0}
+    made.update(over)
+    trader = Trader(Bus(), settings=settings(**made))
+    live = _live()  # entry 4400.5, stop 4395.6 - risk 4.9
+    trader._spread_of[live.intent.feed] = spread
+    return trader._too_wide_to_leave(live, age=age, limit=limit)
+
+
+def test_a_blown_out_spread_defers_the_hold_close():
+    """An aus200 position was quoted bid 8998 / ask 9051 out of ASX hours - 53
+    points against its own 8.89 of risk. Closing there pays six times the
+    trade's entire budget in spread, to leave a position whose true mid had not
+    reached its stop.
+    """
+    assert _hold_guard(spread=30.0) is True
+
+
+def test_an_ordinary_spread_does_not():
+    """The clock is there for a reason and this must not quietly disable it."""
+    assert _hold_guard(spread=0.5) is False
+
+
+def test_the_guard_is_off_by_default():
+    assert _hold_guard(spread=30.0, hold_max_spread=0.0) is False
+
+
+def test_a_permanently_wide_instrument_cannot_hold_a_position_forever():
+    """Past `max_hold_multiple` the trade goes out at whatever is offered,
+    which is the honest outcome when the alternative is never leaving."""
+    assert _hold_guard(spread=30.0, age=99_999.0) is False
+
+
+def test_no_spread_reading_means_no_deferral():
+    """Silence is not evidence of a wide market."""
+    assert _hold_guard(spread=0.0) is False

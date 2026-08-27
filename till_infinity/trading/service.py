@@ -1376,6 +1376,8 @@ class Trader:
                 continue
             if await self._worth_keeping(live, age, limit):
                 continue
+            if self._too_wide_to_leave(live, age, limit):
+                continue
             log.info("trading: closing #%d after %.0fs, past its %.0fs hold", ticket, age, limit)
             live.closed_by = "hold"
             with contextlib.suppress(BrokerError):
@@ -1383,6 +1385,48 @@ class Trader:
             closed = True
         if closed:
             await self._reconcile()
+
+    def _too_wide_to_leave(self, live: Live, age: float, limit: float) -> bool:
+        """Whether the spread makes closing on the clock worse than waiting.
+
+        The hold clock exists to release capital from a thesis that is not
+        playing out. It assumes the exit costs about what the entry did, and
+        out of hours that assumption fails completely: an aus200 position was
+        quoted `bid 8998 / ask 9051` after the ASX closed - 53 points against a
+        normal 1 or 2, and against the trade's own 8.89-point risk. Closing
+        there would have paid six times the trade's entire risk budget in
+        spread alone, to exit a position whose true mid had not reached its
+        stop.
+
+        `max_spread_fraction` already refuses to *enter* on a wide spread, and
+        that is the easy half - an entry can always wait. This is the other
+        half.
+
+        **Bounded, like every extension here.** `max_hold_multiple` still caps
+        total age, so an instrument that is permanently wide cannot hold a
+        position open indefinitely; past that the trade goes out at whatever
+        the market is offering, which is the honest outcome when the
+        alternative is never leaving.
+        """
+        want = self.settings.hold_max_spread
+        if want <= 0:
+            return False
+        if age >= limit * max(1.0, self.settings.max_hold_multiple):
+            return False
+        risk = abs(live.intent.entry - live.intent.stop)
+        spread = self._spread_of.get(live.intent.feed, 0.0)
+        if risk <= 0 or spread <= 0 or spread < risk * want:
+            return False
+        log.info(
+            "trading: holding #%d past its %.0fs hold - spread %.5g is %.1fx its "
+            "%.5g risk, closing now would pay that to leave",
+            live.position.ticket,
+            limit,
+            spread,
+            spread / risk,
+            risk,
+        )
+        return True
 
     async def _stale(self, live: Live, age: float) -> bool:
         """Close a trade that has gone nowhere long past when it should have.
