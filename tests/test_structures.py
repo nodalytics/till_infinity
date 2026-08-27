@@ -1343,7 +1343,8 @@ def test_regime_labels_are_ordered_rather_than_arbitrary():
             "sweep_rate": 0.4,
         }
     )
-    assert quiet in NAMES and wild in NAMES
+    assert quiet in NAMES
+    assert wild in NAMES
     assert NAMES.index(quiet) < NAMES.index(wild), "the calmer condition should rank calmer"
 
 
