@@ -25,9 +25,34 @@ what produces a number like that, how often, and whether the same fault
 distorts pushes that are wrong but plausible - because those are the expensive
 ones and this gate cannot see them.
 
-Worth checking first: whether it correlates with a particular feed, interval
-or warm-up state, and whether `expected_push_vol` has a divide-by-something
-that can approach zero.
+### Characterised the same evening, over 51,885 signals
+
+**It is rare: 40 occurrences, 0.077%.** And it is concentrated on fast
+intervals - 27 on 1m, 38 of 40 across 1m, 3m and 5m together. Only one 15m
+call. That points at something in the fast path rather than at the estimator in
+general.
+
+**The distribution is bimodal, with a clean gap**, which is the useful part:
+
+| band | n | what it looks like |
+| --- | ---: | --- |
+| up to 10.59v | - | legitimate, ordinary `risk_vol`, just past p99.9 (9.81v) |
+| 10.59v - 45.82v | **0** | nothing at all |
+| 45.8v to 20,682v | 40 | the fault |
+
+So `max_push_vol` at 25v sits inside the gap. On this sample it refuses every
+fault and no legitimate call, and there are **no wrong-but-plausible values
+hiding under the ceiling** - which was the worry that made the ceiling feel
+like a bandage. It is better placed than the guess deserved.
+
+That does not close the item. Absence of intermediate values in one sample is
+not proof the fault cannot produce them, and a ceiling still treats the
+symptom. But the risk it was covering is now measured rather than feared.
+
+Worth checking next: what is different about the 1m path, and whether
+`expected_push_vol` has a divide-by-something that can approach zero there.
+Two of the affected calls also carry `risk_vol` of exactly 0.0, which may be
+the same fault seen from another angle.
 
 ## 0n. Trend context is the strongest thing measured here, and nothing uses it
 
