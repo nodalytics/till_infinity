@@ -439,11 +439,38 @@ What follows if the honest version is adopted:
   for *how far* while having nothing to say about *which way*, and nobody has
   measured that. It is now the most valuable open question in the project.
 
-## 0f. The `reward_to_risk` gate is losing money - remove it
+## 0f. The `reward_to_risk` gate refuses 85% of calls to gain nothing
 
-**Measured on 2026-08-17, in [magnitude.md](../research/magnitude.md).** Ahead
-of everything else in this file, because it is a live gate that is actively
-harmful rather than merely useless.
+**Re-verified on 2026-08-27 against the live journal** - see
+[replay.md](../research/replay.md), "Re-verifying the `reward_to_risk` gate".
+The re-check confirmed the direction and substantially softened the claim
+below, so read this first.
+
+In R at a 0.5v stop, over 47,676 production touches joined to the signals that
+produced them: 0.908 ungated, 0.868 at the live 1.2 threshold, 0.834 at 2.0.
+The gate keeps 0.868R and rejects 0.915R, and gets monotonically worse as the
+threshold rises.
+
+So the direction holds and **the magnitude does not**: 0.047R, the same order
+as the three direction gates removed the same day and called noise. The
+original figures below were computed on realised *push* rather than R, and
+push is distance, not profit - it scores a large move against the trade as a
+good outcome.
+
+**The case for removal is volume, not quality.** It refuses 40,421 of 47,676
+calls to gain nothing and lose a twentieth of an R. A filter discarding six
+trades in seven has to earn that.
+
+**The mechanism below did not reproduce.** It predicts the top RR decile
+excursing *less*, being built on a tighter stop. It excurses more - 0.960v
+against 0.812v - and the ratio's distribution is badly behaved besides, the
+bottom decile all zeros and the top reaching 12,772. The effect is real; this
+explanation of it is not supported.
+
+### The original 2026-08-17 measurement, kept for the record
+
+**Measured in [magnitude.md](../research/magnitude.md).** Read with the
+correction above: these are push figures, not R.
 
 `actionable` requires `reward_to_risk >= MIN_REWARD_TO_RISK`. On 11,113 calls:
 
