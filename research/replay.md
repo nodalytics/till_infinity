@@ -456,3 +456,48 @@ push of 43v against 2-3v everywhere else, which is not a real feature of that
 bucket but a handful of contaminated push values sitting in a small sample.
 It does not touch the within-band conclusion, which is computed on R - where
 the stop and target bound every trade's contribution - rather than on push.
+
+## Do the probability, base-rate and edge gates separate anything?
+
+Each of them refuses trades and each is defended by an argument rather than a
+measurement. `research/harness/gates.py` asks the only question that matters:
+do trades above the floor do better than trades below it? A gate that does not
+separate is not neutral - it costs every trade it refuses and returns nothing.
+
+Mean R at a 0.5v stop, by decile of each quantity, over the 4,378 resolutions
+carrying these fields (8% of 54,547 - the rest predate them, and that is the
+main limit on what follows).
+
+| decile | probability | base rate | edge |
+| --- | ---: | ---: | ---: |
+| 1 (lowest) | 0.978 | 0.913 | 1.024 |
+| 5 | 0.978 | 1.021 | 1.041 |
+| 9 | 0.957 | **0.848** | 0.904 |
+| 10 (highest) | **0.913** | **1.130** | 0.901 |
+| spread | 0.090 | 0.283 | 0.153 |
+
+**Probability does not separate outcomes, and slopes slightly the wrong way.**
+The lowest decile returns 0.978 and the highest 0.913, across a spread of 0.090
+that is indistinguishable from noise. The floor at 0.75 is refusing trades for
+a number that does not predict what it is being asked to predict. This is the
+second time this has shown up - the strength measurement above found the same
+flatness once probability was held fixed, from the other direction.
+
+**Edge is the same, and worse-founded.** 1.024 at the bottom against 0.901 at
+the top. Its live floor was already inert, sitting at or below the structures
+threshold that produced the number, which the service warns about on every
+start.
+
+**Base rate is the one with something in it, and the live floor was in the
+wrong place.** The top decile - base rate above 0.563 - returns 1.130 against
+roughly 0.95 everywhere else, the only band in any of these columns that
+stands out. But the ninth decile, 0.519 to 0.563, is the *worst* cell in the
+table at 0.848, and the floor was set at 0.51. It was admitting the single
+worst decile and calling that a filter. A base-rate floor is worth having at
+0.56 and worth nothing at 0.51.
+
+What this does not say: these are touch resolutions under a fixed stop-and-
+target rule, not the trades this book actually took, and 8% coverage is thin.
+It is enough to conclude that two of these three floors are not earning their
+refusals; it is not enough to conclude that probability is *anti*-predictive,
+and the slight negative slopes should not be traded on.
