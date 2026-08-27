@@ -4,6 +4,31 @@ Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
+## 0p. `structures` published an expected push of 10,229 volatility units
+
+Found live 2026-08-27. A brent 1m call arrived with `expected_push_vol` of
+**10,229.708407** against a measured distribution whose median is 2.24v and
+whose p99 is 9.55v - four orders of magnitude past anything the market does.
+`vol_bps` on the same call was 41.6, which is ordinary, so the fault is in the
+push estimate itself rather than in the volatility it is denominated in.
+
+Trading turned it into a target of 3850.308 on an entry of 88.374 - 43 times
+the price of the instrument - and the broker refused the order. **The refusal
+is the only reason it was seen**, which is the part worth sitting with: a push
+of 30v rather than 10,229v would have produced a target that looked odd and
+traded fine, and the position would have run to its stop or its clock aiming
+at a price it could never reach. Nothing would have said anything.
+
+The trading side now refuses a push past `max_push_vol`, which stops the money
+leaving. **That is a bandage on the symptom.** The open question is upstream:
+what produces a number like that, how often, and whether the same fault
+distorts pushes that are wrong but plausible - because those are the expensive
+ones and this gate cannot see them.
+
+Worth checking first: whether it correlates with a particular feed, interval
+or warm-up state, and whether `expected_push_vol` has a divide-by-something
+that can approach zero.
+
 ## 0n. Trend context is the strongest thing measured here, and nothing uses it
 
 Found 2026-08-27, written up in [replay.md](../research/replay.md), built by

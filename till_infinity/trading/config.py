@@ -704,6 +704,26 @@ class Settings:
     #: what they say.
     stop_slippage: float = 0.0
 
+    #: The largest expected push a call may claim, in volatility units. Beyond
+    #: this the number is not a forecast, it is a fault.
+    #:
+    #: **Found live.** A brent call arrived with `expected_push_vol` of
+    #: **10,229.7**. Measured over 54,547 resolutions the push distribution has
+    #: a median of 2.24v and a p99 of 9.55v, so this was four orders of
+    #: magnitude past anything the market does. Trading multiplied it into a
+    #: target of 3850.308 on an entry of 88.374 - 43 times the price of the
+    #: instrument - and the broker refused the order.
+    #:
+    #: The refusal is what made it visible, and that is the uncomfortable part:
+    #: had the target been merely large rather than absurd, the order would
+    #: have been accepted and the trade would have run to its stop or its clock
+    #: with a target it could never reach. Nothing on this side checked.
+    #:
+    #: Set well above p99 rather than close to it. The job is to catch a broken
+    #: number, not to second-guess a large one - a genuine 12v push is rare and
+    #: real, and refusing it would be this gate exceeding its remit.
+    max_push_vol: float = 25.0
+
     #: Defer the hold-clock close while the spread is this multiple of the
     #: trade's own risk distance or wider. Zero closes on the clock regardless.
     #:
@@ -1014,6 +1034,7 @@ class Settings:
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
             stop_slippage=_float("TRADING_STOP_SLIPPAGE", 0.0),
+            max_push_vol=_float("TRADING_MAX_PUSH_VOL", 25.0),
             hold_max_spread=_float("TRADING_HOLD_MAX_SPREAD", 0.0),
             parked_stop_vol=_float("TRADING_PARKED_STOP_VOL", 0.0),
             min_efficiency=_float("TRADING_MIN_EFFICIENCY", 0.0),

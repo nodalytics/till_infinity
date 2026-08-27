@@ -4873,3 +4873,38 @@ def test_a_permanently_wide_instrument_cannot_hold_a_position_forever():
 def test_no_spread_reading_means_no_deferral():
     """Silence is not evidence of a wide market."""
     assert _hold_guard(spread=0.0) is False
+
+
+def test_an_absurd_push_is_refused():
+    """A brent call arrived claiming 10,229v against a measured p99 of 9.55v,
+    and became a target of 3850 on an entry of 88 - 43 times the price of the
+    instrument. The broker refused it, which is the only reason it was seen.
+    """
+    got = take("level-scalp", signal(features={"expected_push_vol": 10_229.7}))
+    assert isinstance(got, Refusal)
+    assert got.gate == "push"
+
+
+def test_a_large_but_real_push_is_not_refused():
+    """The job is to catch a broken number, not to second-guess a large one.
+    A 12v push is rare and real - p99 is 9.55v."""
+    got = take(
+        "level-scalp",
+        signal(features={"expected_push_vol": 12.0}),
+        min_probability=0.0,
+        min_edge=0.0,
+        min_base_rate=0.0,
+    )
+    assert not isinstance(got, Refusal), getattr(got, "detail", got)
+
+
+def test_the_push_ceiling_can_be_switched_off():
+    got = take(
+        "level-scalp",
+        signal(features={"expected_push_vol": 10_229.7}),
+        max_push_vol=0.0,
+        min_probability=0.0,
+        min_edge=0.0,
+        min_base_rate=0.0,
+    )
+    assert not (isinstance(got, Refusal) and got.gate == "push")

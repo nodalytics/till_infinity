@@ -481,6 +481,17 @@ class LevelStrategy(Strategy):
             return Refusal("risk", "the call states no risk distance", feed)
         if push_vol <= 0:
             return Refusal("push", "the call expects no push", feed)
+        # A push far past anything the market does is a fault, not a forecast.
+        # See `Settings.max_push_vol`: a brent call arrived claiming 10,229v
+        # against a measured p99 of 9.55v, and became a target 43 times the
+        # price of the instrument.
+        if self.settings.max_push_vol > 0 and push_vol > self.settings.max_push_vol:
+            return Refusal(
+                "push",
+                f"the call expects {push_vol:.4g}v, past the {self.settings.max_push_vol:.4g}v "
+                "any real push reaches - this is a broken number",
+                feed,
+            )
 
         entry = tick.entry(side)
 
