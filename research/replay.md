@@ -937,3 +937,78 @@ A caveat on the structural breakdown. Many outcome rows carry an empty `feed`,
 so the per-feed medians pool instruments together and the 2,353x range across
 series is not trustworthy. Interval clearly matters; how much is a separate
 question this sample cannot answer cleanly.
+
+## Scoring the estimators, and one result that reversed
+
+Everything built on 2026-08-27 records rather than decides. This is the check
+that has to pass before any of it is allowed to size or gate.
+
+### The live board, 90 closed trades
+
+| feature | n | R below the median | R above | gap |
+| --- | ---: | ---: | ---: | ---: |
+| `efficiency` | 45 | −0.405 | −0.153 | **+0.251** |
+| `origin_distance_vol` | 42 | −0.035 | −0.335 | **−0.299** |
+| `in_origin` | 42 | −0.259 | −0.111 | +0.149 |
+| `expected_hold_s` | 43 | −0.227 | −0.127 | +0.100 |
+| `probability` | 90 | −0.387 | −0.326 | +0.061 |
+| `strength` | 90 | −0.323 | −0.390 | −0.066 |
+| `pressure_vol` | 37 | −0.174 | −0.212 | −0.038 |
+
+`probability` and `strength` are noise here, which is the third independent
+method to say so.
+
+### The origin result did not survive a larger sample
+
+Origin proximity looked like the strongest thing on the board. A conventional
+test of a 0.3R gap at this scatter needs about 180 trades a side; there were
+21. Rather than wait weeks, `research/harness/origin_replay.py` runs the origin
+model over the resolution history - 49,619 touches with enough prior levels,
+each scored against only the origins that existed before it.
+
+| | n | mean R |
+| --- | ---: | ---: |
+| within 0.5 of an origin | 23,711 | **0.809** |
+| further away | 25,908 | **0.975** |
+| inside a zone | 39,049 | 0.860 |
+| outside every zone | 10,570 | 1.028 |
+
+**It reverses.** Proximity is worse, not better, on a sample a thousand times
+larger. The live gap was about one standard error and should not have been
+read as a signal - which is what recording before wiring is for.
+
+### Freshness is the part that holds
+
+| | n | mean R |
+| --- | ---: | ---: |
+| origin never revisited | 10,597 | **1.136** |
+| revisited twice or more | 35,279 | **0.822** |
+
+An origin price has not already worked through is worth **+0.31R** over one it
+has, on ten thousand samples a side. The claim an origin makes is *unfilled
+interest*, and the data says the unfilled half carries it - not the interest
+half, and not the distance to it.
+
+Two limits before acting even on that. The replay has no bars, so it cannot
+use the last-opposing-bar zone and falls back to the whole leg: **79% of levels
+land inside a zone**, which barely discriminates, and production's bar-based
+zone is a much narrower thing than this measures. And `vol_bps` is not on a
+structures outcome, so distance is in median-step units and the far tail holds
+degenerate values where that denominator collapses.
+
+## The stop overrun is partly a width problem
+
+35 stopped trades, mean overrun **+0.056R** past the placed stop.
+
+| | n | overrun |
+| --- | ---: | ---: |
+| stops narrower than 1.67v | 17 | **+0.083R** |
+| wider | 18 | **+0.030R** |
+
+Slippage is a distance in price, so it is a smaller share of a wider stop. That
+makes `stop_hold_scaling` a fix for the overrun as well as for being stopped by
+noise - it was enabled for the second reason and is helping the first.
+
+The other hypothesis could not be tested, and the reason is good news: **34 of
+35 stops already sit beyond the level's sweep band**. `_anchored_stop` places
+them outside the zone by design, so resting in the crowd barely happens.
