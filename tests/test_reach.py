@@ -31,9 +31,25 @@ def test_distance_is_taken_by_magnitude():
     assert _fed([-2.0] * FEWEST).at(0.5) == 2.0
 
 
-def test_zero_is_not_a_distance():
-    r = _fed([0.0] * FEWEST)
-    assert r.at(0.5) is None
+def test_zero_is_an_observation_not_a_missing_one():
+    """The first version discarded zeros, which is backwards. Many touches
+    resolve with no adverse excursion at all, and a trade that never
+    threatened its stop is the most informative thing a stop estimator sees.
+    Dropping them leaves only the touches that went wrong, and a quantile of
+    that puts the stop far wider than the instrument warrants.
+    """
+    assert _fed([0.0] * FEWEST).at(0.5) == 0.0
+    mixed = _fed([0.0] * 30 + [4.0] * 10)
+    assert mixed.at(0.5) == 0.0
+    assert mixed.at(0.95) == 4.0
+
+
+def test_an_absent_field_is_not_counted_as_zero():
+    book = Reaches()
+    for _ in range(FEWEST):
+        book.observe("gold", "3m", 1.0, None)
+    assert book.entry_at("gold", "3m") is not None
+    assert book.stop_at("gold", "3m") is None
 
 
 def test_the_window_forgets():
@@ -48,7 +64,7 @@ def test_the_window_forgets():
 def _book(depths, excursions, feed="gold", interval="3m"):
     book = Reaches()
     for d, e in zip(depths, excursions, strict=False):
-        book.observe(feed, interval, d, e)
+        book.observe(feed, interval, float(d), float(e))
     return book
 
 

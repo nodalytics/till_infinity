@@ -63,9 +63,21 @@ class Reach(Restorable):
         Both quantities are distances and arrive signed by which side of the
         level they were on, which is a fact about the approach rather than
         about how far price went.
+
+        **Zero is an observation, not a missing one**, and the first version of
+        this discarded it. Many touches resolve with no adverse excursion at
+        all - the median resolves in nineteen seconds - and a trade that never
+        threatened its stop is the most informative thing a stop estimator can
+        see. Dropping those leaves a sample of only the touches that went
+        wrong, and a quantile of that puts the stop far wider than the
+        instrument warrants. The same holds for depth: a touch that reached a
+        level without penetrating it is a real thing price did.
+
+        A field that is genuinely absent is the caller's business, and the
+        caller does not call.
         """
         value = abs(float(value))
-        if value > 0:
+        if value >= 0:
             self.seen.append(value)
 
     def at(self, share: float) -> float | None:
@@ -87,11 +99,15 @@ class Reaches(Restorable):
     depth: dict[tuple[str, str], Reach] = field(default_factory=dict)
     excursion: dict[tuple[str, str], Reach] = field(default_factory=dict)
 
-    def observe(self, feed: str, interval: str, depth: float, excursion: float) -> None:
+    def observe(
+        self, feed: str, interval: str, depth: float | None, excursion: float | None
+    ) -> None:
+        """Fold in one resolution. `None` means the field was absent, which is
+        not the same as a distance of zero and must not be counted as one."""
         key = (feed, interval)
-        if depth:
+        if depth is not None:
             self.depth.setdefault(key, Reach()).observe(depth)
-        if excursion:
+        if excursion is not None:
             self.excursion.setdefault(key, Reach()).observe(excursion)
 
     def entry_at(self, feed: str, interval: str, share: float = 0.5) -> float | None:

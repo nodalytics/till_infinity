@@ -460,14 +460,19 @@ class Trader:
         # How far price went into the level, and how far against the trade.
         # The pullback and the stop are questions about these two distances,
         # and both were being answered by constants.
+        # Passed only when present. A zero is a real observation - price
+        # reached the level and did not go through it, or never went against
+        # the trade - and substituting zero for a *missing* field would put
+        # those two things in the same sample.
         depth = payload.get("depth_vol")
         excursion = payload.get("excursion_vol")
-        self._reaches.observe(
-            feed,
-            interval,
-            float(depth) if isinstance(depth, int | float) else 0.0,
-            float(excursion) if isinstance(excursion, int | float) else 0.0,
-        )
+        if isinstance(depth, int | float) or isinstance(excursion, int | float):
+            self._reaches.observe(
+                feed,
+                interval,
+                float(depth) if isinstance(depth, int | float) else None,
+                float(excursion) if isinstance(excursion, int | float) else None,
+            )
         if feed in self.specs:
             log.debug(
                 "trading: %s %s at %s after %ss",
