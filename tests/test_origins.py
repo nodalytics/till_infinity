@@ -103,3 +103,50 @@ def test_the_target_side_is_the_opposing_origin():
     assert target.price == 110
     # And the entry side is the other one.
     assert o.nearest(price=95.0, want_up=True).price == 90
+
+
+# ------------------------- the zone is the last leg the other way, measured
+
+
+def test_the_zone_is_the_last_opposing_leg():
+    """A rally from 96 to 100, then a drop. The zone is 96-100 - the leg
+    itself - not the high padded by a constant somebody chose.
+    """
+    times, prices = _series([96, 97, 98, 99, 100] + [99, 97, 94, 90] + [90] * 8)
+    got = [o for o in Origins().observe(times, prices, unit=1.0) if o.launched == "down"]
+    assert got
+    assert got[0].price == 100.0
+    assert got[0].low == 96.0
+    assert got[0].high == 100.0
+
+
+def test_the_zone_widens_with_the_leg_that_made_it():
+    """Its width is observed. A longer run into the turn leaves a bigger band,
+    because the interest placed during it sat across more price.
+
+    The approach is deliberately gradual in both: a brisk one would qualify as
+    an impulse in its own right and the series would carry two origins, which
+    is correct behaviour and not what this is measuring.
+    """
+    short = _series([99.5, 100] + [99, 97, 94, 90] + [90] * 8)
+    long_ = _series([98, 98.5, 99, 99.5, 100] + [99, 97, 94, 90] + [90] * 8)
+    a = [o for o in Origins().observe(*short, unit=1.0) if o.launched == "down"][0]
+    b = [o for o in Origins().observe(*long_, unit=1.0) if o.launched == "down"][0]
+    assert (b.high - b.low) > (a.high - a.low)
+
+
+def test_a_rally_origin_is_the_selling_leg_before_it():
+    times, prices = _series([104, 103, 102, 101, 100] + [101, 103, 106, 110] + [110] * 8)
+    got = [o for o in Origins().observe(times, prices, unit=1.0) if o.launched == "up"]
+    assert got
+    assert got[0].price == 100.0
+    assert got[0].low == 100.0
+    assert got[0].high == 104.0
+
+
+def test_an_impulse_from_a_flat_still_gets_a_band():
+    """No opposing leg to measure - the fallback, and the weaker case."""
+    times, prices = _series([100] * 6 + [99, 97, 94, 90] + [90] * 8)
+    got = [o for o in Origins().observe(times, prices, unit=1.0) if o.launched == "down"]
+    assert got
+    assert got[0].high > got[0].low

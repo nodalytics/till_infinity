@@ -28,9 +28,18 @@ exactly where 1% is genuinely violent.
 
 Two things follow from what an origin is supposed to represent.
 
-It is a **zone**, not a price: the resting interest that launched the move sat
-across a range, so the origin spans from the extreme to where the impulse
-became decisive, and price entering that band has reached it.
+It is a **zone**, not a price, and the zone is **the last leg the other way**
+before the impulse - the final stretch of buying before a drop, or of selling
+before a rally. Its two ends are the band, so the width is observed rather
+than chosen: whatever interest was placed during that leg sat across exactly
+that range, and price re-entering it has reached the interest.
+
+A first version took the extreme of a fixed lookback and padded it by a
+constant. That gave a zone whose width nobody had measured and whose far edge
+sat an arbitrary distance from the one price that meant anything. The constant
+survives only for the case where there is no opposing leg to measure - an
+impulse from a flat, or from the start of the series - and that case is the
+weaker one.
 
 It is **consumed by being revisited**. The claim is unfilled interest; each
 return trades some of it away. A fresh origin and one price has already worked
@@ -154,13 +163,36 @@ class Origins(Restorable):
             ):
                 end += 1
             move = prices[end] - prices[i]
-            # Where it began: the extreme in the other direction at the start
-            # of the window, not `prices[i]`, which is wherever the walk
-            # happened to be standing.
-            back = max(0, i - bars)
-            window = prices[back : i + 1]
-            price = max(window) if down else min(window)
-            edge = price - ZONE_VOL * unit if down else price + ZONE_VOL * unit
+            # **The turn, not the window.** Detection measures net change
+            # across `bars`, and a window can straddle a reversal - a fall
+            # from 104 to 100 followed by a rally to 110 nets positive, so the
+            # walk reports an up-impulse beginning at 103 when price was still
+            # falling there. The impulse really begins at the extreme inside
+            # the window, so find that first.
+            span = prices[i : end + 1]
+            turn = i + (span.index(max(span)) if down else span.index(min(span)))
+            price = prices[turn]
+
+            # Then the zone: the **last leg the other way** before the turn,
+            # and its own range is the band. Walk back while price was still
+            # travelling opposite to the impulse.
+            #
+            # Not the extreme of a fixed window padded by a constant, which is
+            # what this did first - that gave a zone whose width was chosen
+            # rather than observed, with its far edge an arbitrary distance
+            # from the one price that meant anything.
+            back = turn
+            while back > 0 and (
+                (prices[back - 1] < prices[back]) if down else (prices[back - 1] > prices[back])
+            ):
+                back -= 1
+            edge = prices[back]
+            if back == turn:
+                # No opposing leg to measure - the impulse begins from a flat,
+                # or from the very start of the series. The constant survives
+                # only here, and this is the weaker case.
+                edge = price - ZONE_VOL * unit if down else price + ZONE_VOL * unit
+            move = prices[end] - price
             found.append(
                 Origin(
                     price=price,
