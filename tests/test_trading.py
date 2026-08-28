@@ -4938,3 +4938,70 @@ async def test_a_successful_stale_close_does_stamp_it():
     trader._best[live.position.ticket] = 4400.4
     assert await trader._stale(live, age=900.0) is True
     assert live.closed_by == "stale"
+
+
+# --------------------------- a trade that spans a restart must still be recorded
+
+
+async def _adopted_ref(journal, position):
+    trader = Trader(Bus(), settings=settings(), journal=journal)
+    return trader._ref_for(position)
+
+
+async def test_an_adopted_position_recovers_its_decision(tmp_path):
+    """`_settle` will not journal a close without a ref, and a position adopted
+    after a restart has none - so its close was logged, announced, and never
+    written down. What went missing was exactly the trades that lived long
+    enough to span a deploy.
+    """
+    from till_infinity.journal import Journal, decide
+
+    book = Journal(tmp_path / "j.db")
+    await book.open()
+    ref = await decide(
+        book,
+        "gold buy",
+        rationale="a test",
+        actor="trading",
+        context={"symbol": "XAUUSD", "side": "buy", "entry": 4400.0},
+    )
+    got = await _adopted_ref(book, position(symbol="XAUUSD", side=Side.BUY))
+    await book.close()
+    assert got == ref
+
+
+async def test_it_will_not_adopt_a_decision_that_is_already_settled(tmp_path):
+    """Otherwise a new position inherits the record of an earlier trade on the
+    same instrument, and two trades share one outcome."""
+    from till_infinity.journal import Journal, decide, outcome
+
+    book = Journal(tmp_path / "j.db")
+    await book.open()
+    ref = await decide(
+        book,
+        "gold buy",
+        rationale="a test",
+        actor="trading",
+        context={"symbol": "XAUUSD", "side": "buy", "entry": 4400.0},
+    )
+    await outcome(book, ref, "closed", rationale="a test", actor="trading", context={"profit": 1.0})
+    got = await _adopted_ref(book, position(symbol="XAUUSD", side=Side.BUY))
+    await book.close()
+    assert got == ""
+
+
+async def test_a_different_side_is_not_adopted(tmp_path):
+    from till_infinity.journal import Journal, decide
+
+    book = Journal(tmp_path / "j.db")
+    await book.open()
+    await decide(
+        book,
+        "gold buy",
+        rationale="a test",
+        actor="trading",
+        context={"symbol": "XAUUSD", "side": "buy", "entry": 4400.0},
+    )
+    got = await _adopted_ref(book, position(symbol="XAUUSD", side=Side.SELL))
+    await book.close()
+    assert got == ""

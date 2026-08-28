@@ -702,6 +702,58 @@ class Trader:
 
     # --------------------------------------------------------------- trading
 
+    def _ref_for(self, position: Position) -> str:
+        """The journal entry for the decision that opened this position.
+
+        **Why this is needed at all.** `_settle` writes an outcome against
+        `live.ref`, and `journal.outcome` refuses a record with no parent -
+        correctly, since an outcome that cannot be paired with its decision
+        teaches nothing. But `ref` is handed over through `_pending`, which is
+        only set for a position opened in *this* run. Anything adopted after a
+        restart therefore carried an empty ref and vanished from the record on
+        close.
+
+        **The bias that made it worth fixing rather than noting.** What went
+        missing was precisely the trades that lived long enough to span a
+        deploy - so every figure taken from the journal was computed on a set
+        that over-represented short trades, including the per-strategy table
+        and the stop cost this repository has been reasoning from.
+
+        Matched on symbol and side, newest first, and only against decisions
+        that are not already the parent of an outcome - so a position cannot
+        adopt the record of an earlier, settled trade on the same instrument.
+        Returns "" when nothing matches, which restores the old behaviour for
+        that position rather than guessing.
+        """
+        path = getattr(self.journal, "path", None)
+        if path is None:
+            return ""
+        try:
+            from ..journal import read as read_journal
+
+            decisions = read_journal(path, kind="decision", actor="trading", limit=400)
+            outcomes = read_journal(path, kind="outcome", actor="trading", limit=400)
+        except Exception as exc:
+            log.debug("trading: could not look up a ref for #%d: %s", position.ticket, exc)
+            return ""
+
+        settled = {entry.parent for entry in outcomes if entry.parent}
+        want = str(position.side)
+        for entry in decisions:  # newest first
+            context = entry.context or {}
+            if context.get("symbol") != position.symbol:
+                continue
+            if str(context.get("side") or "") != want:
+                continue
+            if entry.id in settled:
+                continue
+            log.info(
+                "trading: adopted #%d and recovered its decision from the journal",
+                position.ticket,
+            )
+            return entry.id
+        return ""
+
     def _warm_trend(self) -> None:
         """Rebuild the trend windows from the journal before trading starts.
 
@@ -1705,6 +1757,12 @@ class Trader:
                 intent = _intent_from(position)
                 ref = ""
             signal = self._last_signal.get(intent.feed, {})
+            # A position adopted after a restart arrives with no ref, and
+            # `_settle` will not journal a close without one - so the trade
+            # would be logged, announced, and never written down. Recover it
+            # from the decision that opened it.
+            if not ref:
+                ref = self._ref_for(position)
             self.open[ticket] = Live(
                 position=position,
                 intent=intent,
