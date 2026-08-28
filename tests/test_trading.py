@@ -5130,12 +5130,20 @@ async def test_the_reach_estimates_survive_a_restart(tmp_path):
     # the warm start reads that kind. The first version of this test used
     # `observe`, wrote twenty rows of the wrong kind, and failed for a reason
     # that had nothing to do with the code under test.
-    for _ in range(FEWEST):
-        ref = await decide(book, "gold 5m touched", rationale="a test", actor="structures")
+    # Titles vary per row, and they have to. `Entry.id` is a digest of time,
+    # actor and title, so twenty identical writes inside one second collapse
+    # to a single row - which passed when the loop ran slowly enough for the
+    # clock to move and failed when it did not. Worth knowing beyond this
+    # test: the journal silently deduplicates same-second writes sharing an
+    # actor and a title.
+    for n in range(FEWEST):
+        ref = await decide(
+            book, f"gold 5m touched {n}", rationale="a test", actor="structures"
+        )
         await outcome(
             book,
             ref,
-            "gold 5m resolved",
+            f"gold 5m resolved {n}",
             rationale="a test",
             actor="structures",
             context={
