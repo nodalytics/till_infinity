@@ -888,3 +888,52 @@ That trap is documented earlier in this file and was still walked into. It is
 worth stating the general form: **any series whose sign is assigned by the
 outcome will autocorrelate whenever the assignment does.** Successive `level`
 prices carry no such assignment, which is why they are the series used.
+
+## Can hold time be estimated?
+
+`stop_hold_scaling` widens the stop by the square root of the hold, because
+`vol_bps` is one bar of the entry interval and a trade held for many wanders
+further than one. It uses the strategy's **configured** hold - 1800 seconds for
+the scalpers, 120 for `snap` - which is a constant chosen by hand. The trade
+does not care what was configured; it cares how long *this* touch takes.
+
+`research/harness/holding.py`, over 38,244 resolutions in 36 series:
+
+| | |
+| --- | ---: |
+| p25 | 4s |
+| p50 | 61s |
+| p75 | 241s |
+| p90 | 651s |
+| p99 | 3,593s |
+| **p25 to p90** | **163x** |
+
+**It varies enormously, so a constant cannot be right for more than a slice of
+trades.** And unlike direction, it persists:
+
+| series | lag-1 rho | positive in |
+| --- | ---: | ---: |
+| raw seconds | +0.173 | 83% |
+| log seconds | **+0.269** | 86% |
+
+Measured on the log as well as the raw, because the distribution is
+long-tailed enough that a single 3,500-second touch dominates a covariance.
+
+**So hold time behaves like volatility, not like direction.** Set the three
+side by side:
+
+| quantity | varies | persists | worth estimating |
+| --- | --- | --- | --- |
+| volatility | yes | +0.159 | yes, and it has five estimators |
+| **hold time** | **163x** | **+0.269** | **yes, and it has none** |
+| direction | yes | −0.013 | no |
+
+That is the case for estimating it: the same two properties that justify the
+volatility apparatus, on a quantity currently served by a hand-picked
+constant - and one that `stop_hold_scaling` already multiplies into every stop
+it widens.
+
+A caveat on the structural breakdown. Many outcome rows carry an empty `feed`,
+so the per-feed medians pool instruments together and the 2,353x range across
+series is not trustworthy. Interval clearly matters; how much is a separate
+question this sample cannot answer cleanly.
