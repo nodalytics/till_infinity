@@ -843,3 +843,48 @@ So the tighter stop is worth what the entry is worth. With
 `pullback_fraction` at 1.0 the entry waits for the level, which is exactly the
 condition under which the grid's number applies - and that is the argument for
 tightening, rather than the grid alone.
+
+## Is momentum predictable, the way volatility is?
+
+The question decides how much apparatus momentum deserves. Volatility being
+persistent is why `garch`, `har`, `ranges` and `consensus_vol` exist. If
+direction persisted the same way it would warrant the same treatment - its own
+estimators, its own ensemble, arguably its own service. If not, momentum can
+only be a filter on a thesis that comes from elsewhere, which is what it is.
+
+Same test for both, over 53,753 resolutions in 56 feed/interval series:
+lag-1 autocorrelation.
+
+| measure | series | mean rho | share > 0 |
+| --- | ---: | ---: | ---: |
+| \|push\| (volatility) | 56 | **+0.159** | 77% |
+| level change (momentum) | 55 | **−0.239** | 5% |
+| its sign only | 55 | −0.013 | 42% |
+
+**Volatility clusters here as it does everywhere**: +0.159, positive in 77% of
+series. That is the persistence the volatility estimators are built on, and it
+is real on our own instruments.
+
+**Direction does not persist. It reverses.** The level-to-level change comes
+in at −0.239 and is negative in 95% of series - a move one way is followed by
+a move back. Strip the magnitude and the sign alone is −0.013, indistinguishable
+from a coin.
+
+Read together: the *size* of the next move is forecastable, its *direction*
+is not, and what little structure direction has runs against continuation. So
+momentum here is mean-reverting at the level-to-level horizon, which is the
+same thing the level model already trades - and it is an argument against
+building momentum forecasting, not for it.
+
+### The first version of this measured a variable against itself
+
+It used the sign of `push_vol` for direction and found rho **+0.303** - momentum
+apparently twice as persistent as volatility. `push_vol` is signed by the
+outcome together with the approach side, which is an identity, and consecutive
+touches on one level usually share an approach side. The autocorrelation was a
+property of the encoding.
+
+That trap is documented earlier in this file and was still walked into. It is
+worth stating the general form: **any series whose sign is assigned by the
+outcome will autocorrelate whenever the assignment does.** Successive `level`
+prices carry no such assignment, which is why they are the series used.
