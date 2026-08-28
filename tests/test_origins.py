@@ -150,3 +150,47 @@ def test_an_impulse_from_a_flat_still_gets_a_band():
     got = [o for o in Origins().observe(times, prices, unit=1.0) if o.launched == "down"]
     assert got
     assert got[0].high > got[0].low
+
+
+# ------------------------------- the zone comes from the last opposing bar
+
+
+class _Bar:
+    def __init__(self, o, h, lo, c):
+        self.open, self.high, self.low, self.close = o, h, lo, c
+
+
+def test_a_normal_bar_gives_its_whole_range():
+    from till_infinity.structures.origins import zone_of
+
+    assert zone_of(_Bar(100, 100.5, 99.5, 100.2), unit=1.0) == (99.5, 100.5)
+
+
+def test_a_huge_bar_gives_its_body_instead():
+    """Mostly wick: price went there and did not stay, so the open to the
+    close is the part that traded rather than probed."""
+    from till_infinity.structures.origins import zone_of
+
+    low, high = zone_of(_Bar(100, 105, 95, 101), unit=1.0)
+    assert (low, high) == (100.0, 101.0)
+
+
+def test_a_huge_doji_keeps_its_range():
+    """With no body to fall back on, the range is all there is."""
+    from till_infinity.structures.origins import zone_of
+
+    assert zone_of(_Bar(100, 105, 95, 100), unit=1.0) == (95.0, 105.0)
+
+
+def test_the_zone_uses_the_last_opposing_bar_when_bars_are_given():
+    """Not the whole leg: the interest that mattered was placed in the final
+    bar of it, and the leg gives a band far wider than was ever defended."""
+    times, prices = _series([96, 97, 98, 99, 100] + [99, 97, 94, 90] + [90] * 8)
+    bars = [_Bar(p, p + 0.2, p - 0.2, p) for p in prices]
+    got = [
+        o for o in Origins().observe(times, prices, unit=1.0, bars_at=bars) if o.launched == "down"
+    ]
+    assert got
+    # The last bar of the rally sat at 100, not the whole 96-100 leg.
+    assert got[0].low >= 99.0
+    assert got[0].high <= 100.5

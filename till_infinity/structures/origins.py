@@ -28,18 +28,21 @@ exactly where 1% is genuinely violent.
 
 Two things follow from what an origin is supposed to represent.
 
-It is a **zone**, not a price, and the zone is **the last leg the other way**
-before the impulse - the final stretch of buying before a drop, or of selling
-before a rally. Its two ends are the band, so the width is observed rather
-than chosen: whatever interest was placed during that leg sat across exactly
-that range, and price re-entering it has reached the interest.
+It is a **zone**, not a price, and the zone is **the last bar of the leg the
+other way** - the final candle of buying before a drop, or of selling before a
+rally. Its high to its low is the band.
 
-A first version took the extreme of a fixed lookback and padded it by a
-constant. That gave a zone whose width nobody had measured and whose far edge
-sat an arbitrary distance from the one price that meant anything. The constant
-survives only for the case where there is no opposing leg to measure - an
-impulse from a flat, or from the start of the series - and that case is the
-weaker one.
+Not the whole opposing leg, which was the second attempt: a leg can run for
+many bars and the interest that mattered was placed in the last of them, so
+using the whole thing gives a band far wider than anything that was actually
+defended. Not the extreme padded by a constant either, which was the first:
+that gave a width nobody had measured.
+
+**And where that last bar is itself huge, its body is used instead.** A bar
+whose range runs to `WIDE_BAR` volatility units is mostly wick - the price
+went there and did not stay - so its open to its close is the part that
+represents traded interest rather than a probe. This is the one judgement in
+the definition and it is stated as a constant so it can be argued with.
 
 It is **consumed by being revisited**. The claim is unfilled interest; each
 return trades some of it away. A fresh origin and one price has already worked
@@ -71,8 +74,33 @@ MOVE_VOL = 3.0
 #: about a move fast enough that resting interest did not get refilled.
 MOVE_BARS = 6
 #: How far either side of the origin price the zone reaches, in volatility
-#: units, when the impulse gives nothing better to measure from.
+#: units, when there is no bar to measure from at all.
 ZONE_VOL = 0.5
+#: A bar whose whole range reaches this many volatility units is treated as
+#: mostly wick, and its body is used for the zone instead. Price went there and
+#: did not stay, so the open to the close is the part that traded rather than
+#: probed.
+WIDE_BAR = 2.0
+
+
+def zone_of(bar, unit: float) -> tuple[float, float]:
+    """The band one bar contributes: its range, or its body when that is huge.
+
+    `bar` is anything carrying `open`, `high`, `low` and `close` - duck-typed
+    rather than imported, so `structures` need not depend on the trading
+    package that happens to define a Bar today.
+
+    High to low is the interest placed during that bar. Where the whole range
+    reaches `WIDE_BAR` volatility units the bar is mostly wick - price went
+    there and did not stay - so the open to the close is used instead: the part
+    that traded rather than probed.
+    """
+    high, low = float(bar.high), float(bar.low)
+    if unit > 0 and (high - low) >= WIDE_BAR * unit:
+        top, bottom = float(bar.open), float(bar.close)
+        if top != bottom:
+            return min(top, bottom), max(top, bottom)
+    return low, high
 
 
 @dataclass(slots=True)
@@ -132,6 +160,7 @@ class Origins(Restorable):
         *,
         move_vol: float = MOVE_VOL,
         bars: int = MOVE_BARS,
+        bars_at: list | None = None,
     ) -> list[Origin]:
         """Find the origins in a price series. `unit` is one volatility unit.
 
@@ -186,18 +215,33 @@ class Origins(Restorable):
                 (prices[back - 1] < prices[back]) if down else (prices[back - 1] > prices[back])
             ):
                 back -= 1
-            edge = prices[back]
-            if back == turn:
-                # No opposing leg to measure - the impulse begins from a flat,
-                # or from the very start of the series. The constant survives
-                # only here, and this is the weaker case.
+            # The **last bar** of that leg, not the whole leg. A leg can run
+            # for many bars and the interest that mattered was placed in the
+            # last of them; the whole thing gives a band far wider than
+            # anything that was actually defended.
+            # The bar *at* the turn, which is the last bar of the opposing leg -
+            # it is the one that made the extreme. Taking the bar before it
+            # reads the second-to-last stretch of buying and misses the one
+            # that actually turned.
+            last = turn
+            if bars_at is not None and 0 <= last < len(bars_at):
+                low, high = zone_of(bars_at[last], unit)
+            elif back != turn:
+                # No bars to read. The two ends of the leg are wider than they
+                # should be, and better than a constant.
+                low, high = min(prices[back], price), max(prices[back], price)
+            else:
+                # Nothing opposing at all: an impulse from a flat, or from the
+                # start of the series. The constant survives only here, and
+                # this is the weakest case.
                 edge = price - ZONE_VOL * unit if down else price + ZONE_VOL * unit
+                low, high = min(price, edge), max(price, edge)
             move = prices[end] - price
             found.append(
                 Origin(
                     price=price,
-                    low=min(price, edge),
-                    high=max(price, edge),
+                    low=low,
+                    high=high,
                     launched="down" if down else "up",
                     size_vol=abs(move) / unit,
                     when=times[i] if i < len(times) else 0.0,
