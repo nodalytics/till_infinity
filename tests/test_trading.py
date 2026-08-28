@@ -5137,9 +5137,7 @@ async def test_the_reach_estimates_survive_a_restart(tmp_path):
     # test: the journal silently deduplicates same-second writes sharing an
     # actor and a title.
     for n in range(FEWEST):
-        ref = await decide(
-            book, f"gold 5m touched {n}", rationale="a test", actor="structures"
-        )
+        ref = await decide(book, f"gold 5m touched {n}", rationale="a test", actor="structures")
         await outcome(
             book,
             ref,
