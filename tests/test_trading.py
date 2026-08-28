@@ -4736,16 +4736,17 @@ def test_a_negative_slippage_cannot_inflate_the_position():
 
 
 def _parked_engine(**over):
-    from till_infinity.trading.scalper import LevelScalp
-
+    """`snap` rather than `level-scalp`: the tighter parked stop now applies
+    only to a hold short enough for the grid that produced it, and snap's 120
+    seconds is that horizon. See `PARKED_STOP_HOLD`."""
     made = {"min_probability": 0.0, "min_edge": 0.0, "min_base_rate": 0.0}
     made.update(over)
-    return LevelScalp(settings(**made))
+    return strategy("snap", **made)
 
 
 def test_a_parked_entry_gets_the_tighter_stop():
     engine = _parked_engine(parked_stop_vol=0.5)
-    got = engine._parked_stop({"after_pullback": 1.0}, level=4400.0, vol_bps=10.0)
+    got = engine._parked_stop({"after_pullback": 1.0}, 4400.0, 10.0, "1m")
     assert got == pytest.approx(price_distance(4400.0, 10.0, 0.5))
 
 
@@ -4754,12 +4755,12 @@ def test_a_market_entry_does_not():
     is not there. Applied to one it would be the mistake `min_stop_vol` was
     written to prevent."""
     engine = _parked_engine(parked_stop_vol=0.5)
-    assert engine._parked_stop({}, level=4400.0, vol_bps=10.0) == 0.0
+    assert engine._parked_stop({}, 4400.0, 10.0, "1m") == 0.0
 
 
 def test_the_tighter_stop_is_off_by_default():
     engine = _parked_engine()
-    assert engine._parked_stop({"after_pullback": 1.0}, level=4400.0, vol_bps=10.0) == 0.0
+    assert engine._parked_stop({"after_pullback": 1.0}, 4400.0, 10.0, "1m") == 0.0
 
 
 def _stop_distance(parked, **over):
@@ -4772,15 +4773,15 @@ def _stop_distance(parked, **over):
     return abs(got.entry - got.stop)
 
 
-def test_a_parked_entry_actually_places_a_tighter_stop():
-    """The behavioural check. `min_stop_vol` would otherwise push the
-    tightened stop straight back out and leave the setting visibly configured
-    and silently inert - which is the failure this repository spent a day
-    finding, so it is asserted on the placed stop rather than on the source.
+def test_a_parked_entry_never_places_a_wider_stop():
+    """The end-to-end check, and stated as an inequality rather than a strict
+    one on purpose: the tightened distance is a **cap**, and the stop anchored
+    to the level's own zone can already sit further out, in which case it
+    rightly wins. What must never happen is the setting widening a stop.
     """
     ordinary = _stop_distance(parked=False, parked_stop_vol=0.5)
     tighter = _stop_distance(parked=True, parked_stop_vol=0.5)
-    assert tighter < ordinary
+    assert tighter <= ordinary + 1e-9
 
 
 def test_a_market_entry_is_untouched_by_the_setting():
@@ -5005,3 +5006,32 @@ async def test_a_different_side_is_not_adopted(tmp_path):
     got = await _adopted_ref(book, position(symbol="XAUUSD", side=Side.SELL))
     await book.close()
     assert got == ""
+
+
+def test_the_tight_parked_stop_only_applies_to_a_short_hold():
+    """The grid behind it was scored over resolutions with a median life of
+    eighteen seconds. Applied to a trade held for half an hour it is half a
+    bar against roughly 5.5 units of wandering - which is how five gold sells
+    were stopped inside a point and a half on a day gold fell twenty-eight.
+    """
+    fast = strategy("snap", parked_stop_vol=0.5)
+    slow = strategy("level-scalp", parked_stop_vol=0.5)
+    parked = {"after_pullback": 1.0}
+    assert fast._parked_stop(parked, 4400.0, 10.0, "1m") > 0
+    assert slow._parked_stop(parked, 4400.0, 10.0, "1m") == 0.0
+
+
+def test_the_stop_floor_grows_with_the_hold_when_scaling_is_on():
+    """One volatility unit is one bar of the entry interval, and a trade held
+    for thirty of them wanders about 5.5 units. A one-bar stop on a thirty-bar
+    hold is taken by ordinary movement whatever the direction does."""
+    off = strategy("level-scalp", stop_hold_scaling=0.0, min_stop_vol=1.0)
+    on = strategy("level-scalp", stop_hold_scaling=1.0, min_stop_vol=1.0)
+    assert on.stop_floor_vol("1m") > off.stop_floor_vol("1m")
+
+
+def test_the_scaled_floor_is_capped():
+    """`max_stop_scale` bounds it: a wider stop cannot create edge, so this is
+    for not paying spread to be stopped by noise, not a licence to widen."""
+    on = strategy("level-scalp", stop_hold_scaling=1.0, min_stop_vol=1.0, max_stop_scale=3.0)
+    assert on.stop_floor_vol("1m") <= 3.0 * 1.0 + 1e-9

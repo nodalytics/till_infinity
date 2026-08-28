@@ -94,16 +94,39 @@ class LevelStrategy(Strategy):
         """Extra conditions beyond the shared ones. None means take it."""
         return None
 
-    def _parked_stop(self, features: dict[str, float], level: float, vol_bps: float) -> float:
+    #: Longest hold for which the tightened parked stop still applies.
+    #:
+    #: The grid that produced it was scored over touch resolutions whose median
+    #: life is **eighteen seconds** and 84% of which finish inside five
+    #: minutes. A 0.5v stop is right for a trade on that horizon. Applied to
+    #: one held for half an hour it is half of a single bar against roughly 5.5
+    #: units of wandering - the exact mistake `stop_hold_scaling` exists to
+    #: correct, made worse.
+    PARKED_STOP_HOLD: ClassVar[float] = 300.0
+
+    def _parked_stop(
+        self, features: dict[str, float], level: float, vol_bps: float, interval: str = ""
+    ) -> float:
         """The tightened stop distance for an entry that waited, or 0.
 
         Zero for a market entry, which is most of them, and the caller takes
         the smaller of this and the ordinary distance - so this can only ever
         tighten a stop, never widen one. A setting that could widen would be a
         way to increase risk through a field named for reducing it.
+
+        **Zero as well for a trade held longer than `PARKED_STOP_HOLD`**, and
+        that bound is the correction of a real mistake. The tighter stop was
+        adopted from a replay grid, and the grid was scored over resolutions
+        with a median life of eighteen seconds; it says nothing about a
+        position held for thirty minutes. Stop width has to match hold length,
+        and applying a short-hold number to a long-hold trade is how five gold
+        sells were stopped inside a point and a half on a day gold fell
+        twenty-eight.
         """
         want = self.settings.parked_stop_vol
         if want <= 0 or not features.get("after_pullback"):
+            return 0.0
+        if self.hold_for(interval, self.settings.max_hold) > self.PARKED_STOP_HOLD:
             return 0.0
         return price_distance(level, vol_bps, want)
 
@@ -513,7 +536,7 @@ class LevelStrategy(Strategy):
         # that one can. See `Settings.parked_stop_vol` for why this is not a
         # general setting: the replay's tight stop is measured from the level,
         # and a parked entry is the only kind that is actually there.
-        tight = self._parked_stop(features, level, vol_bps)
+        tight = self._parked_stop(features, level, vol_bps, interval)
         if tight:
             risk_distance = min(risk_distance, tight)
         # The far edge of the level's own band on the side the stop sits, and a
