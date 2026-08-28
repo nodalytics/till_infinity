@@ -283,6 +283,7 @@ class Trader:
     async def start(self) -> None:
         """Attach, resolve what can be traded, and open the day."""
         self._warm_trend()
+        self._warm_reach()
         account = await self.broker.connect()
         self.equity = account.equity or account.balance
         self.currency = account.currency or ""
@@ -788,6 +789,63 @@ class Trader:
             )
             return entry.id
         return ""
+
+    def _warm_reach(self) -> None:
+        """Rebuild the hold and reach estimates from the journal before trading.
+
+        The same problem `_warm_trend` was written for, and the same shape.
+        These need a sample **per feed and interval** - twenty resolutions for
+        a reach quantile - while production publishes on the order of
+        twenty-seven signals in fifteen minutes across every series there is.
+        A given pair may see one an hour, so a cold estimator is not merely
+        cold: it is unavailable for most of a day, and every deploy resets it.
+
+        Verified the way `_warm_trend` was not: the first check after shipping
+        the reach estimators found `reach_depth_vol` and `reach_stop_vol`
+        absent from every decision, on a container minutes old.
+
+        Failure is not fatal. Starting cold is what happened before this
+        existed, and a trading service that will not boot because it could not
+        read history is worse than one that starts without an opinion.
+        """
+        path = getattr(self.journal, "path", None)
+        if path is None:
+            return
+        try:
+            from ..journal import read as read_journal
+
+            rows = read_journal(path, kind="outcome", actor="structures", limit=8000)
+        except Exception as exc:
+            log.debug("trading: could not warm the reach estimates: %s", exc)
+            return
+
+        warmed = 0
+        # Oldest first, so a bounded window keeps what is recent rather than
+        # the stalest rows of the batch - the trap `_warm_trend` documents.
+        for entry in reversed(rows):
+            context = getattr(entry, "context", None) or {}
+            feed, interval = context.get("feed"), context.get("interval")
+            if not feed or not interval:
+                continue
+            seconds = context.get("seconds")
+            if isinstance(seconds, int | float) and seconds > 0:
+                self._holds.observe(str(feed), str(interval), float(seconds))
+            depth, excursion = context.get("depth_vol"), context.get("excursion_vol")
+            if isinstance(depth, int | float) or isinstance(excursion, int | float):
+                self._reaches.observe(
+                    str(feed),
+                    str(interval),
+                    float(depth) if isinstance(depth, int | float) else None,
+                    float(excursion) if isinstance(excursion, int | float) else None,
+                )
+                warmed += 1
+        if warmed:
+            log.info(
+                "trading: reach warmed from %d resolutions - %d series ready, %d hold estimates",
+                warmed,
+                self._reaches.ready(),
+                sum(1 for h in self._holds.by_key.values() if h.expected is not None),
+            )
 
     def _warm_trend(self) -> None:
         """Rebuild the trend windows from the journal before trading starts.

@@ -5112,3 +5112,45 @@ async def test_the_reach_estimates_arrive_once_there_is_a_sample():
     # risk_vol is 1.0 on the test signal, and the stop adds it to the quantile
     # rather than taking the larger - different evidence about one question.
     assert got.get("reach_stop_vol") == pytest.approx(2.4, abs=0.05)
+
+
+async def test_the_reach_estimates_survive_a_restart(tmp_path):
+    """A reach quantile needs twenty resolutions per feed and interval, while
+    production publishes about twenty-seven signals in fifteen minutes across
+    every series there is. Cold, it is unavailable for most of a day - and
+    every deploy resets it. Verified after shipping the estimators found both
+    values absent from every decision on a minutes-old container.
+    """
+    from till_infinity.journal import Journal, decide, outcome
+    from till_infinity.structures.reach import FEWEST
+
+    book = Journal(tmp_path / "j.db")
+    await book.open()
+    # `outcome`, not `observe`: a resolution is written as kind `outcome` and
+    # the warm start reads that kind. The first version of this test used
+    # `observe`, wrote twenty rows of the wrong kind, and failed for a reason
+    # that had nothing to do with the code under test.
+    for _ in range(FEWEST):
+        ref = await decide(book, "gold 5m touched", rationale="a test", actor="structures")
+        await outcome(
+            book,
+            ref,
+            "gold 5m resolved",
+            rationale="a test",
+            actor="structures",
+            context={
+                "feed": "gold",
+                "interval": "5m",
+                "seconds": 40.0,
+                "depth_vol": 0.9,
+                "excursion_vol": 1.4,
+            },
+        )
+    trader = Trader(Bus(), settings=settings(), journal=book)
+    await trader.start()
+    await book.close()
+
+    assert trader._reaches.entry_at("gold", "5m") is not None, (
+        "the reach estimate did not survive the restart"
+    )
+    assert trader._holds.expected("gold", "5m") is not None
