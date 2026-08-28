@@ -101,6 +101,10 @@ class Strategy(ABC):
     break_even_at: ClassVar[float] = 0.0
     trail_vol: ClassVar[float] = 0.0
 
+    #: Zero means take the deployment's `max_against_vol`, so the filter is a
+    #: property of the book rather than of whichever strategies remembered to
+    #: ask for it.
+    #:
     #: How much accumulated momentum *against* this trade it will tolerate,
     #: in volatility units. Zero is off, which is every strategy that has not
     #: asked for it.
@@ -123,6 +127,70 @@ class Strategy(ABC):
     #: configured value; a strategy that always wants a resting entry says so
     #: here rather than depending on how the deployment happens to be tuned.
     pullback_fraction: ClassVar[float] = 0.0
+
+    def horizon(self, interval: str) -> float:
+        """How far this strategy's hold stretches one bar of `interval`.
+
+        The same square root of time the stop floor uses, and for the same
+        reason: `vol_bps` and every threshold denominated in it describe **one
+        bar**, while the trade is held for many. A number that is right for one
+        bar is wrong for thirty by a factor of about 5.5.
+
+        Three settings inherited that mistake and are corrected by this.
+
+        * **the trail**, in volatility units of one bar - a session's pullback
+          against a minute's.
+        * **the momentum filter**, likewise: 1.5v is a real run on a 3m chart
+          and ordinary noise on a 4h one.
+
+        Each was previously a constant per strategy, which meant every new
+        strategy had to rediscover the arithmetic and `high-timeframe` carried
+        hand-picked doubles of the scalpers' numbers. This derives them.
+
+        **Break-even is deliberately not one of them**, and that was a mistake
+        caught by reading the numbers before shipping them. Break-even is in R,
+        and R is already measured against the stop, which this same reasoning
+        has already widened. Scaling it again counts the horizon twice and puts
+        `level-scalp` on a 5.5R break-even, which is a threshold that never
+        fires - protection removed by an excess of it.
+
+        Capped at `max_stop_scale`, like the stop floor, because the square
+        root of thirty bars is 5.5 and a trail five and a half times its
+        stated width is not the same rule any more.
+
+        Returns 1.0 when the hold is not knowable, which restores the constants
+        rather than guessing at a scale for them.
+        """
+        import math
+
+        from ..structures.levels import SECONDS
+
+        bars = SECONDS.get(interval, 0.0)
+        if bars <= 0:
+            return 1.0
+        held = self.hold_for(interval, self.settings.max_hold)
+        if held <= 0:
+            return 1.0
+        grown = math.sqrt(max(held / bars, 1.0))
+        return max(1.0, min(grown, max(self.settings.max_stop_scale, 1.0)))
+
+    def protection(self, interval: str) -> tuple[float, float]:
+        """Break-even and trail for this strategy on this interval.
+
+        A strategy's own values win where it states them; both are then
+        stretched by `horizon`, so the same declared intent means the same
+        thing on a two-minute hold and a two-day one.
+        """
+        even = self.break_even_at or self.settings.break_even_at
+        trail = self.trail_vol or self.settings.trail_vol
+        # Break-even unscaled: it is in R, and R is measured against a stop
+        # this reasoning has already widened.
+        return even, trail * self.horizon(interval)
+
+    def against_limit(self, interval: str) -> float:
+        """How much momentum against the trade this strategy tolerates here."""
+        base = self.max_against_vol or self.settings.max_against_vol
+        return base * self.horizon(interval) if base > 0 else 0.0
 
     def hold_for(self, interval: str, ceiling: float) -> float:
         """Seconds this strategy may hold a trade triggered on `interval`."""

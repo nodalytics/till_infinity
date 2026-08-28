@@ -4173,9 +4173,11 @@ def test_a_real_intent_closed_between_its_levels_is_a_hold():
 
 
 def _htf():
-    from till_infinity.trading.scalper import HighTimeframe
-
-    return HighTimeframe(settings())
+    """`swing-level`, which absorbed `high-timeframe` when it was removed as a
+    near-duplicate: they shared entries, context and the requirement that a
+    higher timeframe agree, and the resting entry and horizon-scaled
+    protection moved across."""
+    return strategy("swing-level")
 
 
 def test_the_swing_trade_requires_a_high_timeframe():
@@ -4183,12 +4185,12 @@ def test_the_swing_trade_requires_a_high_timeframe():
     is a fast trade wearing a swing's patience."""
     engine = _htf()
     assert engine.needs_context is True
-    assert all(t in ("1h", "4h", "1d", "1w") for t in engine.context)
+    assert all(t in ("4h", "1d", "1w") for t in engine.context)
 
 
 def test_the_swing_trade_never_triggers_below_15m():
     """The stop comes from the entry interval, so a 1m stop against a
-    three-day hold is not a tight trade but a certain one."""
+    multi-hour hold is not a tight trade but a certain one."""
     fast = {"1m", "3m", "5m"}
     assert not fast & set(_htf().entries)
 
@@ -4198,9 +4200,8 @@ def test_the_swing_hold_does_not_shrink_with_a_fast_trigger():
     close a four-hour idea minutes after opening it."""
     engine = _htf()
     assert engine.hold_bars == 0.0
-    # A 15m trigger gets the same three days a 4h trigger does.
+    # A 15m trigger gets the same hold a 4h trigger does.
     assert engine.hold_for("15m", 1_800.0) == engine.hold_for("4h", 1_800.0)
-    assert engine.hold_for("15m", 1_800.0) > 24 * 3_600.0
 
 
 def test_the_swing_trade_is_not_capped_by_the_scalpers_hold():

@@ -192,6 +192,11 @@ MAGIC_ORDER: tuple[str, ...] = (
     "thesis-only",
     "runner",
     "inverse",
+    # Removed 2026-08-28 as a near-duplicate of `swing-level`, which shares its
+    # entries, context and higher-timeframe requirement; its resting entry and
+    # horizon-scaled protection moved there. The slot stays reserved because
+    # this table is append-only - a magic that has been on live orders has to
+    # keep resolving to the name that placed them.
     "high-timeframe",
 )
 
@@ -795,6 +800,16 @@ class Settings:
     #: Volatility units the move must have turned back **in the trade's
     #: favour**, after a pullback, before the entry is taken. Zero is off.
     #:
+    #: How much accumulated momentum against a trade the book tolerates, in
+    #: volatility units of one bar. Zero is off; a strategy may state its own.
+    #:
+    #: A property of the deployment rather than of whichever strategies
+    #: remembered to ask for it, which is what it was - `sweep-aware` and
+    #: `inverse` carried it and nothing else did, for no reason anyone had
+    #: written down. Stretched per strategy by `Strategy.horizon`, so 1.5 here
+    #: means a real run on a 3m chart and proportionally more on a 4h one.
+    max_against_vol: float = 0.0
+
     #: The stricter half of the momentum filter. `max_against_vol` refuses an
     #: entry while a run is still going against it; this requires the turn to
     #: have actually started. One removes the worst entries, the other insists
@@ -1039,6 +1054,7 @@ class Settings:
             parked_stop_vol=_float("TRADING_PARKED_STOP_VOL", 0.0),
             min_efficiency=_float("TRADING_MIN_EFFICIENCY", 0.0),
             trend_sizing=_float("TRADING_TREND_SIZING", 0.0),
+            max_against_vol=_float("TRADING_MAX_AGAINST_VOL", 0.0),
             require_turn_vol=_float("TRADING_REQUIRE_TURN_VOL", 0.0),
             require_candle=_flag("TRADING_REQUIRE_CANDLE", "0"),
             candle_tolerance_vol=_float("TRADING_CANDLE_TOLERANCE_VOL", 0.25),
