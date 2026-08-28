@@ -130,8 +130,8 @@ def test_the_zone_widens_with_the_leg_that_made_it():
     """
     short = _series([99.5, 100] + [99, 97, 94, 90] + [90] * 8)
     long_ = _series([98, 98.5, 99, 99.5, 100] + [99, 97, 94, 90] + [90] * 8)
-    a = [o for o in Origins().observe(*short, unit=1.0) if o.launched == "down"][0]
-    b = [o for o in Origins().observe(*long_, unit=1.0) if o.launched == "down"][0]
+    a = next(o for o in Origins().observe(*short, unit=1.0) if o.launched == "down")
+    b = next(o for o in Origins().observe(*long_, unit=1.0) if o.launched == "down")
     assert (b.high - b.low) > (a.high - a.low)
 
 
