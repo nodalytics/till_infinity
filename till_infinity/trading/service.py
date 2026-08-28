@@ -37,8 +37,8 @@ from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
 from ..structures.cusum import Cusum
-from ..structures.levels import SECONDS
 from ..structures.holds import Book as HoldBook
+from ..structures.levels import SECONDS
 from ..structures.trend import Trend
 from . import manage, plans, strategy
 from . import symbols as sym
