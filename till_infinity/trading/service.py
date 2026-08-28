@@ -39,6 +39,7 @@ from ..logging import get_logger
 from ..structures.cusum import Cusum
 from ..structures.holds import Book as HoldBook
 from ..structures.levels import SECONDS
+from ..structures.reach import Reaches
 from ..structures.trend import Trend
 from . import manage, plans, strategy
 from . import symbols as sym
@@ -226,6 +227,10 @@ class Trader:
         #: How long a touch on each feed and interval takes to resolve. Fed
         #: from the resolution stream, which the trader already subscribes to.
         self._holds = HoldBook()
+        #: How far price reaches into a level, and against a trade once in it.
+        #: The two distances behind an entry and a stop. See
+        #: `structures/reach.py`.
+        self._reaches = Reaches()
         #: Best price each open trade has seen, for the trailing stop. Tracked
         #: from the quote stream rather than read from the broker, because
         #: `price_current` is a snapshot and a trail anchored to snapshots
@@ -448,9 +453,21 @@ class Trader:
         # `structures.holds` - hold time varies 163x and persists at +0.269,
         # which is the pair of properties that justifies an estimator, and it
         # is multiplied into every stop `stop_hold_scaling` widens.
+        interval = str(payload.get("interval") or "")
         seconds = payload.get("seconds")
         if isinstance(seconds, int | float) and seconds > 0:
-            self._holds.observe(feed, str(payload.get("interval") or ""), float(seconds))
+            self._holds.observe(feed, interval, float(seconds))
+        # How far price went into the level, and how far against the trade.
+        # The pullback and the stop are questions about these two distances,
+        # and both were being answered by constants.
+        depth = payload.get("depth_vol")
+        excursion = payload.get("excursion_vol")
+        self._reaches.observe(
+            feed,
+            interval,
+            float(depth) if isinstance(depth, int | float) else 0.0,
+            float(excursion) if isinstance(excursion, int | float) else 0.0,
+        )
         if feed in self.specs:
             log.debug(
                 "trading: %s %s at %s after %ss",
@@ -536,6 +553,7 @@ class Trader:
         self._hand_over_pressure(feed, payload)
         self._hand_over_trend(feed, payload)
         self._hand_over_hold(feed, payload)
+        self._hand_over_reach(feed, payload)
 
         tick = await self._tick(spec.symbol)
         if tick is None:
@@ -824,6 +842,28 @@ class Trader:
                 ready,
                 len(self._trend),
             )
+
+    def _hand_over_reach(self, feed: str, payload: dict[str, Any]) -> None:
+        """Attach how far price reaches here, into the level and against a trade.
+
+        Recorded rather than acted on, like the hold estimate beside it.
+        `pullback_fraction` and `min_stop_vol` still decide; these say what the
+        instrument has actually done, so the journal can show whether the
+        constants were in the right place before anything is moved.
+        """
+        interval = str(payload.get("interval") or "")
+        entry = self._reaches.entry_at(feed, interval)
+        features = payload.get("features")
+        if not isinstance(features, dict):
+            return
+        if entry is not None:
+            features["reach_depth_vol"] = entry
+        risk = features.get("risk_vol")
+        stop = self._reaches.stop_at(
+            feed, interval, risk_vol=float(risk) if isinstance(risk, int | float) else 0.0
+        )
+        if stop is not None:
+            features["reach_stop_vol"] = stop
 
     def _hand_over_hold(self, feed: str, payload: dict[str, Any]) -> None:
         """Attach how long a touch here usually takes, when that is known.

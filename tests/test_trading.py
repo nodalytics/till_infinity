@@ -5071,3 +5071,44 @@ async def test_the_hold_estimate_reaches_the_decision_once_it_is_known():
     got = later.get("features", {}).get("expected_hold_s")
     assert got is not None, "the estimate never reached the features"
     assert 30.0 < got < 60.0
+
+
+async def test_the_reach_estimates_arrive_once_there_is_a_sample():
+    """The depth price reaches into a level and the excursion a stop must
+    clear, fed from resolutions and recorded on the decision - so the journal
+    can say whether `pullback_fraction` and `min_stop_vol` sit anywhere near
+    where the instrument actually trades."""
+    from till_infinity.structures.reach import FEWEST
+
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+
+    early = signal()
+    await trader.on_signal(early)
+    assert "reach_depth_vol" not in early.get("features", {})
+
+    for _ in range(FEWEST):
+        await trader.handle(
+            Message(
+                topic=RESOLUTIONS,
+                payload={
+                    # 5m to match the test signal: the estimate is per feed *and*
+                    # interval, because how far price reaches into a 1m level and a 4h
+                    # one are different distances.
+                    "feed": "gold",
+                    "interval": "5m",
+                    "seconds": 40.0,
+                    "depth_vol": 0.9,
+                    "excursion_vol": 1.4,
+                    "outcome": "reject",
+                },
+            )
+        )
+
+    later = signal()
+    await trader.on_signal(later)
+    got = later.get("features", {})
+    assert got.get("reach_depth_vol") == pytest.approx(0.9, abs=0.05)
+    # risk_vol is 1.0 on the test signal, and the stop adds it to the quantile
+    # rather than taking the larger - different evidence about one question.
+    assert got.get("reach_stop_vol") == pytest.approx(2.4, abs=0.05)
