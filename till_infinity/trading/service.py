@@ -38,6 +38,7 @@ from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
 from ..structures.cusum import Cusum
 from ..structures.levels import SECONDS
+from ..structures.holds import Book as HoldBook
 from ..structures.trend import Trend
 from . import manage, plans, strategy
 from . import symbols as sym
@@ -222,6 +223,9 @@ class Trader:
         #: efficiency of 1m levels and of 15m levels on one instrument are
         #: different markets, and pooling them measures neither.
         self._trend: dict[tuple[str, str], Trend] = {}
+        #: How long a touch on each feed and interval takes to resolve. Fed
+        #: from the resolution stream, which the trader already subscribes to.
+        self._holds = HoldBook()
         #: Best price each open trade has seen, for the trailing stop. Tracked
         #: from the quote stream rather than read from the broker, because
         #: `price_current` is a snapshot and a trail anchored to snapshots
@@ -440,6 +444,13 @@ class Trader:
         """
         self.resolutions += 1
         feed = str(payload.get("feed") or "")
+        # The one thing acted on: how long this took. See
+        # `structures.holds` - hold time varies 163x and persists at +0.269,
+        # which is the pair of properties that justifies an estimator, and it
+        # is multiplied into every stop `stop_hold_scaling` widens.
+        seconds = payload.get("seconds")
+        if isinstance(seconds, int | float) and seconds > 0:
+            self._holds.observe(feed, str(payload.get("interval") or ""), float(seconds))
         if feed in self.specs:
             log.debug(
                 "trading: %s %s at %s after %ss",
@@ -524,6 +535,7 @@ class Trader:
         # quote stream and a strategy sees one signal at a time.
         self._hand_over_pressure(feed, payload)
         self._hand_over_trend(feed, payload)
+        self._hand_over_hold(feed, payload)
 
         tick = await self._tick(spec.symbol)
         if tick is None:
@@ -812,6 +824,22 @@ class Trader:
                 ready,
                 len(self._trend),
             )
+
+    def _hand_over_hold(self, feed: str, payload: dict[str, Any]) -> None:
+        """Attach how long a touch here usually takes, when that is known.
+
+        Recorded on the decision rather than acted on. The estimator is worth
+        having - hold time varies 163x and persists - but it has never sized a
+        stop, and a quantity that moves money should be visible in the journal
+        for a while before it does. `stop_hold_scaling` still scales by the
+        strategy's configured hold.
+        """
+        expected = self._holds.expected(feed, str(payload.get("interval") or ""))
+        if expected is None:
+            return
+        features = payload.get("features")
+        if isinstance(features, dict):
+            features["expected_hold_s"] = expected
 
     def _hand_over_trend(self, feed: str, payload: dict[str, Any]) -> None:
         """Attach the trend context, then fold this level into it.

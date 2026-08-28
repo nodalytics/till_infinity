@@ -5035,3 +5035,38 @@ def test_the_scaled_floor_is_capped():
     for not paying spread to be stopped by noise, not a licence to widen."""
     on = strategy("level-scalp", stop_hold_scaling=1.0, min_stop_vol=1.0, max_stop_scale=3.0)
     assert on.stop_floor_vol("1m") <= 3.0 * 1.0 + 1e-9
+
+
+async def test_the_hold_estimate_reaches_the_decision_once_it_is_known():
+    """Fed from resolutions, which the trader already subscribes to, and put
+    where `_features` reads - the same dictionary three earlier features were
+    written to the wrong side of."""
+    from till_infinity.structures.holds import FEWEST
+
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+
+    payload = signal()
+    await trader.on_signal(payload)
+    assert "expected_hold_s" not in payload.get("features", {}), (
+        "an estimate was offered before there was anything behind it"
+    )
+
+    for _ in range(FEWEST):
+        await trader.handle(
+            Message(
+                topic=RESOLUTIONS,
+                payload={
+                    "feed": "gold",
+                    "interval": "3m",
+                    "seconds": 42.0,
+                    "outcome": "reject",
+                },
+            )
+        )
+
+    later = signal()
+    await trader.on_signal(later)
+    got = later.get("features", {}).get("expected_hold_s")
+    assert got is not None, "the estimate never reached the features"
+    assert 30.0 < got < 60.0
