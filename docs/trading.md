@@ -1164,9 +1164,42 @@ in thirty minutes, bid, ask and timestamp identical to half an hour earlier.
 not whether it is *trading*, and it said `True` throughout that break.
 
 So the same staleness test that decides whether a close should be deferred now
-also decides whether a position may be opened at all: a feed silent for
+also decides whether a position may be opened at all: a market silent for
 `stale_quote_after` refuses on gate `shut`. A market we cannot get out of is
 not one to get into.
+
+**Which clock, though.** The first version of this gate read `_quoted_at`,
+which is fed from the quotes bus - a consensus of other venues. That is the
+wrong clock, and it was wrong within the hour: a `buy 1.2 Wall Street 30`
+was refused by the broker with `400 Order failed: Market closed` while the
+consensus feed looked perfectly live, because OANDA and the rest carry on
+quoting an index our broker has closed.
+
+Only the broker's own tick time answers the question actually being asked,
+which is whether *this* broker will let a position out. Measured across the
+bridge on a Friday evening, ours and theirs are the same epoch and the two
+states separate cleanly:
+
+| symbol | last tick | |
+| --- | --- | --- |
+| BTCUSD | -2s | 24/7, trading |
+| Australia 200 | 696s | shut |
+| Japan 225 | 696s | shut |
+| EURUSD | 997s | shut |
+| Wall Street 30 | 1597s | shut - the refused order |
+| US Tech 100 | 1596s | shut |
+
+`_shut_for` is that one definition, read by the entry gate and the close
+deferral alike. It prefers the tick in hand, falls back to a cached broker
+tick, and falls back again to the consensus feed for a bridge that reports no
+tick time.
+
+**The cached clock needs its own freshness check.** A tick time goes on ageing
+whether or not we are still asking, so an instrument we simply stopped quoting
+would drift into looking shut. If the observation itself is older than
+`stale_quote_after` the broker's clock is not used at all. Neither missing
+evidence nor our own silence is evidence of a closed market - the same reason
+a feed that has never quoted is not called shut.
 
 **A weekend is this failure with a longer clock.** The hold defers a close
 while the market is shut, but `max_hold_multiple` caps that deferral at four

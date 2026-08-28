@@ -5283,6 +5283,58 @@ def test_it_can_only_reduce():
         assert _momentum_size(pressure) <= 1.0
 
 
+async def test_the_brokers_clock_decides_whether_a_market_is_shut():
+    """The consensus feed is the wrong clock. Other venues keep quoting an
+    instrument our broker has closed - a us30 order was refused with "Market
+    closed" while the quotes bus looked perfectly live - so the broker's own
+    tick time is what the gate reads.
+    """
+    trader = Trader(Bus(), settings=settings(stale_quote_after=300.0))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    # The consensus feed is live; only the broker knows its market is shut.
+    trader._quoted_at["gold"] = time.time()
+    spec = trader.specs["gold"]
+    stale = Tick(symbol=spec.symbol, bid=4399.5, ask=4400.5, time=time.time() - 1597.0)
+
+    got = trader._undealable("gold", spec, stale)
+
+    assert isinstance(got, Refusal)
+    assert got.gate == "shut"
+
+
+async def test_a_trading_market_passes_on_the_brokers_clock():
+    trader = Trader(Bus(), settings=settings(stale_quote_after=300.0))
+    await trader.start()
+    spec = trader.specs["gold"]
+    fresh = Tick(symbol=spec.symbol, bid=4399.5, ask=4400.5, time=time.time() - 2.0)
+
+    assert trader._undealable("gold", spec, fresh) is None
+
+
+async def test_a_tick_with_no_time_is_not_called_shut():
+    """Absence of evidence is not evidence of a closed market. A bridge that
+    does not report a tick time falls back to the consensus feed rather than
+    refusing everything."""
+    trader = Trader(Bus(), settings=settings(stale_quote_after=300.0))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    spec = trader.specs["gold"]
+    untimed = Tick(symbol=spec.symbol, bid=4399.5, ask=4400.5, time=0.0)
+
+    assert trader._undealable("gold", spec, untimed) is None
+
+    # ...but the consensus fallback still applies underneath it.
+    trader._quoted_at["gold"] = time.time() - 900.0
+    got = trader._undealable("gold", spec, untimed)
+    assert isinstance(got, Refusal)
+    assert got.gate == "shut"
+
+
 async def test_a_shut_market_will_not_open_a_position():
     """A shut market keeps its last quote and a broker will still accept an
     order against it. What it will not do is let the position out - a us30
@@ -5291,10 +5343,13 @@ async def test_a_shut_market_will_not_open_a_position():
     """
     trader = Trader(Bus(), settings=settings(stale_quote_after=300.0))
     await trader.start()
+    shut = time.time() - 900.0
     await trader.handle(
-        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        Message(
+            topic=QUOTES,
+            payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5, "time": shut},
+        )
     )
-    trader._quoted_at["gold"] = time.time() - 900.0
     got = await trader.on_signal(signal())
     assert isinstance(got, Refusal)
     assert got.gate == "shut"
@@ -5329,13 +5384,18 @@ async def test_entry_and_exit_agree_on_what_shut_means():
         Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
     )
 
-    trader._quoted_at["gold"] = time.time() - 299.0
-    assert trader._quote_is_stale("gold") is False
-    got = await trader.on_signal(signal())
-    assert not (isinstance(got, Refusal) and got.gate == "shut")
+    spec = trader.specs["gold"]
+    now = time.time()
+    # No time on the tick itself, so both paths fall through to the cached
+    # broker clock and are being asked the same question.
+    untimed = Tick(symbol=spec.symbol, bid=4399.5, ask=4400.5, time=0.0)
 
-    trader._quoted_at["gold"] = time.time() - 301.0
+    trader._broker_quoted_at[spec.symbol] = (now, now - 299.0)
+    assert trader._quote_is_stale("gold") is False
+    assert trader._undealable("gold", spec, untimed) is None
+
+    trader._broker_quoted_at[spec.symbol] = (now, now - 301.0)
     assert trader._quote_is_stale("gold") is True
-    got = await trader.on_signal(signal())
+    got = trader._undealable("gold", spec, untimed)
     assert isinstance(got, Refusal)
     assert got.gate == "shut"

@@ -237,6 +237,11 @@ class Trader:
         #: than retry and shout. `spec.tradable` reports whether an instrument
         #: is enabled, not whether it is trading, so it says True throughout.
         self._quoted_at: dict[str, float] = {}
+        #: symbol -> (when we looked, the broker's own tick time). Two numbers
+        #: because a cached tick time goes on ageing whether or not we are
+        #: still asking, and a stale observation must not be read as a shut
+        #: market. See `_shut_for`.
+        self._broker_quoted_at: dict[str, tuple[float, float]] = {}
         #: Best price each open trade has seen, for the trailing stop. Tracked
         #: from the quote stream rather than read from the broker, because
         #: `price_current` is a snapshot and a trail anchored to snapshots
@@ -547,14 +552,29 @@ class Trader:
         harder half and is not covered: the spread gate refuses some of it,
         since spreads widen into a close, and the rest needs session hours we
         do not have.
+
+        **Which clock decides.** The broker's, not ours. `_quoted_at` is fed
+        from the quotes bus, which is a consensus of other venues, and they
+        keep quoting an instrument our broker has closed - so a us30 order was
+        refused with "Market closed" while the consensus feed looked perfectly
+        live. The broker's own tick time is the only clock that answers the
+        question actually being asked, which is whether *this* broker will let
+        a position out. Measured against it on a Friday evening: BTCUSD -2s,
+        Australia 200 696s, Wall Street 30 1597s - the same epoch as ours, and
+        a clean separation between trading and shut.
+
+        The consensus check stays underneath it as a fallback, for a bridge
+        that does not report a tick time. A tick with no usable time is not
+        called shut: absence of evidence is not evidence of a closed market,
+        the same reason a feed that has never quoted is not called shut.
         """
         if tick is None:
             return Refusal("quote", f"no quote for {spec.symbol}", feed)
-        if self._quote_is_stale(feed):
-            quiet = time.time() - self._quoted_at.get(feed, 0.0)
+        quiet = self._shut_for(feed, tick)
+        if quiet is not None:
             return Refusal(
                 "shut",
-                f"{feed} has not quoted in {quiet:.0f}s - the market is closed, "
+                f"{spec.symbol} last traded {quiet:.0f}s ago - the market is closed, "
                 "and a position opened here could not be closed",
                 feed,
             )
@@ -1609,6 +1629,44 @@ class Trader:
         if closed:
             await self._reconcile()
 
+    def _shut_for(self, feed: str, tick: Tick | None = None) -> float | None:
+        """How long this market has been shut, or None if it is trading.
+
+        **The broker's clock first.** `_quoted_at` is fed from the quotes bus,
+        which is a consensus of other venues, and they carry on quoting an
+        instrument our broker has closed: a us30 order was refused with
+        "Market closed" while the consensus feed looked perfectly live. Only
+        the broker's own tick time answers the question being asked, which is
+        whether *this* broker will let a position out.
+
+        Measured on a Friday evening, our epoch and theirs agree and the two
+        states separate cleanly: BTCUSD -2s against Australia 200 696s and
+        Wall Street 30 1597s.
+
+        **The observation has to be fresh too.** A cached tick time goes on
+        ageing whether or not we are still asking, so an instrument we simply
+        stopped quoting would drift into looking shut. If we have not looked
+        recently the broker's clock is not used at all, and the consensus one
+        answers instead - which is also what happens for a bridge that reports
+        no tick time. Neither missing evidence nor our own silence is evidence
+        of a closed market.
+        """
+        limit = self.settings.stale_quote_after
+        now = time.time()
+        if tick is not None and tick.time > 0.0:
+            quiet = now - tick.time
+            return quiet if quiet > limit else None
+        symbol = self._symbol_of.get(feed)
+        seen = self._broker_quoted_at.get(symbol or "")
+        if seen and now - seen[0] <= limit:
+            quiet = now - seen[1]
+            return quiet if quiet > limit else None
+        last = self._quoted_at.get(feed)
+        if not last:
+            return None
+        quiet = now - last
+        return quiet if quiet > limit else None
+
     def _quote_is_stale(self, feed: str) -> bool:
         """Whether this feed has stopped quoting, which means the market is shut.
 
@@ -1621,12 +1679,14 @@ class Trader:
         shut market means wait, and retrying fills the log with warnings that
         read as a fault. A refused order means something about that order is
         wrong and should be loud.
+
+        One definition, shared with the gate that refuses an entry. Two would
+        let a position be opened into a market this path already considers
+        shut, which is the exact failure the gate exists to prevent.
         """
-        after = self.settings.stale_quote_after
-        if after <= 0:
+        if self.settings.stale_quote_after <= 0:
             return False
-        last = self._quoted_at.get(feed)
-        return bool(last and time.time() - last > after)
+        return self._shut_for(feed) is not None
 
     def _too_wide_to_leave(self, live: Live, age: float, limit: float) -> bool:
         """Whether the spread makes closing on the clock worse than waiting.
@@ -1657,7 +1717,7 @@ class Trader:
                 live.position.ticket,
                 limit,
                 live.intent.feed,
-                time.time() - self._quoted_at.get(live.intent.feed, 0.0),
+                self._shut_for(live.intent.feed) or 0.0,
             )
             return True
         want = self.settings.hold_max_spread
@@ -2250,6 +2310,8 @@ class Trader:
         except BrokerError as exc:
             log.warning("trading: could not quote %s: %s", symbol, exc)
             return None
+        if tick is not None and tick.time > 0.0:
+            self._broker_quoted_at[tick.symbol] = (time.time(), tick.time)
         if tick is not None and self.paper is not None:
             self.paper.observe(tick)
         return tick
