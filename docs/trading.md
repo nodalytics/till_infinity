@@ -159,29 +159,82 @@ open one right now" lead to different fixes.
 
 ## Strategies
 
-Eight. Seven are arithmetic over the measured signal and claim no edge of
-their own; the eighth is a panel of agents that reasons its own way to an
-answer. Every one reads the same
-measured `LEVEL` signal `structures` publishes; they differ in which calls they
-act on and where they put the stop and target. Adding a strategy is a claim
-that a *subset* of those calls behaves differently - which the journal can
-settle - not a new indicator.
+Twelve. Eleven are arithmetic over the measured signal and claim no edge of
+their own; the twelfth is a panel of agents that reasons its own way to an
+answer. Every one reads the same measured `LEVEL` signal `structures`
+publishes; they differ in which calls they act on and where they put the stop
+and target. Adding a strategy is a claim that a *subset* of those calls behaves
+differently - which the journal can settle - not a new indicator.
 
 ```bash
 uv run till-infinity trading strategies
-TRADING_STRATEGIES=sweep-aware,fade-to-value,approach-scalp,level-scalp
+TRADING_STRATEGIES=snap,thesis-only,runner,confluence-scalp,sweep-aware,fade-to-value,approach-scalp,level-scalp
 ```
 
-| strategy | takes | stop | target |
-|---|---|---|---|
-| `level-scalp` | every actionable call | beyond the level | the expected push |
-| `confluence-scalp` | only calls another timeframe agrees on | 1.5× wider | the expected push |
-| `momentum-scalp` | only calls agreeing with three speeds of recent edge | beyond the level | the expected push |
-| `approach-scalp` | a call confirming direction toward another level | beyond the level | the next level, short of it |
-| `swing-level` | a 4h/1d/1w level, triggered as low as 15m | beyond the level, 1.5x | the expected push |
-| `sweep-aware` | the plain call, unless the stop is in front of liquidity | beyond the zone | the expected push |
-| `fade-to-value` | the distance from spot to the best-evidenced level | beyond the triggering level | short of fair value |
-| `council` | whatever four agents agree on, or nothing | as the panel proposes, clamped | as the panel proposes, clamped |
+Each stamps its own magic number on the orders it places, so the journal can
+say which strategy a position belonged to after a restart - see "Which strategy
+opened it".
+
+| strategy | magic | takes | stop | target |
+|---|---:|---|---|---|
+| `level-scalp` | 777702 | every actionable call | beyond the level | the expected push |
+| `confluence-scalp` | 777703 | only calls another timeframe agrees on | 1.5× wider | the expected push |
+| `momentum-scalp` | 777704 | only calls agreeing with three speeds of recent edge | beyond the level | the expected push |
+| `approach-scalp` | 777705 | a call confirming direction toward another level | beyond the level | the next level, short of it |
+| `swing-level` | 777706 | a 4h/1d/1w level, triggered as low as 15m | beyond the level, 1.5× | the expected push |
+| `sweep-aware` | 777707 | the plain call, unless the stop is in front of liquidity | beyond the zone | the expected push |
+| `fade-to-value` | 777708 | the distance from spot to the best-evidenced level | beyond the triggering level | short of fair value |
+| `council` | 777709 | whatever four agents agree on, or nothing | as the panel proposes, clamped | as the panel proposes, clamped |
+| `snap` | 777710 | the same call as `level-scalp` | the same | the same, on a two-minute clock |
+| `thesis-only` | 777711 | the same call as `level-scalp` | a circuit breaker, far out | the same |
+| `runner` | 777712 | the same call as `level-scalp` | the same | 3× the push, the trail exits |
+| `inverse` | 777713 | the calls the model rates highest, traded the other way | the same | the same |
+
+### The last four are experiments, and each changes exactly one thing
+
+`snap`, `thesis-only`, `runner` and `inverse` all take the identical call
+`level-scalp` takes. That is deliberate: run beside it on the same signals,
+each becomes a controlled comparison rather than another opinion.
+
+* **`snap`** holds for two minutes instead of thirty. The median touch resolves
+  in **eighteen seconds** and the fast ones carry the *larger* push, so holding
+  longer gets less of the move while staying exposed to what comes next.
+* **`thesis-only`** moves the stop out to a circuit breaker. Six of twelve
+  stopped trades later reached their target, by 3.7R to 25.7R, so this tests
+  the stops directly rather than adjusting them again.
+* **`runner`** moves the target out past the push distribution and lets the
+  trail end the trade. Replayed, letting the move run returned +8.4R against
+  +1.7R for a fixed target.
+* **`inverse`** trades the opposite side. If it loses what the others lose,
+  direction is not the problem; if it wins, the entries and stops have been
+  polishing a sign error. Disabled 2026-08-27 after five trades.
+
+### `high-timeframe` was removed
+
+Added and removed the same day, as a near-duplicate of `swing-level`: they
+shared entries, context and the requirement that a higher timeframe agree. What
+it had that swing-level did not - a resting entry, protection scaled to the
+horizon, the momentum filter - moved across, and then became general (see
+"Protection scales with the horizon"). Its magic slot stays reserved, because
+that table is append-only: a magic that has been on live orders has to keep
+resolving to the name that placed them.
+
+### Protection scales with the horizon
+
+Break-even, the trail and the momentum filter are all denominated in **one bar
+of the entry interval**, and a trade is held for many. That is the same mistake
+`stop_hold_scaling` exists to correct, so `Strategy.horizon` stretches them by
+the square root of the hold, capped at `max_stop_scale`.
+
+They used to be constants on each strategy, which meant every new one
+rediscovered the arithmetic and `high-timeframe` carried hand-picked doubles of
+the scalpers' numbers. Now a strategy states its intent once and it means the
+same thing on a two-minute hold and a two-day one.
+
+**Break-even is deliberately excluded.** It is in R, and R is measured against
+a stop this same reasoning has already widened - scaling it again counts the
+horizon twice and put `level-scalp` on a 5.5R break-even, a threshold that
+never fires.
 
 Several may run together. The first one to want a trade gets it, and the
 one-position-per-instrument limit is what stops two of them doubling up.
