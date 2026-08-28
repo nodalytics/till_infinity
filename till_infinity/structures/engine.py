@@ -718,7 +718,7 @@ class Engine:
                 "origin_revisits": float(nearest.revisits),
                 "in_origin": 1.0 if inside else 0.0,
             }
-        except Exception as exc:  # noqa: BLE001 - see the docstring
+        except Exception as exc:
             log.debug("structures: no origin reading for %s %s: %s", feed, interval, exc)
             return {}
 
