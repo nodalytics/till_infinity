@@ -31,12 +31,40 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..logging import get_logger
-from . import confluence, patterns, pips, pivots, reactions, regimes, runs, sessions, sweeps
+from . import (
+    confluence,
+    origins,
+    patterns,
+    pips,
+    pivots,
+    reactions,
+    regimes,
+    runs,
+    sessions,
+    sweeps,
+)
 from . import levels as lv
 from .models import Shape, Signal
 from .state import Restorable
 from .volatility import Book as VolBook
 from .volatility import Volatility
+
+
+@dataclass(frozen=True, slots=True)
+class _OriginBar(Restorable):
+    """The four prices `origins.zone_of` reads, and nothing else.
+
+    Restorable although it is never persisted - it lives for one call and is
+    discarded. The walk that enforces that invariant does not know the
+    difference, and satisfying a guard that exists for a real reason is
+    cheaper than teaching it about exceptions.
+    """
+
+    open: float
+    high: float
+    low: float
+    close: float
+
 
 log = get_logger(__name__)
 
@@ -240,22 +268,35 @@ class Series(Restorable):
     closes: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
     highs: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
     lows: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
+    #: Kept for `origins`, which needs a body to fall back on when a bar is
+    #: mostly wick. Everything else here works from closes and extremes.
+    opens: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
     since_reform: int = 0
 
-    def add(self, when: int, high: float, low: float, close: float) -> bool:
+    def add(
+        self, when: int, high: float, low: float, close: float, open_: float | None = None
+    ) -> bool:
         """Fold a bar in. True if it is a new one rather than a correction.
 
         The answer matters to anything *accumulating* rather than storing: see
         the volatility update in `observe_bar`.
         """
         # A bar arriving for a time already held is a correction, not a new bar.
+        opening = close if open_ is None else float(open_)
         if self.times and when == self.times[-1]:
             self.highs[-1], self.lows[-1], self.closes[-1] = high, low, close
+            if self.opens:
+                self.opens[-1] = opening
             return False
         self.times.append(when)
         self.highs.append(high)
         self.lows.append(low)
         self.closes.append(close)
+        # Guarded: a Series restored from before this field existed has an
+        # empty deque while the others are full, and appending blindly would
+        # misalign every bar against its own open from then on.
+        if len(self.opens) == len(self.closes) - 1:
+            self.opens.append(opening)
         self.since_reform += 1
         return True
 
@@ -278,6 +319,10 @@ class Call(Restorable):
     inference: reactions.Inference
     price: float
     time: float
+    #: What the origin model says about this level, or an empty dict. Computed
+    #: at construction because the engine has the series and the Call does not,
+    #: and merged into the published features below.
+    origin: dict = field(default_factory=dict)
 
     def to_signal(self, vol, clock=None, peers=None, busy: float = 1.0, market: str = "") -> Signal:
         # `probability`, not `probability_up`: quoting P(up) beside a *down*
@@ -340,6 +385,13 @@ class Call(Restorable):
                 "neighbours": float(self.inference.neighbours),
                 "strength": self.level.strength(self.time, vol),
                 "risk_vol": self.inference.risk_vol,
+                # Where a violent move began, and whether this level sits in
+                # one. A level that coincides with unfilled interest is better
+                # evidenced than the same level in open space - see
+                # `structures/origins.py`. Recorded for now: nothing gates or
+                # sizes on it, and the journal is what will say whether it
+                # separates.
+                **self.origin,
                 # The volatility unit itself, in basis points. Everything else
                 # here is measured in multiples of it, so a consumer that only
                 # sees the published signal - `trading` reads them off the bus
@@ -618,6 +670,57 @@ class Engine:
         if found is None:
             found = self._series[key] = Series(feed, interval)
         return found
+
+    def _origin_at(self, feed: str, interval: str, price: float, vol: Volatility) -> dict:
+        """What the origin model says about a level, as published features.
+
+        An origin is where a violent move began - the last price in the
+        previous direction before the new one took over - and the zone is the
+        last bar of that opposing leg. A level that coincides with one is
+        sitting on interest that was placed and not filled; the same level in
+        open space is not. See `structures/origins.py`.
+
+        **Recorded, not acted on.** Nothing gates or sizes on these yet. They
+        go on the call so the journal can say whether a level inside an origin
+        behaves differently from one outside it, which is the only thing that
+        would justify acting on it. That is the same order this repository got
+        wrong with `reward_to_risk` and right with `strength`.
+
+        Wrapped, and deliberately. Two production outages this month were a
+        fault in this engine stopping the whole structures service, and an
+        annotation nobody reads yet is not worth a third. A failure here costs
+        the features on one call.
+        """
+        try:
+            unit = price * vol.bps / 10_000.0 if vol.bps else 0.0
+            if unit <= 0:
+                return {}
+            series = self.series(feed, interval)
+            closes = list(series.closes)
+            if len(closes) < 12:
+                return {}
+            bars = None
+            if len(series.opens) == len(closes):
+                bars = [
+                    _OriginBar(o, h, lo, c)
+                    for o, h, lo, c in zip(
+                        series.opens, series.highs, series.lows, closes, strict=False
+                    )
+                ]
+            found = origins.Origins().observe(list(series.times), closes, unit, bars_at=bars)
+            if not found:
+                return {}
+            nearest = min(found, key=lambda o: abs(o.price - price))
+            inside = any(o.holds(price) for o in found)
+            return {
+                "origin_distance_vol": abs(nearest.price - price) / unit,
+                "origin_size_vol": nearest.size_vol,
+                "origin_revisits": float(nearest.revisits),
+                "in_origin": 1.0 if inside else 0.0,
+            }
+        except Exception as exc:  # noqa: BLE001 - see the docstring
+            log.debug("structures: no origin reading for %s %s: %s", feed, interval, exc)
+            return {}
 
     def levels(self, feed: str, interval: str = "") -> list[lv.Level]:
         if interval:
@@ -998,7 +1101,7 @@ class Engine:
 
         self._now = max(self._now, when)
         series = self.series(feed, interval)
-        fresh = series.add(when, high, low, float(close))
+        fresh = series.add(when, high, low, float(close), opened)
         # This timeframe's own volatility: a typical 4h move is not a typical
         # 5m move, and one estimate for both makes every threshold expressed in
         # volatility units wrong for all but whichever series updates most.
@@ -1363,6 +1466,7 @@ class Engine:
                     inference=inference,
                     price=price,
                     time=when,
+                    origin=self._origin_at(feed, interval, level.price, vol),
                 )
             )
             self.calls += 1
