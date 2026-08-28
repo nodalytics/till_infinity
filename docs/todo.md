@@ -34,6 +34,41 @@ and a shut market - and each took a separate investigation to identify. And
 the wide-spread guard added the same evening keys off the spread, which a
 frozen feed may not widen at all.
 
+## 0s. A trade that spans a restart is never journalled on close
+
+Found 2026-08-28, and it undermines every measurement taken from the trading
+journal.
+
+`_settle` guards its journal write on `if live.ref:`. `ref` is handed over
+through `_pending`, which is only set for a position **opened in this run**, so
+a position adopted during reconciliation after a restart carries `ref=""`. Its
+close is logged, announced to Telegram, and never written down. `journal.outcome`
+would refuse it anyway - an outcome without a parent cannot be paired - so
+removing the guard alone changes nothing.
+
+Two closes on the evening it was found went missing this way: an aus200
+`runner` at -28.49 and a us30 `thesis-only` at -5.55, both having survived a
+deploy. The service was deployed about fifteen times that day.
+
+**The bias is not random, which is the damaging part.** What goes missing is
+exactly the trades that lived longest - long enough to span a restart. Every
+number computed from `kind='outcome'` that day inherits that: the per-strategy
+table, the 1.09R stop cost, the win share. Short trades are over-represented in
+all of them.
+
+Two ways to fix it, and the second needs no new storage:
+
+* persist a ticket-to-ref map in the data volume, written on fill and read at
+  startup;
+* or recover the ref at adoption by finding the newest `decision` for that
+  symbol and side which is not yet the parent of any outcome. The journal
+  already holds everything this needs.
+
+Worth doing before any further conclusion is drawn from the trading journal.
+Until then, treat trade counts as a floor and hold-length statistics as
+understated - together with 0q, which independently makes `seconds` measure
+from the last adoption rather than from the fill.
+
 ## 0q. Every deploy resets the hold clock on open positions
 
 Noticed 2026-08-27 while a us30 position retried a refused close: its age went
