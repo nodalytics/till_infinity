@@ -5317,3 +5317,24 @@ async def test_a_live_quote_trades_normally():
     )
     got = await trader.on_signal(signal())
     assert not (isinstance(got, Refusal) and got.gate == "shut")
+
+
+async def test_entry_and_exit_agree_on_what_shut_means():
+    """The gate that refuses an entry and the deferral that holds a close open
+    must share one definition. Two thresholds would let a position be opened
+    into a market the close path already considers shut."""
+    trader = Trader(Bus(), settings=settings(stale_quote_after=300.0))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+
+    trader._quoted_at["gold"] = time.time() - 299.0
+    assert trader._quote_is_stale("gold") is False
+    got = await trader.on_signal(signal())
+    assert not (isinstance(got, Refusal) and got.gate == "shut")
+
+    trader._quoted_at["gold"] = time.time() - 301.0
+    assert trader._quote_is_stale("gold") is True
+    got = await trader.on_signal(signal())
+    assert isinstance(got, Refusal) and got.gate == "shut"
