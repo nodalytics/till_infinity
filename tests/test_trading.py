@@ -5337,4 +5337,5 @@ async def test_entry_and_exit_agree_on_what_shut_means():
     trader._quoted_at["gold"] = time.time() - 301.0
     assert trader._quote_is_stale("gold") is True
     got = await trader.on_signal(signal())
-    assert isinstance(got, Refusal) and got.gate == "shut"
+    assert isinstance(got, Refusal)
+    assert got.gate == "shut"
