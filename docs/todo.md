@@ -95,7 +95,31 @@ adoption; the broker already reports `opened` on a position, which is the
 honest source and needs no storage at all. Small, and worth doing before any
 question about hold length is asked of the data.
 
-## 0p. `structures` published an expected push of 10,229 volatility units
+## ~~0p. `structures` published an expected push of 10,229 volatility units~~ - root cause found 2026-08-28
+
+**It was a guard that existed and was never asked.** `WARMUP = 20` in
+`volatility.py`, the `warmup` field, the `_seen` counter and a `warm` property
+all existed, each documented - "below this the variance of the variance is
+larger than anything it would be used to decide" - and **no code joined them to
+a decision**. The estimator published `bps` from its first bar.
+
+A cold estimate returns `floor_bps`. Every distance in the package is a price
+divided by that, so at the old floor of 0.05 bps one volatility unit on brent
+was 0.00044 in price and a four-and-a-half point move came out at 10,227
+units - against the 10,229.7 that was published. That also explains the
+concentration on 1m: those are the series that can genuinely be flat long
+enough for the estimate to sit on its floor.
+
+Fixed in two places. `Engine` declines to publish a call from an estimate that
+is not warm, which is the root cause. And `MIN_VOL_BPS` goes from 0.05 to
+0.25 - across live decisions the lowest volatility ever seen was 0.517 bps and
+the median 2.47, so the old floor sat an order of magnitude below anything real
+and did not bound what it was written to bound.
+
+`max_push_vol` stays as the third line. It is a bandage, and a bandage over a
+fixed wound is worth keeping: it is the only thing that made this visible.
+
+### The original entry `structures` published an expected push of 10,229 volatility units
 
 Found live 2026-08-27. A brent 1m call arrived with `expected_push_vol` of
 **10,229.708407** against a measured distribution whose median is 2.24v and

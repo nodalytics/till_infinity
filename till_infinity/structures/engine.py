@@ -1458,6 +1458,13 @@ class Engine:
             touch.probability_up = inference.probability_up
             touch.base_rate_up = inference.base_rate_up
             touch.actionable = inference.actionable
+            # A call is priced entirely in volatility units, so an estimate
+            # that has not warmed makes every number on it meaningless rather
+            # than merely uncertain. See `Volatility.warm`: the guard existed
+            # and nothing asked it, and a brent call went out claiming a push
+            # of 10,229 volatility units.
+            if not vol.warm:
+                continue
             calls.append(
                 Call(
                     feed=feed,

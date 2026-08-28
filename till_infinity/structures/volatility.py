@@ -40,7 +40,18 @@ HALF_LIFE = 60.0
 #: A floor, in basis points. Without one, an instrument that has not moved for
 #: an hour gets a near-zero volatility and every subsequent tick looks like a
 #: hundred-sigma event - division by something approaching zero.
-MIN_VOL_BPS = 0.05
+#:
+#: **Raised from 0.05 on 2026-08-28, on measurement.** Across live decisions
+#: the lowest volatility ever seen was 0.517 bps and the median 2.47, so 0.05
+#: sat an order of magnitude below anything real and did not prevent what it
+#: was written to prevent: at that floor a normal brent move came out at
+#: 10,229 volatility units. Half the observed minimum is high enough to bound
+#: the arithmetic and low enough never to bind on an instrument that is
+#: actually trading.
+#:
+#: The floor is the second line. `ready` is the first - a cold estimate should
+#: not be used at all, rather than used with a safer denominator.
+MIN_VOL_BPS = 0.25
 
 #: Observations before the tick estimate is trusted. The minimum of three
 #: samples is not a minimum.
@@ -328,6 +339,22 @@ class Volatility(Restorable):
 
     @property
     def warm(self) -> bool:
+        """Whether enough bars have been seen for `bps` to mean anything.
+
+        `WARMUP` was declared with a docstring saying why it matters - below it
+        "the variance of the variance is larger than anything it would be used
+        to decide" - and this property was written to express it. **Nothing
+        consulted either.** The constant, the field, the counter and this
+        property all existed and no code joined them to a decision.
+
+        What that cost: a cold estimate returns `floor_bps`, every distance in
+        this package is a price divided by it, and at the old floor of 0.05 a
+        four-and-a-half point move on brent became an expected push of **10,229
+        volatility units**. It reached trading, produced a target forty-three
+        times the price of the instrument, and the broker refused the order -
+        which is the only reason anybody saw it. `Engine` now declines to
+        publish a call from an estimate that is not warm.
+        """
         return self._seen >= self.warmup
 
     @property

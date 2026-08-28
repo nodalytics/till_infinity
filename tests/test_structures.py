@@ -1592,3 +1592,37 @@ def test_confluence_is_written_back_only_once():
     tracker.note_confluence("gold", 4400.0, "1h+15m")
     tracker.note_confluence("gold", 4400.0, "1d+4h")
     assert t.confluence == "1h+15m"
+
+
+def test_a_cold_volatility_estimate_is_not_warm():
+    """`WARMUP`, the `warmup` field, the `_seen` counter and this property all
+    existed, and no code joined them to a decision. A cold estimate returns
+    `floor_bps`, every distance here is a price divided by it, and a brent call
+    went out claiming an expected push of 10,229 volatility units.
+    """
+    from till_infinity.structures.volatility import WARMUP, Volatility
+
+    vol = Volatility()
+    assert vol.warm is False
+    for i in range(WARMUP + 1):
+        vol.update(100.0 + i * 0.01)
+    assert vol.warm is True
+
+
+def test_the_volatility_floor_sits_below_anything_real():
+    """0.05 bps was an order of magnitude under the lowest volatility ever
+    seen live (0.517) and did not bound what it was written to bound."""
+    from till_infinity.structures.volatility import MIN_VOL_BPS
+
+    assert 0.1 <= MIN_VOL_BPS <= 0.5
+
+
+def test_the_engine_will_not_publish_from_a_cold_estimate():
+    """The guard has to be asked, not merely available - which was the whole
+    defect."""
+    import inspect
+
+    from till_infinity.structures import engine as eng
+
+    source = inspect.getsource(eng.Engine)
+    assert "if not vol.warm:" in source
