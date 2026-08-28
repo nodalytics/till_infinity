@@ -1012,3 +1012,56 @@ noise - it was enabled for the second reason and is helping the first.
 The other hypothesis could not be tested, and the reason is good news: **34 of
 35 stops already sit beyond the level's sweep band**. `_anchored_stop` places
 them outside the zone by design, so resting in the crowd barely happens.
+
+## A correction that reaches most of this file: `excursion_vol` is not continuous
+
+Trying to measure entering deeper than the level - the entry moved toward the
+stop, which shrinks the risk on the same thesis - produced a degenerate answer:
+every deeper entry returned exactly −1.000R. The input explains it.
+
+| | n |
+| --- | ---: |
+| excursion exactly 0 | 42,442 |
+| between 0 and 1 | **0** |
+| 1.0 or above | 12,105 |
+
+Not one value falls between zero and one. `Tracker` assigns
+`touch.excursion_vol` only once `beyond >= resolve_vol`, so the field records
+how far past a level price went **given it went past by a full unit**, and is
+left at zero otherwise. It is not adverse excursion.
+
+### What that does to `replay.score`
+
+`score` stops a trade when `excursion >= stop`. With excursion in {0} ∪ [1, ∞),
+**every stop below 1.0v is hit exactly as often as a 1.0v stop**:
+
+| nominal stop | trades stopped | mean R |
+| --- | ---: | ---: |
+| 0.25v | 12,105 | 0.930 |
+| 0.50v | 12,105 | 0.902 |
+| 1.00v | 12,105 | 0.781 |
+
+R rises as the nominal stop shrinks because the *denominator* shrinks, not
+because the trade behaves differently.
+
+### What is invalidated, and what survives
+
+**Invalidated: anything comparing stop widths.** The stop-and-target grid above
+reporting a 0.5v stop at **+1.785R** against 1.05v at +0.630R is arithmetic. It
+was one stop scored three ways. `parked_stop_vol = 0.5` was shipped on that
+grid and is switched off.
+
+**Also suspect: `reach_stop_vol`.** The stop estimator reads quantiles of this
+field, and quantiles of a bimodal artefact below 1v mean nothing. It stays
+recording and must not be wired.
+
+**Surviving: every comparison at a fixed stop.** The gate deciles, the trend
+and origin scoring, the freshness result and the strategy tables all held the
+stop constant at 0.5v, so the *relative* differences between buckets are
+unaffected - the same distortion applies to both sides. What is inflated is the
+absolute R level, everywhere in this file.
+
+The live evidence pointed the other way throughout and is unaffected: five gold
+sells stopped inside 1.5 points on a day gold fell twenty-eight, and stopped
+trades overrunning by +0.083R on narrow stops against +0.030R on wide ones.
+`stop_hold_scaling` was enabled on that, not on the grid, and stands.
