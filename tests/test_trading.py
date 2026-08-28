@@ -4546,7 +4546,12 @@ def test_sizing_scales_the_fraction_so_every_cap_still_binds():
     from till_infinity.trading.scalper import LevelStrategy
 
     source = inspect.getsource(LevelStrategy.consider)
-    assert "risk_fraction=settings.risk_fraction * self.trend_scale(features)" in source
+    # Every size factor multiplies the *fraction*, never the lot count, so
+    # `max_risk_money`, the volume step and the broker limits all still bind.
+    assert "settings.risk_fraction" in source
+    assert "self.trend_scale(features)" in source
+    assert "self.momentum_scale(features, side)" in source
+    assert "sized.volume *" not in source
 
 
 async def test_trend_context_reaches_the_features_once_there_is_history():
@@ -5241,3 +5246,38 @@ def test_break_even_is_still_untouched_by_the_push():
     widened - scaling or capping it here would count the horizon twice."""
     engine = strategy("level-scalp", break_even_at=1.0, trail_vol=2.0)
     assert engine.protection("1m", 1.3)[0] == engine.protection("1m", 99.0)[0]
+
+
+def _momentum_size(pressure, side=Side.BUY, share=0.5):
+    engine = strategy("level-scalp", unconfirmed_size=share)
+    features = {} if pressure is None else {"pressure_vol": pressure}
+    return engine.momentum_scale(features, side)
+
+
+def test_momentum_with_the_trade_takes_full_size():
+    assert _momentum_size(1.2) == 1.0
+    assert _momentum_size(-1.2, side=Side.SELL) == 1.0
+
+
+def test_momentum_not_confirming_takes_less():
+    """Between the two yes-or-no gates sits a case neither covers: momentum
+    flat, which is weaker than a turn and stronger than opposition. A smaller
+    trade is the honest response to weaker evidence."""
+    assert _momentum_size(0.0) == 0.5
+    assert _momentum_size(-1.2) == 0.5
+
+
+def test_no_reading_is_not_the_same_as_no_confirmation():
+    """A feed whose accumulator has not warmed sizes as it did before this
+    existed, rather than being punished for silence."""
+    assert _momentum_size(None) == 1.0
+
+
+def test_the_momentum_size_is_off_by_default():
+    assert _momentum_size(-5.0, share=1.0) == 1.0
+
+
+def test_it_can_only_reduce():
+    """A setting named for reducing exposure must have no path that raises it."""
+    for pressure in (-5.0, 0.0, 5.0):
+        assert _momentum_size(pressure) <= 1.0

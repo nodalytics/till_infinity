@@ -372,6 +372,22 @@ class Touch(Restorable):
     #: Furthest it reached beyond the level, in volatility units. What a
     #: breakout entry would have been offered before it was taken back.
     excursion_vol: float = 0.0
+    #: The deepest price went **against** the reaction, in volatility units,
+    #: recorded continuously from the first observation.
+    #:
+    #: `excursion_vol` beside it is not this, and the difference cost a day of
+    #: replay work. That field is only assigned once `beyond >= resolve_vol`,
+    #: so it records how far past a level price went *given it went past by a
+    #: full unit* and is left at zero otherwise: 42,442 zeros against 12,105
+    #: values of 1.0 or more, and **nothing in between**. Every replay that
+    #: stopped a trade when `excursion >= stop` therefore modelled the same
+    #: 1.0v stop whatever width it was asked for, and reported a rising R for
+    #: tighter stops that was arithmetic on the denominator.
+    #:
+    #: This one has no threshold. It is what a stop actually has to survive,
+    #: which is the question `min_stop_vol`, `reach_stop_vol` and every
+    #: stop-width comparison were trying to answer.
+    adverse_vol: float = 0.0
 
     #: What the model thought when this touch opened, kept so the resolution
     #: can be scored against it.
@@ -449,6 +465,7 @@ class Touch(Restorable):
             "outcome": str(self.outcome),
             "push_vol": round(self.push_vol, 4),
             "excursion_vol": round(self.excursion_vol, 4),
+            "adverse_vol": round(self.adverse_vol, 4),
             "edge": round(self.edge, 4),
             "probability_up": round(self.probability_up, 4),
             "base_rate_up": round(self.base_rate_up, 4),
@@ -1054,6 +1071,10 @@ class Tracker(Restorable):
         travelled = level.distance_vol(price, vol)
         away = travelled if side is Side.ABOVE else -travelled
         beyond = -away
+        # Recorded on every observation, with no threshold, because a stop has
+        # to survive what price actually did rather than what it did once it
+        # had already gone a full unit past. See `Touch.adverse_vol`.
+        touch.adverse_vol = max(touch.adverse_vol, beyond)
         # A *rejection* is the one test measured from where the leg in ended
         # rather than from the level's centre line. The zone reaches as far as
         # MAX_ZONE_VOL from the centre while a rejection needs only

@@ -1626,3 +1626,43 @@ def test_the_engine_will_not_publish_from_a_cold_estimate():
 
     source = inspect.getsource(eng.Engine)
     assert "if not vol.warm:" in source
+
+
+def test_adverse_excursion_is_recorded_without_a_threshold():
+    """`excursion_vol` is only assigned once price is a full unit past the
+    level, so it holds 42,442 zeros and 12,105 values of 1.0 or more with
+    nothing between. Every replay stopping a trade at `excursion >= stop`
+    therefore modelled a 1.0v stop whatever it was asked for.
+
+    `adverse_vol` has no threshold, which is what a stop has to survive.
+    """
+    from till_infinity.structures.reactions import Features, Side, Touch
+
+    touch = Touch(
+        feed="gold",
+        level_price=100.0,
+        features=Features(Side.ABOVE, 1.0, 0.5, 0.5, 1.0, 0.5),
+        started=0.0,
+        entry=100.0,
+        extreme=100.0,
+    )
+    assert touch.adverse_vol == 0.0
+    # A shallow move against, well under any resolve threshold.
+    touch.adverse_vol = max(touch.adverse_vol, 0.3)
+    assert 0 < touch.adverse_vol < 1.0
+
+
+def test_adverse_excursion_is_published():
+    """It is no use unless the journal can be asked about it."""
+    from till_infinity.structures.reactions import Features, Side, Touch
+
+    touch = Touch(
+        feed="gold",
+        level_price=100.0,
+        features=Features(Side.ABOVE, 1.0, 0.5, 0.5, 1.0, 0.5),
+        started=0.0,
+        entry=100.0,
+        extreme=100.0,
+    )
+    touch.adverse_vol = 0.42
+    assert touch.to_dict().get("adverse_vol") == pytest.approx(0.42)

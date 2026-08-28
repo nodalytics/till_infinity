@@ -709,6 +709,25 @@ class Settings:
     #: what they say.
     stop_slippage: float = 0.0
 
+    #: How much of normal size a trade takes when momentum is not confirming
+    #: it. One is off - every trade takes full size regardless.
+    #:
+    #: `max_against_vol` already refuses an entry while a run is still going
+    #: against it, and `require_turn_vol` asks for the turn after a pullback.
+    #: Both are yes-or-no. This is the middle: momentum neither running against
+    #: the trade nor yet confirming it is a weaker case than momentum turning
+    #: with it, and the honest response to a weaker case is a smaller trade
+    #: rather than no trade or a full one.
+    #:
+    #: Applied where the trade is otherwise acceptable, so it can only ever
+    #: reduce exposure. There is no path here that sizes anything up.
+    #:
+    #: **Unmeasured.** Recorded on every decision as `momentum_scaled` so it
+    #: can be scored later; nothing yet says a half-size trade on unconfirmed
+    #: momentum beats a full one, and the reasoning that it should is the same
+    #: kind of reasoning `reward_to_risk` was defended with for ten days.
+    unconfirmed_size: float = 1.0
+
     #: Seconds without a quote before a feed is treated as a shut market
     #: rather than a refusing broker. Zero is off.
     #:
@@ -1062,6 +1081,7 @@ class Settings:
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
             stop_slippage=_float("TRADING_STOP_SLIPPAGE", 0.0),
+            unconfirmed_size=_float("TRADING_UNCONFIRMED_SIZE", 1.0),
             stale_quote_after=_float("TRADING_STALE_QUOTE_AFTER_S", 300.0),
             max_push_vol=_float("TRADING_MAX_PUSH_VOL", 25.0),
             hold_max_spread=_float("TRADING_HOLD_MAX_SPREAD", 0.0),

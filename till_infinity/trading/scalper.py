@@ -130,6 +130,29 @@ class LevelStrategy(Strategy):
             return 0.0
         return price_distance(level, vol_bps, want)
 
+    def momentum_scale(self, features: dict[str, float], side: Side) -> float:
+        """Size multiplier for whether momentum is confirming this trade.
+
+        Full size when the accumulated run is with the trade, reduced when it
+        is merely not against it. The two gates either side of this are
+        yes-or-no - `max_against_vol` refuses a run still going the wrong way,
+        `require_turn_vol` asks for the turn after a pullback - and between
+        them sits a case neither covers: momentum flat or unreadable, which is
+        weaker evidence than momentum turning and stronger than momentum
+        opposing.
+
+        Returns 1.0 when the setting is off, when there is no reading, or when
+        momentum is with the trade. It can only reduce.
+        """
+        share = self.settings.unconfirmed_size
+        if share >= 1.0 or share <= 0:
+            return 1.0
+        pressure = features.get("pressure_vol")
+        if pressure is None:
+            return 1.0  # no reading is not the same as no confirmation
+        with_trade = float(pressure) if side is Side.BUY else -float(pressure)
+        return 1.0 if with_trade > 0 else share
+
     def trend_scale(self, features: dict[str, float]) -> float:
         """Size multiplier from the trend context. 1.0 when off or unknown.
 
@@ -590,7 +613,11 @@ class LevelStrategy(Strategy):
         sized = lots(
             spec,
             equity=equity,
-            risk_fraction=settings.risk_fraction * self.trend_scale(features),
+            risk_fraction=(
+                settings.risk_fraction
+                * self.trend_scale(features)
+                * self.momentum_scale(features, side)
+            ),
             stop_distance=abs(entry - stop),
             max_risk_money=settings.max_risk_money,
             slippage=settings.stop_slippage,
@@ -1474,7 +1501,11 @@ class FadeToValue(LevelStrategy):
         sized = lots(
             spec,
             equity=equity,
-            risk_fraction=settings.risk_fraction * self.trend_scale(features),
+            risk_fraction=(
+                settings.risk_fraction
+                * self.trend_scale(features)
+                * self.momentum_scale(features, side)
+            ),
             stop_distance=abs(entry - stop),
             max_risk_money=settings.max_risk_money,
             slippage=settings.stop_slippage,
