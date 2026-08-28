@@ -5281,3 +5281,39 @@ def test_it_can_only_reduce():
     """A setting named for reducing exposure must have no path that raises it."""
     for pressure in (-5.0, 0.0, 5.0):
         assert _momentum_size(pressure) <= 1.0
+
+
+async def test_a_shut_market_will_not_open_a_position():
+    """A shut market keeps its last quote and a broker will still accept an
+    order against it. What it will not do is let the position out - a us30
+    position could not be closed for twenty minutes through the index's daily
+    break, and a weekend is the same thing for two days.
+    """
+    trader = Trader(Bus(), settings=settings(stale_quote_after=300.0))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    trader._quoted_at["gold"] = time.time() - 900.0
+    got = await trader.on_signal(signal())
+    assert isinstance(got, Refusal)
+    assert got.gate == "shut"
+
+
+async def test_a_feed_that_has_never_quoted_is_not_called_shut():
+    """Silence at startup is not evidence of a closed market, and refusing
+    everything until the first quote would be a worse failure than the one
+    this prevents."""
+    trader = Trader(Bus(), settings=settings(stale_quote_after=300.0))
+    await trader.start()
+    assert trader._quote_is_stale("gold") is False
+
+
+async def test_a_live_quote_trades_normally():
+    trader = Trader(Bus(), settings=settings(stale_quote_after=300.0))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.on_signal(signal())
+    assert not (isinstance(got, Refusal) and got.gate == "shut")

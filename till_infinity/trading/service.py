@@ -530,6 +530,36 @@ class Trader:
                 observed(tick)
         self._mark_best(symbol, float(bid), float(ask))
 
+    def _undealable(self, feed: str, spec: SymbolSpec, tick: Tick | None) -> Refusal | None:
+        """Whether we can actually deal in this instrument right now.
+
+        Two ways we cannot. No quote at all is the obvious one. The other is a
+        shut market, which is not obvious: it keeps its last quote, and the
+        broker will still accept an order against it. What it will not do is
+        let the position out. A us30 position could not be closed for twenty
+        minutes through the index's daily break, and a weekend is that same
+        failure for two days.
+
+        `spec.tradable` is no help - it reports whether an instrument is
+        enabled, not whether it is trading, and said True throughout.
+
+        This catches a market already shut. A market *about* to shut is the
+        harder half and is not covered: the spread gate refuses some of it,
+        since spreads widen into a close, and the rest needs session hours we
+        do not have.
+        """
+        if tick is None:
+            return Refusal("quote", f"no quote for {spec.symbol}", feed)
+        if self._quote_is_stale(feed):
+            quiet = time.time() - self._quoted_at.get(feed, 0.0)
+            return Refusal(
+                "shut",
+                f"{feed} has not quoted in {quiet:.0f}s - the market is closed, "
+                "and a position opened here could not be closed",
+                feed,
+            )
+        return None
+
     async def on_signal(
         self, payload: dict[str, Any], *, observe: bool = True, park: bool = True
     ) -> Intent | Refusal | None:
@@ -569,8 +599,8 @@ class Trader:
         self._hand_over_reach(feed, payload)
 
         tick = await self._tick(spec.symbol)
-        if tick is None:
-            return Refusal("quote", f"no quote for {spec.symbol}", feed)
+        if refusal := self._undealable(feed, spec, tick):
+            return refusal
 
         positions = await self._positions()
         for engine in self.strategies:

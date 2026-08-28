@@ -1151,6 +1151,36 @@ after a loss and lowering it after a win came out *worse than no floor at all*
 which is backwards unless outcomes are serially correlated. Third time this
 repository has measured a dynamic rule losing to a constant.
 
+## A shut market will still take an order
+
+A closed instrument does not stop quoting - it keeps its last quote, frozen,
+and the broker will still accept an order against it. What it will not do is
+let the position back out. A us30 position could not be closed for twenty
+minutes through the index's daily break; the error was a bare 400 with no
+retcode, and what actually identified the cause was the quote not having moved
+in thirty minutes, bid, ask and timestamp identical to half an hour earlier.
+
+`spec.tradable` is no help here. It reports whether an instrument is *enabled*,
+not whether it is *trading*, and it said `True` throughout that break.
+
+So the same staleness test that decides whether a close should be deferred now
+also decides whether a position may be opened at all: a feed silent for
+`stale_quote_after` refuses on gate `shut`. A market we cannot get out of is
+not one to get into.
+
+**A weekend is this failure with a longer clock.** The hold defers a close
+while the market is shut, but `max_hold_multiple` caps that deferral at four
+times the hold - so a position carried into a Friday close goes out at whatever
+is offered when the cap expires, not on Monday. Refusing the *entry* is the
+half of the problem that can be solved cheaply.
+
+**What this does not cover** is a market about to shut. The spread gate refuses
+some of it, since spreads widen into a close, but the general case needs
+session hours per instrument and the bridge does not publish them. A feed that
+has never quoted is *not* treated as shut, deliberately: silence at start-up is
+not evidence of a closed market, and refusing everything until the first quote
+would be a worse failure than the one this prevents.
+
 ## When the whole market goes wide
 
 `structures` already scores spread per venue and publishes an anomaly whenever
