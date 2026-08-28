@@ -467,6 +467,13 @@ class Watcher:
                     "outcome": str(touch.outcome),
                     "push_vol": round(touch.push_vol, 4),
                     "excursion_vol": round(touch.excursion_vol, 4),
+                    # Not the same quantity, and the difference cost a day.
+                    # `excursion_vol` is only assigned once price is a full
+                    # unit past the level, so it holds zeros and values above
+                    # one with nothing between, and every replay that stopped
+                    # a trade on it modelled a 1.0v stop whatever width it was
+                    # asked for. `adverse_vol` has no threshold.
+                    "adverse_vol": round(touch.adverse_vol, 4),
                     "seconds": round(touch.resolved - touch.started),
                     "level": round(level.price, 8),
                     "interval": level.interval,

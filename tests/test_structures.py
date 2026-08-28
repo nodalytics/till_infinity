@@ -1666,3 +1666,18 @@ def test_adverse_excursion_is_published():
     )
     touch.adverse_vol = 0.42
     assert touch.to_dict().get("adverse_vol") == pytest.approx(0.42)
+
+
+def test_the_published_resolution_carries_adverse_excursion():
+    """This context is hand-built and does not call `Touch.to_dict`, so adding
+    a field to the dataclass does nothing for what is published. That is the
+    fourth time in one session a value has been computed correctly and written
+    where nothing reads it, and it is only caught by asking what arrives.
+    """
+    import inspect
+
+    from till_infinity.structures import service as svc
+
+    source = inspect.getsource(svc)
+    assert '"adverse_vol": round(touch.adverse_vol, 4),' in source
+    assert '"excursion_vol": round(touch.excursion_vol, 4),' in source
