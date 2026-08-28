@@ -3775,8 +3775,17 @@ def test_a_fast_strategy_protects_faster_than_a_slow_one():
 
     quick = take("snap")
     assert isinstance(quick, Intent)
+    # Break-even is taken as declared: it is in R, and R already carries the
+    # horizon through the stop.
     assert quick.break_even_at == pytest.approx(Snap.break_even_at)
-    assert quick.trail_vol == pytest.approx(Snap.trail_vol)
+    # The trail is *derived*, not taken flat - stretched by the hold and then
+    # capped against the move it protects, so it no longer equals the constant
+    # the strategy declares. What must hold is that a fast strategy still
+    # trails tighter than a slow one.
+    slow = take("level-scalp")
+    assert isinstance(slow, Intent)
+    assert 0 < quick.trail_vol <= Snap.trail_vol * 3.0
+    assert quick.trail_vol < slow.trail_vol or slow.trail_vol == 0.0
 
 
 def test_the_strategys_own_numbers_beat_the_global_ones():
@@ -5197,3 +5206,38 @@ def test_a_rejection_with_no_known_key_still_carries_the_body():
     with pytest.raises(td.broker.RejectedError) as raised:
         mt5_http._body(_Odd(), "POST", "/trading/order")
     assert "whatever" in str(raised.value)
+
+
+def _trail(name, push, **over):
+    made = {"break_even_at": 1.0, "trail_vol": 2.0, "max_hold": 1800.0, "max_stop_scale": 3.0}
+    made.update(over)
+    return strategy(name, **made).protection("1m", push)[1]
+
+
+def test_the_trail_stays_inside_the_move_it_protects():
+    """Scaling 2v by the horizon gives 6v, while the measured push
+    distribution has a median of 2.24v and a p90 of 4.93v. A trail further
+    from price than the entire move can never beat the stop already in place,
+    so `manage.advance` never applies it - the protection is absent, silently.
+    """
+    uncapped = _trail("level-scalp", 0.0)
+    assert uncapped == pytest.approx(6.0)
+    assert _trail("level-scalp", 1.3) < 1.3
+    assert _trail("level-scalp", 2.24) < 2.24
+
+
+def test_a_bigger_expected_move_earns_a_wider_trail():
+    assert _trail("level-scalp", 5.0) > _trail("level-scalp", 1.3)
+
+
+def test_the_cap_never_widens_a_trail():
+    """It is a ceiling. A huge push must not stretch the trail past what the
+    horizon already allowed."""
+    assert _trail("level-scalp", 999.0) == pytest.approx(_trail("level-scalp", 0.0))
+
+
+def test_break_even_is_still_untouched_by_the_push():
+    """It is in R, and R is measured against a stop this reasoning already
+    widened - scaling or capping it here would count the horizon twice."""
+    engine = strategy("level-scalp", break_even_at=1.0, trail_vol=2.0)
+    assert engine.protection("1m", 1.3)[0] == engine.protection("1m", 99.0)[0]

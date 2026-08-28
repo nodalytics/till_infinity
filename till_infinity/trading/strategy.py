@@ -174,18 +174,43 @@ class Strategy(ABC):
         grown = math.sqrt(max(held / bars, 1.0))
         return max(1.0, min(grown, max(self.settings.max_stop_scale, 1.0)))
 
-    def protection(self, interval: str) -> tuple[float, float]:
+    #: The most of the expected push a trail may sit behind the best price.
+    #:
+    #: A trail wider than the move it protects can never be better than the
+    #: stop already in place, so `manage.advance` never applies it and the
+    #: protection is silently absent. Half means that once price reaches the
+    #: modelled push, the trail has locked in half of it.
+    TRAIL_SHARE: ClassVar[float] = 0.5
+
+    def protection(self, interval: str, push_vol: float = 0.0) -> tuple[float, float]:
         """Break-even and trail for this strategy on this interval.
 
-        A strategy's own values win where it states them; both are then
-        stretched by `horizon`, so the same declared intent means the same
-        thing on a two-minute hold and a two-day one.
+        A strategy's own values win where it states them, and the trail is then
+        stretched by `horizon` so the same declared intent means the same thing
+        on a two-minute hold and a two-day one.
+
+        **And then capped against the push, which the first version was not.**
+        Scaling 2v by the horizon gives 6v, while the measured push
+        distribution has a median of 2.24v and a p90 of 4.93v - so the trail
+        sat further from price than the entire move on nine trades in ten,
+        could never beat the stop already in place, and was never applied.
+        Generalising the horizon idea removed the protection it was meant to
+        improve, and silently, which is the worst way for a rule to fail.
+
+        There is a floor downstream: `manage.advance` widens the trail to clear
+        the level's own wick spread, so a tight cap here cannot produce a trail
+        inside the noise. Between them the trail is bracketed rather than
+        merely scaled.
+
+        Break-even is deliberately unscaled - it is in R, and R is measured
+        against a stop this same reasoning has already widened, so scaling it
+        again counts the horizon twice.
         """
         even = self.break_even_at or self.settings.break_even_at
-        trail = self.trail_vol or self.settings.trail_vol
-        # Break-even unscaled: it is in R, and R is measured against a stop
-        # this reasoning has already widened.
-        return even, trail * self.horizon(interval)
+        trail = (self.trail_vol or self.settings.trail_vol) * self.horizon(interval)
+        if push_vol > 0 and trail > 0:
+            trail = min(trail, abs(push_vol) * self.TRAIL_SHARE)
+        return even, trail
 
     def against_limit(self, interval: str) -> float:
         """How much momentum against the trade this strategy tolerates here."""

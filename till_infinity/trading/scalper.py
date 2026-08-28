@@ -601,7 +601,7 @@ class LevelStrategy(Strategy):
         # Stretched to this strategy's horizon rather than taken flat. See
         # `Strategy.horizon`: a 1R break-even and a 2v trail describe one bar,
         # and the trade is held for many.
-        protect_at, protect_trail = self.protection(interval)
+        protect_at, protect_trail = self.protection(interval, push_vol)
         self.wanted += 1
         return Intent(
             feed=feed,
@@ -1484,8 +1484,10 @@ class FadeToValue(LevelStrategy):
 
         # Stretched to this strategy's horizon rather than taken flat. See
         # `Strategy.horizon`: a 1R break-even and a 2v trail describe one bar,
-        # and the trade is held for many.
-        protect_at, protect_trail = self.protection(interval)
+        # and the trade is held for many. The move this one expects is the distance
+        # to fair value, which is what it aims at instead of a modelled push.
+        aimed_vol = abs(target - entry) / unit if unit else 0.0
+        protect_at, protect_trail = self.protection(interval, aimed_vol)
         self.wanted += 1
         return Intent(
             feed=feed,
