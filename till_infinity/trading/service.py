@@ -231,6 +231,12 @@ class Trader:
         #: The two distances behind an entry and a stop. See
         #: `structures/reach.py`.
         self._reaches = Reaches()
+        #: When each feed last quoted. A market in its daily break keeps its
+        #: last quote and refuses every order, which is a different thing from
+        #: an order being wrong and wants the opposite handling: wait, rather
+        #: than retry and shout. `spec.tradable` reports whether an instrument
+        #: is enabled, not whether it is trading, so it says True throughout.
+        self._quoted_at: dict[str, float] = {}
         #: Best price each open trade has seen, for the trailing stop. Tracked
         #: from the quote stream rather than read from the broker, because
         #: `price_current` is a snapshot and a trail anchored to snapshots
@@ -500,6 +506,7 @@ class Trader:
         when = message_time(payload)
         tick = Tick(symbol=symbol, bid=float(bid), ask=float(ask), time=when)
         self._spread_of[feed] = tick.spread
+        self._quoted_at[feed] = time.time()
         # Accumulate directional pressure. Fed from the quote stream rather
         # than from signals, because signals arrive when a level is touched
         # and the run that matters is the one that happened on the way there.
@@ -1572,6 +1579,25 @@ class Trader:
         if closed:
             await self._reconcile()
 
+    def _quote_is_stale(self, feed: str) -> bool:
+        """Whether this feed has stopped quoting, which means the market is shut.
+
+        A us30 position could not be closed for twenty minutes through the
+        index's daily break. The error was a bare 400 with no retcode; what
+        actually identified the cause was the quote not having moved in thirty
+        minutes - bid, ask and timestamp identical to half an hour earlier.
+
+        Worth separating from a refusal because they want opposite handling. A
+        shut market means wait, and retrying fills the log with warnings that
+        read as a fault. A refused order means something about that order is
+        wrong and should be loud.
+        """
+        after = self.settings.stale_quote_after
+        if after <= 0:
+            return False
+        last = self._quoted_at.get(feed)
+        return bool(last and time.time() - last > after)
+
     def _too_wide_to_leave(self, live: Live, age: float, limit: float) -> bool:
         """Whether the spread makes closing on the clock worse than waiting.
 
@@ -1594,6 +1620,16 @@ class Trader:
         the market is offering, which is the honest outcome when the
         alternative is never leaving.
         """
+        if self._quote_is_stale(live.intent.feed):
+            log.info(
+                "trading: holding #%d past its %.0fs hold - %s has not quoted in "
+                "%.0fs, so the market is shut rather than the order refused",
+                live.position.ticket,
+                limit,
+                live.intent.feed,
+                time.time() - self._quoted_at.get(live.intent.feed, 0.0),
+            )
+            return True
         want = self.settings.hold_max_spread
         if want <= 0:
             return False
@@ -1888,6 +1924,14 @@ class Trader:
                 intent = _intent_from(position)
                 ref = ""
             signal = self._last_signal.get(intent.feed, {})
+            # From the fill, not from now. `seen` is stamped at adoption, so a
+            # restart handed every open position a fresh clock - and max_hold,
+            # hold_seconds and stale_after all measure from it. On a day with
+            # fifteen deploys a position can outlive its hold indefinitely, and
+            # `seconds` on its outcome measures from the last adoption rather
+            # than the fill, so hold statistics read shorter than they were.
+            # The broker already reports when it opened; nothing had asked.
+            opened = getattr(position, "opened", 0.0) or 0.0
             # A position adopted after a restart arrives with no ref, and
             # `_settle` will not journal a close without one - so the trade
             # would be logged, announced, and never written down. Recover it
@@ -1901,6 +1945,7 @@ class Trader:
                 by=strategy_for(self.settings.magic, position.magic),
                 signal=signal,
                 attempt=int(signal.get(ATTEMPT, 0) or 0),
+                seen=float(opened) if opened > 0 else time.time(),
             )
             pending = None
         self._pending = None

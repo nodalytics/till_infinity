@@ -4,7 +4,25 @@ Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
-## 0r. Nothing can tell a shut market from a refused order
+## ~~0r. Nothing can tell a shut market from a refused order~~ - fixed 2026-08-28
+
+Three parts, and the third matters most.
+
+`stale_quote_after` treats a feed that has not quoted in five minutes as a
+shut market: the hold defers quietly instead of retrying and filling the log
+with warnings that read as a fault.
+
+The rejection message now carries whatever the bridge said. It looked only for
+a `detail` key the bridge does not use, so every refusal arrived as a bare
+"400" carrying nothing - which hid three distinct causes in one day and left
+one of them permanently unidentified, because the container had recycled
+before anyone looked.
+
+The eurgbp and usdcad rejections were **not** the stops-level miss assumed
+earlier: their stops clear the broker minimum by 2.65x and 1.95x and their
+volumes are valid. What refused them is still unknown, and now recoverable
+next time it happens.
+
 
 Found 2026-08-27. A us30 position could not be closed for twenty minutes -
 `POST /positions/close: 400`, retried on every pass. The cause was the index's
@@ -69,7 +87,14 @@ Until then, treat trade counts as a floor and hold-length statistics as
 understated - together with 0q, which independently makes `seconds` measure
 from the last adoption rather than from the fill.
 
-## 0q. Every deploy resets the hold clock on open positions
+## ~~0q. Every deploy resets the hold clock on open positions~~ - fixed 2026-08-28
+
+`Live.seen` is stamped from the broker's own `opened` when a position is
+adopted, rather than from the moment of adoption. The honest timestamp was
+already on the position and nothing had asked for it, so no storage was
+needed. Hold statistics taken from `seconds` before this date still measure
+from the last adoption and read shorter than the trades were.
+
 
 Noticed 2026-08-27 while a us30 position retried a refused close: its age went
 from 436s back to 311s across a container restart.

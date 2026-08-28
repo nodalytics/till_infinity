@@ -452,11 +452,31 @@ def _body(response: httpx.Response, method: str, path: str) -> Any:
     if response.status_code >= 500:
         raise TransientError(f"{method} {path}: {response.status_code}")
     if response.status_code >= 400:
+        # Every key, not just `detail`. This looked for one field, the bridge
+        # does not use it, and so a refusal arrived as a bare "400" carrying
+        # nothing. That single omission hid three separate causes in one day -
+        # a stops-level miss on eurgbp, an impossible target on brent, and a
+        # market closed for its daily break - each needing its own
+        # investigation to identify, and one of them never identified at all
+        # because the container had recycled by the time anyone looked.
         detail = ""
         try:
-            detail = str(response.json().get("detail", ""))
+            body = response.json()
         except Exception:  # an error page that is not JSON is still an error
-            detail = response.text[:200]
+            detail = response.text[:300]
+        else:
+            if isinstance(body, dict):
+                # The usual suspects first, so the common case reads cleanly,
+                # then the whole body rather than nothing.
+                for key in ("detail", "message", "error", "comment", "retcode"):
+                    found = body.get(key)
+                    if found:
+                        detail = f"{key}={found}"
+                        break
+                else:
+                    detail = str(body)[:300]
+            else:
+                detail = str(body)[:300]
         raise RejectedError(f"{method} {path}: {response.status_code} {detail}")
     try:
         return response.json()

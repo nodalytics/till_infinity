@@ -5160,3 +5160,40 @@ async def test_the_reach_estimates_survive_a_restart(tmp_path):
         "the reach estimate did not survive the restart"
     )
     assert trader._holds.expected("gold", "5m") is not None
+
+
+def test_a_rejection_carries_whatever_the_bridge_said():
+    """It looked for a `detail` key the bridge does not use, so a refusal
+    arrived as a bare "400" carrying nothing. That hid three separate causes in
+    one day - a stops-level miss, an impossible target, and a closed market -
+    each needing its own investigation.
+    """
+    from till_infinity.trading import mt5_http
+
+    class _Body:
+        status_code = 400
+        text = '{"success": false, "message": "Invalid stops"}'
+
+        @staticmethod
+        def json():
+            return {"success": False, "message": "Invalid stops"}
+
+    with pytest.raises(td.broker.RejectedError) as raised:
+        mt5_http._body(_Body(), "POST", "/trading/order")
+    assert "Invalid stops" in str(raised.value)
+
+
+def test_a_rejection_with_no_known_key_still_carries_the_body():
+    from till_infinity.trading import mt5_http
+
+    class _Odd:
+        status_code = 400
+        text = '{"whatever": 7}'
+
+        @staticmethod
+        def json():
+            return {"whatever": 7}
+
+    with pytest.raises(td.broker.RejectedError) as raised:
+        mt5_http._body(_Odd(), "POST", "/trading/order")
+    assert "whatever" in str(raised.value)

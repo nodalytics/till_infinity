@@ -709,6 +709,19 @@ class Settings:
     #: what they say.
     stop_slippage: float = 0.0
 
+    #: Seconds without a quote before a feed is treated as a shut market
+    #: rather than a refusing broker. Zero is off.
+    #:
+    #: A us30 position could not be closed for twenty minutes through the
+    #: index's daily break. The bridge returned a bare 400 with no retcode;
+    #: what identified the cause was the quote not having moved in thirty
+    #: minutes. `spec.tradable` said True throughout - it reports whether an
+    #: instrument is enabled, not whether it is trading.
+    #:
+    #: The two want opposite handling. A shut market means wait. A refused
+    #: order means something about that order is wrong and should be loud.
+    stale_quote_after: float = 300.0
+
     #: The largest expected push a call may claim, in volatility units. Beyond
     #: this the number is not a forecast, it is a fault.
     #:
@@ -1049,6 +1062,7 @@ class Settings:
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),
             trail_sigmas=_float("TRADING_TRAIL_SIGMAS", 0.5),
             stop_slippage=_float("TRADING_STOP_SLIPPAGE", 0.0),
+            stale_quote_after=_float("TRADING_STALE_QUOTE_AFTER_S", 300.0),
             max_push_vol=_float("TRADING_MAX_PUSH_VOL", 25.0),
             hold_max_spread=_float("TRADING_HOLD_MAX_SPREAD", 0.0),
             parked_stop_vol=_float("TRADING_PARKED_STOP_VOL", 0.0),
