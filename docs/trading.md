@@ -532,6 +532,33 @@ merged, because the engine's Kalman mean moves as touches fold in, and anything
 nobody has published a call for in six hours is forgotten rather than kept as a
 description of last week.
 
+## Scalping, swinging, both, or neither
+
+`TRADING_STYLE` is a coarser switch than `TRADING_STRATEGIES`, and the two
+compose - it filters whatever that list selected. Values are `scalp`, `swing`,
+`both` (the default, which changes nothing) and `none`.
+
+`none` is a useful state rather than a broken one: the service connects, warms
+every estimator, publishes signals and takes no trades. It says so loudly at
+start-up, because a process doing that looks identical to a fault.
+
+**A strategy declares its own style, and the names do not decide it.**
+
+| swing | why |
+| --- | --- |
+| `swing-level` | six hours, anchored on the daily |
+| `approach-scalp` | forty-five minutes - longer than `max_hold`, despite the name |
+| `fade-to-value` | forty-five minutes, and a thesis about value rather than the next few ticks |
+| `runner` | a swing by target rather than clock: `target_multiple` 3.0 puts the exit past the modelled push |
+
+Everything else is a scalp: `snap` at two minutes, and `level-scalp`,
+`confluence-scalp`, `momentum-scalp`, `thesis-only`, `sweep-aware` and
+`inverse` at the configured `max_hold`.
+
+**An unrecognised value runs everything rather than nothing.** A typo in an
+environment variable must not be able to stop trading - a mis-set base-rate
+floor once refused 99 signals out of 99 and did exactly that.
+
 ## Risk plans
 
 Ten numbers control how much this can lose, and set individually they are ten

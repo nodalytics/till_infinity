@@ -747,6 +747,22 @@ class Settings:
     #: Zero disables the learning, and with it the closing gate.
     session_bars: int = 1400
 
+    #: Which kind of trading to run: `scalp`, `swing`, `both` or `none`.
+    #:
+    #: A coarser switch than `TRADING_STRATEGIES`, and the two compose - this
+    #: filters whatever that list selected. `both` is the default and changes
+    #: nothing. `none` runs the service without taking trades, which is a
+    #: useful state: signals, estimates and the journal all keep working.
+    #:
+    #: A strategy declares its own `style`. The names do not decide it -
+    #: `approach-scalp` and `fade-to-value` both hold forty-five minutes and
+    #: are classed as swings.
+    #:
+    #: An unrecognised value runs everything rather than nothing. A typo here
+    #: should not silently stop trading, which is what a mis-set base-rate
+    #: floor did once already.
+    style: str = "both"
+
     #: Refuse a trade whose hold does not fit before its market closes, plus
     #: this much margin, in seconds.
     #:
@@ -1103,6 +1119,7 @@ class Settings:
             unconfirmed_size=_float("TRADING_UNCONFIRMED_SIZE", 1.0),
             stale_quote_after=_float("TRADING_STALE_QUOTE_AFTER_S", 300.0),
             session_bars=_int("TRADING_SESSION_BARS", 1400),
+            style=_env("TRADING_STYLE") or "both",
             session_margin=_float("TRADING_SESSION_MARGIN_S", 60.0),
             max_push_vol=_float("TRADING_MAX_PUSH_VOL", 25.0),
             hold_max_spread=_float("TRADING_HOLD_MAX_SPREAD", 0.0),

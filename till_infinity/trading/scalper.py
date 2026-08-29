@@ -830,6 +830,10 @@ class ApproachScalp(LevelStrategy):
     """
 
     name: ClassVar[str] = "approach-scalp"
+
+    #: Forty-five minutes, longer than `max_hold`. A swing wearing a
+    #: scalp's name - the name is historical, the hold is what decides.
+    style: ClassVar[str] = "swing"
     description: ClassVar[str] = (
         "Buys up to the level above and sells down to the level below, on a "
         "confirming call. Targets the next level instead of the push."
@@ -1111,6 +1115,11 @@ class Runner(LevelStrategy):
     """
 
     name: ClassVar[str] = "runner"
+
+    #: A swing by target rather than by clock: `target_multiple` 3.0 puts
+    #: the exit past the modelled push, which is riding a move rather than
+    #: taking a reaction.
+    style: ClassVar[str] = "swing"
     description: ClassVar[str] = (
         "The level call with the target moved out past the push distribution, "
         "so the trail ends the trade rather than the cap. Trades the tail."
@@ -1213,6 +1222,9 @@ class SwingLevel(LevelStrategy):
     """
 
     name: ClassVar[str] = "swing-level"
+
+    #: Six hours on a daily-anchored level. The plainest swing here.
+    style: ClassVar[str] = "swing"
     description: ClassVar[str] = (
         "Bias from 4h/1d/1w, trigger as low as 15m for a tighter stop. Held for hours."
     )
@@ -1367,6 +1379,10 @@ class FadeToValue(LevelStrategy):
     """
 
     name: ClassVar[str] = "fade-to-value"
+
+    #: Forty-five minutes, and a thesis about where value is rather than
+    #: about the next few ticks.
+    style: ClassVar[str] = "swing"
     description: ClassVar[str] = (
         "Takes the distance from spot to the best-evidenced level. The thesis, plainly."
     )

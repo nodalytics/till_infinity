@@ -75,6 +75,17 @@ class Strategy(ABC):
     #: different kind of trade.
     hold_seconds: ClassVar[float] = 0.0
 
+    #: Whether this is a scalp or a swing, so the two can be run together, one
+    #: at a time, or not at all - see `TRADING_STYLE`.
+    #:
+    #: Declared per strategy rather than derived, because the names lie. Both
+    #: `approach-scalp` and `fade-to-value` hold for forty-five minutes, longer
+    #: than `max_hold`, and are swings wearing a scalp's name. What decides is
+    #: how long the thesis needs and whether the trade is trying to catch a
+    #: reaction or ride a move: a swing either holds an hour or more, or lets
+    #: its target run past the modelled push.
+    style: ClassVar[str] = "scalp"
+
     #: The same limit expressed in **bars of the entry interval**, which is the
     #: clock everything else about the trade is measured on.
     #:
@@ -380,6 +391,36 @@ def build(names: Sequence[str] | None, settings: Settings) -> list[Strategy]:
             f"unknown strategy: {', '.join(unknown)} (have: {', '.join(sorted(STRATEGIES))})"
         )
     return [STRATEGIES[name](settings) for name in chosen]
+
+
+#: What `TRADING_STYLE` accepts. "both" is the default and preserves the
+#: behaviour that existed before the switch did.
+STYLES = ("scalp", "swing", "both", "none")
+
+
+def by_style(engines: list[Strategy], style: str) -> tuple[list[Strategy], list[Strategy]]:
+    """Split a strategy list into the ones this style runs and the rest.
+
+    Returns `(kept, dropped)` so the caller can say what it turned off. An
+    unrecognised style keeps everything: a typo in an environment variable
+    should not silently stop the service trading, which is the failure a
+    mis-set base-rate floor already caused once.
+    """
+    wanted = (style or "both").strip().lower()
+    if wanted not in STYLES:
+        log.warning(
+            "trading: TRADING_STYLE=%r is not one of %s - running everything",
+            style,
+            ", ".join(STYLES),
+        )
+        return list(engines), []
+    if wanted == "both":
+        return list(engines), []
+    if wanted == "none":
+        return [], list(engines)
+    kept = [e for e in engines if e.style == wanted]
+    dropped = [e for e in engines if e.style != wanted]
+    return kept, dropped
 
 
 def catalogue() -> dict[str, str]:

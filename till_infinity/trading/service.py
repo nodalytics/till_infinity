@@ -195,7 +195,12 @@ class Trader:
         #: Where orders go. **Not** the same object as `self.broker` unless
         #: armed: see `execution`.
         self.paper: PaperBroker | None = None
-        self.strategies = strategy.build(self.settings.strategies, self.settings)
+        #: What this style is running, and what it stood down. Both are set
+        #: here and nowhere else - an initialiser placed after this line once
+        #: quietly emptied the second of them.
+        self.strategies, self.stood_down = strategy.by_style(
+            strategy.build(self.settings.strategies, self.settings), self.settings.style
+        )
         self.context = Context(
             before=self.settings.news_before,
             after=self.settings.news_after,
@@ -346,6 +351,7 @@ class Trader:
             )
 
         await self._warm_sessions()
+        self._announce_style()
         self._check_gates()
         self._check_order()
         self._check_magics()
@@ -355,6 +361,27 @@ class Trader:
             " + ".join(s.name for s in self.strategies),
             ", ".join(sorted(self.specs)),
         )
+
+    def _announce_style(self) -> None:
+        """Say which kind of trading is running, and what that turned off.
+
+        Loud because it is the difference between a quiet service and a broken
+        one. `TRADING_STYLE=none` produces a process that connects, warms every
+        estimator, publishes signals and takes nothing, which looks identical
+        to a fault unless it says so.
+        """
+        if self.stood_down:
+            log.info(
+                "trading: style=%s - %s stood down (%s)",
+                self.settings.style,
+                len(self.stood_down),
+                ", ".join(sorted(e.name for e in self.stood_down)),
+            )
+        if not self.strategies:
+            log.warning(
+                "trading: style=%s leaves no strategies - the service will run and take nothing",
+                self.settings.style,
+            )
 
     def _check_order(self) -> None:
         """Warn when a strategy is listed where it can never trade.

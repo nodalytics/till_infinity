@@ -25,6 +25,7 @@ from till_infinity.trading import manage
 from till_infinity.trading import plans as tp
 from till_infinity.trading import report as tr
 from till_infinity.trading import sessions as td_sessions
+from till_infinity.trading import strategy as td_strategy
 from till_infinity.trading.book import Book, Seen
 from till_infinity.trading.context import Context
 from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick
@@ -5561,3 +5562,67 @@ async def test_the_closing_gate_can_be_turned_off():
     )
     with mock.patch.object(td_sessions.time, "time", return_value=friday):
         assert trader._closing_soon(intent) is None
+
+
+def test_style_both_changes_nothing():
+    """The default. Whatever TRADING_STRATEGIES selected is what runs."""
+    engines = td_strategy.build(["snap", "swing-level", "runner"], settings())
+    kept, dropped = td_strategy.by_style(engines, "both")
+    assert [e.name for e in kept] == ["snap", "swing-level", "runner"]
+    assert dropped == []
+
+
+def test_style_picks_one_kind_at_a_time():
+    engines = td_strategy.build(
+        ["snap", "level-scalp", "swing-level", "runner", "fade-to-value"], settings()
+    )
+    scalps, _ = td_strategy.by_style(engines, "scalp")
+    swings, _ = td_strategy.by_style(engines, "swing")
+    assert sorted(e.name for e in scalps) == ["level-scalp", "snap"]
+    assert sorted(e.name for e in swings) == ["fade-to-value", "runner", "swing-level"]
+
+
+def test_style_none_stands_everything_down():
+    engines = td_strategy.build(["snap", "swing-level"], settings())
+    kept, dropped = td_strategy.by_style(engines, "none")
+    assert kept == []
+    assert sorted(e.name for e in dropped) == ["snap", "swing-level"]
+
+
+def test_a_typo_in_the_style_runs_everything_rather_than_nothing():
+    """A mis-set base-rate floor once refused 99 signals of 99 and stopped all
+    trading. An environment typo must not be able to do that again."""
+    engines = td_strategy.build(["snap", "swing-level"], settings())
+    kept, dropped = td_strategy.by_style(engines, "scalps")
+    assert sorted(e.name for e in kept) == ["snap", "swing-level"]
+    assert dropped == []
+
+
+def test_the_names_do_not_decide_the_style():
+    """approach-scalp and fade-to-value both hold forty-five minutes, longer
+    than max_hold, and are swings wearing a scalp's name."""
+    engines = {e.name: e for e in td_strategy.build(None, settings())} or {}
+    for name in ("approach-scalp", "fade-to-value"):
+        made = td_strategy.build([name], settings())[0]
+        assert made.style == "swing", name
+        assert made.hold_seconds > settings().max_hold
+    del engines
+
+
+async def test_running_no_strategies_is_announced_not_silent():
+    """A service that connects, warms every estimator and takes nothing looks
+    identical to a fault unless it says so."""
+    trader = Trader(Bus(), settings=settings(style="none"))
+    await trader.start()
+    assert trader.strategies == []
+    assert sorted(e.name for e in trader.stood_down)
+
+
+async def test_a_scalp_only_service_takes_no_swings():
+    trader = Trader(
+        Bus(),
+        settings=settings(style="scalp", strategies=("level-scalp", "swing-level", "runner")),
+    )
+    await trader.start()
+    assert [e.name for e in trader.strategies] == ["level-scalp"]
+    assert sorted(e.name for e in trader.stood_down) == ["runner", "swing-level"]
