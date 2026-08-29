@@ -5848,3 +5848,25 @@ def test_a_cold_ensemble_does_not_refuse_anything():
 def test_the_agreement_gate_is_off_for_the_scalps():
     for name in ("level-scalp", "snap", "confluence-scalp"):
         assert strategy(name).min_momentum_agree == 0.0
+
+
+def test_a_mixed_case_instrument_name_still_matches():
+    """The matcher upper-cased the listing and not the configured name, which
+    every entry survived by being upper-case already. `Volatility 75 Index`
+    matched nothing, and the failure read as "the broker does not carry it"."""
+    from till_infinity.trading.symbols import matches
+
+    listing = ["Volatility 75 Index", "Volatility 75 (1s) Index", "XAUUSD"]
+    assert matches("volatility_75_index", listing) == ["Volatility 75 Index"]
+
+
+def test_every_synthetic_resolves_against_the_brokers_own_listing():
+    """The exact names, as the account lists them."""
+    from till_infinity.prices.models import slugify
+    from till_infinity.trading.config import SYNTHETICS
+    from till_infinity.trading.symbols import matches
+
+    listing = [*SYNTHETICS, "XAUUSD", "Wall Street 30"]
+    for name in SYNTHETICS:
+        slug = slugify(name).lower()
+        assert matches(slug, listing)[:1] == [name], slug
