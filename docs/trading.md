@@ -1189,6 +1189,10 @@ states separate cleanly:
 | Wall Street 30 | 1597s | shut - the refused order |
 | US Tech 100 | 1596s | shut |
 
+Checked against the order that actually failed: Wall Street 30's last tick was
+20:44:58 and the order went at 20:52:07, so the market had been silent **429
+seconds** against a 300-second threshold. The gate would have refused it.
+
 `_shut_for` is that one definition, read by the entry gate and the close
 deferral alike. It prefers the tick in hand, falls back to a cached broker
 tick, and falls back again to the consensus feed for a bridge that reports no
