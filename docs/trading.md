@@ -1232,12 +1232,66 @@ times the hold - so a position carried into a Friday close goes out at whatever
 is offered when the cap expires, not on Monday. Refusing the *entry* is the
 half of the problem that can be solved cheaply.
 
-**What this does not cover** is a market about to shut. The spread gate refuses
-some of it, since spreads widen into a close, but the general case needs
-session hours per instrument and the bridge does not publish them. A feed that
-has never quoted is *not* treated as shut, deliberately: silence at start-up is
-not evidence of a closed market, and refusing everything until the first quote
-would be a worse failure than the one this prevents.
+A feed that has never quoted is *not* treated as shut, deliberately: silence at
+start-up is not evidence of a closed market, and refusing everything until the
+first quote would be a worse failure than the one this prevents.
+
+## A market about to shut
+
+The other half, and the one that costs money. `shut` catches a market that has
+already closed. A market about to close takes the order happily and then will
+not give the position back: opened at 20:52 on a Friday, it cannot be closed
+until Sunday night, and `max_hold_multiple` does not save it because the shut
+branch of the deferral has no cap.
+
+**The broker does not publish its hours.** MT5 keeps them behind
+`symbol_info_session_quote` and the bridge has no route for it - forty-seven
+routes, none for sessions. `symbol_info` *does* carry `session_open` and
+`session_close`, which look like the answer and are not: they are the session's
+open and close **prices**. Wall Street 30 reports `session_close: 53556.35`.
+
+So they are learned from where bars exist, which is the same evidence by a
+different road and needs nothing from the bridge. Fifteen-minute bars over
+about three weeks give a schedule that matches what each instrument visibly
+does:
+
+| instrument | Mon-Thu | Friday | weekend |
+| --- | --- | --- | --- |
+| Wall Street 30 | 00:00-21:00, 22:00-24:00 | to 20:45 | Sun from 22:00 |
+| Australia 200 | 00:00-21:00, 22:00-24:00 | to 21:00 | Sun from 22:00 |
+| EURUSD | continuous | to 21:00 | Sun from 21:00 |
+| BTCUSD | continuous | continuous | continuous |
+
+The 21:00-22:00 gap is the daily break a us30 position could not be closed
+through. Friday's 20:45 is seven minutes before the order the broker refused.
+Both were diagnosed from tick times first and appear here independently, which
+is the only reason to trust either.
+
+**Times are UTC.** The bars arrive as ISO strings in broker server time, which
+is UTC on this account: Wall Street 30's last Friday bar opens 20:45 and its
+last tick was 20:44:58 UTC. Worth stating, because a silent offset would put
+every session hours out and nothing would look wrong.
+
+**The gate is per trade, not per clock.** `session_margin` refuses a trade
+whose *own hold* does not fit before the close. Twenty minutes out, a
+two-minute scalp is fine and a thirty-minute swing is not, and a blanket "no
+trading after 20:30" would refuse both. The hold is the thing that has to fit,
+so the hold is what it is measured against.
+
+**A minute is trading if it traded in any observed week** - the union, not the
+intersection. A holiday, an outage or a week not fetched would otherwise carve
+false closures into the schedule, and each one would refuse a trade that should
+have been allowed. The union errs towards allowing: Friday reads 21:00 rather
+than 20:45 for an instrument that has done both. This is a filter for the
+large, regular closures it can see clearly, not a calendar, and `shut` remains
+the backstop for what it misses.
+
+**Learning costs 0.72s per instrument**, which is 24 seconds of start-up across
+thirty-three - time spent not trading, with the gate unarmed. Six concurrent
+fetches bring it under five seconds without asking the bridge to serve
+thirty-three at once. An instrument whose bars cannot be read has no session
+opinion and the gate stands aside for it, as it does for the ones that never
+close.
 
 ## When the whole market goes wide
 

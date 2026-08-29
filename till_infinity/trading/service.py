@@ -52,10 +52,23 @@ from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
 from .paper import PaperBroker
 from .risk import Guard
+from .sessions import Sessions
 from .sizing import lots, price_distance
 from .strategy import Strategy
 
 log = get_logger(__name__)
+
+#: The bar size session hours are learned at. Fifteen minutes resolves the
+#: daily break and the Friday close, which is what the gate needs, without
+#: fetching a minute of history for every instrument at start-up.
+SESSION_INTERVAL = "15m"
+SESSION_INTERVAL_S = 15 * 60
+
+#: How many symbols to fetch bars for at once. Sequentially this is 0.72s each
+#: and adds 24s to start-up, during which the service is not trading and the
+#: closing gate is not yet armed. Six at a time brings it under five seconds
+#: without asking the bridge to serve thirty-three at once.
+SESSION_FETCHES = 6
 
 #: Where a re-armed signal carries its attempt count. Kept on the payload
 #: rather than in a table keyed by feed, so it survives the round trip through
@@ -237,6 +250,7 @@ class Trader:
         #: than retry and shout. `spec.tradable` reports whether an instrument
         #: is enabled, not whether it is trading, so it says True throughout.
         self._quoted_at: dict[str, float] = {}
+        self._sessions = Sessions()
         #: symbol -> (when we looked, the broker's own tick time). Two numbers
         #: because a cached tick time goes on ageing whether or not we are
         #: still asking, and a stale observation must not be read as a shut
@@ -331,6 +345,7 @@ class Trader:
                 f"none of {', '.join(self.settings.symbols)} can be traded on this account"
             )
 
+        await self._warm_sessions()
         self._check_gates()
         self._check_order()
         self._check_magics()
@@ -847,6 +862,55 @@ class Trader:
             return entry.id
         return ""
 
+    async def _warm_sessions(self) -> None:
+        """Learn each instrument's trading week from where its bars are.
+
+        The broker does not publish its hours - see `sessions.py` - so they are
+        read off fifteen-minute bars, which is enough resolution for the daily
+        break and the Friday close and cheap enough to fetch for every symbol
+        at start-up.
+
+        Failure is not fatal, here as in `_warm_trend` and `_warm_reach`. An
+        instrument whose bars cannot be read simply has no session opinion, and
+        the gate stands aside for it rather than refusing everything.
+        """
+        want = self.settings.session_bars
+        if want <= 0:
+            return
+        span = float(SESSION_INTERVAL_S)
+        gate = asyncio.Semaphore(SESSION_FETCHES)
+
+        async def learn(symbol: str) -> None:
+            async with gate:
+                try:
+                    bars = await self.broker.bars(symbol, SESSION_INTERVAL, want)
+                except BrokerError as exc:
+                    log.debug("trading: no session bars for %s: %s", symbol, exc)
+                    return
+            times = [bar.time for bar in bars if bar.time > 0]
+            if not times:
+                log.debug("trading: no bar times for %s", symbol)
+                return
+            self._sessions.learn(symbol, times, span)
+
+        started = time.time()
+        await asyncio.gather(
+            *(learn(spec.symbol) for spec in self.specs.values()), return_exceptions=True
+        )
+        took = time.time() - started
+        known = self._sessions.learned
+        if known:
+            always = sum(1 for sch in self._sessions.by_symbol.values() if sch.always)
+            log.info(
+                "trading: session hours learned for %d of %d instruments in %.1fs - %d never close",
+                known,
+                len(self.specs),
+                took,
+                always,
+            )
+        else:
+            log.info("trading: no session hours learned - the closing gate stands aside")
+
     def _warm_reach(self) -> None:
         """Rebuild the hold and reach estimates from the journal before trading.
 
@@ -1326,8 +1390,47 @@ class Trader:
             woken["after_pullback"] = 1.0
         return await self.on_signal(held.payload, observe=False, park=False)
 
+    def _closing_soon(self, intent: Intent) -> Refusal | None:
+        """Refuse a trade whose hold does not fit before its market closes.
+
+        The other half of a shut market. `_shut_for` catches one that has
+        already closed, by noticing the broker has stopped quoting; nothing
+        caught one about to close, and that is the case that costs money. A
+        position opened at 20:52 on a Friday cannot be closed until Sunday
+        night: the hold clock keeps running while the market does not, and
+        `max_hold_multiple` does not save it because the shut branch of the
+        deferral has no cap.
+
+        Judged against **this trade's own hold**, not a fixed cutoff, because
+        that is the thing that has to fit. A thirty-minute hold needs thirty
+        minutes of session; a scalp with a two-minute hold is perfectly fine at
+        the same moment, and a blanket "no trading after 20:30" would refuse
+        both.
+
+        Stands aside when the hours were not learned, and for instruments that
+        never close. See `sessions.py` for how little this claims.
+        """
+        margin = self.settings.session_margin
+        if margin <= 0:
+            return None
+        left = self._sessions.closes_in(intent.symbol)
+        if left is None:
+            return None
+        hold = intent.hold or self.settings.max_hold
+        if left >= hold + margin:
+            return None
+        return Refusal(
+            "closing",
+            f"{intent.symbol} closes in {left:.0f}s and this trade wants "
+            f"{hold:.0f}s - it could not be closed before the session ends",
+            intent.feed,
+        )
+
     async def take(self, intent: Intent, by: str = "") -> Intent | Refusal:
         """Send an order, or say why it was not sent."""
+        if refusal := self._closing_soon(intent):
+            log.info("trading: %s - %s", intent.title, refusal.detail)
+            return refusal
         ref = await self._record_intent(intent, by)
 
         if not self.settings.live:

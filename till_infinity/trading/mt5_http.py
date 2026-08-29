@@ -52,6 +52,7 @@ not something the query parameter can express.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 import httpx
@@ -429,6 +430,7 @@ class HttpBroker(Broker):
                         high=float(row["high"]),
                         low=float(row["low"]),
                         close=float(row["close"]),
+                        time=_bar_time(row.get("time")),
                     )
                 )
             except (KeyError, TypeError, ValueError):
@@ -440,6 +442,29 @@ class HttpBroker(Broker):
 
     async def _post(self, path: str, **kwargs: Any) -> Any:
         return await self._request("POST", path, **kwargs)
+
+
+def _bar_time(raw: Any) -> float:
+    """A bar's open time as epoch seconds.
+
+    The bridge is not consistent with itself: `/symbols/ticks/` sends epoch
+    seconds and `/symbols/rates/` sends an ISO string like
+    `2026-08-07T15:00:00`. The string carries no zone and is the broker's
+    server time, which is UTC here - Wall Street 30's last Friday bar opens at
+    20:45 and its last tick was 20:44:58 UTC, so the two agree.
+
+    `Bar.time` defaulted to 0.0 for every bar the bridge returned until this
+    existed, because `float("2026-08-07T15:00:00")` raises and the whole row
+    was skipped.
+    """
+    if isinstance(raw, int | float):
+        return float(raw)
+    if not isinstance(raw, str) or not raw:
+        return 0.0
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=UTC).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def _body(response: httpx.Response, method: str, path: str) -> Any:

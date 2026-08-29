@@ -741,6 +741,25 @@ class Settings:
     #: order means something about that order is wrong and should be loud.
     stale_quote_after: float = 300.0
 
+    #: How many 15-minute bars to read per instrument when learning session
+    #: hours at start-up. 1,400 covers about three weeks for an index, which is
+    #: enough to see every weekday several times and let a holiday be outvoted.
+    #: Zero disables the learning, and with it the closing gate.
+    session_bars: int = 1400
+
+    #: Refuse a trade whose hold does not fit before its market closes, plus
+    #: this much margin, in seconds.
+    #:
+    #: **The other half of a shut market.** `stale_quote_after` catches one
+    #: that has already closed. This catches one about to: a position opened at
+    #: 20:52 on a Friday cannot be closed until Sunday night, and the hold
+    #: clock keeps running while the market does not. Wall Street 30's last
+    #: Friday bar opens 20:45 and the order the broker refused went at 20:52.
+    #:
+    #: Zero disables it. The gate also stands aside for any instrument whose
+    #: hours were not learned, and for those that never close.
+    session_margin: float = 60.0
+
     #: The largest expected push a call may claim, in volatility units. Beyond
     #: this the number is not a forecast, it is a fault.
     #:
@@ -1083,6 +1102,8 @@ class Settings:
             stop_slippage=_float("TRADING_STOP_SLIPPAGE", 0.0),
             unconfirmed_size=_float("TRADING_UNCONFIRMED_SIZE", 1.0),
             stale_quote_after=_float("TRADING_STALE_QUOTE_AFTER_S", 300.0),
+            session_bars=_int("TRADING_SESSION_BARS", 1400),
+            session_margin=_float("TRADING_SESSION_MARGIN_S", 60.0),
             max_push_vol=_float("TRADING_MAX_PUSH_VOL", 25.0),
             hold_max_spread=_float("TRADING_HOLD_MAX_SPREAD", 0.0),
             parked_stop_vol=_float("TRADING_PARKED_STOP_VOL", 0.0),

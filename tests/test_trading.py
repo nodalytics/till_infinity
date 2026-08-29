@@ -10,8 +10,10 @@ working looks exactly like a quiet market.
 from __future__ import annotations
 
 import asyncio
+import calendar
 import time
 from dataclasses import replace
+from unittest import mock
 
 import pytest
 
@@ -22,12 +24,13 @@ from till_infinity.trading import exposure as ex
 from till_infinity.trading import manage
 from till_infinity.trading import plans as tp
 from till_infinity.trading import report as tr
+from till_infinity.trading import sessions as td_sessions
 from till_infinity.trading.book import Book, Seen
 from till_infinity.trading.context import Context
 from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick
 from till_infinity.trading.paper import PaperBroker
 from till_infinity.trading.risk import Guard
-from till_infinity.trading.service import Trader, _market_closed
+from till_infinity.trading.service import Trader, _intent_from, _market_closed
 from till_infinity.trading.sizing import lots, price_distance, stop_for, target_for
 from till_infinity.trading.speeds import Speeds
 from till_infinity.trading.symbols import resolve
@@ -5462,3 +5465,99 @@ async def test_an_adopted_position_still_knows_its_market_is_shut():
     trader._broker_quoted_at[live.position.symbol] = (now, now - 29_000.0)
 
     assert trader._too_wide_to_leave(live, age=29_581.0, limit=1800.0) is True
+
+
+def _learn_wall_street(trader, symbol: str) -> None:
+    """The observed shape: Mon-Thu 00:00-21:00 and 22:00-24:00, Fri to 21:00."""
+    spans = []
+    for day in (24, 25, 26, 27):  # Mon-Thu, week of 2026-08-24
+        spans += [(day, 0, 21), (day, 22, 24)]
+    spans += [(28, 0, 21)]  # Friday
+    times = []
+    for day, start, end in spans:
+        midnight = calendar.timegm((2026, 8, day, 0, 0, 0, 0, 0, 0))
+        times.extend(midnight + m * 60 for m in range(start * 60, end * 60, 15))
+    trader._sessions.learn(symbol, times, 15 * 60.0)
+
+
+async def test_a_trade_that_cannot_close_before_the_session_ends_is_refused():
+    """The order the broker refused went at 20:52 on a Friday, seven minutes
+    after Wall Street 30's last bar. A thirty-minute hold never fitted."""
+    trader = Trader(Bus(), settings=settings(session_margin=60.0, max_hold=1800.0))
+    await trader.start()
+    spec = trader.specs["gold"]
+    _learn_wall_street(trader, spec.symbol)
+
+    friday = calendar.timegm((2026, 8, 28, 20, 40, 0, 0, 0, 0))
+    intent = replace(
+        _intent_from(
+            td.Position(
+                ticket=1,
+                symbol=spec.symbol,
+                side=Side.BUY,
+                volume=0.1,
+                price_open=4400.0,
+            )
+        ),
+        hold=1800.0,
+        feed="gold",
+    )
+    with mock.patch.object(td_sessions.time, "time", return_value=friday):
+        got = trader._closing_soon(intent)
+
+    assert isinstance(got, Refusal)
+    assert got.gate == "closing"
+
+
+async def test_a_scalp_still_trades_when_a_long_hold_would_not():
+    """Judged against this trade's own hold, not a blanket cutoff. Twenty
+    minutes before the close a two-minute scalp is fine."""
+    trader = Trader(Bus(), settings=settings(session_margin=60.0, max_hold=1800.0))
+    await trader.start()
+    spec = trader.specs["gold"]
+    _learn_wall_street(trader, spec.symbol)
+
+    friday = calendar.timegm((2026, 8, 28, 20, 40, 0, 0, 0, 0))
+    base = _intent_from(
+        td.Position(ticket=1, symbol=spec.symbol, side=Side.BUY, volume=0.1, price_open=4400.0)
+    )
+    scalp = replace(base, hold=120.0, feed="gold")
+    swing = replace(base, hold=1800.0, feed="gold")
+
+    with mock.patch.object(td_sessions.time, "time", return_value=friday):
+        assert trader._closing_soon(scalp) is None
+        assert isinstance(trader._closing_soon(swing), Refusal)
+
+
+async def test_an_instrument_with_no_learned_hours_is_not_refused():
+    """Refusing on absent evidence would stop trading on anything whose bars
+    could not be read."""
+    trader = Trader(Bus(), settings=settings(session_margin=60.0))
+    await trader.start()
+    spec = trader.specs["gold"]
+    intent = replace(
+        _intent_from(
+            td.Position(ticket=1, symbol=spec.symbol, side=Side.BUY, volume=0.1, price_open=4400.0)
+        ),
+        hold=1800.0,
+        feed="gold",
+    )
+    assert trader._sessions.closes_in(spec.symbol) is None
+    assert trader._closing_soon(intent) is None
+
+
+async def test_the_closing_gate_can_be_turned_off():
+    trader = Trader(Bus(), settings=settings(session_margin=0.0, max_hold=1800.0))
+    await trader.start()
+    spec = trader.specs["gold"]
+    _learn_wall_street(trader, spec.symbol)
+    friday = calendar.timegm((2026, 8, 28, 20, 55, 0, 0, 0, 0))
+    intent = replace(
+        _intent_from(
+            td.Position(ticket=1, symbol=spec.symbol, side=Side.BUY, volume=0.1, price_open=4400.0)
+        ),
+        hold=1800.0,
+        feed="gold",
+    )
+    with mock.patch.object(td_sessions.time, "time", return_value=friday):
+        assert trader._closing_soon(intent) is None
