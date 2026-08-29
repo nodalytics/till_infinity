@@ -675,6 +675,50 @@ because an unmapped feed is not merely unmeasured, it is *exempt*.
 from 33 feeds to 104 would roughly triple that work in one container. Extending
 the list is an edit to `SYNTHETICS` and one environment variable.
 
+## More than one terminal
+
+`TRADING_FOLLOWERS` copies every filled decision onto other accounts, as
+`name=url[|api_key]` entries. Empty means one terminal, exactly as before.
+
+This is **copy** mode - one decision, many accounts. The other mode in
+[todo.md](todo.md) §6i, *split*, is one book across several terminals, and it
+is not a variation of this one: several questions below have opposite correct
+answers there. Only copy is built.
+
+**Risk is replicated. Lots are not.** The correctness point everything else
+follows from. A 0.05-lot trade sized for a 10,000-unit account is a quarter
+percent of it; the same 0.05 lots on a 2,000-unit account is one and a quarter
+percent - five times the risk the plan authorised, on the account least able to
+carry it. So what travels is the decision and its price levels, and every
+follower re-runs `sizing.lots` against its own equity and its own symbol spec.
+An account whose minimum lot costs more than its risk budget is **refused**
+rather than rounded up.
+
+**Partial failure is the normal case.** One account fills, another is refused -
+no margin, instrument not carried, a different filling mode, AutoTrading off.
+Unwinding the filled one to stay symmetric would turn one broker's problem into
+a realised loss on an account that did nothing wrong, so they are allowed to
+diverge and every outcome is journalled per account. `Replication` carries a
+result per account and no summary that could be mistaken for a single fill.
+
+**Copies happen only after the primary fills.** Copying a decision the deciding
+account refused would put the position everywhere except where it was decided.
+
+**The magic base is the same on every account.** Magic separates our trades
+from a hand-placed one on that terminal, and every account should mark them
+identically. The collision that matters is two processes against *one* account,
+which is a different problem - and the place where split mode's answer inverts.
+
+**Symbol resolution, equity, exposure and risk stay per account.** The same
+position on five accounts is five accounts holding it against their own
+capital, not one position sized five times; aggregating would refuse the
+replication that is the whole point. An account that does not carry
+`Germany 40` simply never receives those trades.
+
+Nothing here can stop the primary trading: a follower that will not start is
+logged and dropped, one that raises is recorded as a refusal, and a malformed
+entry is skipped.
+
 ## Risk plans
 
 Ten numbers control how much this can lose, and set individually they are ten

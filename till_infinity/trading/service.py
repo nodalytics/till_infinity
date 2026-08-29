@@ -41,7 +41,7 @@ from ..structures.holds import Book as HoldBook
 from ..structures.levels import SECONDS
 from ..structures.reach import Reaches
 from ..structures.trend import Trend
-from . import manage, plans, strategy
+from . import manage, plans, replicate, strategy
 from . import symbols as sym
 from .broker import Broker, BrokerError, build
 from .candles import confirms
@@ -268,6 +268,7 @@ class Trader:
         #: is enabled, not whether it is trading, so it says True throughout.
         self._quoted_at: dict[str, float] = {}
         self._sessions = Sessions()
+        self.replicator = replicate.from_settings(self.settings)
         #: symbol -> (when we looked, the broker's own tick time). Two numbers
         #: because a cached tick time goes on ageing whether or not we are
         #: still asking, and a stale observation must not be read as a shut
@@ -362,6 +363,7 @@ class Trader:
                 f"none of {', '.join(self.settings.symbols)} can be traded on this account"
             )
 
+        await self.replicator.start(sorted(self.specs))
         await self._warm_sessions()
         self._announce_style()
         self._check_gates()
@@ -1494,6 +1496,45 @@ class Trader:
             woken["after_pullback"] = 1.0
         return await self.on_signal(held.payload, observe=False, park=False)
 
+    async def _copy_to_followers(self, intent: Intent, by: str) -> None:
+        """Replicate a filled decision onto every other terminal.
+
+        **Risk travels, volume does not.** Each follower re-sizes against its
+        own equity, so the same decision is the same *fraction* of each account
+        rather than the same number of lots - which on a smaller account would
+        be several times the risk the plan authorised. See `replicate.py`.
+
+        Never raises and never blocks the primary. The trade that matters is
+        already on; a follower that cannot take it is a fact to record, not a
+        reason to unwind an account that did nothing wrong.
+        """
+        if not self.replicator.live:
+            return
+        made = await self.replicator.copy(
+            intent,
+            risk_fraction=self.settings.risk_fraction,
+            magic=magic_for(self.settings.magic, by),
+            by=by,
+            max_risk_money=self.settings.max_risk_money,
+            slippage=self.settings.stop_slippage,
+        )
+        for copied in made.results:
+            await self.journal.write(
+                observe(
+                    "trading",
+                    f"copied {intent.title} to {copied.account}",
+                    context={
+                        "account": copied.account,
+                        "ok": copied.ok,
+                        "detail": copied.detail,
+                        "volume": copied.volume,
+                        "ticket": copied.ticket,
+                        "feed": intent.feed,
+                        "by": by,
+                    },
+                )
+            )
+
     def _closing_soon(self, intent: Intent) -> Refusal | None:
         """Refuse a trade whose hold does not fit before its market closes.
 
@@ -1573,6 +1614,10 @@ class Trader:
             intent.reason,
         )
         await self._announce_fill(intent, result.price, result.ticket, by)
+        # Only after the primary has actually filled. Copying a decision the
+        # account it was made for refused would put the position everywhere
+        # except where it was decided.
+        await self._copy_to_followers(intent, by)
         # Tracked from the broker's own position list rather than from the
         # result, because the ticket a fill reports is the order's and the one
         # that has to be closed is the position's. Reconciling picks it up.

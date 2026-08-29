@@ -2088,6 +2088,9 @@ that it is estimating a *quantity*, and that is the property to protect.
 
 ## 6i. More than one terminal, in two modes
 
+> **Copy mode is built** - `trading/replicate.py`, `TRADING_FOLLOWERS`, and
+> [trading.md](trading.md). Split is still only reasoning.
+
 `Broker` is one terminal, one account, and everything above it assumes that:
 `symbols.resolve` scans one catalogue at start-up, sizing reads one equity, and
 the risk plan's limits are a fraction of that one number.
