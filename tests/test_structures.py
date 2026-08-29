@@ -1798,3 +1798,39 @@ def test_the_single_source_set_is_read_from_the_catalogue():
 
         for slug in added:
             FEEDS.pop(slug, None)
+
+
+def _inference(**over):
+    from till_infinity.structures.reactions import Inference
+
+    made = {
+        "side": Side.ABOVE,
+        "probability_up": 0.5,
+        "expected_push": 0.0,
+        "push_sigma": 1.0,
+        "base_rate_up": 0.5,
+        "own_touches": 9.0,
+        "neighbours": 3,
+    }
+    made.update(over)
+    return Inference(**made)
+
+
+def test_a_coin_flip_has_no_direction():
+    """`>= 0.5` resolved a tie to "up", which is a lean invented out of
+    nothing: 0.5 is the absence of a view, not a weak vote for up."""
+    tie = _inference(expected_push=0.0, probability_up=0.5)
+    assert tie.direction == ""
+    assert tie.actionable is False
+
+
+def test_either_side_of_the_tie_still_leans():
+    assert _inference(expected_push=0.0, probability_up=0.5001).direction == "up"
+    assert _inference(expected_push=0.0, probability_up=0.4999).direction == "down"
+
+
+def test_the_expected_push_still_wins_over_the_win_rate():
+    """A level that drifts down four times in five and jumps hard on the fifth
+    has a losing win rate and a positive expectation."""
+    assert _inference(expected_push=1.2, probability_up=0.2).direction == "up"
+    assert _inference(expected_push=-1.2, probability_up=0.8).direction == "down"

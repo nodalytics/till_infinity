@@ -524,12 +524,26 @@ class Inference(Restorable):
         hard on the fifth has a losing win rate and a positive expectation.
         Reporting "down" there while the expected move is upward would be
         incoherent to anyone reading it.
+
+        A true tie has **no** direction and says so. `>= 0.5` resolved a coin
+        flip to "up", which is a lean invented out of nothing: 0.5 is the
+        absence of a view, not a weak vote for up. Rare - `probability_up` is
+        exactly 0.5 on one outcome in 71,988 - and rare is the reason to fix
+        it rather than to leave it, because a bias that fires occasionally is
+        one that never shows up in a summary.
+
+        `actionable` requires a direction, so a call with none is refused
+        rather than published pointing at whichever way the comparison fell.
         """
         if self.expected_push > 0:
             return "up"
         if self.expected_push < 0:
             return "down"
-        return "up" if self.probability_up >= 0.5 else "down"
+        if self.probability_up > 0.5:
+            return "up"
+        if self.probability_up < 0.5:
+            return "down"
+        return ""
 
     @property
     def mixed(self) -> bool:
@@ -665,6 +679,10 @@ class Inference(Restorable):
             # shape, but it is not a call - whichever one you act on, the other
             # says you are wrong.
             and not self.mixed
+            # And it has to point somewhere. `direction` is empty on a true
+            # tie, which used to resolve to "up" and publish a coin flip as a
+            # call.
+            and bool(self.direction)
         )
 
     def to_dict(self) -> dict:
