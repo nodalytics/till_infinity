@@ -634,6 +634,14 @@ The gate is silent while the ensemble is cold. A gate that refuses for want of
 a reading is a gate that stops all trading on a fresh container, which has
 happened here once already.
 
+**The turn asked for scales too, above its floor.** `require_turn_vol` is now
+the **floor** rather than the value: the setting still means "never accept less
+than this", and an instrument whose own pushes are larger raises it. Same
+argument as the CUSUM threshold - a turn worth 0.5v is most of a eurusd move
+and a fifth of a brent one, so one number was asking two different questions. A
+feed with no push estimate yet gets the floor, which is the setting behaving
+exactly as before.
+
 **Both witnesses, not either.** The 4h rejection candle says the auction failed
 there; the momentum ensemble below 1h says it is failing *now*. The disjunction
 the scalps use is right for them - a scalp cannot wait four hours for a bar to

@@ -65,6 +65,13 @@ log = get_logger(__name__)
 #: is a property of the instrument rather than of the moment.
 PUSH_DECAY = 0.05
 
+#: The share of a typical push that counts as a turn, and the most one may ask
+#: for. The share matches the momentum filter's, because they are reading the
+#: same event by different means; the ceiling stops an instrument with a huge
+#: modelled push from asking for a turn no pullback ever produces.
+TURN_SHARE = 0.35
+TURN_CEILING = 2.0
+
 SESSION_INTERVAL = "15m"
 SESSION_INTERVAL_S = 15 * 60
 
@@ -1244,7 +1251,7 @@ class Trader:
             asked.append("turn")
             pressure = float(intent.features.get("pressure_vol") or 0.0)
             turned = pressure if intent.side is Side.BUY else -pressure
-            if turned >= self.settings.require_turn_vol:
+            if turned >= self._turn_wanted(intent.feed):
                 log.info(
                     "trading: %s %s confirmed - turned %.2fv after the pullback",
                     intent.side,
@@ -1534,6 +1541,26 @@ class Trader:
                     },
                 )
             )
+
+    def _turn_wanted(self, feed: str) -> float:
+        """How much of a turn this instrument has to show, in volatility units.
+
+        Adaptive above a fixed floor, for the reason the CUSUM threshold is:
+        volatility units normalise how far an instrument moves per bar, and the
+        push it makes once moving varies on top of that - 1.66v on eurusd
+        against 2.75v on brent. A turn worth 0.5v is most of a eurusd move and
+        a fifth of a brent one, so one number asks two different questions.
+
+        `require_turn_vol` is the **floor**, not the value: the setting still
+        says "never accept less than this", and the instrument raises it when
+        its own moves are larger. A feed with no push estimate yet gets the
+        floor, which is the setting behaving exactly as it did before.
+        """
+        floor = self.settings.require_turn_vol
+        push = self._push_vol.get(feed, 0.0)
+        if push <= 0:
+            return floor
+        return adaptive_threshold(push, share=TURN_SHARE, floor=floor, ceiling=TURN_CEILING)
 
     def _closing_soon(self, intent: Intent) -> Refusal | None:
         """Refuse a trade whose hold does not fit before its market closes.

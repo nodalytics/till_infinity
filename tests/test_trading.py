@@ -5901,3 +5901,34 @@ async def test_an_absurd_push_cannot_move_the_threshold():
     await trader.start()
     trader._note_push("gold", signal(features={"expected_push_vol": 10_229.7}))
     assert "gold" not in trader._push_vol
+
+
+async def test_the_turn_asked_for_scales_with_the_instrument():
+    """A turn worth 0.5v is most of a eurusd move and a fifth of a brent one,
+    so one number asks two different questions."""
+    trader = Trader(Bus(), settings=settings(require_turn_vol=0.5))
+    await trader.start()
+
+    quiet = trader._turn_wanted("gold")  # nothing learned yet
+    assert quiet == 0.5
+
+    for _ in range(300):
+        trader._note_push("gold", signal(features={"expected_push_vol": 2.75}))
+    loud = trader._turn_wanted("gold")
+    assert loud > quiet
+
+
+async def test_the_setting_is_a_floor_not_a_target():
+    """`require_turn_vol` still means 'never accept less than this'. A quiet
+    instrument must not be allowed to lower the bar."""
+    trader = Trader(Bus(), settings=settings(require_turn_vol=0.9))
+    await trader.start()
+    for _ in range(300):
+        trader._note_push("gold", signal(features={"expected_push_vol": 0.4}))
+    assert trader._turn_wanted("gold") == 0.9
+
+
+async def test_an_unlearned_feed_behaves_exactly_as_before():
+    trader = Trader(Bus(), settings=settings(require_turn_vol=0.5))
+    await trader.start()
+    assert trader._turn_wanted("never-seen") == 0.5
