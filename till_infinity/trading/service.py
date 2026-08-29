@@ -36,7 +36,7 @@ from typing import Any
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
-from ..structures.cusum import Cusum, Ensemble
+from ..structures.cusum import Cusum, Ensemble, adaptive_threshold
 from ..structures.holds import Book as HoldBook
 from ..structures.levels import SECONDS
 from ..structures.reach import Reaches
@@ -61,6 +61,10 @@ log = get_logger(__name__)
 #: The bar size session hours are learned at. Fifteen minutes resolves the
 #: daily break and the Friday close, which is what the gate needs, without
 #: fetching a minute of history for every instrument at start-up.
+#: How fast the per-feed push estimate follows new calls. Slow, because this
+#: is a property of the instrument rather than of the moment.
+PUSH_DECAY = 0.05
+
 SESSION_INTERVAL = "15m"
 SESSION_INTERVAL_S = 15 * 60
 
@@ -243,6 +247,9 @@ class Trader:
         #: speed quotes happen to arrive; this one can also say whether the
         #: timeframes agree, which is what a swing entry at an origin turns on.
         self._ensemble: dict[str, Ensemble] = {}
+        #: A slow read on how far each instrument pushes, which is what the
+        #: momentum threshold is sized against. See `_note_push`.
+        self._push_vol: dict[str, float] = {}
         #: Trend context per feed and interval. Keyed on both because the
         #: efficiency of 1m levels and of 15m levels on one instrument are
         #: different markets, and pooling them measures neither.
@@ -641,8 +648,10 @@ class Trader:
         """
         self.context.observe_signal(payload)
         vol_bps = _vol_of(payload)
+        feed_name = str(payload.get("feed") or "")
         if vol_bps > 0:
-            self._vol_bps[str(payload.get("feed") or "")] = vol_bps
+            self._vol_bps[feed_name] = vol_bps
+        self._note_push(feed_name, payload)
         if observe:
             # Skipped when a parked signal is re-considered: the level is
             # already in each strategy's book, and folding it in twice would
@@ -1127,6 +1136,34 @@ class Trader:
         if ratio is not None:
             features["efficiency"] = ratio
         context.observe(float(level))
+
+    def _note_push(self, feed: str, payload: dict[str, Any]) -> None:
+        """Keep a running estimate of how far this instrument moves, and size
+        the momentum filter to it.
+
+        Volatility units already normalise for how much an instrument moves per
+        bar, and that is not enough: the *push* it makes once it starts moving
+        varies on top of that, 1.66v on eurusd against 2.75v on brent. A single
+        threshold is late for one and noisy for the other.
+
+        Measured over 59,982 resolutions, the fixed 2.0v was silent through
+        **47.5% of all moves** and confirmed after 2.0v of a 2.07v median push
+        - the end of the move, which is no use for timing an entry.
+
+        A slow EWMA, because this is a property of the instrument rather than
+        of the moment; the threshold should not lurch because one call carried
+        a big forecast.
+        """
+        if not feed:
+            return
+        push = abs(float(payload.get("features", {}).get("expected_push_vol") or 0.0))
+        if push <= 0 or push > self.settings.max_push_vol:
+            return
+        seen = self._push_vol.get(feed)
+        self._push_vol[feed] = push if seen is None else seen * (1 - PUSH_DECAY) + push * PUSH_DECAY
+        group = self._ensemble.get(feed)
+        if group is not None:
+            group.threshold = adaptive_threshold(self._push_vol[feed])
 
     def _hand_over_pressure(self, feed: str, payload: dict[str, Any]) -> None:
         """Put the accumulated run where the strategies will actually see it.

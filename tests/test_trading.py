@@ -20,6 +20,7 @@ import pytest
 from till_infinity import trading as td
 from till_infinity.bus import ALERTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from till_infinity.journal import Journal, read
+from till_infinity.structures import cusum as td_cusum
 from till_infinity.trading import exposure as ex
 from till_infinity.trading import manage
 from till_infinity.trading import plans as tp
@@ -5870,3 +5871,33 @@ def test_every_synthetic_resolves_against_the_brokers_own_listing():
     for name in SYNTHETICS:
         slug = slugify(name).lower()
         assert matches(slug, listing)[:1] == [name], slug
+
+
+async def test_the_momentum_threshold_follows_the_feeds_own_push():
+    """Sized from the pushes the instrument actually makes, so a quiet one is
+    not held to a loud one's bar."""
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+    trader._ensemble["gold"] = td_cusum.Ensemble()
+
+    for _ in range(200):
+        trader._note_push("gold", signal(features={"expected_push_vol": 2.75}))
+    loud = trader._ensemble["gold"].threshold
+
+    trader._push_vol.clear()
+    trader._ensemble["gold"] = td_cusum.Ensemble()
+    for _ in range(200):
+        trader._note_push("gold", signal(features={"expected_push_vol": 1.66}))
+    quiet = trader._ensemble["gold"].threshold
+
+    assert quiet < loud
+    assert quiet >= td_cusum.FLOOR
+
+
+async def test_an_absurd_push_cannot_move_the_threshold():
+    """`max_push_vol` already exists because a brent call arrived claiming
+    10,229.7. It must not be able to set the momentum threshold either."""
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+    trader._note_push("gold", signal(features={"expected_push_vol": 10_229.7}))
+    assert "gold" not in trader._push_vol

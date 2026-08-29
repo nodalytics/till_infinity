@@ -596,6 +596,32 @@ else is noise; the same move on 1m, 5m and 15m at once is the market doing one
 thing at several resolutions. `min_momentum_agree` is what a strategy asks for,
 and it is 0.5 on `origin-swing` and zero everywhere else.
 
+**The threshold is sized to the instrument, with a floor.** It was a fixed 2.0
+volatility units, and volatility units were doing less normalising than that
+assumed: they account for how much an instrument moves per bar, but the *push*
+it makes once it starts moving varies on top of that, from 1.66v on eurusd to
+2.75v on brent.
+
+Measured over 59,982 resolutions:
+
+| threshold | share of moves smaller than it - never fires |
+| --- | --- |
+| 0.50v | 1.9% |
+| 0.75v | 11.7% |
+| 1.00v | 16.8% |
+| 2.00v | **47.5%** |
+
+The median realised push is 2.07v, so the old fixed 2.0v was silent through
+almost half of all moves and, on the rest, confirmed after essentially the
+whole move had happened. That is no use for timing an entry.
+
+`adaptive_threshold` takes a share of the feed's own typical push - a slow EWMA
+of `expected_push_vol` - floored at 0.5v and capped at the old 2.0v. The floor
+is what keeps it honest when the estimate is missing, cold, or absurd: an
+unknown push returns the floor, because a threshold of zero makes every tick an
+event, and `max_push_vol` refuses the 10,229.7v kind of forecast before it can
+reach this at all.
+
 Two details that are not incidental. `pressure_vol` is still published from the
 single filter, because `require_turn_vol` is calibrated against it and swapping
 the number underneath a threshold silently recalibrates it. And a member that

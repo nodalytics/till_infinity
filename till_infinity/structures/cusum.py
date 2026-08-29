@@ -49,7 +49,43 @@ from dataclasses import dataclass, field
 from .state import Restorable
 
 #: Volatility units of net directional progress that constitute an event.
+#:
+#: Kept as the ceiling rather than the working value. Measured over 59,982
+#: resolutions, a 2.0v threshold is **silent through 47.5% of all moves** - the
+#: median realised push is 2.07v, so it confirms after essentially the whole
+#: move has happened, which is useless for timing an entry. See
+#: `adaptive_threshold`.
 THRESHOLD = 2.0
+
+#: The share of a typical move the filter should fire inside. A filter meant to
+#: time an entry has to speak partway through, not at the end.
+SHARE = 0.35
+
+#: The hard floor, below which this is reading noise rather than momentum. Only
+#: 1.9% of measured moves are smaller than this, so the floor costs almost
+#: nothing and stops a quiet instrument from firing on every tick.
+FLOOR = 0.5
+
+
+def adaptive_threshold(
+    typical_push: float, *, share: float = SHARE, floor: float = FLOOR, ceiling: float = THRESHOLD
+) -> float:
+    """A threshold sized to the moves this instrument actually makes.
+
+    Volatility units already normalise for how much an instrument moves per
+    bar, and that turns out not to be enough: the *push* an instrument makes
+    once it starts moving varies on top of it, from 1.66v on eurusd to 2.75v
+    on brent - a 1.7x spread that a single number cannot serve. A threshold
+    right for one is late for the other.
+
+    So the threshold is a share of the typical push, floored and capped. The
+    floor is what keeps this honest when the estimate is missing, cold, or
+    absurd: an unknown push returns the floor rather than zero, because a
+    threshold of zero makes every tick an event.
+    """
+    if typical_push <= 0:
+        return floor
+    return max(floor, min(ceiling, share * typical_push))
 
 
 @dataclass(slots=True)
@@ -203,9 +239,12 @@ class Ensemble(Restorable):
             if last is not None and when - last < every:
                 continue
             self.seen_at[interval] = when
-            self.members.setdefault(interval, Cusum(threshold=self.threshold)).push(
-                price, unit, when=when
-            )
+            member = self.members.setdefault(interval, Cusum(threshold=self.threshold))
+            # Applied on every push, not only at construction. The threshold
+            # adapts as the instrument's typical push is re-estimated, and a
+            # member built with the old one would keep it forever.
+            member.threshold = self.threshold
+            member.push(price, unit, when=when)
 
     @property
     def ready(self) -> int:
