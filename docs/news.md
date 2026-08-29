@@ -22,6 +22,7 @@ uv run till-infinity news sources          # the configured feeds
 | `forexfactory` | the weekly calendar JSON, keyed by currency |
 | `tradingview` | the calendar service, keyed by country, with importance and raw numerics |
 | `imf` | central bank reserve assets per country (IRFCL), monthly |
+| `fred` | monetary policy: balance sheets, the curve, and daily inflation expectations |
 
 TradingView headlines are the one feed that arrives already tagged with the
 instruments a story concerns (`OANDA:XAUUSD`, `TVC:GOLD`), so gold news lines up
@@ -214,23 +215,15 @@ than an arbitrary price the same distance away.
 
 ## Not yet included
 
-**FRED is now included** - see above. This section used to say it was
-unreachable - every TCP connection to
-`api.stlouisfed.org` timed out, so the integration was left unwritten rather
-than shipped unverified. **That is no longer true.** Retested with a key:
+**FRED is now included** - see "Monetary policy, as data" above. This section
+used to say it was unreachable: every TCP connection to `api.stlouisfed.org`
+timed out, so the integration was left unwritten rather than shipped
+unverified. That stopped being true, and it is now built and verified against
+the live API - 2,174 observations across thirteen series, every one current.
 
-```
-GET /fred/series/observations?series_id=DGS10  ->  200, data from 1962
-```
-
-Whether the earlier failure was the network, the host or the keyless endpoint
-is not worth reconstructing; what matters is that it is testable now, so the
-reason for leaving it out is gone.
-
-It needs `FRED_API_KEY` and a source module in the shape of the others. Series
-worth having: `WALCL` (Fed total assets), `M2SL`, `RRPONTSYD` (reverse repo),
-`WRESBAL` (reserves), `TOTBKCR` (bank credit), `DGS10` and `DGS2` (the curve
-the levels model would actually use), `ECBASSETSW` (ECB), `JPNASSETS` (BoJ).
+Whether the original failure was the network, the host or the keyless endpoint
+was never reconstructed and did not need to be: what mattered was that it
+became testable.
 
 ## IMF reserves
 
