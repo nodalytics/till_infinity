@@ -3566,7 +3566,8 @@ def test_the_shared_gates_live_in_one_place():
     """A copied block is two implementations that can drift; this is one."""
     import inspect
 
-    from till_infinity.trading.scalper import FadeToValue, LevelStrategy
+    from till_infinity.trading.scalper import LevelStrategy
+    from till_infinity.trading.swing import FadeToValue
 
     assert hasattr(LevelStrategy, "quality")
     # Both paths call it rather than repeating it.
@@ -3580,7 +3581,7 @@ def test_fade_to_value_is_still_exempt_from_the_chase_gate():
     premise - the gate would refuse every trade it ever wanted."""
     import inspect
 
-    from till_infinity.trading.scalper import FadeToValue
+    from till_infinity.trading.swing import FadeToValue
 
     assert "_chasing(" not in inspect.getsource(FadeToValue.consider)
 

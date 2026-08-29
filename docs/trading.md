@@ -542,6 +542,11 @@ compose - it filters whatever that list selected. Values are `scalp`, `swing`,
 every estimator, publishes signals and takes no trades. It says so loudly at
 start-up, because a process doing that looks identical to a fault.
 
+They live in separate files - `scalper.py` and `swing.py` - because the two
+answer different questions and one file had stopped saying which was which.
+`LevelStrategy` stays in `scalper.py`: it is the translation from a published
+call into an order, shared machinery rather than a scalping detail.
+
 **A strategy declares its own style, and the names do not decide it.**
 
 | swing | why |
