@@ -466,6 +466,15 @@ class OriginSwing(LevelStrategy):
     #: of points.
     CLEARANCE_VOL: ClassVar[float] = 0.5
 
+    #: How many times the origin may already have been returned to.
+    #:
+    #: Measured over 3,412 returns: the first holds 63.5%, the second 55.6%,
+    #: against a driftless-walk null near 33%. Freshness helps and it is not
+    #: decisive - the third and fourth returns are no worse than the second, and
+    #: ger40 improved with every visit - so this prefers fresh origins rather
+    #: than demanding them. See `research/origins.md`.
+    max_revisits: ClassVar[float] = 1.0
+
     #: How far into the zone price must be before the origin counts as reached.
     #: Zero would fire on the outer edge, which price grazes without trading
     #: there.
@@ -522,14 +531,29 @@ class OriginSwing(LevelStrategy):
             return Refusal("no_bracket", "the bracket carries no distances", feed)
         if to_below <= self.REACH_VOL and to_below <= to_above:
             self._facing = Side.BUY
+            revisits = features.get("origin_below_revisits")
         elif to_above <= self.REACH_VOL:
             self._facing = Side.SELL
+            revisits = features.get("origin_above_revisits")
         else:
             near = min(to_above, to_below)
             return Refusal(
                 "not_at_origin",
                 f"price is {near:.2f}v from the nearer origin, past the "
                 f"{self.REACH_VOL:.2f}v that counts as trading there",
+                feed,
+            )
+
+        # Freshness, which is the one origin reading that has measured. A
+        # missing count is not a stale origin - it is an unknown one, and
+        # refusing on it would stand this strategy down on every feed whose
+        # origins have not been published yet.
+        if revisits is not None and float(revisits) > self.max_revisits:
+            self._facing = None
+            return Refusal(
+                "stale_origin",
+                f"this origin has been returned to {float(revisits):.0f} times, "
+                f"over the {self.max_revisits:.0f} it is worth trading",
                 feed,
             )
         return None

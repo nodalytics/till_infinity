@@ -5933,3 +5933,44 @@ async def test_an_unlearned_feed_behaves_exactly_as_before():
     trader = Trader(Bus(), settings=settings(require_turn_vol=0.5))
     await trader.start()
     assert trader._turn_wanted("never-seen") == 0.5
+
+
+def test_a_stale_origin_is_refused():
+    """Measured over 3,412 returns: the first holds 63.5%, the second 55.6%.
+    Freshness helps, so the swing prefers a fresh origin."""
+    engine = strategy("origin-swing")
+    worn = _bracketed(features={"origin_below_vol": 0.1, "origin_below_revisits": 4.0})
+    got = engine.consider(
+        worn, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "stale_origin"
+
+
+def test_a_first_return_still_trades():
+    engine = strategy("origin-swing")
+    fresh = _bracketed(features={"origin_below_vol": 0.1, "origin_below_revisits": 1.0})
+    got = engine.consider(
+        fresh, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+
+
+def test_an_unknown_revisit_count_is_not_a_stale_origin():
+    """A missing count is an unknown origin, not a worn one. Refusing on it
+    would stand the strategy down on every feed whose origins have not been
+    published yet."""
+    engine = strategy("origin-swing")
+    unknown = _bracketed(features={"origin_below_vol": 0.1})
+    del unknown["features"]["origin_below_revisits"]
+    got = engine.consider(
+        unknown, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+
+
+def test_a_refused_stale_origin_does_not_leak_its_side():
+    engine = strategy("origin-swing")
+    worn = _bracketed(features={"origin_below_vol": 0.1, "origin_below_revisits": 9.0})
+    engine.consider(worn, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0)
+    assert engine._facing is None
