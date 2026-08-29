@@ -230,6 +230,7 @@ class Watcher:
         self.engine = Engine(
             charge_spread=self.settings.charge_spread,
             single_source=single_source_feeds(),
+            formation=self.settings.formation,
         )
         #: What the hour of the day has been worth, per instrument. Learns
         #: from resolutions and from the volatility it sees; asserts

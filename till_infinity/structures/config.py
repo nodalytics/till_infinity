@@ -88,6 +88,21 @@ class Settings(Restorable):
     #: loosen one gate evenly. See levels.md, "What the cost actually comes to".
     charge_spread: bool = True
 
+    #: How swings are found: `pip` takes bar extremes by prominence, `run` the
+    #: boundaries between volatility runs, `origin` the turns whose impulse set
+    #: a new running extremum, and `both` runs pip and run as separate passes
+    #: and merges them.
+    #:
+    #: A setting because it was not one, and the `origin` formation shipped
+    #: unreachable: `Engine` took the argument, nothing passed it, and the
+    #: default won. Every level in production was drawn by `pip` while the
+    #: other two sat there looking available.
+    #:
+    #: The point is to run them over one history and let the outcome machinery
+    #: say which price gets respected, which needs the choice to be reachable
+    #: from a deployment rather than from a keyword argument nobody sets.
+    formation: str = "pip"
+
     @classmethod
     def from_env(cls) -> Settings:
         return cls(
@@ -106,4 +121,5 @@ class Settings(Restorable):
             alert_levels=os.environ.get("STRUCTURES_ALERT_LEVELS", "1") not in ("0", "false", "no"),
             charge_spread=os.environ.get("STRUCTURES_CHARGE_SPREAD", "1")
             not in ("0", "false", "no"),
+            formation=os.environ.get("STRUCTURES_FORMATION") or "pip",
         )

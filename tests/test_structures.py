@@ -1953,3 +1953,27 @@ def test_the_margin_past_the_extremum_is_recorded():
     assert found
     assert found[0].extremum_vol > 0
     assert "extremum_vol" in found[0].to_dict()
+
+
+def test_the_formation_is_reachable_from_settings():
+    """It was not, and the `origin` formation shipped unreachable: `Engine`
+    took the argument, nothing passed it, and the default won. Every level in
+    production was drawn by `pip` while the other two looked available."""
+    import os
+    from unittest import mock
+
+    from till_infinity.structures.config import Settings
+
+    assert Settings().formation == "pip"
+    with mock.patch.dict(os.environ, {"STRUCTURES_FORMATION": "origin"}):
+        assert Settings.from_env().formation == "origin"
+
+
+def test_the_watcher_hands_the_formation_to_the_engine():
+    """The setting existing is not the same as it arriving."""
+    import inspect
+
+    from till_infinity.structures import service
+
+    source = inspect.getsource(service.Watcher.__init__)
+    assert "formation=self.settings.formation" in source
