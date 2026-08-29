@@ -23,6 +23,8 @@ from .config import (
     YAHOO,
     Feed,
     Settings,
+    quote_source_names,
+    register_broker_feeds,
     resolve_feeds,
     resolve_symbols,
 )
@@ -107,6 +109,8 @@ __all__ = [
     "iter_bars",
     "open_store",
     "poll_once",
+    "quote_source_names",
+    "register_broker_feeds",
     "resolve_feeds",
     "resolve_intervals",
     "resolve_symbols",

@@ -25,6 +25,7 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from ..prices.models import slugify
 from ..structures import confluence
 
 #: Broker names for each instrument the price side tracks, best first.
@@ -39,6 +40,35 @@ from ..structures import confluence
 #: signal to the order. Anything absent from this table cannot be traded even
 #: if the broker quotes it, which is deliberate: the scalper acts on `LEVEL`
 #: signals, and those only exist for feeds `prices` collects.
+#: Broker-only instruments, by their exact name on the account.
+#:
+#: Synthetics have no underlying, so no venue outside the broker quotes them
+#: and no alias guessing is possible or wanted: `Volatility 75 Index` is the
+#: only name that resolves. The feed slug is derived the same way
+#: `prices.broker_feeds` derives it, so one instrument has one name on both
+#: sides of the bus.
+#:
+#: They also never close - measured quoting normally on a Saturday with every
+#: real market on the account hours stale - which makes them the only thing
+#: here a weekend session gate has nothing to say about.
+SYNTHETICS: tuple[str, ...] = (
+    "Volatility 10 Index",
+    "Volatility 25 Index",
+    "Volatility 50 Index",
+    "Volatility 75 Index",
+    "Volatility 100 Index",
+    "Step Index",
+    "Boom 500 Index",
+    "Boom 1000 Index",
+    "Crash 1000 Index",
+)
+
+
+def _synthetic_instruments() -> dict[str, tuple[str, ...]]:
+    """`{slug: (exact broker name,)}` - no aliases, because there are none."""
+    return {slugify(name).lower(): (name,) for name in SYNTHETICS}
+
+
 INSTRUMENTS: dict[str, tuple[str, ...]] = {
     "gold": ("XAUUSD", "GOLD", "XAUUSD.spot"),
     "silver": ("XAGUSD", "SILVER"),
@@ -200,6 +230,9 @@ MAGIC_ORDER: tuple[str, ...] = (
     "high-timeframe",
     "origin-swing",
 )
+
+
+INSTRUMENTS.update(_synthetic_instruments())
 
 
 def magic_for(base: int, strategy: str) -> int:

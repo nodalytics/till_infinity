@@ -33,10 +33,22 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
+from .config import SYNTHETICS
 from .models import Intent, Position, Side
+
 
 #: Base and quote per instrument. `USD` on the right for everything that is
 #: quoted in dollars, which is all of them except the two dollar-first pairs.
+def _slug(name: str) -> str:
+    """`Volatility 75 Index` -> `volatility_75_index`, as the feed is keyed."""
+    return "".join(c if c.isalnum() else "_" for c in name).strip("_").lower()
+
+
+def _token(name: str) -> str:
+    """`Volatility 75 Index` -> `VOLATILITY_75`, the instrument's own leg."""
+    return _slug(name).removesuffix("_index").upper()
+
+
 LEGS: dict[str, tuple[str, str]] = {
     "eurusd": ("EUR", "USD"),
     "gbpusd": ("GBP", "USD"),
@@ -124,6 +136,18 @@ COUNTRY_CURRENCY: dict[str, str] = {
 def currency_of(country: str) -> str:
     """The currency a calendar row's country field means. "" if unknown."""
     return COUNTRY_CURRENCY.get(country.strip().upper(), "")
+
+
+#: Synthetics settle in USD and have no underlying, so each gets its own base
+#: token and a USD quote leg.
+#:
+#: A distinct token per instrument on purpose: `Volatility 75 Index` and
+#: `Volatility 25 Index` are different generators with no relationship, and
+#: giving them a shared base would net a long in one against a short in the
+#: other as though they were the same risk. The USD leg is real, though - the
+#: account is in dollars and the margin is dollars, so they do belong to the
+#: currency limit.
+LEGS.update({_slug(name): (_token(name), "USD") for name in SYNTHETICS})
 
 
 def legs(feed: str) -> tuple[str, str]:

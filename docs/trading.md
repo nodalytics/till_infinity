@@ -623,6 +623,32 @@ where to enter, where to aim, where the stop clears - and that is a placement
 decision this repository has not measured either way. It is a hypothesis with
 its reasoning written down, not a finding.
 
+## Synthetics
+
+The account carries 798 symbols, 71 of them synthetic - `Volatility 75 Index`,
+`Step Index`, `Boom 1000 Index`. They have no underlying, so no venue outside
+the broker quotes them and none has an alias worth guessing: the exact name is
+the only one that resolves. `SYNTHETICS` lists the ones enabled here, and the
+feed slug is derived the same way `prices.broker_feeds` derives it, so one
+instrument has one name on both sides of the bus.
+
+**They never close.** Measured quoting normally on a Saturday with every real
+market on the account hours stale, which makes them the only thing here the
+session gate has nothing to say about - and the only thing that trades at all
+on a weekend.
+
+**Each gets its own exposure leg**, `("VOLATILITY_75", "USD")`. A distinct base
+token per instrument on purpose: `Volatility 75` and `Volatility 25` are
+different generators with no relationship, and a shared base would net a long
+in one against a short in the other as though they were the same risk. The USD
+leg is real - the account is in dollars and so is the margin - so they do count
+against the currency limit. There is a test that every tracked instrument maps,
+because an unmapped feed is not merely unmeasured, it is *exempt*.
+
+**Not all 71.** Level building scales with feeds times timeframes, and going
+from 33 feeds to 104 would roughly triple that work in one container. Extending
+the list is an edit to `SYNTHETICS` and one environment variable.
+
 ## Risk plans
 
 Ten numbers control how much this can lose, and set individually they are ten

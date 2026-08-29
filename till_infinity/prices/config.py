@@ -717,6 +717,26 @@ def register_broker_feeds(names: Sequence[str]) -> tuple[str, ...]:
     return added
 
 
+def quote_source_names() -> tuple[str, ...]:
+    """Which quote transports to run, from the environment.
+
+    `PRICES_QUOTE_SOURCES` if set, otherwise the default - plus `broker`
+    whenever broker-only feeds have been registered, because those have no
+    other transport that can reach them. Registering a synthetic and then not
+    polling it would leave a feed that exists, is asked for, and never quotes:
+    present in the catalogue, absent from every level.
+    """
+    from .quotes import DEFAULT_QUOTE_SOURCES
+
+    raw = _env("PRICES_QUOTE_SOURCES") or ""
+    chosen = tuple(n.strip() for n in raw.split(",") if n.strip()) or DEFAULT_QUOTE_SOURCES
+    if BROKER in chosen:
+        return chosen
+    if any(BROKER in feed.symbols for feed in FEEDS.values()):
+        return (*chosen, BROKER)
+    return chosen
+
+
 def resolve_feeds(names: Sequence[str] | None) -> tuple[Feed, ...]:
     """Look feeds up by their configured name."""
     if not names:

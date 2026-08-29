@@ -141,3 +141,33 @@ async def test_an_empty_quote_is_no_quote():
     source = BrokerQuotes(settings=None)
     source._client = FakeClient()
     assert await source.quote(Symbol("BROKER", "Boom 1000 Index")) is None
+
+
+def test_a_registered_broker_feed_selects_its_transport():
+    """Registering a synthetic and leaving the transport at its default would
+    give a feed that exists, is asked for, and never quotes - present in the
+    catalogue, absent from every level."""
+    from till_infinity.prices.config import quote_source_names
+
+    assert BROKER not in quote_source_names()
+    added = register_broker_feeds(["Transport Test Index"])
+    try:
+        assert BROKER in quote_source_names()
+    finally:
+        for slug in added:
+            FEEDS.pop(slug, None)
+    assert BROKER not in quote_source_names()
+
+
+def test_each_synthetic_gets_its_own_exposure_leg():
+    """`Volatility 75` and `Volatility 25` are different generators with no
+    relationship. A shared base would net a long in one against a short in the
+    other as though they were the same risk."""
+    from till_infinity.trading import exposure as ex
+
+    seventy_five = ex.legs("volatility_75_index")
+    twenty_five = ex.legs("volatility_25_index")
+    assert seventy_five != twenty_five
+    # The USD leg is real: the account is in dollars and so is the margin.
+    assert seventy_five[1] == "USD"
+    assert twenty_five[1] == "USD"

@@ -366,6 +366,11 @@ class Stack:
                 px.stream(
                     settings=settings,
                     feeds=feeds,
+                    # Chosen rather than defaulted, so a broker-only feed is
+                    # actually polled. Registering a synthetic and leaving the
+                    # transport at its default would give a feed that exists,
+                    # is asked for, and never quotes.
+                    sources=px.quote_source_names(),
                     sink=store.write_quote,
                     ticks=1 if self.plan.once else None,
                     bus=self.bus,
