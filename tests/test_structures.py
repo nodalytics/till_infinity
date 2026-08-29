@@ -2011,3 +2011,20 @@ def test_an_unknown_pass_is_refused_rather_than_dropped():
         Engine(formation="pip,nonsense")
     with pytest.raises(ValueError, match="unknown formation"):
         Engine(formation="")
+
+
+def test_the_level_says_which_formation_drew_it():
+    """Running several passes is pointless without it: the argument for merging
+    pip, run and origin is that the journal says which price gets respected,
+    and it cannot say that if the record does not carry which pass found it.
+
+    `drawn_by` rather than `origin`, which in this namespace now means the
+    impulse origin - `origin_price`, `origin_low`, `origin_extremum_vol`."""
+    import inspect
+
+    from till_infinity.structures import engine
+
+    source = inspect.getsource(engine)
+    assert '"drawn_by": self.level.origin,' in source
+    # And it must not be published under the colliding name.
+    assert '"origin": self.level.origin,' not in source

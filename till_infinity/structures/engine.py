@@ -478,6 +478,17 @@ class Call(Restorable):
                 # its own prior. A rate with two interactions behind it and one
                 # with ninety are not the same number and must not arrive
                 # looking like it.
+                # Which formation drew this level. Published because running
+                # several passes is pointless without it: the whole argument
+                # for merging pip, run and origin is that the journal says
+                # which price gets respected, and it cannot say that if the
+                # record does not carry which pass found it.
+                #
+                # `drawn_by` rather than `origin`, which in this namespace now
+                # means the impulse origin - `origin_price`, `origin_low`,
+                # `origin_extremum_vol`. One word for two things would be read
+                # wrong exactly once and then trusted.
+                "drawn_by": self.level.origin,
                 "record_hold": self.inference.record_hold,
                 "record_n": self.inference.record_n,
                 # When, which nothing in this package has ever conditioned on.
