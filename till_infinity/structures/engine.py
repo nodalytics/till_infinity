@@ -639,10 +639,23 @@ class Engine:
         #: boundaries between runs of volatility. An experiment, not a setting
         #: to tune in production - the point is to run both over one history
         #: and let the outcome machinery say which price respects more.
-        if formation not in ("pip", "run", "origin", "profile", "both"):
+        known = ("pip", "run", "origin", "profile")
+        wanted = (
+            ("pip", "run")
+            if formation == "both"
+            else tuple(n.strip() for n in formation.split(",") if n.strip())
+        )
+        if not wanted or [n for n in wanted if n not in known]:
             raise ValueError(
-                f"unknown formation {formation!r} - use 'pip', 'run', 'origin', 'profile' or 'both'"
+                f"unknown formation {formation!r} - use {', '.join(known)}, 'both', "
+                "or a comma list of them"
             )
+        #: The passes to run, merged. Composing them is the point rather than a
+        #: fallback: a formation that draws nothing is not a neutral choice, it
+        #: is silence. `origin` alone draws no levels at all on gold at 1m, 5m
+        #: or 15m - the timeframes carrying nearly every signal - so selecting
+        #: it on its own would stop that instrument trading, quietly.
+        self.passes = wanted
         self.formation = formation
         self.run_threshold = run_threshold
         #: Whether the quoted spread is charged against every level call. On by
@@ -828,15 +841,7 @@ class Engine:
         - `as_of`, `form`, the whole outcome machinery - is indifferent to
         which produced them. See [levels.md], "A level spans periods too".
         """
-        if self.formation == "run":
-            return runs.points(
-                list(series.times), list(series.closes), vol, threshold=self.run_threshold
-            )
-        if self.formation == "origin":
-            return origin_points.points(list(series.times), list(series.closes), vol)
-        if self.formation == "profile":
-            return profile.points(list(series.times), list(series.closes), vol)
-        return pips.points(list(series.times), list(series.closes), self.pip_count)
+        return self._points(self.passes[0], series, vol)
 
     def _form(self, series: Series, visible: Sequence[pips.Point], vol: Volatility):
         """Cluster the visible swings into candidate levels.
@@ -849,39 +854,32 @@ class Engine:
         rediscovered level already passes. `agree` then records that both found
         it, which is the whole reason for doing this rather than choosing.
         """
-        if self.formation != "both":
+        if len(self.passes) == 1:
             return lv.form(
-                series.feed, series.interval, pips.turns(visible), vol, origin=self.formation
+                series.feed, series.interval, pips.turns(visible), vol, origin=self.passes[0]
             )
-        by_pip = lv.form(
-            series.feed,
-            series.interval,
-            pips.turns(
-                pips.as_of(
-                    pips.points(list(series.times), list(series.closes), self.pip_count), self._now
-                )
-            ),
-            vol,
-            origin="pip",
-        )
-        by_run = lv.form(
-            series.feed,
-            series.interval,
-            pips.turns(
-                pips.as_of(
-                    runs.points(
-                        list(series.times),
-                        list(series.closes),
-                        vol,
-                        threshold=self.run_threshold,
-                    ),
-                    self._now,
-                )
-            ),
-            vol,
-            origin="run",
-        )
-        return lv.merge(by_pip, by_run, vol)
+        made: list = []
+        for name in self.passes:
+            found = lv.form(
+                series.feed,
+                series.interval,
+                pips.turns(pips.as_of(self._points(name, series, vol), self._now)),
+                vol,
+                origin=name,
+            )
+            made = found if not made else lv.merge(made, found, vol)
+        return made
+
+    def _points(self, name: str, series: Series, vol: Volatility) -> list[pips.Point]:
+        """One pass's turning points."""
+        times, closes = list(series.times), list(series.closes)
+        if name == "run":
+            return runs.points(times, closes, vol, threshold=self.run_threshold)
+        if name == "origin":
+            return origin_points.points([float(t) for t in times], closes, vol)
+        if name == "profile":
+            return profile.points([float(t) for t in times], closes, vol)
+        return pips.points(times, closes, self.pip_count)
 
     def supports(self, feed: str, interval: str) -> bool:
         """Can this instrument carry a level at this resolution?

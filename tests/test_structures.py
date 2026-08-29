@@ -1977,3 +1977,37 @@ def test_the_watcher_hands_the_formation_to_the_engine():
 
     source = inspect.getsource(service.Watcher.__init__)
     assert "formation=self.settings.formation" in source
+
+
+def test_formations_compose():
+    """Several passes is the point rather than a fallback. `origin` alone draws
+    no levels at all on gold at 1m, 5m or 15m - the timeframes carrying nearly
+    every signal - so selecting it on its own would stop that instrument
+    trading, quietly."""
+    from till_infinity.structures.engine import Engine
+
+    assert Engine(formation="pip").passes == ("pip",)
+    assert Engine(formation="origin").passes == ("origin",)
+    assert Engine(formation="pip,origin").passes == ("pip", "origin")
+    assert Engine(formation="pip, run , origin").passes == ("pip", "run", "origin")
+
+
+def test_both_still_means_pip_and_run():
+    """It is in deployments and in the docs; a rename would be a silent change
+    of which levels exist."""
+    from till_infinity.structures.engine import Engine
+
+    assert Engine(formation="both").passes == ("pip", "run")
+
+
+def test_an_unknown_pass_is_refused_rather_than_dropped():
+    """Dropping it would leave a deployment running fewer formations than it
+    asked for, with nothing said."""
+    import pytest
+
+    from till_infinity.structures.engine import Engine
+
+    with pytest.raises(ValueError, match="unknown formation"):
+        Engine(formation="pip,nonsense")
+    with pytest.raises(ValueError, match="unknown formation"):
+        Engine(formation="")
