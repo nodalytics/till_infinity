@@ -26,6 +26,7 @@ from ..bus import ARTICLES, EVENTS, MACRO, Bus
 from ..logging import get_logger
 from .calendar import ForexFactoryCalendar, TradingViewCalendar
 from .config import DEFAULT_SOURCES, Settings
+from .fred import FredSource
 from .headlines import HeadlineSource
 from .imf import ImfSource
 from .models import Article, Batch, Event, WriteResult
@@ -41,6 +42,7 @@ SOURCES: dict[str, type[Source]] = {
     TradingViewCalendar.name: TradingViewCalendar,
     HeadlineSource.name: HeadlineSource,
     ImfSource.name: ImfSource,
+    FredSource.name: FredSource,
 }
 
 

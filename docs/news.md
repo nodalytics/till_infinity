@@ -147,10 +147,75 @@ once one is awake. See [agents.md](agents.md), "News can wake the analyst".
 `NEWS_DIR`, `NEWS_DB`, `NEWS_POLL`, `NEWS_CAL_POLL`, `NEWS_CAL_BACK_DAYS`,
 `NEWS_CAL_FORWARD_DAYS`, `NEWS_CONCURRENCY`, `NEWS_RETRIES`, `NEWS_USER_AGENT`.
 
+## Monetary policy, as data
+
+The calendar says *when* a central bank will speak. This says what its policy
+actually **is** between those dates: how much money exists, what it costs, and
+what the market thinks inflation will be. Those are the inputs a rate
+differential is built from, and a rate differential is most of why one currency
+moves against another - so this is the sentiment layer under an FX view rather
+than a separate interest.
+
+`fred` collects thirteen series, and they are of two kinds that must not be
+read as one:
+
+| kind | series | character |
+| --- | --- | --- |
+| **policy stock** | `WALCL`, `M2SL`, `RRPONTSYD`, `WRESBAL`, `TOTBKCR`, `ECBASSETSW`, `JPNASSETS` | slow, revised, the ground truth of how much money exists |
+| **market expectation** | `DGS2`, `DGS10`, `DFII10`, `T5YIE`, `T10YIE`, `T5YIFR` | daily, never revised, an opinion rather than a fact |
+
+### Why daily, when CPI is monthly
+
+Official inflation *cannot* be daily. A CPI is a multi-week survey of physical
+and digital prices, so the BLS and Eurostat publish monthly or quarterly and no
+amount of wanting will change it.
+
+Markets do not wait. A **breakeven** is the nominal yield minus the
+inflation-protected yield at the same maturity - what inflation is being priced
+right now - and it trades every day. Live on 2026-08-27: `DGS10` 4.67 minus
+`DFII10` 2.34 is 2.33, against `T10YIE` 2.31. That identity is kept as a test,
+as a check on our reading rather than on the bond market: if the three stop
+lining up, the parse is wrong.
+
+Alternatives exist and are not collected. Scraped daily indices (Truflation,
+the Billion Prices lineage) are a real approach and a vendor dependency with an
+unaudited methodology; the breakeven is free, standard, and is what the people
+setting prices are actually looking at.
+
+### The same themes in crypto, where they invert
+
+Crypto has no monetary policy in the FX sense, and the interesting part is
+*which* half is missing.
+
+**Issuance is fixed by protocol.** There is no committee, no meeting, no
+surprise - the supply schedule is published years ahead and a halving is a
+calendar entry, not a decision. So the entire "what will they do" layer that
+drives FX before a central bank speaks simply does not exist. What replaces it:
+
+| FX | crypto analogue | why |
+| --- | --- | --- |
+| M2, balance sheet | **stablecoin supply** | the money that actually buys the asset, and the one supply number that *is* discretionary |
+| policy rate | **perp funding, basis** | the price of leverage, set by demand rather than by a committee |
+| breakeven | **no clean equivalent** | nothing prices expected issuance, because issuance is not in doubt |
+| foreign reserves | **exchange balances, ETF holdings** | who is holding, and where |
+
+**Cost basis is the one that touches this system directly.** Glassnode's
+long-term-holder cost-basis distribution - for instance 1.05m BTC held between
+$83k and $86k while spot is near $79k - is structurally the *same object* this
+repository already models. A price where a large amount of supply changed hands
+is a price where a large amount of supply wants out at break-even, and that is
+an origin with a size attached: unfilled interest, at a known level, with a
+count behind it.
+
+That is a genuine bridge rather than an analogy, and it is not built. It would
+arrive as a level with an external provenance and a size, and the honest first
+question is the one asked of every other level here - does price respect it more
+than an arbitrary price the same distance away.
+
 ## Not yet included
 
-**FRED** (US money supply, Fed balance sheet, credit facilities). This section
-used to say FRED was unreachable - every TCP connection to
+**FRED is now included** - see above. This section used to say it was
+unreachable - every TCP connection to
 `api.stlouisfed.org` timed out, so the integration was left unwritten rather
 than shipped unverified. **That is no longer true.** Retested with a key:
 

@@ -98,6 +98,12 @@ class Settings:
     retries: int = 3
     headline_limit: int = 30
     imf_countries: tuple[str, ...] = IMF_COUNTRIES
+    #: Monetary policy series from FRED. Empty means every one `fred.SERIES`
+    #: knows about.
+    fred_series: tuple[str, ...] = ()
+    #: Required for `fred`, which refuses to poll without it rather than
+    #: collecting nothing: the keyless endpoint answers 400.
+    fred_api_key: str = ""
     user_agent: str = DEFAULT_USER_AGENT
 
     def __post_init__(self) -> None:
@@ -120,4 +126,8 @@ class Settings:
             concurrency=_env_int(6, "NEWS_CONCURRENCY"),
             retries=_env_int(3, "NEWS_RETRIES"),
             user_agent=_env("NEWS_USER_AGENT") or DEFAULT_USER_AGENT,
+            fred_series=tuple(
+                n.strip() for n in (_env("FRED_SERIES") or "").split(",") if n.strip()
+            ),
+            fred_api_key=_env("FRED_API_KEY") or "",
         )
