@@ -291,6 +291,16 @@ class Strategy(ABC):
     #: and the evidence slow.
     candle_interval: ClassVar[str] = ""
 
+    #: Whether every witness asked for must confirm, rather than any one of
+    #: them.
+    #:
+    #: The disjunction is right for a scalp: it cannot wait four hours for a 4h
+    #: bar to close, so requiring both would refuse a clean fast turn for not
+    #: yet having a candle to show for itself. A swing has the time, and the
+    #: two witnesses answer different questions - the candle says the auction
+    #: failed here, the momentum ensemble says it is failing now.
+    needs_both_witnesses: ClassVar[bool] = False
+
     @property
     def intervals(self) -> tuple[str, ...]:
         """Timeframes this strategy will trigger on.

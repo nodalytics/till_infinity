@@ -559,6 +559,48 @@ Everything else is a scalp: `snap` at two minutes, and `level-scalp`,
 environment variable must not be able to stop trading - a mis-set base-rate
 floor once refused 99 signals out of 99 and did exactly that.
 
+## The swing that runs between two origins
+
+An origin is where volatility turned - the last opposing bar before an impulse,
+kept as a zone because the zone is what price reacts to. `origin-swing` trades
+the space between two of them.
+
+When price sits between an origin above and an origin below there are two
+places worth trading and one question: which does price reach first. It
+arrives, it is confirmed there, and the trade runs to the opposite origin. Long
+from the one below, short from the one above.
+
+**The side comes from the origin, not the published direction.** The direction
+on the call is about the level, and this strategy is not trading the level. It
+is set in `quality` and read by `orient`, which run in that order, and it is
+reset on every call so a refused signal cannot hand its side to the next one.
+
+**The target is structure, not a multiple.** `expected_push_vol` is a forecast
+about the next few bars; over a swing horizon the honest answer to "how far
+does this go" is "to the next place that stopped it last time".
+
+**The stop clears the origin being traded, by an amount the instrument sets** -
+the far edge of the zone plus half a volatility unit. Inside the zone is where
+the wicks are, and a stop there is taken out by the rejection the trade exists
+to trade. Anchoring on the level, as every other strategy does, put the stop on
+the wrong side of the fill outright: a long at the lower origin, 2v under the
+level, got a stop *above* its own entry and was refused as already through.
+
+**Both witnesses, not either.** The 4h rejection candle says the auction failed
+there; the momentum ensemble below 1h says it is failing *now*. The disjunction
+the scalps use is right for them - a scalp cannot wait four hours for a bar to
+close, and requiring both would refuse a clean fast turn for having no candle
+yet. A swing has the time, and an origin price merely touched is not one that
+rejected it. `needs_both_witnesses` is what separates the two.
+
+**What is claimed, and what is not.** Origin *freshness* separates: never
+revisited returned 1.136R against 0.822R for twice revisited. Origin
+*proximity* did not - it read +0.299 on the first live sample and **-0.166 over
+49,619**. So nothing here scores on distance. The bracket is used as geometry -
+where to enter, where to aim, where the stop clears - and that is a placement
+decision this repository has not measured either way. It is a hypothesis with
+its reasoning written down, not a finding.
+
 ## Risk plans
 
 Ten numbers control how much this can lose, and set individually they are ten

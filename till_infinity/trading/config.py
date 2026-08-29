@@ -198,6 +198,7 @@ MAGIC_ORDER: tuple[str, ...] = (
     # this table is append-only - a magic that has been on live orders has to
     # keep resolving to the name that placed them.
     "high-timeframe",
+    "origin-swing",
 )
 
 

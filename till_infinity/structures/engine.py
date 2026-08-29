@@ -712,7 +712,27 @@ class Engine:
                 return {}
             nearest = min(found, key=lambda o: abs(o.price - price))
             inside = any(o.holds(price) for o in found)
+            # The pair that brackets the current price. A swing that runs from
+            # one origin to the other needs both ends: the near one is where it
+            # enters and the far one is what it aims at, and "nearest" alone
+            # cannot say which side of price it sits on.
+            above = [o for o in found if o.low > price]
+            below = [o for o in found if o.high < price]
+            bracket: dict[str, float] = {}
+            if above:
+                near = min(above, key=lambda o: o.low - price)
+                bracket["origin_above_low"] = near.low
+                bracket["origin_above_high"] = near.high
+                bracket["origin_above_vol"] = (near.low - price) / unit
+                bracket["origin_above_revisits"] = float(near.revisits)
+            if below:
+                near = max(below, key=lambda o: o.high - price)
+                bracket["origin_below_low"] = near.low
+                bracket["origin_below_high"] = near.high
+                bracket["origin_below_vol"] = (price - near.high) / unit
+                bracket["origin_below_revisits"] = float(near.revisits)
             return {
+                **bracket,
                 "origin_distance_vol": abs(nearest.price - price) / unit,
                 "origin_size_vol": nearest.size_vol,
                 "origin_revisits": float(nearest.revisits),

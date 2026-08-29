@@ -5636,3 +5636,133 @@ async def test_a_scalp_only_service_takes_no_swings():
     await trader.start()
     assert [e.name for e in trader.strategies] == ["level-scalp"]
     assert sorted(e.name for e in trader.stood_down) == ["runner", "swing-level"]
+
+
+def _bracketed(**over):
+    """A swing call with an origin above and below, price between them.
+
+    One unit is 10bps, so $4.40 at 4400. The zones sit about 2v either side.
+    """
+    features = {
+        "origin_below_low": 4386.0,
+        "origin_below_high": 4391.0,
+        "origin_below_vol": 2.0,
+        "origin_below_revisits": 0.0,
+        "origin_above_low": 4410.0,
+        "origin_above_high": 4415.0,
+        "origin_above_vol": 2.2,
+        "origin_above_revisits": 0.0,
+    }
+    features.update(over.pop("features", {}))
+    return swing(features=features, **over)
+
+
+def test_the_origin_swing_needs_both_ends():
+    """One origin gives an entry with no structural target, which is the
+    ordinary push trade every other strategy here already takes."""
+    engine = strategy("origin-swing")
+    only_one = _bracketed()
+    del only_one["features"]["origin_above_low"]
+    got = engine.consider(
+        only_one, spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "no_bracket"
+
+
+def test_price_between_the_origins_is_not_yet_a_trade():
+    """The trade is taken *at* an origin, not in the space between them."""
+    engine = strategy("origin-swing")
+    got = engine.consider(
+        _bracketed(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "not_at_origin"
+
+
+def test_reaching_the_lower_origin_is_a_long_to_the_upper_one():
+    engine = strategy("origin-swing")
+    call = _bracketed(features={"origin_below_vol": 0.1})
+    got = engine.consider(
+        call, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert got.side is Side.BUY
+    # The far edge of the origin above, not a multiple of the modelled push.
+    assert got.target == pytest.approx(4410.0)
+
+
+def test_reaching_the_upper_origin_is_a_short_to_the_lower_one():
+    engine = strategy("origin-swing")
+    call = _bracketed(features={"origin_above_vol": 0.1})
+    got = engine.consider(
+        call, spec=GOLD, tick=Tick("XAUUSD", bid=4409.5, ask=4410.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert got.side is Side.SELL
+    assert got.target == pytest.approx(4391.0)
+
+
+def test_the_side_comes_from_the_origin_not_the_published_direction():
+    """The published direction is about the level, and this strategy is not
+    trading the level."""
+    engine = strategy("origin-swing")
+    call = _bracketed(direction="down", features={"origin_below_vol": 0.1})
+    got = engine.consider(
+        call, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert got.side is Side.BUY
+
+
+def test_the_facing_side_does_not_leak_into_the_next_call():
+    """`quality` runs before `orient` and resets it, so a refused call cannot
+    hand its side to the one after."""
+    engine = strategy("origin-swing")
+    at_low = _bracketed(features={"origin_below_vol": 0.1})
+    engine.consider(at_low, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0)
+    assert engine._facing is Side.BUY
+    engine.consider(
+        _bracketed(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert engine._facing is None
+
+
+def test_the_origin_swing_is_a_swing_on_the_hour():
+    engine = strategy("origin-swing")
+    assert engine.style == "swing"
+    assert engine.intervals == ("1h",)
+    assert engine.candle_interval == "4h"
+    assert engine.needs_both_witnesses is True
+    assert engine.needs_context is True
+
+
+def test_the_stop_clears_the_origin_it_is_trading():
+    """Inside the zone is where the wicks are. A stop placed there is taken out
+    by the very rejection the trade exists to trade.
+
+    Anchoring on the level instead put the stop on the wrong side of the fill
+    outright: a long at the lower origin, 2v under the level, got a stop above
+    its own entry and was refused as already through.
+    """
+    engine = strategy("origin-swing")
+    call = _bracketed(features={"origin_below_vol": 0.1})
+    got = engine.consider(
+        call, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    # Below the zone's far edge (4386) by half a unit of clearance (0.5 * 4.40).
+    assert got.stop < 4386.0
+    assert got.stop == pytest.approx(4383.8)
+    assert got.stop < got.entry < got.target
+
+
+def test_the_short_stop_clears_the_upper_origin():
+    engine = strategy("origin-swing")
+    call = _bracketed(features={"origin_above_vol": 0.1})
+    got = engine.consider(
+        call, spec=GOLD, tick=Tick("XAUUSD", bid=4409.5, ask=4410.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert got.stop > 4415.0
+    assert got.target < got.entry < got.stop

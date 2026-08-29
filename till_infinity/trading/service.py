@@ -1175,7 +1175,14 @@ class Trader:
         if not (wants_turn or wants_candle):
             return None
 
+        # A swing may insist on both. The disjunction is right for a scalp,
+        # which cannot wait four hours for a bar to close and would otherwise
+        # refuse a clean fast turn for having no candle yet. A swing has the
+        # time, and an origin price merely touched is not one that rejected it.
+        both = bool(engine and engine.needs_both_witnesses)
+
         asked: list[str] = []
+        held: list[str] = []
         # The turn. Skipped entirely before a pullback, where the reading means
         # the opposite thing - so on a straight-to-market entry this witness is
         # not merely unsatisfied, it is not applicable.
@@ -1190,17 +1197,31 @@ class Trader:
                     intent.feed,
                     turned,
                 )
-                return None
+                if not both:
+                    return None
+                held.append("turn")
 
         if wants_candle:
             asked.append("candle")
             found = await self._candle_at(intent, engine)
             if found:
                 log.info("trading: %s %s confirmed by a %s", intent.side, intent.feed, found)
-                return None
+                if not both:
+                    return None
+                held.append("candle")
 
         if not asked:
             return None
+        if both:
+            missing = [w for w in asked if w not in held]
+            if not missing:
+                return None
+            return Refusal(
+                "unconfirmed",
+                f"{'/'.join(held) or 'nothing'} confirmed the level but "
+                f"{'/'.join(missing)} did not, and this strategy wants both",
+                intent.feed,
+            )
         witnesses = "/".join(asked)
         return Refusal("unconfirmed", f"nothing confirmed the level ({witnesses})", intent.feed)
 

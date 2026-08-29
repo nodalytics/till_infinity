@@ -1316,6 +1316,191 @@ class SwingLevel(LevelStrategy):
 
 
 @register
+class OriginSwing(LevelStrategy):
+    """Run from one origin to the other, entering at whichever price reaches first.
+
+    An origin is where volatility turned - the last opposing bar before an
+    impulse, kept as a zone rather than a price because the zone is what price
+    reacts to. See `structures/origins.py`.
+
+    **The trade is the space between two of them.** When price sits between an
+    origin above and an origin below there are two places worth trading and one
+    question: which does price reach first. It arrives, it is confirmed there,
+    and the trade runs to the opposite origin. Long from the one below, short
+    from the one above; the far edge is the target either way.
+
+    That makes the target a **structure** rather than a multiple of the
+    modelled push. `expected_push_vol` is a forecast about the next few bars,
+    and over a swing horizon the honest answer to "how far does this go" is "to
+    the next place that stopped it last time".
+
+    **Two confirmations at the origin, and they are different questions.** The
+    4h rejection candle says the auction failed there; the momentum ensemble
+    below 1h says it is failing *now*. The candle is slower, stronger, and has
+    to wait for a close; the accumulator reads the same event tick by tick.
+    Both are required here rather than the disjunction the scalps use - a swing
+    can afford to wait, and an origin price merely touched is not an origin
+    that rejected it.
+
+    **The stop sits beyond the rejection, by an amount the instrument sets.**
+    Past the far edge of the origin zone plus a volatility buffer: inside the
+    zone is where the wicks are, and a stop placed there is stopped by the very
+    rejection it is trading.
+
+    **What is claimed and what is not.** Origin *freshness* separates - never
+    revisited returned 1.136R against 0.822R twice revisited. Origin
+    *proximity* did not: it read +0.299 on the first live sample and -0.166
+    over 49,619. So nothing here scores on distance. The bracket is used as
+    geometry - where to enter, where to aim, where the stop clears - which is a
+    placement decision this repository has not measured either way.
+    """
+
+    name: ClassVar[str] = "origin-swing"
+    style: ClassVar[str] = "swing"
+    description: ClassVar[str] = (
+        "Between two origins: enter where price arrives first, run to the other."
+    )
+
+    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
+    needs_context: ClassVar[bool] = True
+
+    #: The rejection has to show on 4h - several hours of auction failing at
+    #: this price, rather than one hour's worth on the entry bar.
+    candle_interval: ClassVar[str] = "4h"
+
+    #: Six hours, like `swing-level`. The distance between two origins is not
+    #: covered inside a scalper's half hour.
+    hold_seconds: ClassVar[float] = 6 * 3_600.0
+
+    #: More room than a scalp, for the reason `swing-level` takes it: the level
+    #: is placed on slower data and the noise around it is proportionally
+    #: larger.
+    stop_multiple: ClassVar[float] = 1.5
+
+    #: Rest the entry. The thesis is that price comes to the origin, so paying
+    #: the spread to chase it there is paying for the thing being waited for.
+    pullback_fraction: ClassVar[float] = 1.0
+
+    #: Protection scaled to the horizon. A 1R break-even is right for a trade
+    #: resolving in seconds and wrong for one measured in sessions, where
+    #: ordinary retracement passes 1R before the thesis has begun.
+    break_even_at: ClassVar[float] = 1.5
+
+    #: Both witnesses, not either. See `needs_both_witnesses`.
+    needs_both_witnesses: ClassVar[bool] = True
+
+    #: How far past the origin's far edge the stop sits, in volatility units,
+    #: so the instrument's own noise sets the buffer rather than a fixed number
+    #: of points.
+    CLEARANCE_VOL: ClassVar[float] = 0.5
+
+    #: How far into the zone price must be before the origin counts as reached.
+    #: Zero would fire on the outer edge, which price grazes without trading
+    #: there.
+    REACH_VOL: ClassVar[float] = 0.25
+
+    def __init__(self, settings) -> None:
+        super().__init__(settings)
+        #: Which origin price arrived at, decided in `quality` and read by
+        #: `orient`. Reset on every call so a stale side cannot be inherited by
+        #: the next signal - the gate chain runs `quality` before `orient` for
+        #: exactly this ordering.
+        self._facing: Side | None = None
+
+    def orient(self, side: Side) -> Side:
+        """Which origin price is standing at decides the side.
+
+        At the lower origin the trade is long to the upper one; at the upper it
+        is short to the lower. The published direction is about the level, and
+        this strategy is not trading the level.
+        """
+        return self._facing or side
+
+    def bracket(self, features: dict[str, float]) -> tuple[float, float] | None:
+        """`(below_high, above_low)` - the two inner edges, or None.
+
+        Both ends or nothing. One origin gives an entry with no structural
+        target, which is the ordinary push trade every other strategy here
+        already takes.
+        """
+        if "origin_below_high" not in features or "origin_above_low" not in features:
+            return None
+        below_high = float(features["origin_below_high"])
+        above_low = float(features["origin_above_low"])
+        if below_high >= above_low:
+            return None
+        return below_high, above_low
+
+    def quality(
+        self, feed: str, features: dict[str, float], side: Side, interval: str = ""
+    ) -> Refusal | None:
+        self._facing = None
+        refusal = super().quality(feed, features, side, interval)
+        if refusal is not None:
+            return refusal
+
+        if self.bracket(features) is None:
+            return Refusal("no_bracket", "no origin above and below to run between", feed)
+
+        # `origin_*_vol` is the gap to that zone's near edge, so a price inside
+        # the zone reports zero or less.
+        to_above = features.get("origin_above_vol")
+        to_below = features.get("origin_below_vol")
+        if to_above is None or to_below is None:
+            return Refusal("no_bracket", "the bracket carries no distances", feed)
+        if to_below <= self.REACH_VOL and to_below <= to_above:
+            self._facing = Side.BUY
+        elif to_above <= self.REACH_VOL:
+            self._facing = Side.SELL
+        else:
+            near = min(to_above, to_below)
+            return Refusal(
+                "not_at_origin",
+                f"price is {near:.2f}v from the nearer origin, past the "
+                f"{self.REACH_VOL:.2f}v that counts as trading there",
+                feed,
+            )
+        return None
+
+    def _anchored_stop(
+        self,
+        spec: SymbolSpec,
+        features: dict[str, float],
+        side: Side,
+        level: float,
+        risk_distance: float,
+        unit: float,
+    ) -> float:
+        """Beyond the origin being traded, not beyond the level.
+
+        The level is not what this trade is about. Anchoring there put the stop
+        on the wrong side of the fill outright - a long entered at the lower
+        origin, 2v under the level, got a stop *above* its own entry and was
+        refused as already through.
+
+        The far edge of the zone plus a volatility unit of clearance. Inside
+        the zone is where the wicks are, and a stop placed there is taken out
+        by the rejection the trade exists to trade.
+        """
+        edge = features.get("origin_below_low" if side is Side.BUY else "origin_above_high")
+        if edge is None:
+            return super()._anchored_stop(spec, features, side, level, risk_distance, unit)
+        clearance = self.CLEARANCE_VOL * unit
+        beyond = edge - clearance if side is Side.BUY else edge + clearance
+        return spec.round_price(beyond)
+
+    def target(self, context: Aim) -> float | Refusal:
+        """The opposite origin's near edge."""
+        pair = self.bracket(context.features)
+        if pair is None:
+            return Refusal("no_bracket", "the bracket went away between gate and target", "")
+        below_high, above_low = pair
+        far = above_low if context.side is Side.BUY else below_high
+        return context.spec.round_price(far)
+
+
+@register
 class SweepAware(LevelStrategy):
     """The plain call, refused when the stop is standing in front of the door.
 
