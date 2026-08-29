@@ -68,6 +68,24 @@ MIN_VENUES = 3
 SCALE_LIMIT = 2.0
 
 
+def single_source_feeds() -> frozenset[str]:
+    """Feeds only one venue carries, so `MIN_VENUES` must not apply to them.
+
+    Read from the price catalogue rather than guessed: a feed whose symbol map
+    has exactly one source is one nobody else quotes. Synthetics are the case
+    that matters - they have no underlying, so the broker is not one opinion
+    among several, it is the instrument.
+
+    Import kept local because `structures` does not otherwise depend on
+    `prices`, and a missing catalogue must not stop the engine starting.
+    """
+    try:
+        from ..prices.config import FEEDS
+    except Exception:  # pragma: no cover - prices is always present in practice
+        return frozenset()
+    return frozenset(name for name, feed in FEEDS.items() if len(feed.symbols) <= 1)
+
+
 class BarConsensus:
     """Median close per (instrument, interval), for the drift detector.
 
@@ -209,7 +227,10 @@ class Watcher:
         #: Key levels and what they do when price arrives. Fed by both bars
         #: (which form the levels) and quotes (which detect the touch in time
         #: to matter - waiting for a 5m close reports it after the fact).
-        self.engine = Engine(charge_spread=self.settings.charge_spread)
+        self.engine = Engine(
+            charge_spread=self.settings.charge_spread,
+            single_source=single_source_feeds(),
+        )
         #: What the hour of the day has been worth, per instrument. Learns
         #: from resolutions and from the volatility it sees; asserts
         #: nothing until an hour has earned it.

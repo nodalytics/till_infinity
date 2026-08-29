@@ -191,6 +191,20 @@ class Consensus(Restorable):
     rather than waiting for a venue that may never report.
     """
 
+    #: Feeds carried by a single source, which need no agreement because there
+    #: is none to be had.
+    #:
+    #: `MIN_VENUES` exists because a median of two is one venue's opinion
+    #: wearing a median's clothes. That argument does not reach an instrument
+    #: only one place quotes: a synthetic has no underlying, so the broker is
+    #: not *a* source for it, it is the *only* source, and the price it gives
+    #: is the instrument by definition.
+    #:
+    #: Without this the block was total and silent - nine synthetics quoted,
+    #: were selected in the terminal, published onto the bus, and produced not
+    #: one level between them, because a lone venue never reached three.
+    single_source: frozenset[str] = frozenset()
+
     #: (feed, interval) -> ts -> venue -> (high, low, close)
     _bars: dict[tuple[str, str], dict[int, dict[str, tuple[float, float, float]]]] = field(
         default_factory=dict
@@ -208,7 +222,7 @@ class Consensus(Restorable):
         if len(bars) > 4:
             for stale in sorted(bars)[:-4]:
                 del bars[stale]
-        if len(at) < MIN_VENUES:
+        if len(at) < (1 if feed in self.single_source else MIN_VENUES):
             return None
         return (
             statistics.median([h for h, _, _ in at.values()]),
@@ -582,6 +596,7 @@ class Engine:
         charge_spread: bool = True,
         formation: str = "pip",
         run_threshold: float = runs.RUN_SWING_VOL,
+        single_source: frozenset[str] = frozenset(),
     ) -> None:
         #: How swings are found: `pip` selects bar extremes, `run` takes the
         #: boundaries between runs of volatility. An experiment, not a setting
@@ -610,7 +625,7 @@ class Engine:
         #: delay and exist before price has ever turned there.
         self.sessions = pivots.Sessions()
         #: Bars are per venue; levels are not. This makes them one series.
-        self.consensus = Consensus()
+        self.consensus = Consensus(single_source=single_source)
         #: (feed, interval, venue) already reported as arriving with no
         #: high/low. Warned once each rather than per bar - the condition is a
         #: property of the producer, so it either happens always or never, and

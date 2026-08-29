@@ -1751,3 +1751,50 @@ def test_ordinary_venue_disagreement_is_kept():
     assert got is not None
     _, median, _ = got
     assert 82.0 < median < 82.6
+
+
+def test_a_single_source_feed_needs_no_agreement():
+    """`MIN_VENUES` exists because a median of two is one venue's opinion in a
+    median's clothes. That argument does not reach an instrument only one place
+    quotes: a synthetic has no underlying, so the broker is not *a* source, it
+    is the only one.
+
+    Without this the block was total and silent - nine synthetics quoted, were
+    selected in the terminal, published onto the bus, and produced not one
+    level between them.
+    """
+    from till_infinity.structures.engine import Consensus
+
+    lone = Consensus(single_source=frozenset({"volatility_75_index"}))
+    got = lone.observe("volatility_75_index", "5m", "BROKER", 1_000, 101.0, 99.0, 100.0)
+    assert got == (101.0, 99.0, 100.0)
+
+
+def test_an_ordinary_feed_still_needs_three_venues():
+    """One venue's opinion must not become a level for anything the group can
+    actually check."""
+    from till_infinity.structures.engine import Consensus
+
+    book = Consensus()
+    assert book.observe("gold", "5m", "OANDA", 1_000, 101.0, 99.0, 100.0) is None
+    assert book.observe("gold", "5m", "TVC", 1_000, 101.2, 99.1, 100.1) is None
+    got = book.observe("gold", "5m", "CAPITALCOM", 1_000, 100.8, 98.9, 99.9)
+    assert got is not None
+
+
+def test_the_single_source_set_is_read_from_the_catalogue():
+    """A feed whose symbol map has one source is one nobody else quotes."""
+    from till_infinity.prices.config import register_broker_feeds
+    from till_infinity.structures.service import single_source_feeds
+
+    added = register_broker_feeds(["Single Source Test Index"])
+    try:
+        lone = single_source_feeds()
+        assert "single_source_test_index" in lone
+        # A properly multi-venue feed is not in it.
+        assert "gold" not in lone
+    finally:
+        from till_infinity.prices.config import FEEDS
+
+        for slug in added:
+            FEEDS.pop(slug, None)
