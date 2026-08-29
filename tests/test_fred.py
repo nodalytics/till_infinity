@@ -86,3 +86,26 @@ def test_the_breakeven_identity_is_what_it_claims():
     real = parse(payload([("2026-08-27", "2.34")]), "DFII10")[0].value
     breakeven = parse(payload([("2026-08-27", "2.31")]), "T10YIE")[0].value
     assert abs((nominal - real) - breakeven) < 0.05
+
+
+def test_the_source_list_is_reachable_from_settings():
+    """It was not: `stack` called `collect` without one, so the default won and
+    nothing a deployment said could change it. `fred` was configured on a live
+    box with its key present and was never constructed, with no error to say
+    so."""
+    import os
+    from unittest import mock
+
+    assert Settings().sources == ()
+    with mock.patch.dict(os.environ, {"NEWS_SOURCES": "rss,imf,fred"}):
+        assert Settings.from_env().sources == ("rss", "imf", "fred")
+
+
+def test_the_stack_hands_the_source_list_to_collect():
+    """The setting existing is not the same as it arriving."""
+    import inspect
+
+    from till_infinity import stack
+
+    source = inspect.getsource(stack.Stack._run_news)
+    assert "sources=settings.sources or None" in source

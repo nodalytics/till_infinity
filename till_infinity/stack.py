@@ -384,6 +384,10 @@ class Stack:
             await nw.collect(
                 settings=settings,
                 store=store,
+                # Chosen rather than defaulted. Without this the default source
+                # list won whatever a deployment asked for, silently: `fred`
+                # was configured with its key present and was never built.
+                sources=settings.sources or None,
                 cycles=1 if self.plan.once else None,
                 bus=self.bus,
             )

@@ -148,6 +148,12 @@ once one is awake. See [agents.md](agents.md), "News can wake the analyst".
 `NEWS_DIR`, `NEWS_DB`, `NEWS_POLL`, `NEWS_CAL_POLL`, `NEWS_CAL_BACK_DAYS`,
 `NEWS_CAL_FORWARD_DAYS`, `NEWS_CONCURRENCY`, `NEWS_RETRIES`, `NEWS_USER_AGENT`.
 
+`NEWS_SOURCES` selects which of these to poll; empty takes the default set.
+Worth stating because it did not work: `stack` called `collect` without a source
+list, so the default won whatever a deployment asked for. `fred` was configured
+on a live box with its key present and its name in the environment, and the
+source was never constructed - no error, because nothing read it.
+
 ## Monetary policy, as data
 
 The calendar says *when* a central bank will speak. This says what its policy

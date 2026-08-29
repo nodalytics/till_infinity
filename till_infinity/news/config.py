@@ -104,6 +104,14 @@ class Settings:
     #: Required for `fred`, which refuses to poll without it rather than
     #: collecting nothing: the keyless endpoint answers 400.
     fred_api_key: str = ""
+    #: Which providers to poll. Empty means `DEFAULT_SOURCES`.
+    #:
+    #: A setting because it was not one: `stack` called `collect` without a
+    #: source list, so the default won and nothing a deployment said could
+    #: change it. `fred` was configured on a live box, the key was present, the
+    #: name was in the environment - and the source was never constructed, with
+    #: no error to say so, because nothing read it.
+    sources: tuple[str, ...] = ()
     user_agent: str = DEFAULT_USER_AGENT
 
     def __post_init__(self) -> None:
@@ -130,4 +138,5 @@ class Settings:
                 n.strip() for n in (_env("FRED_SERIES") or "").split(",") if n.strip()
             ),
             fred_api_key=_env("FRED_API_KEY") or "",
+            sources=tuple(n.strip() for n in (_env("NEWS_SOURCES") or "").split(",") if n.strip()),
         )
