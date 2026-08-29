@@ -5766,3 +5766,85 @@ def test_the_short_stop_clears_the_upper_origin():
     assert isinstance(got, Intent)
     assert got.stop > 4415.0
     assert got.target < got.entry < got.stop
+
+
+async def test_the_ensemble_reading_lands_where_strategies_look():
+    """Into `features`, not the top level. `_features` reads
+    `payload["features"]` and nothing else, so a top-level key is invisible to
+    every strategy - the gate reads zero and refuses nothing while looking
+    configured. That has happened here before, with `pressure_vol`."""
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+    # The volatility unit comes from the last signal for this feed, so the
+    # accumulators are inert until one has arrived.
+    trader._vol_bps["gold"] = 10.0
+    price = 4400.0
+    for step in range(0, 3600, 30):
+        price += 1.0
+        await trader.handle(
+            Message(
+                topic=QUOTES,
+                payload={
+                    "feed": "gold",
+                    "bid": price - 0.5,
+                    "ask": price + 0.5,
+                    "time": NOW + step,
+                },
+            )
+        )
+    payload = signal()
+    trader._hand_over_pressure("gold", payload)
+
+    assert "momentum_agree" in payload["features"]
+    assert "momentum_agree" not in payload
+    assert payload["features"]["momentum_ready"] > 0
+
+
+def test_the_swing_refuses_a_trade_the_timeframes_disagree_with():
+    """One timeframe moving alone is what a touch looks like."""
+    engine = strategy("origin-swing")
+    against = _bracketed(
+        features={
+            "origin_below_vol": 0.1,
+            "momentum_ready": 5.0,
+            "momentum_agree": -1.0,  # every sub-hour timeframe pointing down
+        }
+    )
+    got = engine.consider(
+        against, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0
+    )
+    assert isinstance(got, Refusal)
+    assert got.gate == "momentum"
+
+
+def test_the_swing_takes_a_trade_the_timeframes_are_behind():
+    engine = strategy("origin-swing")
+    behind = _bracketed(
+        features={
+            "origin_below_vol": 0.1,
+            "momentum_ready": 5.0,
+            "momentum_agree": 1.0,
+        }
+    )
+    got = engine.consider(
+        behind, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert got.side is Side.BUY
+
+
+def test_a_cold_ensemble_does_not_refuse_anything():
+    """A gate that refuses because the reading is missing is a gate that stops
+    all trading on a fresh container, which has happened here once already."""
+    engine = strategy("origin-swing")
+    cold = _bracketed(features={"origin_below_vol": 0.1})
+    assert "momentum_ready" not in cold["features"]
+    got = engine.consider(
+        cold, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+
+
+def test_the_agreement_gate_is_off_for_the_scalps():
+    for name in ("level-scalp", "snap", "confluence-scalp"):
+        assert strategy(name).min_momentum_agree == 0.0

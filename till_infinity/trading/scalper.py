@@ -197,6 +197,18 @@ class LevelStrategy(Strategy):
         """
         settings = self.settings
 
+        agree_at = self.min_momentum_agree
+        if agree_at > 0 and features.get("momentum_ready"):
+            agreement = _number(features, "momentum_agree")
+            facing = agreement if side is Side.BUY else -agreement
+            if facing < agree_at:
+                return Refusal(
+                    "momentum",
+                    f"the sub-hour timeframes are {facing:+.2f} behind this "
+                    f"{side.name.lower()}, under the {agree_at:.2f} it needs",
+                    feed,
+                )
+
         probability = _number(features, "probability")
         # The bar for *this* direction. A single absolute number let 96% of
         # sells through and refused one buy in five, because the two
@@ -1389,6 +1401,11 @@ class OriginSwing(LevelStrategy):
 
     #: Both witnesses, not either. See `needs_both_witnesses`.
     needs_both_witnesses: ClassVar[bool] = True
+
+    #: More than half the sub-hour timeframes pointing the trade's way. An
+    #: origin price merely touched is not an origin that rejected it, and one
+    #: timeframe moving alone is what a touch looks like.
+    min_momentum_agree: ClassVar[float] = 0.5
 
     #: How far past the origin's far edge the stop sits, in volatility units,
     #: so the instrument's own noise sets the buffer rather than a fixed number

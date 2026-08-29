@@ -301,6 +301,18 @@ class Strategy(ABC):
     #: failed here, the momentum ensemble says it is failing now.
     needs_both_witnesses: ClassVar[bool] = False
 
+    #: How much of the sub-hour momentum ensemble must point the way the trade
+    #: does, from 0 (ask nothing) to 1 (every timeframe).
+    #:
+    #: Agreement is the reading a single filter cannot give: momentum on 1m and
+    #: nowhere else is noise, the same move on 1m, 5m and 15m at once is the
+    #: market doing one thing at several resolutions.
+    #:
+    #: **Silent when the ensemble is cold.** A gate that refuses because the
+    #: reading is missing is a gate that stops all trading on a fresh
+    #: container, which this repository has done once already.
+    min_momentum_agree: ClassVar[float] = 0.0
+
     @property
     def intervals(self) -> tuple[str, ...]:
         """Timeframes this strategy will trigger on.

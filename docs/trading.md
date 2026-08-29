@@ -586,6 +586,28 @@ to trade. Anchoring on the level, as every other strategy does, put the stop on
 the wrong side of the fill outright: a long at the lower origin, 2v under the
 level, got a stop *above* its own entry and was refused as already through.
 
+**The momentum is an ensemble, not one filter.** A single tick-driven CUSUM
+answers "is there momentum" at one speed, and which speed that is happens to be
+an accident of how often quotes arrive - a burst on a quiet instrument and a
+drift on a busy one accumulate identically. `Ensemble` runs one member per
+sub-hour timeframe (1m, 3m, 5m, 15m, 30m), each sampled at its own cadence, and
+reports what no single filter can: **agreement**. Momentum on 1m and nowhere
+else is noise; the same move on 1m, 5m and 15m at once is the market doing one
+thing at several resolutions. `min_momentum_agree` is what a strategy asks for,
+and it is 0.5 on `origin-swing` and zero everywhere else.
+
+Two details that are not incidental. `pressure_vol` is still published from the
+single filter, because `require_turn_vol` is calibrated against it and swapping
+the number underneath a threshold silently recalibrates it. And a member that
+has just *fired* reads a pressure of exactly zero - a CUSUM resets on firing -
+so agreement falls back to the side of that member's last event. Counting a
+confirmed run as an abstention would make the ensemble quietest precisely when
+the market is loudest.
+
+The gate is silent while the ensemble is cold. A gate that refuses for want of
+a reading is a gate that stops all trading on a fresh container, which has
+happened here once already.
+
 **Both witnesses, not either.** The 4h rejection candle says the auction failed
 there; the momentum ensemble below 1h says it is failing *now*. The disjunction
 the scalps use is right for them - a scalp cannot wait four hours for a bar to

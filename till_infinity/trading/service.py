@@ -36,7 +36,7 @@ from typing import Any
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
-from ..structures.cusum import Cusum
+from ..structures.cusum import Cusum, Ensemble
 from ..structures.holds import Book as HoldBook
 from ..structures.levels import SECONDS
 from ..structures.reach import Reaches
@@ -238,6 +238,11 @@ class Trader:
         #: accumulation is the state and mixing instruments into it would
         #: measure nothing.
         self._push: dict[str, Cusum] = {}
+        #: The same momentum question asked at several sub-hour resolutions.
+        #: The single filter above answers "is there momentum" at whatever
+        #: speed quotes happen to arrive; this one can also say whether the
+        #: timeframes agree, which is what a swing entry at an origin turns on.
+        self._ensemble: dict[str, Ensemble] = {}
         #: Trend context per feed and interval. Keyed on both because the
         #: efficiency of 1m levels and of 15m levels on one instrument are
         #: different markets, and pooling them measures neither.
@@ -568,6 +573,7 @@ class Trader:
         unit = price_distance(tick.mid, self._vol_bps.get(feed, 0.0), 1.0)
         if unit > 0:
             self._push.setdefault(feed, Cusum()).push(tick.mid, unit, when=when)
+            self._ensemble.setdefault(feed, Ensemble()).push(tick.mid, unit, when=when)
         # The paper book holds its own stops, so it has to see the market. When
         # the execution venue *is* the broker they are the same object and this
         # runs once.
@@ -1136,8 +1142,17 @@ class Trader:
         if running is None:
             return
         features = payload.setdefault("features", {})
-        if isinstance(features, dict):
-            features["pressure_vol"] = running.pressure
+        if not isinstance(features, dict):
+            return
+        features["pressure_vol"] = running.pressure
+        # The ensemble's own reading, alongside rather than instead of the
+        # single filter: `require_turn_vol` is calibrated against that one, and
+        # swapping the number underneath a threshold silently recalibrates it.
+        group = self._ensemble.get(feed)
+        if group is not None and group.ready:
+            features["momentum_vol"] = group.pressure
+            features["momentum_agree"] = group.agreement
+            features["momentum_ready"] = float(group.ready)
 
     async def _rejected_at(self, intent: Intent, engine: Strategy | None = None) -> Refusal | None:
         """Refuse a trade nothing has confirmed yet. Either witness will do.

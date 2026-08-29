@@ -149,3 +149,113 @@ class Cusum(Restorable):
         enough in one direction to count.
         """
         return self.up + self.down
+
+
+#: The timeframes an ensemble reads, all below 1h. Above that the swing's own
+#: context timeframes already speak, and they answer a different question:
+#: whether the level is real, not whether it is being rejected right now.
+SUB_HOUR: tuple[str, ...] = ("1m", "3m", "5m", "15m", "30m")
+
+#: Seconds per interval, kept here rather than imported so this module stays
+#: free of the level machinery.
+CADENCE: dict[str, float] = {
+    "1m": 60.0,
+    "3m": 180.0,
+    "5m": 300.0,
+    "15m": 900.0,
+    "30m": 1_800.0,
+}
+
+
+@dataclass
+class Ensemble(Restorable):
+    """One CUSUM per sub-hour timeframe, read together.
+
+    A single tick-driven filter answers "is there momentum" at one speed, and
+    which speed it happens to be is an accident of how often quotes arrive. A
+    burst on a quiet instrument and a drift on a busy one produce the same
+    accumulation for different reasons.
+
+    Several filters, each sampled at its own cadence, separate those. Momentum
+    that shows on 1m and nowhere else is noise; momentum that shows on 1m, 5m
+    and 15m at once is the market doing one thing at several resolutions. What
+    the ensemble adds over any single member is **agreement**, which is the
+    part a single filter cannot report however it is tuned.
+
+    Members are sampled rather than resampled: a tick is handed to a member
+    only once its interval has elapsed since that member last saw one. That
+    makes each member a filter over that timeframe's closes without needing
+    bars, which matters because this is fed from the quote stream.
+    """
+
+    intervals: tuple[str, ...] = SUB_HOUR
+    threshold: float = THRESHOLD
+    members: dict[str, Cusum] = field(default_factory=dict)
+    seen_at: dict[str, float] = field(default_factory=dict)
+
+    def push(self, price: float, unit: float, when: float = 0.0) -> None:
+        """Feed one price to whichever members are due for it."""
+        for interval in self.intervals:
+            every = CADENCE.get(interval, 0.0)
+            if every <= 0:
+                continue
+            last = self.seen_at.get(interval)
+            if last is not None and when - last < every:
+                continue
+            self.seen_at[interval] = when
+            self.members.setdefault(interval, Cusum(threshold=self.threshold)).push(
+                price, unit, when=when
+            )
+
+    @property
+    def ready(self) -> int:
+        """How many members have seen enough to have an opinion."""
+        return sum(1 for m in self.members.values() if m.started)
+
+    @property
+    def pressure(self) -> float:
+        """The members' mean accumulation, in volatility units.
+
+        The mean rather than the sum, so the reading does not change scale when
+        a member is added or is not yet warm - it stays comparable with the
+        single-filter reading it replaces, and with `require_turn_vol`, which
+        is calibrated in those units.
+        """
+        warm = [m.pressure for m in self.members.values() if m.started]
+        return sum(warm) / len(warm) if warm else 0.0
+
+    @staticmethod
+    def _opinion(member: Cusum) -> int:
+        """Which way one member is pointing: 1, -1, or 0 for no view.
+
+        **The accumulator alone is not enough.** A CUSUM resets when it fires,
+        so a member that has just confirmed a run reads a pressure of exactly
+        zero - the strongest case it can report looks identical to a flat
+        market. Falling back to the side of its last event is what keeps a
+        confirmed run counted as a view rather than an abstention.
+        """
+        if member.pressure > 0:
+            return 1
+        if member.pressure < 0:
+            return -1
+        if member.events:
+            return 1 if member.events[-1].side == "up" else -1
+        return 0
+
+    @property
+    def agreement(self) -> float:
+        """Signed share of warm members pointing the same way, -1 to 1.
+
+        1.0 is every timeframe pushing up, -1.0 every one pushing down, and
+        zero either a split or nothing moving. This is the reading a single
+        filter cannot give, and the reason for the ensemble.
+
+        Divided by every warm member, not only those with a view, so a
+        timeframe that is genuinely flat dilutes the reading. That is the
+        honest answer: not all of them agree.
+        """
+        warm = [m for m in self.members.values() if m.started]
+        if not warm:
+            return 0.0
+        views = [self._opinion(m) for m in warm]
+        return sum(views) / len(warm)
