@@ -839,12 +839,32 @@ class ApproachScalp(LevelStrategy):
         "confirming call. Targets the next level instead of the push."
     )
     #: Forty-five minutes. See the last paragraph above.
-    hold_seconds: ClassVar[float] = 2_700.0
-    #: Wider than the scalpers, because it holds for longer and because the
-    #: distance to the next level is what it trades - on 15m that distance is
-    #: worth crossing, where on 1m it is often inside the spread.
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
-    context: ClassVar[tuple[str, ...]] = ("1h", "4h", "1d")
+    #: Four 1h bars. A swing enters on 1h, and a hold shorter than its own
+    #: entry bar is incoherent: the trade would be closed on its clock before
+    #: the bar it was entered on had finished forming, and every level beyond
+    #: about a unit reads as unreachable in the one bar available. That is not
+    #: a conservative filter, it is a strategy that refuses everything - which
+    #: is how the forty-five minute hold showed up the moment the entry moved
+    #: to 1h.
+    hold_seconds: ClassVar[float] = 4 * 3_600.0
+
+    #: **The swing contract.** Entry on 1h; 2h, 4h, 1d and 1w are compulsory
+    #: context; the timeframes below 1h are optional and contribute momentum
+    #: rather than agreement.
+    #:
+    #: The division of labour is the point. The slow timeframes say *whether* -
+    #: a level several hours of auction respected - and the fast ones say
+    #: *when*, through the momentum accumulator. Asking a 1m series whether a
+    #: weekly level is real is asking the wrong series; asking a weekly bar to
+    #: time an entry is asking it to answer four hours late.
+    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
+    needs_context: ClassVar[bool] = True
+
+    #: The rejection has to show on 4h. A pin bar there is a claim that several
+    #: hours of auction failed at this price; the same shape on the 1h entry
+    #: bar is one hour's worth.
+    candle_interval: ClassVar[str] = "4h"
 
     def __init__(self, settings) -> None:
         super().__init__(settings)
@@ -1116,6 +1136,11 @@ class Runner(LevelStrategy):
 
     name: ClassVar[str] = "runner"
 
+    #: Four 1h bars, for the same reason the other swings carry one: `runner`
+    #: took `max_hold`, which is thirty minutes, and a 1h entry cannot be held
+    #: for half its own bar.
+    hold_seconds: ClassVar[float] = 4 * 3_600.0
+
     #: A swing by target rather than by clock: `target_multiple` 3.0 puts
     #: the exit past the modelled push, which is riding a move rather than
     #: taking a reaction.
@@ -1124,8 +1149,24 @@ class Runner(LevelStrategy):
         "The level call with the target moved out past the push distribution, "
         "so the trail ends the trade rather than the cap. Trades the tail."
     )
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
-    context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+
+    #: **The swing contract.** Entry on 1h; 2h, 4h, 1d and 1w are compulsory
+    #: context; the timeframes below 1h are optional and contribute momentum
+    #: rather than agreement.
+    #:
+    #: The division of labour is the point. The slow timeframes say *whether* -
+    #: a level several hours of auction respected - and the fast ones say
+    #: *when*, through the momentum accumulator. Asking a 1m series whether a
+    #: weekly level is real is asking the wrong series; asking a weekly bar to
+    #: time an entry is asking it to answer four hours late.
+    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
+    needs_context: ClassVar[bool] = True
+
+    #: The rejection has to show on 4h. A pin bar there is a claim that several
+    #: hours of auction failed at this price; the same shape on the 1h entry
+    #: bar is one hour's worth.
+    candle_interval: ClassVar[str] = "4h"
     #: Three times the modelled push. With the push capped near 1.3v that lands
     #: around 4v - close to the ninetieth percentile of what touches actually
     #: reach, so it bounds the trade without being what normally ends it.
@@ -1228,9 +1269,24 @@ class SwingLevel(LevelStrategy):
     description: ClassVar[str] = (
         "Bias from 4h/1d/1w, trigger as low as 15m for a tighter stop. Held for hours."
     )
-    entries: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
-    context: ClassVar[tuple[str, ...]] = ("4h", "1d", "1w")
+
+    #: **The swing contract.** Entry on 1h; 2h, 4h, 1d and 1w are compulsory
+    #: context; the timeframes below 1h are optional and contribute momentum
+    #: rather than agreement.
+    #:
+    #: The division of labour is the point. The slow timeframes say *whether* -
+    #: a level several hours of auction respected - and the fast ones say
+    #: *when*, through the momentum accumulator. Asking a 1m series whether a
+    #: weekly level is real is asking the wrong series; asking a weekly bar to
+    #: time an entry is asking it to answer four hours late.
+    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
+
+    #: The rejection has to show on 4h. A pin bar there is a claim that several
+    #: hours of auction failed at this price; the same shape on the 1h entry
+    #: bar is one hour's worth.
+    candle_interval: ClassVar[str] = "4h"
     #: Six hours. A daily level does not resolve inside a scalper's half hour.
     hold_seconds: ClassVar[float] = 6 * 3_600.0
     #: More room than a scalp, because the level is placed on slower data and
@@ -1386,9 +1442,32 @@ class FadeToValue(LevelStrategy):
     description: ClassVar[str] = (
         "Takes the distance from spot to the best-evidenced level. The thesis, plainly."
     )
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
-    context: ClassVar[tuple[str, ...]] = ("1h", "4h", "1d")
-    hold_seconds: ClassVar[float] = 2_700.0
+
+    #: **The swing contract.** Entry on 1h; 2h, 4h, 1d and 1w are compulsory
+    #: context; the timeframes below 1h are optional and contribute momentum
+    #: rather than agreement.
+    #:
+    #: The division of labour is the point. The slow timeframes say *whether* -
+    #: a level several hours of auction respected - and the fast ones say
+    #: *when*, through the momentum accumulator. Asking a 1m series whether a
+    #: weekly level is real is asking the wrong series; asking a weekly bar to
+    #: time an entry is asking it to answer four hours late.
+    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
+    needs_context: ClassVar[bool] = True
+
+    #: The rejection has to show on 4h. A pin bar there is a claim that several
+    #: hours of auction failed at this price; the same shape on the 1h entry
+    #: bar is one hour's worth.
+    candle_interval: ClassVar[str] = "4h"
+    #: Four 1h bars. A swing enters on 1h, and a hold shorter than its own
+    #: entry bar is incoherent: the trade would be closed on its clock before
+    #: the bar it was entered on had finished forming, and every level beyond
+    #: about a unit reads as unreachable in the one bar available. That is not
+    #: a conservative filter, it is a strategy that refuses everything - which
+    #: is how the forty-five minute hold showed up the moment the entry moved
+    #: to 1h.
+    hold_seconds: ClassVar[float] = 4 * 3_600.0
 
     def __init__(self, settings) -> None:
         super().__init__(settings)

@@ -1681,3 +1681,24 @@ def test_the_published_resolution_carries_adverse_excursion():
     source = inspect.getsource(svc)
     assert '"adverse_vol": round(touch.adverse_vol, 4),' in source
     assert '"excursion_vol": round(touch.excursion_vol, 4),' in source
+
+
+def test_the_origin_zone_is_published_in_prices():
+    """The scoring fields describe an origin without saying where it is, which
+    is enough to judge a level and not enough to enter at one. Resting an order
+    at the edge of the zone needs the edge, and `origin_distance_vol` is an
+    absolute distance that has lost its direction."""
+    from till_infinity.structures import origins
+
+    origin = origins.Origin(
+        price=100.0,
+        low=99.0,
+        high=101.0,
+        launched="up",
+        size_vol=2.0,
+        when=0.0,
+    )
+    published = origin.to_dict()
+    assert published["low"] == 99.0
+    assert published["high"] == 101.0
+    assert published["price"] == 100.0

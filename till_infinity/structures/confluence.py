@@ -94,7 +94,7 @@ ORDER: tuple[str, ...] = (
 #: timeframe, the more a "level" is session noise wearing a price. 1m is here
 #: to be *measured* against the outcome machinery that grades every other
 #: timeframe, and it earns its place or it does not.
-TIMEFRAMES: tuple[str, ...] = ("1m", "3m", "5m", "15m", "1h", "4h", "1d", "1w")
+TIMEFRAMES: tuple[str, ...] = ("1m", "3m", "5m", "15m", "1h", "2h", "4h", "1d", "1w")
 
 #: Alias kept for readers who think of it as a span rather than a list.
 DEFAULT_SPAN: tuple[str, ...] = TIMEFRAMES

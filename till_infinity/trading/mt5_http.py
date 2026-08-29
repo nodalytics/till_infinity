@@ -394,6 +394,7 @@ class HttpBroker(Broker):
         "15m": "M15",
         "30m": "M30",
         "1h": "H1",
+        "2h": "H2",
         "4h": "H4",
         "1d": "D1",
         "1w": "W1",

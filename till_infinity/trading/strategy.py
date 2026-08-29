@@ -280,6 +280,17 @@ class Strategy(ABC):
     #: Whether an entry is refused when no context timeframe agrees.
     needs_context: ClassVar[bool] = False
 
+    #: The timeframe whose last closed bar must show the rejection, when the
+    #: candle witness is asked for. Empty means the entry interval, which is
+    #: what a scalp wants: it is entering on that bar's evidence.
+    #:
+    #: A swing wants the opposite. It enters on 1h but the rejection that
+    #: matters is the 4h one - a pin bar there is a claim several hours of
+    #: auction failed at this price, where the same shape on 1h is one hour's
+    #: worth. Naming the timeframe separately is what lets the entry be fast
+    #: and the evidence slow.
+    candle_interval: ClassVar[str] = ""
+
     @property
     def intervals(self) -> tuple[str, ...]:
         """Timeframes this strategy will trigger on.

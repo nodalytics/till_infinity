@@ -85,6 +85,15 @@ def signal(**over):
     return payload
 
 
+def swing(**over):
+    """A level call as a swing strategy needs one: entered on 1h, with a
+    compulsory high timeframe agreeing. The four swings moved to this contract
+    when the entry/context split was made explicit."""
+    over.setdefault("interval", "1h")
+    over.setdefault("confluence", ["1h", "4h", "1d"])
+    return signal(**over)
+
+
 def settings(**over):
     made = td.Settings(symbols=("gold",), account_equity=10_000.0, paper_equity=10_000.0)
     for key, value in over.items():
@@ -422,41 +431,41 @@ def test_the_book_finds_the_next_level_each_way():
 def test_approach_scalp_buys_up_to_the_level_above():
     engine = strategy("approach-scalp")
     # A level above, and the confirming call at the one price is standing on.
-    engine.observe(signal(features={"level": 4420.0}))  # 4.4v above the fill
-    engine.observe(signal())
+    engine.observe(swing(features={"level": 4410.0}))  # 2.2v above the fill
+    engine.observe(swing())
     got = engine.consider(
-        signal(),
+        swing(),
         spec=GOLD,
         tick=Tick("XAUUSD", bid=4399.5, ask=4400.5),
         equity=10_000.0,
     )
     assert isinstance(got, Intent)
-    # Short of 4420 by the quarter-unit buffer (0.25 * 4.40 = 1.10), because
+    # Short of 4410 by the quarter-unit buffer (0.25 * 4.40 = 1.10), because
     # the last stretch into the zone is the part magnet.md says nothing about.
-    assert got.target == pytest.approx(4418.9)
+    assert got.target == pytest.approx(4408.9)
     # The stop is still anchored beyond the confirming level, not the target.
     assert got.stop == pytest.approx(4395.6)
-    assert got.hold == pytest.approx(2_700.0)
+    assert got.hold == pytest.approx(4 * 3_600.0)
 
 
 def test_approach_scalp_sells_down_to_the_level_below():
     engine = strategy("approach-scalp")
-    engine.observe(signal(features={"level": 4380.0}))  # 4.4v below the fill
-    down = signal(direction="down")
+    engine.observe(swing(features={"level": 4390.0}))  # 2.2v below the fill
+    down = swing(direction="down")
     engine.observe(down)
     got = engine.consider(
         down, spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
     )
     assert isinstance(got, Intent)
     assert got.side is Side.SELL
-    assert got.target == pytest.approx(4381.1)  # 4380 + the buffer
+    assert got.target == pytest.approx(4391.1)  # 4390 + the buffer
 
 
 def test_approach_scalp_refuses_when_it_knows_of_no_level_to_aim_at():
     engine = strategy("approach-scalp")
-    engine.observe(signal())
+    engine.observe(swing())
     got = engine.consider(
-        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+        swing(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
     )
     assert isinstance(got, Refusal)
     assert got.gate == "no_target"
@@ -464,10 +473,10 @@ def test_approach_scalp_refuses_when_it_knows_of_no_level_to_aim_at():
 
 def test_approach_scalp_refuses_a_level_too_far_to_reach_in_the_hold():
     engine = strategy("approach-scalp")
-    engine.observe(signal(features={"level": 4700.0}))  # ~68 volatility units
-    engine.observe(signal())
+    engine.observe(swing(features={"level": 4700.0}))  # ~68 volatility units
+    engine.observe(swing())
     got = engine.consider(
-        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+        swing(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
     )
     assert isinstance(got, Refusal)
     assert got.gate == "too_far"
@@ -1755,8 +1764,8 @@ def test_a_strategy_separates_where_it_triggers_from_where_its_bias_comes_from()
     """
     made = settings()
     swing = td.STRATEGIES["swing-level"](made)
-    assert swing.intervals == ("15m", "1h", "4h")
-    assert swing.anchors == ("4h", "1d", "1w")
+    assert swing.intervals == ("1h",)
+    assert swing.anchors == ("2h", "4h", "1d", "1w")
     # Its lowest trigger is well below its highest anchor.
     assert swing.intervals[0] not in ("1d", "1w")
     assert swing.hold_seconds > td.STRATEGIES["level-scalp"](made).hold_seconds
@@ -1822,7 +1831,8 @@ def test_a_strategy_declares_its_own_timeframes():
     """
     made = settings()
     assert td.STRATEGIES["level-scalp"](made).intervals == ("1m", "3m", "5m")
-    assert "15m" in td.STRATEGIES["approach-scalp"](made).intervals
+    # approach-scalp is a swing now: it enters on 1h, not on the fast set.
+    assert td.STRATEGIES["approach-scalp"](made).intervals == ("1h",)
     # The council takes whatever the operator allows and judges it itself.
     assert td.STRATEGIES["council"](made).intervals == made.intervals
 
@@ -1979,10 +1989,10 @@ def test_fair_value_is_the_best_evidenced_level_not_the_nearest():
 
 def test_a_price_below_fair_value_is_a_long():
     engine = fade()
-    engine.observe(signal(features={"level": 4425.0, "record_n": 40.0}))
-    engine.observe(signal())
+    engine.observe(swing(features={"level": 4425.0, "record_n": 40.0}))
+    engine.observe(swing())
     got = engine.consider(
-        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+        swing(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
     )
     assert isinstance(got, Intent)
     assert got.side is Side.BUY
@@ -1992,10 +2002,10 @@ def test_a_price_below_fair_value_is_a_long():
 
 def test_a_price_above_fair_value_is_a_short():
     engine = fade()
-    engine.observe(signal(features={"level": 4375.0, "record_n": 40.0}))
-    engine.observe(signal())
+    engine.observe(swing(features={"level": 4375.0, "record_n": 40.0}))
+    engine.observe(swing())
     got = engine.consider(
-        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+        swing(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
     )
     assert isinstance(got, Intent)
     assert got.side is Side.SELL
@@ -2006,10 +2016,10 @@ def test_a_price_above_fair_value_is_a_short():
 def test_a_price_at_fair_value_has_nothing_to_say():
     """Inside one volatility unit the distance is the noise of the estimate."""
     engine = fade()
-    engine.observe(signal(features={"level": 4402.0, "record_n": 40.0}))
-    engine.observe(signal())
+    engine.observe(swing(features={"level": 4402.0, "record_n": 40.0}))
+    engine.observe(swing())
     got = engine.consider(
-        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+        swing(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
     )
     assert isinstance(got, Refusal)
     assert got.gate == "at_value"
@@ -2019,9 +2029,9 @@ def test_a_level_with_too_little_history_is_not_a_valuation():
     engine = fade()
     # The only level it knows of has been touched once, so there is nothing to
     # price against. The triggering call is deliberately not observed either.
-    engine.observe(signal(features={"level": 4425.0, "record_n": 1.0}))
+    engine.observe(swing(features={"level": 4425.0, "record_n": 1.0}))
     got = engine.consider(
-        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+        swing(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
     )
     assert isinstance(got, Refusal)
     assert got.gate == "no_value"
@@ -2030,10 +2040,10 @@ def test_a_level_with_too_little_history_is_not_a_valuation():
 def test_the_fade_stop_sits_beyond_the_level_price_is_standing_at():
     """That is where this reading of value is wrong."""
     engine = fade()
-    engine.observe(signal(features={"level": 4425.0, "record_n": 40.0}))
-    engine.observe(signal())
+    engine.observe(swing(features={"level": 4425.0, "record_n": 40.0}))
+    engine.observe(swing())
     got = engine.consider(
-        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+        swing(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
     )
     assert isinstance(got, Intent)
     # The triggering level is 4400; the stop is below it, not below fair value.
@@ -2045,17 +2055,17 @@ def test_the_side_is_arithmetic_once_the_valuation_exists():
     """Nothing is forecast: the same signal gives opposite sides on the
     valuation alone."""
     up, down = fade(), fade()
-    up.observe(signal(features={"level": 4425.0, "record_n": 40.0}))
-    down.observe(signal(features={"level": 4375.0, "record_n": 40.0}))
+    up.observe(swing(features={"level": 4425.0, "record_n": 40.0}))
+    down.observe(swing(features={"level": 4375.0, "record_n": 40.0}))
     for engine in (up, down):
-        engine.observe(signal())
+        engine.observe(swing())
     tick = Tick("XAUUSD", bid=4399.5, ask=4400.5)
-    long = up.consider(signal(), spec=GOLD, tick=tick, equity=10_000.0)
-    short = down.consider(signal(), spec=GOLD, tick=tick, equity=10_000.0)
+    long = up.consider(swing(), spec=GOLD, tick=tick, equity=10_000.0)
+    short = down.consider(swing(), spec=GOLD, tick=tick, equity=10_000.0)
     assert long.side is Side.BUY
     assert short.side is Side.SELL
     # Identical signal, identical direction field on it: only the valuation differs.
-    assert signal()["direction"] == "up"
+    assert swing()["direction"] == "up"
 
 
 # ------------------------------------------ what the terminal actually paid
@@ -4198,7 +4208,7 @@ def test_the_swing_trade_requires_a_high_timeframe():
     is a fast trade wearing a swing's patience."""
     engine = _htf()
     assert engine.needs_context is True
-    assert all(t in ("4h", "1d", "1w") for t in engine.context)
+    assert all(t in ("2h", "4h", "1d", "1w") for t in engine.context)
 
 
 def test_the_swing_trade_never_triggers_below_15m():

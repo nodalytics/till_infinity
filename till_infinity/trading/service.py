@@ -697,7 +697,7 @@ class Trader:
                 return stopped
 
             if park:
-                unconfirmed = await self._rejected_at(verdict)
+                unconfirmed = await self._rejected_at(verdict, engine)
                 if unconfirmed is not None:
                     await self._record_refusal(verdict, unconfirmed, engine.name)
                     return unconfirmed
@@ -1139,7 +1139,7 @@ class Trader:
         if isinstance(features, dict):
             features["pressure_vol"] = running.pressure
 
-    async def _rejected_at(self, intent: Intent) -> Refusal | None:
+    async def _rejected_at(self, intent: Intent, engine: Strategy | None = None) -> Refusal | None:
         """Refuse a trade nothing has confirmed yet. Either witness will do.
 
         A level says where a trade is worth taking and is silent about when.
@@ -1194,7 +1194,7 @@ class Trader:
 
         if wants_candle:
             asked.append("candle")
-            found = await self._candle_at(intent)
+            found = await self._candle_at(intent, engine)
             if found:
                 log.info("trading: %s %s confirmed by a %s", intent.side, intent.feed, found)
                 return None
@@ -1204,7 +1204,7 @@ class Trader:
         witnesses = "/".join(asked)
         return Refusal("unconfirmed", f"nothing confirmed the level ({witnesses})", intent.feed)
 
-    async def _candle_at(self, intent: Intent) -> str:
+    async def _candle_at(self, intent: Intent, engine: Strategy | None = None) -> str:
         """The pattern rejecting this level on the last closed bar, or "".
 
         An unavailable answer is an empty one, not an exception: if the broker
@@ -1213,7 +1213,11 @@ class Trader:
         inactive on every instrument whose bars fail, which is the failure mode
         that looks like working code.
         """
-        bars = await self.execution.bars(intent.symbol, intent.interval, count=3)
+        # A swing enters on 1h and wants the 4h rejection: the entry can be
+        # fast while the evidence is slow. A scalp names nothing and is judged
+        # on the bar it is entering on.
+        interval = (engine.candle_interval if engine else "") or intent.interval
+        bars = await self.execution.bars(intent.symbol, interval, count=3)
         if len(bars) < 2:
             return ""
         level = float(intent.features.get("level") or intent.entry)

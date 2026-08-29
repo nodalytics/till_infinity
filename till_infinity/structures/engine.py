@@ -717,6 +717,15 @@ class Engine:
                 "origin_size_vol": nearest.size_vol,
                 "origin_revisits": float(nearest.revisits),
                 "in_origin": 1.0 if inside else 0.0,
+                # The zone itself, in prices. The four fields above describe an
+                # origin without saying where it is, which is enough to score a
+                # level and not enough to enter at one: a consumer that wants
+                # to rest an order at the edge of the zone needs the edge.
+                # `origin_distance_vol` is an absolute distance and cannot be
+                # turned back into a price - it has lost the direction.
+                "origin_price": nearest.price,
+                "origin_low": nearest.low,
+                "origin_high": nearest.high,
             }
         except Exception as exc:
             log.debug("structures: no origin reading for %s %s: %s", feed, interval, exc)
