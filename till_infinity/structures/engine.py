@@ -631,7 +631,7 @@ class Engine:
         horizon: float = 3600.0,
         shape_horizon: int = SHAPE_HORIZON,
         charge_spread: bool = True,
-        formation: str = "pip",
+        formation: str = "pip,run,origin",
         run_threshold: float = runs.RUN_SWING_VOL,
         single_source: frozenset[str] = frozenset(),
     ) -> None:

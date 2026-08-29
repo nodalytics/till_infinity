@@ -1964,7 +1964,7 @@ def test_the_formation_is_reachable_from_settings():
 
     from till_infinity.structures.config import Settings
 
-    assert Settings().formation == "pip"
+    assert Settings().formation == "pip,run,origin"
     with mock.patch.dict(os.environ, {"STRUCTURES_FORMATION": "origin"}):
         assert Settings.from_env().formation == "origin"
 

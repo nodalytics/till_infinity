@@ -102,7 +102,16 @@ class Settings(Restorable):
     #: The point is to run them over one history and let the outcome machinery
     #: say which price gets respected, which needs the choice to be reachable
     #: from a deployment rather than from a keyword argument nobody sets.
-    formation: str = "pip"
+    #:
+    #: **Three by default**, because they find different prices and merging is
+    #: additive - a pass that draws nothing costs a little work and removes no
+    #: level. `origin` alone draws none at all on gold at 1m, 5m or 15m, so
+    #: selecting it instead of `pip` would have stopped that instrument
+    #: trading; selecting it *alongside* cannot.
+    #:
+    #: `profile` is left out of the default: it is measured but unproven, and
+    #: a default is not the place to find out.
+    formation: str = "pip,run,origin"
 
     @classmethod
     def from_env(cls) -> Settings:
