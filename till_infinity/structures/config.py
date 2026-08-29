@@ -90,8 +90,9 @@ class Settings(Restorable):
 
     #: How swings are found: `pip` takes bar extremes by prominence, `run` the
     #: boundaries between volatility runs, `origin` the turns whose impulse set
-    #: a new running extremum, and `both` runs pip and run as separate passes
-    #: and merges them.
+    #: a new running extremum, `profile` the price bands where the most
+    #: activity happened, and `both` runs pip and run as separate passes and
+    #: merges them.
     #:
     #: A setting because it was not one, and the `origin` formation shipped
     #: unreachable: `Engine` took the argument, nothing passed it, and the

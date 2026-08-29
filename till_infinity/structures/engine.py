@@ -38,6 +38,7 @@ from . import (
     patterns,
     pips,
     pivots,
+    profile,
     reactions,
     regimes,
     runs,
@@ -638,9 +639,9 @@ class Engine:
         #: boundaries between runs of volatility. An experiment, not a setting
         #: to tune in production - the point is to run both over one history
         #: and let the outcome machinery say which price respects more.
-        if formation not in ("pip", "run", "origin", "both"):
+        if formation not in ("pip", "run", "origin", "profile", "both"):
             raise ValueError(
-                f"unknown formation {formation!r} - use 'pip', 'run', 'origin' or 'both'"
+                f"unknown formation {formation!r} - use 'pip', 'run', 'origin', 'profile' or 'both'"
             )
         self.formation = formation
         self.run_threshold = run_threshold
@@ -833,6 +834,8 @@ class Engine:
             )
         if self.formation == "origin":
             return origin_points.points(list(series.times), list(series.closes), vol)
+        if self.formation == "profile":
+            return profile.points(list(series.times), list(series.closes), vol)
         return pips.points(list(series.times), list(series.closes), self.pip_count)
 
     def _form(self, series: Series, visible: Sequence[pips.Point], vol: Volatility):
