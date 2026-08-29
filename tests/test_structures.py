@@ -1902,3 +1902,23 @@ def test_a_missing_or_malformed_origin_is_ignored():
     assert _widen_to_origin(99.0, 101.0, {"in_origin": 1.0}) == (99.0, 101.0)
     upside_down = {"in_origin": 1.0, "origin_low": 103.0, "origin_high": 98.0}
     assert _widen_to_origin(99.0, 101.0, upside_down) == (99.0, 101.0)
+
+
+def test_an_origins_time_is_its_turn_and_its_settling_is_the_break():
+    """`price` is the turn's price, so `when` has to be the turn's time - it
+    was the detection window's start, which sits at or before it. And an origin
+    is not knowable until its impulse breaks structure, which is later still:
+    reading `when` as the knowable moment is a look-ahead bug."""
+    from till_infinity.structures.origins import Origins
+
+    prices = [90.0, 110.0, 95.0, 108.0, 100.0, 97.0, 94.0, 91.0, 88.0, 85.0]
+    times = [float(i) for i in range(len(prices))]
+    found = Origins().observe(times, prices, unit=1.0, move_vol=3.0, bars=6)
+    assert found
+
+    origin = found[0]
+    # The time it reports is the bar its price came from.
+    assert prices[int(origin.when)] == origin.price
+    # And it was not knowable until the impulse had run.
+    assert origin.settled > origin.when
+    assert origin.settled in times

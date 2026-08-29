@@ -134,6 +134,15 @@ class Origin(Restorable):
     #: How far the move went, in volatility units. The strength of the claim.
     size_vol: float
     when: float
+    #: When the impulse that made this origin broke structure.
+    #:
+    #: **Not the same as `when`, and the difference is a look-ahead bug.** The
+    #: turn happens first; the origin does not exist until the move that
+    #: followed took out the structure that was holding, which is several bars
+    #: later. Anything asking "when was this knowable" - a level's `confirmed`,
+    #: a replay's cut-off - has to read this, or it is drawing a level at a
+    #: price nobody could have known was one.
+    settled: float = 0.0
     #: How many times price has come back into the zone since. Each return
     #: trades away some of whatever was resting here.
     revisits: int = 0
@@ -159,6 +168,7 @@ class Origin(Restorable):
             "launched": self.launched,
             "size_vol": round(self.size_vol, 4),
             "when": self.when,
+            "settled": self.settled,
             "revisits": self.revisits,
         }
 
@@ -282,7 +292,15 @@ class Origins(Restorable):
                     high=high,
                     launched="down" if down else "up",
                     size_vol=abs(move) / unit,
-                    when=times[i] if i < len(times) else 0.0,
+                    # The turn, not the window that found it. `price` is
+                    # `prices[turn]` and this was `times[i]` - the start of the
+                    # detection window, which sits at or before the turn. One
+                    # origin was reporting its price from one bar and its time
+                    # from another.
+                    when=times[turn] if turn < len(times) else 0.0,
+                    # When the impulse broke structure, which is when this
+                    # became knowable. See `Origin.settled`.
+                    settled=times[end] if end < len(times) else 0.0,
                 )
             )
             # Past the move, so one impulse is recorded once rather than at

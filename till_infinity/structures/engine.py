@@ -33,6 +33,7 @@ from pathlib import Path
 from ..logging import get_logger
 from . import (
     confluence,
+    origin_points,
     origins,
     patterns,
     pips,
@@ -637,8 +638,10 @@ class Engine:
         #: boundaries between runs of volatility. An experiment, not a setting
         #: to tune in production - the point is to run both over one history
         #: and let the outcome machinery say which price respects more.
-        if formation not in ("pip", "run", "both"):
-            raise ValueError(f"unknown formation {formation!r} - use 'pip', 'run' or 'both'")
+        if formation not in ("pip", "run", "origin", "both"):
+            raise ValueError(
+                f"unknown formation {formation!r} - use 'pip', 'run', 'origin' or 'both'"
+            )
         self.formation = formation
         self.run_threshold = run_threshold
         #: Whether the quoted spread is charged against every level call. On by
@@ -823,6 +826,8 @@ class Engine:
             return runs.points(
                 list(series.times), list(series.closes), vol, threshold=self.run_threshold
             )
+        if self.formation == "origin":
+            return origin_points.points(list(series.times), list(series.closes), vol)
         return pips.points(list(series.times), list(series.closes), self.pip_count)
 
     def _form(self, series: Series, visible: Sequence[pips.Point], vol: Volatility):
