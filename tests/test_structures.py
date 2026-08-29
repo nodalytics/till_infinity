@@ -1864,3 +1864,41 @@ def test_the_impulse_still_has_to_be_volatile():
     drift = [100.0 - i * 0.1 for i in range(30)]
     times = [float(i) for i in range(len(drift))]
     assert Origins().observe(times, drift, unit=1.0, move_vol=3.0, bars=6) == []
+
+
+def test_the_zone_widens_to_the_origin_the_level_sits_in():
+    """The zone is the band a stop has to clear. When the level coincides with
+    an origin - the last opposing bar before an impulse that broke structure -
+    the interest stranded there is what price reacts to, and its far edge is
+    further out than the wick average knows."""
+    from till_infinity.structures.engine import _widen_to_origin
+
+    inside = {"in_origin": 1.0, "origin_low": 98.0, "origin_high": 103.0}
+    assert _widen_to_origin(99.0, 101.0, inside) == (98.0, 103.0)
+
+
+def test_a_nearby_origin_the_level_is_not_in_changes_nothing():
+    """Stretching a zone towards an unrelated origin would put stops where
+    nothing has ever been defended."""
+    from till_infinity.structures.engine import _widen_to_origin
+
+    near = {"in_origin": 0.0, "origin_low": 90.0, "origin_high": 92.0}
+    assert _widen_to_origin(99.0, 101.0, near) == (99.0, 101.0)
+
+
+def test_the_zone_can_only_widen():
+    """An origin narrower than the observed wicks does not make the wicks
+    smaller."""
+    from till_infinity.structures.engine import _widen_to_origin
+
+    narrow = {"in_origin": 1.0, "origin_low": 99.5, "origin_high": 100.5}
+    assert _widen_to_origin(99.0, 101.0, narrow) == (99.0, 101.0)
+
+
+def test_a_missing_or_malformed_origin_is_ignored():
+    from till_infinity.structures.engine import _widen_to_origin
+
+    assert _widen_to_origin(99.0, 101.0, {}) == (99.0, 101.0)
+    assert _widen_to_origin(99.0, 101.0, {"in_origin": 1.0}) == (99.0, 101.0)
+    upside_down = {"in_origin": 1.0, "origin_low": 103.0, "origin_high": 98.0}
+    assert _widen_to_origin(99.0, 101.0, upside_down) == (99.0, 101.0)

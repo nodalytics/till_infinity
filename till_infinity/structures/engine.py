@@ -176,6 +176,39 @@ MIN_TICKS_PER_ZONE = 4.0
 MAX_LEVELS = 15
 
 
+def _widen_to_origin(low: float, high: float, origin: dict) -> tuple[float, float]:
+    """Extend a level's zone to cover the origin it sits in.
+
+    **Only when the level is inside one.** `in_origin` is the condition: a
+    level that happens to have an origin somewhere nearby is an ordinary level,
+    and stretching its zone towards an unrelated one would put stops where
+    nothing has ever been defended.
+
+    The zone is the band a stop has to clear, built from how far wicks have run
+    past the level. When the level coincides with an origin - the last opposing
+    bar before an impulse that broke structure - the interest left stranded
+    there is the thing price reacts to, and its far edge is further out than
+    the wick average knows. A stop inside it is stopped by the rejection the
+    trade is trading.
+
+    The level price itself does not move. Every statistic the level owns is
+    recorded against that price, and shifting it would silently re-key history
+    that was measured somewhere else.
+
+    Union, never contraction: an origin narrower than the observed wicks does
+    not make the wicks smaller. The zone can only widen.
+    """
+    if not origin or not origin.get("in_origin"):
+        return low, high
+    edge_low = origin.get("origin_low")
+    edge_high = origin.get("origin_high")
+    if not isinstance(edge_low, int | float) or not isinstance(edge_high, int | float):
+        return low, high
+    if not edge_low or not edge_high or edge_low > edge_high:
+        return low, high
+    return min(low, float(edge_low)), max(high, float(edge_high))
+
+
 @dataclass(slots=True)
 class Consensus(Restorable):
     """Median bar across venues, per instrument and interval.
@@ -351,10 +384,12 @@ class Call(Restorable):
         )
 
         zone_low, zone_high = self.level.zone(vol)
+        zone_low, zone_high = _widen_to_origin(zone_low, zone_high, self.origin)
         # The wider band a stop has to clear. See `Level.sweep_zone`: the touch
         # zone is built from the average wick, and a stop at the average sweep
         # depth is exceeded by about half of all sweeps by construction.
         sweep_low, sweep_high = self.level.sweep_zone(vol, SWEEP_SIGMAS)
+        sweep_low, sweep_high = _widen_to_origin(sweep_low, sweep_high, self.origin)
         unit = vol.price_units(self.level.price, 1.0) or 1.0
         wick_below = (self.level.price - zone_low) / unit
         wick_above = (zone_high - self.level.price) / unit
