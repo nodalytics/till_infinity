@@ -5436,3 +5436,29 @@ async def test_a_position_past_its_hold_refreshes_the_brokers_clock():
     seen = trader._broker_quoted_at.get(spec.symbol)
     assert seen is not None, "the close path must ask the broker for its clock"
     assert time.time() - seen[0] < 5.0
+
+
+async def test_an_adopted_position_still_knows_its_market_is_shut():
+    """A position adopted after a restart is given `feed = symbol.lower()` -
+    "us tech 100", which is not a feed key. Both lookups miss it, so a shut
+    market read as trading and #5759753523 went on attempting its close.
+    The position knows its symbol outright; that is what the close path uses.
+    """
+    trader = Trader(Bus(), settings=settings(stale_quote_after=300.0))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    intent = await trader.on_signal(signal())
+    assert not isinstance(intent, Refusal)
+    live = next(iter(trader.open.values()))
+
+    # What adoption produces: a feed name nothing can resolve.
+    live.intent = replace(live.intent, feed=live.position.symbol.lower())
+    assert trader._symbol_of.get(live.intent.feed) is None
+    assert trader._shut_for(live.intent.feed) is None
+
+    now = time.time()
+    trader._broker_quoted_at[live.position.symbol] = (now, now - 29_000.0)
+
+    assert trader._too_wide_to_leave(live, age=29_581.0, limit=1800.0) is True

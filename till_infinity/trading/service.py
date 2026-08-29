@@ -1645,7 +1645,7 @@ class Trader:
         if closed:
             await self._reconcile()
 
-    def _shut_for(self, feed: str, tick: Tick | None = None) -> float | None:
+    def _shut_for(self, feed: str, tick: Tick | None = None, *, symbol: str = "") -> float | None:
         """How long this market has been shut, or None if it is trading.
 
         **The broker's clock first.** `_quoted_at` is fed from the quotes bus,
@@ -1672,8 +1672,12 @@ class Trader:
         if tick is not None and tick.time > 0.0:
             quiet = now - tick.time
             return quiet if quiet > limit else None
-        symbol = self._symbol_of.get(feed)
-        seen = self._broker_quoted_at.get(symbol or "")
+        # A caller holding the position knows its symbol outright. Worth taking
+        # over the feed mapping, because a position adopted after a restart is
+        # given `feed = position.symbol.lower()` - "us tech 100", which is not
+        # a feed key, so both lookups miss and a shut market reads as trading.
+        symbol = symbol or self._symbol_of.get(feed) or ""
+        seen = self._broker_quoted_at.get(symbol)
         if seen and now - seen[0] <= limit:
             quiet = now - seen[1]
             return quiet if quiet > limit else None
@@ -1726,14 +1730,15 @@ class Trader:
         the market is offering, which is the honest outcome when the
         alternative is never leaving.
         """
-        if self._quote_is_stale(live.intent.feed):
+        shut = self._shut_for(live.intent.feed, symbol=live.position.symbol)
+        if shut is not None:
             log.info(
                 "trading: holding #%d past its %.0fs hold - %s has not quoted in "
                 "%.0fs, so the market is shut rather than the order refused",
                 live.position.ticket,
                 limit,
-                live.intent.feed,
-                self._shut_for(live.intent.feed) or 0.0,
+                live.position.symbol,
+                shut,
             )
             return True
         want = self.settings.hold_max_spread

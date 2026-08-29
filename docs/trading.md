@@ -1201,6 +1201,13 @@ its close every minute for eight hours of a shut US Tech 100, logging a warning
 each time. A position past its hold now quotes its own symbol before the
 deferral is judged. Only positions already at their limit pay for the call.
 
+**An adopted position needs its symbol, not its feed.** A position adopted
+after a restart is given `feed = position.symbol.lower()` - `"us tech 100"`,
+which is not a feed key, so both lookups miss and a shut market reads as
+trading. That is why `#5759753523` went on attempting a close even once the
+clock was being refreshed. A caller holding the position knows its symbol
+outright, and the close path passes it.
+
 **And the broker's own words settle it.** Every clock here is an inference
 about the broker's state; `400 Order failed: Market closed` is the broker
 stating it, and it cannot be wrong. A close refused with that message is
