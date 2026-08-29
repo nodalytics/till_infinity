@@ -1834,3 +1834,33 @@ def test_the_expected_push_still_wins_over_the_win_rate():
     has a losing win rate and a positive expectation."""
     assert _inference(expected_push=1.2, probability_up=0.2).direction == "up"
     assert _inference(expected_push=-1.2, probability_up=0.8).direction == "down"
+
+
+def test_an_origin_must_break_structure():
+    """A turn followed by a large move is not yet an origin. Price turns and
+    runs constantly inside a range, and every one of those is a "last opposing
+    bar before an impulse" that meant nothing. What separates the ones that
+    matter is that the impulse took out the extreme that had been holding."""
+    from till_infinity.structures.origins import Origins
+
+    unit = 1.0
+    # A range between 90 and 110, then a turn at 100 that runs to 95 - a large
+    # move that stops well inside the range. No structure broken.
+    inside = [90.0, 110.0, 95.0, 108.0, 100.0, 99.0, 98.0, 97.0, 96.0, 95.0]
+    times = [float(i) for i in range(len(inside))]
+    assert Origins().observe(times, inside, unit, move_vol=3.0, bars=6) == []
+
+    # The same shape, but the impulse runs past the range low.
+    breaks = [90.0, 110.0, 95.0, 108.0, 100.0, 97.0, 94.0, 91.0, 88.0, 85.0]
+    found = Origins().observe(times, breaks, unit, move_vol=3.0, bars=6)
+    assert found, "an impulse through the prior low is a break of structure"
+
+
+def test_the_impulse_still_has_to_be_volatile():
+    """`MOVE_VOL` is the other half: a drift that breaks structure slowly is
+    not an impulse, and leaves nothing stranded behind it."""
+    from till_infinity.structures.origins import Origins
+
+    drift = [100.0 - i * 0.1 for i in range(30)]
+    times = [float(i) for i in range(len(drift))]
+    assert Origins().observe(times, drift, unit=1.0, move_vol=3.0, bars=6) == []

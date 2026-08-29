@@ -73,6 +73,23 @@ MOVE_VOL = 3.0
 #: its "origin" is wherever you started looking; the claim being made here is
 #: about a move fast enough that resting interest did not get refilled.
 MOVE_BARS = 6
+
+#: Bars looked back over for the structure an impulse has to break.
+#:
+#: **An origin has to lead somewhere.** A turn followed by a large move is not
+#: yet an origin: price turns and runs constantly inside a range, and every one
+#: of those is a "last opposing bar before an impulse" that meant nothing. What
+#: separates the ones that matter is that the impulse **broke structure** -
+#: took out the swing extreme that had been holding - because that is the move
+#: that leaves unfilled interest behind it.
+#:
+#: This is also the most likely reason origin *proximity* measured -0.166 over
+#: 49,619 resolutions: unfiltered, most origins are range noise, and a signal
+#: averaged over noise measures the noise. **A hypothesis, not a result** - the
+#: filter keeps 62-72% of origins across gold, eurusd, us100 and btc, so it is
+#: a real cut, and whether what survives scores better is unmeasured until the
+#: journal has enough of them.
+STRUCTURE_BARS = 20
 #: How far either side of the origin price the zone reaches, in volatility
 #: units, when there is no bar to measure from at all.
 ZONE_VOL = 0.5
@@ -161,6 +178,8 @@ class Origins(Restorable):
         move_vol: float = MOVE_VOL,
         bars: int = MOVE_BARS,
         bars_at: list | None = None,
+        structure_bars: int = STRUCTURE_BARS,
+        require_break: bool = True,
     ) -> list[Origin]:
         """Find the origins in a price series. `unit` is one volatility unit.
 
@@ -236,6 +255,25 @@ class Origins(Restorable):
                 # this is the weakest case.
                 edge = price - ZONE_VOL * unit if down else price + ZONE_VOL * unit
                 low, high = min(price, edge), max(price, edge)
+            # **Did the impulse break structure?** The extreme that was
+            # holding before the turn, and whether the move took it out. A
+            # move that stops short of it is a swing inside a range, not the
+            # break that leaves interest stranded.
+            # Before the turn, not including it: the turn is the origin, and
+            # the structure is what was holding until it.
+            look = prices[max(0, turn - structure_bars) : turn] if require_break else []
+            if require_break and len(look) < 2:
+                # No history to have broken. An impulse off the first bars of a
+                # series has no structure behind it, and calling that a break
+                # would make every series begin with an origin.
+                i = turn + 1
+                continue
+            if require_break:
+                held = min(look) if down else max(look)
+                if not (prices[end] < held if down else prices[end] > held):
+                    i = turn + 1
+                    continue
+
             move = prices[end] - price
             found.append(
                 Origin(
