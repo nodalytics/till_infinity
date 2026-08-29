@@ -5,10 +5,18 @@ what they just stored, agents consume it and publish alerts, notifications
 deliver those.
 
 ```
-prices  ──┐                        ┌──▶ notifications
-          ├──▶ bus ──▶ agents ──▶ bus
-news    ──┘
+prices  ──┐                          ┌──▶ agents ───┐
+          ├──▶ bus ──▶ structures ──▶┤              ├──▶ bus ──▶ notifications
+news    ──┘                          └──▶ trading ──┘                  ▲
+                                              │                        │
+                                              └──▶ MT5 bridge          │
+                                                                       │
+          structures, agents, trading ──▶ journal ─────────────────────┘
 ```
+
+`trading` is a second consumer of `structures.signals`, not a stage after
+`agents`: the two read the same signal and answer different questions, one for
+a human and one for the account.
 
 ## What it carries
 

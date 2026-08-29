@@ -185,7 +185,7 @@ separately; see [how the parts talk](#how-the-parts-talk).
 ## Prices
 
 OHLCV candles and realtime bid/ask for the same instrument across many brokers,
-from TradingView and Yahoo.
+from TradingView, Yahoo, and - when asked for - the trading terminal itself.
 
 ```bash
 uv run till-infinity prices backfill      # deep history
@@ -199,8 +199,13 @@ Fourteen instruments by default - the **seven FX majors**, **gold**, **BTC**,
 **ETH**, **SOL**, **USDCNH**, **US100** (Nasdaq 100) and **SPX500** - each from
 five to seven venues, on intervals from 1m to 1w. They answer to whatever you
 call them (`-s nasdaq`, `-s sp500`, `-s kiwi`, `-s solana`),
-and `-s` also takes `VENUE:TICKER` or a bare Yahoo ticker. Full guide:
-**[docs/prices.md](docs/prices.md)**.
+and `-s` also takes `VENUE:TICKER` or a bare Yahoo ticker.
+
+`PRICES_BROKER_SYMBOLS` adds instruments read straight from the trading
+terminal over the MT5 bridge. That is the only way to reach the ones no
+consensus venue carries - **synthetics**, which have no underlying and so no
+other source at all, and which are the only instruments here that trade at a
+weekend. Full guide: **[docs/prices.md](docs/prices.md)**.
 
 ## News
 
@@ -441,12 +446,37 @@ notifications deliver those. The databases stay the source of truth - the bus
 carries notice that something happened, not the data itself.
 
 ```
-prices ──┬─▶ structures ─┬─▶ structures.signals ─┐
-         │               └───────────────────────┼─▶ alerts ─▶ notifications
-news  ───┴─────────────────────▶ agents ─────────┘
-                                   │
-             structures, agents ───┴──▶ journal ──▶ journal.db
+  tradingview ─┐
+  yahoo ───────┤
+  MT5 bridge ──┴──▶ prices ──▶ prices.bars, prices.quotes ──┐
+                                                            │
+  news ──────────▶ news.articles, news.events ──────────────┤
+                                                            ▼
+                                                       structures
+                                                            │
+                                                            ▼
+                                                  structures.signals
+                                                       │        │
+                                       ┌───────────────┘        └───────────┐
+                                       ▼                                    ▼
+                                    agents                               trading
+                                       │                                    │
+                                       └──────────▶ alerts ◀────────────────┤
+                                                       │                    │
+                                                       ▼                    ▼
+                                                 notifications         MT5 bridge
+                                                                            │
+                                                                            ▼
+                                                                   trading terminal
+
+  structures, agents, trading ──▶ journal ──▶ journal.db
 ```
+
+The bridge appears twice on purpose. It is the **execution** path - orders out,
+fills and positions back - and since synthetics exist it is also a **price**
+source, because instruments with no underlying are quoted nowhere else. One
+transport, two directions, and the same tick time is read for both: a frozen
+one is how a shut market is recognised.
 
 Every part is a service and every arrow is a bus topic - including the
 journal, so one process writes it and a service on another machine can record
