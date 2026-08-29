@@ -405,20 +405,28 @@ FEEDS: dict[str, Feed] = {
         _feed(
             "wti",
             # Energy, which is the one driver nothing else here carries.
+            #
+            # **FOREXCOM quotes oil in cents.** `FOREXCOM:USOIL` ran 8047-8397
+            # against 80-85 everywhere else, and `FOREXCOM:UKOIL` 8516-8891
+            # against 85-92 - a clean factor of 100, in 70,402 stored wti
+            # quotes and 61,924 brent ones. A venue on a different unit is not
+            # a venue with a different opinion: it drags the consensus mid,
+            # makes every spread comparison meaningless and reads as a
+            # permanent dislocation. Dropped rather than rescaled, because a
+            # rescale is a silent lie the day they fix it.
             tradingview=(
                 "OANDA:WTICOUSD",
                 "CAPITALCOM:OIL_CRUDE",
-                "FOREXCOM:USOIL",
                 "TVC:USOIL",
             ),
             yahoo=("CL=F",),
         ),
         _feed(
             "brent",
+            # `FOREXCOM:UKOIL` dropped for the reason `wti` gives above.
             tradingview=(
                 "OANDA:BCOUSD",
                 "CAPITALCOM:OIL_BRENT",
-                "FOREXCOM:UKOIL",
                 "TVC:UKOIL",
             ),
             yahoo=("BZ=F",),

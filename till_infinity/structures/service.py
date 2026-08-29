@@ -53,6 +53,20 @@ UNAMBIGUOUS: frozenset[Shape] = frozenset({Shape.STALE})
 #: Venues needed before a median close means anything, matching the quote side.
 MIN_VENUES = 3
 
+#: How far from the group's median a venue may be before it is treated as
+#: quoting a different **unit** rather than a different price.
+#:
+#: `FOREXCOM:USOIL` ran 8047-8397 against 80-85 everywhere else, and
+#: `FOREXCOM:UKOIL` 8516-8891 against 85-92 - oil quoted in cents, a clean
+#: factor of 100, across 70,402 stored wti quotes and 61,924 brent ones. That
+#: is not a dislocation: it drags the median, makes every spread comparison
+#: meaningless, and reads as one venue permanently disagreeing with five.
+#:
+#: A real disagreement between venues is basis points. Two times is already far
+#: beyond anything a live market produces, and far below the hundred-fold a
+#: unit error produces, so there is no band where this has to guess.
+SCALE_LIMIT = 2.0
+
 
 class BarConsensus:
     """Median close per (instrument, interval), for the drift detector.
@@ -87,7 +101,26 @@ class BarConsensus:
         aligned = [price for ts, price in group.values() if ts == latest]
         if len(aligned) < MIN_VENUES:
             return None
+        aligned = _same_unit(aligned)
+        if len(aligned) < MIN_VENUES:
+            return None
         return feed, statistics.median(aligned), interval
+
+
+def _same_unit(prices: list[float]) -> list[float]:
+    """Drop venues quoting a different unit from the group.
+
+    The median is the reference because it is what the group agrees on and it
+    survives one venue being wrong - which is the whole case this exists for.
+    A venue outside `SCALE_LIMIT` either way is not disagreeing about price, it
+    is counting in something else.
+    """
+    if not prices:
+        return prices
+    middle = statistics.median(prices)
+    if middle <= 0:
+        return prices
+    return [p for p in prices if 1 / SCALE_LIMIT <= p / middle <= SCALE_LIMIT]
 
 
 def alert_payload(signal: Signal) -> dict[str, object]:

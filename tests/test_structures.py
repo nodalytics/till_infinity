@@ -1702,3 +1702,52 @@ def test_the_origin_zone_is_published_in_prices():
     assert published["low"] == 99.0
     assert published["high"] == 101.0
     assert published["price"] == 100.0
+
+
+def test_a_venue_on_another_unit_is_dropped_from_the_consensus():
+    """`FOREXCOM:USOIL` ran 8047-8397 against 80-85 everywhere else - oil in
+    cents, a clean factor of 100, across 70,402 stored wti quotes. That is not
+    a dislocation: it drags the median and reads as one venue permanently
+    disagreeing with five."""
+    from till_infinity.structures.service import BarConsensus
+
+    book = BarConsensus()
+    for venue, close in (
+        ("OANDA", 82.10),
+        ("CAPITALCOM", 82.05),
+        ("TVC", 82.15),
+        ("FOREXCOM", 8210.0),
+    ):
+        got = book.observe(
+            {
+                "feed": "wti",
+                "venue": venue,
+                "interval": "5m",
+                "close": close,
+                "time": 1_000,
+            }
+        )
+    assert got is not None
+    _, median, _ = got
+    # The cent-quoted venue is gone, so the median is an oil price.
+    assert 80.0 < median < 85.0
+
+
+def test_ordinary_venue_disagreement_is_kept():
+    """A real disagreement is basis points, and must not be discarded as a unit
+    error - that would be the gate silently thinning the consensus."""
+    from till_infinity.structures.service import BarConsensus
+
+    book = BarConsensus()
+    for venue, close in (
+        ("OANDA", 82.10),
+        ("CAPITALCOM", 82.90),
+        ("TVC", 81.40),
+        ("FOREXCOM", 83.50),
+    ):
+        got = book.observe(
+            {"feed": "wti", "venue": venue, "interval": "5m", "close": close, "time": 1_000}
+        )
+    assert got is not None
+    _, median, _ = got
+    assert 82.0 < median < 82.6
