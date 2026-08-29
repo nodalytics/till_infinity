@@ -1922,3 +1922,34 @@ def test_an_origins_time_is_its_turn_and_its_settling_is_the_break():
     # And it was not knowable until the impulse had run.
     assert origin.settled > origin.when
     assert origin.settled in times
+
+
+def test_an_impulse_that_barely_clears_the_extremum_is_not_an_origin():
+    """Measured on 3,458 first returns: clearing by under 0.5 units held 49.7%,
+    against 60.4% on a generated process with no structure at all. Barely
+    clearing is worse than nothing, so it is a floor rather than a preference."""
+    from till_infinity.structures.origins import Origins
+
+    times = [float(i) for i in range(12)]
+    # Falls to 88, recovers, then an impulse that stops a whisker below it.
+    grazes = [95.0, 110.0, 88.0, 108.0, 100.0, 97.0, 94.0, 91.0, 89.0, 87.9, 87.9, 87.9]
+    assert Origins().observe(times, grazes, unit=1.0, move_vol=4.0, bars=6) == []
+
+    # The same shape, clearing the prior low decisively.
+    clears = [95.0, 110.0, 88.0, 108.0, 100.0, 97.0, 94.0, 91.0, 88.0, 84.0, 82.0, 80.0]
+    found = Origins().observe(times, clears, unit=1.0, move_vol=4.0, bars=6)
+    assert found
+    assert found[0].extremum_vol >= 0.5
+
+
+def test_the_margin_past_the_extremum_is_recorded():
+    """Kept so a consumer can weigh the two tests instead of taking both as
+    pass/fail, and so the journal can say which mattered."""
+    from till_infinity.structures.origins import Origins
+
+    prices = [90.0, 110.0, 95.0, 108.0, 100.0, 97.0, 94.0, 91.0, 88.0, 85.0]
+    times = [float(i) for i in range(len(prices))]
+    found = Origins().observe(times, prices, unit=1.0, move_vol=4.0, bars=6)
+    assert found
+    assert found[0].extremum_vol > 0
+    assert "extremum_vol" in found[0].to_dict()

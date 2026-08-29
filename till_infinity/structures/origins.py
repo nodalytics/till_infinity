@@ -68,20 +68,44 @@ from .state import Restorable
 #: How large a move must be, in volatility units, for its start to count as an
 #: origin. Three is deliberately well beyond an ordinary bar - the point is to
 #: catch displacement, not movement.
-MOVE_VOL = 3.0
+MOVE_VOL = 4.0
 #: How many bars the move may take. A drop that takes fifty bars is a trend and
 #: its "origin" is wherever you started looking; the claim being made here is
 #: about a move fast enough that resting interest did not get refilled.
 MOVE_BARS = 6
 
-#: Bars looked back over for the structure an impulse has to break.
+#: How far past the prior extremum the impulse must go, in volatility units.
+#:
+#: **Barely clearing it is worse than nothing.** Measured on the first return
+#: to 3,458 origins: one that cleared the extremum by under 0.5 units held
+#: 49.7% of the time, against 60.4% for the same bucket on Deriv's synthetics -
+#: a generated process with no structure at all. Clearing it by 0.5 to 1.5
+#: units held 75.6%.
+#:
+#: So this is a floor rather than a preference, and the same is true of
+#: `MOVE_VOL`: impulses of 3-4 units held 54.3% against 57.6% on synthetics,
+#: and 4-5.5 units held 75.0%. Both tests have a region where they select
+#: origins worse than noise, and past it both plateau - bigger is not better,
+#: it is just not worse. That is why they are two floors rather than a score
+#: trading one against the other.
+MIN_EXTREMUM_VOL = 0.5
+
+#: Bars the impulse's extremum is measured against.
 #:
 #: **An origin has to lead somewhere.** A turn followed by a large move is not
 #: yet an origin: price turns and runs constantly inside a range, and every one
 #: of those is a "last opposing bar before an impulse" that meant nothing. What
-#: separates the ones that matter is that the impulse **broke structure** -
-#: took out the swing extreme that had been holding - because that is the move
-#: that leaves unfilled interest behind it.
+#: separates the ones that matter is that the impulse **set a new running
+#: extremum** over this window - exceeded the highest high or lowest low that
+#: had been holding - because that is the move which leaves unfilled interest
+#: behind it.
+#:
+#: A desk calls this a *break of structure*. The name here is the mathematical
+#: one because it says what is computed: the running maximum or minimum of the
+#: lookback, and whether the impulse exceeded it. `record` would be the term
+#: from probability - a value larger than everything before it - but this
+#: package already uses `record` for a level's touch history, and one word
+#: meaning two things is worse than a longer word.
 #:
 #: This is also the most likely reason origin *proximity* measured -0.166 over
 #: 49,619 resolutions: unfiltered, most origins are range noise, and a signal
@@ -89,7 +113,7 @@ MOVE_BARS = 6
 #: filter keeps 62-72% of origins across gold, eurusd, us100 and btc, so it is
 #: a real cut, and whether what survives scores better is unmeasured until the
 #: journal has enough of them.
-STRUCTURE_BARS = 20
+EXTREMUM_BARS = 20
 #: How far either side of the origin price the zone reaches, in volatility
 #: units, when there is no bar to measure from at all.
 ZONE_VOL = 0.5
@@ -134,6 +158,16 @@ class Origin(Restorable):
     #: How far the move went, in volatility units. The strength of the claim.
     size_vol: float
     when: float
+    #: How far past the structure it broke, in volatility units.
+    #:
+    #: The magnitude test (`MOVE_VOL`) and the structural one are separate
+    #: questions - how big was it, and did it clear a particular prior extreme -
+    #: and measured against a 4.5-unit move they agree only 59-78% of the time.
+    #: Keeping the margin lets a consumer weigh them together instead of taking
+    #: both as pass/fail, and lets the journal say whether a decisive break is
+    #: worth more than a large one.
+    extremum_vol: float = 0.0
+
     #: When the impulse that made this origin broke structure.
     #:
     #: **Not the same as `when`, and the difference is a look-ahead bug.** The
@@ -167,6 +201,7 @@ class Origin(Restorable):
             "high": round(self.high, 8),
             "launched": self.launched,
             "size_vol": round(self.size_vol, 4),
+            "extremum_vol": round(self.extremum_vol, 4),
             "when": self.when,
             "settled": self.settled,
             "revisits": self.revisits,
@@ -188,8 +223,9 @@ class Origins(Restorable):
         move_vol: float = MOVE_VOL,
         bars: int = MOVE_BARS,
         bars_at: list | None = None,
-        structure_bars: int = STRUCTURE_BARS,
-        require_break: bool = True,
+        extremum_bars: int = EXTREMUM_BARS,
+        require_extremum: bool = True,
+        min_extremum_vol: float = MIN_EXTREMUM_VOL,
     ) -> list[Origin]:
         """Find the origins in a price series. `unit` is one volatility unit.
 
@@ -271,16 +307,21 @@ class Origins(Restorable):
             # break that leaves interest stranded.
             # Before the turn, not including it: the turn is the origin, and
             # the structure is what was holding until it.
-            look = prices[max(0, turn - structure_bars) : turn] if require_break else []
-            if require_break and len(look) < 2:
+            look = prices[max(0, turn - extremum_bars) : turn] if require_extremum else []
+            if require_extremum and len(look) < 2:
                 # No history to have broken. An impulse off the first bars of a
                 # series has no structure behind it, and calling that a break
                 # would make every series begin with an origin.
                 i = turn + 1
                 continue
-            if require_break:
+            past_by = 0.0
+            if require_extremum:
                 held = min(look) if down else max(look)
                 if not (prices[end] < held if down else prices[end] > held):
+                    i = turn + 1
+                    continue
+                past_by = abs(prices[end] - held) / unit if unit else 0.0
+                if past_by < min_extremum_vol:
                     i = turn + 1
                     continue
 
@@ -292,6 +333,7 @@ class Origins(Restorable):
                     high=high,
                     launched="down" if down else "up",
                     size_vol=abs(move) / unit,
+                    extremum_vol=past_by,
                     # The turn, not the window that found it. `price` is
                     # `prices[turn]` and this was `times[i]` - the start of the
                     # detection window, which sits at or before the turn. One

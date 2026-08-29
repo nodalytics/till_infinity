@@ -788,6 +788,11 @@ class Engine:
                 **bracket,
                 "origin_distance_vol": abs(nearest.price - price) / unit,
                 "origin_size_vol": nearest.size_vol,
+                # How decisively the impulse cleared the extremum it broke.
+                # Both this and the size have a floor below which the origin
+                # holds *worse* than a generated process - see origins.py - so
+                # a consumer that wants to be stricter than the detector can.
+                "origin_extremum_vol": nearest.extremum_vol,
                 "origin_revisits": float(nearest.revisits),
                 "in_origin": 1.0 if inside else 0.0,
                 # The zone itself, in prices. The four fields above describe an
