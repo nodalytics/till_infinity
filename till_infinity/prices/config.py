@@ -10,10 +10,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..logging import get_logger
 from .models import Symbol, slugify
+
+log = get_logger(__name__)
 
 TRADINGVIEW = "tradingview"
 YAHOO = "yahoo"
+#: The trading terminal's own book, over the MT5 bridge. Off unless asked for -
+#: see `BrokerQuotes` and `broker_feeds`.
+BROKER = "broker"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +41,35 @@ def _feed(name: str, *, tradingview: tuple[str, ...], yahoo: tuple[str, ...]) ->
             YAHOO: tuple(Symbol("YAHOO", s) for s in yahoo),
         },
     )
+
+
+def broker_feeds(names: Sequence[str]) -> dict[str, Feed]:
+    """Feeds for instruments only the broker carries, keyed by a slug.
+
+    The point of these is the instruments no consensus venue quotes -
+    synthetics above all, which have no underlying and so no other source by
+    construction. Without a feed they cannot be traded here at all, because
+    `structures` builds levels out of quotes and there are none.
+
+    The broker's own name is the symbol, verbatim: `Volatility 75 Index`, not a
+    guess at what it might be called elsewhere. The feed name is a slug of it,
+    because feed names travel through journal keys and log lines where spaces
+    are a nuisance. Nothing is resolved or probed here - a name the broker does
+    not carry simply never quotes, and `_note_unavailable` says so once.
+    """
+    made: dict[str, Feed] = {}
+    for raw in names:
+        symbol = raw.strip()
+        if not symbol:
+            continue
+        slug = slugify(symbol).lower()
+        if not slug or slug in made:
+            continue
+        made[slug] = Feed(
+            name=slug,
+            symbols={BROKER: (Symbol(BROKER.upper(), symbol),)},
+        )
+    return made
 
 
 FEEDS: dict[str, Feed] = {
@@ -664,6 +699,24 @@ SYMBOL_ALIASES: dict[str, str] = {
 }
 
 
+def register_broker_feeds(names: Sequence[str]) -> tuple[str, ...]:
+    """Add broker-only instruments to the catalogue. Returns the slugs added.
+
+    Called at start-up from `PRICES_BROKER_SYMBOLS`, so a synthetic named there
+    becomes an ordinary feed that everything downstream - quotes, storage,
+    levels, signals - handles without knowing it came from anywhere unusual.
+
+    Mutating the module catalogue is deliberate. `FEEDS` is what `resolve_feeds`
+    and every alias lookup read, and a parallel registry would be a second
+    place for a feed to exist and a second place to forget to look.
+    """
+    made = broker_feeds(names)
+    added = tuple(slug for slug in made if slug not in FEEDS)
+    for slug in added:
+        FEEDS[slug] = made[slug]
+    return added
+
+
 def resolve_feeds(names: Sequence[str] | None) -> tuple[Feed, ...]:
     """Look feeds up by their configured name."""
     if not names:
@@ -804,6 +857,19 @@ class Settings:
     def from_env(cls) -> Settings:
         data_dir = Path(_env("PRICES_DIR") or DEFAULT_DATA_DIR)
         db = _env("PRICES_DB")
+        # Broker-only instruments become ordinary feeds before anything reads
+        # the catalogue. Empty by default: this needs a bridge, and a
+        # deployment without one should not be polling for symbols it cannot
+        # reach. See `register_broker_feeds`.
+        raw = _env("PRICES_BROKER_SYMBOLS") or ""
+        wanted = [n.strip() for n in raw.split(",") if n.strip()]
+        if wanted:
+            added = register_broker_feeds(wanted)
+            log.info(
+                "prices: %d broker-only feed(s) registered - %s",
+                len(added),
+                ", ".join(added) or "none new",
+            )
         return cls(
             data_dir=data_dir,
             database=Path(db) if db else None,

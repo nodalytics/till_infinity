@@ -160,6 +160,56 @@ the venue (`tradingview`/`OANDA`/`XAUUSD`), not on how the quote was fetched -
 so switching between them, or running one after the other, does not fragment
 the store.
 
+## The broker's own book
+
+Every other source here is somebody else's opinion of the price.
+`PRICES_BROKER_SYMBOLS` adds instruments read straight from the trading
+terminal over the MT5 bridge, and it is off unless set.
+
+Two reasons it is worth having. **Coverage**: the consensus venues carry the
+majors and nothing else, while the account offers 798 symbols, 71 of them
+synthetics - which have no underlying and therefore no other source by
+construction. Without this they cannot be traded at all, because `structures`
+builds levels out of quotes and there are none to build from. **Agreement**: a
+level built from six venues and an order filled on one broker's book answer
+slightly different questions, and that gap is what `dislocation` exists to
+police. A level built from the broker's own quotes has no gap.
+
+```
+PRICES_BROKER_SYMBOLS="Volatility 75 Index,Step Index,Boom 1000 Index"
+```
+
+The broker's own name is the symbol, verbatim - nothing is guessed or probed.
+The feed name is a slug of it (`volatility_75_index`), because feed names
+travel through journal keys and log lines. A name the account does not carry
+simply never quotes and says so once.
+
+**It polls; there is no stream.** The bridge publishes no websocket and no SSE
+- forty-seven routes, and its only `subscribe` is
+`/symbols/book/{symbol}/subscribe`, which is MT5 market *depth* and is itself
+read by polling. "Stream prices from the terminal" is the obvious way to
+describe the goal and is not what the transport does.
+
+**A symbol has to be selected before it will quote, and skipping that is
+silent.** MT5 only streams ticks for symbols in Market Watch; an unselected one
+answers the tick endpoint with `bid 0.0, ask 0.0, time 0` - HTTP 200,
+well-formed, and empty. Measured on the live bridge:
+
+| symbol | before select | after select |
+| --- | --- | --- |
+| Volatility 75 Index | `0.0 / 0.0` | `51418.35 / 51436.01` |
+| Step Index | `0.0 / 0.0` | `7731.6 / 7731.7` |
+
+So `prepare` selects every symbol once at start-up. Without it the source polls
+happily and publishes nothing, which is the failure that looks like working
+code.
+
+**The tick's own time is kept, not restamped.** A frozen tick time is how a
+shut market is recognised - see `_shut_for` in [trading.md](trading.md) - and
+overwriting it with `time.time()` would erase exactly that evidence. Synthetics
+are the interesting case here: they quoted normally on a Saturday, when every
+real market on the account was hours stale.
+
 ## Storage
 
 SQLite is the default and the reason is dedup. The primary key is the bar's

@@ -34,7 +34,7 @@ from httpx_ws import aconnect_ws
 
 from ..bus import QUOTES, Bus
 from ..logging import get_logger
-from .config import TRADINGVIEW, YAHOO, Feed, Settings
+from .config import BROKER, TRADINGVIEW, YAHOO, Feed, Settings
 from .models import Quote, QuoteKey, Symbol, WriteResult
 from .tradingview import MAX_MESSAGE_BYTES, decode, encode, message, session_id
 
@@ -467,10 +467,140 @@ class YahooQuotes(QuoteSource):
         )
 
 
+class BrokerQuotes(QuoteSource):
+    """Top of book straight from the trading terminal, over the MT5 bridge.
+
+    Every other source here is somebody else's opinion of the price. This one
+    is the book we actually deal on, and that difference is worth having for
+    two separate reasons.
+
+    **Coverage.** The consensus venues carry the majors and nothing else. A
+    broker offers hundreds of instruments no venue on TradingView quotes -
+    synthetics above all, which have no underlying and therefore no other
+    source by construction. Without this they cannot be traded here at all,
+    because `structures` builds levels from quotes and there were none to
+    build from.
+
+    **Agreement with what we trade.** A level built from six venues' consensus
+    and an order filled on one broker's book are answers to slightly different
+    questions, and the gap between them is what `dislocation` exists to police.
+    A level built from the broker's own quotes has no gap to police.
+
+    **It polls; there is no stream.** The bridge publishes no websocket and no
+    SSE - forty-seven routes, and the only `subscribe` is
+    `/symbols/book/{symbol}/subscribe`, which is MT5 market *depth* and is
+    still read by polling `/symbols/book/{symbol}`. So this is a poller, and
+    `streaming` stays False. Worth stating plainly because "stream prices from
+    the terminal" is the obvious way to describe the goal and is not what the
+    transport does.
+
+    **Off unless asked for.** Not in `DEFAULT_QUOTE_SOURCES`: it needs a bridge
+    that only exists where a terminal is reachable, and a deployment without
+    one should not be trying and failing on every symbol.
+    """
+
+    name = BROKER
+    feed_key = BROKER
+    streaming = False
+
+    #: Read from the same variables the trading service uses, so one bridge is
+    #: configured once. A deployment that can trade can quote.
+    URL_VAR = "TRADING_MT5_URL"
+    KEY_VAR = "TRADING_MT5_API_KEY"
+
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(settings)
+        self._client: Any = None
+
+    async def __aenter__(self) -> Self:
+        import os
+
+        import httpx
+
+        url = os.environ.get(self.URL_VAR, "")
+        if not url:
+            raise RuntimeError(
+                f"{self.name} quotes need {self.URL_VAR} - there is no bridge to read"
+            )
+        headers = {"Accept": "application/json"}
+        key = os.environ.get(self.KEY_VAR, "")
+        if key:
+            headers["X-API-Key"] = key
+        self._client = httpx.AsyncClient(base_url=url, headers=headers, timeout=10.0)
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def prepare(self, keys: Sequence[QuoteKey], sink: QuoteSink | None = None) -> None:
+        """Select every symbol in the terminal before reading any of them.
+
+        **Not optional, and silent when skipped.** MT5 only streams ticks for
+        symbols in Market Watch, and an unselected one answers the tick
+        endpoint with `bid 0.0, ask 0.0, time 0` - HTTP 200, well-formed, and
+        empty. Measured: `Volatility 75 Index` read zero, and 51418.35/51436.01
+        one second after a select. Without this the source would poll happily
+        and publish nothing, which is the failure that looks like working code.
+
+        Selection sticks for the session, so this runs once per start rather
+        than per poll.
+        """
+        # This source has nothing to push: it writes through the caller's poll
+        # like every other request/response source here.
+        del sink
+        if self._client is None:
+            return
+        picked = 0
+        for key in keys:
+            try:
+                response = await self._client.post(f"/api/v1/symbols/select/{key.symbol.ticker}")
+            except Exception as exc:  # httpx raises a family of transport errors
+                self._note_unavailable(key.symbol, str(exc)[:60])
+                continue
+            if response.status_code != 200:
+                self._note_unavailable(key.symbol, f"select: HTTP {response.status_code}")
+                continue
+            picked += 1
+        log.info("%s selected %d of %d symbols in the terminal", self.name, picked, len(keys))
+
+    async def quote(self, symbol: Symbol) -> Quote | None:
+        if self._client is None:
+            return None
+        try:
+            response = await self._client.get(f"/api/v1/symbols/ticks/{symbol.ticker}")
+        except Exception as exc:  # httpx raises a family of transport errors
+            self._note_unavailable(symbol, str(exc)[:60])
+            return None
+        if response.status_code != 200:
+            self._note_unavailable(symbol, f"HTTP {response.status_code}")
+            return None
+        try:
+            row = response.json()
+        except ValueError:
+            self._note_unavailable(symbol, "not JSON")
+            return None
+        if not isinstance(row, dict):
+            return None
+
+        bid, ask = _number(row.get("bid")), _number(row.get("ask"))
+        if not bid or not ask:
+            return None
+        # The bridge's own tick time, in epoch seconds and on our clock - the
+        # rates endpoint sends ISO strings but this one does not. Kept rather
+        # than stamped with `time.time()` because a frozen tick time is how a
+        # shut market is recognised, and overwriting it would erase exactly
+        # that evidence.
+        when = _number(row.get("time")) or time.time()
+        return Quote(time=when, bid=bid, ask=ask, last=(bid + ask) / 2.0)
+
+
 QUOTE_SOURCES: dict[str, type[QuoteSource]] = {
     TradingViewQuotes.name: TradingViewQuotes,
     TradingViewScannerQuotes.name: TradingViewScannerQuotes,
     YahooQuotes.name: YahooQuotes,
+    BrokerQuotes.name: BrokerQuotes,
 }
 
 DEFAULT_QUOTE_SOURCES: tuple[str, ...] = (TradingViewQuotes.name,)
