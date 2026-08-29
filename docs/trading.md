@@ -1194,6 +1194,20 @@ deferral alike. It prefers the tick in hand, falls back to a cached broker
 tick, and falls back again to the consensus feed for a bridge that reports no
 tick time.
 
+**The close path has to ask.** The cached clock is only trusted while the
+observation behind it is fresh, and nothing on the close path was refreshing
+it - so the shut test fell back to the consensus feed and `#5759753523` retried
+its close every minute for eight hours of a shut US Tech 100, logging a warning
+each time. A position past its hold now quotes its own symbol before the
+deferral is judged. Only positions already at their limit pay for the call.
+
+**And the broker's own words settle it.** Every clock here is an inference
+about the broker's state; `400 Order failed: Market closed` is the broker
+stating it, and it cannot be wrong. A close refused with that message is
+logged as a shut market rather than a fault. It is matched as a string because
+the bridge sends no retcode - the same reason the original us30 diagnosis had
+to go by the quote not moving.
+
 **The cached clock needs its own freshness check.** A tick time goes on ageing
 whether or not we are still asking, so an instrument we simply stopped quoting
 would drift into looking shut. If the observation itself is older than

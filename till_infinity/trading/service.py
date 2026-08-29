@@ -1616,13 +1616,29 @@ class Trader:
                 continue
             if await self._worth_keeping(live, age, limit):
                 continue
+            # Refreshes the broker's clock for this symbol. Without it the
+            # cached tick time ages past its own freshness guard and the shut
+            # test silently falls back to the consensus feed, which carries on
+            # quoting an instrument the broker has closed - #5759753523 retried
+            # its close every minute for eight hours of a shut US Tech 100.
+            # Only positions already past their hold pay for the call.
+            await self._tick(live.position.symbol)
             if self._too_wide_to_leave(live, age, limit):
                 continue
             log.info("trading: closing #%d after %.0fs, past its %.0fs hold", ticket, age, limit)
             try:
                 await self.execution.close_position(ticket)
             except BrokerError as exc:
-                log.warning("trading: could not close #%d on its clock: %s", ticket, exc)
+                if _market_closed(exc):
+                    log.info(
+                        "trading: holding #%d past its %.0fs hold - the broker says "
+                        "%s is closed, so this is a shut market rather than a fault",
+                        ticket,
+                        limit,
+                        live.position.symbol,
+                    )
+                else:
+                    log.warning("trading: could not close #%d on its clock: %s", ticket, exc)
                 continue
             live.closed_by = "hold"
             closed = True
@@ -2380,6 +2396,22 @@ def _exit_kind(live: Live, price: float) -> str:
     if not intent.stop and not intent.target:
         return "unknown"
     return "hold"
+
+
+def _market_closed(exc: BrokerError) -> bool:
+    """Whether the broker refused because its market is shut.
+
+    The last authority on the question, and the only one that cannot be wrong:
+    every clock here is an inference about the broker's state, and this is the
+    broker stating it. `400 Order failed: Market closed` is what a close
+    against a shut US Tech 100 actually returns.
+
+    Kept as a string match because the bridge sends no retcode to match on -
+    the same reason the original us30 diagnosis had to go by the quote not
+    moving. Worth having anyway: a shut market means wait, and logging it as a
+    warning every minute for eight hours reads as a fault that needs fixing.
+    """
+    return "market closed" in str(exc).lower()
 
 
 def message_time(payload: dict[str, Any]) -> float:

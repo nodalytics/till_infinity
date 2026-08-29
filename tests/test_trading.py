@@ -27,7 +27,7 @@ from till_infinity.trading.context import Context
 from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick
 from till_infinity.trading.paper import PaperBroker
 from till_infinity.trading.risk import Guard
-from till_infinity.trading.service import Trader
+from till_infinity.trading.service import Trader, _market_closed
 from till_infinity.trading.sizing import lots, price_distance, stop_for, target_for
 from till_infinity.trading.speeds import Speeds
 from till_infinity.trading.symbols import resolve
@@ -5399,3 +5399,40 @@ async def test_entry_and_exit_agree_on_what_shut_means():
     got = trader._undealable("gold", spec, untimed)
     assert isinstance(got, Refusal)
     assert got.gate == "shut"
+
+
+def test_the_brokers_own_words_settle_a_shut_market():
+    """Every clock here is an inference about the broker's state; this is the
+    broker stating it. Matched on the string because the bridge sends no
+    retcode - the same reason the original us30 diagnosis had to go by the
+    quote not moving."""
+    closed = td.BrokerError("POST /trading/order: 400 Order failed: Market closed")
+    assert _market_closed(closed)
+    assert _market_closed(td.BrokerError("market CLOSED"))
+    assert not _market_closed(td.BrokerError("400 Invalid stops"))
+    assert not _market_closed(td.BrokerError("connection reset"))
+
+
+async def test_a_position_past_its_hold_refreshes_the_brokers_clock():
+    """The cached tick time ages past its own freshness guard, and nothing on
+    the close path was refreshing it - so the shut test fell back to the
+    consensus feed and #5759753523 retried its close every minute for eight
+    hours of a shut US Tech 100."""
+    trader = Trader(Bus(), settings=settings(stale_quote_after=300.0, max_hold=1.0))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    intent = await trader.on_signal(signal())
+    assert not isinstance(intent, Refusal)
+
+    spec = trader.specs["gold"]
+    trader._broker_quoted_at.clear()
+    for live in trader.open.values():
+        live.seen = time.time() - 100_000.0
+
+    await trader._expire()
+
+    seen = trader._broker_quoted_at.get(spec.symbol)
+    assert seen is not None, "the close path must ask the broker for its clock"
+    assert time.time() - seen[0] < 5.0
