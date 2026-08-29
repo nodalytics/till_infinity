@@ -2022,9 +2022,35 @@ def test_the_level_says_which_formation_drew_it():
     impulse origin - `origin_price`, `origin_low`, `origin_extremum_vol`."""
     import inspect
 
-    from till_infinity.structures import engine
+    from till_infinity.structures import engine, service
 
-    source = inspect.getsource(engine)
-    assert '"drawn_by": self.level.origin,' in source
-    # And it must not be published under the colliding name.
-    assert '"origin": self.level.origin,' not in source
+    assert '"drawn_by": level.origin,' in inspect.getsource(service)
+    # Never in the signal's features: those are dict[str, float] and
+    # `Signal.to_dict` rounds every value, so a string there raises
+    # `TypeError: type str doesn't define __round__` - which stopped the
+    # structures service in production.
+    assert "drawn_by" not in inspect.getsource(engine.Call.to_signal)
+
+
+def test_every_signal_feature_is_a_number():
+    """`Signal.to_dict` rounds every feature value, so one string anywhere in
+    that dict takes the whole service down - it did, for four minutes, when a
+    level's formation was published there."""
+    from till_infinity.structures.models import Shape, Signal
+
+    made = Signal(
+        shape=Shape.LEVEL,
+        feed="gold",
+        venue="consensus",
+        score=0.3,
+        detail="",
+        features={"level": 4400.0, "edge": 0.2},
+        interval="5m",
+    )
+    assert made.to_dict()["features"] == {"level": 4400.0, "edge": 0.2}
+
+    import pytest
+
+    made.features["drawn_by"] = "pip"  # type: ignore[assignment]
+    with pytest.raises(TypeError, match="round"):
+        made.to_dict()

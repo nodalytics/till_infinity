@@ -358,6 +358,10 @@ class Stack:
                     store=store,
                     feeds=feeds,
                     intervals=intervals,
+                    # Chosen rather than defaulted, for the reason the quote
+                    # list is: a broker-only feed has no other candle source,
+                    # and quotes without bars build no level at all.
+                    sources=px.bar_source_names(),
                     cycles=1 if self.plan.once else None,
                     bus=self.bus,
                 )

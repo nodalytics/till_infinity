@@ -725,6 +725,27 @@ def register_broker_feeds(names: Sequence[str]) -> tuple[str, ...]:
     return added
 
 
+def bar_source_names() -> tuple[str, ...]:
+    """Which candle providers to run, from the environment.
+
+    `PRICES_SOURCES` if set, otherwise the default - plus `broker` whenever
+    broker-only feeds are registered, for the same reason the quote list gets
+    it: nothing else carries them.
+
+    Quotes alone are not enough. `structures` builds levels from **bars**, so a
+    synthetic with a live price and no candles produces no level, no signal and
+    no trade. Nine of them collected 1,271 quotes each and zero bars, which
+    reads as a slow warm-up and is not one.
+    """
+    raw = _env("PRICES_SOURCES") or ""
+    chosen = tuple(n.strip() for n in raw.split(",") if n.strip()) or DEFAULT_SOURCES
+    if BROKER in chosen:
+        return chosen
+    if any(BROKER in feed.symbols for feed in FEEDS.values()):
+        return (*chosen, BROKER)
+    return chosen
+
+
 def quote_source_names() -> tuple[str, ...]:
     """Which quote transports to run, from the environment.
 

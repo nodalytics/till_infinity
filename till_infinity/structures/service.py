@@ -532,6 +532,21 @@ class Watcher:
                     "seconds": round(touch.resolved - touch.started),
                     "level": round(level.price, 8),
                     "interval": level.interval,
+                    # Which formation drew this level. Running pip, run and
+                    # origin together is pointless without it: the argument for
+                    # merging them is that the journal says which price gets
+                    # respected, and it cannot say that if the record does not
+                    # carry which pass found it.
+                    #
+                    # On the **outcome**, not the signal's features. Features
+                    # are `dict[str, float]` and `Signal.to_dict` rounds every
+                    # value, so a string there raises `TypeError: type str
+                    # doesn't define __round__` - which stopped the structures
+                    # service in production for four minutes.
+                    #
+                    # `drawn_by` rather than `origin`, which in this namespace
+                    # already means the impulse origin.
+                    "drawn_by": level.origin,
                     # Which instrument this happened on. The resolution had the
                     # timeframe and not the instrument, so a scoring pass could
                     # group by one and not the other - and pooling gold with
