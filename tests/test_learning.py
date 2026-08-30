@@ -373,3 +373,19 @@ def test_the_bench_compares_on_direction_which_is_what_the_knn_predicts():
 
     source = inspect.getsource(service.Watcher._benchmark)
     assert "push_vol" in source
+
+
+def test_the_floor_is_one_feature_and_no_model():
+    """The first bench result put the kNN, a logistic model and a learned
+    distance within 0.7 points of each other, while the logistic weights put
+    `up_rate` at +0.94 and nothing else above +0.34. If reading that one
+    feature scores what they score, eight features and the whole neighbour
+    machinery are earning nothing - and that is worth knowing precisely rather
+    than suspecting."""
+    bench = Bench()
+    random.seed(12)
+    for _ in range(200):
+        rate = random.random()
+        bench.observe(Touch(up_rate=rate), random.random() < rate)
+    assert "up_rate" in bench.scores
+    assert bench.scores["up_rate"].edge > 0.1

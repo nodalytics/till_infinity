@@ -26,6 +26,8 @@ it is told the answer:
 * `sequence` - what has followed this shape of move before, from a symbol
   n-gram over the price series. A different kind of evidence entirely: it knows
   nothing about the level.
+* `up_rate` - **no model**. The level's own record of which way its touches
+  went, read straight off the feature. The floor everything else has to clear.
 
 The kNN's own answer is recorded beside them on the same touches, so the
 comparison is like-for-like rather than two numbers from two runs.
@@ -162,6 +164,19 @@ class Bench(Restorable):
         if knn_said is not None:
             said["knn"] = float(knn_said)
             self.score("knn").observe(float(knn_said), held)
+
+        # One feature, no model at all: the level's own record of which way its
+        # touches went, read straight off. This is the floor everything above
+        # has to clear, and it exists because the first bench result put the
+        # kNN, a logistic model and a learned distance within 0.7 points of
+        # each other while the logistic weights put `up_rate` at +0.94 and
+        # nothing else above +0.34. If this scores what they score, then eight
+        # features and the whole neighbour machinery are earning nothing, and
+        # that is worth knowing precisely rather than suspecting.
+        rate = getattr(features, "up_rate", None)
+        if rate is not None:
+            said["up_rate"] = float(rate)
+            self.score("up_rate").observe(float(rate), held)
 
         if sequence_said is not None:
             said["sequence"] = float(sequence_said)

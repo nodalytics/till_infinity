@@ -28,6 +28,52 @@ touch itself is excluded**: it is added to memory during resolution, so it can
 appear among its own neighbours at distance zero and hand every model the
 answer.
 
+## First result: 442 touches
+
+    attention   72.4% of 442   base 50.6%   edge +21.79%
+    knn         72.0% of 442   base 50.6%   edge +21.41%
+    linear      71.7% of 442   base 50.6%   edge +21.05%
+
+**The three are within 0.7 points of each other.** At n=442 and p=0.72 the
+standard error of a single proportion is 2.1 points, so the spread between them
+is well inside noise even before allowing that they are scored on the same
+touches. On this evidence the kNN is not buying anything a logistic regression
+on the same nine features does not already provide - which is the first of the
+three outcomes below, and the one that says simplify.
+
+The weights say why:
+
+    up_rate        +0.9414
+    depth_vol      -0.3377
+    approach_vol   +0.3150
+    backcheck      +0.2649
+    regime         +0.1995
+    experience     -0.0871
+
+`up_rate` - the level's own record of which way its previous same-side touches
+went - is worth nearly three times the next feature. Everything else is small.
+That is the model independently rediscovering what research/features.md found
+by hand: none of the other eight predicts direction once side is known.
+
+The learned distance kept `depth_vol` at 1.0 and pushed the rest toward zero,
+which is the same finding arriving from the other direction - if only one
+feature separates outcomes, the *distance* between touches barely matters.
+
+### So the next measurement is the floor, not a better model
+
+If reading `up_rate` straight off scores what all three score, then eight
+features and the entire neighbour machinery are earning nothing. That is a
+one-line comparison and it is now in the bench as `up_rate` - no model at all,
+just the feature. It is the number the other three have to beat, and until they
+beat it none of them has demonstrated anything.
+
+Caveats, stated because the result is a strong one on a small sample: 442
+decayed touches, one snapshot taken shortly after a cold start, and every
+learned model still moving. `up_rate` is point-in-time by construction -
+`features_for` runs before `Tracker.begin`, so a touch is not in its own
+denominator - which is the one way this number could have been an artefact and
+is not.
+
 ## What to read
 
 **Edge**, not accuracy. 63% accuracy on a problem whose base rate is 63% is a
