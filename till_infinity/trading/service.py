@@ -69,6 +69,16 @@ PUSH_DECAY = 0.05
 #: for. The share matches the momentum filter's, because they are reading the
 #: same event by different means; the ceiling stops an instrument with a huge
 #: modelled push from asking for a turn no pullback ever produces.
+#: How many of a series' own expected holds a trade gets before it counts as
+#: going nowhere. Two, because one is the time it usually takes and stopping
+#: there would close every trade that is merely slower than the median.
+STALE_HOLDS = 2.0
+
+#: How much of the sub-hour ensemble must be behind a motionless trade for it
+#: to be given more time. A majority, because half the timeframes pointing one
+#: way is what a coin flip looks like.
+STALE_AGREE = 0.5
+
 TURN_SHARE = 0.35
 TURN_CEILING = 2.0
 
@@ -1719,6 +1729,67 @@ class Trader:
             log.warning("trading: could not withdraw #%d on %s: %s", held.ticket, held.feed, exc)
         held.ticket = 0
 
+    def _still_building(self, live: Live) -> bool:
+        """Whether momentum is gathering behind this trade despite the silence.
+
+        A trade that has not moved is two different situations. One is dead:
+        nothing is happening and the capital should go elsewhere, which is what
+        the stale clock is for. The other is coiling - price has not travelled
+        yet and the sub-hour timeframes are lining up behind it - and closing
+        that one is closing the setup immediately before it works.
+
+        The clock alone cannot tell them apart, because it only reads distance
+        travelled. The momentum ensemble can: `agreement` is the share of
+        timeframes pointing the trade's way, and it turns before the move
+        rather than after it.
+
+        Only a **majority behind the trade** buys more time, and only until the
+        hold clock ends it anyway. A silent instrument with no reading is not
+        given the benefit - unknown is not the same as building.
+        """
+        group = self._ensemble.get(live.intent.feed)
+        if group is None or not group.ready:
+            return False
+        facing = group.agreement * live.intent.side.sign
+        if facing < STALE_AGREE:
+            return False
+        log.info(
+            "trading: #%d has not moved but %.0f%% of the fast timeframes are behind it",
+            live.position.ticket,
+            facing * 100,
+        )
+        return True
+
+    def _stale_after(self, live: Live) -> float:
+        """How long this instrument gets before a trade counts as going nowhere.
+
+        Adaptive above a fixed floor, for the reason the momentum threshold is:
+        the setting is one number and hold time is not. Measured across this
+        book it varies **163-fold** between series and it persists, which is
+        exactly the shape that makes an average useless - a fixed 300s is most
+        of a fast series' whole life and a fraction of a slow one's.
+
+        `STALE_HOLDS` times the series' own expected hold. A trade that has not
+        moved after twice as long as this instrument usually takes to resolve
+        is genuinely going nowhere; the same silence after 300 seconds may be
+        an instrument that has not started.
+
+        The estimator is the one already published on every decision as
+        `expected_hold_s`, so this is the first thing to act on a number that
+        has been visible in the journal for a while - which is the order this
+        repository does it in.
+
+        `stale_after` stays the floor: it still means "never sooner than this",
+        and a series with no estimate yet behaves exactly as before.
+        """
+        floor = self.settings.stale_after
+        if floor <= 0:
+            return 0.0
+        expected = self._holds.expected(live.intent.feed, live.intent.interval)
+        if not expected or expected <= 0:
+            return floor
+        return max(floor, STALE_HOLDS * float(expected))
+
     def _turn_wanted(self, feed: str) -> float:
         """How much of a turn this instrument has to show, in volatility units.
 
@@ -2238,8 +2309,10 @@ class Trader:
         banked or the stop is at break even, the thing this protects against
         has already been dealt with by something better.
         """
-        after = self.settings.stale_after
+        after = self._stale_after(live)
         if after <= 0 or age < after or live.scaled:
+            return False
+        if self._still_building(live):
             return False
         risk = abs(live.intent.entry - live.intent.stop)
         if risk <= 0:

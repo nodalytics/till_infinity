@@ -32,7 +32,7 @@ from till_infinity.trading.context import Context
 from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick
 from till_infinity.trading.paper import PaperBroker
 from till_infinity.trading.risk import Guard
-from till_infinity.trading.service import Trader, _intent_from, _market_closed
+from till_infinity.trading.service import Live, Trader, _intent_from, _market_closed
 from till_infinity.trading.sizing import lots, price_distance, stop_for, target_for
 from till_infinity.trading.speeds import Speeds
 from till_infinity.trading.symbols import resolve
@@ -6352,3 +6352,122 @@ async def test_nothing_is_left_with_the_broker_unless_asked():
     assert got.gate == "waiting"
     assert trader.broker.rested == []
     assert trader._waiting["gold"].ticket == 0
+
+
+async def test_the_stale_clock_follows_the_instruments_own_hold():
+    """Hold time varies 163-fold between series and it persists, which is the
+    shape that makes one number useless: 300s is most of a fast series' life
+    and a fraction of a slow one's."""
+    trader = Trader(Bus(), settings=settings(stale_after=300.0))
+    await trader.start()
+    live = Live(
+        position=td.Position(
+            ticket=1, symbol="XAUUSD", side=Side.BUY, volume=0.1, price_open=4400.0
+        ),
+        intent=Intent(
+            feed="gold",
+            symbol="XAUUSD",
+            side=Side.BUY,
+            volume=0.1,
+            entry=4400.0,
+            stop=4390.0,
+            target=4420.0,
+            interval="5m",
+        ),
+    )
+
+    # Nothing learned yet: the floor, exactly as before.
+    assert trader._stale_after(live) == 300.0
+
+    # A slow series waits longer than the floor.
+    for _ in range(60):
+        trader._holds.observe("gold", "5m", 900.0)
+    assert trader._stale_after(live) > 300.0
+
+    # A fast one is never rushed below it.
+    quick = Trader(Bus(), settings=settings(stale_after=300.0))
+    await quick.start()
+    for _ in range(60):
+        quick._holds.observe("gold", "5m", 5.0)
+    assert quick._stale_after(live) == 300.0
+
+
+async def test_a_zero_floor_still_switches_it_off():
+    """The setting means 'never sooner than this', and zero means never."""
+    trader = Trader(Bus(), settings=settings(stale_after=0.0))
+    await trader.start()
+    live = Live(
+        position=td.Position(
+            ticket=1, symbol="XAUUSD", side=Side.BUY, volume=0.1, price_open=4400.0
+        ),
+        intent=Intent(
+            feed="gold",
+            symbol="XAUUSD",
+            side=Side.BUY,
+            volume=0.1,
+            entry=4400.0,
+            stop=4390.0,
+            target=4420.0,
+            interval="5m",
+        ),
+    )
+    for _ in range(60):
+        trader._holds.observe("gold", "5m", 900.0)
+    assert trader._stale_after(live) == 0.0
+
+
+async def _motionless(**over):
+    trader = Trader(Bus(), settings=settings(stale_after=1.0, **over))
+    await trader.start()
+    live = Live(
+        position=td.Position(
+            ticket=7, symbol="XAUUSD", side=Side.BUY, volume=0.1, price_open=4400.0
+        ),
+        intent=Intent(
+            feed="gold",
+            symbol="XAUUSD",
+            side=Side.BUY,
+            volume=0.1,
+            entry=4400.0,
+            stop=4390.0,
+            target=4420.0,
+            interval="5m",
+        ),
+    )
+    return trader, live
+
+
+async def test_a_coiling_trade_is_not_called_stale():
+    """A trade that has not moved is two situations. One is dead. The other is
+    coiling - price has not travelled yet and the fast timeframes are lining up
+    behind it - and closing that one closes the setup immediately before it
+    works."""
+    trader, live = await _motionless()
+    group = td_cusum.Ensemble(intervals=("1m", "3m", "5m"))
+    price = 100.0
+    for step in range(0, 3600, 30):
+        price += 0.5
+        group.push(price, unit=1.0, when=float(step))
+    trader._ensemble["gold"] = group
+
+    assert group.agreement > 0
+    assert trader._still_building(live) is True
+
+
+async def test_momentum_against_the_trade_earns_it_nothing():
+    trader, live = await _motionless()
+    group = td_cusum.Ensemble(intervals=("1m", "3m", "5m"))
+    price = 100.0
+    for step in range(0, 3600, 30):
+        price -= 0.5
+        group.push(price, unit=1.0, when=float(step))
+    trader._ensemble["gold"] = group
+
+    assert group.agreement < 0
+    assert trader._still_building(live) is False
+
+
+async def test_an_unread_instrument_is_not_given_the_benefit():
+    """Unknown is not the same as building."""
+    trader, live = await _motionless()
+    assert trader._still_building(live) is False
