@@ -6132,3 +6132,101 @@ def test_no_risk_is_not_zero_r():
         target=4420.0,
     )
     assert _r_multiple(unknown, 4420.0) == 0.0
+
+
+def test_the_target_can_be_pulled_short_of_where_it_aimed():
+    """A target sitting exactly where everyone else is watching fills last.
+    Price stalls *at* a level rather than through it."""
+    engine = strategy("level-scalp", target_buffer_vol=0.25)
+    got = engine.consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    plain = strategy("level-scalp").consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert isinstance(plain, Intent)
+    # One volatility unit is 4.40 here, so a quarter of one is 1.10.
+    assert got.target < plain.target
+    assert plain.target - got.target == pytest.approx(1.10, abs=0.02)
+
+
+def test_the_buffer_never_pulls_the_target_past_the_entry():
+    """A buffer larger than the move would invert the trade, and a target
+    behind the fill is not a smaller target."""
+    engine = strategy("level-scalp", target_buffer_vol=50.0)
+    got = engine.consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert got.target > got.entry
+    # At most half the move is given up.
+    assert (got.target - got.entry) >= 0.0
+
+
+def test_a_short_pulls_its_target_the_other_way():
+    engine = strategy("level-scalp", target_buffer_vol=0.25)
+    down = signal(direction="down")
+    got = engine.consider(
+        down, spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    plain = strategy("level-scalp").consider(
+        down, spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(got, Intent)
+    assert isinstance(plain, Intent)
+    assert got.side is Side.SELL
+    # A sell target sits below the fill, so pulling it short raises it.
+    assert got.target > plain.target
+
+
+def test_no_buffer_changes_nothing():
+    """Off by default, so the setting has to be asked for."""
+    assert settings().target_buffer_vol == 0.0
+    plain = strategy("level-scalp").consider(
+        signal(), spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
+    )
+    assert isinstance(plain, Intent)
+
+
+async def test_an_entry_can_rest_a_fraction_better_than_the_quote():
+    """The trade is worth taking at the level; it is worth more a fraction
+    nearer it. Distinct from `pullback_fraction`, which waits for the sweep
+    edge - 189 signals of 813 reached that wait and none of them parked."""
+    trader = Trader(Bus(), settings=settings(entry_edge_vol=0.25, pullback_fraction=0.0))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.on_signal(signal())
+
+    assert isinstance(got, Refusal)
+    assert got.gate == "waiting"
+    held = trader._waiting.get("gold")
+    assert held is not None
+    # A buy rests below the ask it was offered.
+    assert held.trigger < 4400.5
+
+
+async def test_no_edge_means_no_resting():
+    """Off unless asked for, so nothing changes by default."""
+    trader = Trader(Bus(), settings=settings(entry_edge_vol=0.0, pullback_fraction=0.0))
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.on_signal(signal())
+    assert not (isinstance(got, Refusal) and got.gate == "waiting")
+
+
+async def test_a_fill_already_better_than_the_rest_is_taken():
+    """On a fast move there is nothing to improve, and waiting would only risk
+    the trade."""
+    trader = Trader(Bus(), settings=settings(entry_edge_vol=0.25, pullback_fraction=0.0))
+    await trader.start()
+    # The quote is far below the level, so the buy is already better off.
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4380.0, "ask": 4380.5})
+    )
+    got = await trader.on_signal(signal())
+    assert not (isinstance(got, Refusal) and got.gate == "waiting")

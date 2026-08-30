@@ -1337,6 +1337,15 @@ class Trader:
         # zeroed is not the same trade.
         own = getattr(engine, "pullback_fraction", 0.0) if engine is not None else 0.0
         fraction = own or self.settings.pullback_fraction
+
+        # The small, ordinary improvement, tried before the deep one. Resting a
+        # fraction of a unit nearer the level is a different bet from waiting
+        # for the sweep edge: 189 signals of 813 reached that wait and none of
+        # them parked, because by then the fill was already past it.
+        edge = self._edge_entry(payload, intent, tick)
+        if edge is not None:
+            return edge
+
         if fraction <= 0:
             return None
         features = intent.features or {}
@@ -1541,6 +1550,59 @@ class Trader:
                     },
                 )
             )
+
+    def _edge_entry(self, payload: dict[str, Any], intent: Intent, tick: Tick) -> Refusal | None:
+        """Hold the order a fraction of a unit better than the quote.
+
+        The trade is worth taking at the level; it is worth more a fraction
+        nearer it. This waits at that price rather than paying the spread to
+        cross now, and the wait is short by construction - a quarter of a unit
+        is inside the noise of any instrument that is moving at all.
+
+        **Held here, not sent to the broker.** The bridge has
+        `POST /orders/pending`, and using it would put the stop and target on
+        the terminal between placement and fill, where nothing here can adjust
+        them - and where a market that gapped through would fill at a price
+        this never agreed to. The same book that already re-arms parked signals
+        watches this one.
+
+        Skipped when the fill is already better than the price being waited
+        for, which is the common case on a fast move: there is nothing to
+        improve and waiting would only risk the trade.
+        """
+        want = self.settings.entry_edge_vol
+        if want <= 0:
+            return None
+        unit = price_distance(intent.entry, _vol_of(payload), 1.0)
+        if unit <= 0:
+            return None
+        better = intent.entry - intent.side.sign * want * unit
+        # Already there or better: nothing to wait for.
+        if (intent.entry - better) * intent.side.sign <= 0:
+            return None
+        if (tick.entry(intent.side) - better) * intent.side.sign <= 0:
+            return None
+        bars = SECONDS.get(intent.interval, 0.0)
+        window = (
+            bars * self.settings.pullback_bars if bars else (intent.hold or self.settings.max_hold)
+        )
+        self._waiting[intent.feed] = Waiting(
+            payload=payload,
+            feed=intent.feed,
+            trigger=better,
+            side=intent.side,
+            until=tick.time + window,
+        )
+        self._was_parked[intent.feed] = True
+        log.info(
+            "trading: %s %s resting at %.5g - %.2fv better than the %.5g on offer",
+            intent.side,
+            intent.feed,
+            better,
+            want,
+            intent.entry,
+        )
+        return Refusal("waiting", f"holding out for {better:.5g}", intent.feed)
 
     def _turn_wanted(self, feed: str) -> float:
         """How much of a turn this instrument has to show, in volatility units.

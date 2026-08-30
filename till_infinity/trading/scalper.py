@@ -467,6 +467,33 @@ class LevelStrategy(Strategy):
         against_fill = spec.round_price(entry - floor if side is Side.BUY else entry + floor)
         return min(anchored, against_fill) if side is Side.BUY else max(anchored, against_fill)
 
+    def _short_of(
+        self, target: float, entry: float, side: Side, unit: float, spec: SymbolSpec
+    ) -> float:
+        """Pull the target back by `target_buffer_vol`, if one is asked for.
+
+        A target sitting exactly where everyone else is watching fills last.
+        Price stalls *at* a level rather than through it, so the final fraction
+        is the part most often not given - and giving it up costs a known
+        small amount to avoid an unknown larger one. `approach-scalp` has
+        always done this; this is the same idea for every other target.
+
+        Applied after the strategy has aimed, so an override that already
+        stands off - the next level minus a buffer, the opposite origin's near
+        edge - gets the same treatment and does not have to remember to.
+
+        **Never past the entry.** A buffer larger than the move would invert
+        the trade, and a target behind the fill is not a smaller target.
+        """
+        want = self.settings.target_buffer_vol
+        if want <= 0 or unit <= 0 or not target:
+            return target
+        move = (target - entry) * side.sign
+        if move <= 0:
+            return target
+        pulled = min(want * unit, move * 0.5)
+        return spec.round_price(target - side.sign * pulled)
+
     def target(self, context: Aim) -> float | Refusal:
         """Where to take profit. Overridden by anything not aiming at the push."""
         return context.spec.round_price(target_for(context.entry, context.side, context.push))
@@ -592,7 +619,7 @@ class LevelStrategy(Strategy):
         )
         if isinstance(aimed, Refusal):
             return aimed
-        target = aimed
+        target = self._short_of(aimed, entry, side, unit, spec)
 
         # The stop is anchored to the level, so a fill on the far side of it -
         # price ran through while this was being decided - leaves a stop that is

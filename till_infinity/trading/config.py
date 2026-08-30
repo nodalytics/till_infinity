@@ -781,6 +781,38 @@ class Settings:
     #: Zero disables the learning, and with it the closing gate.
     session_bars: int = 1400
 
+    #: Pull the target this many volatility units short of where it was aimed.
+    #:
+    #: A target sitting exactly on the price everyone else is watching is a
+    #: target that fills last. Price stalls *at* a level rather than through
+    #: it, so the last fraction of the move is the part most often not given -
+    #: and giving it up costs a known, small amount to avoid an unknown,
+    #: larger one.
+    #:
+    #: `approach-scalp` has always done this, stopping a quarter unit short of
+    #: the level it aims at. This is the same idea for every other target.
+    #:
+    #: Never past the entry: a buffer larger than the move itself would invert
+    #: the trade, and a target behind the fill is not a smaller target.
+    target_buffer_vol: float = 0.0
+
+    #: Rest the entry this many volatility units better than the quote.
+    #:
+    #: The trade is worth taking at the level; it is worth more a fraction
+    #: nearer it. This holds the order at that price instead of paying the
+    #: spread to cross now, and takes it when price comes.
+    #:
+    #: Distinct from `pullback_fraction`, which waits for the **sweep edge** -
+    #: a deep retracement that measured 189 signals of 813 reaching the wait
+    #: and none of them parking, because by then the fill was already past it.
+    #: This is a small, ordinary improvement rather than a bet on a sweep.
+    #:
+    #: Held here and fired at market when price arrives, rather than sent as a
+    #: broker pending order. The bridge has `POST /orders/pending`, and using it
+    #: would mean the stop and target live on the terminal between placement
+    #: and fill, where nothing here can adjust them.
+    entry_edge_vol: float = 0.0
+
     #: Extra terminals that copy every decision, as
     #: `name=url[|api_key]` entries. Empty means one terminal, as before.
     #:
@@ -1162,6 +1194,8 @@ class Settings:
             unconfirmed_size=_float("TRADING_UNCONFIRMED_SIZE", 1.0),
             stale_quote_after=_float("TRADING_STALE_QUOTE_AFTER_S", 300.0),
             session_bars=_int("TRADING_SESSION_BARS", 1400),
+            target_buffer_vol=_float("TRADING_TARGET_BUFFER_VOL", 0.0),
+            entry_edge_vol=_float("TRADING_ENTRY_EDGE_VOL", 0.0),
             followers=_names(_env("TRADING_FOLLOWERS")),
             style=_env("TRADING_STYLE") or "both",
             session_margin=_float("TRADING_SESSION_MARGIN_S", 60.0),
