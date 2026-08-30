@@ -425,7 +425,7 @@ class Macro:
         out: dict[str, float] = {}
 
         left, right = self.reading(base) if base else None, self.reading(quote)
-        if left is not None and left.known and right.known:
+        if left is not None:
             gap = _gap(left.carry, right.carry)
             if gap is not None:
                 out["macro_carry_gap"] = gap
@@ -439,9 +439,11 @@ class Macro:
             if liquidity is not None:
                 out["macro_liquidity_gap"] = liquidity
         elif right.liquidity is not None:
-            # No base leg, so no differential - but the currency it is quoted
-            # in still has a balance sheet, and that is the reading that
-            # matters for a dollar-quoted asset with no carry of its own.
+            # Only when there is no base leg at all. Keyed off `base` rather
+            # than off whether the readings are known, which put the quote's
+            # balance sheet on `eurusd` under the name a *non*-pair uses,
+            # simply because the euro rate had not arrived yet. A pair with a
+            # leg missing is a pair with a leg missing; it is not gold.
             out["macro_liquidity"] = right.liquidity
 
         # The dollar block, on everything. The dollar is on one side of almost

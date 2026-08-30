@@ -399,3 +399,16 @@ async def test_the_store_is_read_before_the_first_notice(tmp_path):
     await bus.close()
     await watcher.run(messages=0)
     assert watcher.macro.warm
+
+
+def test_a_pair_with_a_leg_not_yet_collected_is_not_treated_as_gold():
+    """`macro_liquidity` is the reading for an instrument with no base leg.
+    Keyed off whether the *readings* were known rather than off whether there
+    is a base, it appeared on `eurusd` for as long as the euro rate had not
+    arrived - the same key meaning two different things."""
+    macro = mc.Macro()
+    now = time.time()
+    macro.observe("WALCL", now - 120 * DAY, 8_000.0)
+    macro.observe("WALCL", now, 8_100.0)
+    assert "macro_liquidity" not in macro.features("eurusd")
+    assert "macro_liquidity" in macro.features("gold")
