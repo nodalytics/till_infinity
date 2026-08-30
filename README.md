@@ -529,6 +529,7 @@ lands, and journal entries are content-addressed.
 | [docs/levels.md](docs/levels.md) | key levels - PIP swings, Kalman tracking, per-side directional inference |
 | [docs/agents.md](docs/agents.md) | analysts, tools, models, read-only access, watching the bus |
 | [docs/journal.md](docs/journal.md) | decisions, reasoning, outcomes, exporting for training |
+| [docs/ledger.md](docs/ledger.md) | what each level made or lost, and why a level's price is not its name |
 | [docs/notifications.md](docs/notifications.md) | Telegram and Discord alerts, channels, chat discovery |
 | [docs/bus.md](docs/bus.md) | topics, publishing, fan-out, Redis |
 | [docs/deployment.md](docs/deployment.md) | one process, compose, or CI to a server - and how to size it |

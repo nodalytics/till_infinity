@@ -21,6 +21,14 @@ rather than believed.
 | [turns.md](turns.md) | **measured** - can a major turn be seen coming; yes, weakly. AUC 0.595 purged over 310 turns, and `vol` alone carries it |
 | [cycles.md](cycles.md) | **measured** - does a level's place in the larger move matter; one cell separates by nothing at all, and the AUC gain's interval includes zero |
 | [bandits.md](bandits.md) | design note - where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
+| [learning.md](learning.md) | **measured** - is the kNN behind every level call buying anything; on 442 touches a learned distance, the kNN and a logistic regression land within 0.7 points of each other, and `up_rate` carries almost all of it |
+| [formations.md](formations.md) | seven ways to find a level and why they run together; 57% of levels now have more than one method behind them, where every one used to be `pip` alone |
+| [shelves.md](shelves.md) | **measured** - do high-activity bands get respected; pooled over 849 windows a node is reached 45.8% against a control's 46.3%, and the synthetic null reads -11.6% |
+| [origins.md](origins.md) | **measured** - do origins hold when price comes back to them |
+| [reachable.md](reachable.md) | **measured** - how often all of `origin-swing`'s conditions hold at once |
+| [geometry.md](geometry.md) | **measured** - where reward-to-risk actually comes from, and why a floor on it keeps losers and refuses winners |
+| [lateness.md](lateness.md) | **measured** - what entering late costs |
+| [macro.md](macro.md) | design note - monetary policy as features on a signal and as a model of its own, and why a rate differential needs both legs from one series family |
 
 Findings that changed the code, or that belong next to it, are written up in
 `docs/` instead - [edge.md](../docs/edge.md), [strength.md](../docs/strength.md),
