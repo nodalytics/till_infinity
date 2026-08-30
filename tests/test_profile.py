@@ -37,10 +37,13 @@ def test_a_flat_profile_has_no_node():
 
 
 def test_the_threshold_is_relative_to_how_many_bins_there_are():
-    """As a fixed 5% share this drew no nodes at all, on any instrument: bins
-    are half a volatility unit wide, a 500-bar window spans far more than
-    twenty of them, and no bin can hold a twentieth of everything unless price
-    barely moves."""
+    """A fixed share means a different thing per window.
+
+    Measured over 339 warm series at the engine's 500-bar window: the median
+    window holds 59 bins, and 5% is three fair shares at 60 - so the old
+    threshold was calibrated for the median by accident, and was too strict on
+    a wide-ranging window and too loose on a narrow one.
+    """
     assert NODE_CONCENTRATION > 1.0
     # A window that ranges widely and concentrates in one place still finds it,
     # which a fixed share cannot do once the range is wide enough.

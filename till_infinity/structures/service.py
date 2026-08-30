@@ -30,7 +30,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 
-from ..bus import ALERTS, BARS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
+from ..bus import ALERTS, BARS, MACRO, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
 from . import confluence as cf
@@ -40,12 +40,17 @@ from .anomaly import Detector
 from .config import DRIFT_INTERVALS, Settings
 from .drift import Drift
 from .engine import Engine
+from .macro import Macro, since_default, stored
 from .models import Shape, Signal
 from .sessions import Clock
 
 log = get_logger(__name__)
 
-TOPICS: tuple[str, ...] = (QUOTES, BARS)
+#: `MACRO` is a notice with a count in it, not the data - see `bus.py`. The
+#: series are read from the store when it arrives, which is the contract the
+#: bus was written to and the reason a poll of thousands of historic rows does
+#: not become thousands of messages.
+TOPICS: tuple[str, ...] = (QUOTES, BARS, MACRO)
 
 #: Shapes that never need a model or a calendar to be worth sending.
 UNAMBIGUOUS: frozenset[Shape] = frozenset({Shape.STALE})
@@ -66,6 +71,18 @@ MIN_VENUES = 3
 #: beyond anything a live market produces, and far below the hundred-fold a
 #: unit error produces, so there is no band where this has to guess.
 SCALE_LIMIT = 2.0
+
+
+def _passes(level: object) -> list[str]:
+    """The formations that drew a level, from its "+"-joined origin.
+
+    Pivots are named `pivot:PP` and are one formation however many of them
+    merged, so the split is on "+" and the count is of distinct passes.
+    """
+    drawn = getattr(level, "origin", "")
+    if not isinstance(drawn, str) or not drawn:
+        return []
+    return sorted({part.partition(":")[0] for part in drawn.split("+") if part})
 
 
 def single_source_feeds() -> frozenset[str]:
@@ -236,6 +253,14 @@ class Watcher:
         #: from resolutions and from the volatility it sees; asserts
         #: nothing until an hour has earned it.
         self.clock = Clock()
+        #: Monetary policy per currency, folded onto every level call and
+        #: emitted as its own shape when a stance turns. Empty until the news
+        #: service has collected something, and silent while empty - a level
+        #: call is correct without it.
+        self.macro = Macro()
+        #: The newest observation time already taken, so a re-read after a
+        #: poll asks for the tail rather than for four hundred days again.
+        self._macro_since = 0.0
         #: How busy each instrument's bars usually are, so a touch can be
         #: stamped with whether this one was unusual. Decides nothing.
         self.activity = ActivityBook()
@@ -301,7 +326,23 @@ class Watcher:
         self.engine = state.get("engine", self.engine)
         self.clock = state.get("clock", self.clock)
         self.activity = state.get("activity", self.activity)
-        log.info("structures: restored models (%s)", self.detector.seen())
+        # Configuration re-applied over the restore, and this is not tidying.
+        # The pickled engine carries the settings it was **first** built with,
+        # so every one of these was inert from the moment a state file existed:
+        # production drew levels with `pip` alone for the whole life of a
+        # `STRUCTURES_FORMATION` that asked for three passes, and the only
+        # symptom was `run` and `origin` never drawing anything.
+        #
+        # What is learned is kept - the levels, their touch history, the
+        # filters. What was *chosen* comes from this deployment.
+        self.engine.draw_with(self.settings.formation)
+        self.engine.charge_spread = self.settings.charge_spread
+        self.engine.consensus.single_source = single_source_feeds()
+        log.info(
+            "structures: restored models (%s), drawing with %s",
+            self.detector.seen(),
+            "+".join(self.engine.passes),
+        )
         # Restored levels were formed under whatever geometry was current when
         # the state was saved, which is not necessarily this one.
         self._decline_unsupported()
@@ -609,7 +650,37 @@ class Watcher:
                     self.engine.regime_changed(feed, found.features.get("severity_pct", 0.5))
                     signals.append(found)
             return signals
+        if message.topic == MACRO:
+            return await self._read_macro()
         return []
+
+    async def _read_macro(self) -> list[Signal]:
+        """Re-read the policy series, and speak if a stance turned.
+
+        Both halves of the consumption at once, deliberately. The features and
+        the model read the same state, so splitting them would mean two reads
+        of the same file and two chances for them to disagree about what the
+        rate differential is.
+        """
+        if not self.settings.macro:
+            return []
+        since = self._macro_since or since_default()
+        rows = await asyncio.to_thread(stored, self.settings.news_db, since=since)
+        if not rows:
+            return []
+        taken = self.macro.take(rows)
+        # From the rows rather than from the clock: a series two months behind
+        # would otherwise push the watermark past its own newest observation
+        # and the next read would ask for a window it has nothing in.
+        self._macro_since = max(row.time for row in rows)
+        found = self.macro.calls(sorted(self.engine.feeds()))
+        if taken or found:
+            log.info(
+                "structures: policy - %d new readings, %d stance changes",
+                taken,
+                len(found),
+            )
+        return found
 
     def _level_calls(self, calls: Sequence[object]) -> list[Signal]:
         """Turn level calls into signals, dropping the ones with no edge.
@@ -656,6 +727,26 @@ class Watcher:
                 busy,
                 market,
             )
+            # How many formations agree on this price, as a number.
+            #
+            # `Level.origin` has always carried the passes that drew it -
+            # "pip+run+origin" - and `agree()` has always maintained it through
+            # a merge. Nothing ever counted it, so "does a level two methods
+            # found behave better than a level one method found" could not be
+            # asked, of 969 recorded outcomes or of any others.
+            #
+            # A feature and not a gate, deliberately and in that order: it
+            # lands in the journal beside the outcome, and the outcome
+            # machinery gets to say whether agreement is worth anything before
+            # anything is refused for lacking it.
+            extra = {"drawn_by_n": float(len(_passes(call.level)))}
+            # Policy folded on here rather than inside `to_signal`, for the
+            # same reason the regime label is: it is one model across the whole
+            # book and a Call has no business holding it. Empty until the news
+            # service has collected something, so this is a no-op on a
+            # deployment without one rather than a missing key downstream.
+            extra.update(self.macro.features(call.feed))
+            signal = replace(signal, features={**signal.features, **extra})
             if call.feed not in grouped:
                 grouped[call.feed] = self._zones(call.feed)
             zone = self._zone_for(grouped[call.feed], call.level)

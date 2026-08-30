@@ -18,19 +18,41 @@ what inflation the market is pricing *right now*, and it trades every day. That
 is a sentiment reading rather than a measurement - it is what people believe,
 which is exactly what moves a currency before the print confirms or refutes it.
 
-So the series here are of two kinds and should not be read as one:
+So the series here are of three kinds and should not be read as one:
 
 * **Policy stock** - `WALCL`, `M2SL`, `RRPONTSYD`, `WRESBAL`, `TOTBKCR`,
   `ECBASSETSW`, `JPNASSETS`. Slow, revised, and the ground truth of how much
   money exists.
 * **Market expectation** - `DGS2`, `DGS10`, `T5YIE`, `T10YIE`, `T5YIFR`,
   `DFII10`. Daily, never revised, and an opinion rather than a fact.
+* **Rates, one definition per family** - the daily policy rates `DFF`,
+  `ECBDFR` and `IUDSOIA`, and the two OECD families `IRSTCI01xx` (overnight)
+  and `IRLTLT01xx` (ten-year) for eight currencies.
+
+## Why a family rather than the best series per country
+
+A rate differential is most of why one currency moves against another, and a
+differential is only meaningful when both legs are the **same measurement**.
+Quoting an overnight policy rate for one currency against a ten-year yield for
+another gives a number that moves with the shape of one curve rather than with
+the gap between two countries - and it will look like signal, because it moves.
+
+So the cross-country rates are taken from two OECD families, which are one
+definition with the country code swapped. They are monthly and about two months
+behind, checked against the live API rather than assumed: on 2026-08-30 the
+newest observation was 2026-06-01. That is slow, and it is what a comparable
+cross-country rate costs. The three daily policy rates are the fast read where
+one exists.
+
+Germany stands in for the euro area. The euro-area aggregates exist
+(`IRSTCI01EZM156N`, `IRLTLT01EZM156N`) and stop in January 2026, which is worse
+than a proxy that is current.
 
 ## What this deliberately does not do
 
 It does not forecast. Nothing here says a widening breakeven means buy dollars;
 this package collects and the models decide, which is the same division every
-other source in `news` keeps.
+other source in `news` keeps. `structures/macro.py` is the model.
 
 `FRED_API_KEY` is required and there is no keyless fallback: the keyless
 endpoint returns 400, and a source that silently collects nothing is worse than
@@ -74,6 +96,42 @@ SERIES: dict[str, str] = {
     # The other two balance sheets that matter to a major pair.
     "ECBASSETSW": "ECB total assets",
     "JPNASSETS": "Bank of Japan total assets",
+    # Policy rates that move daily, for the three currencies that publish one.
+    # These are the fast half of a rate differential and there is no comparable
+    # daily series for the yen, the Swiss franc or the commodity currencies.
+    "DFF": "Fed funds effective rate",
+    "ECBDFR": "ECB deposit facility rate",
+    "IUDSOIA": "SONIA (sterling overnight)",
+    # The two OECD families, and the reason for preferring them to a hand-picked
+    # series per country. A differential is only meaningful when both legs are
+    # the *same measurement*: quoting an overnight policy rate against a ten-year
+    # yield produces a number that moves with the shape of one curve rather than
+    # with the gap between two countries. Every code below is the same
+    # definition with the country swapped, so subtracting one from another means
+    # what it looks like it means.
+    #
+    # Monthly and about two months behind - checked, not assumed: the newest
+    # observation on 2026-08-30 was 2026-06-01. That is slow, and it is what a
+    # comparable cross-country rate costs. The daily policy rates above are the
+    # fast read where one exists.
+    #
+    # Germany stands in for the euro area. The euro-area aggregates
+    # (`IRSTCI01EZM156N`, `IRLTLT01EZM156N`) exist and stop in January 2026,
+    # which is worse than a proxy that is current.
+    "IRSTCI01USM156N": "US overnight rate",
+    "IRSTCI01DEM156N": "euro-area overnight rate",
+    "IRSTCI01GBM156N": "UK overnight rate",
+    "IRSTCI01JPM156N": "Japan overnight rate",
+    "IRSTCI01CAM156N": "Canada overnight rate",
+    "IRSTCI01AUM156N": "Australia overnight rate",
+    "IRLTLT01USM156N": "US 10-year rate",
+    "IRLTLT01DEM156N": "euro-area 10-year rate",
+    "IRLTLT01GBM156N": "UK 10-year rate",
+    "IRLTLT01JPM156N": "Japan 10-year rate",
+    "IRLTLT01CAM156N": "Canada 10-year rate",
+    "IRLTLT01AUM156N": "Australia 10-year rate",
+    "IRLTLT01CHM156N": "Switzerland 10-year rate",
+    "IRLTLT01NZM156N": "New Zealand 10-year rate",
 }
 
 #: Which currency each series speaks about, so a consumer can line it up with a
@@ -81,6 +139,20 @@ SERIES: dict[str, str] = {
 CURRENCY: dict[str, str] = {
     "ECBASSETSW": "EUR",
     "JPNASSETS": "JPY",
+    "ECBDFR": "EUR",
+    "IUDSOIA": "GBP",
+    "IRSTCI01DEM156N": "EUR",
+    "IRSTCI01GBM156N": "GBP",
+    "IRSTCI01JPM156N": "JPY",
+    "IRSTCI01CAM156N": "CAD",
+    "IRSTCI01AUM156N": "AUD",
+    "IRLTLT01DEM156N": "EUR",
+    "IRLTLT01GBM156N": "GBP",
+    "IRLTLT01JPM156N": "JPY",
+    "IRLTLT01CAM156N": "CAD",
+    "IRLTLT01AUM156N": "AUD",
+    "IRLTLT01CHM156N": "CHF",
+    "IRLTLT01NZM156N": "NZD",
 }
 
 #: Days of history to ask for. Enough to see the level and the trend it is on,

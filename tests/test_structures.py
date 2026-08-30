@@ -1962,9 +1962,13 @@ def test_the_formation_is_reachable_from_settings():
     import os
     from unittest import mock
 
-    from till_infinity.structures.config import Settings
+    from till_infinity.structures.config import DEFAULT_FORMATION, Settings
 
-    assert Settings().formation == "pip,run,origin"
+    # Both defaults named once. They had drifted apart - the field said three
+    # passes and `from_env` said one - so a deployment that set nothing got a
+    # formation the documentation beside the field denied it had.
+    assert Settings().formation == DEFAULT_FORMATION
+    assert Settings.from_env().formation == DEFAULT_FORMATION
     with mock.patch.dict(os.environ, {"STRUCTURES_FORMATION": "origin"}):
         assert Settings.from_env().formation == "origin"
 
@@ -1977,6 +1981,10 @@ def test_the_watcher_hands_the_formation_to_the_engine():
 
     source = inspect.getsource(service.Watcher.__init__)
     assert "formation=self.settings.formation" in source
+    # And again after a restore, which is the half this missed: the pickled
+    # engine carries the formation it was first saved with, so handing the
+    # setting to the constructor is not enough to make it reach production.
+    assert "draw_with(self.settings.formation)" in inspect.getsource(service.Watcher.load)
 
 
 def test_formations_compose():

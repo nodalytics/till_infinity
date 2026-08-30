@@ -40,6 +40,11 @@ class Shape(StrEnum):
     DRIFT = "drift"
     #: Price arrived at a key level, and its history says which way it goes.
     LEVEL = "level"
+    #: Monetary policy turned - a rate differential that was widening one way
+    #: is now widening the other. Slow by construction: the fastest series
+    #: behind it moves once a day and most move once a month, so this is
+    #: context for a trade rather than a trade.
+    MACRO = "macro"
 
 
 @dataclass(frozen=True, slots=True)

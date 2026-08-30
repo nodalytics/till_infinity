@@ -39,10 +39,16 @@ the share alone would return a plateau's worth of adjacent bins, and the local
 maximum alone would return the tallest bin of a flat profile, which is noise
 with a rank.
 
-The share is relative rather than absolute, and that is not a detail: as a
-fixed 5% this drew **no nodes at all, on any instrument**. Bins are half a
-volatility unit wide, a 500-bar window spans far more than twenty of them, and
-no bin can hold a twentieth of everything unless price barely moves.
+The share is relative rather than absolute, and the reason is narrower than it
+first looked. Measured over 339 warm instrument/timeframe series at the engine's
+own 500-bar window, the fixed 5% drew a node on 68% of them and the relative
+form draws one on 75% - a recalibration, not a formation that was blank.
+
+What makes it worth doing anyway is *where* the two differ. A window holds a
+median of 59 bins and ranges from 1 to 159, and 5% is exactly three times a
+fair share at 60 bins. So the old threshold was right for the median series by
+coincidence, far too strict on a wide-ranging one and far too loose on a narrow
+one. The relative form asks the same question of every window.
 
 Bins are `BIN_VOL` volatility units wide, because a fixed price width would give
 btc four bins and eurusd four thousand.
@@ -60,12 +66,10 @@ BIN_VOL = 0.5
 
 #: How many times its fair share a bin must hold to be a node.
 #:
-#: **Relative, because an absolute share cannot be calibrated.** This was a
-#: fixed 5% and drew nothing anywhere: bins are half a volatility unit wide, a
-#: 500-bar window spans far more than twenty of them, and no bin can hold a
-#: twentieth of everything unless price sits almost still. The threshold was an
-#: absolute number where the quantity it judges depends on how many bins there
-#: are.
+#: **Relative, because an absolute share means a different thing per window.**
+#: A window holds a median of 59 bins, and 5% happens to be three fair shares at
+#: 60 - so the fixed threshold was calibrated for the median series by accident
+#: and was too strict on a wide-ranging one and too loose on a narrow one.
 #:
 #: Fair share is `1 / bins`, so this asks for a bin holding `NODE_CONCENTRATION`
 #: times what it would hold if activity were spread evenly. That self-calibrates

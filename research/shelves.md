@@ -15,26 +15,41 @@ control [magnet.md](../docs/magnet.md) already uses.
 
 ## What it says
 
+Re-measured after the threshold was made relative (`NODE_CONCENTRATION`), which
+changed which windows produce a node at all:
+
 | instrument | weight | windows | node | control | gap |
 | --- | --- | --- | --- | --- | --- |
-| spx500 | time | 258 | 84.5% | 56.6% | **+27.9%** |
-| us100 | time | 289 | 71.3% | 59.2% | **+12.1%** |
-| ger40 | time | 66 | 62.1% | 50.0% | **+12.1%** |
-| gold | time | 236 | 52.1% | 44.9% | +7.2% |
-| eurusd | time | 326 | 54.3% | 51.5% | +2.8% |
-| **btc** | **volume** | 357 | 41.2% | 48.5% | **-7.3%** |
-| Volatility 25 | time | 34 | 52.9% | 61.8% | -8.8% |
-| Volatility 75 | time | 42 | 47.6% | 45.2% | +2.4% |
+| spx500 | time | 54 | 75.9% | 51.9% | **+24.1%** |
+| ger40 | time | 46 | 63.0% | 52.2% | +10.9% |
+| gold | time | 171 | 49.1% | 42.7% | +6.4% |
+| us100 | time | 84 | 48.8% | 53.6% | -4.8% |
+| eurusd | time | 142 | 40.8% | 46.5% | -5.6% |
+| **btc** | **volume** | 352 | 38.6% | 44.6% | -6.0% |
+| Volatility 25 | time | 191 | 33.0% | 33.0% | +0.0% |
+| Volatility 75 | time | 154 | 32.5% | 36.4% | -3.9% |
+| Step Index | time | 258 | 33.7% | 45.3% | -11.6% |
 
-**Time-weighted nodes are reached more than the control on every real
-instrument that used time**, from +2.8% to +27.9%. The synthetics straddle zero
-on small samples, which is what a null should do.
+**Pooled across the real instruments the effect is nothing**: 849 windows, 45.8%
+for the node against 46.3% for the control, a gap of **-0.5%**. The three
+positive instruments are the three smallest samples and the three negative ones
+carry two thirds of the windows.
 
-**The one volume-weighted instrument is negative.** btc is the only feed here
-whose volume means contracts rather than tick count, and it is the only real
-instrument where the node is reached *less* than the control. That is either
-volume being the wrong weight or btc being a different market - one instrument
-cannot separate those, and it should not be read as either.
+The synthetics say how wide the noise is. They are a generated process with no
+supply and no holders, so every one of those numbers is zero by construction -
+and one of them reads -11.6% over 258 windows. A +24.1% on 54 heavily
+overlapping windows is not outside that.
+
+### This replaces an earlier reading, which was wrong
+
+The first version of this table reported a positive gap on every real
+instrument that used time weighting, from +2.8% to +27.9%, and concluded that
+time-weighted nodes are reached more than the control. That was measured with
+the absolute threshold, which selected a different and much smaller set of
+windows - and it was read as a result rather than as six numbers with no
+correction for how few independent samples they contain. Windows step 50 bars
+and are judged over 200, so about a quarter of them are independent: spx500's 54
+windows are roughly 13 observations.
 
 ## The confound, stated
 
@@ -52,7 +67,21 @@ the band inside 200 bars, which is the magnet question and not a trade. Nothing
 here measures a stop, a target, or what happened on arrival - which is the
 question `revisits.py` asks of origins and nobody has yet asked of these.
 
-The formation is built and **not enabled**: `STRUCTURES_FORMATION` is still
-`pip`. Turning it on is what would put these levels in front of the outcome
-machinery, which is the only thing that can say whether they are respected as
-opposed to reached.
+## Refuted as a source, kept as a vote
+
+This kills `profile` as a *place to draw levels from*: pooled over the real
+instruments a node is reached no more often than an arbitrary price the same
+distance away.
+
+It does not touch the other question, which is the one it now runs for. Levels
+from the four passes are **merged**, not pooled - `lv.merge` folds a candidate
+into an existing level only when it falls inside that level's own zone, and
+`agree()` records that both found it. So `profile` cannot draw a level of its
+own that anything trades; what it can do is put a fourth name on a price that
+`pip`, `run` or `origin` already drew.
+
+Whether that agreement is worth anything is unmeasured, because it was
+unmeasurable: `Level.origin` has always carried the list and nothing ever
+counted it, so all 969 recorded outcomes say `pip` and nothing else. The count
+is now published as `drawn_by_n` on every level call and lands in the journal
+beside the outcome. Ask again with a few thousand touches behind it.

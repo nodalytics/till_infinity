@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import ClassVar
 
 from ..logging import get_logger
 from . import (
@@ -639,24 +640,14 @@ class Engine:
         #: boundaries between runs of volatility. An experiment, not a setting
         #: to tune in production - the point is to run both over one history
         #: and let the outcome machinery say which price respects more.
-        known = ("pip", "run", "origin", "profile")
-        wanted = (
-            ("pip", "run")
-            if formation == "both"
-            else tuple(n.strip() for n in formation.split(",") if n.strip())
-        )
-        if not wanted or [n for n in wanted if n not in known]:
-            raise ValueError(
-                f"unknown formation {formation!r} - use {', '.join(known)}, 'both', "
-                "or a comma list of them"
-            )
         #: The passes to run, merged. Composing them is the point rather than a
         #: fallback: a formation that draws nothing is not a neutral choice, it
         #: is silence. `origin` alone draws no levels at all on gold at 1m, 5m
         #: or 15m - the timeframes carrying nearly every signal - so selecting
         #: it on its own would stop that instrument trading, quietly.
-        self.passes = wanted
-        self.formation = formation
+        self.passes: tuple[str, ...] = ()
+        self.formation = ""
+        self.draw_with(formation)
         self.run_threshold = run_threshold
         #: Whether the quoted spread is charged against every level call. On by
         #: default, because an uncharged edge is a gross number and acting on
@@ -822,6 +813,49 @@ class Engine:
         except Exception as exc:
             log.debug("structures: no origin reading for %s %s: %s", feed, interval, exc)
             return {}
+
+    FORMATIONS: ClassVar[tuple[str, ...]] = ("pip", "run", "origin", "profile")
+
+    def draw_with(self, formation: str) -> tuple[str, ...]:
+        """Set which passes draw levels, validating the name. Returns the passes.
+
+        A method rather than two lines in `__init__` because it has to be
+        callable **after a restore**, and that is not a refinement - it is the
+        correction of a setting that was inert for its whole life. `Watcher.load`
+        replaces the freshly configured engine with the pickled one, so a
+        deployment that asked for three passes got whichever one the state file
+        was first saved with and kept it across every restart. Production ran
+        `pip` alone while `STRUCTURES_FORMATION` said `pip,run,origin`, and the
+        only visible symptom was that `run` and `origin` never drew anything -
+        which reads exactly like two formations that do not work.
+
+        Levels already formed are not redrawn. They are evidence gathered under
+        the old geometry and throwing them away would cost the touch history
+        that makes them worth holding; what changes is how the next reform
+        draws, which is where the agreement between passes comes from.
+        """
+        wanted = (
+            ("pip", "run")
+            if formation == "both"
+            else tuple(n.strip() for n in formation.split(",") if n.strip())
+        )
+        if not wanted or [n for n in wanted if n not in self.FORMATIONS]:
+            raise ValueError(
+                f"unknown formation {formation!r} - use {', '.join(self.FORMATIONS)}, "
+                "'both', or a comma list of them"
+            )
+        self.passes = wanted
+        self.formation = formation
+        return wanted
+
+    def feeds(self) -> set[str]:
+        """Every instrument this engine has bars for, whatever the interval.
+
+        From the series rather than from the levels: an instrument that has
+        printed bars but not yet formed a level is one this engine is watching,
+        and a consumer asking "what am I following" wants it in the answer.
+        """
+        return {feed for feed, _ in self._series}
 
     def levels(self, feed: str, interval: str = "") -> list[lv.Level]:
         if interval:

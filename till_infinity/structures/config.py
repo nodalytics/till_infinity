@@ -16,6 +16,13 @@ from .state import Restorable
 DEFAULT_STATE_DIR = ".data/structures"
 DEFAULT_JOURNAL_DB = ".data/journal/journal.db"
 DEFAULT_PRICES_DB = ".data/prices/prices.db"
+DEFAULT_NEWS_DB = ".data/news/news.db"
+
+#: Named once, because the field default and the environment fallback had
+#: drifted apart: the dataclass said all three passes and `from_env` said one,
+#: so a deployment that set nothing got a formation the documentation beside
+#: the field denied it had.
+DEFAULT_FORMATION = "pip,run,origin,profile"
 
 #: Only fast data. Above five minutes a "cross-venue disagreement" is mostly
 #: different bar boundaries, not different opinions about the price.
@@ -62,6 +69,9 @@ class Settings(Restorable):
     journal_db: Path = field(default_factory=lambda: Path(DEFAULT_JOURNAL_DB))
     #: Read-only, and only to warm the level windows on start.
     prices_db: Path = field(default_factory=lambda: Path(DEFAULT_PRICES_DB))
+    #: Read-only, and only for the monetary-policy series. Same argument as
+    #: `prices_db`: the collector owns the file and this reads it.
+    news_db: Path = field(default_factory=lambda: Path(DEFAULT_NEWS_DB))
     warm: bool = True
     journalling: bool = True
     warmup: int = 60
@@ -103,15 +113,35 @@ class Settings(Restorable):
     #: say which price gets respected, which needs the choice to be reachable
     #: from a deployment rather than from a keyword argument nobody sets.
     #:
-    #: **Three by default**, because they find different prices and merging is
-    #: additive - a pass that draws nothing costs a little work and removes no
-    #: level. `origin` alone draws none at all on gold at 1m, 5m or 15m, so
+    #: **All four by default**, because they find different prices and merging
+    #: is additive - a pass that draws nothing costs a little work and removes
+    #: no level. `origin` alone draws none at all on gold at 1m, 5m or 15m, so
     #: selecting it instead of `pip` would have stopped that instrument
     #: trading; selecting it *alongside* cannot.
     #:
-    #: `profile` is left out of the default: it is measured but unproven, and
-    #: a default is not the place to find out.
-    formation: str = "pip,run,origin"
+    #: `profile` is included although it fails the test it was built for - a
+    #: node is reached no more often than an arbitrary price the same distance
+    #: away, pooled across instruments (see research/shelves.md). That refutes
+    #: it as a *source* of levels and says nothing about it as a **vote**: the
+    #: question here is whether a price four independent methods agree on is
+    #: respected more than a price one found, and a pass that is useless alone
+    #: can still carry information about a price something else already drew.
+    #:
+    #: Which is why `drawn_by_n` is published on every level call. Four passes
+    #: that agree is a claim; it is recorded now, and gated only if the outcome
+    #: machinery says it is worth something.
+    formation: str = DEFAULT_FORMATION
+
+    #: Whether monetary policy is folded onto level calls and emitted as its
+    #: own shape. On by default and cheap: the series are already collected,
+    #: the features decide nothing, and a macro call is published for the
+    #: outcome machinery to judge rather than acted on.
+    #:
+    #: Off is for a deployment with no `news` service, where the database it
+    #: reads does not exist - though that case already degrades to silence, so
+    #: the setting is for saying so deliberately rather than for avoiding a
+    #: fault.
+    macro: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -119,6 +149,7 @@ class Settings(Restorable):
             state_dir=Path(os.environ.get("STRUCTURES_DIR") or DEFAULT_STATE_DIR),
             journal_db=Path(os.environ.get("JOURNAL_DB") or DEFAULT_JOURNAL_DB),
             prices_db=Path(os.environ.get("PRICES_DB") or DEFAULT_PRICES_DB),
+            news_db=Path(os.environ.get("NEWS_DB") or DEFAULT_NEWS_DB),
             warm=os.environ.get("STRUCTURES_WARM", "1") not in ("0", "false", "no"),
             journalling=os.environ.get("JOURNAL", "1") not in ("0", "false", "no"),
             warmup=_int("STRUCTURES_WARMUP", 60),
@@ -131,5 +162,6 @@ class Settings(Restorable):
             alert_levels=os.environ.get("STRUCTURES_ALERT_LEVELS", "1") not in ("0", "false", "no"),
             charge_spread=os.environ.get("STRUCTURES_CHARGE_SPREAD", "1")
             not in ("0", "false", "no"),
-            formation=os.environ.get("STRUCTURES_FORMATION") or "pip",
+            formation=os.environ.get("STRUCTURES_FORMATION") or DEFAULT_FORMATION,
+            macro=os.environ.get("STRUCTURES_MACRO", "1") not in ("0", "false", "no"),
         )
