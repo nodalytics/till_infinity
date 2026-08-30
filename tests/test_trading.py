@@ -5974,3 +5974,91 @@ def test_a_refused_stale_origin_does_not_leak_its_side():
     worn = _bracketed(features={"origin_below_vol": 0.1, "origin_below_revisits": 9.0})
     engine.consider(worn, spec=GOLD, tick=Tick("XAUUSD", bid=4390.5, ask=4391.5), equity=10_000.0)
     assert engine._facing is None
+
+
+def test_a_contradicted_tick_value_is_corrected_to_the_contract():
+    """`Volatility 75 Index` reports tick_size 0.01 with tick_value 0.0001 - a
+    hundredth of a point per lot against a contract size of 1. The trade that
+    proved it wrong moved 115.56 points on 5.277 lots and paid 622.63, which is
+    1.021 per point per lot rather than the 0.01 claimed.
+
+    Sizing believed it risked 9.47 and risked about 886, which is 9.5% of the
+    account on one position against an intended 0.25%."""
+    from till_infinity.trading.mt5_http import _spec_from
+
+    raw = {
+        "name": "Volatility 75 Index",
+        "digits": 2,
+        "point": 0.01,
+        "trade_tick_size": 0.01,
+        "trade_tick_value": 0.0001,
+        "trade_contract_size": 1.0,
+        "currency_profit": "USD",
+    }
+    spec = _spec_from(raw, "Volatility 75 Index", "USD")
+    # One point per lot is the contract size, so tick_value is contract x tick.
+    assert spec.tick_value == pytest.approx(0.01)
+    assert spec.tick_value / spec.tick_size == pytest.approx(1.0)
+
+
+def test_an_agreeing_tick_value_is_left_alone():
+    """Every other instrument on the account already agrees, and correcting a
+    right answer is how a fix becomes the next bug."""
+    from till_infinity.trading.mt5_http import _spec_from
+
+    gold = {
+        "name": "XAUUSD",
+        "digits": 2,
+        "point": 0.01,
+        "trade_tick_size": 0.01,
+        "trade_tick_value": 1.0,
+        "trade_contract_size": 100.0,
+        "currency_profit": "USD",
+    }
+    assert _spec_from(gold, "XAUUSD", "USD").tick_value == pytest.approx(1.0)
+
+    vol25 = {
+        "name": "Volatility 25 Index",
+        "digits": 3,
+        "point": 0.001,
+        "trade_tick_size": 0.001,
+        "trade_tick_value": 0.001,
+        "trade_contract_size": 1.0,
+        "currency_profit": "USD",
+    }
+    assert _spec_from(vol25, "Volatility 25 Index", "USD").tick_value == pytest.approx(0.001)
+
+
+def test_a_foreign_settlement_currency_is_never_corrected():
+    """The tick value carries a conversion there - USDJPY settles in yen and
+    its ratio is nowhere near its contract size - so the invariant does not
+    hold and applying it would break the instruments that are right."""
+    from till_infinity.trading.mt5_http import _spec_from
+
+    usdjpy = {
+        "name": "USDJPY",
+        "digits": 3,
+        "point": 0.001,
+        "trade_tick_size": 0.001,
+        "trade_tick_value": 0.67,
+        "trade_contract_size": 100_000.0,
+        "currency_profit": "JPY",
+    }
+    assert _spec_from(usdjpy, "USDJPY", "USD").tick_value == pytest.approx(0.67)
+
+
+def test_an_unknown_account_currency_changes_nothing():
+    """Before `connect` there is nothing to compare against, and guessing would
+    be worse than leaving the broker's number alone."""
+    from till_infinity.trading.mt5_http import _spec_from
+
+    raw = {
+        "name": "Volatility 75 Index",
+        "digits": 2,
+        "point": 0.01,
+        "trade_tick_size": 0.01,
+        "trade_tick_value": 0.0001,
+        "trade_contract_size": 1.0,
+        "currency_profit": "USD",
+    }
+    assert _spec_from(raw, "Volatility 75 Index", "").tick_value == pytest.approx(0.0001)

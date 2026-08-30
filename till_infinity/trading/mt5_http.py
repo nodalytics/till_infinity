@@ -89,6 +89,10 @@ class HttpBroker(Broker):
         self._spec_route = ""
         #: Whether this bridge can list its symbols. None until asked.
         self._can_list: bool | None = None
+        #: The account's currency, learned on connect. Needed to know whether a
+        #: symbol's tick value is directly comparable with its contract size -
+        #: see `_spec_from`.
+        self._account_currency = ""
 
     # ------------------------------------------------------------- lifecycle
 
@@ -106,7 +110,9 @@ class HttpBroker(Broker):
         if not await self.healthy():
             await self.close()
             raise NotConnectedError(f"the bridge at {self.settings.url} has no terminal attached")
-        return await self.account()
+        found = await self.account()
+        self._account_currency = (found.currency or "").upper()
+        return found
 
     async def close(self) -> None:
         if self._client is not None:
@@ -219,13 +225,13 @@ class HttpBroker(Broker):
                 narrowed = raw  # usable only if nothing better answers
                 continue
             self._spec_route = route.replace(symbol, "{symbol}")
-            return _spec_from(raw, symbol)
+            return _spec_from(raw, symbol, self._account_currency)
         if narrowed is not None:
             log.warning(
                 "trading: %s came back without a tick value, so it cannot be sized",
                 symbol,
             )
-            return _spec_from(narrowed, symbol)
+            return _spec_from(narrowed, symbol, self._account_currency)
         return None
 
     async def quote(self, symbol: str) -> Tick | None:
@@ -514,7 +520,52 @@ def _ours(row: dict[str, Any], base: int) -> bool:
     return ours(base, int(row.get("magic") or 0))
 
 
-def _spec_from(raw: dict[str, Any], symbol: str) -> SymbolSpec:
+def _point_value(raw: dict[str, Any], tick_size: float, account: str) -> float:
+    """`trade_tick_value`, corrected when the broker contradicts itself.
+
+    **What one point of price is worth per lot is `contract_size`**, when the
+    instrument settles in the account's own currency. That holds across every
+    symbol on this account: Volatility 25 has a contract of 1 and
+    `tick_value / tick_size` of 1; Step Index 10 and 10; XAUUSD 100 and 100;
+    EURUSD 100,000 and 100,000.
+
+    `Volatility 75 Index` reports `tick_size 0.01` with `tick_value 0.0001` -
+    a ratio of 0.01 against a contract size of 1. **It is wrong by a hundred**,
+    and the trade that proved it moved 115.56 points on 5.277 lots and paid
+    622.63, which is 1.021 per point per lot rather than the 0.01 claimed.
+
+    Sizing believed it was risking 9.47 and was risking about 886 - 9.5% of the
+    account on one position against an intended 0.25%. It won. The arithmetic
+    was right and the input was not.
+
+    Only checked when the profit currency **is** the account currency. For
+    anything else the tick value carries a conversion - USDJPY settles in yen
+    and its ratio is nowhere near its contract size - and correcting there
+    would break the instruments that are right.
+    """
+    reported = float(raw.get("trade_tick_value") or 0.0)
+    contract = float(raw.get("trade_contract_size") or 0.0)
+    profit = str(raw.get("currency_profit") or "").upper()
+    if not account or profit != account or contract <= 0 or tick_size <= 0:
+        return reported
+
+    implied = contract * tick_size
+    if reported > 0 and abs(reported - implied) <= implied * 0.01:
+        return reported
+    log.warning(
+        "trading: %s reports tick_value %g against a contract of %g at tick %g, "
+        "which is %g per point rather than %g - sizing on the contract instead",
+        raw.get("name") or "?",
+        reported,
+        contract,
+        tick_size,
+        (reported / tick_size) if tick_size else 0.0,
+        contract,
+    )
+    return implied
+
+
+def _spec_from(raw: dict[str, Any], symbol: str, account: str = "") -> SymbolSpec:
     digits = int(raw.get("digits") or 5)
     point = float(raw.get("point") or 10.0**-digits)
     tick_size = float(raw.get("trade_tick_size") or point)
@@ -523,7 +574,7 @@ def _spec_from(raw: dict[str, Any], symbol: str) -> SymbolSpec:
         digits=digits,
         point=point,
         tick_size=tick_size,
-        tick_value=float(raw.get("trade_tick_value") or 0.0),
+        tick_value=_point_value(raw, tick_size, account),
         volume_min=float(raw.get("volume_min") or 0.01),
         volume_max=float(raw.get("volume_max") or 100.0),
         volume_step=float(raw.get("volume_step") or 0.01),
