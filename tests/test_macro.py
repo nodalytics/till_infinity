@@ -381,3 +381,21 @@ def test_how_many_passes_agree_is_published_as_a_number():
 
     # One formation however many pivots merged into it.
     assert _passes(Pivot()) == ["pivot"]
+
+
+@pytest.mark.asyncio
+async def test_the_store_is_read_before_the_first_notice(tmp_path):
+    """FRED is a slow source. Waiting for its next poll would publish level
+    calls with no policy on them for hours, with four hundred days of it
+    already in the store."""
+    path = tmp_path / "news.db"
+    now = time.time()
+    observations(
+        path,
+        [("fred", mc.OVERNIGHT["USD"], now - d * DAY, 3.0) for d in range(400, 0, -30)],
+    )
+    bus = Bus()
+    watcher = Watcher(bus, settings=Settings(news_db=path, warm=False, journalling=False))
+    await bus.close()
+    await watcher.run(messages=0)
+    assert watcher.macro.warm

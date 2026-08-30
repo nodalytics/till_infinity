@@ -830,6 +830,13 @@ class Watcher:
         seen = 0
         queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=10_000)
 
+        # Read once before consuming anything, rather than waiting for the
+        # first `MACRO` notice. FRED is a slow source and its series move once
+        # a day at fastest, so a restart would otherwise publish level calls
+        # with no policy on them for however long the next poll is away - with
+        # four hundred days of it already sitting in the store.
+        await self._read_macro()
+
         async def read(topic: str) -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 async for message in self.bus.subscribe(topic, group=self.group):
