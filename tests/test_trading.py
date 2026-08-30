@@ -6641,3 +6641,37 @@ def test_the_excursion_is_forgotten_when_the_trade_closes():
     trader._best.pop(live.position.ticket, None)
     trader._worst.pop(live.position.ticket, None)
     assert live.position.ticket not in trader._worst
+
+
+def test_every_carried_synthetic_is_registered_in_all_four_tables():
+    """An instrument needs a name the broker answers to, an exposure leg, a
+    price feed and a place in the symbol list. All four were once written by
+    hand in three files, keyed on a slug each computed for itself - three
+    chances to disagree and no way to notice. This is the noticing."""
+    from till_infinity.trading.config import INSTRUMENTS, SYNTHETICS, broker_slug
+    from till_infinity.trading.exposure import legs
+
+    for name in SYNTHETICS:
+        slug = broker_slug(name)
+        assert slug in INSTRUMENTS, name
+        assert name in INSTRUMENTS[slug], name
+        assert legs(slug) != ("", ""), name
+
+
+def test_the_one_second_variants_do_not_collide_with_their_parents():
+    """`Volatility 25 (1s) Index` and `Volatility 25 Index` are different
+    generated processes. A slug that folded them together would net a long in
+    one against a short in the other as though they were the same risk."""
+    from till_infinity.trading.config import SYNTHETICS, broker_slug
+
+    slugs = [broker_slug(n) for n in SYNTHETICS]
+    assert len(set(slugs)) == len(slugs)
+    assert broker_slug("Volatility 25 (1s) Index") != broker_slug("Volatility 25 Index")
+
+
+def test_an_unmapped_instrument_would_be_exempt_from_the_currency_limit():
+    """The failure mode this guards is the one that looks like nothing at all:
+    a feed with no exposure leg is not merely unmeasured, it is exempt."""
+    from till_infinity.trading.exposure import legs
+
+    assert legs("not_a_real_instrument") == ("", "")

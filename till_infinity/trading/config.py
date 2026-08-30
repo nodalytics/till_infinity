@@ -61,6 +61,25 @@ SYNTHETICS: tuple[str, ...] = (
     "Boom 500 Index",
     "Boom 1000 Index",
     "Crash 1000 Index",
+    # Added 2026-08-30 on the cost screen in research/catalogue.md. Every one
+    # of these costs the same or less to cross than the nine above - 0.116v to
+    # 0.199v against their 0.075v to 0.244v - measured in volatility units,
+    # which is the only currency that compares across instruments. In points
+    # the synthetics look ten times dearer than FX and the ordering inverts.
+    "Range Break 100 Index",
+    "Range Break 200 Index",
+    "Jump 10 Index",
+    "Jump 25 Index",
+    "Crash 300 Index",
+    "Crash 500 Index",
+    # The one-second variants. Same generated processes, ticking every second
+    # rather than every two, so they carry roughly twice the quote rate for the
+    # same structure - the cost worth watching here is bus traffic, not spread.
+    "Volatility 10 (1s) Index",
+    "Volatility 25 (1s) Index",
+    "Volatility 50 (1s) Index",
+    "Volatility 75 (1s) Index",
+    "Volatility 100 (1s) Index",
 )
 
 
