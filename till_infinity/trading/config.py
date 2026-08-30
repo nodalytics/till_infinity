@@ -392,9 +392,25 @@ class Settings:
     max_per_symbol: int = 1
     #: Stop for the day after losing this fraction of the day's opening equity.
     daily_loss_fraction: float = 0.03
-    #: Minimum reward-to-risk from the *quoted* entry, spread included. Below
-    #: this the trade is paying more to get in than it expects to make.
-    min_reward_to_risk: float = 1.2
+    #: Minimum reward-to-risk from the *quoted* entry, spread included.
+    #:
+    #: **Off by default, because it was measured and it loses.** Re-verified on
+    #: 2026-08-27 over 47,676 production touches joined to the signals that
+    #: produced them: 0.908R ungated against 0.868R at the 1.2 that used to be
+    #: the default, monotonically worse as the floor rises. It refused 40,421
+    #: calls of 47,676 to give back 0.047R.
+    #:
+    #: 119 closed trades say the same thing from the other end: a 0.8 floor
+    #: keeps 78 trades worth -737 and refuses 41 worth +667. The trades with a
+    #: near target are the ones that reach it - hit rate falls from 35.7% to
+    #: zero as the ratio rises, while the stop rate climbs from 10.7% to 48.5%.
+    #: See `research/geometry.md`.
+    #:
+    #: The reasoning for a floor is sound and the measurement disagrees with
+    #: it, twice, on two independent samples. A default of 1.2 meant every
+    #: fresh deployment applied a gate this repository had already refuted, and
+    #: had to know to turn it off.
+    min_reward_to_risk: float = 0.0
     #: A scalp whose spread eats this much of its own target is not a trade.
     max_spread_fraction: float = 0.25
     #: The signal's own confidence, and its separation from the base rate.
@@ -1164,7 +1180,7 @@ class Settings:
             max_positions=_int("TRADING_MAX_POSITIONS", 4),
             max_per_symbol=_int("TRADING_MAX_PER_SYMBOL", 1),
             daily_loss_fraction=_float("TRADING_DAILY_LOSS_FRACTION", 0.03),
-            min_reward_to_risk=_float("TRADING_MIN_RR", 1.2),
+            min_reward_to_risk=_float("TRADING_MIN_RR", 0.0),
             max_spread_fraction=_float("TRADING_MAX_SPREAD_FRACTION", 0.25),
             min_probability=_float("TRADING_MIN_PROBABILITY", 0.58),
             min_base_rate=_float("TRADING_MIN_BASE_RATE", 0.0),

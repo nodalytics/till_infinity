@@ -6230,3 +6230,25 @@ async def test_a_fill_already_better_than_the_rest_is_taken():
     )
     got = await trader.on_signal(signal())
     assert not (isinstance(got, Refusal) and got.gate == "waiting")
+
+
+async def test_a_resting_entry_is_journalled(tmp_path):
+    """It was not, so a rested entry left no record at all - the log said it
+    happened and the journal showed zero, which makes the one number that
+    matters, how often a rested entry is filled, impossible to compute."""
+    async with Journal(tmp_path / "journal.db") as book:
+        trader = Trader(
+            Bus(),
+            settings=settings(entry_edge_vol=1.5, pullback_fraction=0.0),
+            journal=book,
+        )
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+        assert isinstance(got, Refusal)
+        assert got.gate == "waiting"
+
+    gates = [e.context.get("gate") for e in read(tmp_path / "journal.db")]
+    assert "waiting" in gates

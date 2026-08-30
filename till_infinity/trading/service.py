@@ -727,6 +727,12 @@ class Trader:
                     return unconfirmed
                 parked = self._park(payload, verdict, engine.name, tick, engine)
                 if parked is not None:
+                    # Journalled like every other refusal. It was not, so a
+                    # resting entry left no record at all: the log said it
+                    # happened and the journal showed zero, which makes the one
+                    # number that matters - how often a rested entry is
+                    # actually filled - impossible to compute.
+                    await self._record_refusal(verdict, parked, engine.name)
                     await self._also_wanted(payload, spec, tick, engine.name)
                     return parked
             others = await self._also_wanted(payload, spec, tick, engine.name)
