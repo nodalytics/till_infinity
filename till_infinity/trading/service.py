@@ -306,6 +306,12 @@ class Trader:
         #: `price_current` is a snapshot and a trail anchored to snapshots
         #: follows whatever the last poll happened to catch.
         self._best: dict[int, float] = {}
+        #: The worst price each open trade has seen. The mirror of `_best`, and
+        #: it was missing: the trailing rules need the favourable extreme so
+        #: that one was tracked, and nothing needed the adverse one so nobody
+        #: wrote it down. That made "how much heat does a winner take" - the
+        #: number that sizes a stop - unanswerable from our own record.
+        self._worst: dict[int, float] = {}
         #: feed -> a signal parked until price comes back. One per instrument,
         #: because the per-instrument position limit would refuse the second
         #: anyway and holding several would only decide which to drop later.
@@ -1960,20 +1966,31 @@ class Trader:
         self._say_what_it_is_doing()
 
     def _mark_best(self, symbol: str, bid: float, ask: float) -> None:
-        """Track the best price each open trade has seen, for the trail."""
+        """Track the extremes each open trade has seen, both ways.
+
+        The favourable one is what the trailing rules read. The adverse one is
+        what sizes a stop, and it was not tracked at all: 38 stopped trades cost
+        -897.84 and how far price went against the ones that *won* - the number
+        that says whether a 4v stop is protecting anything - could not be got
+        out of our own record. See research/stops.md.
+        """
         for ticket, live in self.open.items():
             if live.position.symbol != symbol:
                 continue
             # The exit side, because that is the price a stop is measured
             # against: a long is closed on the bid.
             price = bid if live.position.side is Side.BUY else ask
+            buying = live.position.side is Side.BUY
             seen = self._best.get(ticket)
             if seen is None:
                 self._best[ticket] = price
-            elif live.position.side is Side.BUY:
-                self._best[ticket] = max(seen, price)
             else:
-                self._best[ticket] = min(seen, price)
+                self._best[ticket] = max(seen, price) if buying else min(seen, price)
+            hurt = self._worst.get(ticket)
+            if hurt is None:
+                self._worst[ticket] = price
+            else:
+                self._worst[ticket] = min(hurt, price) if buying else max(hurt, price)
 
     async def _manage(self) -> int:
         """Move stops on open trades, and bank part of the ones in front."""
@@ -2417,6 +2434,35 @@ class Trader:
         gained = (best - live.position.price_open) * live.intent.side.sign
         return max(gained / risk, 0.0)
 
+    def _heat(self, live: Live) -> float:
+        """Furthest this trade ever went **against** itself, in units of risk.
+
+        The mirror of `_reach`, and the number research/stops.md wanted and did
+        not have. On a trade that won it says how much of the stop was actually
+        used: if winners rarely spend more than a third of their risk, a stop
+        four volatility units wide is protection nobody reaches, bought by
+        sizing every position at a quarter of what the same money would allow.
+
+        Zero rather than negative when the trade never went against itself at
+        all, which is a real case on a fast fill and is not "no reading".
+        """
+        hurt = self._worst.get(live.position.ticket)
+        risk = abs(live.intent.entry - live.intent.stop)
+        if hurt is None or risk <= 0:
+            return 0.0
+        lost = (live.position.price_open - hurt) * live.intent.side.sign
+        return max(lost / risk, 0.0)
+
+    def _heat_vol(self, live: Live) -> float:
+        """The same excursion in volatility units, so it compares across the book.
+
+        `adverse_r` is in units of *this trade's* risk, which is the right
+        denominator for "was the stop used" and the wrong one for comparing
+        instruments - a 4v stop and a 1v stop both read 1.0 when fully used.
+        """
+        stop_vol = live.intent.stop_vol
+        return round(self._heat(live) * stop_vol, 4) if stop_vol > 0 else 0.0
+
     def money(self, amount: float, *, signed: bool = True) -> str:
         """An amount with the account's currency attached. See `models.money`."""
         return money(amount, self.currency, signed=signed)
@@ -2621,6 +2667,7 @@ class Trader:
                     price, profit, why = told[0], told[1], "closed"
             del self.open[ticket]
             self._best.pop(ticket, None)
+            self._worst.pop(ticket, None)
             settled.append((live, price, why))
             await self._settle(live, price, why, profit)
         return settled
@@ -2707,6 +2754,14 @@ class Trader:
                     # measure afterwards. Above 1 means a trade that was a
                     # winner by its own risk and did not end as one.
                     "best_r": round(self._reach(live), 3),
+                    # And the other side of the same question, which was never
+                    # recorded: how far it went against itself before it got
+                    # there. On a winner this is how much of the stop was
+                    # actually used, and a book whose winners never spend more
+                    # than a third of their risk is a book sized at a quarter
+                    # of what it could be. See research/stops.md.
+                    "adverse_r": round(self._heat(live), 3),
+                    "adverse_vol": self._heat_vol(live),
                     # What was asked for against what the terminal actually
                     # filled at. `position.price_open` is the broker's own
                     # record, so this survives a restart and does not depend on

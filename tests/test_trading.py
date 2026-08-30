@@ -6569,3 +6569,75 @@ def test_the_tight_stop_halves_the_risk_on_an_ordinary_rest():
     assert abs(tight.entry - tight.stop) == pytest.approx(abs(wide.entry - wide.stop) / 2, rel=0.1)
     assert tight.reward_to_risk > wide.reward_to_risk * 1.8
     assert tight.volume > wide.volume
+
+
+# ---------------------------------------------- how much of the stop gets used
+
+
+def _heated(trader, live, prices):
+    """Walk some quotes past an open trade and report the excursions."""
+    trader.open[live.position.ticket] = live
+    for price in prices:
+        trader._mark_best(live.position.symbol, bid=price, ask=price + 0.1)
+    return trader._reach(live), trader._heat(live)
+
+
+def test_the_adverse_extreme_is_tracked_as_well_as_the_favourable_one():
+    """The trailing rules needed the favourable one so it was tracked; nothing
+    needed the adverse one so nobody wrote it down - which made "how much heat
+    does a winner take", the number that sizes a stop, unanswerable from our
+    own record."""
+    trader = Trader(Bus(), settings=settings())
+    live = _live()  # entry 4400.5, stop 4395.6, so 4.9 of risk
+    reach, heat = _heated(trader, live, [4398.0, 4403.0, 4399.0])
+    assert reach > 0.0
+    assert heat > 0.0
+
+
+def test_heat_is_measured_in_units_of_the_trade_s_own_risk():
+    """So "was the stop used" reads the same on a 4v stop and a 1v one."""
+    trader = Trader(Bus(), settings=settings())
+    live = _live()
+    risk = abs(live.intent.entry - live.intent.stop)
+    _heated(trader, live, [live.position.price_open - risk / 2])
+    assert trader._heat(live) == pytest.approx(0.5, abs=0.02)
+
+
+def test_a_trade_that_never_went_against_itself_reads_zero():
+    """A real case on a fast fill, and not the same as no reading."""
+    trader = Trader(Bus(), settings=settings())
+    live = _live()
+    _heated(trader, live, [4402.0, 4405.0])
+    assert trader._heat(live) == 0.0
+
+
+def test_a_sell_measures_heat_upward():
+    trader = Trader(Bus(), settings=settings())
+    live = _live(
+        position=position(side=Side.SELL, price_open=4400.0),
+        intent=intent(side=Side.SELL, entry=4400.0, stop=4405.0, target=4390.0),
+    )
+    _heated(trader, live, [4402.5])
+    assert trader._heat(live) == pytest.approx(0.5, abs=0.05)
+
+
+def test_heat_in_volatility_units_scales_by_the_stop_width():
+    """`adverse_r` is in units of this trade's risk, which is the wrong
+    denominator for comparing instruments - a 4v stop and a 1v stop both read
+    1.0 when fully used."""
+    trader = Trader(Bus(), settings=settings())
+    live = _live(intent=intent(stop_vol=4.0))
+    risk = abs(live.intent.entry - live.intent.stop)
+    _heated(trader, live, [live.position.price_open - risk / 2])
+    assert trader._heat_vol(live) == pytest.approx(2.0, abs=0.1)
+
+
+def test_the_excursion_is_forgotten_when_the_trade_closes():
+    """It runs forever; a per-ticket dict that is never cleaned is a leak."""
+    trader = Trader(Bus(), settings=settings())
+    live = _live()
+    _heated(trader, live, [4398.0])
+    assert live.position.ticket in trader._worst
+    trader._best.pop(live.position.ticket, None)
+    trader._worst.pop(live.position.ticket, None)
+    assert live.position.ticket not in trader._worst

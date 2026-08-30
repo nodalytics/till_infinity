@@ -79,6 +79,29 @@ See [geometry.md](geometry.md).
   absent, three times the hold it actually got. A more generous window would
   find more targets and would be answering a different question - "would it have
   worked eventually" rather than "was the stop early".
-* `adverse_vol` is absent or zero on these rows, so how far *past* the stop
-  price went is unmeasured. That is the number that would size a stop change,
-  and it is the next thing worth recording.
+* How far price went *past* the stop is still unmeasured. That would need bars
+  after the close, and `_watch_shadows` already follows stopped trades for the
+  narrower question of whether the target arrived.
+
+## Now recorded: how much of the stop a trade actually uses
+
+The gap this measurement ran into was that only the *favourable* extreme was
+tracked. The trailing rules need it, so `_best` existed; nothing needed the
+adverse one, so nobody wrote it down - and "how much heat does a winner take"
+was not answerable from our own record.
+
+`adverse_r` and `adverse_vol` are now on every trading outcome, beside `best_r`:
+
+* **`adverse_r`** - the furthest a trade went against itself, in units of its
+  own risk. On a trade that won, this is how much of the stop was used.
+* **`adverse_vol`** - the same excursion in volatility units, because
+  `adverse_r` is the right denominator for "was the stop used" and the wrong
+  one for comparing instruments: a 4v stop and a 1v stop both read 1.0 when
+  fully used.
+
+The question it exists to answer: median `stop_vol` is **4.0v**. If winners
+rarely spend more than a third of that, the stop is protection nobody reaches -
+bought by sizing every position at a fraction of what the same money at risk
+would otherwise allow. That is a sizing decision worth several times what the
+seven early stops cost, and it needs a few dozen closed trades carrying the
+field before it can be read.
