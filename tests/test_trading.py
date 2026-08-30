@@ -6062,3 +6062,72 @@ def test_an_unknown_account_currency_changes_nothing():
         "currency_profit": "USD",
     }
     assert _spec_from(raw, "Volatility 75 Index", "").tick_value == pytest.approx(0.0001)
+
+
+def test_an_adopted_position_keeps_the_real_feed_name():
+    """It was `symbol.lower()`, which for a broker whose symbols have spaces
+    gives `volatility 25 index` beside the `volatility_25_index` everything
+    else writes - two names for one instrument, so its history splits and
+    neither half accumulates. Three trades went in under the spaced name."""
+    position = td.Position(
+        ticket=1,
+        symbol="Volatility 25 Index",
+        side=Side.BUY,
+        volume=0.5,
+        price_open=4756.0,
+        stop=4750.0,
+    )
+    resolved = {"Volatility 25 Index": "volatility_25_index"}
+    assert _intent_from(position, resolved).feed == "volatility_25_index"
+
+
+def test_an_untracked_symbol_still_gets_a_name():
+    """A position on something we do not track must still be adoptable and
+    closable; the lowered symbol survives as the fallback."""
+    position = td.Position(
+        ticket=1, symbol="Some Index", side=Side.BUY, volume=0.5, price_open=100.0
+    )
+    assert _intent_from(position, {}).feed == "some index"
+    assert _intent_from(position).feed == "some index"
+
+
+def test_r_is_signed_against_the_side():
+    """Money is not comparable across instruments or account sizes; R is, and
+    it was never recorded - so every question about how a strategy did began
+    with a derivation the reader had to do themselves."""
+    from till_infinity.trading.service import _r_multiple
+
+    long = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.1,
+        entry=4400.0,
+        stop=4390.0,
+        target=4420.0,
+    )
+    assert _r_multiple(long, 4420.0) == pytest.approx(2.0)
+    assert _r_multiple(long, 4390.0) == pytest.approx(-1.0)
+
+    short = replace(long, side=Side.SELL, stop=4410.0, target=4380.0)
+    # A profitable short is positive.
+    assert _r_multiple(short, 4380.0) == pytest.approx(2.0)
+    assert _r_multiple(short, 4410.0) == pytest.approx(-1.0)
+
+
+def test_no_risk_is_not_zero_r():
+    """A trade that made nothing and one whose risk is unknown are different
+    facts. An adopted placeholder has the broker's stop and the fill as its
+    entry, which is not a trade that risked nothing."""
+    from till_infinity.trading.service import _r_multiple
+
+    unknown = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.1,
+        entry=4400.0,
+        stop=4400.0,
+        target=4420.0,
+    )
+    assert _r_multiple(unknown, 4420.0) == 0.0

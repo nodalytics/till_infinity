@@ -2311,7 +2311,7 @@ class Trader:
                 continue
             intent, ref = (pending[1], pending[2]) if pending else (None, "")
             if intent is None or intent.symbol != position.symbol:
-                intent = _intent_from(position)
+                intent = _intent_from(position, self._feed_of)
                 ref = ""
             signal = self._last_signal.get(intent.feed, {})
             # From the fill, not from now. `seen` is stamped at adoption, so a
@@ -2410,6 +2410,18 @@ class Trader:
                 context={
                     "exit": price,
                     "profit": round(profit, 2),
+                    # What it made in the unit everything else here is judged
+                    # in. Money is not comparable across instruments or across
+                    # account sizes; R is, and it was never recorded - so every
+                    # question about how a strategy actually did began with a
+                    # derivation from entry, stop and exit that a reader had to
+                    # do themselves and could get wrong.
+                    #
+                    # Signed against the side, so a profitable short is
+                    # positive. Zero risk means a placeholder intent adopted
+                    # after a restart, where the stop is the broker's and the
+                    # entry is the fill - not a trade that risked nothing.
+                    "r_multiple": _r_multiple(live.intent, price),
                     "reason": why,
                     # Said plainly because it is not always a fill price: a
                     # position that vanished between polls is settled at the
@@ -2703,16 +2715,37 @@ def message_time(payload: dict[str, Any]) -> float:
     return float(when) if isinstance(when, int | float) and when else time.time()
 
 
-def _intent_from(position: Position) -> Intent:
+def _r_multiple(intent: Intent, exit_price: float) -> float:
+    """What the trade made, in multiples of what it risked.
+
+    `None` when there is no risk to divide by, rather than zero: a trade that
+    made nothing and a trade whose risk is unknown are different facts, and
+    zero would pool them.
+    """
+    risk = abs(intent.entry - intent.stop)
+    if risk <= 0 or not exit_price or not intent.entry:
+        return 0.0
+    return round((exit_price - intent.entry) * intent.side.sign / risk, 4)
+
+
+def _intent_from(position: Position, feed_of: dict[str, str] | None = None) -> Intent:
     """A placeholder intent for a position we did not open in this run.
 
     A restart leaves positions on the account carrying our magic and no record
     in memory of why they were opened. Adopting them means they are managed and
     closed properly; the reasoning is gone, and the journal entry says so
     rather than inventing one.
+
+    **The feed name has to be the real one.** It was `symbol.lower()`, which
+    for a broker whose symbols have spaces gives `volatility 25 index` beside
+    the `volatility_25_index` everything else writes - two names for one
+    instrument, so its history splits and neither half accumulates. Three
+    trades went into the journal under the spaced name. The resolved map is
+    passed in rather than guessed at, and the lowered symbol survives only as
+    the fallback for a position on an instrument we do not track.
     """
     return Intent(
-        feed=position.symbol.lower(),
+        feed=(feed_of or {}).get(position.symbol) or position.symbol.lower(),
         symbol=position.symbol,
         side=position.side,
         volume=position.volume,
