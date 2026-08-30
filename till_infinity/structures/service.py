@@ -37,6 +37,8 @@ from . import confluence as cf
 from . import store
 from .activity import Book as ActivityBook
 from .anomaly import Detector
+from .baseline import Bench
+from .baseline import vector as bench_vector
 from .config import DRIFT_INTERVALS, Settings
 from .drift import Drift
 from .engine import Engine
@@ -258,6 +260,12 @@ class Watcher:
         #: service has collected something, and silent while empty - a level
         #: call is correct without it.
         self.macro = Macro()
+        #: Every model that could replace the kNN, scored beside it on the same
+        #: touches. Decides nothing - the whole point is that "the kNN works"
+        #: has never been distinguished from "the features work and any model
+        #: would do", and two separate runs would compare two samples rather
+        #: than two models.
+        self.bench = Bench()
         #: The newest observation time already taken, so a re-read after a
         #: poll asks for the tail rather than for four hundred days again.
         self._macro_since = 0.0
@@ -326,6 +334,7 @@ class Watcher:
         self.engine = state.get("engine", self.engine)
         self.clock = state.get("clock", self.clock)
         self.activity = state.get("activity", self.activity)
+        self.bench = state.get("bench", self.bench)
         # Configuration re-applied over the restore, and this is not tidying.
         # The pickled engine carries the settings it was **first** built with,
         # so every one of these was inert from the moment a state file existed:
@@ -355,12 +364,18 @@ class Watcher:
             log.info("structures: %d instrument/timeframe pair(s) declined", dropped)
 
     def save(self) -> None:
+        if self.bench.scores:
+            # Logged rather than only stored, because a comparison nobody reads
+            # settles nothing - and this one exists to settle whether the model
+            # behind every level call is earning its complexity.
+            log.info("structures: model bench\n%s", self.bench.report())
         try:
             store.save(
                 {
                     "detector": self.detector,
                     "drift": self.drift,
                     "engine": self.engine,
+                    "bench": self.bench,
                     "clock": self.clock,
                     "activity": self.activity,
                 },
@@ -486,6 +501,57 @@ class Watcher:
         while len(self._awaiting) > self.memory:
             self._awaiting.popitem(last=False)
 
+    def _benchmark(self, level: object, touch: object) -> None:
+        """Put one resolved touch through every model, the kNN included.
+
+        **Direction**, not hold-versus-break, because direction is what the kNN
+        actually predicts and a comparison has to be on the incumbent's own
+        quantity. `Memory.prior` returns P(up); so does everything here.
+
+        **The same neighbour set for all of them**, derived once. That is what
+        makes this like-for-like rather than two numbers from two runs: the
+        fixed distance and the learned one are handed identical evidence, and
+        the only difference is how they weight it.
+
+        **The touch itself is excluded.** It is added to memory during
+        resolution, so it can appear among its own neighbours at distance zero
+        and hand every model the answer - which would report a perfect score
+        for whichever model trusted its nearest neighbour most.
+
+        Wrapped, because this is measurement and not machinery: a model that
+        raises must not stop the service recording what happened, which is the
+        one thing here that cannot be recomputed later.
+        """
+        try:
+            went_up = float(touch.push_vol) > 0
+            found = [
+                (distance, other)
+                for distance, other in self.engine.tracker.memory.neighbours(touch.features)
+                if other is not touch
+            ]
+            if not found:
+                return
+            keys = [bench_vector(other.features) for _d, other in found]
+            values = [1.0 if other.push_vol > 0 else 0.0 for _d, other in found]
+            # The kNN's own answer over exactly this evidence: distance
+            # weighted, the way `Memory.prior` weights it.
+            weights = [1.0 / (1.0 + d) for d, _o in found]
+            total = sum(weights)
+            said = (
+                sum(w * v for w, v in zip(weights, values, strict=True)) / total
+                if total > 0
+                else 0.5
+            )
+            self.bench.observe(
+                touch.features,
+                went_up,
+                neighbours=list(zip(keys, values, strict=True)),
+                level_id=getattr(level, "id", ""),
+                knn_said=said,
+            )
+        except Exception as exc:  # measurement must not stop the record
+            log.debug("structures: bench skipped a touch: %s", exc)
+
     async def record_outcomes(self) -> int:
         """Attach what happened to the decision that predicted it.
 
@@ -535,6 +601,12 @@ class Watcher:
             # current one. The Kalman mean moves when the touch is folded in,
             # and it is folded in before this runs - so looking up by
             # `level.price` searches for a key that no longer exists.
+            # Every resolution, not only the predicted ones - and before the
+            # journal lookup for the same reason the announcement is: most
+            # touches were never called by anything, and those are the sample
+            # a model learns most from.
+            self._benchmark(level, touch)
+
             ref = self._awaiting.pop((level.feed, round(touch.level_price, 8)), None)
             if ref is None:
                 continue  # nothing predicted this; the result is a fact, not a label

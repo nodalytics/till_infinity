@@ -82,6 +82,11 @@ DAY = 86_400.0
 #: has moved two or three times, short enough to still be about now.
 TREND_DAYS = 90.0
 
+#: What a year is, for the series that only mean anything year over year. An
+#: index number's ninety-day change is mostly seasonality; its twelve-month
+#: change is the inflation rate everybody quotes.
+YEAR_DAYS = 365.0
+
 #: The overnight rate per currency, one OECD definition with the country
 #: swapped. Germany stands in for the euro area: the euro-area aggregate exists
 #: and stops in January 2026, which is worse than a proxy that is current.
@@ -130,6 +135,27 @@ BALANCE: dict[str, str] = {
 REAL_YIELD = "DFII10"
 BREAKEVEN = "T10YIE"
 CURVE_LONG, CURVE_SHORT = "DGS10", "DGS2"
+
+#: Inflation as **measured**, against the breakeven above which is inflation as
+#: **priced**. They are not the same reading and the gap between them is what a
+#: print delivers: the market is already positioned for the breakeven, and the
+#: surprise is the distance from it to the number that arrives.
+#:
+#: Read as a rate of change rather than a level, because these are index
+#: numbers - "US CPI is 332.813" means nothing without the base year, and the
+#: quantity anybody trades is how fast it is moving.
+INFLATION: dict[str, str] = {
+    "USD": "CPIAUCSL",
+    "EUR": "CP0000EZ19M086NEST",
+}
+CORE_INFLATION = "CPILFESL"
+
+#: The dollar against everything. On the other side of nearly every instrument
+#: here by construction, so it is attached to all of them - a dollar index
+#: falling is the common factor behind gold rising, the crypto rising and the
+#: majors rising, and reading each of those as its own signal is how a book
+#: ends up holding one trade five times.
+DOLLAR = "DTWEXBGS"
 
 #: Currencies this module can say anything about at all.
 CODES: frozenset[str] = frozenset(OVERNIGHT) | frozenset(LONG) | frozenset(POLICY)
@@ -463,6 +489,47 @@ class Macro:
         curve = _gap(self.latest(CURVE_LONG), self.latest(CURVE_SHORT))
         if curve is not None:
             out["macro_us_curve"] = curve
+
+        out.update(self._prices_and_dollar(base, quote))
+        return out
+
+    def _prices_and_dollar(self, base: str, quote: str) -> dict[str, float]:
+        """Inflation as counted, and the dollar, for one instrument's legs.
+
+        Separate from `features` because it is a separate question and because
+        the combined method had grown past the point where a reader can hold
+        it - not a style preference: this is the file where a missing branch
+        means a feature silently absent rather than wrong, and a long method is
+        where a missing branch hides.
+        """
+        out: dict[str, float] = {}
+        # The dollar itself, as a level and as a move. Attached to every
+        # instrument, for the reason in DOLLAR's docstring.
+        dollar = self.latest(DOLLAR)
+        if dollar is not None:
+            out["macro_dollar"] = dollar
+        moved = self.relative(DOLLAR)
+        if moved is not None:
+            out["macro_dollar_change"] = moved
+
+        # As a rate of change, because the level of an index number means
+        # nothing without its base year, and year over year because a
+        # ninety-day change of one is mostly seasonality.
+        for key, code in (("base", base), ("quote", quote)):
+            series = INFLATION.get(code, "")
+            rate = self.relative(series, YEAR_DAYS * DAY) if series else None
+            if rate is not None:
+                out[f"macro_inflation_{key}"] = rate
+        core = self.relative(CORE_INFLATION, YEAR_DAYS * DAY)
+        if core is not None:
+            out["macro_us_core_inflation"] = core
+
+        # What the market is pricing, minus what was counted. Positive means
+        # the market expects more inflation than has arrived, which is the
+        # quantity a print is a surprise against.
+        priced, counted = self.latest(BREAKEVEN), out.get("macro_inflation_quote")
+        if priced is not None and counted is not None:
+            out["macro_inflation_surprise"] = priced / 100.0 - counted
         return out
 
     # ------------------------------------------------ the expensive half

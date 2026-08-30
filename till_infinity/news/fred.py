@@ -132,6 +132,20 @@ SERIES: dict[str, str] = {
     "IRLTLT01AUM156N": "Australia 10-year rate",
     "IRLTLT01CHM156N": "Switzerland 10-year rate",
     "IRLTLT01NZM156N": "New Zealand 10-year rate",
+    # Inflation as measured rather than as priced. The breakevens above are what
+    # the market *thinks*; these are what was counted, monthly and revised, and
+    # the gap between the two is the surprise a print delivers.
+    "CPIAUCSL": "US CPI",
+    "CPILFESL": "US core CPI",
+    "PCEPILFE": "US core PCE",
+    "CP0000EZ19M086NEST": "euro-area HICP",
+    # The dollar against everything, which is the other side of every
+    # instrument in the book by construction. Daily.
+    "DTWEXBGS": "broad dollar index",
+    "DTWEXAFEGS": "dollar against advanced economies",
+    # One activity series, because a rate differential is a story about
+    # policy and policy is a story about this.
+    "UNRATE": "US unemployment rate",
 }
 
 #: Which currency each series speaks about, so a consumer can line it up with a
@@ -153,6 +167,7 @@ CURRENCY: dict[str, str] = {
     "IRLTLT01AUM156N": "AUD",
     "IRLTLT01CHM156N": "CHF",
     "IRLTLT01NZM156N": "NZD",
+    "CP0000EZ19M086NEST": "EUR",
 }
 
 #: Days of history to ask for. Enough to see the level and the trend it is on,

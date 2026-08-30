@@ -85,3 +85,31 @@ unmeasurable: `Level.origin` has always carried the list and nothing ever
 counted it, so all 969 recorded outcomes say `pip` and nothing else. The count
 is now published as `drawn_by_n` on every level call and lands in the journal
 beside the outcome. Ask again with a few thousand touches behind it.
+
+## Open: thin bands as targets, not barriers
+
+Not measured, and it is the question this null actually points at.
+
+The reachability test refuted the **peaks** - a busy band is reached no more
+often than an arbitrary price the same distance away. It says nothing about the
+**valleys**, and the idea the peaks came from has a claim about those too: price
+is supposed to move quickly through a range where little traded, because there
+is nothing there to stop it.
+
+That is a different kind of claim and needs a different measurement. A busy band
+is a claim about *where price stops*, which the touch machinery already scores.
+A thin band is a claim about *how fast price crosses*, which is a statement
+about **targets and hold time** rather than about levels - so it does not belong
+in a formation at all, and building one would answer the wrong question.
+
+What it needs instead: for each thin band the profile finds, the time price
+takes to cross it, against the time to cross an equally wide band of ordinary
+density the same distance away. `harness/reachable.py` already has the shape -
+a funnel over what the desk actually saw, with a matched control - and
+`expected_hold_s` is already journalled on every intent, so both sides of the
+comparison exist.
+
+Left undone deliberately rather than forgotten. It changes `target` and
+`hold_for`, which are the two settings with live money behind them and the two
+this repository has already been wrong about twice - and it is worth measuring
+before anything is moved, not alongside it.
