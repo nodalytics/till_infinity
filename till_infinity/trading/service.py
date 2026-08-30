@@ -168,6 +168,11 @@ class Waiting:
     #: the judgement and the broker keeps the reflexes, and the half that can
     #: change its mind has to be able to reach the half that cannot.
     ticket: int = 0
+    #: What was left there, kept only so the withdrawal can describe it. The
+    #: **decision** is still re-made from `payload` on arrival - this is not a
+    #: stale intent waiting to be resurrected, it is a label.
+    resting: Intent | None = None
+    by: str = ""
 
 
 @dataclass(slots=True)
@@ -1705,12 +1710,15 @@ class Trader:
             log.warning("trading: broker refused the resting %s: %s", intent.feed, result)
             return
         held.ticket = result.ticket
+        held.resting = intent
+        held.by = by
         log.info(
             "trading: %s also left with the broker at %.5g as #%d",
             intent.feed,
             at,
             result.ticket,
         )
+        await self._announce_rest(intent, at, by, result.ticket)
 
     async def _withdraw(self, held: Waiting, why: str) -> None:
         """Take a resting order back off the broker.
@@ -1722,12 +1730,15 @@ class Trader:
         """
         if not held.ticket:
             return
+        ticket = held.ticket
         try:
-            await self.execution.withdraw(held.ticket)
-            log.info("trading: withdrew #%d on %s - %s", held.ticket, held.feed, why)
+            await self.execution.withdraw(ticket)
+            log.info("trading: withdrew #%d on %s - %s", ticket, held.feed, why)
         except BrokerError as exc:
-            log.warning("trading: could not withdraw #%d on %s: %s", held.ticket, held.feed, exc)
+            log.warning("trading: could not withdraw #%d on %s: %s", ticket, held.feed, exc)
         held.ticket = 0
+        if held.resting is not None:
+            await self._announce_rest(held.resting, held.trigger, held.by, ticket, gone=why)
 
     def _still_building(self, live: Live) -> bool:
         """Whether momentum is gathering behind this trade despite the silence.
@@ -2796,6 +2807,56 @@ class Trader:
                     # close read as the same finding, and a trade that closed
                     # inside the cooldown lost its close alert entirely.
                     "event": "open",
+                    "strategy": by,
+                    "direction": "up" if intent.side.sign > 0 else "down",
+                    "venue": self.broker.name,
+                },
+                "source": "trading",
+            },
+            source="trading",
+        )
+
+    async def _announce_rest(
+        self, intent: Intent, at: float, by: str, ticket: int, gone: str = ""
+    ) -> None:
+        """Say that an order is resting with the broker, or no longer is.
+
+        An order left there is money committed while nobody is looking - it can
+        fill on the terminal's own tick with this process asleep - so the two
+        things worth telling a person are that it is out there and that it is
+        not any more. `gone` carries why it was taken back, and is empty when
+        it has just been placed.
+        """
+        if not (self.settings.notify and self.settings.notify_rests):
+            return
+        away = abs(intent.entry - at)
+        body = [
+            f"{intent.side} {intent.volume:g} lots resting @ {at:.5g}"
+            if not gone
+            else f"withdrawn - {gone}",
+            "",
+            f"{away:.5g} better than the {intent.entry:.5g} on offer" if not gone else "",
+            f"stop {intent.stop:.5g} · target {intent.target:.5g}" if not gone else "",
+            intent.reason if not gone else "",
+        ]
+        await self.bus.publish(
+            ALERTS,
+            {
+                "title": (
+                    f"{self.settings.mode}: {'withdrew' if gone else 'resting'} "
+                    f"{intent.side} {intent.feed}"
+                    + (f" #{ticket}" if ticket else "")
+                    + (f" · {by}" if by else "")
+                ),
+                "body": "\n".join(line for line in body if line),
+                "level": "info",
+                "fields": {
+                    "instrument": intent.feed,
+                    "shape": "trade",
+                    # Its own event, or a placement and its withdrawal would
+                    # collapse into one finding under the repeat key - and the
+                    # withdrawal is the half that says the money came back.
+                    "event": "withdrawn" if gone else "resting",
                     "strategy": by,
                     "direction": "up" if intent.side.sign > 0 else "down",
                     "venue": self.broker.name,

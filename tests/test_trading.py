@@ -6471,3 +6471,58 @@ async def test_an_unread_instrument_is_not_given_the_benefit():
     """Unknown is not the same as building."""
     trader, live = await _motionless()
     assert trader._still_building(live) is False
+
+
+async def test_a_resting_order_is_announced_when_placed_and_when_withdrawn():
+    """An order left with the broker is money committed while nobody is
+    looking - it can fill on the terminal's own tick with this process asleep -
+    so the two things worth telling a person are that it is out there and that
+    it is not any more."""
+    bus = Bus()
+    alerts = bus.subscribe(ALERTS, group="test")
+    made = settings(entry_edge_vol=1.5, entry_pending=True, pullback_fraction=0.0, live=True)
+    trader = Trader(bus, settings=made)
+    trader.broker = RestingBroker(made)
+    trader.paper = None
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+
+    await trader.on_signal(signal())
+    placed = await alerts.next()
+    assert placed is not None
+    assert placed.payload["fields"]["event"] == "resting"
+    assert "resting" in placed.payload["title"]
+
+    held = trader._waiting["gold"]
+    held.until = 0.0
+    await trader._arrived("gold", Tick("XAUUSD", bid=4399.5, ask=4400.5, time=time.time()))
+    gone = await alerts.next()
+    assert gone is not None
+    # Its own event, or a placement and its withdrawal collapse into one
+    # finding under the repeat key.
+    assert gone.payload["fields"]["event"] == "withdrawn"
+    assert "withdrew" in gone.payload["title"]
+
+
+async def test_rest_alerts_can_be_switched_off():
+    bus = Bus()
+    alerts = bus.subscribe(ALERTS, group="test")
+    made = settings(
+        entry_edge_vol=1.5,
+        entry_pending=True,
+        pullback_fraction=0.0,
+        live=True,
+        notify_rests=False,
+    )
+    trader = Trader(bus, settings=made)
+    trader.broker = RestingBroker(made)
+    trader.paper = None
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.on_signal(signal())
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(alerts.next(), 0.1)

@@ -64,9 +64,47 @@ SYNTHETICS: tuple[str, ...] = (
 )
 
 
-def _synthetic_instruments() -> dict[str, tuple[str, ...]]:
-    """`{slug: (exact broker name,)}` - no aliases, because there are none."""
-    return {slugify(name).lower(): (name,) for name in SYNTHETICS}
+def broker_slug(name: str) -> str:
+    """`Volatility 75 Index` -> `volatility_75_index`.
+
+    The one place a broker symbol becomes a feed name. Every table that has to
+    agree - instruments, exposure legs, price feeds - derives its key from
+    here, so they cannot drift apart the way a second hand-written list does.
+    """
+    return slugify(name).lower()
+
+
+def register_broker_instruments(names: Sequence[str]) -> tuple[str, ...]:
+    """Make broker symbols tradable. Returns the feed names added.
+
+    An instrument needs four things to be traded here: a name the broker
+    answers to, an exposure leg, a price feed, and a place in the symbol list.
+    All four were written by hand for nine synthetics, in three files, keyed on
+    a slug each computed for itself - which is three chances to disagree and no
+    way to notice.
+
+    This is the generated form. The broker's own name is the only alias,
+    because for an instrument nothing else quotes there is nothing to guess at.
+
+    **Not the whole catalogue.** The account lists 798 symbols and level
+    building scales with feeds times timeframes, so what is registered is what
+    is asked for. Naming them is the operator's decision; keeping the four
+    tables in step is not.
+    """
+    from .exposure import register_broker_legs
+
+    added: list[str] = []
+    for raw in names:
+        name = raw.strip()
+        if not name:
+            continue
+        slug = broker_slug(name)
+        if not slug or slug in INSTRUMENTS:
+            continue
+        INSTRUMENTS[slug] = (name,)
+        added.append(slug)
+    register_broker_legs(added)
+    return tuple(added)
 
 
 INSTRUMENTS: dict[str, tuple[str, ...]] = {
@@ -232,7 +270,11 @@ MAGIC_ORDER: tuple[str, ...] = (
 )
 
 
-INSTRUMENTS.update(_synthetic_instruments())
+#: The synthetics carried by default. A list rather than the whole catalogue
+#: for the reason `register_broker_instruments` gives, and here rather than in
+#: the environment so a deployment that says nothing still gets the instruments
+#: this repository has measured.
+register_broker_instruments(SYNTHETICS)
 
 
 def magic_for(base: int, strategy: str) -> int:
@@ -878,6 +920,14 @@ class Settings:
     #: several of these answers.
     followers: tuple[str, ...] = ()
 
+    #: Broker-only instruments to carry, by their exact names.
+    #:
+    #: The **same** variable `prices` reads, deliberately. An instrument needs
+    #: a price feed and a tradable entry and an exposure leg, and two lists
+    #: would let a deployment have one without the others - a feed that quotes
+    #: and cannot be traded, or an instrument that resolves and has no prices.
+    broker_symbols: tuple[str, ...] = ()
+
     #: Which kind of trading to run: `scalp`, `swing`, `both` or `none`.
     #:
     #: A coarser switch than `TRADING_STRATEGIES`, and the two compose - this
@@ -1151,6 +1201,14 @@ class Settings:
     notify_fills: bool = True
     notify_closes: bool = True
     notify_declines: bool = False
+    #: Whether a resting entry is announced when it is placed and when it is
+    #: taken back.
+    #:
+    #: On by default, unlike declines, because an order left with the broker is
+    #: money committed while nobody is looking: it can fill on the terminal's
+    #: own tick with this process asleep, so the one thing a person needs is to
+    #: know it is out there and to know when it is not.
+    notify_rests: bool = True
     journal_context: bool = True
     #: Starting balance for the paper book, when there is no account to ask.
     paper_equity: float = 10_000.0
@@ -1179,6 +1237,18 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        # Registered before the settings exist, so the instrument, its exposure
+        # leg and its price feed are all in place before anything resolves it.
+        # One list drives all three; two would let a deployment have a feed
+        # that quotes and cannot be traded.
+        # Split but not lowered: a broker symbol is `Volatility 75 Index` and
+        # that exact string is what the terminal answers to. The slug derived
+        # from it is what everything here keys on.
+        carried = tuple(
+            n.strip() for n in (_env("PRICES_BROKER_SYMBOLS") or "").split(",") if n.strip()
+        )
+        if carried:
+            register_broker_instruments(carried)
         return cls(
             backend=(_env("TRADING_BACKEND") or "auto").lower(),
             url=_env("TRADING_MT5_URL"),
@@ -1257,6 +1327,7 @@ class Settings:
             unconfirmed_size=_float("TRADING_UNCONFIRMED_SIZE", 1.0),
             stale_quote_after=_float("TRADING_STALE_QUOTE_AFTER_S", 300.0),
             session_bars=_int("TRADING_SESSION_BARS", 1400),
+            broker_symbols=carried,
             target_buffer_vol=_float("TRADING_TARGET_BUFFER_VOL", 0.0),
             entry_edge_vol=_float("TRADING_ENTRY_EDGE_VOL", 0.0),
             entry_pending=_flag("TRADING_ENTRY_PENDING"),
@@ -1286,6 +1357,7 @@ class Settings:
             notify=_flag("TRADING_NOTIFY", "1"),
             notify_fills=_flag("TRADING_NOTIFY_FILLS", "1"),
             notify_closes=_flag("TRADING_NOTIFY_CLOSES", "1"),
+            notify_rests=_flag("TRADING_NOTIFY_RESTS", "1"),
             notify_declines=_flag("TRADING_NOTIFY_DECLINES", "0"),
             paper_equity=_float("TRADING_PAPER_EQUITY", 10_000.0),
             paper_spread_bps=_float("TRADING_PAPER_SPREAD_BPS", 2.0),

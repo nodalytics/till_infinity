@@ -31,9 +31,9 @@ the yen are now the same trade. This is the version that cannot go stale.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .config import SYNTHETICS
 from .models import Intent, Position, Side
 
 
@@ -145,9 +145,21 @@ def currency_of(country: str) -> str:
 #: `Volatility 25 Index` are different generators with no relationship, and
 #: giving them a shared base would net a long in one against a short in the
 #: other as though they were the same risk. The USD leg is real, though - the
-#: account is in dollars and the margin is dollars, so they do belong to the
-#: currency limit.
-LEGS.update({_slug(name): (_token(name), "USD") for name in SYNTHETICS})
+def register_broker_legs(feeds: Sequence[str], quote: str = "USD") -> None:
+    """Give broker-only instruments an exposure leg.
+
+    An unmapped feed is not merely unmeasured, it is **exempt** from the
+    currency limit - which is the one failure mode that looks like nothing at
+    all, and which a test catches by insisting every tracked instrument maps.
+
+    A distinct base token each, because `Volatility 75` and `Volatility 25` are
+    unrelated generators and a shared base would net a long in one against a
+    short in the other as though they were the same risk. The quote leg is
+    real: the account is in dollars and so is the margin.
+    """
+    for feed in feeds:
+        if feed and feed not in LEGS:
+            LEGS[feed] = (feed.removesuffix("_index").upper(), quote)
 
 
 def legs(feed: str) -> tuple[str, str]:
