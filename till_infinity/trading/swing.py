@@ -5,9 +5,17 @@ file had stopped saying which was which - `approach-scalp` and `fade-to-value`
 carry a scalp's name and hold for four hours, and finding that out meant
 reading their class bodies.
 
-**The swing contract**, shared by everything here: entry on 1h, with 2h, 4h, 1d
-and 1w as compulsory context, and the timeframes below 1h contributing momentum
-rather than agreement. The slow ones say *whether* - a level several hours of
+**The swing contract**, shared by everything here: entry on 15m, 30m or 1h,
+with 2h, 4h, 1d and 1w as compulsory context, and the timeframes below the
+entry contributing momentum rather than agreement.
+
+Entry was 1h alone and that turned out to be unreachable: over 2,123 signals,
+**two arrived on 1h** - 0.09% - so every swing was starved before any of its
+own conditions applied, and `origin-swing` never fired once. 15m and 30m carry
+enough calls to be measurable while keeping the slow context and the slow hold.
+The entry interval fixes the stop, and a tighter one buys more of the same idea
+for the same money, which is the argument `swing-level` already made for
+triggering below its anchor. The slow ones say *whether* - a level several hours of
 auction respected - and the fast ones say *when*, through the momentum
 ensemble. Asking a 1m series whether a weekly level is real is asking the wrong
 series; asking a weekly bar to time an entry is asking it to answer four hours
@@ -111,7 +119,7 @@ class ApproachScalp(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
-    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m", "1h")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
 
@@ -283,7 +291,7 @@ class Runner(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
-    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m", "1h")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
 
@@ -345,7 +353,7 @@ class SwingLevel(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
-    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m", "1h")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
 
@@ -427,7 +435,7 @@ class OriginSwing(LevelStrategy):
         "Between two origins: enter where price arrives first, run to the other."
     )
 
-    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m", "1h")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
 
@@ -650,7 +658,7 @@ class FadeToValue(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
-    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m", "1h")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
 

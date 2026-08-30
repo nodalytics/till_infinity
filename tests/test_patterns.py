@@ -226,14 +226,16 @@ def test_levels_far_apart_stay_separate():
 def test_a_timeframe_outside_the_span_is_not_fused_in():
     """A level on a timeframe nothing builds on must not join a zone.
 
-    The example used to be 1m, which is now in the span and so stopped being
-    an example of anything. 30m is in `ORDER` - it ranks, it is a real
-    duration - and is deliberately not in `TIMEFRAMES`, which is exactly the
-    case this guards: ranking a timeframe is not the same as building on it.
+    The example has now been absorbed twice: first 1m, then 30m, each added to
+    the span and each stopping being an example of anything. `daily` is the
+    durable one - an alias that ranks in `ORDER` beside 1d and is deliberately
+    not a timeframe levels are built on, so it cannot be absorbed by widening
+    the span. Ranking a timeframe is not the same as building on it.
     """
     vol = _vol()
-    assert "30m" not in confluence.TIMEFRAMES
-    zones = confluence.combine([_level(4400.0, "30m", 0.001), _level(4400.0, "1h", 0.5)], vol)
+    assert "daily" in confluence.ORDER
+    assert "daily" not in confluence.TIMEFRAMES
+    zones = confluence.combine([_level(4400.0, "daily", 0.001), _level(4400.0, "1h", 0.5)], vol)
     assert len(zones) == 1
     assert zones[0].timeframes == ("1h",)
 

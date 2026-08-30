@@ -36,6 +36,7 @@ INTERVALS: dict[str, Interval] = {
     "3m": Interval("3m", 180),
     "5m": Interval("5m", 300),
     "15m": Interval("15m", 900),
+    "30m": Interval("30m", 1_800),
     "1h": Interval("1h", 3_600),
     "2h": Interval("2h", 7_200),
     "4h": Interval("4h", 14_400),
