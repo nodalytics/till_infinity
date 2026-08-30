@@ -6526,3 +6526,46 @@ async def test_rest_alerts_can_be_switched_off():
     await trader.on_signal(signal())
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(alerts.next(), 0.1)
+
+
+def test_a_fill_a_full_unit_past_the_level_is_refused_by_the_tight_stop():
+    """The cost of the tighter stop, recorded rather than discovered later.
+
+    `entry_edge_vol` parks 1.5v better than the market and the median entry
+    sits 0.91v from its level, so a typical rest fills about 0.6v past it and
+    is fine. The quartile already close to its level fills past a full unit,
+    where the level-anchored 0.5v stop is above a long's fill - and that trade
+    is declined rather than taken with a stop already behind price.
+    """
+    unit = 4400.0 * 10.0 / 10_000
+    payload = signal()
+    payload["features"]["after_pullback"] = 1.0
+    deep = Tick("XAUUSD", bid=4400.0 - unit - 0.5, ask=4400.0 - unit + 0.5)
+    common = {"min_probability": 0.0, "min_edge": 0.0, "min_base_rate": 0.0}
+
+    refused = take("snap", payload, tick=deep, parked_stop_vol=0.5, **common)
+    assert isinstance(refused, Refusal)
+    assert refused.gate == "through"
+
+    # And the same fill is taken when the stop is left wide, which is what
+    # makes this a trade-off rather than a fault.
+    taken = take("snap", payload, tick=deep, parked_stop_vol=0.0, **common)
+    assert isinstance(taken, Intent)
+
+
+def test_the_tight_stop_halves_the_risk_on_an_ordinary_rest():
+    """The reason to turn it on. Half the risk for the same target doubles the
+    ratio and doubles the size for the same money at stake."""
+    unit = 4400.0 * 10.0 / 10_000
+    payload = signal()
+    payload["features"]["after_pullback"] = 1.0
+    ordinary = Tick("XAUUSD", bid=4400.0 - 0.6 * unit - 0.5, ask=4400.0 - 0.6 * unit + 0.5)
+    common = {"min_probability": 0.0, "min_edge": 0.0, "min_base_rate": 0.0}
+
+    wide = take("snap", payload, tick=ordinary, parked_stop_vol=0.0, **common)
+    tight = take("snap", payload, tick=ordinary, parked_stop_vol=0.5, **common)
+    assert isinstance(wide, Intent)
+    assert isinstance(tight, Intent)
+    assert abs(tight.entry - tight.stop) == pytest.approx(abs(wide.entry - wide.stop) / 2, rel=0.1)
+    assert tight.reward_to_risk > wide.reward_to_risk * 1.8
+    assert tight.volume > wide.volume

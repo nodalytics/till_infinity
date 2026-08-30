@@ -1022,6 +1022,31 @@ class Settings:
     #: what waiting for it buys - so the grid's number applies there and
     #: nowhere else. Applied to any other entry it would be the mistake
     #: `min_stop_vol` was written to prevent.
+    #:
+    #: **What it does, measured rather than argued** (gold at 4400, one unit
+    #: $4.40, `snap`, entry parked below its support):
+    #:
+    #:     fill past the level    off      at 0.5v
+    #:     0.0v                   1.11v    0.61v risk, R:R 1.26 -> 2.28
+    #:     0.3v                   1.00v    0.50v risk, R:R 1.40 -> 2.80
+    #:     0.6v                   1.00v    0.50v risk, R:R 1.40 -> 2.80
+    #:     1.0v                   1.00v    refused, "through"
+    #:
+    #: Half the risk for the same target doubles the ratio and doubles the
+    #: size for the same money at stake - 0.05 lots to 0.11.
+    #:
+    #: **The refusal at 1.0v is the cost and it is not a bug.** A long filling
+    #: a full volatility unit below its support has a fill past the price the
+    #: stop is anchored to; with the wide stop that trade is taken and with the
+    #: tight one it is not. That is what a tight stop means. It matters because
+    #: `entry_edge_vol` parks 1.5v better than the market and the median entry
+    #: sits 0.91v from its level, so a typical rest fills ~0.6v past it - safe -
+    #: while the quartile that was already close to its level fills past 1.0v
+    #: and is refused. Roughly a quarter of resting fills, declined rather than
+    #: taken with a stop already behind price.
+    #:
+    #: Bounded to holds under `Scalper.PARKED_STOP_HOLD` (300s) whatever this
+    #: says, which is what keeps a short-hold grid's number off a swing.
     parked_stop_vol: float = 0.0
 
     #: Refuse a trade when the market around this level is choppier than this.
