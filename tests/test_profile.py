@@ -1,7 +1,7 @@
 """Levels where a lot of supply changed hands."""
 
 from till_infinity.structures.pips import Swing
-from till_infinity.structures.profile import BIN_VOL, nodes, points
+from till_infinity.structures.profile import BIN_VOL, NODE_CONCENTRATION, nodes, points
 from till_infinity.structures.volatility import Volatility
 
 
@@ -34,6 +34,20 @@ def test_a_flat_profile_has_no_node():
     which is noise with a rank."""
     prices = [100.0 + (i % 40) * 0.5 for i in range(2000)]
     assert nodes(prices, warm(prices)) == []
+
+
+def test_the_threshold_is_relative_to_how_many_bins_there_are():
+    """As a fixed 5% share this drew no nodes at all, on any instrument: bins
+    are half a volatility unit wide, a 500-bar window spans far more than
+    twenty of them, and no bin can hold a twentieth of everything unless price
+    barely moves."""
+    assert NODE_CONCENTRATION > 1.0
+    # A window that ranges widely and concentrates in one place still finds it,
+    # which a fixed share cannot do once the range is wide enough.
+    wide = [100.0 + (i % 200) * 0.5 for i in range(400)] + [100.0] * 1600
+    found = nodes(wide, warm(wide))
+    assert found
+    assert abs(found[0][0] - 100.0) < 2.0
 
 
 def test_volume_is_used_where_it_is_given():

@@ -33,11 +33,16 @@ pretending they are the same.
 
 ## What a node is
 
-A bin is a **node** when it holds more than `NODE_SHARE` of everything in the
-window and is a local maximum among its neighbours. Both conditions matter: the
-share alone would return a plateau's worth of adjacent bins, and the local
+A bin is a **node** when it holds several times its fair share of everything in
+the window and is a local maximum among its neighbours. Both conditions matter:
+the share alone would return a plateau's worth of adjacent bins, and the local
 maximum alone would return the tallest bin of a flat profile, which is noise
 with a rank.
+
+The share is relative rather than absolute, and that is not a detail: as a
+fixed 5% this drew **no nodes at all, on any instrument**. Bins are half a
+volatility unit wide, a 500-bar window spans far more than twenty of them, and
+no bin can hold a twentieth of everything unless price barely moves.
 
 Bins are `BIN_VOL` volatility units wide, because a fixed price width would give
 btc four bins and eurusd four thousand.
@@ -53,10 +58,24 @@ from .volatility import Volatility
 #: Bin width, in volatility units.
 BIN_VOL = 0.5
 
-#: The share of the window's total weight a bin must hold to be a node. With
-#: bins half a unit wide a window spans tens of them, so a bin holding a
-#: twentieth of everything is genuinely concentrated rather than merely present.
-NODE_SHARE = 0.05
+#: How many times its fair share a bin must hold to be a node.
+#:
+#: **Relative, because an absolute share cannot be calibrated.** This was a
+#: fixed 5% and drew nothing anywhere: bins are half a volatility unit wide, a
+#: 500-bar window spans far more than twenty of them, and no bin can hold a
+#: twentieth of everything unless price sits almost still. The threshold was an
+#: absolute number where the quantity it judges depends on how many bins there
+#: are.
+#:
+#: Fair share is `1 / bins`, so this asks for a bin holding `NODE_CONCENTRATION`
+#: times what it would hold if activity were spread evenly. That self-calibrates
+#: to any window length and to any instrument's spread of prices - the same
+#: argument that makes the bins volatility-scaled rather than fixed in price.
+NODE_CONCENTRATION = 3.0
+
+#: The most a bin can be asked to hold, whatever the bin count implies. Half a
+#: window in one half-unit band is concentrated by any reading.
+MOST_OF_IT = 0.5
 
 #: How many bins either side must be smaller for a bin to be a local maximum.
 NODE_SPAN = 2
@@ -68,7 +87,7 @@ def nodes(
     *,
     weights: Sequence[float] | None = None,
     bin_vol: float = BIN_VOL,
-    share: float = NODE_SHARE,
+    concentration: float = NODE_CONCENTRATION,
     span: int = NODE_SPAN,
 ) -> list[tuple[float, float]]:
     """`(price, share of the window)` for each high-activity band, richest first.
@@ -98,12 +117,25 @@ def nodes(
         buckets[at] = buckets.get(at, 0.0) + weight
 
     total = sum(buckets.values())
-    if total <= 0:
+    if total <= 0 or not buckets:
         return []
+
+    # What a bin would hold if activity were spread evenly across the bins that
+    # actually saw any. Empty bins are not counted: a window that ranges widely
+    # and trades in two places has two bins, not two hundred, and dividing by
+    # the span would make every node look concentrated.
+    fair = 1.0 / len(buckets)
+    # Capped, or the threshold becomes unsatisfiable exactly where it should be
+    # easiest: with three bins a fair share is a third and three times that is
+    # everything, so a window that traded in two places would return nothing.
+    # A bin holding half of a window is a node whatever the bin count says.
+    # Named `least` rather than `floor`, which is already the window's lowest
+    # price a few lines up. Shadowing it put every node at 8.5 instead of 100.
+    least = min(fair * concentration, MOST_OF_IT)
 
     found: list[tuple[float, float]] = []
     for at, weight in buckets.items():
-        if weight / total < share:
+        if weight / total < least:
             continue
         neighbours = [buckets.get(at + step, 0.0) for step in range(-span, span + 1) if step != 0]
         if any(other > weight for other in neighbours):
