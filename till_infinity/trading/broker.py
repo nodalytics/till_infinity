@@ -155,6 +155,38 @@ class Broker(ABC):
     @abstractmethod
     async def close_position(self, ticket: int, volume: float = 0.0) -> OrderResult: ...
 
+    async def rest(self, order: Order, price: float, until: float = 0.0) -> OrderResult:
+        """Leave a limit order at `price` for the broker to fill.
+
+        The half of a resting entry we cannot do ourselves. A poller sees price
+        at its own cadence, and a deep wick is brief by construction - it is
+        the 14.6% tail of the depth distribution - so the fills most worth
+        having are the ones most likely to be missed between two reads.
+
+        The broker fills on its own tick and never blinks. What it cannot do is
+        change its mind, which is why this is half of a hybrid rather than a
+        replacement: the order is placed here and withdrawn by `withdraw` the
+        moment a gate turns.
+
+        `until` is a broker-side expiry, so an order outlives neither its
+        window nor this process's memory of it.
+        """
+        raise BrokerError(f"{self.name}: resting an order is not supported")
+
+    async def withdraw(self, ticket: int) -> OrderResult:
+        """Cancel a resting order. See `rest`."""
+        raise BrokerError(f"{self.name}: cancelling an order is not supported")
+
+    async def resting(self) -> list[int]:
+        """Tickets of the orders we have left waiting, ours only.
+
+        Read back rather than remembered, because a restart forgets and the
+        orders do not: an order left resting by a previous process would sit
+        there unwatched, fill on its own, and arrive as a position nothing
+        could explain.
+        """
+        return []
+
     async def modify(self, ticket: int, stop: float, target: float = 0.0) -> OrderResult:
         """Move a stop or target. Optional: the paper book overrides it, and a
         backend that cannot do it says so rather than reporting a silent

@@ -153,6 +153,11 @@ class Waiting:
     #: After this it is dropped. A resting order with no deadline is a trade
     #: taken on information that has gone stale.
     until: float
+    #: The broker's order, when the price was also left there as a limit - see
+    #: `Settings.entry_pending`. Held so it can be withdrawn: this system keeps
+    #: the judgement and the broker keeps the reflexes, and the half that can
+    #: change its mind has to be able to reach the half that cannot.
+    ticket: int = 0
 
 
 @dataclass(slots=True)
@@ -725,7 +730,7 @@ class Trader:
                 if unconfirmed is not None:
                     await self._record_refusal(verdict, unconfirmed, engine.name)
                     return unconfirmed
-                parked = self._park(payload, verdict, engine.name, tick, engine)
+                parked = await self._park(payload, verdict, engine.name, tick, engine)
                 if parked is not None:
                     # Journalled like every other refusal. It was not, so a
                     # resting entry left no record at all: the log said it
@@ -1313,7 +1318,7 @@ class Trader:
         tolerance = price_distance(level, vol_bps, self.settings.candle_tolerance_vol)
         return confirms(bars, level, intent.side is Side.BUY, tolerance)
 
-    def _park(
+    async def _park(
         self,
         payload: dict[str, Any],
         intent: Intent,
@@ -1348,7 +1353,7 @@ class Trader:
         # fraction of a unit nearer the level is a different bet from waiting
         # for the sweep edge: 189 signals of 813 reached that wait and none of
         # them parked, because by then the fill was already past it.
-        edge = self._edge_entry(payload, intent, tick)
+        edge = await self._edge_entry(payload, intent, tick, by)
         if edge is not None:
             return edge
 
@@ -1500,12 +1505,29 @@ class Trader:
             return None
         if tick.time >= held.until:
             self._waiting.pop(feed, None)
+            await self._withdraw(held, "the window expired")
             log.info("trading: %s expired waiting for %.5g", feed, held.trigger)
             return None
+        # The judgement half, exercised while the reflex half waits. A broker
+        # order cannot change its mind, so anything that would refuse the trade
+        # now has to reach in and take it back - otherwise the one arrangement
+        # this was meant to avoid is the one it creates: a fill on a setup that
+        # had already stopped being worth taking.
+        turned = self._turned_against(held, tick)
+        if turned:
+            self._waiting.pop(feed, None)
+            await self._withdraw(held, turned)
+            log.info("trading: %s dropped while waiting - %s", feed, turned)
+            return None
+
         price = tick.entry(held.side)
         if (price - held.trigger) * held.side.sign > 0:
             return None  # not there yet
         self._waiting.pop(feed, None)
+        # Taken back before the signal is re-asked: if the gates still pass we
+        # fill at market here, and if they do not the order must already be
+        # gone. Leaving it would fill a setup this system just refused.
+        await self._withdraw(held, "price arrived, deciding here")
         log.info("trading: %s reached %.5g - reconsidering", feed, held.trigger)
         # Asked again rather than resurrected: a setup that stopped being worth
         # taking while it waited is refused on arrival like any other.
@@ -1557,7 +1579,9 @@ class Trader:
                 )
             )
 
-    def _edge_entry(self, payload: dict[str, Any], intent: Intent, tick: Tick) -> Refusal | None:
+    async def _edge_entry(
+        self, payload: dict[str, Any], intent: Intent, tick: Tick, by: str = ""
+    ) -> Refusal | None:
         """Hold the order a fraction of a unit better than the quote.
 
         The trade is worth taking at the level; it is worth more a fraction
@@ -1608,7 +1632,92 @@ class Trader:
             want,
             intent.entry,
         )
+        await self._leave_with_broker(intent, by, better, tick.time + window)
         return Refusal("waiting", f"holding out for {better:.5g}", intent.feed)
+
+    def _turned_against(self, held: Waiting, tick: Tick) -> str:
+        """Why this wait should be abandoned now, or "" to keep waiting.
+
+        Only conditions that would refuse the trade outright. A signal that has
+        merely aged is handled by `until`, and one whose numbers moved is
+        handled by asking the strategy again on arrival - this is for the cases
+        where there is no point arriving at all.
+        """
+        shut = self._shut_for(held.feed, symbol=self._symbol_of.get(held.feed, ""))
+        if shut is not None:
+            return f"the market shut {shut:.0f}s ago"
+        if self.context.drifting(held.feed):
+            return "the regime changed under it"
+        # `widened` is already zero below its own threshold, so this reads
+        # "several venues at once" rather than "any venue".
+        if self.context.widened(held.feed):
+            return "the venues went wide together"
+        spread = tick.spread
+        if spread > 0 and self.settings.max_spread_fraction > 0:
+            risk = abs(held.trigger - tick.entry(held.side))
+            if risk > 0 and spread > risk * self.settings.max_spread_fraction:
+                return f"the spread reached {spread:.5g}"
+        return ""
+
+    async def _leave_with_broker(self, intent: Intent, by: str, at: float, until: float) -> None:
+        """Also leave the price with the broker, as a limit order.
+
+        The other half of the hybrid. A poller sees price at its own cadence
+        and a deep wick is brief by construction, so the fills most worth
+        having are the ones most likely to fall between two reads. The broker
+        fills on its own tick.
+
+        Failure here is not fatal and not silent: the local watch is already
+        registered, so a rejected order leaves the entry exactly as it was
+        before this existed rather than losing it.
+        """
+        if not self.settings.entry_pending or not self.settings.live:
+            return
+        held = self._waiting.get(intent.feed)
+        if held is None:
+            return
+        order = Order(
+            symbol=intent.symbol,
+            side=intent.side,
+            volume=intent.volume,
+            stop=intent.stop,
+            target=intent.target,
+            comment=f"till {by or 'scalp'}"[:31],
+            magic=magic_for(self.settings.magic, by),
+            deviation=self.settings.deviation,
+        )
+        try:
+            result = await self.execution.rest(order, at, until)
+        except BrokerError as exc:
+            log.warning("trading: could not rest %s with the broker: %s", intent.feed, exc)
+            return
+        if not result.ok or not result.ticket:
+            log.warning("trading: broker refused the resting %s: %s", intent.feed, result)
+            return
+        held.ticket = result.ticket
+        log.info(
+            "trading: %s also left with the broker at %.5g as #%d",
+            intent.feed,
+            at,
+            result.ticket,
+        )
+
+    async def _withdraw(self, held: Waiting, why: str) -> None:
+        """Take a resting order back off the broker.
+
+        Every path that drops a wait comes through here, because an order left
+        behind is one that fills on a setup this system has already refused -
+        the exact failure a broker-side limit invites and the reason it is only
+        half of the arrangement.
+        """
+        if not held.ticket:
+            return
+        try:
+            await self.execution.withdraw(held.ticket)
+            log.info("trading: withdrew #%d on %s - %s", held.ticket, held.feed, why)
+        except BrokerError as exc:
+            log.warning("trading: could not withdraw #%d on %s: %s", held.ticket, held.feed, exc)
+        held.ticket = 0
 
     def _turn_wanted(self, feed: str) -> float:
         """How much of a turn this instrument has to show, in volatility units.

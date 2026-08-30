@@ -6252,3 +6252,103 @@ async def test_a_resting_entry_is_journalled(tmp_path):
 
     gates = [e.context.get("gate") for e in read(tmp_path / "journal.db")]
     assert "waiting" in gates
+
+
+class RestingBroker(PaperBroker):
+    """A paper book that also records what was left with the broker."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rested: list[tuple[float, float]] = []
+        self.withdrawn: list[int] = []
+
+    async def rest(self, order, price, until=0.0):
+        self.rested.append((price, until))
+        return td.OrderResult(ok=True, ticket=4242, price=price, volume=order.volume)
+
+    async def withdraw(self, ticket):
+        self.withdrawn.append(ticket)
+        return td.OrderResult(ok=True, ticket=ticket)
+
+
+async def _resting_trader(**over):
+    made = settings(
+        entry_edge_vol=1.5, entry_pending=True, pullback_fraction=0.0, live=True, **over
+    )
+    trader = Trader(Bus(), settings=made)
+    trader.broker = RestingBroker(made)
+    trader.paper = None
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    return trader
+
+
+async def test_a_rested_entry_is_also_left_with_the_broker():
+    """A poller sees price at its own cadence and a deep wick is brief, so the
+    fills most worth having are the ones most likely to fall between two
+    reads. The broker fills on its own tick."""
+    trader = await _resting_trader()
+    got = await trader.on_signal(signal())
+    assert isinstance(got, Refusal)
+    assert got.gate == "waiting"
+    assert trader.broker.rested, "the price should have been left with the broker"
+    price, until = trader.broker.rested[0]
+    assert price < 4400.5  # better than the ask for a buy
+    assert until > 0  # and with a broker-side expiry
+    assert trader._waiting["gold"].ticket == 4242
+
+
+async def test_the_order_is_withdrawn_when_the_window_expires():
+    """An order left behind is one that fills on a setup this system has
+    already stopped watching."""
+    trader = await _resting_trader()
+    await trader.on_signal(signal())
+    held = trader._waiting["gold"]
+    held.until = 0.0
+    await trader._arrived("gold", Tick("XAUUSD", bid=4399.5, ask=4400.5, time=time.time()))
+    assert trader.broker.withdrawn == [4242]
+    assert "gold" not in trader._waiting
+
+
+async def test_the_order_is_withdrawn_when_price_arrives():
+    """Taken back before the signal is re-asked: if the gates still pass we
+    fill at market here, and if they do not the order must already be gone."""
+    trader = await _resting_trader()
+    await trader.on_signal(signal())
+    trigger = trader._waiting["gold"].trigger
+    await trader._arrived(
+        "gold", Tick("XAUUSD", bid=trigger - 1.0, ask=trigger - 0.5, time=time.time())
+    )
+    assert trader.broker.withdrawn == [4242]
+
+
+async def test_the_order_is_withdrawn_when_the_market_shuts():
+    """The judgement half, exercised while the reflex half waits. A broker
+    order cannot change its mind."""
+    trader = await _resting_trader(stale_quote_after=300.0)
+    await trader.on_signal(signal())
+    spec = trader.specs["gold"]
+    now = time.time()
+    trader._broker_quoted_at[spec.symbol] = (now, now - 900.0)
+    await trader._arrived("gold", Tick("XAUUSD", bid=4399.5, ask=4400.5, time=now))
+    assert trader.broker.withdrawn == [4242]
+    assert "gold" not in trader._waiting
+
+
+async def test_nothing_is_left_with_the_broker_unless_asked():
+    """Off by default, and the local watch works exactly as before."""
+    made = settings(entry_edge_vol=1.5, entry_pending=False, pullback_fraction=0.0, live=True)
+    trader = Trader(Bus(), settings=made)
+    trader.broker = RestingBroker(made)
+    trader.paper = None
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    got = await trader.on_signal(signal())
+    assert isinstance(got, Refusal)
+    assert got.gate == "waiting"
+    assert trader.broker.rested == []
+    assert trader._waiting["gold"].ticket == 0

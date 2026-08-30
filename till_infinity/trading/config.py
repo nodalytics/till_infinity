@@ -839,6 +839,25 @@ class Settings:
     #: here says what it does next, and buying a deeper fall is a different
     #: trade from buying a shallow one.
     #:
+    #: **Whether the resting price is also left with the broker.**
+    #:
+    #: `entry_edge_vol` alone is a poller's limit order: it watches quotes and
+    #: fires at market when price arrives. That misses the fills most worth
+    #: having, because a deep wick is brief by construction - it is the 14.6%
+    #: tail - and a wick that pierces and recovers between two reads is a fill
+    #: that never happened.
+    #:
+    #: With this on, the price is *also* left with the broker as a limit order,
+    #: which fills on the terminal's own tick and never blinks. What the broker
+    #: cannot do is change its mind, so this system keeps watching and
+    #: withdraws the order the moment a gate turns - the market goes wide, the
+    #: session shuts, the window expires. Two halves: the broker has the
+    #: reflexes and this has the judgement, which is how a person would do it
+    #: with a platform in front of them.
+    #:
+    #: Needs `entry_edge_vol` to have somewhere to rest.
+    entry_pending: bool = False
+
     #: Distinct from `pullback_fraction`, which waits for the **sweep edge** -
     #: a retracement that measured 189 signals of 813 reaching the wait and
     #: none of them parking, because by then the fill was already past it. This
@@ -1059,6 +1078,13 @@ class Settings:
     #: the event it was opened for. Holding it does not wait for the thesis; it
     #: waits for noise to reach the stop, which is a losing trade arrived at
     #: slowly. Closing flat costs the spread and keeps the rest.
+    #:
+    #: **Loosened deliberately.** Measured over 119 closed trades this fired
+    #: six times for -5.01 at a 50% win rate - it was neither helping nor
+    #: hurting much - and it is a risk control from before the structures
+    #: models could say much about a level. The hold clock still ends every
+    #: trade, so this only governs the window between the two, and a trade that
+    #: has not moved yet is not the same as one that will not.
     stale_after: float = 0.0
     #: How far the trade must have travelled by `stale_after` to count as
     #: having started, in R. Deliberately generous - this is meant to catch
@@ -1233,6 +1259,7 @@ class Settings:
             session_bars=_int("TRADING_SESSION_BARS", 1400),
             target_buffer_vol=_float("TRADING_TARGET_BUFFER_VOL", 0.0),
             entry_edge_vol=_float("TRADING_ENTRY_EDGE_VOL", 0.0),
+            entry_pending=_flag("TRADING_ENTRY_PENDING"),
             followers=_names(_env("TRADING_FOLLOWERS")),
             style=_env("TRADING_STYLE") or "both",
             session_margin=_float("TRADING_SESSION_MARGIN_S", 60.0),

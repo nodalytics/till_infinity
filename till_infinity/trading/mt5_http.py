@@ -251,6 +251,71 @@ class HttpBroker(Broker):
 
     # ---------------------------------------------------------------- writes
 
+    async def rest(self, order: Order, price: float, until: float = 0.0) -> OrderResult:
+        """Leave a limit order for the broker to fill. See `Broker.rest`.
+
+        **A limit, never a stop order.** The direction decides which: a buy
+        resting *below* the market is `BUY_LIMIT`, and the same price above it
+        would be `BUY_STOP`, which is the opposite trade - one buys a dip, the
+        other buys a breakout. The bridge would accept either, and MT5 rejects
+        a limit priced through the market rather than silently converting it,
+        which is the failure we want.
+        """
+        kind = "BUY_LIMIT" if order.side is Side.BUY else "SELL_LIMIT"
+        body: dict[str, Any] = {
+            "symbol": order.symbol,
+            "volume": order.volume,
+            "order_type": kind,
+            "price": price,
+            "sl": order.stop,
+            "tp": order.target or None,
+            "deviation": order.deviation,
+            "comment": order.comment[:31],
+            "magic": order.magic,
+            "type_filling": self.settings.filling,
+        }
+        if until:
+            # Broker-side expiry, so an order outlives neither its window nor
+            # this process's memory of it.
+            body["type_time"] = "SPECIFIED"
+            body["expiration"] = (
+                datetime.fromtimestamp(until, UTC).replace(microsecond=0).isoformat()
+            )
+        raw = await self._post("/orders/pending", json=body)
+        result = raw.get("result") or {}
+        order_ticket = result.get("order") or raw.get("ticket") or 0
+        retcode = int(result.get("retcode") or 0)
+        return OrderResult(
+            ok=bool(raw.get("success", True)) and retcode in (0, TRADE_DONE, 10008),
+            ticket=int(order_ticket) if str(order_ticket).isdigit() else 0,
+            price=float(result.get("price") or price),
+            volume=float(result.get("volume") or order.volume),
+            retcode=retcode,
+        )
+
+    async def withdraw(self, ticket: int) -> OrderResult:
+        """Cancel a resting order."""
+        raw = await self._request("DELETE", f"/orders/{ticket}")
+        body = raw if isinstance(raw, dict) else {}
+        return OrderResult(ok=bool(body.get("success", True)), ticket=ticket)
+
+    async def resting(self) -> list[int]:
+        """Tickets of the orders we left waiting, ours only."""
+        try:
+            raw = await self._get("/orders/")
+        except BrokerError as exc:
+            log.debug("trading: could not list resting orders: %s", exc)
+            return []
+        rows = raw if isinstance(raw, list) else raw.get("orders", [])
+        out: list[int] = []
+        for row in rows:
+            if not isinstance(row, dict) or not _ours(row, self.settings.magic):
+                continue
+            ticket = row.get("ticket") or row.get("order")
+            if str(ticket).isdigit():
+                out.append(int(ticket))
+        return out
+
     async def send(self, order: Order) -> OrderResult:
         body = {
             "symbol": order.symbol,
