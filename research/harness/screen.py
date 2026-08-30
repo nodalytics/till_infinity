@@ -9,7 +9,11 @@ So this asks, for a sample of what the broker offers: how much of a typical
 move does it cost to get in and out? Anything above about half a unit cannot
 support a scalp whose whole expected push is one or two.
 """
-import asyncio, os, re, statistics as st
+
+import asyncio
+import os
+import re
+import statistics as st
 
 import httpx
 
@@ -22,9 +26,15 @@ if KEY:
     headers["X-API-Key"] = KEY
 
 CARRIED = {
-    "Volatility 10 Index", "Volatility 25 Index", "Volatility 50 Index",
-    "Volatility 75 Index", "Volatility 100 Index", "Step Index",
-    "Boom 500 Index", "Boom 1000 Index", "Crash 1000 Index",
+    "Volatility 10 Index",
+    "Volatility 25 Index",
+    "Volatility 50 Index",
+    "Volatility 75 Index",
+    "Volatility 100 Index",
+    "Step Index",
+    "Boom 500 Index",
+    "Boom 1000 Index",
+    "Crash 1000 Index",
 }
 
 
@@ -80,7 +90,7 @@ async def main() -> None:
         for n in names:
             by_family.setdefault(family(n), []).append(n)
         sample = list(CARRIED)
-        for g, members in by_family.items():
+        for _g, members in by_family.items():
             sample += [m for m in members if m not in CARRIED][:14]
 
         got = [r for r in await asyncio.gather(*(judge(n) for n in sample)) if r]
@@ -97,7 +107,8 @@ async def main() -> None:
         for g in sorted(by_family):
             here = [r for r in got if family(r[0]) == g]
             if here:
-                print(f"   {g:10s} median {st.median([r[2] for r in here]):6.3f}v  ({len(here)} sampled)")
+                mid = st.median([r[2] for r in here])
+                print(f"   {g:10s} median {mid:6.3f}v  ({len(here)} sampled)")
 
 
 asyncio.run(main())
