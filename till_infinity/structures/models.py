@@ -88,6 +88,18 @@ class Signal(Restorable):
     #: raise lands in the structures consumer, which stops while the container
     #: goes on reporting healthy.
     market: str = ""
+    #: Which level this call is about, by identity rather than by price.
+    #:
+    #: A string, so it lives here for the same reason `market` does: `features`
+    #: is a float dict and every value in it is rounded on the way out.
+    #:
+    #: It exists because a level's price is not its identity - the Kalman
+    #: filter moves it whenever the level learns something - so grouping a
+    #: record by price splits one level's history across several rows. Asked
+    #: which levels had been profitable, the record answered "117 levels, 119
+    #: trades, one traded twice", which is a fact about grouping a drifting
+    #: number rather than about the market.
+    level_id: str = ""
     #: The other timeframes agreeing on this price, coarsest first, as
     #: "1d+4h+1h". Empty means no other timeframe has a level here - which is
     #: information too, and is reported as such rather than left blank.
@@ -113,6 +125,7 @@ class Signal(Restorable):
             "time": self.time,
             "direction": self.direction,
             "confluence": list(self.confluence),
+            "level_id": self.level_id,
         }
 
     def __str__(self) -> str:

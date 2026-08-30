@@ -34,6 +34,8 @@ from typing import ClassVar
 from ..logging import get_logger
 from . import (
     confluence,
+    equals,
+    gaps,
     origin_points,
     origins,
     patterns,
@@ -42,11 +44,13 @@ from . import (
     profile,
     reactions,
     regimes,
+    rounds,
     runs,
     sessions,
     sweeps,
 )
 from . import levels as lv
+from .config import DEFAULT_FORMATION
 from .models import Shape, Signal
 from .state import Restorable
 from .volatility import Book as VolBook
@@ -426,6 +430,9 @@ class Call(Restorable):
             venue="consensus",
             score=abs(self.inference.edge),
             detail=detail,
+            # By identity, not by price - the price moves under the filter, so
+            # a record grouped by it splits one level across several rows.
+            level_id=self.level.id,
             features={
                 "level": self.level.price,
                 "probability_up": self.inference.probability_up,
@@ -632,7 +639,11 @@ class Engine:
         horizon: float = 3600.0,
         shape_horizon: int = SHAPE_HORIZON,
         charge_spread: bool = True,
-        formation: str = "pip,run,origin",
+        # The one named default, not a third copy of it. This literal had
+        # already drifted from the two in `config` once - see DEFAULT_FORMATION
+        # - and a constructor default that disagrees with the setting is a
+        # deployment drawing something nobody chose.
+        formation: str = DEFAULT_FORMATION,
         run_threshold: float = runs.RUN_SWING_VOL,
         single_source: frozenset[str] = frozenset(),
     ) -> None:
@@ -814,7 +825,20 @@ class Engine:
             log.debug("structures: no origin reading for %s %s: %s", feed, interval, exc)
             return {}
 
-    FORMATIONS: ClassVar[tuple[str, ...]] = ("pip", "run", "origin", "profile")
+    FORMATIONS: ClassVar[tuple[str, ...]] = (
+        "pip",
+        "run",
+        "origin",
+        "profile",
+        # Defined by equality rather than by prominence: two extremes at one
+        # price, which is a different claim from two significant turns.
+        "equal",
+        # Defined by trade that did not happen - the only one here that is.
+        "gap",
+        # Defined by nothing that happened at all, which is why it is measured
+        # rather than assumed.
+        "round",
+    )
 
     def draw_with(self, formation: str) -> tuple[str, ...]:
         """Set which passes draw levels, validating the name. Returns the passes.
@@ -913,6 +937,21 @@ class Engine:
             return origin_points.points([float(t) for t in times], closes, vol)
         if name == "profile":
             return profile.points([float(t) for t in times], closes, vol)
+        if name == "equal":
+            return equals.points([float(t) for t in times], closes, vol, count=self.pip_count)
+        if name == "gap":
+            # The only formation that needs the bar's shape rather than its
+            # close: an imbalance is a relationship between one bar's high and
+            # another's low, and closes cannot express it.
+            return gaps.points(
+                [float(t) for t in times],
+                list(series.highs),
+                list(series.lows),
+                closes,
+                vol,
+            )
+        if name == "round":
+            return rounds.points([float(t) for t in times], closes, vol)
         return pips.points(times, closes, self.pip_count)
 
     def supports(self, feed: str, interval: str) -> bool:

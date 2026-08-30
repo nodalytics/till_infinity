@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import math
 import time
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -531,6 +532,20 @@ class Level(Restorable):
     filter: Kalman
     origin: str = "pip"
     created: float = field(default_factory=time.time)
+    #: A name that survives the level moving, so its record can be added up.
+    #:
+    #: **A level's price is not its identity and using it as one was a real
+    #: measurement error.** The Kalman filter moves the price every time the
+    #: level learns something, so a level traded twice is journalled at two
+    #: prices; grouped by price, its two trades become two levels with one
+    #: trade each. Asked "which levels were profitable", the honest answer came
+    #: back "117 levels, 119 trades, one traded twice" - which is not a fact
+    #: about the market, it is a fact about grouping a drifting number.
+    #:
+    #: Minted once at formation and carried through `merge` and `dedupe`, where
+    #: the surviving level keeps its own id and absorbs the other's history -
+    #: the same rule those already apply to touches.
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     state: State = State.FRESH
     last_touch: float = 0.0
     #: Statistics per approach side. The asymmetry is the whole point.

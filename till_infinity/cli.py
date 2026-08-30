@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import time
 from collections.abc import Coroutine
 from datetime import UTC, datetime
@@ -1924,6 +1925,63 @@ def journal_info(db):
         )
     console.print(table)
     console.print(f"{sum(r['entries'] for r in rows):,} entries")
+
+
+@journal.command("levels")
+@db_option
+@click.option("--top", "-n", default=12, show_default=True, help="How many either end.")
+@click.option("--min-trades", default=1, show_default=True, help="Ignore levels below this.")
+def journal_levels(db, top, min_trades):
+    """What each level made or lost, grouped by identity rather than by price.
+
+    Grouped by `level_id` because a level's price moves under its filter, so a
+    level traded twice is journalled at two prices - and grouped by price its
+    two trades read as two levels with one trade each.
+    """
+    from .journal.ledger import ledger, outcomes, totals
+
+    setup_logging()
+    try:
+        records = ledger(outcomes(_journal_db(db)))
+    except (FileNotFoundError, sqlite3.Error) as exc:
+        console.print(f"[yellow]{escape(str(exc))}[/]")
+        return
+    if not records:
+        console.print("[yellow]no closed trades recorded[/]")
+        return
+
+    counts = totals(records)
+    console.print(
+        f"{int(counts['trades'])} closed trades over {int(counts['levels'])} level(s), "
+        f"net [b]{counts['net']:+.2f}[/], hit rate {counts['hit_rate']:.0%}"
+    )
+    console.print(
+        f"{int(counts['named_levels'])} carry a level id; "
+        f"{int(counts['levels_traded_more_than_once'])} of those were traded more than once"
+    )
+
+    shown = [r for r in records if r.trades >= min_trades]
+    table = Table(title="levels by what they made")
+    for column in ("level", "instrument", "price", "tf", "net", "trades", "up", "how it ended"):
+        table.add_column(column, justify="right" if column in ("net", "trades", "up") else "left")
+
+    def ends(record):
+        return ", ".join(
+            f"{k} {v}" for k, v in sorted(record.endings.items(), key=lambda kv: -kv[1])
+        )
+
+    for record in shown[:top] + ([] if len(shown) <= top * 2 else shown[-top:]):
+        table.add_row(
+            escape(record.level_id or "unnamed"),
+            escape(record.feed or "-"),
+            f"{record.price:.6g}",
+            escape(record.interval or "-"),
+            f"{record.net:+.2f}",
+            str(record.trades),
+            str(record.wins),
+            escape(ends(record) or "-"),
+        )
+    console.print(table)
 
 
 @journal.command("export")

@@ -456,6 +456,11 @@ class Watcher:
                     "direction": signal.direction,
                     "market": signal.market,
                     "confluence": "+".join(signal.confluence),
+                    # The level's name rather than its price. Without it a
+                    # record cannot be added up: the filter moves the price
+                    # whenever the level learns, so two trades on one level are
+                    # journalled at two prices and group as two levels.
+                    "level_id": signal.level_id,
                     **signal.features,
                 },
                 tags=(signal.feed, signal.venue, str(signal.shape), signal.interval),

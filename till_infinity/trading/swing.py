@@ -835,6 +835,10 @@ class FadeToValue(LevelStrategy):
             ),
             interval=interval,
             confluence=_confluence(payload),
+            # Carried from the signal so a closed trade can be added up
+            # against the level that produced it. Levels drift under the
+            # filter, so the price is not a name.
+            level_id=str(payload.get("level_id") or ""),
             features={**features, "distance_vol": distance, "fair_value": value.price},
             risk_money=sized.risk_money,
             stop_vol=abs(entry - stop) / unit if unit else 0.0,

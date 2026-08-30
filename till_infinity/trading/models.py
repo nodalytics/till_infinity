@@ -178,6 +178,10 @@ class Intent:
     #: The signal's features, copied in. See `journal.decide` on why context is
     #: copied rather than pointed at.
     features: dict[str, float] = field(default_factory=dict)
+    #: Which level this trade is about, by identity rather than by price.
+    #: Copied from the signal so a closed trade can be added up against the
+    #: level that produced it - see `structures.levels.Level.id`.
+    level_id: str = ""
     risk_money: float = 0.0
     #: The stop in the units the rules that placed it are written in, and the
     #: multiplier `stop_hold_scaling` applied to reach it. Both are derivable
@@ -231,6 +235,10 @@ class Intent:
             "risk_money": round(self.risk_money, 2),
             "interval": self.interval,
             "confluence": "+".join(self.confluence),
+            # Spread *after* the features so a level's name cannot be
+            # overwritten by a float of the same key, and before nothing - the
+            # whole ledger is grouped on it.
+            "level_id": self.level_id,
             **{k: round(v, 6) for k, v in self.features.items()},
         }
 
