@@ -802,10 +802,31 @@ class Settings:
     #: nearer it. This holds the order at that price instead of paying the
     #: spread to cross now, and takes it when price comes.
     #:
+    #: **What a depth costs and buys**, over 72,452 resolved touches against a
+    #: median stop of 3.02v:
+    #:
+    #: | depth | fills | risk left | R:R |
+    #: | --- | --- | --- | --- |
+    #: | 0.25v | 75.0% | 2.77v | 1.09x |
+    #: | 0.50v | 49.6% | 2.52v | 1.20x |
+    #: | 1.00v | 25.9% | 2.02v | 1.50x |
+    #: | 1.50v | 14.6% | 1.52v | 1.99x |
+    #: | 2.00v | 7.9% | 1.02v | 2.96x |
+    #:
+    #: Halving the risk costs 85% of the setups. It buys more than the table
+    #: shows, because the target is measured from the **fill** while the stop
+    #: is anchored to the **level**: a deeper fill shrinks the risk and brings
+    #: the target nearer in absolute terms at the same time.
+    #:
+    #: What is not measured is whether a trade filled on a deep wick still
+    #: works. The depth distribution says how often price gets there; nothing
+    #: here says what it does next, and buying a deeper fall is a different
+    #: trade from buying a shallow one.
+    #:
     #: Distinct from `pullback_fraction`, which waits for the **sweep edge** -
-    #: a deep retracement that measured 189 signals of 813 reaching the wait
-    #: and none of them parking, because by then the fill was already past it.
-    #: This is a small, ordinary improvement rather than a bet on a sweep.
+    #: a retracement that measured 189 signals of 813 reaching the wait and
+    #: none of them parking, because by then the fill was already past it. This
+    #: rests at a measured depth instead of at a computed edge.
     #:
     #: Held here and fired at market when price arrives, rather than sent as a
     #: broker pending order. The bridge has `POST /orders/pending`, and using it
