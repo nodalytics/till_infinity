@@ -707,6 +707,22 @@ SYMBOL_ALIASES: dict[str, str] = {
 }
 
 
+#: Slugs registered from `PRICES_BROKER_SYMBOLS`, kept so a caller can ask
+#: which feeds exist *only* because the broker carries them.
+#:
+#: Needed because naming a broker symbol was not enough to have it collected.
+#: `register_broker_feeds` puts it in the catalogue, and `resolve_symbols` then
+#: returns only what `SYMBOLS` names - so eleven synthetics were registered,
+#: tradable, given exposure legs, and polled by nothing. Zero quotes and zero
+#: bars, which is the same silence as a feed that does not exist.
+_BROKER_ONLY: set[str] = set()
+
+
+def broker_feed_names() -> tuple[str, ...]:
+    """Feeds that exist only because `PRICES_BROKER_SYMBOLS` named them."""
+    return tuple(sorted(_BROKER_ONLY))
+
+
 def register_broker_feeds(names: Sequence[str]) -> tuple[str, ...]:
     """Add broker-only instruments to the catalogue. Returns the slugs added.
 
@@ -722,6 +738,10 @@ def register_broker_feeds(names: Sequence[str]) -> tuple[str, ...]:
     added = tuple(slug for slug in made if slug not in FEEDS)
     for slug in added:
         FEEDS[slug] = made[slug]
+    # Every slug named, not only the newly added ones: a second call with the
+    # same list must still report them as broker-only, or a restart would
+    # forget which feeds nothing else can reach.
+    _BROKER_ONLY.update(made)
     return added
 
 

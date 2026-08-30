@@ -349,6 +349,27 @@ class Stack:
     async def _run_prices(self, _book) -> None:
         settings = px.Settings.from_env()
         feeds = px.resolve_symbols(self.plan.symbols or None)
+        # Broker-only feeds are added whatever `SYMBOLS` says, and that is the
+        # correction of a bug rather than a convenience. `PRICES_BROKER_SYMBOLS`
+        # is already an explicit opt-in list and it is the only way to reach an
+        # instrument nothing else quotes - so naming one there and having it
+        # collected by nothing is never what anybody wanted. Eleven synthetics
+        # were registered, made tradable, given exposure legs, and polled by
+        # nothing: zero quotes and zero bars, which looks exactly like a feed
+        # that does not exist.
+        #
+        # `resolve_symbols` stays pure. A one-off `prices bars --symbols gold`
+        # should get gold, not the whole synthetic book; this is the running
+        # deployment, where the two lists are meant to describe one intent.
+        known = {feed.name for feed in feeds}
+        extra = tuple(n for n in px.broker_feed_names() if n not in known)
+        if extra:
+            feeds = feeds + px.resolve_symbols(extra)
+            log.info(
+                "stack: %d broker-only feed(s) carried that SYMBOLS does not name: %s",
+                len(extra),
+                ", ".join(extra),
+            )
         intervals = px.resolve_intervals(self.plan.intervals or None)
         store = px.open_store("sqlite", database=settings.database, data_dir=settings.data_dir)
         async with store, asyncio.TaskGroup() as group:

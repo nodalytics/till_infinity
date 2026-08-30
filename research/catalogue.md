@@ -93,3 +93,32 @@ says nothing about whether there is anything to trade above it: a generated
 process with a tiny spread and no structure is cheap and worthless. The
 synthetics already carried are the evidence available, and they have been
 running long enough to say - see the ledger.
+
+## Adding them found a third list
+
+The eleven were added and collected nothing: **zero quotes and zero bars on
+every one**, which is the same silence as a feed that does not exist - and is
+exactly the failure the original nine hit, where 1,271 quotes each and no
+candles read as a slow warm-up and was not one.
+
+There were three lists, not the two this note assumed:
+
+| list | where | decides |
+| --- | --- | --- |
+| `SYNTHETICS` | code | what is **tradable** |
+| `PRICES_BROKER_SYMBOLS` | env | what the broker source knows the **name** of |
+| `SYMBOLS` | env | what is actually **collected** |
+
+Naming an instrument in the first two registered it, made it tradable, gave it
+an exposure leg - and left it polled by nothing, because `resolve_symbols`
+returns what `SYMBOLS` names and nothing else.
+
+The fix is not to write the list a third time. `PRICES_BROKER_SYMBOLS` is
+already an explicit opt-in and it is the *only* way to reach an instrument
+nothing else quotes, so naming one there and having it collected by nothing is
+never what anybody wanted. The running deployment now carries every broker-only
+feed whatever `SYMBOLS` says.
+
+`resolve_symbols` itself stays narrow: a one-off `prices bars --symbols gold`
+should get gold, not the whole synthetic book. The union belongs to the stack,
+where the lists are meant to describe one intent.
