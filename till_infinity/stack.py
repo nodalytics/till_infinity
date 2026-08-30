@@ -344,6 +344,13 @@ class Stack:
         if watcher.cold:
             log.info("stack: structures restored no levels, warming from the store")
             watcher.warm()
+        else:
+            # And the feeds added since the last cold start, which `cold`
+            # cannot see - it asks whether the engine holds *any* levels, and
+            # with 2,018 restored it does. Eleven instruments added to a
+            # running deployment had 2,700 stored bars each and seven levels
+            # between them, because nothing replayed their history.
+            watcher.warm_new()
         await watcher.run()
 
     async def _run_prices(self, _book) -> None:

@@ -24,11 +24,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sqlite3
 import statistics
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
+from contextlib import closing
 from dataclasses import replace
+from pathlib import Path
 
 from ..bus import ALERTS, BARS, MACRO, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
@@ -280,6 +283,9 @@ class Watcher:
         #: result can be attached to the decision that predicted it, which is
         #: the whole difference between a log and a training example.
         self._awaiting: OrderedDict[tuple[str, float], str] = OrderedDict()
+        #: Feeds already replayed in this process, whether or not the replay
+        #: left a series behind. See `warm_new`.
+        self._seeded: set[str] = set()
         self.outcomes = 0
         self._saved = 0.0
         self.published = 0
@@ -298,6 +304,65 @@ class Watcher:
         skipped warming because the restore had *succeeded*.
         """
         return not any(self.engine._levels.values())
+
+    def unwarmed(self) -> tuple[str, ...]:
+        """Feeds the store has bars for and the engine has never seen.
+
+        An instrument added to a running deployment lands here: it collects
+        bars immediately and forms levels only from the live stream, one bar at
+        a time, while every feed that was present at the last cold start got a
+        several-hundred-thousand-bar replay. Eleven synthetics added this way
+        had 2,700 stored bars each and seven levels between them.
+
+        The engine's own series are the test rather than its levels: a feed
+        that has been replayed and legitimately formed no level is warm, and
+        seeding it again would count every one of its bars twice.
+        """
+        path = Path(self.settings.prices_db)
+        if not path.exists():
+            return ()
+        seen = {feed for feed, _interval in self.engine._series} | self._seeded
+        try:
+            with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
+                stored = {row[0] for row in conn.execute("SELECT DISTINCT feed FROM bars")}
+        except sqlite3.Error as exc:
+            log.warning("structures: could not list stored feeds: %s", exc)
+            return ()
+        return tuple(sorted(stored - seen))
+
+    def warm_new(self, on_progress: Callable[[int, int], None] | None = None) -> int:
+        """Replay the store for feeds the engine has no history of.
+
+        Called after every restore, not only a cold one. `cold` asks whether
+        the engine holds *any* levels, which was the right question when the
+        instrument set never changed and is the wrong one now: with 2,018
+        levels restored the engine is not cold, so the warm-up was skipped
+        entirely and eleven new feeds were left to learn from the bus at
+        roughly one bar a minute.
+
+        Safe to call every start because it seeds only what has no series, and
+        a feed with no series has no bars to double count.
+        """
+        if not self.settings.warm:
+            return 0
+        feeds = self.unwarmed()
+        if not feeds:
+            return 0
+        log.info("structures: warming %d feed(s) with no history: %s", len(feeds), ", ".join(feeds))
+        # Remembered whether or not a series results. A feed whose bars cannot
+        # form one - too few venues, and not marked single-source - would
+        # otherwise read as unwarmed and be replayed on every call, announcing
+        # work it has already done.
+        self._seeded.update(feeds)
+        try:
+            replayed = self.engine.seed(
+                self.settings.prices_db, feeds=feeds, on_progress=on_progress
+            )
+            self._decline_unsupported()
+            return replayed
+        except Exception as exc:  # warming is an optimisation, not a requirement
+            log.warning("structures: could not warm %s: %s", ", ".join(feeds), exc)
+            return 0
 
     def warm(self, on_progress: Callable[[int, int], None] | None = None) -> int:
         """Fill the level windows from stored price history.
@@ -962,4 +1027,10 @@ async def watch(
     watcher.load()
     if watcher.cold:
         watcher.warm()
+    else:
+        # And the feeds added since the last cold start, which `cold` cannot
+        # see: it asks whether the engine holds *any* levels, so eleven new
+        # instruments with 2,700 stored bars each were left to learn from the
+        # bus one bar at a time.
+        watcher.warm_new()
     return await watcher.run(messages=messages, on_signal=on_signal)

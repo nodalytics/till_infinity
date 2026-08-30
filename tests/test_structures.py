@@ -2062,3 +2062,143 @@ def test_every_signal_feature_is_a_number():
     made.features["drawn_by"] = "pip"  # type: ignore[assignment]
     with pytest.raises(TypeError, match="round"):
         made.to_dict()
+
+
+# ------------------------------- warming a feed added to a running deployment
+
+
+def _prices_with(path, feeds, bars=600):
+    """A prices database holding candles for the named feeds.
+
+    Three venues, because a bar needs `MIN_VENUES` to become a consensus bar: a
+    one-venue fixture replays every bar happily and leaves no series behind,
+    which is indistinguishable from a warm-up that did nothing.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE bars (feed TEXT, venue TEXT, interval TEXT, ts INTEGER,"
+        " open REAL, high REAL, low REAL, close REAL, volume REAL)"
+    )
+    rows = []
+    for feed in feeds:
+        price = 100.0
+        for i in range(bars):
+            price += (i % 7) - 3
+            rows += [
+                (
+                    feed,
+                    venue,
+                    "5m",
+                    1_700_000_000 + i * 300,
+                    price,
+                    price + 1,
+                    price - 1,
+                    price,
+                    10.0,
+                )
+                for venue in ("DERIV", "OANDA", "SAXO")
+            ]
+    conn.executemany("INSERT INTO bars VALUES (?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_a_feed_the_engine_has_never_seen_is_reported_as_unwarmed(tmp_path):
+    from till_infinity.structures.config import Settings
+    from till_infinity.structures.service import Watcher
+
+    db = _prices_with(tmp_path / "prices.db", ["gold", "jump_10_index"])
+    watcher = Watcher(Bus(), settings=Settings(prices_db=db, state_dir=tmp_path))
+    assert set(watcher.unwarmed()) == {"gold", "jump_10_index"}
+
+
+def test_a_feed_already_replayed_is_not_warmed_again(tmp_path):
+    """Seeding it twice would count every one of its bars twice, and the
+    engine's own series are the test rather than its levels: a feed that was
+    replayed and legitimately formed no level is warm."""
+    from till_infinity.structures.config import Settings
+    from till_infinity.structures.service import Watcher
+
+    db = _prices_with(tmp_path / "prices.db", ["gold", "jump_10_index"])
+    watcher = Watcher(Bus(), settings=Settings(prices_db=db, state_dir=tmp_path))
+    watcher.warm()
+    assert watcher.unwarmed() == ()
+    assert watcher.warm_new() == 0
+
+
+def test_a_feed_added_later_is_warmed_although_the_engine_is_not_cold(tmp_path):
+    """The bug: `cold` asks whether the engine holds *any* levels, so with
+    2,018 restored it is not cold and the warm-up was skipped entirely -
+    leaving eleven new instruments with 2,700 stored bars each to learn from
+    the bus one bar at a time."""
+    from till_infinity.structures.config import Settings
+    from till_infinity.structures.service import Watcher
+
+    db = tmp_path / "prices.db"
+    _prices_with(db, ["gold"])
+    watcher = Watcher(Bus(), settings=Settings(prices_db=db, state_dir=tmp_path))
+    watcher.warm()
+    assert not watcher.cold, "gold should have formed something to replay from"
+
+    # A new instrument arrives in the store while the engine is running.
+    import sqlite3
+
+    conn = sqlite3.connect(db)
+    price = 100.0
+    rows = []
+    for i in range(600):
+        price += (i % 7) - 3
+        rows.append(
+            (
+                "jump_10_index",
+                "DERIV",
+                "5m",
+                1_700_000_000 + i * 300,
+                price,
+                price + 1,
+                price - 1,
+                price,
+                10.0,
+            )
+        )
+    conn.executemany("INSERT INTO bars VALUES (?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    assert watcher.unwarmed() == ("jump_10_index",)
+    assert watcher.warm_new() > 0
+    assert watcher.unwarmed() == ()
+
+
+def test_the_warm_up_can_be_turned_off(tmp_path):
+    from till_infinity.structures.config import Settings
+    from till_infinity.structures.service import Watcher
+
+    db = _prices_with(tmp_path / "prices.db", ["gold"])
+    watcher = Watcher(Bus(), settings=Settings(prices_db=db, state_dir=tmp_path, warm=False))
+    assert watcher.warm_new() == 0
+
+
+def test_a_missing_prices_database_is_silence_rather_than_a_fault(tmp_path):
+    from till_infinity.structures.config import Settings
+    from till_infinity.structures.service import Watcher
+
+    watcher = Watcher(Bus(), settings=Settings(prices_db=tmp_path / "absent.db"))
+    assert watcher.unwarmed() == ()
+    assert watcher.warm_new() == 0
+
+
+def test_both_entry_points_warm_the_new_feeds():
+    """`structures.watch` and the stack had the same two lines once, and only
+    one of them was fixed - production kept the bug for a deploy after the fix
+    shipped."""
+    import inspect
+
+    from till_infinity import stack
+    from till_infinity.structures import service
+
+    assert "warm_new()" in inspect.getsource(service.watch)
+    assert "warm_new()" in inspect.getsource(stack.Stack._run_structures)
