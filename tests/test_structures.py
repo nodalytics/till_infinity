@@ -2202,3 +2202,27 @@ def test_both_entry_points_warm_the_new_feeds():
 
     assert "warm_new()" in inspect.getsource(service.watch)
     assert "warm_new()" in inspect.getsource(stack.Stack._run_structures)
+
+
+def test_a_thin_series_counts_as_unwarmed(tmp_path):
+    """ "Has a series" is not "has enough of one". The eleven new synthetics had
+    about twenty bars each, collected live since they were added, so the first
+    version of this reported nothing to warm while they sat on 2,700 stored
+    bars apiece."""
+    from till_infinity.structures.config import Settings
+    from till_infinity.structures.service import WARM_MIN_BARS, Watcher
+
+    db = _prices_with(tmp_path / "prices.db", ["gold"])
+    watcher = Watcher(Bus(), settings=Settings(prices_db=db, state_dir=tmp_path))
+    watcher.warm()
+    assert watcher.unwarmed() == ()
+
+    # A feed the engine has seen a handful of live bars from is not warm.
+    engine = watcher.engine
+    thin = next(iter(engine._series))
+    series = engine._series[thin]
+    while len(series.closes) >= WARM_MIN_BARS:
+        series.closes.popleft()
+        series.times.popleft()
+    watcher._seeded.clear()
+    assert thin[0] in watcher.unwarmed()

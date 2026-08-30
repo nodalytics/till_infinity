@@ -57,6 +57,13 @@ log = get_logger(__name__)
 #: not become thousands of messages.
 TOPICS: tuple[str, ...] = (QUOTES, BARS, MACRO)
 
+#: How many bars a feed's deepest window must hold before it counts as warm.
+#:
+#: A fifth of the engine's window. Not "has any series at all", which is what
+#: this asked first and which reported eleven instruments as warm on about
+#: twenty live bars each while the store held 2,700 apiece.
+WARM_MIN_BARS = 100
+
 #: Shapes that never need a model or a calendar to be worth sending.
 UNAMBIGUOUS: frozenset[Shape] = frozenset({Shape.STALE})
 
@@ -317,11 +324,27 @@ class Watcher:
         The engine's own series are the test rather than its levels: a feed
         that has been replayed and legitimately formed no level is warm, and
         seeding it again would count every one of its bars twice.
+
+        **Thin counts as unwarmed, and "has a series" did not.** The first
+        version of this asked only whether the engine had ever seen the feed,
+        and the eleven new synthetics had - about twenty bars each, collected
+        live since they were added. So it reported nothing to warm while they
+        sat on 2,700 stored bars apiece. A window holding less than
+        `WARM_MIN_BARS` is not a warm feed, it is a feed at the start of a very
+        slow one.
+
+        The overlap that costs is real and small: replaying a feed with twenty
+        live bars re-counts those twenty. Against five hundred replayed bars
+        that is noise, and the alternative is leaving the instrument thin for
+        hours.
         """
         path = Path(self.settings.prices_db)
         if not path.exists():
             return ()
-        seen = {feed for feed, _interval in self.engine._series} | self._seeded
+        deepest: dict[str, int] = {}
+        for (feed, _interval), series in self.engine._series.items():
+            deepest[feed] = max(deepest.get(feed, 0), len(series.closes))
+        seen = {f for f, n in deepest.items() if n >= WARM_MIN_BARS} | self._seeded
         try:
             with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
                 stored = {row[0] for row in conn.execute("SELECT DISTINCT feed FROM bars")}
