@@ -4,6 +4,66 @@ Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
+
+## Strategies on break risk, added 2026-08-31
+
+`structures/breaking.py` publishes `break_probability` on every level call and
+nothing acts on it. These are the strategies it makes possible, and what each
+needs before it can be trusted with money.
+
+The evidence behind all of them: `approach_vol` and `depth_vol` together
+separate hold from break at **AUC 0.658** over 10,904 touches
+([research/force.md](../research/force.md)), on a question `up_rate` - which
+carries almost all of *direction* - answers at 0.4892, i.e. not at all.
+
+### 1. Refuse the trade the level is about to lose
+
+The cheapest and the one to do first, because it only ever declines. Every
+existing strategy trades a level *holding*; none of them asks how likely it is
+to give way. A gate that refuses when `break_probability` is high is a filter on
+what already exists rather than a new thing to size.
+
+**Needs first**: the arithmetic in [paying.md](../research/paying.md), applied
+to breaks. A refusal is only worth making if the trades it declines lose more
+than the trades it wrongly declines would have won.
+
+### 2. Trade the break itself
+
+The level goes, price runs. This is the natural inverse of every level strategy
+here and nothing implements it.
+
+**Needs first, and this is the awkward part**: breaks are the *more
+predictable* move but not the larger one. Median push 2.82v against a hold's
+2.08v, but means of 3.38v and 5.67v - holds carry a fat right tail. A break
+strategy trades the consistent side of a skewed distribution, which is a
+different proposition from trading the bigger one and must not be sold as the
+same.
+
+**And**: break rates and separability are instrument-specific, 38.5% on eurgbp
+against 59.4% on us2000, joint AUC 0.509 on jp225 against 0.671 on euraud. An
+instrument list chosen on net, as paying.md argues for direction.
+
+### 3. Size on the break estimate rather than gate on it
+
+Between the two: take the trade either way and let `break_probability` scale
+the position. Softer than a gate and it keeps the evidence flowing, because a
+refused trade produces no outcome and a small one does.
+
+**Needs first**: calibration. `Logistic` is not calibrated and nothing here has
+checked whether a stated 70% happens seventy times in a hundred - which is what
+[calibration.md](../research/planned/calibration.md) was written for and has
+never been measured on this system.
+
+### 4. Add deceleration to the estimate
+
+`slowing` - the speed of the bars before arrival against the bars before those
+- separates at AUC 0.5237 and is **orthogonal to `approach_vol`**, correlation
++0.008. A weak separator uncorrelated with a strong one adds where a second
+strong one would not.
+
+**Needs first**: the engine carrying a short speed history per series, so the
+figure exists when a touch opens rather than only in a replay.
+
 ## ~~0r. Nothing can tell a shut market from a refused order~~ - fixed 2026-08-28
 
 Three parts, and the third matters most.

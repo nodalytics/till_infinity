@@ -110,6 +110,44 @@ break rates from 38.5% on eurgbp to 59.4% on us2000 - so both the separability
 and the base rate are instrument-specific, which is the same shape
 [paying.md](paying.md) found for direction.
 
+## Does price *slow down* into a level it respects?
+
+`approach_vol` is one reading taken when the touch opens. The desk describes a
+**sequence** - price comes in, slows, pushes back, rejects, comes back - and
+only the first frame of that is stored. The second is reconstructable from
+bars: speed over the three bars immediately before arrival, over the speed of
+the three before those. Below one is decelerating.
+
+[`harness/slowing.py`](harness/slowing.py), 4,078 touches with enough bars
+either side.
+
+| feature | slowest fifth → fastest | AUC |
+| --- | --- | --- |
+| **slowing** | 50.3, 50.4, 50.4, 56.1, 55.0% | **0.5237** |
+| approach_vol | 45.3, 49.7, 51.0, 56.9, 59.3% | 0.5573 |
+
+    decelerating   2040 touches, 50.3% break
+    accelerating   2038 touches, 54.6% break
+
+**The claim holds and is weak.** Price decelerating into a level breaks 50.3%
+of the time against 54.6% when it is still accelerating - the right direction,
+a 4.3 point gap, AUC 0.5237. At n=4,078 the standard error of an AUC is about
+0.009, so that is under three standard errors: real, and much smaller than
+arrival speed's six-and-a-half.
+
+**And it is almost perfectly orthogonal to arrival speed - correlation
++0.008.** That is the finding. A weak separator that is uncorrelated with a
+strong one is worth more than a second strong one that agrees, because it is
+new information rather than a restatement. `approach_vol` and `slowing` are
+measuring different things: how fast price is going, and whether it is easing
+off.
+
+It is **not** in `breaking.py`, and the reason is practical rather than
+principled: it needs the speed of the *preceding* bars, which nothing currently
+carries at the moment a touch opens. Adding it means the engine tracking a
+short speed history per series - a genuine change, justified by an orthogonal
++0.02 of AUC, which is worth doing and worth doing deliberately.
+
 ## Applied, and deciding nothing
 
 `structures/breaking.py`. A single online logistic on the two features, one

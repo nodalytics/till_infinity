@@ -73,27 +73,30 @@ def touches(limit: int = 400_000) -> list[dict]:
     return out
 
 
-def series(conn, wanted: set[tuple[str, str]]) -> dict[tuple[str, str], tuple[list, list]]:
-    """Every series loaded once, as parallel time and close lists.
+def series(conn, wanted: set[tuple[str, str]], since: float) -> dict:
+    """Every series needed, in **one** pass over the table.
 
-    One query per *series* rather than per touch. The first version issued a
-    query for each of ten thousand touches and did not finish in ten minutes;
-    there are only a few hundred distinct series behind them.
+    Two earlier versions of this did not finish. The first issued a query per
+    touch - ten thousand of them. The second issued one per series, which is
+    five hundred full scans of a million-row table with no index on
+    `(feed, interval, ts)`, and is quadratic in disguise.
+
+    This reads the rows once, filtered by time, and buckets them in Python.
+    `since` is the earliest arrival being measured less a margin, so the slice
+    is small even though the table is not.
     """
-    out: dict[tuple[str, str], tuple[list, list]] = {}
-    for feed, interval in sorted(wanted):
-        # Bounded, and reversed back into order. Without the limit this loads
-        # every bar the store holds for every series, and there is no index on
-        # (feed, interval, ts) - it did not finish in ten minutes. The touches
-        # being measured are recent, so recent bars are all that is needed.
-        rows = conn.execute(
-            "SELECT ts, close FROM bars WHERE feed=? AND interval=? ORDER BY ts DESC LIMIT ?",
-            (feed, interval, BARS),
-        ).fetchall()
-        rows.reverse()
-        if len(rows) > NEAR + FAR + 1:
-            out[(feed, interval)] = ([float(t) for t, _ in rows], [float(c) for _, c in rows])
-    return out
+    held: dict[tuple[str, str], tuple[list, list]] = {}
+    for feed, interval, ts, close in conn.execute(
+        "SELECT feed, interval, ts, close FROM bars WHERE ts >= ? ORDER BY ts ASC",
+        (since,),
+    ):
+        key = (str(feed), str(interval))
+        if key not in wanted:
+            continue
+        times, prices = held.setdefault(key, ([], []))
+        times.append(float(ts))
+        prices.append(float(close))
+    return {k: v for k, v in held.items() if len(v[0]) > NEAR + FAR + 1}
 
 
 def slowing(held: tuple[list, list], started: float) -> float | None:
@@ -154,7 +157,10 @@ def main() -> None:
     print(f"{len(seen)} resolved touches in {LOW:.0f}-{HIGH:.0f}s\n")
     prices = sqlite3.connect(PRICES, uri=True)
 
-    loaded = series(prices, {(r["feed"], r["interval"]) for r in seen})
+    # A margin of a week of seconds before the earliest arrival, so the bars
+    # *preceding* the first touch are in the slice too.
+    floor = min(r["started"] for r in seen) - 7 * 86_400
+    loaded = series(prices, {(r["feed"], r["interval"]) for r in seen}, floor)
     print(f"{len(loaded)} series loaded")
     got = []
     for r in seen:
