@@ -203,6 +203,36 @@ MIN_EDGE = 0.10
 #: call the rest chop.
 HORIZON_BARS = 12.0
 
+#: How wide a horizon band is, as a power of two in seconds. A band therefore
+#: holds intervals whose horizons are within a factor of two of each other -
+#: 1m and 3m can inform one another, 1m and 1w cannot.
+#:
+#: Two rather than a finer split because the alternative is a band per
+#: interval, and there are ten of them over 1,762 resolved touches at the slow
+#: end. A partition that leaves every slow band empty is the pooling problem
+#: with extra steps.
+HORIZON_BAND = 2.0
+
+#: How far outside its own band a draw may reach before giving up. Two bands is
+#: a factor of four in horizon, which is the point past which "comparable
+#: length" stops meaning anything.
+MAX_WIDEN = 2
+
+
+def band_of(interval: str) -> int | None:
+    """Which horizon band an interval belongs to, or None if it has no length.
+
+    From the interval rather than from the touch's realised duration, because
+    the band has to be known when the touch *opens* - how long it will take to
+    resolve is the future, and choosing neighbours by it would be selecting the
+    training set with the answer.
+    """
+    seconds = SECONDS.get(interval, 0.0)
+    if seconds <= 0:
+        return None
+    return int(math.log(seconds * HORIZON_BARS, HORIZON_BAND))
+
+
 #: How many bars a break stays provisional before it counts as having held.
 #: Six, which is what 5m already had at `TRAP_WINDOW` of 1,800 seconds, and
 #: half the horizon as before. It had the same defect: 1,800 seconds is 2% of a
@@ -739,6 +769,13 @@ class Memory:
         #: rather than derived on demand, because deriving it would mean a scan
         #: of every touch on every call.
         self._buckets: dict[tuple[str, str], list[int]] = {}
+        #: How often a neighbour draw had to reach outside its own horizon
+        #: band, and how often one happened at all. A band that cannot fill `k`
+        #: is borrowing from a population that resolves on a different
+        #: timescale, and that is exactly the mixing this banding exists to
+        #: stop - so it is counted rather than left to be inferred.
+        self.widened = 0
+        self.drawn = 0
 
     def _bucket(self, touch: Touch) -> list[int] | None:
         if not touch.interval:
@@ -810,18 +847,57 @@ class Memory:
             return pooled
         return (ups + BASE_WEIGHT * pooled) / (seen + BASE_WEIGHT)
 
-    def neighbours(self, features: Features) -> list[tuple[float, Touch]]:
-        """The k most similar resolved touches, nearest first."""
-        scored = [
-            (features.distance(touch.features), touch)
-            for touch in self._touches
-            if touch.features.side is features.side
-        ]
-        scored = [pair for pair in scored if math.isfinite(pair[0])]
-        scored.sort(key=lambda pair: pair[0])
-        return scored[: self.k]
+    def neighbours(
+        self, features: Features, interval: str = "", widen: bool = True
+    ) -> list[tuple[float, Touch]]:
+        """The k most similar resolved touches **of comparable length**, nearest first.
 
-    def prior(self, features: Features) -> tuple[float, float, int]:
+        `interval` bands the draw, and leaving it out pools everything as this
+        did for its whole life. That pooling is the flaw research/similarity.md
+        found, and it is in the training set rather than in the report.
+
+        A touch approached from above that resolves inside a minute resolves
+        upward **100.0% of the time**, because that is what a rejection is. So
+        46% of the pool is a population where the label is the definition, and a
+        1w touch - whose real answer is 52.8%, a coin - drew its neighbours
+        from there. A model given free answers learns the free answer.
+
+        Banded by `HORIZON_BAND`, a log-2 bucket of the horizon the touch is
+        judged over, so a 1m touch and a 3m touch can still inform each other
+        while a 1m touch and a weekly one cannot.
+
+        **Widening is recorded, not silent.** Bands are thin by construction -
+        1,762 resolved touches beyond thirty minutes against 30,118 under a
+        minute - so a strict band would leave the slow end with nothing, which
+        is the cold-start problem pooling was introduced to solve. When a band
+        cannot fill k, adjacent bands are added outward; `widened` counts it,
+        because a neighbour set assembled from two bands away is weaker
+        evidence and nothing downstream can tell by looking.
+        """
+        want = band_of(interval)
+        pools: list[int | None] = [want] if want is not None else [None]
+        found: list[tuple[float, Touch]] = []
+        reach = 0
+        while True:
+            scored = [
+                (features.distance(touch.features), touch)
+                for touch in self._touches
+                if touch.features.side is features.side
+                and (pools[0] is None or band_of(touch.interval) in pools)
+            ]
+            found = sorted(
+                (pair for pair in scored if math.isfinite(pair[0])), key=lambda pair: pair[0]
+            )[: self.k]
+            if not widen or pools[0] is None or len(found) >= self.k or reach >= MAX_WIDEN:
+                break
+            reach += 1
+            pools = [want - reach, *pools, want + reach]
+        if reach:
+            self.widened += 1
+        self.drawn += 1
+        return found
+
+    def prior(self, features: Features, interval: str = "") -> tuple[float, float, int]:
         """(P(up), mean push, count) from similar touches at *other* levels.
 
         Distance-weighted, so a close neighbour counts for more than a distant
@@ -837,7 +913,7 @@ class Memory:
         "0%" from them will eventually print it about something it is wrong
         about.
         """
-        found = self.neighbours(features)
+        found = self.neighbours(features, interval)
         if not found:
             return self.base_rate_up, 0.0, 0
         weights = [1.0 / (1.0 + distance) for distance, _ in found]
@@ -882,7 +958,10 @@ def infer(
     distance beyond the level either way.
     """
     own = level.stats(side)
-    prior_up, prior_push, neighbours = memory.prior(features)
+    # Banded by the level's own interval, so a weekly touch is not informed by
+    # a population of sub-minute touches whose direction is definitional. See
+    # research/similarity.md.
+    prior_up, prior_push, neighbours = memory.prior(features, level.interval)
 
     # Shrinkage: the level's own history takes over as it accumulates. With no
     # touches this is entirely the neighbours' answer; past CONFIDENT_TOUCHES it

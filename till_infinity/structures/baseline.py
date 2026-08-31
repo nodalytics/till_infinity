@@ -116,13 +116,58 @@ class Comparison(Restorable):
 
 
 @dataclass(slots=True)
-class Bench(Restorable):
-    """Every model on one stream of touches, scored the same way."""
+class Band(Restorable):
+    """One horizon band's models and its scores. See `Bench`."""
 
     linear: Logistic = field(default_factory=Logistic)
     attention: Attention = field(default_factory=Attention)
-    levels: Embedding = field(default_factory=Embedding)
     scores: dict[str, Comparison] = field(default_factory=dict)
+
+    def score(self, name: str) -> Comparison:
+        found = self.scores.get(name)
+        if found is None:
+            found = self.scores[name] = Comparison(name=name)
+        return found
+
+
+@dataclass(slots=True)
+class Bench(Restorable):
+    """Every model on one stream of touches, scored the same way.
+
+    **One set of models per horizon band, not one across everything.** Pooled,
+    every score here was dominated by a population where the answer is written
+    into the question: a touch approached from above that resolves inside a
+    minute resolves upward 100.0% of the time, because that is what a rejection
+    means, and 46% of resolutions are that fast. Every model reproduced the
+    definition and scored 84-88% against a 52% base rate.
+
+    Banding is not a reporting change. A parametric model fitted on the pooled
+    stream *learns* the fast tautology and carries it into its predictions
+    about slow touches, so the band has to reach the training and not only the
+    report. See research/similarity.md.
+
+    The kNN needs no equivalent here because it has no parameters - its
+    training set is its neighbour pool, and `Memory.neighbours` bands that
+    directly.
+    """
+
+    bands: dict[int, Band] = field(default_factory=dict)
+    levels: Embedding = field(default_factory=Embedding)
+    #: The pooled models, fitted alongside the banded ones so the pooled row
+    #: compares like with like.
+    linear: Logistic = field(default_factory=Logistic)
+    attention: Attention = field(default_factory=Attention)
+    #: Kept for the pooled view, which is worth having beside the bands rather
+    #: than instead of them: it is what every earlier number in this repository
+    #: was, and the gap between it and the bands is the size of the mistake.
+    scores: dict[str, Comparison] = field(default_factory=dict)
+
+    def band(self, at: int | None) -> Band:
+        key = -1 if at is None else at
+        found = self.bands.get(key)
+        if found is None:
+            found = self.bands[key] = Band()
+        return found
 
     def score(self, name: str) -> Comparison:
         found = self.scores.get(name)
@@ -139,6 +184,7 @@ class Bench(Restorable):
         neighbours: Sequence[tuple[Sequence[float], float]] = (),
         level_id: str = "",
         sequence_said: float | None = None,
+        interval: str = "",
     ) -> dict[str, float]:
         """One resolved touch through every model. Returns what each predicted.
 
@@ -146,24 +192,39 @@ class Bench(Restorable):
         the incumbent is scored on exactly the touches its challengers saw -
         the alternative, two separate runs, compares two samples rather than
         two models.
+
+        `interval` picks the horizon band. Everything is scored twice: into its
+        own band, which is the number worth reading, and into the pooled set,
+        which is what every earlier figure in this repository was. Keeping both
+        is what makes the size of the mistake visible rather than asserted.
         """
+        from .reactions import band_of
+
         x = vector(features)
         said: dict[str, float] = {}
+        band = self.band(band_of(interval))
 
-        said["linear"] = self.linear.observe(x, held)
-        self.score("linear").observe(said["linear"], held)
+        def record(name: str, value: float) -> None:
+            said[name] = value
+            self.score(name).observe(value, held)
+            band.score(name).observe(value, held)
+
+        record("linear", band.linear.observe(x, held))
+        # The pooled linear model is kept fitted too, so the pooled row is a
+        # like-for-like comparison rather than a banded model wearing a pooled
+        # score.
+        self.linear.observe(x, held)
 
         if neighbours:
             keys = [list(k) for k, _ in neighbours]
             values = [v for _, v in neighbours]
-            got = self.attention.observe(x, keys, values, 1.0 if held else 0.0)
+            got = band.attention.observe(x, keys, values, 1.0 if held else 0.0)
+            self.attention.observe(x, keys, values, 1.0 if held else 0.0)
             if got is not None:
-                said["attention"] = got
-                self.score("attention").observe(got, held)
+                record("attention", got)
 
         if knn_said is not None:
-            said["knn"] = float(knn_said)
-            self.score("knn").observe(float(knn_said), held)
+            record("knn", float(knn_said))
 
         # One feature, no model at all: the level's own record of which way its
         # touches went, read straight off. This is the floor everything above
@@ -175,23 +236,40 @@ class Bench(Restorable):
         # that is worth knowing precisely rather than suspecting.
         rate = getattr(features, "up_rate", None)
         if rate is not None:
-            said["up_rate"] = float(rate)
-            self.score("up_rate").observe(float(rate), held)
+            record("up_rate", float(rate))
 
         if sequence_said is not None:
-            said["sequence"] = float(sequence_said)
-            self.score("sequence").observe(float(sequence_said), held)
+            record("sequence", float(sequence_said))
 
         if level_id:
             self.levels.observe(level_id, x, held)
         return said
 
     def report(self) -> str:
-        """The comparison as a person would want to read it."""
+        """The comparison as a person would want to read it.
+
+        Bands first, pooled last and labelled as such. The pooled row is the
+        one every earlier figure here was, and it is kept so the gap is visible
+        - not because it is the number to act on.
+        """
         if not self.scores:
             return "nothing scored yet"
+        from .reactions import HORIZON_BAND
+
+        lines: list[str] = []
+        for key in sorted(self.bands):
+            band = self.bands[key]
+            if not band.scores:
+                continue
+            seconds = HORIZON_BAND**key if key >= 0 else 0.0
+            name = f"~{seconds / 60:.0f}m horizon" if key >= 0 else "no interval"
+            lines.append(f"{name}:")
+            lines += [f"   {c}" for c in sorted(band.scores.values(), key=lambda c: -c.edge)]
+        if lines:
+            lines.append("")
+            lines.append("pooled (what every earlier number here was):")
         ordered = sorted(self.scores.values(), key=lambda c: -c.edge)
-        lines = [str(c) for c in ordered]
+        lines += [f"   {c}" for c in ordered]
         weights = self.linear.importance(NAMES)
         if weights:
             lines.append("")
@@ -204,10 +282,17 @@ class Bench(Restorable):
             lines += [f"   {name:14s} {w:.4f}" for name, w in learned[:6]]
         return "\n".join(lines)
 
-    def reading(self) -> dict[str, float]:
-        """The scores as floats, for a signal's features or the journal."""
+    def reading(self, interval: str = "") -> dict[str, float]:
+        """The scores as floats, for a signal's features or the journal.
+
+        This band's numbers when an interval is given, because a pooled edge on
+        a signal is the tautology's edge and not this call's.
+        """
+        from .reactions import band_of
+
         out: dict[str, float] = {}
-        for name, score in self.scores.items():
+        scores = self.band(band_of(interval)).scores if interval else self.scores
+        for name, score in scores.items():
             if score.seen >= 30.0:
                 out[f"bench_{name}_edge"] = round(score.edge, 5)
         if self.linear.warm:

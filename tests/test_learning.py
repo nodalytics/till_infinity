@@ -389,3 +389,155 @@ def test_the_floor_is_one_feature_and_no_model():
         bench.observe(Touch(up_rate=rate), random.random() < rate)
     assert "up_rate" in bench.scores
     assert bench.scores["up_rate"].edge > 0.1
+
+
+# ------------------------------------------- one model set per horizon band
+
+
+def test_intervals_of_comparable_length_share_a_band():
+    """1m and 3m can inform each other; 1m and 1w cannot."""
+    from till_infinity.structures.reactions import band_of
+
+    assert band_of("3m") == band_of("5m")
+    assert band_of("1m") != band_of("1w")
+    assert band_of("1d") != band_of("1w")
+    assert band_of("nonsense") is None
+
+
+def test_a_band_is_chosen_from_the_interval_not_the_realised_duration():
+    """The band has to be known when the touch *opens*. How long it takes to
+    resolve is the future, and choosing neighbours by it would be selecting the
+    training set with the answer."""
+    import inspect
+
+    from till_infinity.structures import reactions
+
+    source = inspect.getsource(reactions.band_of)
+    assert "SECONDS" in source
+    assert "resolved" not in source
+
+
+def test_a_slow_touch_does_not_draw_neighbours_from_fast_ones():
+    """The flaw research/similarity.md found, and it is in the training set
+    rather than the report: a touch approached from above that resolves inside
+    a minute resolves upward 100.0% of the time, so a weekly touch drawing from
+    there learns the definition of a rejection."""
+    from till_infinity.structures.levels import Side
+    from till_infinity.structures.reactions import Features, Memory, Outcome, Touch
+
+    def touch(interval, up):
+        return Touch(
+            outcome=Outcome.REJECT,
+            feed="gold",
+            interval=interval,
+            level_price=4400.0,
+            features=Features(
+                side=Side.ABOVE,
+                approach_vol=1.0,
+                depth_vol=0.0,
+                strength=0.0,
+                run_vol=0.0,
+                experience=0.0,
+            ),
+            started=0.0,
+            resolved=1.0,
+            entry=4400.0,
+            extreme=4400.0,
+            push_vol=1.0 if up else -1.0,
+        )
+
+    memory = Memory(k=3)
+    for _ in range(50):
+        memory.add(touch("1m", up=True))
+    for _ in range(10):
+        memory.add(touch("1w", up=False))
+
+    want = Features(
+        side=Side.ABOVE,
+        approach_vol=1.0,
+        depth_vol=0.0,
+        strength=0.0,
+        run_vol=0.0,
+        experience=0.0,
+    )
+    weekly = memory.neighbours(want, "1w")
+    assert weekly
+    assert all(t.interval == "1w" for _d, t in weekly)
+
+
+def test_a_thin_band_widens_outward_and_says_so():
+    """Bands are thin by construction - 1,762 resolved touches beyond thirty
+    minutes against 30,118 under a minute - so a strict band leaves the slow
+    end with nothing, which is the cold-start problem pooling solved."""
+    from till_infinity.structures.levels import Side
+    from till_infinity.structures.reactions import Features, Memory, Outcome, Touch
+
+    memory = Memory(k=12)
+    want = Features(
+        side=Side.ABOVE,
+        approach_vol=1.0,
+        depth_vol=0.0,
+        strength=0.0,
+        run_vol=0.0,
+        experience=0.0,
+    )
+    for _ in range(30):
+        memory.add(
+            Touch(
+                outcome=Outcome.REJECT,
+                feed="gold",
+                interval="5m",
+                level_price=4400.0,
+                features=want,
+                started=0.0,
+                resolved=1.0,
+                entry=4400.0,
+                extreme=4400.0,
+                push_vol=1.0,
+            )
+        )
+    before = memory.widened
+    found = memory.neighbours(want, "15m")  # its own band is empty
+    assert found
+    assert memory.widened > before
+
+
+def test_the_bench_keeps_one_model_set_per_band():
+    """Banding has to reach the *training*, not only the report: a parametric
+    model fitted on the pooled stream learns the fast tautology and carries it
+    into its predictions about slow touches."""
+    bench = Bench()
+    random.seed(21)
+    for _ in range(120):
+        bench.observe(Touch(depth_vol=random.gauss(0, 1)), True, knn_said=0.9, interval="1m")
+        bench.observe(Touch(depth_vol=random.gauss(0, 1)), False, knn_said=0.9, interval="1w")
+    from till_infinity.structures.reactions import band_of
+
+    fast = bench.band(band_of("1m"))
+    slow = bench.band(band_of("1w"))
+    assert fast.scores["knn"].accuracy != slow.scores["knn"].accuracy
+    assert fast.linear.weights != slow.linear.weights
+
+
+def test_the_pooled_row_is_kept_and_labelled():
+    """It is what every earlier number here was, and the gap between it and the
+    bands is the size of the mistake."""
+    bench = Bench()
+    random.seed(22)
+    for _ in range(60):
+        bench.observe(Touch(up_rate=0.9), True, knn_said=0.9, interval="1m")
+    text = bench.report()
+    assert "pooled" in text
+    assert "horizon" in text
+
+
+def test_a_reading_for_one_interval_is_that_band_s():
+    """A pooled edge on a signal is the tautology's edge, not this call's."""
+    bench = Bench()
+    random.seed(23)
+    for _ in range(80):
+        bench.observe(Touch(up_rate=0.9), True, knn_said=0.9, interval="1m")
+    banded = bench.reading("1m")
+    pooled = bench.reading()
+    assert banded
+    assert set(banded) == set(pooled)

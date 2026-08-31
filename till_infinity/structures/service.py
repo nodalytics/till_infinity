@@ -636,6 +636,10 @@ class Watcher:
                 neighbours=list(zip(keys, values, strict=True)),
                 level_id=getattr(level, "id", ""),
                 knn_said=said,
+                # The band this touch belongs to. Without it every model is
+                # fitted and scored on a stream that is 46% sub-minute touches
+                # whose direction is definitional.
+                interval=getattr(level, "interval", ""),
             )
         except Exception as exc:  # measurement must not stop the record
             log.debug("structures: bench skipped a touch: %s", exc)
