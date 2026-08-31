@@ -78,7 +78,7 @@ most valuable state from the one labelled "nothing".
 level in a short time*, which is exactly the shape of the double-counting bug
 that produced 171 touches on a 3m gold level. Before absorption can be measured,
 the counting has to be trustworthy, or the feature will fire hardest wherever
-the bug is worst. See [handoff.md](handoff.md), "Why the channel is silent".
+the bug is worst. See [handoff.md](../research/handoff.md), "Why the channel is silent".
 
 ### 2. Compression on approach
 

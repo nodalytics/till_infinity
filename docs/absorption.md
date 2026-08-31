@@ -342,7 +342,7 @@ bar:
 On spx500 the consensus close wanders several volatility units inside a single
 bar purely as a function of which venues have reported, and spx500 has the
 highest instant-resolution rate of any instrument at 41.2%. This is not the
-double-counting bug of [handoff.md](handoff.md) - the re-arm rule holds, and
+double-counting bug of [handoff.md](../research/handoff.md) - the re-arm rule holds, and
 only two timestamps in the replay carry more than one touch at one level -
 but it is the same family, and it is why two runs of the same replay disagree.
 

@@ -145,7 +145,7 @@ earns only seven points. Inflated touches, lopsided base rate, eaten edge,
 closed gate, silent channel. Four steps, each reasonable alone.
 
 Splitting `observe_bar` fixed it, and the channel spoke within minutes. Detail
-and the measured numbers are in [levels.md](levels.md), "The base rate is what
+and the measured numbers are in [levels.md](../docs/levels.md), "The base rate is what
 actually closed the gate" and "It charges zero on the replay path".
 
 Two smaller things found alongside, both now fixed: `risk_vol` was 0.0 on every
@@ -156,7 +156,7 @@ anything" for the attempt to derive it and why the pre-fix journal cannot.
 
 ## Then, in order
 
-See [todo.md](todo.md) for the full list. What the 2026-08-31 findings make
+See [todo.md](../docs/todo.md) for the full list. What the 2026-08-31 findings make
 first:
 
 1. **Wait for the duration-banded scores.** Nothing about model quality should
@@ -219,7 +219,7 @@ sudo docker logs till-infinity | grep -A 20 "model bench"      # the comparison
 The level calls now reach an account. `trading` consumes `structures.signals`,
 sizes against the terminal's own symbol rules, and places the order - on paper
 unless `TRADING_LIVE=1`, and off entirely unless `TRADING_ENABLED=1`. Neither
-switch implies the other. Full guide: [trading.md](trading.md).
+switch implies the other. Full guide: [trading.md](../docs/trading.md).
 
 **Where the terminal runs, and why not here.** MetaTrader 5 is an x86-64
 Windows binary and WineHQ publishes no arm64 packages, so it cannot run on the

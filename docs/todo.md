@@ -708,7 +708,7 @@ already recorded on every touch, so the data to derive a real stop exists.
 
 The two learning-path bugs from the same day are **fixed** - the silent
 `journal.read` clamp that starved `facto.dataset`, and the unscaled features
-that diverged the FM. Both accounted for in [handoff.md](handoff.md). Neither
+that diverged the FM. Both accounted for in [handoff.md](../research/handoff.md). Neither
 touches the two items below, and the first of them now matters *more*: a fit
 can finally see the whole journal, so nothing but the warning below stops it
 drawing 9,000 examples from one afternoon.

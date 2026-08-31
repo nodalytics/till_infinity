@@ -21,11 +21,13 @@ rather than believed.
 | [turns.md](turns.md) | **measured** - can a major turn be seen coming; yes, weakly. AUC 0.595 purged over 310 turns, and `vol` alone carries it |
 | [cycles.md](cycles.md) | **measured** - does a level's place in the larger move matter; one cell separates by nothing at all, and the AUC gain's interval includes zero |
 | [news-models.md](news-models.md) | survey - model families that could turn stored headlines into features, and which of them fit in 640MB beside everything else |
+| [reading.md](reading.md) | notes - AlphaGo Zero, Llama 3, InstructGPT and DeepSeek-R1, what transfers and what does not; all four guard against the reward hacking this system did to itself |
 | [bandits.md](bandits.md) | design note - where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
 | [catalogue.md](catalogue.md) | **measured** - which of the broker's 798 symbols are worth carrying; in volatility units the synthetics cost 0.170v to cross against FX's 2.267v, which is the opposite of what the point spreads say |
 | [stops.md](stops.md) | **measured on production** - stops are the whole loss; 20 of 27 judgeable stopped trades never reached target and 7 were stopped early, so the answer is a better entry rather than a wider stop |
 | [strength.md](strength.md) | **measured, not built** - how strong is a level and does it matter; the strongest single thing a level knows |
 | [similarity.md](similarity.md) | **measured** - does `Features.distance` order neighbours; at tradable horizons AUC 0.4921 and 0.5120 against a 0.500 control, and the fast buckets that look decisive are a tautology - `side` fixes direction 100.0% under a minute and 52.8% beyond thirty |
+| [handoff.md](handoff.md) | **start here** - what is true, what is broken, what cost time, and the tautology that reframes every model score in this repository |
 | [horizon.md](horizon.md) | **measured on production** - the level model's edge is +45% on touches resolving inside five minutes and **+0.00%** beyond thirty, which is the horizon `max_hold` trades; and 27% of resolutions carry a negative duration |
 | [learning.md](learning.md) | **measured** - is the kNN behind every level call buying anything; at a matched 1,996 touches it beats a one-feature floor by 3.1 points of edge, a learned distance adds nothing over it, and a logistic regression on nine features matches reading one |
 | [formations.md](formations.md) | seven ways to find a level and why they run together; 57% of levels now have more than one method behind them, where every one used to be `pip` alone |

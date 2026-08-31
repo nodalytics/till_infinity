@@ -359,7 +359,7 @@ curve is a single point sitting exactly on the diagonal, and the model has
 stopped saying anything. It would pass any calibration test written carelessly,
 and `actionable` would never fire again because `|edge|` would be zero - the
 model would be *reported as improved and be silent*, which is precisely the
-failure mode [handoff.md](../../docs/handoff.md) warns about under "correct silence and
+failure mode [handoff.md](../handoff.md) warns about under "correct silence and
 broken silence are indistinguishable".
 
 The shape of the trade, measured on synthetic data to check the direction rather

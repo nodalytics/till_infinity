@@ -105,3 +105,35 @@ bought by sizing every position at a fraction of what the same money at risk
 would otherwise allow. That is a sizing decision worth several times what the
 seven early stops cost, and it needs a few dozen closed trades carrying the
 field before it can be read.
+
+## Per strategy: is the stop being wicked into?
+
+A stop hit *and then reversed through* is a different failure from a stop that
+was right, and pooling four strategies with different geometry hides it -
+`fade-to-value` in particular enters at a discount to fair value, so its entry
+is away from the level its stop is anchored to.
+
+Harness: [`harness/wicked.py`](harness/wicked.py). Forward from each stopped
+trade's own close, over the hold it had left.
+
+| strategy | stops | came back through entry | reached target | money |
+| --- | --- | --- | --- | --- |
+| snap | 11 | 6/10 60% | 4/10 40% | −260.89 |
+| fade-to-value | 6 | 4/6 67% | 3/6 50% | −155.16 |
+| runner | 7 | 2/5 40% | 1/5 20% | −132.59 |
+| inverse | 4 | 4/4 100% | 2/4 50% | −107.90 |
+| sweep-aware | 3 | 3/3 100% | 2/3 67% | −99.09 |
+| thesis-only | 4 | 3/4 75% | 2/4 50% | −76.16 |
+
+**Supported and not distinguishing.** Two thirds of `fade-to-value`'s stops were
+revisited, which is consistent with the stop sitting inside the noise - but
+`inverse` and `sweep-aware` are at 100% and every cell is single digits. Pooled,
+25 of 35 judgeable stops were revisited, so *most* stops are being traded back
+through and no strategy separates from that yet.
+
+Read against the section above rather than instead of it. This test is more
+permissive - a wider forward window, and it does not exclude the bars where the
+stop and the target are both inside one candle - so its 40% "reached target"
+against the 21% above is the same data under a looser rule. The truth is
+between them, and the direction both agree on is that a better *entry* is worth
+more than a wider stop.

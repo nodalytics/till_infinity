@@ -1479,7 +1479,7 @@ Two independent series with those marginals would agree about **78%** of the
 time. Ninety-nine point nine is not skill.
 
 The cause is the touch inflation described in
-[handoff.md](handoff.md): when one grinding episode is counted as 171 separate
+[handoff.md](../research/handoff.md): when one grinding episode is counted as 171 separate
 touches, the level's *history* and its *next outcome* are the same price action
 counted twice. The model predicts down because it just went down 148 times, and
 it goes down again because it is still the same move. Nothing leaked from the
