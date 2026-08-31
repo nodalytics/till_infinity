@@ -784,6 +784,20 @@ class Watcher:
                     # `drawn_by` rather than `origin`, which in this namespace
                     # already means the impulse origin.
                     "drawn_by": level.origin,
+                    # Which other timeframes agreed on this price. It was on
+                    # the signal and written back onto the touch and **not
+                    # here**, so all 12,504 resolutions record zero timeframes
+                    # and "does agreement across timeframes predict anything"
+                    # cannot be asked of the only record that can answer it.
+                    #
+                    # A string, so it belongs in the outcome context rather
+                    # than the features, for the reason `drawn_by` does:
+                    # features are `dict[str, float]` and a string there raises
+                    # on the first signal.
+                    "confluence": touch.confluence,
+                    "confluence_n": float(
+                        len([t for t in str(touch.confluence or "").split("+") if t])
+                    ),
                     # Which instrument this happened on. The resolution had the
                     # timeframe and not the instrument, so a scoring pass could
                     # group by one and not the other - and pooling gold with
