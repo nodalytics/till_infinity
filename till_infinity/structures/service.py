@@ -42,6 +42,7 @@ from .activity import Book as ActivityBook
 from .anomaly import Detector
 from .baseline import Bench
 from .baseline import vector as bench_vector
+from .breaking import Breaks
 from .config import DRIFT_INTERVALS, Settings
 from .drift import Drift
 from .engine import Engine
@@ -276,6 +277,13 @@ class Watcher:
         #: would do", and two separate runs would compare two samples rather
         #: than two models.
         self.bench = Bench()
+        #: Will this level give way? A different question from which way price
+        #: goes, and the first one anything here has separated: `up_rate` is
+        #: the strongest direction feature there is and predicts a break at
+        #: AUC 0.4892, while `approach_vol` and `depth_vol` together reach
+        #: 0.658. See research/force.md. Publishes a number and decides
+        #: nothing.
+        self.breaks = Breaks()
         #: The newest observation time already taken, so a re-read after a
         #: poll asks for the tail rather than for four hundred days again.
         self._macro_since = 0.0
@@ -423,6 +431,7 @@ class Watcher:
         self.clock = state.get("clock", self.clock)
         self.activity = state.get("activity", self.activity)
         self.bench = state.get("bench", self.bench)
+        self.breaks = state.get("breaks", self.breaks)
         # Configuration re-applied over the restore, and this is not tidying.
         # The pickled engine carries the settings it was **first** built with,
         # so every one of these was inert from the moment a state file existed:
@@ -464,6 +473,7 @@ class Watcher:
                     "drift": self.drift,
                     "engine": self.engine,
                     "bench": self.bench,
+                    "breaks": self.breaks,
                     "clock": self.clock,
                     "activity": self.activity,
                 },
@@ -701,6 +711,9 @@ class Watcher:
             # touches were never called by anything, and those are the sample
             # a model learns most from.
             self._benchmark(level, touch)
+            # Predict-then-learn, like everything else here: `observe` returns
+            # what it said before it was told.
+            self.breaks.observe(touch.features, str(touch.outcome))
 
             ref = self._awaiting.pop((level.feed, round(touch.level_price, 8)), None)
             if ref is None:
@@ -912,6 +925,11 @@ class Watcher:
             # machinery gets to say whether agreement is worth anything before
             # anything is refused for lacking it.
             extra = {"drawn_by_n": float(len(_passes(call.level)))}
+            # P(this level gives way), from the arrival force and the depth of
+            # the touch. Silent until it has 200 resolutions behind it, and
+            # `None` rather than 0.5 while cold - "no opinion" and "an even
+            # chance" are different claims.
+            extra.update(self.breaks.reading(getattr(call, "features", None) or {}))
             # Policy folded on here rather than inside `to_signal`, for the
             # same reason the regime label is: it is one model across the whole
             # book and a Call has no business holding it. Empty until the news

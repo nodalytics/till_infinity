@@ -82,6 +82,49 @@ rather than a finding: both correlate with busy instruments and slower
 timeframes. It is recorded because it is the opposite of what the names imply,
 and anything reading `strength` as "this will hold" has it backwards.
 
+## Digging in: together, and how big
+
+**They are complementary, not redundant.** Fitted jointly over 10,904 touches,
+a walk-forward logistic on the two reaches **AUC 0.658** - materially better
+than either alone, with weights `approach_vol +0.255` and `depth_vol -0.779`,
+which is the model saying what the quintile ladders say.
+
+Two weak separators that disagree are worth more than two that agree, and that
+is what these are: speed is about the move, depth is about the level.
+
+**A break is the more predictable move but not the larger one.**
+
+| | median \|push\| | mean \|push\| |
+| --- | --- | --- |
+| broke | **2.82v** | 3.38v |
+| held | 2.08v | **5.67v** |
+
+Breaks are bigger at the median and much smaller at the mean, because holds
+have a fat right tail: most rejections are modest and a few run a very long
+way. A model that trades breaks is trading the consistent side of a skewed
+distribution, which is a different proposition from trading the bigger one and
+should not be confused with it.
+
+Per instrument the joint AUC runs from 0.509 on jp225 to 0.671 on euraud, and
+break rates from 38.5% on eurgbp to 59.4% on us2000 - so both the separability
+and the base rate are instrument-specific, which is the same shape
+[paying.md](paying.md) found for direction.
+
+## Applied, and deciding nothing
+
+`structures/breaking.py`. A single online logistic on the two features, one
+model across the book because they are scale-free, learning from every
+resolution and publishing `break_probability` on every level call.
+
+Silent until 200 resolutions are behind it, and **`None` rather than 0.5 while
+cold** - "no opinion" and "an even chance" are different claims, and a consumer
+that cannot tell them apart will act on the second when it was handed the
+first.
+
+`chop` is not counted as a hold. A touch that went nowhere is not evidence the
+level did anything, which is the discipline the rest of the package already
+applies to it.
+
 ## What follows
 
 Nothing is gated on this yet, and nothing should be until it is scored the way
