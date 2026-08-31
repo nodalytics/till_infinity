@@ -124,7 +124,7 @@ which before reading a word. Direction wins over shape when a signal claims one.
 | 💤 | a feed has stopped moving |
 | ↔️ | a spread blew out |
 | ⚡ | one venue is away from the consensus |
-| 🧭 | the [score](score.md), when it exists |
+| 🧭 | the [score](../research/planned/score.md), when it exists |
 | 🤖 | an agent finding |
 | • ▲ ■ | nothing claimed - falls back to severity |
 

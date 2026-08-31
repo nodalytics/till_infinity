@@ -98,7 +98,7 @@ and 84.9% of calls in each, so no single instrument is carrying the effect.
 ## 2. A rolling quantile is **worse** than a constant
 
 [todo.md](todo.md) proposed making the gate "a rolling quantile of realised
-edges rather than a constant - the same instinct as [score.md](score.md)'s
+edges rather than a constant - the same instinct as [score.md](../research/planned/score.md)'s
 thresholds". **That was wrong, and the measurement is not close.** Each rolling
 rule is compared against the constant that lets exactly the same number of
 calls through, on the same calls:
@@ -379,6 +379,6 @@ So three things follow:
 
 The repair is the metric, not the cutoff: which features belong in
 `Features.distance`, and with what weights, is an empirical question nobody has
-asked. [strength.md](strength.md) reached the same shape of conclusion from a
+asked. [strength.md](../research/strength.md) reached the same shape of conclusion from a
 different direction - the level's own record predicts, and the derived
 quantities layered on top of it mostly do not.

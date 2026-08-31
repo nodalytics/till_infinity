@@ -1,6 +1,6 @@
 """Three exponential averages of one series, and whether they agree.
 
-From [score.md](../../docs/score.md) §2, which keeps three EWMAs of its score
+From [score.md](../../research/planned/score.md) §2, which keeps three EWMAs of its score
 and treats their agreement as the confidence: "the fast line is what is
 happening, the slow line is the context". Half-lives are in observations rather
 than bars, because a strategy sees signals as they are published rather than

@@ -189,7 +189,7 @@ See [todo.md](todo.md) for the full list. The short version:
 2. **Re-measure the outcome rate** before any `fit`, now that touch counting is
    fixed. Then `0.08`, which is still the one gate nobody chose.
 3. **Run-formed levels** as an experiment, not a feature.
-4. **Build the score** ([score.md](score.md)).
+4. **Build the score** ([score.md](../research/planned/score.md)).
 5. **Score the trading.** `structures.resolutions` puts ground truth on the bus
    and `trading report` pairs decisions with outcomes; neither has enough
    closed trades to say anything. Until it does, four strategies are four

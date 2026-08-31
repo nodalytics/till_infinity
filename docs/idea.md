@@ -88,7 +88,7 @@ The thesis has two halves and they have not fared equally.
 rate on the arriving side, resolutions separate 59.4% to 92.2% across four
 bands with an AUC of 0.648 - the strongest single signal a level carries, and
 the only one that *strengthened* when a volatility-denominator bug was fixed.
-See [strength.md](strength.md).
+See [strength.md](../research/strength.md).
 
 **Not supported.** Price is not drawn to a level. Across 22,219 evaluation bars
 a level was reached within twenty bars 44.9% of the time against 49.5% for an

@@ -1004,7 +1004,16 @@ class Watcher:
         # a day at fastest, so a restart would otherwise publish level calls
         # with no policy on them for however long the next poll is away - with
         # four hundred days of it already sitting in the store.
-        await self._read_macro()
+        #
+        # **And emit what it finds.** This discarded the return value, which
+        # was worse than not calling it: `calls` records the stance it just
+        # announced, so seven stance changes were computed, marked as already
+        # published, and dropped - and the feeds they were about then stayed
+        # silent until they flipped again. Nothing reached the journal, so the
+        # expensive half of the FRED work looked like a model that never fires.
+        opening = await self._read_macro()
+        if opening:
+            await self.emit(opening)
 
         async def read(topic: str) -> None:
             with contextlib.suppress(asyncio.CancelledError):

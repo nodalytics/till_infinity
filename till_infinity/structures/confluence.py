@@ -215,7 +215,7 @@ class Zone(Restorable):
         went on to hold, over four replays, and it does not separate: four runs
         produced four different orderings, AUC 0.45-0.51, and a bootstrap over
         levels put the spread at -2.2 points [-6.3, +1.7]. A 4-deep zone was
-        being lifted 45% on that. See docs/strength.md.
+        being lifted 45% on that. See research/strength.md.
 
         This orders what the agents are shown (`agents/data.py`) and what the
         CLI prints, so it is a live decision rather than a display detail.

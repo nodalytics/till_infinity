@@ -74,7 +74,7 @@ from each other, which is what makes combining them worth anything:
 
 | | what it says | where it is |
 |---|---|---|
-| **how it was found** | one formation or both - a bar extreme that is also a run boundary has been confirmed by two methods | [todo.md](todo.md) 5a |
+| **how it was found** | one formation or both - a bar extreme that is also a run boundary has been confirmed by two methods | [todo.md](../../docs/todo.md) 5a |
 | **how many timeframes see it** | a price four resolutions agree on is not the same object as one only 3m can see | confluence, computed and reported, weighting nothing |
 | **what it has done** | touches, hold rate, `strength` | measured, reported, consumed nowhere |
 

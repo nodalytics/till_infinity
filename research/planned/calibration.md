@@ -2,7 +2,7 @@
 
 Does 80% mean 80%.
 
-[todo.md](todo.md) item 3 names this as one of three things standing between a
+[todo.md](../../docs/todo.md) item 3 names this as one of three things standing between a
 good model and a decision, and it is the first of the three because the other
 two consume it. Sizing reads a probability. A rule that stakes more on a 70%
 call than a 55% one is only sane if 70% happens seventy times in a hundred; if
@@ -75,13 +75,13 @@ Three things about that pairing are load-bearing.
 and only one is a claim about the up/down label the outcome records.
 `probability` flips to face the claimed direction, so pairing it with
 `push_vol > 0` compares a down-facing number against an up-facing label - the
-exact shape [levels.md](levels.md) §7 says is "not a comparison". Worse,
+exact shape [levels.md](../../docs/levels.md) §7 says is "not a comparison". Worse,
 `confidence` on the journal row is not a probability at all: `emit` passes
 `confidence=min(1.0, signal.score)` and `score` is `abs(edge)`. A local decision
 row reads `confidence 0.102` beside `probability_up 0.028`. Anyone calibrating
 the column named `confidence` would be calibrating the edge magnitude and
 getting a coherent-looking curve out of it. `probability_up` is also what the
-journal and `facto` are keyed on and what [levels.md](levels.md) §7 promises will
+journal and `facto` are keyed on and what [levels.md](../../docs/levels.md) §7 promises will
 not change meaning, so it is the one field here with a stability guarantee.
 
 **Both parent kinds carry it.** `decide` writes `**signal.features`, which
@@ -89,7 +89,7 @@ includes `probability_up`; `observe` writes `**inference.to_dict()`, which
 includes it too. So the calibration sample is *every* level call, actioned or
 not - which is the whole reason `_watch_calls` journals observations. Only about
 one call in forty-three has ever cleared `|edge| >= 0.08`
-([levels.md](levels.md) §8, measured pre-fix), so a curve built from decisions
+([levels.md](../../docs/levels.md) §8, measured pre-fix), so a curve built from decisions
 alone would be built from a two-percent tail. Build it from everything, and
 report the tail separately - see §3.
 
@@ -107,7 +107,7 @@ and a reason to record the tracker's settings beside any calibration run.
 `push_vol` is the signed distance at the moment of closing, and `> 0` splits it.
 For a `reject` at 1.5v the sign is emphatic. For a `chop` - price arrived, sat,
 and did nothing until the horizon - the sign is the sign of a small number, and
-on the stored history chop was 74.3% of outcomes ([levels.md](levels.md) §7b).
+on the stored history chop was 74.3% of outcomes ([levels.md](../../docs/levels.md) §7b).
 Those rows are not mislabelled, but their labels are close to coin flips no
 model could call, and they set a floor on the Brier score that has nothing to do
 with the model.
@@ -148,7 +148,7 @@ decile picture is too sparse to read, and say which is which.
 `sum(y)`. Everything in this section falls out of those plus the global counts,
 folded one call at a time and keeping nothing - the same shape as
 `facto.evaluate`'s single pass and as the streamed `Window` in
-[agents.md](agents.md).
+[agents.md](../../docs/agents.md).
 
 **When data is thin**, decline rather than draw. The precedent is
 `facto.MIN_EXAMPLES`: below the count it reports the count and stops, because a
@@ -173,7 +173,7 @@ improve it by hedging. And it is directly comparable against the one baseline
 that matters here - always quoting the base rate, which scores exactly
 `ȳ(1 − ȳ)`. A model whose Brier score does not beat that has produced no usable
 probability at all, whatever its reliability curve looks like. That is the same
-"two baselines, always" instinct as [structures.md](structures.md), applied to a
+"two baselines, always" instinct as [structures.md](../../docs/structures.md), applied to a
 different quantity.
 
 ### The decomposition, which is the part that stops the cheat
@@ -259,7 +259,7 @@ The journal is contaminated before 2026-08-14. Inflated touch counts made a
 level's history and its next outcome the same price move counted twice, and the
 pre-fix data therefore calls direction correctly **99.9%** of the time at
 essentially every level of `|edge|`, against ~78% for independent series with
-those marginals ([levels.md](levels.md), "The attempt to derive it").
+those marginals ([levels.md](../../docs/levels.md), "The attempt to derive it").
 
 For calibration this is not a degradation, it is an inversion. A model whose
 claims are near 0 or 1 and whose outcomes agree 99.9% of the time will produce a
@@ -269,7 +269,7 @@ noise. It looks like the best-calibrated forecaster anybody has ever built.
 
 So: every calibration run takes a `since`, there is no default, and the boundary
 belongs beside the numbers in whatever is printed. This is the same argument as
-`facto.fit(since=)` and [structures.md](structures.md)'s "Examples have an
+`facto.fit(since=)` and [structures.md](../../docs/structures.md)'s "Examples have an
 expiry", and the same alarm is worth keeping: a near-perfect calibration report
 is what this class of contamination looks like from outside, and it would
 otherwise read as a triumph.
@@ -298,7 +298,7 @@ parents against everything.
 Outcomes accumulate at roughly **895 per hour** and are severely concentrated:
 of the last 5,000, `sol` alone accounted for 2,430, and 3m and 5m for 4,305
 between them, against 10 on 4h and none on the daily or weekly
-([todo.md](todo.md) item 0). Two hundred consecutive outcomes arrive in a median
+([todo.md](../../docs/todo.md) item 0). Two hundred consecutive outcomes arrive in a median
 of 4.9 minutes.
 
 Three consequences for a reliability curve, in increasing order of how badly
@@ -345,7 +345,7 @@ across blocks is the thing you most want to catch anyway (see §7).
 kNN prior toward the Jeffreys-smoothed base rate by neighbour count, and the
 level's own beta-binomial toward that prior by `PRIOR_WEIGHT`, with the base
 rate itself shrunk toward the pooled rate by `BASE_WEIGHT`
-([levels.md](levels.md) §7, "Certainty the evidence cannot support"). Every one
+([levels.md](../../docs/levels.md) §7, "Certainty the evidence cannot support"). Every one
 of those pulls confident claims toward the middle, and every one of them was
 added for a reason that has nothing to do with calibration - three touches that
 all went up is not 100%.
@@ -359,7 +359,7 @@ curve is a single point sitting exactly on the diagonal, and the model has
 stopped saying anything. It would pass any calibration test written carelessly,
 and `actionable` would never fire again because `|edge|` would be zero - the
 model would be *reported as improved and be silent*, which is precisely the
-failure mode [handoff.md](handoff.md) warns about under "correct silence and
+failure mode [handoff.md](../../docs/handoff.md) warns about under "correct silence and
 broken silence are indistinguishable".
 
 The shape of the trade, measured on synthetic data to check the direction rather
@@ -392,7 +392,7 @@ for this repo:
   deciles are occupied. A run where six deciles were occupied last month and two
   are occupied this month has lost sharpness, whatever else improved.
 - **The base rate moves too**, and it moves the claims with it. `edge` is
-  `conditional − base`, and [levels.md](levels.md) has already documented one
+  `conditional − base`, and [levels.md](../../docs/levels.md) has already documented one
   episode where a drifting base rate ate every edge in the system and closed the
   gate. A calibration report that does not carry `base_rate_up` per stratum
   cannot tell a model that changed from a reference that moved underneath it.
@@ -400,7 +400,7 @@ for this repo:
 ## 7. What good enough looks like
 
 Two thresholds are needed and neither can be derived yet, so both are stated as
-proposals with their reasoning, in the same spirit as [levels.md](levels.md)'s
+proposals with their reasoning, in the same spirit as [levels.md](../../docs/levels.md)'s
 admission that `0.08` "is not derived from anything". Writing down a number
 chosen by argument is honest; writing it down without saying which it is, is not.
 
@@ -425,7 +425,7 @@ Both of those are chosen, not measured. What would derive them is the sizing
 rule itself: given a stake function, the loss from a slope error is computable,
 and the tolerance is wherever that loss stops mattering against the spread
 already being charged. That calculation belongs with whoever owns the capital -
-the same boundary [todo.md](todo.md) item 3 draws around sizing - and until it
+the same boundary [todo.md](../../docs/todo.md) item 3 draws around sizing - and until it
 exists these are placeholders that should be labelled as such wherever they are
 printed.
 
@@ -545,7 +545,7 @@ and no figure from it should be repeated as a result.
 
 The precondition is the same one everything else is waiting on: enough
 post-boundary outcomes, spread across enough instruments and timeframes, that a
-bucket means something. [todo.md](todo.md) item 0 is what makes that arrive
+bucket means something. [todo.md](../../docs/todo.md) item 0 is what makes that arrive
 honestly rather than quickly.
 
 ## Reading

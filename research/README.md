@@ -24,6 +24,7 @@ rather than believed.
 | [bandits.md](bandits.md) | design note - where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
 | [catalogue.md](catalogue.md) | **measured** - which of the broker's 798 symbols are worth carrying; in volatility units the synthetics cost 0.170v to cross against FX's 2.267v, which is the opposite of what the point spreads say |
 | [stops.md](stops.md) | **measured on production** - stops are the whole loss; 20 of 27 judgeable stopped trades never reached target and 7 were stopped early, so the answer is a better entry rather than a wider stop |
+| [strength.md](strength.md) | **measured, not built** - how strong is a level and does it matter; the strongest single thing a level knows |
 | [similarity.md](similarity.md) | **measured** - does `Features.distance` order neighbours; at tradable horizons AUC 0.4921 and 0.5120 against a 0.500 control, and the fast buckets that look decisive are a tautology - `side` fixes direction 100.0% under a minute and 52.8% beyond thirty |
 | [horizon.md](horizon.md) | **measured on production** - the level model's edge is +45% on touches resolving inside five minutes and **+0.00%** beyond thirty, which is the horizon `max_hold` trades; and 27% of resolutions carry a negative duration |
 | [learning.md](learning.md) | **measured** - is the kNN behind every level call buying anything; at a matched 1,996 touches it beats a one-feature floor by 3.1 points of edge, a learned distance adds nothing over it, and a logistic regression on nine features matches reading one |
@@ -35,8 +36,12 @@ rather than believed.
 | [lateness.md](lateness.md) | **measured** - what entering late costs |
 | [macro.md](macro.md) | design note - monetary policy as features on a signal and as a model of its own, and why a rate differential needs both legs from one series family |
 
+Designs nobody has built and measurements nobody has taken live in
+[planned/](planned/) - the one thing that must not sit beside documentation of
+things that exist, because that is where a reader cannot tell the difference.
+
 Findings that changed the code, or that belong next to it, are written up in
-`docs/` instead - [edge.md](../docs/edge.md), [strength.md](../docs/strength.md),
+`docs/` instead - [edge.md](../docs/edge.md), [strength.md](strength.md),
 [absorption.md](../docs/absorption.md), [magnet.md](../docs/magnet.md),
 [news-dedup.md](../docs/news-dedup.md).
 

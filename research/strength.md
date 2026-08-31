@@ -2,11 +2,11 @@
 
 **Status: measured, not built.** The measurements below were run on stored
 history on 2026-08-14. The weight they argue for - `quality_l` in
-[score.md](score.md) §1 - does not exist in the code, and neither does anything
+[score.md](planned/score.md) §1 - does not exist in the code, and neither does anything
 that consumes it. This document exists so that when it is written, the weights
 are ones somebody measured rather than ones somebody liked.
 
-The question is the one [todo.md](todo.md) 5b asks: the model has no way of
+The question is the one [todo.md](../docs/todo.md) 5b asks: the model has no way of
 saying *this level is weak*. `Level.strength` is a continuous score mixing
 touches, zone tightness, recency and breadth, and it is consumed nowhere as a
 decision. Before giving it a job, it is worth finding out whether it - or any
@@ -60,7 +60,7 @@ rate below look better or worse for no reason.
 
 **One number has to be stated before any of the rest can be read.** Across the
 main run, 4,950 decisive interactions were 3,987 rejects, 18 back checks, 933
-traps and **12 breaks**. Under the alternative reading - [levels.md](levels.md)
+traps and **12 breaks**. Under the alternative reading - [levels.md](../docs/levels.md)
 §7b is explicit that a trap *is* the level holding, violently - the hold rate
 is **99.8%** and nothing separates from anything, because there is nothing left
 to separate.
@@ -88,7 +88,7 @@ Three details are load-bearing:
 - **Drained during the replay**, through `on_progress`. `MAX_RESOLVED` caps the
   queue at 500 and silently drops the oldest beyond it, and an earlier run of
   this comparison was invalidated exactly that way - see
-  [levels.md](levels.md), "Rerun with both flaws fixed".
+  [levels.md](../docs/levels.md), "Rerun with both flaws fixed".
 - **Attributes snapshotted at first contact**, not at drain time. The tracker
   calls `level.record(...)` when an interaction closes, so by the time a pair
   reaches `drain_resolved()` the level already contains the outcome being
@@ -252,7 +252,7 @@ Reproducing 5a as the harness check, pre-fix:
 
 Agreement over run-only is **+6.0 points [+2.6, +9.9]** resampling levels, and
 +8.4 [+4.4, +12.6] on the 800 run - the same direction and roughly the same
-size as the numbers in [levels.md](levels.md), on a different sample. As a
+size as the numbers in [levels.md](../docs/levels.md), on a different sample. As a
 check that the harness was known-good before anything new was asked of it, that
 worked.
 
@@ -272,7 +272,7 @@ units, so a denominator two to four times too small changed which swings the
 run pass found at all. The pre-fix and post-fix runs are not grading the same
 levels differently; they are grading different levels. **So origin is out of
 the design**, and it is out on a measurement rather than on taste - with the
-note that [levels.md](levels.md)'s agreement result rests on the same
+note that [levels.md](../docs/levels.md)'s agreement result rests on the same
 denominator and should be re-run before it is relied on again.
 
 ### Confluence breadth does not separate, and may lean the wrong way
@@ -321,7 +321,7 @@ build on.
   explanation and an unstable ordering is not a finding.
 - **Age.** +10.3 points across quartiles, and **+0.045 standardised (z = 0.4)**
   once the record and experience are in the same model. It is a proxy for
-  having been touched, which is what [levels.md](levels.md) §10 already says
+  having been touched, which is what [levels.md](../docs/levels.md) §10 already says
   under "age is deliberately not rewarded". Confirmed rather than overturned.
 - **Swings.** +9.9 points, and no improvement in held-out AUC over experience
   alone. It is a third way of counting the same evidence.
@@ -400,7 +400,7 @@ Three things to take from that, and one of them costs a component:
   codebases are not grading the same levels differently; they are grading
   different levels. Until it is re-measured on corrected data at
   size, "found by both formations" is **unresolved**, and
-  [levels.md](levels.md)'s agreement result inherits the same doubt.
+  [levels.md](../docs/levels.md)'s agreement result inherits the same doubt.
 
 Confluence breadth does not separate on the corrected run either - a
 coefficient of −0.01 and, once again, a non-monotone bucket table with a
@@ -460,7 +460,7 @@ series. κ = 4 matches the prior weight already used in
 (AUC 0.604, 0.606, 0.607), so this is not a number worth tuning.
 
 **Why the same-side record rather than the level's overall record.** The
-asymmetry is the point of the whole level model ([levels.md](levels.md) §5),
+asymmetry is the point of the whole level model ([levels.md](../docs/levels.md) §5),
 and same-side buckets separate more than pooled ones on both codebases -
 +20.8 against +17.1 before the fix, +32.8 against +26.1 after. It costs
 nothing: `SideStats` already holds it.
@@ -501,7 +501,7 @@ measured ratio with a wide interval rather than a chosen constant, and it
 should be **recomputed from the rolling window** rather than frozen at today's
 value.
 
-**A quantile rank, not a raw score**, for the reason [score.md](score.md) §3
+**A quantile rank, not a raw score**, for the reason [score.md](planned/score.md) §3
 gives for the thresholds and the reason the timeframe table gives: `raw_l` is
 not comparable between a 1m gold level and a 1h spx500 one, and a constant cut
 would be another number nobody chose. The window has to be long enough to be a
@@ -526,12 +526,12 @@ Two of these are worth spelling out.
 **`record_l` is point-in-time and still dangerous.** The evidence in
 `SideStats` at contact is genuinely all past, because the tracker records an
 outcome only when an interaction closes. What it is *not* is independent of
-what follows. [levels.md](levels.md) §8 describes the failure exactly: when one
+what follows. [levels.md](../docs/levels.md) §8 describes the failure exactly: when one
 grinding episode is counted as many touches, "the level's history and its next
 outcome are the same price action counted twice", and that produced a 99.9%
 direction column that looked like skill. A record-based weight is the same
 machinery pointed at the same hazard. It is only trustworthy while touch
-counting is, which makes item 1 in [todo.md](todo.md) a **prerequisite** for
+counting is, which makes item 1 in [todo.md](../docs/todo.md) a **prerequisite** for
 this design rather than an unrelated bug.
 
 **The quantile window is a look-ahead risk that does not look like one.**
@@ -561,7 +561,7 @@ Six ways, in the order they are likely to happen:
 4. **The grind.** If price loiters at a level and the counting inflates,
    `record_l` and the next outcome are the same move, and the weight will fire
    hardest exactly where the counting is worst - which is also where the
-   channel is loudest. See §8 of [levels.md](levels.md) for what this looks
+   channel is loudest. See §8 of [levels.md](../docs/levels.md) for what this looks
    like from the outside: it looks like a triumph.
 5. **A denominator that is wrong in the units everything is expressed in.**
    Not hypothetical: it happened here, it was invisible in every summary
@@ -608,7 +608,7 @@ Concrete, and each of these is a test somebody can run:
    here was taken before `18e95c0`, on distances two to four times too large by
    an instrument-dependent factor. One check run on the corrected code is
    reported above; it is 800 bars, not the main sample.
-2. **Trust the touch counting first.** [todo.md](todo.md) item 1. Both
+2. **Trust the touch counting first.** [todo.md](../docs/todo.md) item 1. Both
    components are counts, and a count that inflates during a grind makes the
    weight strongest where it is least earned.
 3. **Record what is already computable but not kept** - confluence depth at
@@ -620,7 +620,7 @@ Concrete, and each of these is a test somebody can run:
    kNN feature in `facto.py` and journalled examples carry its current
    definition.
 5. **Wire it into the score** as `w_l = proximity · confidence · quality`, once
-   the score itself exists - [score.md](score.md) §6 already orders it third
+   the score itself exists - [score.md](planned/score.md) §6 already orders it third
    for the same reason.
 6. **Rerun this measurement on fourteen instruments** and refit the two
    weights. The split between them is the least-measured thing here.

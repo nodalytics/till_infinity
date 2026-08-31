@@ -446,7 +446,7 @@ class SideStats(Restorable):
         Chop is excluded rather than folded into either column. A level price
         loitered at without resolving is a third thing, and hiding it in one
         side or the other makes the rate below look better or worse for no
-        reason - which is the discipline [strength.md](../../docs/strength.md)
+        reason - which is the discipline [strength.md](../../research/strength.md)
         applies throughout, and the reason its numbers can be compared at all.
         """
         return self.rejects + self.breaks + self.traps

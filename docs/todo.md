@@ -338,7 +338,7 @@ someone measured rather than reasoned.
   out divided by the venues past quorum - 4x on EURUSD and GBPUSD, 3x on
   XAUUSD, 2x on BTCUSD. Every distance in volatility units read that much too
   large. This invalidates measurements, not just numbers: see [levels.md](
-  levels.md) §10b and the agreement section, and [strength.md](strength.md).
+  levels.md) §10b and the agreement section, and [strength.md](../research/strength.md).
 - **`expire`'s return value was discarded** (`04d24c0`), so touches that
   resolved on the clock reached only the kNN memory - no `level.record`, no
   journal, no `facto`. Breaks went 11 to 61 and back checks 3 to 29.
@@ -903,7 +903,7 @@ counts made a level's history and its next outcome the same move counted twice.
 Detail in [levels.md](levels.md), "The attempt to derive it, and why it failed".
 
 So this waits on post-fix data. Then make it a rolling quantile of realised
-edges rather than a constant - the same instinct as [score.md](score.md)'s
+edges rather than a constant - the same instinct as [score.md](../research/planned/score.md)'s
 thresholds - rather than picking a new number by hand.
 
 ## 0c. Left open by the 2026-08-14 fixes, in the order they would bite
@@ -950,7 +950,7 @@ strength work below has no history behind it for a while.
 
 **Replace `Level.strength`, do not merely stop multiplying it.** Removing
 confluence breadth from `Zone.strength` was the cheap half.
-[strength.md](strength.md) finds the composite loses to its own best term in
+[strength.md](../research/strength.md) finds the composite loses to its own best term in
 every run - AUC 0.548 against 0.648 for the level's own same-side record - and
 this number is not only reported: `reactions.py` passes it into the model as a
 feature. Mixing one signal that works with three that do not is diluting the
@@ -1313,7 +1313,7 @@ comparison. `Engine(formation=...)` takes `pip`, `run` or `both` and
 `research/harness/` replays all three over one history and the outcome
 machinery says which set price respects - the same question
 [levels.md](levels.md) leaves unresolved for pip against run, and which
-[strength.md](strength.md) showed was measured on a broken
+[strength.md](../research/strength.md) showed was measured on a broken
 volatility denominator anyway and needs redoing regardless.
 
 One caution from what is already measured, and it cuts both ways.
@@ -1560,7 +1560,7 @@ is consumed nowhere as a decision. There is no point at which the system says
 "this one is worth less" and acts on it.
 
 Three sources of evidence were proposed for that judgement. **All three have
-now been measured** ([strength.md](strength.md)), and only one of them earns
+now been measured** ([strength.md](../research/strength.md)), and only one of them earns
 its place:
 
 - **What it has done - yes, and by a wide margin.** A level's own same-side
@@ -1585,7 +1585,7 @@ composite loses to its own best term** in every run (AUC 0.548 against 0.648
 for the record alone). Mixing touches, agreement, recency and breadth into one
 number dilutes the one part that works with three that do not.
 
-[strength.md](strength.md) proposes a concrete `quality_l` built from the
+[strength.md](../research/strength.md) proposes a concrete `quality_l` built from the
 record and experience only, graded *within* `(feed, interval)` - the grading is
 load-bearing, since chart identity alone reaches AUC 0.586-0.608. It is
 unfitted and beats `Level.strength` on all four runs. The open risks are the
@@ -1600,7 +1600,7 @@ Two places it should show up:
 strong level deserves a tighter zone and a lower bar, a weak one the reverse.
 Today every level is gated identically no matter what is behind it.
 
-**In the [score](score.md)**, which is where it matters more. The score is one
+**In the [score](../research/planned/score.md)**, which is where it matters more. The score is one
 number per instrument and a level call is its main input, so a call from a weak
 level and one from a strong level currently contribute the same. They should
 not. The score's own thresholds are already designed as rolling quantiles
@@ -1617,7 +1617,7 @@ arithmetic looks harmless.
 
 ## 6. Build the score
 
-Designed in [score.md](score.md), not built: one number per instrument in
+Designed in [score.md](../research/planned/score.md), not built: one number per instrument in
 [-1, +1], three EWMAs, thresholds as rolling quantiles, transitions only.
 
 ## 6b. Let the constants adjust themselves
@@ -1955,7 +1955,7 @@ sample under thirty. What is missing is closed trades.
    way `trading report` already does. A win rate without the base rate beside
    it is the mistake §7 of levels.md exists to prevent.
 3. **Then decide what to keep.** `confluence-scalp` is the one to watch:
-   [strength.md](strength.md) measures confluence depth at an AUC of 0.476 and
+   [strength.md](../research/strength.md) measures confluence depth at an AUC of 0.476 and
    0.452 - below the 0.5 that means no information - so the prior says it
    should not beat `level-scalp`. If it does, that is worth understanding
    rather than celebrating, because what strength.md measured is "did price get

@@ -412,3 +412,31 @@ def test_a_pair_with_a_leg_not_yet_collected_is_not_treated_as_gold():
     macro.observe("WALCL", now, 8_100.0)
     assert "macro_liquidity" not in macro.features("eurusd")
     assert "macro_liquidity" in macro.features("gold")
+
+
+@pytest.mark.asyncio
+async def test_the_opening_read_emits_what_it_finds(tmp_path):
+    """Discarding the return was worse than not reading at all: `calls` records
+    the stance it announces, so a startup read computed seven stance changes,
+    marked them as published, and dropped them - and those feeds then stayed
+    silent until they flipped again."""
+    import inspect
+
+    from till_infinity.structures import service
+
+    source = inspect.getsource(service.Watcher.run)
+    assert "opening = await self._read_macro()" in source
+    assert "await self.emit(opening)" in source
+
+
+def test_a_stance_is_only_remembered_once_it_is_returned():
+    """The property that made the dropped signals permanent: `calls` is the
+    only place the stance is written, so anything that takes its output and
+    discards it has suppressed a signal rather than delayed one."""
+    macro = mc.Macro()
+    series(macro, mc.OVERNIGHT["EUR"], ramp(4.0, creep=0.1, jump=1.0))
+    series(macro, mc.OVERNIGHT["USD"], steady("us", 2.0))
+    assert "eurusd" not in macro._stance
+    found = macro.calls(["eurusd"])
+    assert found
+    assert macro._stance["eurusd"] != 0

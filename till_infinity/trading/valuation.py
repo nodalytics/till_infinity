@@ -23,7 +23,7 @@ stated interval as often as the interval claims" is checkable per call and
 answers a better question: an analyst whose 80% intervals contain the price 80%
 of the time is *useful* even when its point estimate is mediocre, and one whose
 intervals are far too narrow is dangerous however often it points the right
-way. That is the question [calibration.md](../../docs/calibration.md) wants to
+way. That is the question [calibration.md](../../research/planned/calibration.md) wants to
 ask of this project, and a number with a width is what makes it askable.
 
 **Two estimates of the same quantity can be compared.** `structures` prices the

@@ -722,7 +722,7 @@ class ConfluenceScalp(LevelStrategy):
     more *precisely located* one.
 
     **The only measurement bearing on this says breadth does not predict.**
-    [strength.md](../../docs/strength.md) tested confluence depth against
+    [strength.md](../../research/strength.md) tested confluence depth against
     whether a level holds and found nothing, in the strongest form of nothing:
     four runs produced four different orderings - best at depth 1, at depth 2,
     monotone increasing, and best at depth 3 - and as a ranking signal depth

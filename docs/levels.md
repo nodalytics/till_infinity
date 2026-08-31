@@ -955,7 +955,7 @@ each feature in turn and found that **none of the other eight predicts
 direction once `side` is known** - while the level's own same-side record,
 which was not among them, is worth +0.024 AUC on levels with three or more
 prior touches. It had been hiding inside `strength`, diluted with three terms
-[research/strength.md](strength.md) shows separate nothing, and
+[research/strength.md](../research/strength.md) shows separate nothing, and
 behind `experience`, which counts touches without saying what they did.
 
 0.5 means *no history*, not an even split. Those are different things and the
@@ -1743,7 +1743,7 @@ beside, so the zone is worth its best member.
 > Measured against whether the level then held, over four replays, breadth
 > does not separate at all: four runs produced four different orderings, AUC
 > 0.45-0.51, and a bootstrap over levels put the spread at -2.2 points
-> [-6.3, +1.7]. See [strength.md](strength.md). The multiplier is gone; `depth`
+> [-6.3, +1.7]. See [strength.md](../research/strength.md). The multiplier is gone; `depth`
 > and `timeframes` are still reported, because the object really is different
 > even if the difference does not predict holding. This ordered what the agents
 > are shown and what the CLI prints, so it was a live decision rather than a
@@ -2076,7 +2076,7 @@ every formation that found a level.
 > divided by the number of venues reporting each bar (see §10b), and every
 > threshold here - 1v, 2v, 4v - is in volatility units, so the *arms of the
 > comparison were not the distances they say they were*. Re-run on the
-> corrected denominator in [strength.md](strength.md), the ordering **inverts**:
+> corrected denominator in [strength.md](../research/strength.md), the ordering **inverts**:
 > run-only goes from weakest to strongest, and adding origin to a hold model
 > drops its held-out AUC below a chart-identity baseline. Origin came out of
 > that design.

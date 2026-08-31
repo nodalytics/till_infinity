@@ -325,7 +325,7 @@ model's own - several timeframes on one price is one structure seen several
 times - and it is worth knowing that **the only measurement bearing on it found
 nothing**.
 
-[strength.md](strength.md) tested confluence depth against whether a level
+[strength.md](../research/strength.md) tested confluence depth against whether a level
 holds. Four runs produced four different orderings, and as a ranking signal
 depth scores an **AUC of 0.476 and 0.452** - below 0.5, meaning that if
 anything more agreement goes very slightly with breaking. `depth >= 3` against
@@ -466,7 +466,7 @@ the question being settled by which sounds cleverer.
 
 A fifth was written and removed: take the top decile of each instrument's own
 recent `|edge|` rather than a fixed threshold, on the strength of
-[score.md](score.md) §3's argument that a constant is a claim about a
+[score.md](../research/planned/score.md) §3's argument that a constant is a claim about a
 distribution nobody has measured.
 
 [edge.md](edge.md) had already measured it, on 10,483 call-outcome pairs. The
@@ -1634,7 +1634,7 @@ which is why every `Refusal` carries a machine-readable gate name.
 ## The level's own record, now published
 
 `structures` computes a level's hold rate on the side price is arriving from
-and, until recently, published it nowhere. [strength.md](strength.md) measures
+and, until recently, published it nowhere. [strength.md](../research/strength.md) measures
 it as the strongest thing a level knows - 59.4% to 92.2% across four buckets
 with an **AUC of 0.648**, and the only signal in that study that got *stronger*
 when the volatility denominator bug was fixed, against `Level.strength`'s 0.548
