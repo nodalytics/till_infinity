@@ -1,6 +1,46 @@
 # Handoff
 
-Written 2026-08-14. What is true, what is broken, and what to do first.
+What is true, what is broken, and what to do first. Started 2026-08-14, current
+to **2026-08-31**.
+
+Read the next section before anything else. It is not a bug; it is the reason
+most of the numbers in this repository were measuring something other than what
+they appeared to.
+
+## The finding that reframes everything, 2026-08-31
+
+**At the horizons that dominate the record, the label is a tautology.** Split
+resolved touches by how long they took and by which side price approached from:
+
+| held for | side above → up | side below → down |
+| --- | --- | --- |
+| 0-60s | **100.0%** (n=7,649) | **100.0%** (n=22,473) |
+| 60-300s | 99.7% (n=12,157) | 99.8% (n=11,344) |
+| 300-1,800s | 68.9% (n=5,086) | 66.4% (n=5,627) |
+| beyond 1,800s | 52.8% (n=830) | 50.1% (n=932) |
+
+A touch approached from above that resolves inside a minute resolves *upward*.
+That is not a prediction, it is what "rejection" means - and 46% of resolutions
+are that fast. So a model scoring 97% on the pooled population is reproducing a
+definition.
+
+By thirty minutes it is a coin, and `max_hold` is 1,800 seconds. **The horizon
+at which the model knows nothing is the horizon the desk trades.**
+
+What this invalidates, and it is a lot:
+
+* every pooled model score here, which is what all of them were;
+* [features.md](../research/features.md)'s "`side` alone matches all nine
+  features" - true, and now explained;
+* the kNN's apparent 3.1-point edge over a one-feature floor
+  ([learning.md](../research/learning.md));
+* any reading of the account that assumed good signals were being traded badly.
+
+See [horizon.md](../research/horizon.md) and
+[similarity.md](../research/similarity.md). Scores are now cut by realised
+duration; training is banded by interval, because how long a touch turned out
+to take is not knowable when it opens and selecting on it would be selecting
+the training set with the answer.
 
 ## Both fixed on 2026-08-14. What they actually were
 
@@ -114,104 +154,52 @@ recorded call, so `reward_to_risk` was meaningless - `vol` was optional on
 anything, which is still true and still open: see "0.08 is not derived from
 anything" for the attempt to derive it and why the pre-fix journal cannot.
 
-## The first weekend, 2026-08-15/16 - what to look at on Monday
-
-Deployed on the Friday afternoon, untested against a real close. FX and the
-indices stop trading; crypto does not, which makes the weekend a free
-controlled experiment - the same code over two instrument classes where only
-one of them halts.
-
-**Alerts should stay quiet on FX and keep working on crypto.** Nothing knows
-about market hours; the protection is structural and worth confirming rather
-than trusting. `staleness_ratio` divides a venue's stillness by the group's, so
-a market that freezes together stays near 1 and fires nothing, and a new level
-call needs a *new* touch, which a frozen price does not open. If FX stale
-alerts arrive anyway, the venues are freezing at different times and that
-assumption is wrong.
-
-**No outcome should span the close.** `GAP_FACTOR` discards a touch open more
-than four horizons rather than resolving it, because `_close` records
-`push_vol` as the distance at the moment of closing - so before this, a touch
-open at the Friday close wrote the Sunday reopening gap into the level's
-statistics and into `facto`'s targets as that level's reaction. On EURUSD one
-weekend resolved as a 27-volatility-unit rejection.
-
-```bash
-sudo docker exec till-infinity till-infinity structures gaps --hours 72
-```
-
-Expected: **`none - the gap guard held`**, and exit 0. Anything listed is the
-guard having failed, and the command exits 1 so a cron can act on it.
-
-It splits by whether the instrument closes, because that is the control.
-**Crypto never stops**, so a gap on btc, eth or sol means the *collector*
-stopped rather than the market - the same guard firing for a different reason,
-and the difference is only visible with both classes side by side.
-
-A handful of large `push_vol` values on Monday morning that are genuine gap
-trades will still appear as *new* touches, which is correct: the guard drops
-interactions that span the close, not the reopening itself.
-
-### And the outcome rate, which the weekend measures for free
-
-The second thing to read on Monday, and the weekend makes it a better
-experiment than a weekday would.
-
-The zone floor shipped on Friday evening to explain why sol produced half of
-all outcomes. Its effect on the *rate* was never verified - the last reading
-before the box was left alone showed the rate falling from ~2,280/hour to ~500
-and sol dropping out of the top feeds entirely, which is the shape the fix
-predicts and is also what a Friday evening looks like on its own. Restarts from
-four deploys sat in the middle of the same window. Three explanations, one
-observation.
-
-**Crypto separates them.** btc, eth and sol trade through the weekend while FX
-and the indices do not, so a weekend reading of crypto alone has no
-Friday-evening confound and no market-hours effect at all - only the fix. If
-sol's share among crypto has fallen, it is the zones. If it has not, the cause
-is still unfound, and that would be the third hypothesis to fail on this item
-after the re-arm hole and the `observe_bar` split.
-
-Read it beside the hold rate rather than alone. Widening a zone reduces touch
-counts mechanically, so a lower rate is necessary evidence and not sufficient -
-the question is whether what remains is *better*, and only the outcomes say
-that.
-
 ## Then, in order
 
-See [todo.md](todo.md) for the full list. The short version:
+See [todo.md](todo.md) for the full list. What the 2026-08-31 findings make
+first:
 
-1. **Re-measure memory now the window is bounded.** The box is 908MB with no
-   swap and was OOM-killed five times on 2026-08-14. The cause was not the
-   level set - it was the agents watcher holding 101,297 messages, 199MB, to
-   derive fifteen triggers. Bounded at 20,000 now, and 1m went back on the
-   level set once the real cause was measured. Swap still does not exist.
-2. **Re-measure the outcome rate** before any `fit`, now that touch counting is
-   fixed. Then `0.08`, which is still the one gate nobody chose.
-3. **Run-formed levels** as an experiment, not a feature.
-4. **Build the score** ([score.md](../research/planned/score.md)).
-5. **Score the trading.** `structures.resolutions` puts ground truth on the bus
-   and `trading report` pairs decisions with outcomes; neither has enough
-   closed trades to say anything. Until it does, four strategies are four
-   untested rules and the docs say so.
+1. **Wait for the duration-banded scores.** Nothing about model quality should
+   be acted on until `beyond 1800s` has a readable sample. Everything before it
+   was measured on the tautology. The prediction to hold this to: that bucket
+   should come back near zero edge for every model.
+2. **`Memory` still pools training across intervals**, banded now but by
+   interval rather than by anything that separates a fast resolution from a
+   slow one - which is the best that can be done without leaking, and is a
+   proxy rather than a fix.
+3. **Stops are the account.** -897.84 over 38 trades, none up, against +920.20
+   from 20 targets. Twenty of the 27 judgeable never reached target, so the
+   answer is a better entry rather than a wider stop
+   ([stops.md](../research/stops.md)). `adverse_r` now records how much of the
+   stop a winner actually uses, which is what would size a change.
+4. **Macro needs weeks, not hours.** The features land on 1,197 level calls and
+   the conditional test exists; the band where a daily signal could matter has
+   fourteen calls in it ([macro.md](../research/macro.md)).
+5. **Score the trading.** 120 closed trades, net -688 excluding one
+   sizing-bug outlier. Not enough to say anything about any strategy.
 
-## What is deployed and working
+## What is deployed and working, 2026-08-31
 
-Levels form on 1m/3m/5m/15m/1h/4h/1d/1w across fourteen instruments - gold, btc,
-eth, sol, eurusd, gbpusd, usdjpy, audusd, usdcad, usdchf, nzdusd, usdcnh,
-us100, spx500 - alert to Telegram
-with confluence, deduplicated per zone, and charged the median spread before
-qualifying - which now records a non-zero cost, having charged nothing until
-`observe_bar` was split. Agents run on Groq with a Gemini fallback. 713 tests.
+**53 instruments** - 33 conventional plus 20 Deriv synthetics - on
+1m/3m/5m/15m/30m/1h/2h/4h/1d/1w. 2,956 levels held, 55.6% of them on 15m or
+slower. Seven formations run merged: `pip,run,origin,profile,equal,gap,round`,
+and 57% of levels now carry more than one, where every level used to be `pip`
+alone. Trading is live on a Deriv demo account. 1,589 tests.
 
-Production: one container on the EC2 box named in `.secrets/samuel.md`, data
-under `/home/ubuntu/till-data`, config at `/home/ubuntu/till.env` (backed up to
-`.secrets/prod-till.env`, gitignored). CI deploys on push to `main`.
+The synthetics are worth their place for a measured reason: in volatility units
+- what `charge_spread` actually deducts - they cost 0.170v to cross against
+FX's 2.267v ([catalogue.md](../research/catalogue.md)). In raw points they look
+ten times dearer, which is why the screen has to be in the right currency.
+
+Production: one container on `tis`, data under `/home/ubuntu/till-data`, config
+at `/home/ubuntu/till.env`, backed up to `strut/.secrets/env-backups/`. CI
+deploys on push to `main`. **A `docker restart` does not re-read `till.env`** -
+only a redeploy recreates the container.
 
 ```bash
-sudo docker exec till-infinity till-infinity structures levels   # touches should read in the tens
-sudo docker exec till-infinity till-infinity structures zones --feed btc --min-timeframes 2
-sudo docker logs till-infinity | grep "alert '"                  # what was actually sent
+sudo docker exec till-infinity till-infinity structures levels
+sudo docker exec till-infinity till-infinity journal levels    # PnL per level
+sudo docker logs till-infinity | grep -A 20 "model bench"      # the comparison
 ```
 
 ## Trading, added 2026-08-26
@@ -307,6 +295,50 @@ output.** The tests passed, the container was healthy, the logs were busy. What
 found them was asking what a specific number should have been and checking, or
 in one case a user asking why a particular signal did not trade.
 
+### Five more of the same, 2026-08-30/31
+
+The pattern recurred often enough in two days to be worth treating as the
+default suspicion rather than a surprise. Every one was **configured, deployed
+and inert**, and in each case the setting was never the problem - the
+*handover* was.
+
+**The formation setting had never worked.** `Watcher.load` replaced the
+configured engine with the pickled one, and a pickle carries the settings it
+was *first* built with. Production drew levels with `pip` alone for the entire
+life of a `STRUCTURES_FORMATION` that said `pip,run,origin`. The symptom was
+that `run` and `origin` never drew anything, which reads exactly like two
+formations that do not work - the worst kind of silent failure, because it
+produces evidence and the evidence is wrong.
+
+**FRED collected 2,174 rows and nothing read them.** Collection without
+consumption looks like progress from outside.
+
+**The macro model's signals were discarded.** `run` called `_read_macro` and
+threw the return away, which is worse than not calling it: `calls` records the
+stance it announces, so seven stance changes were computed, marked as already
+published, and dropped - and those feeds then stayed silent until they flipped.
+
+**Eleven new instruments were polled by nothing.** Three lists have to agree -
+what is tradable, what the broker source knows the name of, and what is
+*collected* - and naming an instrument in the first two left it registered,
+tradable, given an exposure leg, and quoted by no one. Zero quotes and zero
+bars, which is the same silence as a feed that does not exist.
+
+**And then warmed by nothing.** The fix for that shipped clean and did nothing,
+because `cold` asks whether the engine holds *any* levels and with 2,018
+restored it does. A second attempt asked whether the engine had ever *seen* the
+feed - by then it had, about twenty live bars each - so it reported nothing to
+warm while they sat on 2,700 stored bars apiece. A feed is warm when its window
+holds enough, not when a series exists for it.
+
+**A document that did not exist was cited as evidence.** `similarity.md` was
+referenced three times, including from `prior.md`, as the case for deleting
+`Memory`, `Features.distance` and the kNN - "no better than random across 13.5M
+pairs". No such file, in the tree or in git history. It has since been written
+and measured; the claim holds at tradable horizons and the deletion still does
+not follow. **Check that a cited document exists before believing a number in
+it.**
+
 ## Things that cost time, so they do not cost it twice
 
 **Verify by running, not by reading.** Every bug that mattered was found by
@@ -327,6 +359,24 @@ a failing `ruff format` scrolled past inside output that ended in "962 passed".
 Every gate had run and one of them was red. Backgrounding and piping are the
 same mistake wearing different clothes - if the thing you read is not the exit
 code, you have not checked.
+
+**Measure the window you think you are measuring.** A fix for negative touch
+durations was checked against "the last hour" and came back at 26% - unchanged
+- because the deploy was seven minutes old and the hour was mostly the old
+code. Filtered to rows written since the container started: zero. The fix was
+correct and the check was not.
+
+**A cut is a claim.** Banding the model bench by the *interval's* horizon
+looked like it separated fast touches from slow ones and did not: a weekly
+level can be touched and resolve in thirty seconds. Scoring must be cut by the
+realised duration, which is knowable afterwards; training can only be banded by
+what is knowable when the touch opens. Getting those the same way round is the
+difference between a measurement and a leak.
+
+**Ask whether a strong number is possible.** 100.0% agreement between
+same-side touch pairs was not a strong result, it was an impossible one, and
+chasing why produced the tautology at the top of this document. 95% accuracy on
+FX direction should have prompted the same question weeks earlier.
 
 **Assert properties, not tolerances.** "Less than 3x" is a number someone made
 up. "One print in sixty-one cannot move a median" is the property. The first
