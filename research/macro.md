@@ -86,3 +86,61 @@ worth anything, which is the only thing that can settle it.
 `trading` ignores `Shape.MACRO` - `context.py` acts on `drift` and `spread` and
 nothing else - so this changes no behaviour until something is written to read
 it. That is the intended first state.
+
+## How to take advantage of "the level is priced, the change is not"
+
+The insight is standard and correct: a rate differential's level sits in the
+forward curve by covered interest parity, so nobody is paid for knowing it.
+Spot moves when policy *expectations* are repriced.
+
+**The constraint is data, not theory.** Checked against the live API: every
+foreign rate series FRED carries is monthly and lagged, and several are dead.
+
+    DGS2              D  last 2026-08-27   US 2-year
+    IRLTLT01DEM156N   M  last 2026-06-01   euro-area 10-year
+    IR3TIB01DEM156N   M  last 2026-06-01   euro-area 3-month
+    INTGSBJPM193N     M  last 2017-05-01   Japan, dead since 2017
+
+So a daily cross-country differential cannot be built from this source. The one
+genuinely daily, genuinely market-determined pair available is **USD/GBP**
+(`DFF` against `IUDSOIA`). `ECBDFR` is a policy step function: its change is
+zero on every day but the eight a year the ECB moves.
+
+That leaves three usable forms, in order of what they cost:
+
+1. **Condition, do not trade.** Ask whether level calls that agree with the
+   macro drift resolve better than calls that fight it. The data is already
+   journalled - `macro_carry_gap_change` is on every level call and outcomes
+   link by parent ref - so this is a join.
+   [`harness/conditioned.py`](harness/conditioned.py).
+2. **The eight days.** `ECBDFR` stepping *is* the repricing event, and the
+   calendar service already knows when central banks speak. A signal that fires
+   eight times a year is not a strategy, but it is a clean natural experiment
+   for whether repricing moves the levels at all.
+3. **The dollar index as a common factor.** `DTWEXBGS` is daily. Its change is
+   the realised repricing rather than a forecast of one, which makes it a state
+   variable - "is the dollar trending" - and not a signal.
+
+### First reading: nothing, and far too little of it
+
+    130 level calls with a macro reading and a linked outcome
+
+    band            agreeing              fighting
+    60-300s         100.0% of 27          100.0% of 30
+    300-1800s        88.9% of 27           86.4% of 22
+    beyond 1800s     14 calls - too few
+
+The 60-300s row is the tautology from [similarity.md](similarity.md): both
+sides perfect, nothing to discriminate. The 300-1,800s row differs by 2.5
+points on about twenty-five calls each, which is noise. The band where a daily
+signal could actually matter has fourteen calls in it.
+
+**This needs weeks, not hours.** The macro features are a day old, and only
+touches something predicted carry a parent ref, so the join is over a small
+selected subset. The measurement exists and runs; the answer does not yet.
+
+One caution worth stating before anyone waits on it. Macro moves daily, so it
+can only show up at horizons of a day or more - and that is the thinnest part
+of the record by an order of magnitude, 1,762 resolved touches beyond thirty
+minutes against 30,118 under a minute. This is a long-dated bet on
+accumulating evidence, not a quick win, and it should be funded as one.
