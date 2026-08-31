@@ -226,6 +226,29 @@ inert - which is the failure this repository has found five times in two days,
 arriving here as a threshold calibrated against the wrong denominator rather
 than as a setting nobody read.
 
+### Watched, 2026-08-31: wired, alive, and nearly inert
+
+    structures calls: n=250  median 0.157  p90 0.259  max 0.411   above 0.35: 2%
+    reaching trading: n=7    median 0.146  p90 0.152  max 0.152   above 0.35: 0%
+
+The plumbing works - the estimate is on every level call and reaches the trader
+- and the gate has refused nothing, because the population moved under it. It
+was set from the top fifth of published estimates when the model was younger
+(median 0.209, max 0.475); the distribution has since tightened to a median of
+0.157, and calls that survive the *other* gates are tighter still.
+
+**Left at 0.35 anyway.** This threshold has now been calibrated twice against a
+distribution that then shifted, and n=7 is nowhere near enough to set it a
+third time. Chasing a quantile on a moving population is how a gate ends up
+fitted to noise.
+
+The right threshold is the one that refuses calls that would have **lost**, not
+one that refuses a fixed fraction, and that needs refused calls with outcomes
+attached. At 0.35 it costs nothing and the evidence accumulates slowly; the
+alternative - dropping to about 0.20 so it fires often enough to be judged -
+declines real trades on an estimate no outcome has yet validated. The slow way
+round is the right one here.
+
 **Live at 0.35**, which declines about one call in eight - roughly the top fifth
 of what actually reaches a strategy. The number to watch is not the ceiling but
 what it refuses: `break_risk` now appears as a gate in the journal, and whether
