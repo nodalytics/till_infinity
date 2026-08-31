@@ -90,6 +90,58 @@ It had been fixed twice before in `observe_bar`, which is why the third
 attempt is at the consumer rather than the producer: a bar cannot know what
 touches a quote opened after its close, and the tracker can.
 
+## Confirmed by the live bench, 2026-08-31
+
+The prediction this document made was that every model would fall to zero edge
+beyond thirty minutes. Measured by the bench, cut by realised duration:
+
+| resolved in | n | knn | attention | up_rate | linear | base |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0–60s | 37 | +43.19% | +43.19% | +24.23% | +24.23% | 51.4% |
+| 60–300s | 403 | +37.19% | +37.18% | +33.81% | +31.42% | 51.4% |
+| 300–1,800s | 325 | +15.89% | +15.87% | +9.98% | +9.61% | 50.7% |
+| **beyond 1,800s** | **150** | **−2.03%** | **−2.03%** | **−0.01%** | **−1.43%** | 59.1% |
+
+**Every model is at or below zero past thirty minutes**, and `max_hold` is
+1,800 seconds. The edge decays monotonically as the population stops being
+definitional - +43 under a minute, +37 to five, +16 to thirty, nothing beyond.
+
+Three readings, kept separate because they are different claims:
+
+* **The kNN's advantage is real and lives entirely in the fast population.** It
+  leads by 3 to 19 points in every bucket up to thirty minutes and then goes
+  negative with everything else. So [learning.md](learning.md)'s "the kNN beats
+  the floor by 3.1 points" was true and was measured on the tautology - the
+  argument for deleting it and the argument for keeping it were both about the
+  wrong sample.
+* **kNN and attention are identical to two decimals in all four buckets**, a
+  fourth independent confirmation that the learned distance finds nothing.
+* **−2% is "no edge", not "anti-edge".** On 150 observations that is inside a
+  standard error of zero. What it is emphatically not is the +25% the pooled
+  figure showed.
+
+### What it means for the desk
+
+**There is no demonstrated directional edge at the horizon this system
+trades.** The 120 closed trades netting −688 are consistent with that rather
+than with bad execution - the stop work, the entry geometry and the
+reward-to-risk arithmetic were all improving the execution of calls that carry
+no measured information at thirty minutes.
+
+Two responses, and neither should be taken before the next measurement:
+
+1. **Shorten the hold to where the edge is.** If the model is right at 60–300s,
+   a 1,800s hold is three to thirty times longer than the signal supports.
+2. **Or treat the slow horizon as unsolved**, and the current strategies as
+   unvalidated until something separates at 1,800s.
+
+The measurement that should come first: the 60–300s bucket has +37% edge and is
+also where cost bites hardest relative to the move. `charge_spread` already
+deducts the quoted spread, and [catalogue.md](catalogue.md) puts it at 0.170v
+on a synthetic against 2.267v on FX. Whether a +37% directional edge survives
+that is answerable from the same data, and decides whether shortening the hold
+is an opportunity or a faster way to pay the spread.
+
 ## Where the evidence actually comes from
 
 Levels are spread evenly across timeframes and touches are not:
