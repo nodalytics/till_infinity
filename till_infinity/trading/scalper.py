@@ -23,6 +23,7 @@ constant would put the stop somewhere nobody chose, and would do it silently.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -534,6 +535,12 @@ class LevelStrategy(Strategy):
         spec: SymbolSpec,
         tick: Tick,
         equity: float,
+        # What the book already holds, and the equity high-water mark. Both
+        # optional and both default to "nothing known", so a caller that does
+        # not track them - a test, a replay - sizes exactly as before rather
+        # than differently and silently. See `risk_scale`.
+        positions: Sequence[Any] = (),
+        peak: float = 0.0,
     ) -> Verdict:
         self.seen += 1
         feed = str(payload.get("feed") or "")
@@ -681,6 +688,9 @@ class LevelStrategy(Strategy):
                 settings.risk_fraction
                 * self.trend_scale(features)
                 * self.momentum_scale(features, side)
+                # Crowding, volatility, measured edge and drawdown. All four
+                # off unless set, and none can enlarge - see `scaling.py`.
+                * self.risk_scale(feed, features, positions, equity, peak)
             ),
             stop_distance=abs(entry - stop),
             max_risk_money=settings.max_risk_money,

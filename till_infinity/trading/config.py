@@ -569,6 +569,72 @@ class Settings:
     #: this default is a property of the trade being taken, not of the module.
     max_hold: float = 1_800.0
 
+    #: The shortest a trade may be held, in seconds. Zero is off.
+    #:
+    #: **A floor, because the ceiling was never the problem.** research/
+    #: horizon.md cut 1,400 resolved touches by how long they took and found
+    #: the edge decays with the horizon: +43% inside a minute, +39% to five
+    #: minutes, **+16% from five to thirty**, and zero beyond. The first two
+    #: are a tautology - a touch approached from above that resolves inside a
+    #: minute resolves upward 100.0% of the time, because that is what a
+    #: rejection means - so the only band with a real, tradable edge is
+    #: 300-1,800 seconds.
+    #:
+    #: The desk was holding for a median of **95 seconds on gold** and 99
+    #: across the book. That is not inside the band at all: the trade is closed
+    #: before the horizon its edge was measured over has elapsed. `snap` asks
+    #: for 120 seconds outright.
+    #:
+    #: This does not force a trade to stay open - a stop, a target, a shut
+    #: market or a regime change all still close it. It stops the *clock* from
+    #: closing one early, which is the only closure this can sensibly govern.
+    min_hold: float = 0.0
+
+    #: How much of its size a position keeps for each open position sharing a
+    #: currency leg the same way round. Zero is off, 0.5 halves the second on a
+    #: leg and quarters the third.
+    #:
+    #: `exposure.py` already **caps** a leg - it refuses the fourth dollar
+    #: trade. This **sizes** for it, which is a different thing: capping stops
+    #: the book growing past a limit and sizing stops it arriving there at full
+    #: weight. Long EURUSD, GBPUSD and AUDUSD is one dollar trade in three
+    #: tickets, and they will be right together and wrong together.
+    #:
+    #: Geometric, because the risk of a shared leg compounds. A hedge is not
+    #: penalised: the sign has to match for a leg to count as crowded.
+    crowding_share: float = 0.0
+
+    #: The instrument volatility this book is sized for, in basis points. Zero
+    #: is off. Above it a trade is scaled by the ratio, so twice the volatility
+    #: is half the size.
+    #:
+    #: **Only ever reduces.** A quiet instrument does not get a larger
+    #: position: the stop already widens with volatility so the money at risk
+    #: is constant either way, and what this adds is a cap on how much of the
+    #: portfolio one violent instrument can represent. Sizing *up* into calm is
+    #: how a book discovers that the calm was the beginning of something.
+    volatility_target_bps: float = 0.0
+
+    #: The net edge, in volatility units, that earns full size. Zero is off.
+    #:
+    #: research/paying.md measures this per instrument - accuracy times
+    #: expected push, less the cost to cross - and the spread is wide: gold at
+    #: +0.919v against usdcnh at -4.663v, which currently carry the same risk
+    #: fraction. Linear in the edge and capped, which is the conservative end
+    #: of the Kelly family: full Kelly on an edge estimated from fifty touches
+    #: is a way to be wiped out by an estimation error rather than by a market.
+    edge_full_at: float = 0.0
+
+    #: Drawdown from the equity peak at which size reaches its floor. Zero is
+    #: off.
+    #:
+    #: `daily_loss_limit` is a cliff - full size until it fires, then nothing.
+    #: This is the ramp to it. Square-root rather than linear so the first
+    #: losses barely register: a book that tapers hard on a 2% dip cannot
+    #: recover, because it is trading a quarter size exactly when the edge it
+    #: was sized for is still there.
+    drawdown_halt_at: float = 0.0
+
     #: R in front at which the hold stops applying. Zero keeps the old rule:
     #: the clock closes everything, whatever it is doing.
     #:
@@ -1363,6 +1429,11 @@ class Settings:
             min_edge=_float("TRADING_MIN_EDGE", 0.15),
             loss_cooldown=_float("TRADING_LOSS_COOLDOWN_S", 900.0),
             max_hold=_float("TRADING_MAX_HOLD_S", 1_800.0),
+            min_hold=_float("TRADING_MIN_HOLD_S", 0.0),
+            crowding_share=_float("TRADING_CROWDING_SHARE", 0.0),
+            volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),
+            edge_full_at=_float("TRADING_EDGE_FULL_AT", 0.0),
+            drawdown_halt_at=_float("TRADING_DRAWDOWN_HALT_AT", 0.0),
             hold_extends_at=_float("TRADING_HOLD_EXTENDS_AT", 0.0),
             max_hold_multiple=_float("TRADING_MAX_HOLD_MULTIPLE", 4.0),
             news_before=_float("TRADING_NEWS_BEFORE_S", 600.0),

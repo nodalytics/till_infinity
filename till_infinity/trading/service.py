@@ -243,6 +243,14 @@ class Trader:
         self.specs: dict[str, SymbolSpec] = {}
         self.open: dict[int, Live] = {}
         self.equity = 0.0
+        #: The highest equity this process has seen. Drawdown is measured from
+        #: it, so a book that has given back a third of its month trades
+        #: smaller *before* the daily halt fires rather than at full size until
+        #: it does. Not persisted: a restart starts the peak at the current
+        #: equity, which under-reports an existing drawdown rather than
+        #: inventing one, and understating is the safe direction for a number
+        #: that only ever reduces size.
+        self.peak_equity = 0.0
         #: The account's currency, for anything that prints an amount. A bare
         #: "+12.56" does not say what it is 12.56 of, and the answer is not
         #: guessable from the instrument - a gold trade on a euro-denominated
@@ -362,6 +370,7 @@ class Trader:
         self._warm_reach()
         account = await self.broker.connect()
         self.equity = account.equity or account.balance
+        self.peak_equity = max(self.peak_equity, self.equity)
         self.currency = account.currency or ""
         self.guard.currency = self.currency
         log.info(
@@ -718,7 +727,17 @@ class Trader:
         for engine in self.strategies:
             if not engine.wants(payload):
                 continue
-            verdict = await engine.consider_async(payload, spec=spec, tick=tick, equity=self.equity)
+            verdict = await engine.consider_async(
+                payload,
+                spec=spec,
+                tick=tick,
+                equity=self.equity,
+                # What the book already holds, so a trade sharing a currency
+                # leg with three open ones is sized for that rather than
+                # merely refused at the cap. See `scaling.crowding`.
+                positions=positions,
+                peak=self.peak_equity,
+            )
             if isinstance(verdict, Refusal):
                 self.refused += 1
                 key = f"{engine.name}:{verdict.gate}"
@@ -858,8 +877,14 @@ class Trader:
             if engine.name == taken_by or not engine.wants(payload):
                 continue
             try:
+                # No `positions` here, deliberately. This is the shadow
+                # evaluation - what each *other* strategy would have done with
+                # the same signal - and crowding is a fact about the book
+                # rather than about the strategy. Applying it would make the
+                # comparison depend on what happened to be open, which is the
+                # opposite of what a comparison is for.
                 verdict = await engine.consider_async(
-                    payload, spec=spec, tick=tick, equity=self.equity
+                    payload, spec=spec, tick=tick, equity=self.equity, peak=self.peak_equity
                 )
             except Exception as exc:
                 # A shadow evaluation must never break a real trade.
@@ -2162,6 +2187,14 @@ class Trader:
         closed = False
         for ticket, live in list(self.open.items()):
             limit = live.intent.hold or self.settings.max_hold
+            # Floored, because the ceiling was never the problem. The measured
+            # edge lives at 300-1,800s and the desk was holding for a median of
+            # 99 seconds - closing trades before the horizon their edge was
+            # measured over had elapsed. `snap` asks for 120s outright. See
+            # research/horizon.md and `Settings.min_hold`.
+            floor = self.settings.min_hold
+            if floor > 0:
+                limit = max(limit, floor)
             if limit <= 0:
                 continue
             age = now - live.seen
@@ -2338,6 +2371,12 @@ class Trader:
         has already been dealt with by something better.
         """
         after = self._stale_after(live)
+        # The floor applies here too, or it is defeated: `_expire` would keep a
+        # young trade and this would close it anyway. Stale is the other early
+        # closure and both have to respect the band the edge was measured in.
+        floor = self.settings.min_hold
+        if floor > 0:
+            after = max(after, floor)
         if after <= 0 or age < after or live.scaled:
             return False
         if self._still_building(live):

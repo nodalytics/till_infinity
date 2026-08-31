@@ -20,13 +20,15 @@ from __future__ import annotations
 
 import sqlite3
 import statistics as st
+import time
 from collections import defaultdict
 from datetime import UTC, datetime
 
 PRICES = "file:/app/.data/prices/prices.db?mode=ro"
 
-#: Take one quote in this many. See the query for why.
-SAMPLE = 20
+#: Days of quotes to read. Bounded because the table is millions of rows, and
+#: because a spread from three weeks ago is not evidence about today's cost.
+DAYS = 4
 
 #: The hours each session owns, in UTC. Deliberately coarse: the question is
 #: "is the London number the whole story", not where exactly Tokyo ends.
@@ -68,12 +70,22 @@ def main() -> None:
     #: feed -> hour -> [spread in volatility units]
     seen: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
     # Sampled, not scanned. The quotes table is millions of rows and a full
-    # pass with per-row work in Python does not finish; a median over one row
-    # in twenty is the same number to three decimals and takes seconds.
+    # pass with per-row work in Python does not finish.
+    #
+    # Sampled on `ts` rather than `rowid`, because the table is WITHOUT ROWID
+    # and has none - the obvious version raises "no such column: rowid". The
+    # timestamp is in milliseconds, so this keeps one quote per twenty
+    # milliseconds of clock, which is a fair sample of a feed that quotes at
+    # most a few times a second.
+    # Bounded by time rather than sampled. `CAST(ts) % n` cannot use an index
+    # and reads every row anyway; a `ts >=` bound can. The last DAYS days is
+    # also the right window on its own terms - a spread from three weeks ago is
+    # not evidence about what it costs to trade now.
+    since = (time.time() - DAYS * 86_400) * 1000.0
     for feed, ts, spread in conn.execute(
         "SELECT feed, ts, spread_bps FROM quotes"
-        " WHERE spread_bps IS NOT NULL AND spread_bps > 0 AND rowid % ? = 0",
-        (SAMPLE,),
+        " WHERE ts >= ? AND spread_bps IS NOT NULL AND spread_bps > 0",
+        (since,),
     ):
         own = bps.get(str(feed))
         if not own:

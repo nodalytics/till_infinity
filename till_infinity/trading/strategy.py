@@ -228,6 +228,48 @@ class Strategy(ABC):
         base = self.max_against_vol or self.settings.max_against_vol
         return base * self.horizon(interval) if base > 0 else 0.0
 
+    def risk_scale(
+        self,
+        feed: str,
+        features: dict[str, float],
+        positions: Sequence[object] = (),
+        equity: float = 0.0,
+        peak: float = 0.0,
+    ) -> float:
+        """Every sizing reduction at once, as one multiplier in [0, 1].
+
+        Beside `trend_scale` and `momentum_scale`, which already multiply into
+        the risk fraction - these are four more reasons to be smaller and they
+        compose the same way. See `scaling.py` for what each measures.
+
+        Each is off unless its setting is set, and **none can enlarge a
+        position**. A sizing model that can size up is one that can turn a
+        measurement error into a margin call, and every input here rests on a
+        few hundred observations.
+        """
+        from . import scaling
+
+        settings = self.settings
+        return scaling.combined(
+            scaling.crowding(
+                feed,
+                # `(feed, sign)` per open position. `Position` carries the
+                # broker's symbol rather than the feed, so the caller supplies
+                # what it already knows instead of this reverse-mapping it.
+                [
+                    (str(getattr(p, "feed", "")), p.side.sign)
+                    for p in positions
+                    if getattr(p, "feed", "") and hasattr(p, "side")
+                ],
+                settings.crowding_share,
+            ),
+            scaling.by_volatility(
+                float(features.get("vol_bps") or 0.0), settings.volatility_target_bps
+            ),
+            scaling.by_edge(features.get("net_edge_vol"), settings.edge_full_at),
+            scaling.by_drawdown(peak, equity, settings.drawdown_halt_at),
+        )
+
     def hold_for(self, interval: str, ceiling: float) -> float:
         """Seconds this strategy may hold a trade triggered on `interval`."""
         from ..structures.levels import SECONDS
@@ -371,6 +413,8 @@ class Strategy(ABC):
         spec: SymbolSpec,
         tick: Tick,
         equity: float,
+        positions: Sequence[Any] = (),
+        peak: float = 0.0,
     ) -> Verdict:
         """The async door, for a strategy that genuinely blocks on the network.
 
@@ -379,7 +423,9 @@ class Strategy(ABC):
         overrides it - making every strategy async would be a lie about what
         the others cost.
         """
-        return self.consider(payload, spec=spec, tick=tick, equity=equity)
+        return self.consider(
+            payload, spec=spec, tick=tick, equity=equity, positions=positions, peak=peak
+        )
 
     @abstractmethod
     def consider(
@@ -389,6 +435,12 @@ class Strategy(ABC):
         spec: SymbolSpec,
         tick: Tick,
         equity: float,
+        # What the book already holds, and the equity high-water mark. Both
+        # optional and both default to "nothing known", so a caller that does
+        # not track them - a test, a replay - sizes exactly as before rather
+        # than differently and silently. See `risk_scale`.
+        positions: Sequence[Any] = (),
+        peak: float = 0.0,
     ) -> Verdict:
         """A trade, or the reason there is not one. Never raises for a bad signal."""
 
