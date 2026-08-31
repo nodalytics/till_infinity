@@ -207,8 +207,27 @@ method exists because `FadeToValue` once overrode `consider` entirely and ran
 none of the gates, an exemption invisible from the configuration while the
 exempt strategy took most of the trades.
 
-**0.42 is the measured top fifth**, which breaks 43.2% of the time against the
-bottom fifth's 16.9%.
+**0.42 was the measured top fifth of *touches* - and that is the wrong
+population.** A published level call has already passed the actionable filter,
+so the estimates that reach a strategy are far tighter than the estimates over
+all touches:
+
+    137 published estimates
+    p10 0.146   median 0.209   p75 0.250   p90 0.370   max 0.475
+
+    a 0.35 ceiling refuses 13.1%
+    a 0.42 ceiling refuses  4.4%
+    a 0.50 ceiling refuses  0.0%
+
+At 0.42 the gate would decline one call in twenty-three and be very nearly
+inert - which is the failure this repository has found five times in two days,
+arriving here as a threshold calibrated against the wrong denominator rather
+than as a setting nobody read.
+
+**Live at 0.35**, which declines about one call in eight - roughly the top fifth
+of what actually reaches a strategy. The number to watch is not the ceiling but
+what it refuses: `break_risk` now appears as a gate in the journal, and whether
+those declined calls would have lost is answerable in a few hundred of them.
 
 **Refusing rather than inverting, and that was tested.** Flipping the trade in
 that fifth turns 56.8% right into 43.2% right - the call is still better than a

@@ -54,7 +54,29 @@ checked whether a stated 70% happens seventy times in a hundred - which is what
 [calibration.md](../research/planned/calibration.md) was written for and has
 never been measured on this system.
 
-### 4. Add deceleration to the estimate
+### 4. The range around a level - `chop`, and why it is parked
+
+Price does not only hold or break. It can settle into a **range around** the
+level, oscillating either side and resolving neither way, and nothing here
+models that: `approach_vol`, `depth_vol` and the momentum ensemble all describe
+the *arrival* rather than what follows.
+
+The code names it - `Outcome.CHOP` - and every model excludes it, correctly,
+since it is neither a hold nor a break. What nothing does is predict it.
+
+**Parked on the sample, not on the idea.** At five to thirty minutes chop is
+2.5% of resolutions - 280 of 11,272 - which cannot support a third class. For
+comparison `trap` is 22.6%, and a trap is the same shape of event ("went
+through and came back") already handled on the right side of the hold/break
+line.
+
+Revisit when there are a few thousand chops, or if a cut of the record makes
+them commoner - a slower timeframe, a quieter session, a wider zone. The
+question to ask then is not "can we predict chop" but **"does a level about to
+chop look different on arrival"**, which is the same shape as the break
+question and would use the same two features.
+
+### 5. Add deceleration to the estimate
 
 `slowing` - the speed of the bars before arrival against the bars before those
 - separates at AUC 0.5237 and is **orthogonal to `approach_vol`**, correlation
