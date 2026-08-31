@@ -120,6 +120,43 @@ Three readings, kept separate because they are different claims:
   standard error of zero. What it is emphatically not is the +25% the pooled
   figure showed.
 
+### Re-read an hour later, on roughly twice the sample
+
+| resolved in | n | knn | attention | up_rate | linear | base |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0–60s | 56 | +42.07% | +42.07% | +28.04% | +28.04% | 52.7% |
+| 60–300s | 664 | +38.87% | +38.86% | +35.80% | +33.25% | 52.2% |
+| 300–1,800s | 484 | +16.44% | +16.83% | +10.96% | +10.54% | 50.7% |
+| **beyond 1,800s** | **196** | **−8.08%** | **−8.08%** | **−5.54%** | **−7.62%** | 61.8% |
+
+The shape holds and sharpens: +42 → +39 → +16 → below zero, now over about
+1,400 observations.
+
+**The slow bucket looks worse and mostly is not.** Its base rate moved from
+59.1% to 61.8%, and edge is accuracy minus base rate, so a sample becoming more
+imbalanced pushes edge down mechanically. Accuracy itself only fell from 57.1%
+to 53.7%. At n=196 and p≈0.54 one standard error is about 3.6 points, so −8.08%
+is roughly two of them from zero - leaning harder than the first reading, still
+short of "reliably wrong". **No demonstrated edge** remains the honest phrasing.
+
+**kNN and attention are identical to two decimals in all four buckets again**,
+which is the fifth independent confirmation that the learned distance finds
+nothing.
+
+### The bucket worth chasing
+
+`300–1,800s` is the one number here that is unambiguously real: +16.44% on 484
+observations is about 4.5 standard errors. It sits between the tautology and the
+hold - too slow to be the definition of a rejection, too fast to be the horizon
+`max_hold` trades.
+
+That makes it the interesting place to look, and it frames the choice in front
+of the desk more usefully than "shorten the hold or give up": there is a
+measured edge at five to thirty minutes, and the question is whether it
+survives the spread. See [catalogue.md](catalogue.md) - the cost to cross runs
+from 0.170v on a synthetic to 2.267v on FX, and an edge that cannot pay 2v is
+not an edge on those instruments.
+
 ### What it means for the desk
 
 **There is no demonstrated directional edge at the horizon this system
