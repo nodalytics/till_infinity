@@ -29,6 +29,12 @@ research/force.md and research/horizon.md):
 Fitted weights put `approach_vol` at +0.255 and `depth_vol` at -0.779, which is
 the model saying the same thing the quintiles do.
 
+* **`slowing`** - the speed of the last few bars against the few before them,
+  AUC 0.5237. Weaker than either, and **nearly orthogonal to arrival speed**:
+  correlation +0.008 over 4,078 touches. That is the reason it is here. A weak
+  separator uncorrelated with a strong one adds information; a second strong
+  one that agrees restates it.
+
 `run_vol` - how far the leg had already travelled - does nothing at all, AUC
 0.5000. Speed on arrival matters and distance already covered does not, which
 is worth stating because they are the same intuition and only half survives.
@@ -62,7 +68,7 @@ from .online import Logistic
 from .state import Restorable
 
 #: The two that separate, in the order the fitted weights are reported.
-NAMES: tuple[str, ...] = ("approach_vol", "depth_vol")
+NAMES: tuple[str, ...] = ("approach_vol", "depth_vol", "slowing")
 
 #: A **trap is not a break.** Price gets through, traps whoever followed it,
 #: and comes back - so the level ultimately held and the push lands in the hold

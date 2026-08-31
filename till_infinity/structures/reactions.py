@@ -297,6 +297,21 @@ class Features(Restorable):
     #: Point in time by construction: `features_for` runs before
     #: `Tracker.begin`, so this touch is not yet in its own denominator.
     up_rate: float = 0.5
+    #: Speed over the last few bars against the speed of the few before them.
+    #: Below one means price was **decelerating** into this level; above one
+    #: that it was still accelerating.
+    #:
+    #: The second frame of a sequence whose first frame is `approach_vol`, and
+    #: it is worth carrying because it is nearly **orthogonal** to it -
+    #: correlation +0.008 over 4,078 resolved touches. On its own it separates
+    #: hold from break at AUC 0.5237, weaker than arrival speed's 0.5429 and
+    #: adding where a second correlated feature would not. See
+    #: research/force.md.
+    #:
+    #: Zero means no reading rather than "not decelerating": there was not
+    #: enough series, or the earlier leg did not move and a ratio against
+    #: nothing is not a deceleration.
+    slowing: float = 0.0
 
     def distance(self, other: Features) -> float:
         """Similarity for kNN. Side is a hard constraint, not a dimension.
@@ -335,6 +350,7 @@ class Features(Restorable):
             "side": str(self.side),
             "approach_vol": round(self.approach_vol, 4),
             "depth_vol": round(self.depth_vol, 4),
+            "slowing": round(self.slowing, 4),
             "strength": round(self.strength, 4),
             "run_vol": round(self.run_vol, 4),
             "experience": round(self.experience, 4),
@@ -1328,6 +1344,7 @@ def features_for(
     *,
     approach_vol: float = 0.0,
     run_vol: float = 0.0,
+    slowing: float = 0.0,
     when: float | None = None,
 ) -> Features:
     """Describe one touch in the scale-free terms kNN compares."""
@@ -1343,6 +1360,7 @@ def features_for(
         backcheck=1.0 if level.is_backcheck(side, when) else 0.0,
         regime=vol.regime,
         up_rate=up_rate_of(level.stats(side)),
+        slowing=slowing,
     )
 
 

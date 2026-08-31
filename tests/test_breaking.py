@@ -16,9 +16,10 @@ from till_infinity.structures.breaking import BROKE, HELD, MIN_SEEN, NAMES, Brea
 
 
 class Touch:
-    def __init__(self, approach_vol=0.0, depth_vol=0.0):
+    def __init__(self, approach_vol=0.0, depth_vol=0.0, slowing=0.0):
         self.approach_vol = approach_vol
         self.depth_vol = depth_vol
+        self.slowing = slowing
 
 
 def teach(model, n=400, seed=3):
@@ -34,18 +35,21 @@ def teach(model, n=400, seed=3):
 # ------------------------------------------------------------- what it reads
 
 
-def test_it_reads_the_two_that_separate():
-    assert NAMES == ("approach_vol", "depth_vol")
+def test_it_reads_the_three_that_separate():
+    """`slowing` earns its place by being nearly orthogonal to `approach_vol` -
+    correlation +0.008 - rather than by being strong. A weak separator that
+    disagrees adds; a strong one that agrees restates."""
+    assert NAMES == ("approach_vol", "depth_vol", "slowing")
 
 
 def test_it_takes_a_plain_dictionary_too():
     """A signal carries its features as a dict, not as a Features object."""
-    assert Breaks.inputs({"approach_vol": 1.5, "depth_vol": 0.5}) == [1.5, 0.5]
-    assert Breaks.inputs(Touch(approach_vol=1.5, depth_vol=0.5)) == [1.5, 0.5]
+    assert Breaks.inputs({"approach_vol": 1.5, "depth_vol": 0.5, "slowing": 0.8}) == [1.5, 0.5, 0.8]
+    assert Breaks.inputs(Touch(approach_vol=1.5, depth_vol=0.5, slowing=0.8)) == [1.5, 0.5, 0.8]
 
 
 def test_a_missing_feature_reads_as_zero_rather_than_shortening_the_vector():
-    assert Breaks.inputs({}) == [0.0, 0.0]
+    assert Breaks.inputs({}) == [0.0, 0.0, 0.0]
 
 
 # --------------------------------------------------------- what it will say
@@ -275,3 +279,27 @@ def test_every_strategy_runs_it_rather_than_one():
     from till_infinity.trading import scalper
 
     assert "max_break_risk" in inspect.getsource(scalper.LevelStrategy.quality)
+
+
+def test_the_outcome_records_which_timeframes_agreed():
+    """It was on the signal and on the touch and not on the outcome, so all
+    12,504 resolutions recorded zero timeframes and "does agreement across
+    timeframes predict anything" could not be asked of the only record that
+    can answer it."""
+    import inspect
+
+    from till_infinity.structures import service
+
+    source = inspect.getsource(service.Watcher.record_outcomes)
+    assert '"confluence": touch.confluence' in source
+    assert '"confluence_n"' in source
+
+
+def test_deceleration_needs_no_new_state():
+    """It was parked for a day on a guess about the plumbing. The series window
+    already holds five hundred closes, so this reads six where `_speed` reads
+    two."""
+    from till_infinity.structures.engine import Engine
+
+    engine = Engine()
+    assert engine._slowing("nothing", "5m") == 0.0

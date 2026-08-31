@@ -1601,7 +1601,15 @@ class Engine:
                 continue
             side = self._approach(level, price)
             features = reactions.features_for(
-                level, side, price, vol, approach_vol=self._speed(feed, interval, vol), when=when
+                level,
+                side,
+                price,
+                vol,
+                approach_vol=self._speed(feed, interval, vol),
+                # Whether price is easing off into the level or still coming.
+                # Orthogonal to the speed above it - see `_slowing`.
+                slowing=self._slowing(feed, interval),
+                when=when,
             )
             touch = self.tracker.begin(level, price, features, when)
             inference = reactions.infer(
@@ -1722,6 +1730,37 @@ class Engine:
         if not previous:
             return 0.0
         return abs((latest - previous) / previous * 10_000) / vol.bps
+
+    def _slowing(self, feed: str, interval: str, near: int = 3, far: int = 3) -> float:
+        """Speed over the last `near` bars, over the speed of the `far` before.
+
+        Below one means price is **decelerating** into wherever it is going;
+        above one that it is still accelerating.
+
+        A different quantity from `_speed`, and measurably so: over 4,078
+        resolved touches the correlation between them is **+0.008**, and
+        deceleration separates hold from break at AUC 0.5237 on its own. A weak
+        separator uncorrelated with a strong one adds where a second strong one
+        would not - see research/force.md.
+
+        Needs no new state. The series window already holds the closes; this
+        reads six of them instead of two, which is the whole reason it was
+        worth building rather than the reason it was not.
+
+        Returns 0.0 when there is not enough series, or when the earlier leg did
+        not move - a ratio against nothing is not a deceleration, and zero is
+        read as "no reading" by everything downstream.
+        """
+        series = self._series.get((feed, interval))
+        if series is None or len(series.closes) < near + far + 1:
+            return 0.0
+        closes = list(series.closes)[-(near + far + 1) :]
+        early, late = closes[: far + 1], closes[far:]
+        before = abs(early[-1] - early[0]) / max(len(early) - 1, 1)
+        after = abs(late[-1] - late[0]) / max(len(late) - 1, 1)
+        if before <= 0:
+            return 0.0
+        return after / before
 
     # ---------------------------------------------------------------- state
 

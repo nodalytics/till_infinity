@@ -178,11 +178,13 @@ new information rather than a restatement. `approach_vol` and `slowing` are
 measuring different things: how fast price is going, and whether it is easing
 off.
 
-It is **not** in `breaking.py`, and the reason is practical rather than
-principled: it needs the speed of the *preceding* bars, which nothing currently
-carries at the moment a touch opens. Adding it means the engine tracking a
-short speed history per series - a genuine change, justified by an orthogonal
-+0.02 of AUC, which is worth doing and worth doing deliberately.
+**Now in `breaking.py`**, and it needed no new state at all. The obstacle was
+assumed rather than checked: the engine's series window already holds five
+hundred closes, so `_slowing` reads six of them where `_speed` reads two. The
+"genuine change" this was deferred for was a wider slice of a list.
+
+That is worth recording as its own lesson. A feature was parked for a day on a
+guess about the plumbing, and the guess was wrong.
 
 ## Applied, and deciding nothing
 
