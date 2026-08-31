@@ -1,177 +1,117 @@
-"""When risk exceeds the expected push, is the other side the better trade?
+"""Would inverting the trade on a high break estimate have helped?
 
-The proposal: if a call's `risk_vol` is larger than its `expected_push_vol`,
-the trade has negative expectancy as modelled - so take the opposite side.
+`inverse` inverts every call unconditionally - a control, expected to lose,
+built to separate "the direction is wrong" from "the execution loses it".
 
-**The arithmetic does not carry the argument.** A bad expectancy in one
-direction is not a good one in the other; the model's push estimate belongs to
-the direction it named, and flipping gives an unknown expectation rather than
-the mirror of a known bad one. The premise only holds if the model is
-*anti-predictive* specifically on this subset, which is a fact about the data.
+The informed version is to invert **selectively**: a level call says price goes
+up from support, and it is wrong exactly when the level gives way. So
+`break_probability` is a principled trigger for flipping a trade rather than
+refusing it - and unlike a refusal, an inverted trade still produces an
+outcome, which is evidence.
 
-So this measures it. For every resolved touch, both trades are scored:
-
-* **with** the call - favourable movement is the realised push, adverse is the
-  excursion,
-* **against** it - the mirror, favourable is the excursion and adverse is the
-  push.
-
-Bucketed by `risk_vol / expected_push_vol`, the ratio the proposal keys on.
-
-**The mirror is an approximation and its limit should be stated.** It ignores
-ordering: a touch that ran 2v against before going 3v in favour scores the
-same here as one that did the reverse, and the two are different trades - one
-is stopped, the other is not. It is the standard way to score a hypothetical
-opposite side and it is optimistic about both directions equally, which is
-what keeps the *comparison* fair even though neither number is a P&L.
-
-Usage: python -m research.harness.inverting [journal.db]
+Testable before anything is built. Fit the break model walk-forward, bucket the
+touches by what it said, and ask what actually happened in each bucket.
 """
 
+from __future__ import annotations
+
 import json
+import math
 import sqlite3
-import sys
+import statistics as st
+
+JOURNAL = "file:/app/.data/journal/journal.db?mode=ro"
+LOW, HIGH = 300.0, 1800.0
+HELD, BROKE = ("reject", "backcheck", "trap"), ("break",)
+FEATURES = ("approach_vol", "depth_vol")
 
 
-def load(db):
-    """Outcomes joined to the signals that produced them.
-
-    `risk_vol` and `expected_push_vol` live on the signal, the realised push
-    and excursion on the outcome, so the ratio the proposal keys on and the
-    result it has to be judged against are in different records. The journal's
-    parent link is the join - every outcome names the observation it came from.
-    """
-    con = sqlite3.connect(db)
-    signals = {}
-    q = "select id,context from entries where actor='structures' and kind='observation'"
-    for entry_id, ctx in con.execute(q):
-        d = json.loads(ctx or "{}")
-        risk, expected = d.get("risk_vol"), d.get("expected_push_vol")
-        if risk is None or not expected:
-            continue
-        signals[entry_id] = abs(float(risk)) / abs(float(expected))
-
+def rows() -> list[dict]:
+    conn = sqlite3.connect(JOURNAL, uri=True)
     out = []
-    q = "select parent,context from entries where actor='structures' and kind='outcome'"
-    for parent, ctx in con.execute(q):
-        ratio = signals.get(parent)
-        if ratio is None:
+    for (blob,) in conn.execute(
+        "SELECT context FROM entries WHERE actor='structures' AND kind='outcome'"
+        " ORDER BY time ASC LIMIT 400000"
+    ):
+        try:
+            d = json.loads(blob or "{}")
+        except (ValueError, TypeError):
             continue
-        d = json.loads(ctx or "{}")
-        push, excursion = d.get("push_vol"), d.get("excursion_vol")
-        if push is None or excursion is None:
+        outcome, secs = str(d.get("outcome") or ""), d.get("seconds")
+        if outcome not in HELD + BROKE or secs is None:
             continue
-        out.append(
-            {
-                "push": abs(float(push)),
-                "excursion": abs(float(excursion)),
-                "ratio": ratio,
-            }
-        )
+        try:
+            secs, push = float(secs), abs(float(d.get("push_vol") or 0.0))
+        except (TypeError, ValueError):
+            continue
+        if not (LOW <= secs < HIGH):
+            continue
+        got = {"broke": outcome in BROKE, "push": push}
+        for n in FEATURES:
+            try:
+                got[n] = float(d.get(n) or 0.0)
+            except (TypeError, ValueError):
+                got[n] = 0.0
+        out.append(got)
     return out
 
 
-def r_of(good, bad, stop=0.5, target=0.75):
-    """R for a trade whose favourable move is `good` and adverse is `bad`."""
-    if bad >= stop:
-        return -1.0
-    return (target / stop) if good >= target else 0.0
+def walk(seen: list[dict], rate: float = 0.05) -> list[tuple[float, dict]]:
+    """Predict-then-learn over the stream, oldest first. No look-ahead."""
+    mean = dict.fromkeys(FEATURES, 0.0)
+    m2 = dict.fromkeys(FEATURES, 0.0)
+    w = dict.fromkeys(FEATURES, 0.0)
+    bias, n = 0.0, 0.0
+    out = []
+    for r in seen:
+        n += 1.0
+        z = {}
+        for f in FEATURES:
+            delta = r[f] - mean[f]
+            mean[f] += delta / n
+            m2[f] += delta * (r[f] - mean[f])
+            sd = math.sqrt(m2[f] / n) if n > 1 else 0.0
+            z[f] = (r[f] - mean[f]) / sd if sd > 1e-9 else 0.0
+        raw = bias + sum(w[f] * z[f] for f in FEATURES)
+        p = 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, raw))))
+        if n > 500:  # warm
+            out.append((p, r))
+        err = (1.0 if r["broke"] else 0.0) - p
+        for f in FEATURES:
+            w[f] += rate * err * z[f]
+        bias += rate * err
+    return out
 
 
-def main():
-    db = sys.argv[1] if len(sys.argv) > 1 else ".data/journal/journal.db"
-    rows = load(db)
-    print(f"{len(rows):,} resolutions carrying both risk and expected push\n")
-    if len(rows) < 1000:
-        print("not enough to say anything")
+def main() -> None:
+    seen = rows()
+    scored = walk(seen)
+    print(f"{len(seen)} touches, {len(scored)} scored after warm-up\n")
+    if len(scored) < 500:
+        print("too few")
         return
 
-    over = [r for r in rows if r["ratio"] > 1.0]
-    under = [r for r in rows if r["ratio"] <= 1.0]
-    print(
-        f"risk exceeds expected push on {len(over):,} of {len(rows):,} "
-        f"({len(over) / len(rows):.0%})\n"
-    )
+    scored.sort(key=lambda kv: kv[0])
+    step = len(scored) // 5
+    print(f"{'break estimate':16s} {'n':>6s} {'actually broke':>15s} {'E|push|':>9s}")
+    for i in range(5):
+        cut = scored[i * step : (i + 1) * step] if i < 4 else scored[i * step :]
+        lo, hi = cut[0][0], cut[-1][0]
+        broke = sum(1 for _p, r in cut if r["broke"]) / len(cut)
+        push = st.median(r["push"] for _p, r in cut)
+        print(f"{lo:.2f}-{hi:.2f}      {len(cut):6d} {broke:15.1%} {push:9.2f}")
 
-    print(f"{'subset':>26s} {'n':>8s} {'R with':>8s} {'R against':>10s} {'better':>8s}")
-    print("-" * 65)
-    for name, group in (
-        ("risk > expected push", over),
-        ("risk <= expected push", under),
-        ("everything", rows),
-    ):
-        if not group:
-            continue
-        w = sum(r_of(r["push"], r["excursion"]) for r in group) / len(group)
-        a = sum(r_of(r["excursion"], r["push"]) for r in group) / len(group)
-        print(
-            f"{name:>26s} {len(group):>8,} {w:>8.3f} {a:>10.3f} "
-            f"{'against' if a > w else 'with':>8s}"
-        )
-
-    print("\npolicies, scored over the same population")
-    print("total R is what matters here - a policy that trades less can win on")
-    print("the mean and still make less money.\n")
-    print(f"{'policy':>40s} {'trades':>8s} {'mean R':>8s} {'total R':>9s}")
-    print("-" * 69)
-
-    band = 0.1  # what counts as "about equal"
-
-    def score(rows, choose):
-        """`choose` returns 'with', 'against' or 'skip' for a call."""
-        taken = []
-        for r in rows:
-            side = choose(r)
-            if side == "with":
-                taken.append(r_of(r["push"], r["excursion"]))
-            elif side == "against":
-                taken.append(r_of(r["excursion"], r["push"]))
-        return taken
-
-    policies = [
-        ("always with the model", lambda _r: "with"),
-        (
-            "the three-way rule as proposed",
-            lambda r: (
-                "skip"
-                if abs(r["ratio"] - 1.0) <= band
-                else ("with" if r["ratio"] < 1.0 else "against")
-            ),
-        ),
-        (
-            "with, but skip when risk > push",
-            lambda r: "with" if r["ratio"] < 1.0 else "skip",
-        ),
-        (
-            "with, skip only the bad tail (RR<0.55)",
-            lambda r: "with" if r["ratio"] < 1.8 else "skip",
-        ),
-        (
-            "with, skip the ambiguous band only",
-            lambda r: "skip" if abs(r["ratio"] - 1.0) <= band else "with",
-        ),
-    ]
-    for name, choose in policies:
-        taken = score(rows, choose)
-        if not taken:
-            continue
-        print(f"{name:>40s} {len(taken):>8,} {sum(taken) / len(taken):>8.3f} {sum(taken):>9,.0f}")
-
-    print("\nby how far risk exceeds the push")
-    ordered = sorted(rows, key=lambda r: r["ratio"])
-    size = len(ordered) // 8
-    print(f"{'ratio':>16s} {'n':>8s} {'R with':>8s} {'R against':>10s}")
-    print("-" * 46)
-    for i in range(8):
-        chunk = ordered[i * size : (i + 1) * size] if i < 7 else ordered[7 * size :]
-        if not chunk:
-            continue
-        w = sum(r_of(r["push"], r["excursion"]) for r in chunk) / len(chunk)
-        a = sum(r_of(r["excursion"], r["push"]) for r in chunk) / len(chunk)
-        print(
-            f"{chunk[0]['ratio']:>7.2f}-{chunk[-1]['ratio']:<8.2f} "
-            f"{len(chunk):>8,} {w:>8.3f} {a:>10.3f}"
-        )
+    top = scored[4 * step :]
+    bottom = scored[:step]
+    tb = sum(1 for _p, r in top if r["broke"]) / len(top)
+    bb = sum(1 for _p, r in bottom if r["broke"]) / len(bottom)
+    print(f"\ntop fifth breaks {tb:.1%}, bottom fifth {bb:.1%}, spread {tb - bb:+.1%}")
+    print()
+    print("what inverting in the top fifth would be worth, as directional accuracy:")
+    print(f"   taking the level's call there : {1 - tb:.1%} right")
+    print(f"   inverting it there            : {tb:.1%} right")
+    base = sum(1 for _p, r in scored if r["broke"]) / len(scored)
+    print(f"   (the level's call overall     : {1 - base:.1%} right)")
 
 
 if __name__ == "__main__":

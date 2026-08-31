@@ -26,7 +26,7 @@ from bisect import bisect_left
 JOURNAL = "file:/app/.data/journal/journal.db?mode=ro"
 PRICES = "file:/app/.data/prices/prices.db?mode=ro"
 LOW, HIGH = 300.0, 1800.0
-HELD, BROKE = ("reject", "backcheck"), ("break", "trap")
+HELD, BROKE = ("reject", "backcheck", "trap"), ("break",)
 
 #: Bars either side of the split. Short, because a level is approached over a
 #: few bars and averaging over twenty would measure the trend instead.

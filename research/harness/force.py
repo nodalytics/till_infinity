@@ -27,8 +27,7 @@ import statistics as st
 JOURNAL = "file:/app/.data/journal/journal.db?mode=ro"
 LOW, HIGH = 300.0, 1800.0
 
-HELD = ("reject", "backcheck")
-BROKE = ("break", "trap")
+HELD, BROKE = ("reject", "backcheck", "trap"), ("break",)
 
 
 def rows() -> list[dict]:

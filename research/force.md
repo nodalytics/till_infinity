@@ -20,25 +20,61 @@ Harness: [`harness/force.py`](harness/force.py), over 10,871 resolved touches in
 that band, 55.6% of them breaks. Read off `outcome` - reject, backcheck, break,
 trap - which labels this directly rather than inferring it from the push.
 
+
+## Correction, 2026-08-31: a trap is not a break
+
+Every number first published in this document was computed with `trap` grouped
+with `break`. It is not one. A trap is a **failed** break - price gets through,
+traps whoever followed it, and comes back - so the level ultimately held and the
+final push lands in the *hold* direction. Measured over 10,977 touches, with no
+ambiguity at all:
+
+| side | outcome | pushed up |
+| --- | --- | --- |
+| above | reject | 100.0% |
+| above | **trap** | **100.0%** |
+| above | break | 0.0% |
+| below | reject | 0.0% |
+| below | **trap** | **0.0%** |
+| below | break | 100.0% |
+
+A trap pushes exactly like a reject. Grouping it with breaks inflated the break
+rate from **32.3% to 55.6%**, and produced two conclusions that were wrong:
+
+* that the level's directional call is right **44.7%** of the time - below a
+  coin. It is right **67.6%**.
+* that inverting the trade in the highest break-risk fifth would turn 29.5%
+  into 70.5%. It would turn **56.8% into 43.2%** - inverting loses.
+
+**There is no sign error.** `outcome` and `push_vol` agree perfectly; the
+inconsistency was in this document's own labelling, and it was found by chasing
+a contradiction between two of its own measurements - [similarity.md](similarity.md)
+had side-above touches pushing up 68.9% of the time, which implies a 31% break
+rate, against this document's 55.6%. Both could not be true.
+
+The corrected figures are below. The direction of every finding survives; the
+sizes are smaller.
+
+
 ## Break rate across each feature, weakest fifth to strongest
 
 | feature | 1st | 2nd | 3rd | 4th | 5th | spread | AUC |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **approach_vol** | 49.8% | 51.1% | 54.6% | 58.6% | **63.8%** | **+14.0%** | 0.5600 |
-| **depth_vol** | 64.6% | 60.6% | 58.6% | 55.8% | **38.3%** | **−26.3%** | **0.4010** |
-| strength | 51.5% | 53.9% | 55.6% | 54.1% | 62.9% | +11.3% | 0.5404 |
-| experience | 51.2% | 54.7% | 55.2% | 55.9% | 60.8% | +9.6% | 0.5368 |
+| **approach_vol** | 27.7% | 29.4% | 31.1% | 33.9% | **37.9%** | **+10.2%** | 0.5429 |
+| **depth_vol** | 41.6% | 36.7% | 33.8% | 30.1% | **19.7%** | **−21.9%** | **0.4180** |
+| strength | 29.6% | 31.0% | 32.3% | 30.5% | 38.2% | +8.6% | 0.5325 |
+| experience | 29.8% | 31.3% | 32.0% | 33.8% | 34.6% | +4.8% | 0.5230 |
 | run_vol | 55.0% | 50.7% | 52.2% | 59.0% | 61.1% | +6.1% | 0.5000 |
-| up_rate | | | | | | | 0.4892 |
+| up_rate | | | | | | | 0.4928 |
 
 At n=10,871 the standard error of an AUC is about 0.006, so 0.560 is eleven
 standard errors from nothing and 0.401 is eighteen. Both are real.
 
 ## The claim holds
 
-**Arrival speed predicts breaks, monotonically.** Fast arrivals break 59.8% of
-the time against 51.4% for slow ones, and the quintile ladder rises without a
-kink: 49.8, 51.1, 54.6, 58.6, 63.8. AUC 0.5600.
+**Arrival speed predicts breaks, monotonically.** Fast arrivals break 35.1% of
+the time against 29.5% for slow ones, and the quintile ladder rises without a
+kink: 27.7, 29.4, 31.1, 33.9, 37.9. AUC 0.5429.
 
 That is a modest effect and a real one, and it is the first thing in this
 repository to separate hold from break at all. It is also, notably, a different
@@ -54,8 +90,8 @@ are the same intuition and only half of it survives.
 ## And something larger, running the other way
 
 **`depth_vol` separates harder than anything else here, inverted.** A touch that
-barely enters the zone breaks 64.6% of the time; one that pushes deep into it
-breaks 38.3%. AUC 0.4010, which read the right way round is 0.599 - stronger
+barely enters the zone breaks 41.6% of the time; one that pushes deep into it
+breaks 19.7%. AUC 0.4180, which read the right way round is 0.582 - stronger
 than arrival speed.
 
 The reading that fits: a touch that pushes deep into a level and still resolves
@@ -68,7 +104,7 @@ single separator found so far, and it was sitting in the feature set unused.
 
 ## What does not predict a break
 
-**`up_rate`, at AUC 0.4892 - nothing.** The level's own record of which way its
+**`up_rate`, at AUC 0.4928 - nothing.** The level's own record of which way its
 touches went is the single strongest feature for *direction*
 ([learning.md](learning.md) has it at weight +2.29, ten times the next) and it
 is worthless for *hold versus break*.

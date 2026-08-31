@@ -24,7 +24,7 @@ from collections import defaultdict
 
 JOURNAL = "file:/app/.data/journal/journal.db?mode=ro"
 LOW, HIGH = 300.0, 1800.0
-HELD, BROKE = ("reject", "backcheck"), ("break", "trap")
+HELD, BROKE = ("reject", "backcheck", "trap"), ("break",)
 FEATURES = ("approach_vol", "depth_vol")
 
 
