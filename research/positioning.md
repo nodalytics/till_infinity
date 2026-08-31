@@ -87,7 +87,56 @@ were derived down different paths - the inverted pairs through `INVERTED` and
 the dollar index straight through. That coherence is the evidence the table is
 right, and it is why it is recorded here rather than asserted in a docstring.
 
-## What it is worth, which is unmeasured
+## Does it lag price? Measured, and the answer splits
+
+The worry that decides whether this is worth carrying: speculative positioning
+is famously trend-following, so a fund's net might be a *description* of the
+move that already happened rather than a claim about the next one.
+
+Harness: [`harness/cotlag.py`](harness/cotlag.py), over 84 weekly reports from
+the CFTC's own history files, against the broker's daily closes - so the price
+series correlated is the one the desk would trade, not the futures contract.
+
+| feed | weeks | lag corr | lead corr |
+| --- | --- | --- | --- |
+| eurusd | 84 | +0.026 | −0.046 |
+| gbpusd | 84 | −0.144 | −0.046 |
+| **usdjpy** | 84 | **+0.397** | +0.033 |
+| audusd | 84 | −0.009 | +0.042 |
+| usdcad | 84 | +0.176 | −0.195 |
+| usdchf | 84 | −0.045 | +0.117 |
+| nzdusd | 84 | −0.043 | +0.075 |
+| **spx500** | 84 | **−0.433** | +0.177 |
+| **us100** | 84 | **−0.508** | +0.155 |
+| **btc** | 84 | **−0.464** | +0.083 |
+| | | mean **−0.105** | mean **+0.040** |
+
+At 84 observations the standard error of a correlation is about 0.11, so ±0.22
+is the two-sigma line. Three findings, and only one of them is the expected
+one.
+
+**FX positioning does not clearly follow price.** Six of the seven pairs sit
+inside the noise band and the signs are mixed. That contradicts the standard
+"funds chase trends" story at weekly frequency, and it is mildly good news: the
+number is not merely a restatement of the last week's return. `usdjpy` at +0.397
+is the exception and is significant.
+
+**The indices and bitcoin move hard *against* the prior week - −0.43 to −0.51,
+all significant.** When price rose, leveraged funds cut their net long or added
+to a short. The natural reading is not contrarian conviction but **hedging**:
+leveraged funds short index futures against long cash equity, so a rally
+mechanically enlarges the hedge.
+
+That has a direct consequence for anything that reads this. **`spx500` at −15.4%
+net short is not a bearish opinion**, and a consumer treating the *level* of
+index positioning as directional would be reading a hedge book as a view. FX is
+the part of this data where the net plausibly means what it looks like.
+
+**Nothing leads.** Every lead correlation is inside the noise band, the largest
+is −0.195, and the mean is +0.040. On 84 weeks there is no predictive content
+at the weekly horizon.
+
+## What it is worth, which is now partly measured
 
 Tuesday's positions, published Friday. **The freshest reading is always three
 days old and it changes once a week.**
@@ -106,7 +155,18 @@ something:
   number is badly matched to a thirty-minute hold and well matched to the
   timescale at which this system has never had any evidence at all.
 
-Collected now because collection is nearly free and cannot be done
-retroactively. Nothing consumes it yet, and it should not until there is enough
-of it to say something - which is the mistake `news/fred.py` made in the other
-direction, collecting 2,174 rows that nothing read for a month.
+Collected now because collection is nearly free. Nothing consumes it yet and
+nothing should: the lead correlations above say there is no weekly predictive
+content to consume, so wiring it into a signal would be adding a feature that
+has already been measured to nothing.
+
+What it is good for, on this evidence, is **interpretation rather than
+prediction** - and one interpretive fact is worth having: index positioning is
+a hedge book and must not be read as a view. That is a caution against a
+mistake somebody would otherwise make, which is a smaller thing than a signal
+and is not nothing.
+
+The history is the useful part and it is already public: 84 weeks were
+downloaded and analysed in one go from the CFTC's own archive, so the case for
+collecting weekly is only to have it for whatever is asked later, not to
+accumulate towards a threshold.
