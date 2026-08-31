@@ -47,6 +47,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from .attention import Attention, Embedding
 from .online import Logistic
@@ -152,6 +153,18 @@ class Bench(Restorable):
     """
 
     bands: dict[int, Band] = field(default_factory=dict)
+    #: Scores cut by how long the touch **actually took**, which is a different
+    #: question from the band it was trained in and the one that matters.
+    #:
+    #: Training can only be banded by something known when the touch opens, so
+    #: `interval` is the honest proxy there. Scoring happens afterwards, so it
+    #: can use the realised duration with no leak - and it must, because the
+    #: two cuts are not the same: a weekly level touched and resolved in thirty
+    #: seconds sits in the slowest *interval* band while carrying the fastest
+    #: population's tautology. Banding by interval alone left every band
+    #: scoring 80-91% against a ~53% base, where research/similarity.md says a
+    #: genuinely slow touch is a coin.
+    held: dict[str, dict[str, Comparison]] = field(default_factory=dict)
     levels: Embedding = field(default_factory=Embedding)
     #: The pooled models, fitted alongside the banded ones so the pooled row
     #: compares like with like.
@@ -161,6 +174,22 @@ class Bench(Restorable):
     #: than instead of them: it is what every earlier number in this repository
     #: was, and the gap between it and the bands is the size of the mistake.
     scores: dict[str, Comparison] = field(default_factory=dict)
+
+    #: How long a touch took, as buckets. The boundaries are the ones
+    #: research/horizon.md found the edge falling off at, not round numbers.
+    DURATIONS: ClassVar[tuple[tuple[str, float, float], ...]] = (
+        ("0-60s", 0.0, 60.0),
+        ("60-300s", 60.0, 300.0),
+        ("300-1800s", 300.0, 1800.0),
+        ("beyond 1800s", 1800.0, float("inf")),
+    )
+
+    @classmethod
+    def took(cls, seconds: float | None) -> str:
+        """Which duration bucket a resolved touch belongs to."""
+        if seconds is None or seconds < 0:
+            return ""
+        return next((name for name, low, high in cls.DURATIONS if low <= seconds < high), "")
 
     def band(self, at: int | None) -> Band:
         key = -1 if at is None else at
@@ -185,6 +214,7 @@ class Bench(Restorable):
         level_id: str = "",
         sequence_said: float | None = None,
         interval: str = "",
+        seconds: float | None = None,
     ) -> dict[str, float]:
         """One resolved touch through every model. Returns what each predicted.
 
@@ -204,10 +234,18 @@ class Bench(Restorable):
         said: dict[str, float] = {}
         band = self.band(band_of(interval))
 
+        took = self.took(seconds)
+        by_length = self.held.setdefault(took, {}) if took else None
+
         def record(name: str, value: float) -> None:
             said[name] = value
             self.score(name).observe(value, held)
             band.score(name).observe(value, held)
+            if by_length is not None:
+                found = by_length.get(name)
+                if found is None:
+                    found = by_length[name] = Comparison(name=name)
+                found.observe(value, held)
 
         record("linear", band.linear.observe(x, held))
         # The pooled linear model is kept fitted too, so the pooled row is a
@@ -257,6 +295,17 @@ class Bench(Restorable):
         from .reactions import HORIZON_BAND
 
         lines: list[str] = []
+        # By how long the touch took, first, because it is the cut that
+        # separates the tautology from the trade.
+        for name, _low, _high in self.DURATIONS:
+            scores = self.held.get(name)
+            if not scores:
+                continue
+            lines.append(f"resolved in {name}:")
+            lines += [f"   {c}" for c in sorted(scores.values(), key=lambda c: -c.edge)]
+        if lines:
+            lines.append("")
+            lines.append("by the interval each was trained in:")
         for key in sorted(self.bands):
             band = self.bands[key]
             if not band.scores:

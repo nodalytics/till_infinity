@@ -541,3 +541,42 @@ def test_a_reading_for_one_interval_is_that_band_s():
     pooled = bench.reading()
     assert banded
     assert set(banded) == set(pooled)
+
+
+def test_scores_are_cut_by_how_long_the_touch_actually_took():
+    """A different question from the band it was *trained* in, and the one that
+    matters: a weekly level touched and resolved in thirty seconds sits in the
+    slowest interval band while carrying the fastest population's tautology."""
+    bench = Bench()
+    for _ in range(80):
+        bench.observe(Touch(up_rate=0.9), True, knn_said=0.9, interval="1w", seconds=5.0)
+        bench.observe(Touch(up_rate=0.9), False, knn_said=0.9, interval="1w", seconds=4000.0)
+    fast = bench.held["0-60s"]["knn"]
+    slow = bench.held["beyond 1800s"]["knn"]
+    assert fast.accuracy > slow.accuracy
+    # Both were trained in the same interval band, which is the whole point.
+    assert len(bench.bands) == 1
+
+
+def test_a_duration_bucket_uses_the_boundaries_the_edge_falls_off_at():
+    assert Bench.took(30.0) == "0-60s"
+    assert Bench.took(120.0) == "60-300s"
+    assert Bench.took(1000.0) == "300-1800s"
+    assert Bench.took(5000.0) == "beyond 1800s"
+
+
+def test_a_negative_duration_is_not_bucketed():
+    """The mixed-clock rows. Excluded rather than clamped: they are the ones
+    whose length is not known, and this cut is by length."""
+    assert Bench.took(-60.0) == ""
+    assert Bench.took(None) == ""
+
+
+def test_the_report_leads_with_duration_rather_than_interval():
+    """It is the cut that separates the tautology from the trade."""
+    bench = Bench()
+    for _ in range(40):
+        bench.observe(Touch(up_rate=0.9), True, knn_said=0.9, interval="1m", seconds=10.0)
+    text = bench.report()
+    assert "resolved in" in text
+    assert text.index("resolved in") < text.index("trained in")

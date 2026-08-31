@@ -74,6 +74,39 @@ written down beside the number at the time. The simplification it seemed to
 argue for - drop the neighbour search, read the level's record - would have
 cost 3 points of edge on the most important path in the system.
 
+## Two cuts, and only one of them answers the question
+
+The first banding shipped cut everything by the **interval's** horizon, and the
+numbers it produced looked like this:
+
+    ~9m     675  knn +28.76  attention +28.32  linear +26.80  up_rate +24.89
+    ~137m    90  knn/attention +38.06  up_rate +31.63  linear +28.40
+    ~546m    30  knn/attention +26.70  up_rate +20.02  linear -6.59
+    ~2185m    6  knn/attention +33.35  up_rate +16.68
+
+**That cut does not separate the tautology.** A weekly level can be touched and
+resolve in thirty seconds; it lands in the ~2185m band and takes the fast
+population's answer with it. The giveaway is the accuracies: every band scores
+77-91% against a ~53% base, where [similarity.md](similarity.md) says a
+genuinely slow touch is a coin at 52.8%.
+
+So the two cuts are separated, and the asymmetry is the reason both exist:
+
+* **training** can only be banded by something known when the touch opens, so
+  the interval is the honest proxy - choosing the training set by how long a
+  touch turned out to take is selecting it with the answer;
+* **scoring** happens afterwards, so it uses the realised duration, and it must,
+  because that is the cut the edge actually falls off along.
+
+`Bench.held` carries the duration cut and `report()` leads with it.
+
+One thing survives the caveat and is worth keeping: **kNN and attention are
+identical to two decimals in five of seven interval bands**, so the learned
+distance finding is now confirmed per band rather than only pooled. And the
+linear model degrades as the band slows - +26.80 at ~9m to **-6.59** at ~546m -
+while the kNN does not, which is at least consistent with the neighbourhood
+carrying something a linear fit cannot.
+
 ## What to read
 
 **Edge**, not accuracy. 63% accuracy on a problem whose base rate is 63% is a

@@ -640,6 +640,9 @@ class Watcher:
                 # fitted and scored on a stream that is 46% sub-minute touches
                 # whose direction is definitional.
                 interval=getattr(level, "interval", ""),
+                # And how long it actually took, which is what the scores are
+                # cut by. Known only now, which is why it cannot band training.
+                seconds=float(touch.resolved) - float(touch.started),
             )
         except Exception as exc:  # measurement must not stop the record
             log.debug("structures: bench skipped a touch: %s", exc)
