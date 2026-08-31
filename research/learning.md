@@ -91,7 +91,38 @@ Three outcomes and two of them are useful:
 
 The third is what happened, and it took a matched sample to see it.
 
-## The learned distance
+## The learned distance, and why it is kept rather than removed
+
+`Attention` scores a past touch by `-sum(w_i * (query_i - key_i)^2)`, softmaxes
+those into a weighting, and predicts the weighted average. With every `w` equal
+it *is* the kNN's distance with a soft edge instead of a hard cut at k, which is
+where it starts deliberately: a comparison that starts from noise measures the
+training, not the idea.
+
+**It found nothing, and that is a result rather than a failure.** After two
+thousand touches its nine weights are all within 0.004 of 1.0 and it scores
+0.07 points from the kNN - indistinguishable. It has not drifted, wandered or
+collapsed; it has converged on the metric it was given and reported that there
+is no better one to find. The value in the neighbour vote is the neighbours,
+not how they are weighted.
+
+The case for deleting it is that it is measurement, the measurement is taken,
+and it costs a small amount of work on every resolution. That case is real and
+it is outweighed by two things:
+
+* **it is a live control.** The claim "the fixed distance is adequate" is
+  currently true of nine features on one population. Change the feature set -
+  and [horizon.md](horizon.md) argues the population should change too - and
+  that claim has to be re-established. An arm already running re-establishes it
+  for free; one that was deleted has to be rebuilt and rewarmed first.
+* **a converged weight vector is a continuing statement.** Weights at 1.0 today
+  and 1.4 next month would be the model saying the distance had started to
+  matter, which is exactly the kind of drift nothing else here would notice.
+
+So it stays, and this section is the record of what it found, so nobody has to
+re-run it to know.
+
+## How the learned distance works
 
 `Attention` scores a past touch by `-sum(w_i * (query_i - key_i)^2)`, softmaxes
 those into a weighting, and predicts the weighted average. With every `w` equal
