@@ -184,3 +184,45 @@ def test_all_four_are_off_by_default():
     assert s.volatility_target_bps == 0.0
     assert s.edge_full_at == 0.0
     assert s.drawdown_halt_at == 0.0
+
+
+# ------------------------------------------- the call the service actually makes
+
+
+def test_every_strategy_accepts_what_the_service_passes():
+    """The test that would have caught a two-hour outage.
+
+    `FadeToValue` and `Council` override `consider` with their own signatures.
+    Widening the base and the scalper left those two unchanged, and the service
+    passes `positions` and `peak` to every strategy - so the trading service
+    stopped with `FadeToValue.consider() got an unexpected keyword argument
+    'positions'` while 1,653 tests passed, because none of them called it the
+    way the service does.
+
+    Signature-level, not behavioural: it asks whether each strategy can be
+    *called*, which is exactly what broke.
+    """
+    import inspect
+
+    import till_infinity.trading as td
+
+    for name, cls in td.STRATEGIES.items():
+        for method in ("consider", "consider_async"):
+            found = getattr(cls, method, None)
+            if found is None or method not in vars(cls):
+                continue  # inherited, so the base's signature governs
+            parameters = inspect.signature(found).parameters
+            for wanted in ("positions", "peak"):
+                assert wanted in parameters, f"{name}.{method} cannot take {wanted}"
+
+
+def test_the_service_passes_them():
+    """And the other half: a signature that accepts them is useless if the
+    caller never sends them."""
+    import inspect
+
+    from till_infinity.trading import service
+
+    source = inspect.getsource(service.Trader.on_signal)
+    assert "positions=positions" in source
+    assert "peak=self.peak_equity" in source

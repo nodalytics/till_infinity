@@ -295,6 +295,33 @@ output.** The tests passed, the container was healthy, the logs were busy. What
 found them was asking what a specific number should have been and checking, or
 in one case a user asking why a particular signal did not trade.
 
+### The one that stopped trading, 2026-08-31
+
+Not silent this time - it logged a traceback and stopped a service - but it
+went unnoticed for **two hours** because nothing was watching the one signal
+that mattered.
+
+`Strategy.consider` gained `positions` and `peak` so the four sizing models
+could read them. `FadeToValue` and `Council` override `consider` with their own
+signatures, and only the base and the scalper were widened. The service passes
+the new arguments to every strategy, so trading stopped on the first level call
+with `FadeToValue.consider() got an unexpected keyword argument 'positions'`.
+
+**1,653 tests passed**, because not one of them called a strategy the way the
+service does. The test that catches it now walks `STRATEGIES` and asserts every
+override can be *called* with what the service sends - a signature test rather
+than a behavioural one, because a signature is what broke.
+
+Two lessons, and the second is the one that cost the time:
+
+* **an override is a place a base-class change does not reach.** `quality()`
+  exists in this codebase precisely because `FadeToValue` overrode `consider`
+  and thereby skipped every gate. The same strategy, the same mechanism, twice.
+* **"the container is healthy" is not "the desk is trading".** The health check
+  passed for two hours with the trading service dead. Finding it needed
+  somebody to ask what a specific number should have been - in this case, why a
+  live gate had refused nothing.
+
 ### Five more of the same, 2026-08-30/31
 
 The pattern recurred often enough in two days to be worth treating as the

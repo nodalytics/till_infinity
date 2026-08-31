@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import asyncio
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -365,7 +366,20 @@ class CouncilStrategy(Strategy):
         self.abstained = 0
 
     def consider(
-        self, payload: dict[str, Any], *, spec: SymbolSpec, tick: Tick, equity: float
+        self,
+        payload: dict[str, Any],
+        *,
+        spec: SymbolSpec,
+        tick: Tick,
+        equity: float,
+        # Accepted and unused. The service passes these to every strategy, and
+        # a strategy that does not size on them must still be callable - the
+        # version of this without them stopped the trading service outright
+        # with `FadeToValue.consider() got an unexpected keyword argument
+        # 'positions'`, because `FadeToValue` overrides `consider` and the
+        # signature was only widened on the base and the scalper.
+        positions: Sequence[Any] = (),
+        peak: float = 0.0,
     ) -> Verdict:
         """Synchronous by interface; the panel is async. See `service`.
 
@@ -382,7 +396,20 @@ class CouncilStrategy(Strategy):
         )
 
     async def consider_async(
-        self, payload: dict[str, Any], *, spec: SymbolSpec, tick: Tick, equity: float
+        self,
+        payload: dict[str, Any],
+        *,
+        spec: SymbolSpec,
+        tick: Tick,
+        equity: float,
+        # Accepted and unused. The service passes these to every strategy, and
+        # a strategy that does not size on them must still be callable - the
+        # version of this without them stopped the trading service outright
+        # with `FadeToValue.consider() got an unexpected keyword argument
+        # 'positions'`, because `FadeToValue` overrides `consider` and the
+        # signature was only widened on the base and the scalper.
+        positions: Sequence[Any] = (),
+        peak: float = 0.0,
     ) -> Verdict:
         self.seen += 1
         feed = str(payload.get("feed") or "")

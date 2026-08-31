@@ -35,6 +35,7 @@ than a scalping detail, and moving it would be a second, larger change.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from ..logging import get_logger
@@ -719,7 +720,20 @@ class FadeToValue(LevelStrategy):
         return max(candidates, key=lambda s: (s.touches, -abs(s.price - spot)))
 
     def consider(
-        self, payload: dict[str, Any], *, spec: SymbolSpec, tick: Tick, equity: float
+        self,
+        payload: dict[str, Any],
+        *,
+        spec: SymbolSpec,
+        tick: Tick,
+        equity: float,
+        # Accepted and unused. The service passes these to every strategy, and
+        # a strategy that does not size on them must still be callable - the
+        # version of this without them stopped the trading service outright
+        # with `FadeToValue.consider() got an unexpected keyword argument
+        # 'positions'`, because `FadeToValue` overrides `consider` and the
+        # signature was only widened on the base and the scalper.
+        positions: Sequence[Any] = (),
+        peak: float = 0.0,
     ) -> Verdict:
         self.seen += 1
         feed = str(payload.get("feed") or "")
