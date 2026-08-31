@@ -1066,6 +1066,14 @@ class Settings:
     #:
     #: Bounded to holds under `Scalper.PARKED_STOP_HOLD` (300s) whatever this
     #: says, which is what keeps a short-hold grid's number off a swing.
+    #:
+    #: **Turned off in production on 2026-08-31, and the reason is worth
+    #: keeping.** Gold is nearly half the account's loss, its median hold is 95
+    #: seconds - so it qualifies for this - and 62% of its stopped trades
+    #: reached target *after* being stopped, against 26% across the book. Its
+    #: stops are already too tight, and this halves them again. The arithmetic
+    #: above is correct and was measured on the pooled record; gold is the
+    #: instrument it is wrong for. See research/stops.md.
     #: Refuse a level call whose chance of giving way is above this. Zero is
     #: off.
     #:

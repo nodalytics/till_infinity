@@ -44,7 +44,7 @@ def main() -> None:
     for t in trades:
         if str(t.get("exit_kind") or "") != "stop":
             continue
-        name = str(t.get("strategy") or "?")
+        name = str(t.get("feed") or "?")
         try:
             entry, target = float(t["entry"]), float(t["target"])
             held = float(t.get("seconds") or 0.0)
@@ -82,7 +82,7 @@ def main() -> None:
         got["back"] += back
         got["target"] += hit
 
-    head = f"{'strategy':18s} {'stops':>6s} {'came back':>11s}"
+    head = f"{'instrument':18s} {'stops':>6s} {'came back':>11s}"
     print(f"{head} {'reached target':>15s} {'no bars':>8s} {'money':>10s}")
     for name, got in sorted(by.items(), key=lambda kv: kv[1]["money"]):
         n = got["n"]

@@ -137,3 +137,59 @@ stop and the target are both inside one candle - so its 40% "reached target"
 against the 21% above is the same data under a looser rule. The truth is
 between them, and the direction both agree on is that a better *entry* is worth
 more than a wider stop.
+
+## Gold is the counter-example, and it cost a setting
+
+Gold is 29 of 128 closed trades and **−315.25 of the account**, nearly half the
+total loss. It is also, by every touch-level measure, the best instrument on
+the board: the highest net edge in [paying.md](paying.md) at +0.919v, and the
+cheapest spread in the book at 0.048v. Those cannot both be describing the same
+thing, and the stopped trades say which is which.
+
+| | stops | came back through entry | reached target anyway |
+| --- | --- | --- | --- |
+| **gold** | 9 | **7/8 (88%)** | **5/8 (62%)** |
+| pooled, above | 27 | 25/35 | 7/27 (26%) |
+
+**Gold inverts the pooled finding.** Across the book most stops were right - 20
+of 27 judgeable trades never reached target. Gold's are mostly *early*: 62%
+reached target after being stopped out, and those nine stops are −237.54 of its
+−315.25.
+
+### What it is not
+
+**Not that gold wicks unusually far.** The obvious explanation is that it is a
+spiky instrument needing more room, and that is false: by median wick past the
+level it ranks **24th of 39** instruments. It is calmer than most of the book.
+
+### The setting that was working against it
+
+`parked_stop_vol` halves the stop on a parked fill held under
+`PARKED_STOP_HOLD` (300s). **Gold's median hold is 95 seconds**, so gold trades
+qualify - and gold's problem is stops that are already too tight.
+
+It was shipped this session on a pooled measurement: halving the risk for the
+same target doubles reward-to-risk and doubles the size for the same money at
+stake. That arithmetic is correct and it is the wrong arithmetic for an
+instrument whose stops are being clipped. **Turned off.**
+
+The general lesson is the one this repository keeps paying for: a setting
+justified by a pooled number can be actively harmful on the instrument that
+number was averaged over.
+
+### What is still unresolved
+
+Gold has the best touch-level edge, the cheapest spread, and a 95-second median
+hold against an edge measured at 300-1,800s. **The trade never survives to
+where the edge is.** Two mechanisms fit and one measurement separates them:
+
+* **the stop is too close for the hold** - 95 seconds is not long enough for a
+  five-to-thirty-minute thesis, so the stop is sized for a trade that is not
+  being allowed to happen;
+* **the entries are in the tautology band** - 20 of gold's 29 trades are on 1m
+  and 3m, where [horizon.md](horizon.md) finds the signal definitional rather
+  than real.
+
+`adverse_r` now records how much of its stop a *winner* actually used. A few
+dozen gold trades carrying it will separate these: if winners spend most of the
+stop, it is too tight; if they barely touch it, the entries are wrong.
