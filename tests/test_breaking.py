@@ -166,3 +166,55 @@ def test_it_survives_a_restart():
 
     assert '"breaks": self.breaks' in inspect.getsource(service.Watcher.save)
     assert 'state.get("breaks"' in inspect.getsource(service.Watcher.load)
+
+
+def test_the_alert_shows_the_break_risk_when_there_is_one():
+    """A number nobody sees is a number nobody can sanity-check, and this one is
+    new enough to want checking against what the chart actually did."""
+    from till_infinity.structures.models import Shape, Signal
+    from till_infinity.structures.service import alert_payload
+
+    signal = Signal(
+        shape=Shape.LEVEL,
+        feed="gold",
+        venue="consensus",
+        score=0.3,
+        direction="up",
+        features={"level": 4400.0, "probability_up": 0.7, "break_probability": 0.62},
+    )
+    assert "break risk 62%" in alert_payload(signal)["body"]
+
+
+def test_the_alert_says_nothing_when_the_model_is_cold():
+    """Silence rather than 50%, for the same reason `predict` returns None."""
+    from till_infinity.structures.models import Shape, Signal
+    from till_infinity.structures.service import alert_payload
+
+    signal = Signal(
+        shape=Shape.LEVEL,
+        feed="gold",
+        venue="consensus",
+        score=0.3,
+        direction="up",
+        features={"level": 4400.0, "probability_up": 0.7},
+    )
+    assert "break risk" not in alert_payload(signal)["body"]
+
+
+def test_it_reaches_trading_as_a_feature():
+    """`trading` copies the signal's features onto the intent, so the estimate
+    is journalled beside every decision that was taken while it existed - which
+    is what will make it possible to ask later whether it was worth gating on."""
+    from till_infinity.trading.models import Intent, Side
+
+    intent = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.05,
+        entry=4400.0,
+        stop=4395.0,
+        target=4410.0,
+        features={"break_probability": 0.62},
+    )
+    assert intent.to_context()["break_probability"] == pytest.approx(0.62)

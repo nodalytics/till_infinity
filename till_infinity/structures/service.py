@@ -221,6 +221,17 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         f"expected push {push:+.2f}v" + (f" · risk {risk:.2f}v" if risk else ""),
         f"{touches:.0f} touches here + {similar} similar · strength {got.get('strength', 0.0):.2f}",
     ]
+    # How likely the level is to give way, when there is an estimate. A
+    # separate question from the direction above it, and the evidence that they
+    # are separate is that `up_rate` - which carries almost all of the
+    # direction - predicts a break at AUC 0.4892. See research/force.md.
+    #
+    # Read to a person and acted on by nothing. It is here because a number
+    # nobody sees is a number nobody can sanity-check, and this one is new
+    # enough to want checking against what the chart actually did.
+    breaking = got.get("break_probability")
+    if breaking is not None:
+        body.append(f"break risk {breaking:.0%} · from arrival speed and depth")
     return {
         "title": f"{signal.feed.upper()} {signal.interval} - {signal.direction}",
         "body": "\n".join(body),
