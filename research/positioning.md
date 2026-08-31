@@ -136,6 +136,36 @@ the part of this data where the net plausibly means what it looks like.
 is −0.195, and the mean is +0.040. On 84 weeks there is no predictive content
 at the weekly horizon.
 
+## The Socrata API, and why it is not used
+
+The CFTC serves the same data as JSON at
+`publicreporting.cftc.gov/resource/gpe5-46if.json`, and it is better in every
+respect but one.
+
+**It answers 403 from some networks and 200 from others.** It serves the
+production host in Mumbai and refuses the development machine, which is the
+worst shape a dependency can have: it works until somebody tries to reproduce a
+result, and then it fails for reasons unrelated to the result.
+
+What it would buy, recorded so the decision does not have to be made again:
+
+* **named fields.** `news/cot.py` reads `row[14]`. A column reshuffle in a
+  fixed-layout government text dump would not raise - it would return a
+  different category of trader, silently, which is the same class of failure
+  the sign mapping is written to avoid. `lev_money_positions_long` cannot do
+  that.
+* **server-side filtering** to the twelve markets that matter, rather than
+  parsing 94 and discarding 82.
+* **incremental fetching** by report date, instead of pulling the whole file
+  weekly to find one new row per market.
+* **the whole history behind one endpoint**, rather than the per-year zips
+  `harness/cotlag.py` downloads.
+
+Not adopted. The lead correlations above are all inside the noise band, so this
+data has no measured predictive content, and hardening the pipeline of
+something nothing consumes is work at the wrong end. The named-field argument
+is real and becomes the right answer the moment anything depends on this.
+
 ## What it is worth, which is now partly measured
 
 Tuesday's positions, published Friday. **The freshest reading is always three

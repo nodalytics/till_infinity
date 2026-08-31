@@ -61,8 +61,27 @@ from .source import Source, TransientError
 
 log = get_logger(__name__)
 
-#: The weekly financial-futures file, short format. The Socrata API for the
-#: same data answers 403 from a datacentre address; this does not.
+#: The weekly financial-futures file, short format.
+#:
+#: There is a Socrata JSON API for the same data
+#: (`publicreporting.cftc.gov/resource/gpe5-46if.json`) and it is better in
+#: every respect except one: it answers **403 from some networks and 200 from
+#: others**. It serves the production host and refuses the development machine,
+#: which is the worst shape a dependency can have - it works until somebody
+#: tries to reproduce a result.
+#:
+#: What it would buy, recorded because it is the right answer if this data ever
+#: earns its keep: **named fields**. This parser reads `row[14]`, and a column
+#: reshuffle in a fixed-layout government text dump would not fail, it would
+#: read a different category of trader - a silent wrong answer of exactly the
+#: kind the sign mapping below is written to avoid. Also server-side filtering
+#: to the twelve markets that matter, incremental fetching by report date, and
+#: the whole history behind one endpoint rather than a zip per year.
+#:
+#: Not adopted, because the lead correlations in research/positioning.md are
+#: all inside the noise band: this data has no measured predictive content, and
+#: hardening the pipeline of something nothing consumes is work spent on the
+#: wrong end.
 COT_URL = "https://www.cftc.gov/dea/newcot/FinFutWk.txt"
 
 #: Column positions in the short-format file, zero-based. Verified against the
