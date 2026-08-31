@@ -143,7 +143,14 @@ short of "reliably wrong". **No demonstrated edge** remains the honest phrasing.
 which is the fifth independent confirmation that the learned distance finds
 nothing.
 
-### The bucket worth chasing
+### The bucket worth chasing - and it was worth chasing
+
+**Followed up in [paying.md](paying.md).** The edge is real: the synthetic null
+scores 47% in this band where real instruments score 70%, so it is not an
+artefact of the method. Eleven of twenty-six instruments clear their own
+spread, and gold and spx500 clear it by an order of magnitude over the next
+tier.
+
 
 `300–1,800s` is the one number here that is unambiguously real: +16.44% on 484
 observations is about 4.5 standard errors. It sits between the tautology and the
