@@ -1,6 +1,6 @@
 # Near-duplicate headlines: what they are, and what they are not
 
-[news-models.md](news-models.md) puts SimHash near-duplicate detection first on
+[news-models.md](../research/news-models.md) puts SimHash near-duplicate detection first on
 the grounds that 7.6% of the corpus is provably duplicated and that the
 restatement count is a feature on its own. It also writes down what would
 falsify that, and nobody had run it. This document runs both falsifications.
@@ -16,7 +16,7 @@ data-quality fix. It should be kept, and it should stop being called a signal.
 Everything below comes from a snapshot of `.data/news/news.db` and
 `.data/prices/prices.db` taken on **2026-08-14**. The corpus at that moment:
 **2,756 articles over 44.8 hours** of wall clock, which is larger than the 2,241
-quoted in [news-models.md](news-models.md) because collection did not stop. The
+quoted in [news-models.md](../research/news-models.md) because collection did not stop. The
 ratios are close; the counts are not, so nothing here should be compared to that
 document row by row.
 
@@ -102,7 +102,7 @@ is worth: canonicalising removes **109 rows, 3.96% of the corpus**.
 
 ## 2. SimHash, and what it adds over `GROUP BY`
 
-Implemented as [news-models.md](news-models.md) specifies - 64-bit fingerprint
+Implemented as [news-models.md](../research/news-models.md) specifies - 64-bit fingerprint
 over word shingles, `blake2b` from the standard library, Hamming distance by
 popcount, no new dependency. Three-word shingles over the normalised title.
 **2,756 fingerprints cost 22,048 bytes - 21.5 KB.** The footprint argument in
@@ -263,7 +263,7 @@ not be reported as either the claim confirmed or the claim refuted.
 
 ## 4. The look-ahead trap, corrected
 
-[news-models.md](news-models.md) says: keep the first copy by `fetched`, record
+[news-models.md](../research/news-models.md) says: keep the first copy by `fetched`, record
 the duplicates as a count, because the fuller copy usually arrives later and
 stamping it with the earlier timestamp imports the future into the past. **The
 hazard is real and the measurement confirms it** - in 41 of 105 duplicate

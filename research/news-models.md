@@ -1,14 +1,14 @@
 # Models for news, and which of them this box can run
 
 A survey of the model families that could turn stored headlines into features,
-checked against the schema in [news.md](news.md) and against the machine the
+checked against the schema in [news.md](../docs/news.md) and against the machine the
 thing actually runs on. Written because the interesting question is not "what is
 the best news model" - that is answered every six months by somebody with a GPU
 - but "what can be run inside 640MB alongside everything else, learned online,
 and graded against realised outcomes".
 
 Nothing below is built. The shape of the document follows
-[behaviours.md](behaviours.md): map the idea onto what already exists, say
+[behaviours.md](../docs/behaviours.md): map the idea onto what already exists, say
 plainly where the data is missing, and end with an ordered list.
 
 ## What is measured here
@@ -43,7 +43,7 @@ and adding one is not free: the wheel competes for the same 2.1GB as the data
 directory, which is already at 104MB and growing with every poll. A dependency
 is a permanent cost paid for a benefit that has to be demonstrated first.
 
-**Online beats batch.** Everything in [structures.md](structures.md) is
+**Online beats batch.** Everything in [structures.md](../docs/structures.md) is
 `learn_one`/`predict_one` over a stream, with state files that refuse to load
 into a version mismatch rather than silently half-restoring. A news model that
 requires a nightly batch fit over the whole corpus does not fit that shape and
@@ -71,7 +71,7 @@ general enough to state up front, and both are visible in the data:
 
 **Everything must be gradeable.** A sentiment score that nobody can check is
 worse than no score, because it looks like information. The outcome machinery in
-[journal.md](journal.md) grades a decision against what followed it, and that is
+[journal.md](../docs/journal.md) grades a decision against what followed it, and that is
 the test every candidate here has to survive - not a benchmark number from a
 paper trained on 10-K filings.
 
@@ -97,7 +97,7 @@ Worse, those 1,147 rows reference **579 distinct symbol strings** for a universe
 of eight tracked instruments, because the venue prefix varies:
 `FX:EURUSD`, `BITSTAMP:EURUSD` and `FTMO_OANDA:EURUSD.SIM` are one instrument;
 `FX:USDJPY` and `FX_IDC:USDJPY` are another; `ICEUS:DXY` and `TVC:DXY` a third.
-[news.md](news.md) says TradingView headlines "line up against the gold series
+[news.md](../docs/news.md) says TradingView headlines "line up against the gold series
 without a keyword search", and that is true only after this normalisation, which
 nothing currently does.
 
@@ -264,7 +264,7 @@ that shares no shingles with anything but is phrased in familiar language.
 already seen**. A batch TF-IDF fit over the whole table gives every historical
 headline a novelty score computed partly from its own future, and the resulting
 backtest will look excellent. This is the same failure as the smoothed-versus-
-filtered HMM estimate in [structures.md](structures.md), and it is worth
+filtered HMM estimate in [structures.md](../docs/structures.md), and it is worth
 recognising as a recurring shape rather than a one-off.
 
 **Grading:** journal the novelty score with each detection and compare realised
@@ -308,7 +308,7 @@ different currencies. A 0.2 miss on core CPI and a 0.2 miss on a PMI are not the
 same event. The standard fix is to divide by the historical dispersion of that
 event's own surprises - a z-score per event type, which is exactly what
 `river.stats.RollingQuantile` and friends are for, and exactly the move that
-[structures.md](structures.md) recommends for grading regime change.
+[structures.md](../docs/structures.md) recommends for grading regime change.
 
 **And we cannot do it yet.** Only **57 events** have both a numeric actual and a
 numeric forecast, spread across **410 distinct titles**. There is not enough
@@ -371,7 +371,7 @@ batch over embeddings of the whole corpus.
 The infrastructure exists. [agents/](../till_infinity/agents/) is built on
 pydantic-ai with providers for Anthropic, Google, Groq and the OpenAI wire
 format, model selection is `provider:model` with Claude as the default, and the
-roles/tools plumbing is described in [agents.md](agents.md). Adding a headline
+roles/tools plumbing is described in [agents.md](../docs/agents.md). Adding a headline
 extractor is a role, not a subsystem - and crucially, **it moves the compute off
 the box entirely**, which makes every footprint objection above irrelevant.
 
@@ -444,7 +444,7 @@ Cheapest useful first, and each step's output is the next step's input.
 1. **Near-duplicate detection by SimHash.** 7.6% of the corpus is already
    provably duplicated, and finding it needs no dependency, no checkpoint and no
    labels. ~~The restatement count is a feature on its own~~ - **this half was
-   run and it failed**; see [news-dedup.md](news-dedup.md). Eighty-nine percent
+   run and it failed**; see [news-dedup.md](../docs/news-dedup.md). Eighty-nine percent
    of duplicated rows are one outlet counted twice by our own collection, and no
    group in the corpus is two independent newsrooms judging one story important.
    Build it, run it at distance zero, and treat it as hygiene rather than signal.
@@ -476,7 +476,7 @@ Cheapest useful first, and each step's output is the next step's input.
 > **Both of these were run on 2026-08-14. The second fired; the first turned out
 > not to be runnable - the ≥3 cell is empty at every window. The measurement,
 > the corrected keep-first rule, and what is still unobservable are in
-> [news-dedup.md](news-dedup.md). What follows is the test as it was specified,
+> [news-dedup.md](../docs/news-dedup.md). What follows is the test as it was specified,
 > kept because the design is still the right one to re-run once the corpus has
 > the outlets to support it.**
 
@@ -526,5 +526,5 @@ because 57 observations across 410 event types cannot support it, and building i
 now would produce a number that looks like a z-score and is noise. Collect first.
 
 Everything above is unbuilt and ungraded. The reason to write it down is the same
-as in [behaviours.md](behaviours.md): the outcome machinery can settle each one,
+as in [behaviours.md](../docs/behaviours.md): the outcome machinery can settle each one,
 and an idea that can be settled is worth more than an idea that sounds right.

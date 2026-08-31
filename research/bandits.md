@@ -96,7 +96,7 @@ harness.
 
 Worth noting honestly:
 
-- **It is a dependency on a 640MB box**, and [news-models.md](../docs/news-models.md)
+- **It is a dependency on a 640MB box**, and [news-models.md](news-models.md)
   rejected a 418MB checkpoint on exactly those grounds. Gymnasium itself is
   small, but the reason to add it is convention rather than capability, and the
   same Env could be a plain class with `reset`/`step` and no dependency at all.

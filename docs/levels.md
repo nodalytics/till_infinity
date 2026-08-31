@@ -955,7 +955,7 @@ each feature in turn and found that **none of the other eight predicts
 direction once `side` is known** - while the level's own same-side record,
 which was not among them, is worth +0.024 AUC on levels with three or more
 prior touches. It had been hiding inside `strength`, diluted with three terms
-[research/strength.md](../research/strength.md) shows separate nothing, and
+[research/strength.md](strength.md) shows separate nothing, and
 behind `experience`, which counts touches without saying what they did.
 
 0.5 means *no history*, not an even split. Those are different things and the

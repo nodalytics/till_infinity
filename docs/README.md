@@ -7,7 +7,6 @@
 | [idea.md](idea.md) | what the project is for, and the reasoning behind each part - the long version of the README's opening |
 | [getting-started.md](getting-started.md) | how to use Till Infinity - install, first pull, keeping it current, reading the data back |
 | [news.md](news.md) | headlines and the economic calendar - sources, two clocks, storage |
-| [news-models.md](news-models.md) | **planned** - models that could process the news data, what each costs on a 640MB box, and the cheapest wins first |
 | [news-dedup.md](news-dedup.md) | **measured** - 7.8% of headlines are duplicates, 89% of them our own collection counting one outlet twice; the crowding signal is not there |
 | [prices.md](prices.md) | OHLCV candles and realtime bid/ask across brokers - CLI, sources, storage, schema, library use |
 | [notifications.md](notifications.md) | Telegram and Discord alerts - channels, level routing, chat discovery |

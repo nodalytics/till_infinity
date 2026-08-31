@@ -91,6 +91,28 @@ Three outcomes and two of them are useful:
 
 The third is what happened, and it took a matched sample to see it.
 
+## It also settles a deletion that was queued on a document nobody can read
+
+`prior.md` item 4 and two entries in `docs/todo.md` proposed deleting `Memory`,
+`Features.distance` and the kNN outright. All three cited **`similarity.md`**,
+"which found the distance orders neighbours no better than random across 13.5M
+pairs".
+
+There is no such file. Not in the tree, and not anywhere in git history - so
+the 13.5M-pair figure has never been checkable by anyone, and it was standing
+as the evidence for removing the model behind every level call.
+
+The claim has now been tested rather than cited. The learned distance below
+agrees with the half of it that was right: no reweighting of the nine features
+improves the ordering. And the bench above shows the deletion would have been
+wrong anyway, because the kNN beats a one-feature floor by 3.1 points on 1,996
+matched touches. Both hold together - a metric can order neighbours no better
+than chance while the neighbourhood still carries signal, which is a fact about
+the *features* being flat rather than about the method.
+
+Those three entries are withdrawn in place rather than deleted, with the reason
+beside them.
+
 ## The learned distance, and why it is kept rather than removed
 
 `Attention` scores a past touch by `-sum(w_i * (query_i - key_i)^2)`, softmaxes

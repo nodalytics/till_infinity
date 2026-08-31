@@ -20,6 +20,7 @@ rather than believed.
 | [prior.md](prior.md) | **measured** - what `edge` is actually measuring; subtract a side-aware baseline and the level's record plus its neighbours predict at 51.8%, AUC 0.520 |
 | [turns.md](turns.md) | **measured** - can a major turn be seen coming; yes, weakly. AUC 0.595 purged over 310 turns, and `vol` alone carries it |
 | [cycles.md](cycles.md) | **measured** - does a level's place in the larger move matter; one cell separates by nothing at all, and the AUC gain's interval includes zero |
+| [news-models.md](news-models.md) | survey - model families that could turn stored headlines into features, and which of them fit in 640MB beside everything else |
 | [bandits.md](bandits.md) | design note - where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
 | [catalogue.md](catalogue.md) | **measured** - which of the broker's 798 symbols are worth carrying; in volatility units the synthetics cost 0.170v to cross against FX's 2.267v, which is the opposite of what the point spreads say |
 | [stops.md](stops.md) | **measured on production** - stops are the whole loss; 20 of 27 judgeable stopped trades never reached target and 7 were stopped early, so the answer is a better entry rather than a wider stop |

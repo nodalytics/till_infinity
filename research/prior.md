@@ -107,11 +107,22 @@ was identification.
 3. **The side-conditioned base rate is the best directional estimate here** at
    AUC 0.741. If anything is published, publish that - it is calibrated, it is
    free, and it beats the composite that costs a kNN over every stored touch.
-4. **`Memory` and `Features.distance` can go**, on this evidence plus
-   [similarity.md](similarity.md), which found the distance orders neighbours no
-   better than random across 13.5M pairs. That is a large deletion: the k
-   nearest, the metric, the radius question in [edge.md](../docs/edge.md) §6,
-   and the memory they occupy.
+4. ~~**`Memory` and `Features.distance` can go**~~ - **withdrawn.** This cited
+   `similarity.md`, which found the distance orders neighbours no better than
+   random across 13.5M pairs. **That document does not exist and never has**,
+   in this tree or anywhere in git history, so the 13.5M-pair figure cannot be
+   checked by anyone.
+
+   The claim was tested live instead, and the deletion it recommended would
+   have been a mistake. [learning.md](learning.md): a learned distance over the
+   same nine features converged on weights all within 0.004 of 1.0 - agreeing
+   that *no reweighting improves the ordering* - while the kNN beat a
+   one-feature floor by 3.1 points of edge on 1,996 matched touches. Both can
+   be true: the metric may order neighbours no better than chance and the
+   neighbourhood still carry signal.
+
+   So the k nearest stay. What the missing document got right is narrower than
+   what it was cited for.
 5. **This does not touch magnitude or risk.** `expected_push`, `risk_vol` and
    `reward_to_risk` are separate claims and are not tested here. The system may
    well be useful for *how far* while having nothing to say about *which way* -

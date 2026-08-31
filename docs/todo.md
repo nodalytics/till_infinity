@@ -576,8 +576,11 @@ purpose:
 
 That control has never run, and this week it would have been worth a great
 deal. [prior.md](../research/prior.md) found the kNN prior contributes nothing
-and [similarity.md](../research/similarity.md) found the distance metric orders
-neighbours no better than random - so the cold-start mechanism is dead. **A
+and `similarity.md` reportedly found the distance metric orders neighbours no
+better than random - **but that document does not exist and never has**, so
+treat the second half as unsupported. Measured live in
+[learning.md](../research/learning.md), the kNN beats a one-feature floor by
+3.1 points on 1,996 matched touches, so the cold-start mechanism is not dead. **A
 pivot is on the chart before the first touch**, which is the same problem
 solved without borrowing anything.
 
@@ -620,9 +623,10 @@ measurement. **Make it deliberately.**
 
 What follows if the honest version is adopted:
 
-- `Memory`, `Features.distance` and the kNN can be deleted, on this plus
-  [similarity.md](../research/similarity.md) finding the distance orders
-  neighbours no better than random over 13.5M pairs.
+- ~~`Memory`, `Features.distance` and the kNN can be deleted~~ - **withdrawn**,
+  see [learning.md](../research/learning.md). The `similarity.md` this rested on
+  does not exist in the tree or in git history, and the live bench has the kNN
+  3.1 points of edge ahead of a one-feature floor over 1,996 matched touches.
 - The published directional estimate becomes the side-conditioned base rate.
 - **Magnitude and risk are untouched and untested.** `expected_push`,
   `risk_vol` and `reward_to_risk` are separate claims. The system may be useful
@@ -1080,7 +1084,7 @@ one outlet counted twice by our own collection - so `MACRO`'s headline lens is
 looking for something the data does not contain. And symbol normalisation is
 unbuilt, so half the corpus cannot be routed to an instrument at all.
 
-So the order is the one [news-models.md](news-models.md) §2 already gives:
+So the order is the one [news-models.md](../research/news-models.md) §2 already gives:
 symbol normalisation, then keyword matching against TradingView's tagged rows,
 then a headline trigger, then the join with price. Wiring the trigger first
 inverts it. Today the roles read prices and structures
@@ -1091,7 +1095,7 @@ corroboration rather than as the subject.
 Concretely, in the order the groundwork exists:
 
 - **Intent and meaning from the news, not keywords.** [news-models.md](
-  news-models.md) ranks what fits on this box, and [news-dedup.md](news-dedup.md)
+  ../research/news-models.md) ranks what fits on this box, and [news-dedup.md](news-dedup.md)
   settled the first question on it: deduplication is hygiene, not signal, so
   the restatement count is not the feature. Symbol normalisation (§2 there) is
   the real prerequisite, because nothing routes without it and half the corpus
@@ -1309,7 +1313,7 @@ comparison. `Engine(formation=...)` takes `pip`, `run` or `both` and
 `research/harness/` replays all three over one history and the outcome
 machinery says which set price respects - the same question
 [levels.md](levels.md) leaves unresolved for pip against run, and which
-[strength.md](../research/strength.md) showed was measured on a broken
+[strength.md](strength.md) showed was measured on a broken
 volatility denominator anyway and needs redoing regardless.
 
 One caution from what is already measured, and it cuts both ways.
@@ -1790,7 +1794,7 @@ loosely will make everything downstream look excellent.
 
 Do not start from the news. [news-dedup.md](news-dedup.md) established that
 the corpus contains no observation of independent outlets converging on a
-story, and [news-models.md](news-models.md) §1 was demoted on the strength of
+story, and [news-models.md](../research/news-models.md) §1 was demoted on the strength of
 it. Sentiment or crowding as a turn signal is the same claim in a longer coat,
 and the data to test it does not exist yet.
 
