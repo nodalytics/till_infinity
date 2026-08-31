@@ -65,15 +65,26 @@ def touches() -> dict[str, list[tuple[bool, float]]]:
     return out
 
 
-def cost(client: httpx.Client, aliases: tuple[str, ...]) -> float | None:
-    """The spread to cross, in volatility units. See research/catalogue.md.
+def catalogue(client: httpx.Client) -> dict[str, str]:
+    """The broker's own symbol names, keyed upper-cased.
 
-    Every alias is tried, not just the first. `INSTRUMENTS` lists the names
-    different brokers use and Deriv's are the spaced ones - "US Tech 100"
-    rather than "US100" - so taking `aliases[0]` silently left ten instruments
-    unpriced, including several with the largest gross edge.
+    Because an alias has to match the broker's *spelling*, not its spelling
+    upper-cased. `INSTRUMENTS` writes "US TECH 100" and the terminal answers to
+    "US Tech 100", so trying the alias verbatim left nine instruments unpriced -
+    several of them with the largest gross edge on the board. The same
+    case-sensitivity once reported all nine synthetics as unavailable.
     """
-    for symbol in aliases:
+    try:
+        r = client.get("/api/v1/symbols/", follow_redirects=True)
+        return {str(n).upper(): str(n) for n in r.json()} if r.status_code == 200 else {}
+    except Exception:
+        return {}
+
+
+def cost(client: httpx.Client, aliases: tuple[str, ...], known: dict[str, str]) -> float | None:
+    """The spread to cross, in volatility units. See research/catalogue.md."""
+    for alias in aliases:
+        symbol = known.get(alias.upper(), alias)
         got = _cost_of(client, symbol)
         if got is not None:
             return got
@@ -124,11 +135,12 @@ def main() -> None:
     )
     rows = []
     with httpx.Client(base_url=URL, headers=headers, timeout=90.0) as client:
+        known = catalogue(client)
         for feed, seen in sorted(found.items(), key=lambda kv: -len(kv[1])):
             if len(seen) < MIN_TOUCHES:
                 continue
             names = INSTRUMENTS.get(feed) or ()
-            spread = cost(client, names) if names else None
+            spread = cost(client, names, known) if names else None
             acc = sum(1 for right, _ in seen if right) / len(seen)
             push = st.median(size for _r, size in seen)
             gross = (2 * acc - 1) * push
