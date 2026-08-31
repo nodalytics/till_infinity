@@ -23,6 +23,7 @@ rather than believed.
 | [news-models.md](news-models.md) | survey - model families that could turn stored headlines into features, and which of them fit in 640MB beside everything else |
 | [reading.md](reading.md) | notes - AlphaGo Zero, Llama 3, InstructGPT and DeepSeek-R1, what transfers and what does not; all four guard against the reward hacking this system did to itself |
 | [bandits.md](bandits.md) | design note - where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
+| [positioning.md](positioning.md) | what supply and demand this system has - six ideas inferred from price, the macro block that is all supply and no demand, and the CFTC positioning that is the one *observed* measure reachable from here |
 | [catalogue.md](catalogue.md) | **measured** - which of the broker's 798 symbols are worth carrying; in volatility units the synthetics cost 0.170v to cross against FX's 2.267v, which is the opposite of what the point spreads say |
 | [stops.md](stops.md) | **measured on production** - stops are the whole loss; 20 of 27 judgeable stopped trades never reached target and 7 were stopped early, so the answer is a better entry rather than a wider stop |
 | [strength.md](strength.md) | **measured, not built** - how strong is a level and does it matter; the strongest single thing a level knows |
