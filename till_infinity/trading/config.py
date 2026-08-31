@@ -1066,6 +1066,30 @@ class Settings:
     #:
     #: Bounded to holds under `Scalper.PARKED_STOP_HOLD` (300s) whatever this
     #: says, which is what keeps a short-hold grid's number off a swing.
+    #: Refuse a level call whose chance of giving way is above this. Zero is
+    #: off.
+    #:
+    #: `structures/breaking.py` publishes `break_probability` from the arrival
+    #: speed and the depth of the touch - a different question from the
+    #: direction every other gate reads, and demonstrably so: `up_rate`, which
+    #: carries almost all of direction, predicts a break at AUC 0.4928.
+    #:
+    #: **0.42 is the measured top fifth.** Over 10,977 resolved touches at five
+    #: to thirty minutes, the highest fifth by this estimate breaks 43.2% of
+    #: the time against the lowest fifth's 16.9% - so the level's call is right
+    #: 56.8% there against 83.1% at the other end.
+    #:
+    #: **Refusing, not inverting.** Flipping the trade in that fifth was
+    #: measured and loses: the call is still right more often than not even
+    #: where it is weakest, so an inversion turns 56.8% into 43.2%. That was
+    #: worth testing and the answer was no.
+    #:
+    #: Off by default because a gate that refuses trades should be turned on
+    #: deliberately, and because the numbers behind it were wrong once already
+    #: - `trap` was grouped with `break`, which put the break rate at 55.6%
+    #: instead of 32.3%. See research/force.md.
+    max_break_risk: float = 0.0
+
     parked_stop_vol: float = 0.0
 
     #: Refuse a trade when the market around this level is choppier than this.
@@ -1381,6 +1405,7 @@ class Settings:
             max_push_vol=_float("TRADING_MAX_PUSH_VOL", 25.0),
             hold_max_spread=_float("TRADING_HOLD_MAX_SPREAD", 0.0),
             parked_stop_vol=_float("TRADING_PARKED_STOP_VOL", 0.0),
+            max_break_risk=_float("TRADING_MAX_BREAK_RISK", 0.0),
             min_efficiency=_float("TRADING_MIN_EFFICIENCY", 0.0),
             trend_sizing=_float("TRADING_TREND_SIZING", 0.0),
             max_against_vol=_float("TRADING_MAX_AGAINST_VOL", 0.0),

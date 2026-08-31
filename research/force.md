@@ -199,6 +199,65 @@ first.
 level did anything, which is the discipline the rest of the package already
 applies to it.
 
+## Applied as a gate, not an inversion
+
+`TRADING_MAX_BREAK_RISK` refuses a level call whose break estimate is above it,
+in `LevelStrategy.quality` - the shared gate, so every strategy runs it. That
+method exists because `FadeToValue` once overrode `consider` entirely and ran
+none of the gates, an exemption invisible from the configuration while the
+exempt strategy took most of the trades.
+
+**0.42 is the measured top fifth**, which breaks 43.2% of the time against the
+bottom fifth's 16.9%.
+
+**Refusing rather than inverting, and that was tested.** Flipping the trade in
+that fifth turns 56.8% right into 43.2% right - the call is still better than a
+coin even where it is weakest. The inversion was a good hypothesis and the data
+refused it.
+
+Off by default. A gate that declines trades should be turned on deliberately,
+and the numbers behind this one were wrong once already.
+
+## The dip is already allowed for
+
+A level does not fail because price touched the other side of it. `Tracker`
+requires `break_vol` - 0.75 volatility units - beyond the level before a break
+is even provisional, and a break that comes back through inside `trap_window`
+resolves as a **trap** rather than a break.
+
+That is the code's name for "dipped through and came back", and it is why the
+correction above is a correction rather than a convenient relabelling: the
+machinery had always treated a trap as the level surviving, and only the
+analysis had it otherwise.
+
+## A range around the level is a third thing, and nothing models it
+
+Price does not only hold or break. It can settle into a range *around* the
+level, oscillating either side and resolving neither way - and that is not
+captured by `approach_vol`, `depth_vol` or the momentum ensemble, all of which
+describe the **arrival** rather than what happens afterwards.
+
+The code has a name for it - `Outcome.CHOP` - and **every model here excludes
+it**, deliberately and consistently: it is neither a hold nor a break, so
+counting it as either would be wrong. What nothing does is *predict* it.
+
+At five to thirty minutes the outcome mix is:
+
+| outcome | share |
+| --- | --- |
+| reject | 35.8% |
+| break | 31.5% |
+| trap | 22.6% |
+| backcheck | 7.6% |
+| **chop** | **2.5%** |
+
+So the range case is real, named, excluded from every model, and **rare** -
+2.5% of resolutions, 280 of 11,272. That is the reason not to chase it yet
+rather than an argument that it does not matter: a third class worth 2.5% of
+the sample cannot be modelled from this record, and the trap rate at 22.6% is a
+far larger pool of "went through and came back" that already *is* being
+modelled, on the right side of the hold/break line.
+
 ## What follows
 
 Nothing is gated on this yet, and nothing should be until it is scored the way

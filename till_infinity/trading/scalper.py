@@ -193,6 +193,35 @@ class LevelStrategy(Strategy):
         """
         settings = self.settings
 
+        # How likely the level is to give way, from the arrival speed and how
+        # deep the touch went. A different question from the direction every
+        # other gate here reads, and the evidence that it is different is that
+        # `up_rate` - which carries almost all of direction - predicts a break
+        # at AUC 0.4928, which is nothing. See research/force.md.
+        #
+        # Measured over 10,977 resolved touches at five to thirty minutes: the
+        # top fifth by this estimate breaks 43.2% of the time against the
+        # bottom fifth's 16.9%, so the call is right 56.8% there against 83.1%
+        # at the other end. This refuses that top fifth.
+        #
+        # **Refuse, not invert.** Inverting the trade there was measured and
+        # loses: the call is still right more often than not even where it is
+        # weakest, so flipping it turns 56.8% into 43.2%.
+        #
+        # Silent when the estimate is absent, which is the honest state until
+        # the model has 200 resolutions behind it - a level call with no break
+        # reading is not a level call with a low one.
+        ceiling = settings.max_break_risk
+        if ceiling > 0:
+            risk = features.get("break_probability")
+            if risk is not None and float(risk) > ceiling:
+                return Refusal(
+                    "break_risk",
+                    f"a {float(risk):.0%} chance this level gives way, over the "
+                    f"{ceiling:.0%} it allows",
+                    feed,
+                )
+
         agree_at = self.min_momentum_agree
         if agree_at > 0 and features.get("momentum_ready"):
             agreement = _number(features, "momentum_agree")
