@@ -1046,6 +1046,8 @@ class Tracker(Restorable):
         The wick is where liquidity was taken. The close is where the leg in
         ended and the leg out began, and it is the close that the level is
         drawn at.
+
+        An observation older than the touch is refused - see `_live`.
         """
         touch = self._live(level, when)
         if touch is not None:
@@ -1150,7 +1152,22 @@ class Tracker(Restorable):
         without an outcome; see GAP_FACTOR.
         """
         touch = self._open.get(self.key(level))
-        if touch is not None and when - touch.started >= self.horizon_for(touch) * GAP_FACTOR:
+        if touch is None:
+            return None
+        # And **not before it began**. A bar reaches here stamped at its own
+        # close and arrives *after* that close, so a touch a quote opened in
+        # the meantime can be handed a bar describing a window it did not exist
+        # in. That resolved 28.9% of outcomes at a negative duration - median
+        # exactly one bar on a 1m series - and anything reading `seconds` off a
+        # resolution was reading a quarter of its input backwards.
+        #
+        # Refused rather than clamped: clamping keeps the outcome and lies
+        # about its length, when the bar's range is evidence about a period
+        # before the touch and says nothing about what the touch did. The touch
+        # stays open and the next observation resolves it properly.
+        if when < touch.started:
+            return None
+        if when - touch.started >= self.horizon_for(touch) * GAP_FACTOR:
             self._open.pop(self.key(level), None)
             return None
         return touch
@@ -1169,7 +1186,11 @@ class Tracker(Restorable):
         # the approach. A consumer wants to know which way to lean, not whether
         # the level "won".
         touch.push_vol = travelled
-        touch.resolved = when
+        # Never before it began. `update` already refuses a stale observation,
+        # and this is the backstop for every other path into `_close` - a
+        # duration that runs backwards is not a small error, it silently
+        # reverses whatever reads it.
+        touch.resolved = max(when, touch.started)
         self._open.pop(self.key(level), None)
         level.record(side, outcome, touch.push_vol, when)
         if outcome is Outcome.BREAK and touch.broke_at:
@@ -1206,7 +1227,7 @@ class Tracker(Restorable):
             if when - touch.started >= self.horizon_for(touch) * GAP_FACTOR:
                 continue  # a gap, not an outcome - see GAP_FACTOR
             touch.outcome = Outcome.BREAK if touch.breaking else Outcome.CHOP
-            touch.resolved = when
+            touch.resolved = max(when, touch.started)
             # No price arrived to close this out, so the push is whatever the
             # touch had already reached: the excursion for a break that got
             # through and went quiet, and nothing at all for chop, which is

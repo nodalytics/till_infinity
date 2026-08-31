@@ -75,4 +75,35 @@ bar. The same class of error as the two timestamp bugs this project has already
 found.
 
 Anything that reads `seconds` off a resolution - hold estimates, the reach
-book, this document's own buckets - is reading a quarter of its input backwards.
+book, this document's own buckets - was reading a quarter of its input
+backwards.
+
+**Fixed.** `Tracker._live` now refuses an observation stamped earlier than the
+touch it would advance. Refused rather than clamped: the bar's range is
+evidence about a period before the touch began and says nothing about what the
+touch did, so clamping would keep the outcome and lie about its length. The
+touch stays open and the next observation resolves it properly. `_close` and
+`expire` carry a `max(when, started)` backstop for the paths that do not go
+through `update`.
+
+It had been fixed twice before in `observe_bar`, which is why the third
+attempt is at the consumer rather than the producer: a bar cannot know what
+touches a quote opened after its close, and the tracker can.
+
+## Where the evidence actually comes from
+
+Levels are spread evenly across timeframes and touches are not:
+
+| interval | series | levels | touches |
+| --- | --- | --- | --- |
+| 1m | 53 | 542 | 5,713 |
+| 5m | 53 | 343 | 1,744 |
+| 15m | 53 | 252 | 1,006 |
+| 1h | 52 | 241 | 548 |
+| 1d | 46 | 251 | 361 |
+| 1w | 43 | 269 | 542 |
+
+55.6% of levels sit on 15m or slower, and the fast end supplies most of the
+touches anyway. So the population problem is not that the higher timeframes are
+missing - they are there and forming - it is that they resolve rarely, and a
+pooled score is dominated by the interval that resolves most.

@@ -2226,3 +2226,89 @@ def test_a_thin_series_counts_as_unwarmed(tmp_path):
         series.times.popleft()
     watcher._seeded.clear()
     assert thin[0] in watcher.unwarmed()
+
+
+# ------------------------------------ a duration that runs backwards
+
+
+def _open_touch(tracker, started=1_000.0, feed="gold", price=4400.0):
+    from till_infinity.structures.levels import Side
+    from till_infinity.structures.reactions import Features, Touch
+
+    touch = Touch(
+        feed=feed,
+        interval="1m",
+        level_price=price,
+        features=Features(
+            side=Side.ABOVE,
+            approach_vol=1.0,
+            depth_vol=0.0,
+            strength=0.0,
+            run_vol=0.0,
+            experience=0.0,
+        ),
+        started=started,
+        entry=price,
+        extreme=price,
+    )
+    tracker._open[(feed, price)] = touch
+    return touch
+
+
+def test_an_observation_older_than_the_touch_is_refused():
+    """A bar reaches the tracker stamped at its own close and arrives *after*
+    that close, so a touch a quote opened in the meantime gets handed a bar
+    describing a window it did not exist in. That resolved 28.9% of production
+    outcomes at a negative duration, median exactly one bar on a 1m series."""
+    from till_infinity.structures.levels import Kalman, Level
+    from till_infinity.structures.reactions import Tracker
+
+    tracker = Tracker()
+    level = Level(feed="gold", interval="1m", filter=Kalman(4400.0, 1.0))
+    touch = _open_touch(tracker, started=1_000.0, price=level.price)
+    assert tracker._live(level, 1_060.0) is touch
+    assert tracker._live(level, 940.0) is None
+
+
+def test_the_touch_stays_open_when_a_stale_bar_is_refused():
+    """Refused rather than clamped: the bar's range is evidence about a period
+    before the touch and says nothing about what the touch did, so the touch
+    waits for an observation that is actually about it."""
+    from till_infinity.structures.levels import Kalman, Level
+    from till_infinity.structures.reactions import Tracker
+
+    tracker = Tracker()
+    level = Level(feed="gold", interval="1m", filter=Kalman(4400.0, 1.0))
+    _open_touch(tracker, started=1_000.0, price=level.price)
+    tracker._live(level, 940.0)
+    assert ("gold", 4400.0) in tracker._open
+
+
+def test_a_resolution_can_never_precede_its_own_start():
+    """The backstop for every path into `_close` that is not `update`. A
+    duration running backwards is not a small error - it silently reverses
+    whatever reads it."""
+    from till_infinity.structures.levels import Kalman, Level, Side
+    from till_infinity.structures.reactions import Outcome, Tracker
+
+    tracker = Tracker()
+    level = Level(feed="gold", interval="1m", filter=Kalman(4400.0, 1.0))
+    touch = _open_touch(tracker, started=1_000.0, price=level.price)
+    done = tracker._close(level, touch, Outcome.REJECT, 1.0, Side.ABOVE, when=940.0)
+    assert done.resolved >= done.started
+    assert done.resolved - done.started >= 0.0
+
+
+def test_an_expired_touch_also_cannot_run_backwards():
+    from till_infinity.structures.levels import Kalman, Level
+    from till_infinity.structures.reactions import Tracker
+
+    tracker = Tracker()
+    level = Level(feed="gold", interval="1m", filter=Kalman(4400.0, 1.0))
+    touch = _open_touch(tracker, started=10_000.0, price=level.price)
+    # Far enough past the horizon to expire, but stamped earlier than the
+    # touch began - which `expire` reaches without going through `update`.
+    touch.started = 10_000.0
+    for done in tracker.expire(when=10_000.0 + tracker.horizon_for(touch) * 2):
+        assert done.resolved >= done.started
+    assert all(t.resolved >= t.started for t in tracker.memory._touches)
