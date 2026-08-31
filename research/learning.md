@@ -28,51 +28,51 @@ touch itself is excluded**: it is added to memory during resolution, so it can
 appear among its own neighbours at distance zero and hand every model the
 answer.
 
-## First result: 442 touches
+## The result, at a matched sample
 
-    attention   72.4% of 442   base 50.6%   edge +21.79%
-    knn         72.0% of 442   base 50.6%   edge +21.41%
-    linear      71.7% of 442   base 50.6%   edge +21.05%
+    attention   87.8% of 1996   base 52.0%   edge +35.78%
+    knn         87.7% of 1996   base 52.0%   edge +35.71%
+    up_rate     84.7% of 1995   base 52.0%   edge +32.67%
+    linear      84.6% of 1996   base 52.0%   edge +32.61%
 
-**The three are within 0.7 points of each other.** At n=442 and p=0.72 the
-standard error of a single proportion is 2.1 points, so the spread between them
-is well inside noise even before allowing that they are scored on the same
-touches. On this evidence the kNN is not buying anything a logistic regression
-on the same nine features does not already provide - which is the first of the
-three outcomes below, and the one that says simplify.
+Three findings, and they point in different directions:
 
-The weights say why:
+**The neighbour structure earns its place.** The kNN beats the one-feature
+floor by 3.1 points of edge. At n=1996 the standard error on a proportion is
+0.75 points and the models are scored on the same touches, so that gap is real.
+Something in *which past touches resemble this one* predicts beyond the level's
+own record.
 
-    up_rate        +0.9414
-    depth_vol      -0.3377
-    approach_vol   +0.3150
-    backcheck      +0.2649
-    regime         +0.1995
-    experience     -0.0871
+**Learning the distance adds nothing.** Attention scores +35.78 against the
+kNN's +35.71 - a 0.07 point gap, indistinguishable. Its learned weights are
+still all within 0.004 of 1.0 after two thousand touches, which is the model
+saying it could not find a metric worth having. The value is in the neighbours,
+not in how they are weighted.
 
-`up_rate` - the level's own record of which way its previous same-side touches
-went - is worth nearly three times the next feature. Everything else is small.
-That is the model independently rediscovering what research/features.md found
-by hand: none of the other eight predicts direction once side is known.
+**The linear model is the floor.** +32.61 against reading `up_rate` straight
+off at +32.67. Logistic regression on nine features matches one feature and no
+model, and the weights say why: `up_rate` at +2.29 with nothing else above
+0.22. Beyond it, the features carry nothing *linearly*.
 
-The learned distance kept `depth_vol` at 1.0 and pushed the rest toward zero,
-which is the same finding arriving from the other direction - if only one
-feature separates outcomes, the *distance* between touches barely matters.
+Together: the signal is in **local, non-linear** structure - exactly what a kNN
+captures and a linear model cannot.
 
-### So the next measurement is the floor, not a better model
+### This reverses an earlier reading
 
-If reading `up_rate` straight off scores what all three score, then eight
-features and the entire neighbour machinery are earning nothing. That is a
-one-line comparison and it is now in the bench as `up_rate` - no model at all,
-just the feature. It is the number the other three have to beat, and until they
-beat it none of them has demonstrated anything.
+At 442 touches the three models sat within 0.7 points of each other, and when
+the floor was added it appeared to beat all of them by 3 points. That was
+written up here as "the kNN is not buying anything", and it was wrong.
 
-Caveats, stated because the result is a strong one on a small sample: 442
-decayed touches, one snapshot taken shortly after a cold start, and every
-learned model still moving. `up_rate` is point-in-time by construction -
-`features_for` runs before `Tracker.begin`, so a touch is not in its own
-denominator - which is the one way this number could have been an artefact and
-is not.
+The cause was a sample mismatch, not arithmetic: `up_rate` was added later, so
+it had 394 touches against the others' 776 and a base rate of 55.0% against
+their 53.2%. Different touches, different period. The ordering inverted as soon
+as the counts converged.
+
+Two things kept it from becoming a bad decision. The comparison was recorded
+rather than acted on, and the caveat that the samples were not matched was
+written down beside the number at the time. The simplification it seemed to
+argue for - drop the neighbour search, read the level's record - would have
+cost 3 points of edge on the most important path in the system.
 
 ## What to read
 
@@ -88,6 +88,8 @@ Three outcomes and two of them are useful:
   finding about the *features*, and no amount of model fixes it;
 * **the kNN wins clearly** — worth knowing, and it would be the first evidence
   for it rather than the assumption it has been.
+
+The third is what happened, and it took a matched sample to see it.
 
 ## The learned distance
 

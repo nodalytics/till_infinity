@@ -23,7 +23,7 @@ rather than believed.
 | [bandits.md](bandits.md) | design note - where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
 | [catalogue.md](catalogue.md) | **measured** - which of the broker's 798 symbols are worth carrying; in volatility units the synthetics cost 0.170v to cross against FX's 2.267v, which is the opposite of what the point spreads say |
 | [stops.md](stops.md) | **measured on production** - stops are the whole loss; 20 of 27 judgeable stopped trades never reached target and 7 were stopped early, so the answer is a better entry rather than a wider stop |
-| [learning.md](learning.md) | **measured** - is the kNN behind every level call buying anything; on 442 touches a learned distance, the kNN and a logistic regression land within 0.7 points of each other, and `up_rate` carries almost all of it |
+| [learning.md](learning.md) | **measured** - is the kNN behind every level call buying anything; at a matched 1,996 touches it beats a one-feature floor by 3.1 points of edge, a learned distance adds nothing over it, and a logistic regression on nine features matches reading one |
 | [formations.md](formations.md) | seven ways to find a level and why they run together; 57% of levels now have more than one method behind them, where every one used to be `pip` alone |
 | [shelves.md](shelves.md) | **measured** - do high-activity bands get respected; pooled over 849 windows a node is reached 45.8% against a control's 46.3%, and the synthetic null reads -11.6% |
 | [origins.md](origins.md) | **measured** - do origins hold when price comes back to them |
