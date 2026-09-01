@@ -572,15 +572,11 @@ class LevelStrategy(Strategy):
         # `side`, so the trade this builds is a correct one on the other side.
         side = self.orient(side)
 
-        # The class flag, or the setting when this is a scalp. Reading both
-        # here rather than overriding `needs_context` keeps the class flag
-        # meaning what it says - `confluence-scalp` requires context whatever
-        # the deployment does - while letting a deployment ask the same of the
-        # rest. See `Settings.scalp_needs_context` for why that is a switch
-        # rather than a default.
-        wants_context = self.needs_context or (
-            self.style == "scalp" and self.settings.scalp_needs_context and bool(self.context)
-        )
+        # Both, and the second half is the guard: a strategy that names no
+        # context timeframes cannot be unanchored, and asking would refuse
+        # every call it ever saw. `council` is that case - it declares no
+        # context because it delegates, and its members carry their own.
+        wants_context = self.needs_context and bool(self.context)
         if wants_context and not self.anchored(payload):
             return Refusal(
                 "unanchored",

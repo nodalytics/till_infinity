@@ -472,25 +472,23 @@ def test_every_scalp_names_a_higher_timeframe_as_context():
         assert set(cls.context) <= {"15m", "30m", "1h", "2h", "4h", "1d", "1w"}, name
 
 
-def test_the_requirement_is_off_by_default():
-    """research/strength.md scores confluence depth at AUC 0.476 and 0.452 -
-    below the 0.5 that means no information - so requiring it is a switch
-    rather than a default."""
-    assert _scalp().settings.scalp_needs_context is False
-
-
-def test_it_can_be_required():
-    assert _scalp(scalp_needs_context=True).settings.scalp_needs_context is True
-
-
-def test_a_strategy_that_always_wants_context_is_unaffected():
-    """`confluence-scalp` requires it whatever the deployment says - the class
-    flag means what it says, and the setting only adds to it."""
+def test_every_strategy_wants_context():
+    """The switch that staged this for scalps is gone: a trigger with nothing
+    above it agreeing is a fast trade in no direction, whatever the style."""
     import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
 
-    engine = td.STRATEGIES["confluence-scalp"](Settings(scalp_needs_context=False))
-    assert engine.needs_context is True
+    for name, cls in td.STRATEGIES.items():
+        assert cls.needs_context is True, name
+
+
+def test_a_strategy_naming_no_context_is_not_gated():
+    """`council` delegates to its members, which carry their own anchors.
+    Asking it for agreement it never declared would refuse every call."""
+    import till_infinity.trading as td
+
+    engine = td.STRATEGIES["council"](_scalp().settings)
+    assert engine.context == ()
+    assert engine.anchors == ()
 
 
 def test_the_gate_reads_both():
@@ -499,5 +497,12 @@ def test_the_gate_reads_both():
     from till_infinity.trading import scalper
 
     source = inspect.getsource(scalper.LevelStrategy.consider)
-    assert "scalp_needs_context" in source
-    assert "self.needs_context or" in source
+    assert "self.needs_context and bool(self.context)" in source
+
+
+def test_origin_swing_anchors_on_the_high_timeframes_alone():
+    """Asked for on 2026-09-01: the space between two origins is only worth
+    trading when 4h or 1d says the far one is real."""
+    import till_infinity.trading as td
+
+    assert td.STRATEGIES["origin-swing"].context == ("4h", "1d")

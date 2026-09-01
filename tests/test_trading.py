@@ -79,7 +79,9 @@ def signal(**over):
         "features": features,
         "interval": "5m",
         "direction": "up",
-        "confluence": ["5m"],
+        # Anchored, because every strategy now requires it. A test that wants
+        # the unanchored case passes `confluence=["5m"]` and says so.
+        "confluence": ["5m", "1h"],
         "time": NOW,
     }
     payload.update(over)

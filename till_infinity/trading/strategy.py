@@ -345,7 +345,13 @@ class Strategy(ABC):
     context: ClassVar[tuple[str, ...]] = ()
 
     #: Whether an entry is refused when no context timeframe agrees.
-    needs_context: ClassVar[bool] = False
+    #:
+    #: **On by default.** A trigger with nothing above it agreeing is a fast
+    #: trade in no direction, which is the thing `context` exists to prevent -
+    #: making it opt-in meant most strategies opted out. A strategy that
+    #: declares no `context` at all is unaffected: `consider` requires both,
+    #: so `council`, which delegates to its members, is not gated twice.
+    needs_context: ClassVar[bool] = True
 
     #: The timeframe whose last closed bar must show the rejection, when the
     #: candle witness is asked for. Empty means the entry interval, which is

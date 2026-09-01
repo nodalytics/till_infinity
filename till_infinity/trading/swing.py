@@ -437,8 +437,15 @@ class OriginSwing(LevelStrategy):
     )
 
     entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
-    context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
-    needs_context: ClassVar[bool] = True
+
+    #: The high timeframes alone, narrower than the other swings.
+    #:
+    #: The trade is the space between two origins, and an origin worth
+    #: running to is not one that 2h agrees about. 2h and 1w are dropped
+    #: for opposite reasons: 2h is close enough to the entry bar that
+    #: agreement there is nearly the same measurement twice, and 1w is
+    #: rare enough that requiring it would be requiring 4h and 1d anyway.
+    context: ClassVar[tuple[str, ...]] = ("4h", "1d")
 
     #: The rejection has to show on 4h - several hours of auction failing at
     #: this price, rather than one hour's worth on the entry bar.
