@@ -742,7 +742,7 @@ class LevelScalp(LevelStrategy):
     #: `max_hold` closes it inside the hour, so a 4h thesis would be ended by
     #: the clock rather than by being right or wrong - which teaches the
     #: journal nothing.
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
     #: Anchored above, without requiring it. A 5m call confirmed by 1h is a
     #: better 5m call; one without is still a call, and refusing it is
     #: `confluence-scalp`'s job rather than this one's.
@@ -792,7 +792,7 @@ class ConfluenceScalp(LevelStrategy):
     )
     #: Same fast trigger as `level-scalp`. The difference is that the anchor
     #: is required rather than merely welcome.
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
     context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h", "1d")
     needs_context: ClassVar[bool] = True
     stop_multiple: ClassVar[float] = 1.5
@@ -830,7 +830,7 @@ class MomentumScalp(LevelStrategy):
     #: forty-eight calls span months, so the slow line would describe a market
     #: that no longer exists. Fast data is where the estimator has enough
     #: observations for its own half-lives to mean anything.
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
     context: ClassVar[tuple[str, ...]] = ("15m", "1h")
 
     def __init__(self, settings) -> None:
@@ -923,7 +923,7 @@ class Snap(LevelStrategy):
     #: distance.
     break_even_at: ClassVar[float] = 0.5
     trail_vol: ClassVar[float] = 0.75
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
     context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
 
 
@@ -967,7 +967,7 @@ class ThesisOnly(LevelStrategy):
         "rather than a trade decision. Exits on target or on the clock. An "
         "experiment to test whether the stops or the theses are wrong."
     )
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
     context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
 
     def distances(
@@ -1039,7 +1039,7 @@ class Inverse(LevelStrategy):
         "The calls the model likes best, traded the other way. A control on "
         "whether the direction or the execution is what loses money."
     )
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
     context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
 
     #: Fading a run that is still running is the worst version of what this
@@ -1096,7 +1096,7 @@ class SweepAware(LevelStrategy):
     description: ClassVar[str] = (
         "level-scalp, refusing setups whose stop sits in front of resting liquidity."
     )
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m")
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
     context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
     #: A sweep *is* momentum - a run through a level, taking the stops behind
     #: it. This strategy refuses when its stop sits in front of that liquidity,

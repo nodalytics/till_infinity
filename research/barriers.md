@@ -165,6 +165,29 @@ exposure on any instrument that closes, and the session gate - which refuses to
 hold would refuse most FX and index entries outright rather than lengthening
 them.
 
+## Where the split falls: 15m is a scalp
+
+The traversal rates put 15m with the fast group rather than with the swings:
+
+| interval | far | back |
+| --- | --- | --- |
+| 1m | 44.1% | 55.2% |
+| 5m | 46.0% | 49.2% |
+| **15m** | **46.9%** | **52.4%** |
+| 30m | 44.6% | 52.7% |
+| **1h** | **54.3%** | **39.1%** |
+
+15m looks like 1m and 5m: "back" beats "far". **1h is the one that is
+different** - the only interval where the trade completes more often than it
+stops out. So the swings now enter at 30m and above, and 15m has moved to the
+scalps.
+
+The honest reading of the same table is that **30m also sits with the fast
+group** (44.6% far against 52.7% back), and 1h is the only interval that
+separates. But 74 setups at 30m and 46 at 1h is not enough to move a boundary
+on, and the swing/scalp line has to fall somewhere - 30m is where the hold, the
+anchor timeframes and the context all already point.
+
 ## One ceiling per style
 
 `max_hold` never governed both. `hold_for` read it only when a strategy named
