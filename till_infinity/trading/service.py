@@ -1985,10 +1985,54 @@ class Trader:
         self.equity = account.equity or self.equity
         self.guard.roll(self.equity)
         await self._reconcile()
+        await self._orphans()
         await self._manage()
         await self._expire()
         await self._rearm_stopped()
         self._say_what_it_is_doing()
+
+    async def _orphans(self) -> None:
+        """Withdraw resting orders this process is not tracking.
+
+        `_waiting` is in-process memory and the broker's order book is not.
+        Every path that drops a wait goes through `_withdraw`, which is the
+        right design and covers nothing across a restart: the container
+        recycles, `_waiting` comes back empty, and the orders it was holding
+        sit at the broker with nobody watching them.
+
+        Found live on 2026-09-01 - seven resting orders, the oldest 6.9 hours
+        old and placed before a restart the evening before. A stale limit is
+        worse than a missed trade: it fills on a setup this system stopped
+        believing in hours ago, at a price the market has since left, and the
+        first anybody knows is a position nobody opened.
+
+        Deliberately **not** adopting them instead. Reconstructing what a
+        `Waiting` believed - which gate it watched, what would have withdrawn
+        it - is guesswork, and a wrong guess leaves a live order governed by a
+        fiction. Withdrawing is the honest recovery: the signal is gone, and if
+        it is still good it will be published again.
+        """
+        if not self.settings.entry_pending or not self.settings.live:
+            return
+        try:
+            resting = await self.execution.resting()
+        except BrokerError as exc:
+            log.debug("trading: could not list resting orders: %s", exc)
+            return
+        mine = {held.ticket for held in self._waiting.values() if held.ticket}
+        for ticket in resting:
+            if ticket in mine:
+                continue
+            try:
+                await self.execution.withdraw(ticket)
+            except BrokerError as exc:
+                log.warning("trading: could not withdraw orphan #%d: %s", ticket, exc)
+                continue
+            log.info(
+                "trading: withdrew orphan #%d - resting at the broker with "
+                "nothing here tracking it",
+                ticket,
+            )
 
     def _mark_best(self, symbol: str, bid: float, ask: float) -> None:
         """Track the extremes each open trade has seen, both ways.

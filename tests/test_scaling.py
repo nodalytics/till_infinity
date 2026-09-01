@@ -226,3 +226,93 @@ def test_the_service_passes_them():
     source = inspect.getsource(service.Trader.on_signal)
     assert "positions=positions" in source
     assert "peak=self.peak_equity" in source
+
+
+# ------------------------------------------ orders the broker holds and we forgot
+
+
+class _Broker:
+    """Enough of the execution port to answer `resting` and `withdraw`."""
+
+    def __init__(self, resting):
+        self._resting = list(resting)
+        self.withdrawn = []
+
+    async def resting(self):
+        return list(self._resting)
+
+    async def withdraw(self, ticket):
+        self.withdrawn.append(ticket)
+
+
+def _trader(**over):
+    from till_infinity.bus import Bus
+    from till_infinity.trading.config import Settings
+    from till_infinity.trading.service import Trader
+
+    made = {"entry_pending": True, "live": True}
+    made.update(over)
+    return Trader(Bus(), settings=Settings(**made))
+
+
+@pytest.mark.asyncio
+async def test_an_order_the_process_is_not_tracking_is_withdrawn():
+    """`_waiting` is in-process memory and the broker's order book is not. A
+    restart empties the first and leaves the second holding live orders that
+    fill on setups this system stopped believing in hours ago."""
+    trader = _trader()
+    # `execution` is `paper or broker`, so setting the broker is how the real
+    # thing is reached rather than patching a property.
+    trader.broker = _Broker([111, 222])
+    trader.paper = None
+    await trader._orphans()
+    assert trader.broker.withdrawn == [111, 222]
+
+
+@pytest.mark.asyncio
+async def test_an_order_it_is_tracking_is_left_alone():
+    from till_infinity.trading.models import Side
+    from till_infinity.trading.service import Waiting
+
+    trader = _trader()
+    trader._waiting["gold"] = Waiting(
+        payload={}, feed="gold", trigger=4400.0, side=Side.BUY, until=0.0, ticket=111
+    )
+    trader.broker = _Broker([111, 222])
+    trader.paper = None
+    await trader._orphans()
+    assert trader.broker.withdrawn == [222]
+
+
+@pytest.mark.asyncio
+async def test_it_does_nothing_when_resting_orders_are_off():
+    """A deployment that never places one should never withdraw one either."""
+    trader = _trader(entry_pending=False)
+    trader.broker = _Broker([111])
+    trader.paper = None
+    await trader._orphans()
+    assert trader.broker.withdrawn == []
+
+
+@pytest.mark.asyncio
+async def test_a_broker_that_will_not_answer_is_not_a_fault():
+    """Sweeping is recovery, not machinery: it must not stop the heartbeat."""
+    from till_infinity.trading.broker import BrokerError
+
+    class Broken(_Broker):
+        async def resting(self):
+            raise BrokerError("no")
+
+    trader = _trader()
+    trader.broker = Broken([])
+    trader.paper = None
+    await trader._orphans()  # must not raise
+
+
+def test_the_heartbeat_sweeps_them():
+    """A recovery nothing calls is not a recovery."""
+    import inspect
+
+    from till_infinity.trading import service
+
+    assert "await self._orphans()" in inspect.getsource(service.Trader.sweep)
