@@ -370,3 +370,80 @@ def test_every_swing_entry_is_a_higher_timeframe():
         if cls.style != "swing" or not cls.entries:
             continue
         assert set(cls.entries) <= {"15m", "30m", "1h", "2h", "4h", "1d", "1w"}, name
+
+
+# ------------------------------------- a close with no decision behind it
+
+
+def _closed(ref: str):
+    """Settle a position and return every journal call it made."""
+    import asyncio
+
+    import till_infinity.trading as td
+    from till_infinity.bus import Bus
+    from till_infinity.trading.config import Settings
+    from till_infinity.trading.models import Intent, Side
+    from till_infinity.trading.service import Live, Trader
+
+    written = []
+
+    class Book:
+        async def write(self, entry):
+            written.append(entry)
+            return entry.id
+
+    trader = Trader(Bus(), settings=Settings(live=False), journal=Book())
+    live = Live(
+        position=td.Position(
+            ticket=5762684366, symbol="XAUUSD", side=Side.BUY, volume=0.05, price_open=4400.0
+        ),
+        intent=Intent(
+            feed="gold",
+            symbol="XAUUSD",
+            side=Side.BUY,
+            volume=0.05,
+            entry=4400.0,
+            stop=4395.0,
+            target=4410.0,
+        ),
+        ref=ref,
+        by="runner",
+    )
+
+    async def run():
+        await trader._settle(live, price=4405.0, why="closed", profit=13.2)
+
+    asyncio.run(run())
+    return written
+
+
+def test_a_close_with_a_decision_is_journalled_as_an_outcome():
+    written = _closed("decision-123")
+    kinds = [str(e.kind) for e in written]
+    assert "outcome" in kinds
+
+
+def test_a_close_with_no_decision_still_reaches_the_journal():
+    """After a restart `self.open` is rebuilt from the broker and the ref lives
+    in memory, so every position that outlived one closed without being
+    recorded: twenty tickets closed in fourteen hours, six outcomes written."""
+    written = _closed("")
+    assert written, "an unattributed close must not vanish"
+    assert any("unattributed" in str(e.title) for e in written)
+
+
+def test_an_unattributed_close_is_an_observation_not_an_outcome():
+    """`journal.outcome` refuses a parentless entry on purpose - an outcome is
+    a label on a decision. Forcing one through would break that invariant to
+    fix this."""
+    written = _closed("")
+    assert all(str(e.kind) != "outcome" for e in written)
+
+
+def test_the_ticket_is_recorded():
+    """The one identifier tying our books to the broker's, and the one thing
+    that was not written down - a ticket from an alert could not be traced to
+    its record at all."""
+    for ref in ("decision-123", ""):
+        written = _closed(ref)
+        assert any(e.context.get("ticket") for e in written), ref

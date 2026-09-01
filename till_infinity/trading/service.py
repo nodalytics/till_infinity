@@ -2788,6 +2788,43 @@ class Trader:
                 stopped_at=price,
             )
         await self._announce_close(live, price, profit, why)
+        if not live.ref:
+            # A close with no decision behind it, which after a restart is most
+            # of them: `self.open` is rebuilt from the broker by `_reconcile`
+            # and the ref lives in memory, so every position that outlived a
+            # restart closed without reaching the journal. Measured on
+            # 2026-09-01: twenty distinct tickets closed in fourteen hours and
+            # six outcomes recorded.
+            #
+            # Recorded as an **observation**, not an outcome. `journal.outcome`
+            # refuses a parentless entry on purpose - an outcome is a label on
+            # a decision and a label with nothing to label is not one - so
+            # forcing it through there would break that invariant to fix this.
+            # An observation is what this is: something that happened, with no
+            # decision of ours attached.
+            await observe(
+                self.journal,
+                f"{position.symbol} closed {profit:+.2f} at {price:.5g}, unattributed",
+                rationale=(
+                    f"{why} after {position.age:.0f}s. No decision is on record for this "
+                    "position - it was adopted from the broker rather than opened here, "
+                    "which is what happens to anything that outlives a restart."
+                ),
+                actor="trading",
+                context={
+                    "feed": live.intent.feed,
+                    "symbol": position.symbol,
+                    "ticket": position.ticket,
+                    "exit": price,
+                    "profit": round(profit, 2),
+                    "seconds": round(position.age),
+                    "reason": why,
+                    "exit_kind": _exit_kind(live, price),
+                    "strategy": live.by,
+                    "unattributed": 1.0,
+                },
+                tags=(live.intent.feed, "close", "unattributed"),
+            )
         if live.ref:
             await outcome(
                 self.journal,
@@ -2823,6 +2860,12 @@ class Trader:
                     "seconds": round(position.age),
                     "strategy": live.by,
                     "magic": position.magic,
+                    # The broker's own name for this trade. Absent until now,
+                    # which meant a ticket from the terminal or an alert could
+                    # not be traced to its record at all - the one identifier
+                    # tying our books to theirs was the one thing not written
+                    # down.
+                    "ticket": position.ticket,
                     # Which of the three ways it ended. `reason` says how the
                     # position left the book - closed, or gone between polls -
                     # and not what took it, so stop and target were
