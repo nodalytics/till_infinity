@@ -182,11 +182,15 @@ different** - the only interval where the trade completes more often than it
 stops out. So the swings now enter at 30m and above, and 15m has moved to the
 scalps.
 
-The honest reading of the same table is that **30m also sits with the fast
-group** (44.6% far against 52.7% back), and 1h is the only interval that
-separates. But 74 setups at 30m and 46 at 1h is not enough to move a boundary
-on, and the swing/scalp line has to fall somewhere - 30m is where the hold, the
-anchor timeframes and the context all already point.
+**30m moved to the scalps too, on the same reading.** It sits with the fast
+group at 44.6% far against 52.7% back, so the boundary now falls where the data
+puts it rather than where the naming did: the five swing strategies enter on
+**1h only**, and everything from 1m to 30m is a scalp.
+
+That is a narrow door for the swings - one interval - and it is the honest
+consequence of the table. 46 setups is a thin basis for it, so the thing that
+would revise this is more of them, which is what widening the replay harness
+past 1h is for.
 
 ## One ceiling per style
 

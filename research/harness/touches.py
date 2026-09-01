@@ -2,10 +2,23 @@
 
 import pickle
 import sqlite3
+from collections import Counter
 from pathlib import Path
 
-CACHE = Path(__file__).with_name("touches.pkl")
-INTERVALS = ("1m", "5m", "15m", "1h")
+#: Which intervals to replay.
+#:
+#: Widened past 1h because the thin higher-timeframe samples were never a data
+#: problem: the store holds 1,884 4h bars per feed back to 2024 and 1,318
+#: weekly bars back to 2020. What was thin is *resolved touches*, which only
+#: accumulate as the desk runs live - 1,297 at 1h against 157 at 4h in the
+#: journal. Replaying the history that is already there is the difference
+#: between waiting months for a 4h sample and having one now.
+INTERVALS = ("1m", "5m", "15m", "30m", "1h", "2h", "4h", "1d")
+
+#: Named for the intervals it holds. A single `touches.pkl` was silently
+#: reused when `INTERVALS` widened, which answers the new question with the old
+#: data and looks exactly like a replay that found nothing new.
+CACHE = Path(__file__).with_name(f"touches-{len(INTERVALS)}.pkl")
 FIELDS = (
     "approach_vol",
     "depth_vol",
@@ -88,6 +101,11 @@ def load():
                 )
             )
     rows.sort(key=lambda r: r[4])
+    seen = Counter(r[3] for r in rows)
+    print(
+        f"replayed {len(rows)} resolved touches: "
+        + ", ".join(f"{iv} {seen.get(iv, 0)}" for iv in INTERVALS)
+    )
     CACHE.write_bytes(pickle.dumps(rows))
     return rows
 
