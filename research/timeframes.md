@@ -135,5 +135,49 @@ Roughly 38 signals refused per parked entry that eventually filled — an upper
 bound, since some would have died on another gate. And the trades parking buys
 are not better: two closed, −19.73 each against −5.31 for the 147 that went
 straight in. n=2 settles nothing about quality; it is the finding about
-frequency. At 1.5v the resting price is not reached often enough to be a
-strategy, and while it waits it is a mute button on the feed.
+frequency.
+
+### The cause was not the distance — 2026-09-01, later
+
+`entry_edge_vol` was lowered 1.5 → 0.5 on the reading above, that the resting
+price was simply not reached. That reading was wrong, and the next hour of
+logs said so: nine rests placed, **zero filled, zero expired, five withdrawn
+and every one of them for spread**. Parking at 0.5v raised the rest *rate*
+about eightfold — nine in 65 minutes against three in 5.5 hours — and changed
+the fill count not at all.
+
+`_turned_against` decided each withdrawal with this:
+
+```python
+risk = abs(held.trigger - tick.entry(held.side))
+if risk > 0 and spread > risk * self.settings.max_spread_fraction:
+```
+
+`risk` is not the trade's risk. It is the distance price still has to travel
+to reach the resting price, and it collapses to nothing as price arrives —
+which is the event the order is waiting for. The threshold collapses with it,
+so any spread at all clears the bar. `_turned_against` runs *before* the
+arrival check in `_arrived`, so the withdrawal won the race with the fill
+every time.
+
+**A resting entry could not fill through this path.** The 8.8% that ever
+arrived "after waiting" are most likely the ones that jumped the gap between
+two polls and were never observed near their trigger — which is also why that
+number sat close enough to the 14.6% predicted from the depth distribution to
+look like a plausible fill rate.
+
+Two things kept it hidden. The local was named `risk`, so the line reads as
+the trade's risk against its spread — the same shape as the correct test at
+`risk.py:187`, which divides by `intent.reward`. And the test fixture arrived
+*exactly* on the trigger, where the gap is 0.0 and `risk > 0` skipped the
+guard entirely. Real ticks overshoot.
+
+Fixed by measuring the spread against the target, the same quantity the
+entry-time refusal uses, and skipping it when there is no broker order to take
+back. `entry_edge_vol` stays at 0.5 — not because 0.5 was shown to be right,
+but because the number that would decide it has never once been observed.
+
+**The general shape, again.** This is the same defect as the eleven feeds
+polled by nothing and `STRUCTURES_FORMATION` inert for its whole life:
+computed correctly, applied to the wrong quantity, and never contradicted
+because what it broke produced silence rather than an error.
