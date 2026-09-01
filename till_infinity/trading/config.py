@@ -975,9 +975,10 @@ class Settings:
     #:
     #: `entry_edge_vol` alone is a poller's limit order: it watches quotes and
     #: fires at market when price arrives. That misses the fills most worth
-    #: having, because a deep wick is brief by construction - it is the 14.6%
-    #: tail - and a wick that pierces and recovers between two reads is a fill
-    #: that never happened.
+    #: having, because a deep wick is brief by construction - at the 1.5v this
+    #: shipped on it was the 14.6% tail, and the realised rate was lower still
+    #: - and a wick that pierces and recovers between two reads is a fill that
+    #: never happened.
     #:
     #: With this on, the price is *also* left with the broker as a limit order,
     #: which fills on the terminal's own tick and never blinks. What the broker
@@ -999,6 +1000,21 @@ class Settings:
     #: broker pending order. The bridge has `POST /orders/pending`, and using it
     #: would mean the stop and target live on the terminal between placement
     #: and fill, where nothing here can adjust them.
+    #:
+    #: **Lowered from 1.5 to 0.5 in production on 2026-09-01, and the reason is
+    #: the first measurement of what parking actually does.** This shipped on a
+    #: predicted 14.6% fill rate taken from the depth distribution. Over the
+    #: whole journal 148 trades were taken, 13 of them (8.8%) after a parked
+    #: wait, against 496 signals refused because the feed was already parked -
+    #: roughly 38 refusals per fill, an upper bound since some would have died
+    #: on another gate anyway. The two that closed averaged -19.73 against
+    #: -5.31 for the 147 that went straight in, which at n=2 says nothing about
+    #: quality; the finding is about frequency.
+    #:
+    #: A parked entry holds its whole feed through the `waiting` gate, so the
+    #: cost of a distance price rarely reaches is not a missed fill - it is
+    #: every other signal on that instrument, muted. 1.5v was a price the
+    #: market did not come back to often enough to be a strategy.
     entry_edge_vol: float = 0.0
 
     #: Extra terminals that copy every decision, as
@@ -1129,11 +1145,14 @@ class Settings:
     #: a full volatility unit below its support has a fill past the price the
     #: stop is anchored to; with the wide stop that trade is taken and with the
     #: tight one it is not. That is what a tight stop means. It matters because
-    #: `entry_edge_vol` parks 1.5v better than the market and the median entry
-    #: sits 0.91v from its level, so a typical rest fills ~0.6v past it - safe -
-    #: while the quartile that was already close to its level fills past 1.0v
-    #: and is refused. Roughly a quarter of resting fills, declined rather than
-    #: taken with a stop already behind price.
+    #: `entry_edge_vol` parked 1.5v better than the market against a median
+    #: entry 0.91v from its level, so a typical rest filled ~0.6v past it -
+    #: safe - while the quartile already close to its level filled past 1.0v
+    #: and was refused: roughly a quarter of resting fills, declined rather
+    #: than taken with a stop already behind price. At the 0.5v it was lowered
+    #: to on 2026-09-01 that arithmetic reverses - a typical rest now fills
+    #: ~0.4v *short* of the level rather than past it - so this refusal should
+    #: become rare. Predicted, not measured; the parked sample is 13 trades.
     #:
     #: Bounded to holds under `Scalper.PARKED_STOP_HOLD` (300s) whatever this
     #: says, which is what keeps a short-hold grid's number off a swing.
