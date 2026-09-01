@@ -22,8 +22,40 @@ from collections import Counter, defaultdict
 JOURNAL = "file:/app/.data/journal/journal.db?mode=ro"
 PRICES = "file:/app/.data/prices/prices.db?mode=ro"
 
-#: The vertical barrier, in seconds. `max_hold` in production.
-HORIZON = 1800.0
+#: The vertical barrier, in seconds, **per entry interval**.
+#:
+#: A flat 1,800 was wrong and produced a finding that was an artefact of it:
+#: "at 1h the vertical barrier decides the trade 52.2% of the time". That is
+#: the scalpers' ceiling. The strategies that actually trade 15m, 30m and 1h
+#: ask for their own hold - `origin-swing` and `swing-level` take 21,600s, and
+#: `runner`, `fade-to-value` and `approach-scalp` take 14,400s - so a 1h setup
+#: in production gets four to six hours, not thirty minutes.
+#:
+#: Taken from what those strategies declare rather than from `max_hold`, which
+#: is only the ceiling for a strategy that names no hold of its own.
+HORIZON = {
+    "1m": 1800.0,
+    "3m": 1800.0,
+    "5m": 1800.0,
+    "15m": 14400.0,
+    "30m": 14400.0,
+    "1h": 14400.0,
+    "2h": 21600.0,
+    "4h": 21600.0,
+}
+DEFAULT_HORIZON = 1800.0
+
+#: What a 48-72 hour hold on the higher timeframes would give, for comparison.
+LONG = {
+    "1m": 1800.0,
+    "3m": 1800.0,
+    "5m": 1800.0,
+    "15m": 48 * 3600.0,
+    "30m": 48 * 3600.0,
+    "1h": 48 * 3600.0,
+    "2h": 72 * 3600.0,
+    "4h": 72 * 3600.0,
+}
 #: How far back through the entry origin counts as stopped, in volatility units.
 STOP_VOL = 1.0
 #: Only touches this close to an origin count as having arrived at it.
@@ -99,6 +131,12 @@ def main() -> None:
     bars = series(prices, {(s["feed"], s["interval"]) for s in got}, floor)
     print(f"{len(bars)} series loaded")
 
+    for horizon, name in ((HORIZON, "production holds"), (LONG, "48-72h holds")):
+        walk(got, bars, horizon, name)
+
+
+def walk(got, bars, horizon, title) -> None:
+    print(f"\n=== {title} ===")
     label = Counter()
     per_interval = defaultdict(Counter)
     reached_after = []
@@ -110,40 +148,44 @@ def main() -> None:
         times, highs, lows = held
         start = bisect_left(times, s["when"])
         stop = s["entry"] + (STOP_VOL * s["unit"] if s["short"] else -STOP_VOL * s["unit"])
-        outcome = "neither"
-        for i in range(start, len(times)):
-            if times[i] - s["when"] > HORIZON:
-                break
-            if s["short"]:
-                if lows[i] <= s["target"]:
-                    outcome = "far"
-                    reached_after.append(times[i] - s["when"])
-                    break
-                if highs[i] >= stop:
-                    outcome = "back"
-                    break
-            else:
-                if highs[i] >= s["target"]:
-                    outcome = "far"
-                    reached_after.append(times[i] - s["when"])
-                    break
-                if lows[i] <= stop:
-                    outcome = "back"
-                    break
+        outcome = label_one(s, times, highs, lows, start, stop, horizon, reached_after)
         label[outcome] += 1
         per_interval[s["interval"]][outcome] += 1
+    report(label, per_interval, reached_after)
 
+
+def label_one(s, times, highs, lows, start, stop, horizon, reached_after) -> str:
+    """Which barrier is hit first, or "neither" when the clock wins."""
+    limit = horizon.get(s["interval"], DEFAULT_HORIZON)
+    for i in range(start, len(times)):
+        if times[i] - s["when"] > limit:
+            break
+        if s["short"]:
+            if lows[i] <= s["target"]:
+                reached_after.append(times[i] - s["when"])
+                return "far"
+            if highs[i] >= stop:
+                return "back"
+        else:
+            if highs[i] >= s["target"]:
+                reached_after.append(times[i] - s["when"])
+                return "far"
+            if lows[i] <= stop:
+                return "back"
+    return "neither"
+
+
+def report(label, per_interval, reached_after) -> None:
     total = sum(v for k, v in label.items() if k != "no bars")
-    print(f"\nwhich barrier first, over {total} judgeable setups:")
+    print(f"which barrier first, over {total} judgeable setups:")
     for name in ("far", "back", "neither", "no bars"):
         n = label.get(name, 0)
         if n:
             share = f"{n / max(total, 1):6.1%}" if name != "no bars" else "      "
             print(f"   {name:9s} {n:6d} {share}")
     if reached_after:
-        print(f"\n   when it reached the far origin: median {st.median(reached_after):.0f}s")
-
-    print("\nby interval:")
+        print(f"   reached the far origin after a median {st.median(reached_after):.0f}s")
+    print("   by interval:")
     for iv in ("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h"):
         row = per_interval.get(iv)
         if not row:
@@ -152,8 +194,8 @@ def main() -> None:
         if n < 20:
             continue
         print(
-            f"   {iv:4s} n={n:5d}   far {row['far'] / n:6.1%}   back {row['back'] / n:6.1%}"
-            f"   neither {row['neither'] / n:6.1%}"
+            f"      {iv:4s} n={n:5d}   far {row['far'] / n:6.1%}"
+            f"   back {row['back'] / n:6.1%}   neither {row['neither'] / n:6.1%}"
         )
 
 

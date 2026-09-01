@@ -107,6 +107,64 @@ reasons worth stating plainly:
   over by the second, so this is an instrument-selection question before it is
   a strategy question.
 
+## Corrected: the harness was using the wrong clock
+
+The table below first showed **52.2% "neither" at 1h**, and that was an
+artefact of the harness rather than a property of the market. It applied a flat
+1,800s vertical barrier to every interval - which is `max_hold`, the ceiling for
+a strategy that names no hold of its own. The strategies that actually trade
+15m, 30m and 1h all name one:
+
+| strategy | entries | hold for a 1h call |
+| --- | --- | --- |
+| `origin-swing` | 15m,30m,1h | **21,600s (6h)** |
+| `swing-level` | 15m,30m,1h | **21,600s (6h)** |
+| `runner`, `fade-to-value`, `approach-scalp` | 15m,30m,1h | **14,400s (4h)** |
+| `level-scalp`, `thesis-only`, `sweep-aware`, `snap` | 1m,3m,5m | 1,800s or less |
+
+So a 1h setup in production already gets four to six hours, not thirty minutes.
+Re-run with the holds each strategy declares:
+
+    far        627   45.0%
+    back       726   52.1%
+    neither     41    2.9%
+
+      1m   n=605   far 44.1%   back 55.2%   neither  0.7%
+      5m   n=313   far 46.0%   back 49.2%   neither  4.8%
+      15m  n=143   far 46.9%   back 52.4%   neither  0.7%
+      1h   n= 46   far 54.3%   back 39.1%   neither  6.5%
+
+**1h is the best interval for this setup, not the worst.** 54.3% reach the far
+origin against 39.1% stopping out - the only interval where "far" beats "back"
+- and the vertical barrier decides 6.5% rather than half. The earlier
+conclusion, that higher timeframes time out and the fast end is where this
+resolves cleanly, was backwards and was a fact about a constant in the harness.
+
+On 46 setups it is a hint. But it is a hint pointing the way the original idea
+pointed, which the artefact had reversed.
+
+## Would a 48-72 hour hold help? No
+
+Measured rather than argued, by running the same walk with 48h on 15m-1h and
+72h on 2h-4h:
+
+| | far | back | neither |
+| --- | --- | --- | --- |
+| production holds (4-6h) | 45.0% | 52.1% | 2.9% |
+| 48-72h holds | 45.1% | 52.2% | 2.7% |
+
+**Four setups out of 1,394 change.** The reason is the timing: the median
+traversal takes **101 seconds**. A trade that is going to reach the far origin
+does it in minutes, and one that has not done so in six hours is not waiting -
+it has already hit the stop.
+
+Extending the clock therefore buys nothing measurable and costs three things it
+would be wrong to ignore: overnight financing on every night held, weekend gap
+exposure on any instrument that closes, and the session gate - which refuses to
+*open* a trade whose hold does not fit before its market shuts, so a 48-hour
+hold would refuse most FX and index entries outright rather than lengthening
+them.
+
 ## The higher timeframes behave differently, and thinly
 
 | interval | n | far | back | neither |
@@ -118,15 +176,10 @@ reasons worth stating plainly:
 | 30m | 74 | 37.8% | 35.1% | **27.0%** |
 | **1h** | 46 | 26.1% | 21.7% | **52.2%** |
 
-**At 1h the vertical barrier decides the trade half the time.** The corridor is
-wider in price and the 1,800s hold is not enough to cross it, so the outcome is
-neither barrier - which is a flat exit rather than a loss, but it is not the
-trade either.
-
-Below 15m the traversal rate is flat at 43-46% and "neither" is negligible, so
-the fast end is where this setup resolves cleanly. That cuts against the
-original idea of running it on higher timeframes, and the sample at 1h is 46
-setups, so it is a hint rather than a finding.
+**Withdrawn** - the table above was computed with a flat 1,800s clock that no
+higher-timeframe strategy actually uses. See the correction above: with the
+holds production declares, 1h is the *best* interval at 54.3% far against 39.1%
+back, and "neither" falls to 6.5%.
 
 ## What that changes, and what it does not
 
