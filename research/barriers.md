@@ -56,6 +56,71 @@ Against how far a touch that **held** actually travelled:
 the distance to the opposite barrier. At 1h the p90 move is 2.57v - so even the
 best tenth of holds does not reach the far side of a median corridor.
 
+## Withdrawn on 40,803 setups: no interval reaches the far barrier more often than the stop
+
+Everything below was measured on 1,391 setups drawn from journalled level calls
+- what the live desk happened to see. Replaying the stored bars through the same
+engine produces **40,803**, roughly thirty times as many, and reverses the
+conclusion.
+
+| interval | n | far | back | neither | corridor |
+| --- | --- | --- | --- | --- | --- |
+| 1m | 16,356 | 34.9% | 64.6% | 0.5% | 3.7v |
+| 5m | 10,511 | 36.1% | 55.6% | 8.3% | 4.1v |
+| 15m | 6,422 | 34.8% | 47.6% | 17.7% | 3.7v |
+| 30m | 1,893 | 34.7% | 40.0% | 25.3% | 3.1v |
+| **1h** | **2,382** | **38.4%** | **52.5%** | 9.2% | 3.4v |
+| 2h | 1,277 | 34.9% | 48.5% | 16.6% | 3.1v |
+| 4h | 1,352 | 28.8% | 41.3% | 30.0% | 3.0v |
+| 1d | 610 | 15.2% | 20.7% | 64.1% | 2.6v |
+| **pooled** | **40,803** | **34.9%** | **55.8%** | 9.3% | |
+
+**Not one interval reaches the far barrier more often than it stops out.** The
+best is 1h at 38.4% against 52.5%, and even that loses.
+
+### What this refutes, and it is my own reasoning
+
+The journal-based table had 1h at **54.3% far against 39.1% back** - the only
+interval where the trade completed more often than it failed - and that number
+is what the swing/scalp boundary was moved on. On 2,382 setups instead of 46 it
+is 38.4% against 52.5%. The separation is gone.
+
+The two measurements are not identical and the differences are worth naming
+rather than glossing: the journal version used the *origins* either side from
+the signal and required price standing at one, while this uses the touched
+level as the entry barrier and the next level in the hold direction as the
+target - which is closer to the trade actually described. This one is also
+bars-only, and research/README.md records that the bars-versus-quotes
+difference has overturned a replay result before.
+
+But thirty times the sample pointing the other way is not a detail, and the
+honest position is that **the 46-setup result should not have been acted on**.
+
+### The economics, which survive
+
+    0.349 x 3.5v corridor  -  0.558 x 1.0v stop  =  +0.66v per setup
+
+Positive, and positive for a reason that has nothing to do with hit rate: the
+corridor is three and a half times the stop. A trade that works one time in
+three still pays when it pays 3.5:1, which is the geometry
+[geometry.md](geometry.md) has been pointing at all along.
+
+That is before costs, and [paying.md](paying.md) puts the cost to cross between
+0.048v on gold and 5.8v on usdcnh - so instrument selection decides whether
++0.66v is a strategy or a rounding error.
+
+### And the vertical barrier is what kills the slow end
+
+"Neither" rises monotonically with the timeframe: 0.5% at 1m, 17.7% at 15m,
+30.0% at 4h, **64.1% at 1d**. A daily corridor is 2.6v wide and the swing hold
+is four to six hours, so two thirds of daily setups simply run out of clock.
+
+That is the honest argument for a longer swing hold, and it is a different one
+from the argument I rejected earlier: extending 4-6h to 48h changed four
+setups in 1,394 *on the journal sample*, where "neither" was 7.1%. Here it is
+64.1% at 1d and 30.0% at 4h. The two disagree, the replay has the larger
+sample, and this deserves re-measuring before anything is changed.
+
 ## Measured directly: the far barrier *is* reached
 
 The section above inferred that the far barrier is out of reach, from a median

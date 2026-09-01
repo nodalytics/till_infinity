@@ -612,6 +612,32 @@ class Settings:
     #: This does not force a trade to stay open - a stop, a target, a shut
     #: market or a regime change all still close it. It stops the *clock* from
     #: closing one early, which is the only closure this can sensibly govern.
+    #: Require every scalp to have a level at a higher timeframe agreeing with
+    #: it - `Strategy.context`, which for the scalps is 15m and above.
+    #:
+    #: A setting rather than a class flag because the evidence cuts against it
+    #: and the point is to be able to settle that rather than assume either
+    #: way. research/strength.md tested confluence depth against whether a
+    #: level holds and found **nothing, in the strongest form of nothing**:
+    #: four runs produced four different orderings, and as a ranking signal
+    #: depth scores AUC 0.476 and 0.452 - below the 0.5 that means no
+    #: information at all.
+    #:
+    #: Two things that measurement does not settle, and they are why this is
+    #: worth having as a switch. It asked *did price get through the level*,
+    #: which is not *did the trade make money* - a level that holds after a 3v
+    #: excursion is a hold and a loss. And it measured depth as a **weight**
+    #: where this uses it to **select**, and a filter that halves the trade
+    #: count is a different object from a multiplier on a score.
+    #:
+    #: `confluence-scalp` already requires it and exists precisely as the A/B
+    #: against `level-scalp`. That comparison has never been answerable: the
+    #: confluence field was absent from every outcome until 2026-09-01, so all
+    #: 12,504 resolutions record zero timeframes. Turning this on makes the
+    #: requirement uniform; leaving it off keeps the A/B. Both are defensible
+    #: and neither is measured yet.
+    scalp_needs_context: bool = False
+
     min_hold: float = 0.0
 
     #: How much of its size a position keeps for each open position sharing a
@@ -1454,6 +1480,7 @@ class Settings:
             loss_cooldown=_float("TRADING_LOSS_COOLDOWN_S", 900.0),
             max_hold=_float("TRADING_MAX_HOLD_S", 1_800.0),
             min_hold=_float("TRADING_MIN_HOLD_S", 0.0),
+            scalp_needs_context=_flag("TRADING_SCALP_NEEDS_CONTEXT"),
             max_hold_swing=_float("TRADING_MAX_HOLD_SWING_S", 21_600.0),
             crowding_share=_float("TRADING_CROWDING_SHARE", 0.0),
             volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),

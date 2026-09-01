@@ -447,3 +447,57 @@ def test_the_ticket_is_recorded():
     for ref in ("decision-123", ""):
         written = _closed(ref)
         assert any(e.context.get("ticket") for e in written), ref
+
+
+# ------------------------------- requiring a higher timeframe behind a scalp
+
+
+def _scalp(**over):
+    import till_infinity.trading as td
+    from till_infinity.trading.config import Settings
+
+    return td.STRATEGIES["level-scalp"](Settings(**over))
+
+
+def test_every_scalp_names_a_higher_timeframe_as_context():
+    """The requirement is only meaningful if the context is actually higher -
+    a 1m call confirmed by 3m is the same fast noise seen twice."""
+    import till_infinity.trading as td
+
+    fast = {"1m", "3m", "5m"}
+    for name, cls in td.STRATEGIES.items():
+        if cls.style != "scalp" or not cls.context:
+            continue
+        assert not (set(cls.context) & fast), name
+        assert set(cls.context) <= {"15m", "30m", "1h", "2h", "4h", "1d", "1w"}, name
+
+
+def test_the_requirement_is_off_by_default():
+    """research/strength.md scores confluence depth at AUC 0.476 and 0.452 -
+    below the 0.5 that means no information - so requiring it is a switch
+    rather than a default."""
+    assert _scalp().settings.scalp_needs_context is False
+
+
+def test_it_can_be_required():
+    assert _scalp(scalp_needs_context=True).settings.scalp_needs_context is True
+
+
+def test_a_strategy_that_always_wants_context_is_unaffected():
+    """`confluence-scalp` requires it whatever the deployment says - the class
+    flag means what it says, and the setting only adds to it."""
+    import till_infinity.trading as td
+    from till_infinity.trading.config import Settings
+
+    engine = td.STRATEGIES["confluence-scalp"](Settings(scalp_needs_context=False))
+    assert engine.needs_context is True
+
+
+def test_the_gate_reads_both():
+    import inspect
+
+    from till_infinity.trading import scalper
+
+    source = inspect.getsource(scalper.LevelStrategy.consider)
+    assert "scalp_needs_context" in source
+    assert "self.needs_context or" in source

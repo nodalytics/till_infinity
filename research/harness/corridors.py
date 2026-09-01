@@ -91,17 +91,33 @@ def setups() -> list[dict]:
             unit = abs(price * vol.bps / 10_000)
             if unit <= 0:
                 continue
-            # The nearest level either side, which is the corridor.
-            near = [x.price for x in engine.levels(feed, interval) if abs(x.price - price) > unit]
-            above = min((p for p in near if p > price), default=None)
-            below = max((p for p in near if p < price), default=None)
-            if above is None or below is None:
+            # **Price is at the touched level by construction** - that is what
+            # a touch is - so the entry barrier is that level and the corridor
+            # runs to the next one in the direction a hold would take price.
+            #
+            # The first version of this asked for the nearest levels more than
+            # a unit away and then required the entry to be within half a unit,
+            # which cannot both be true: it returned zero setups over the whole
+            # replay, cleanly and silently, and looked like a market with no
+            # corridors in it.
+            #
+            # Which direction a hold goes is not a guess. Measured over 10,977
+            # touches: approached from above and holding, price pushed up
+            # 100.0% of the time; from below and holding, down 100.0%. So the
+            # target is the next level *above* for a touch approached from
+            # above, and below for one approached from below.
+            up = touch.features.side.name == "ABOVE"
+            others = [
+                x.price for x in engine.levels(feed, interval) if abs(x.price - price) > 0.5 * unit
+            ]
+            target = (
+                min((p for p in others if p > price), default=None)
+                if up
+                else max((p for p in others if p < price), default=None)
+            )
+            if target is None:
                 continue
-            # Price has to be standing at one end for the corridor to be a trade.
-            at_top = abs(above - price) < abs(price - below)
-            entry, target = (above, below) if at_top else (below, above)
-            if abs(entry - price) / unit > AT_VOL:
-                continue
+            entry = price
             out.append(
                 {
                     "feed": feed,
@@ -109,9 +125,9 @@ def setups() -> list[dict]:
                     "when": float(touch.started),
                     "entry": entry,
                     "target": target,
-                    "short": at_top,
+                    "short": not up,
                     "unit": unit,
-                    "corridor": abs(above - below) / unit,
+                    "corridor": abs(target - entry) / unit,
                 }
             )
     CACHE.write_bytes(pickle.dumps(out))
