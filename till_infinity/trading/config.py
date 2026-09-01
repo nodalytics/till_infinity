@@ -593,7 +593,6 @@ class Settings:
     #: book. See research/barriers.md.
     max_hold_swing: float = 21_600.0
 
-
     min_hold: float = 0.0
 
     #: How much of its size a position keeps for each open position sharing a
