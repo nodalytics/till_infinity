@@ -123,7 +123,7 @@ class LevelStrategy(Strategy):
         want = self.settings.parked_stop_vol
         if want <= 0 or not features.get("after_pullback"):
             return 0.0
-        if self.hold_for(interval, self.settings.max_hold) > self.PARKED_STOP_HOLD:
+        if self.hold_for(interval) > self.PARKED_STOP_HOLD:
             return 0.0
         return price_distance(level, vol_bps, want)
 
@@ -323,7 +323,7 @@ class LevelStrategy(Strategy):
         share = self.settings.stop_hold_scaling
         if floor <= 0 or share <= 0:
             return floor
-        bars = self.hold_bars_for(interval, self.settings.max_hold)
+        bars = self.hold_bars_for(interval)
         scale = min(math.sqrt(max(bars, 1.0)), max(self.settings.max_stop_scale, 1.0))
         # Interpolated rather than switched, so the setting can be walked up
         # from the old behaviour while the shadow watch collects evidence.
@@ -723,7 +723,7 @@ class LevelStrategy(Strategy):
             risk_money=sized.risk_money,
             stop_vol=abs(entry - stop) / unit if unit else 0.0,
             stop_scale=self.stop_floor_vol(interval) / (self.settings.min_stop_vol or 1.0),
-            hold=self.hold_for(interval, self.settings.max_hold),
+            hold=self.hold_for(interval),
             break_even_at=protect_at,
             trail_vol=protect_trail,
         )

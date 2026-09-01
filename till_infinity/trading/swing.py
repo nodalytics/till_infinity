@@ -857,7 +857,7 @@ class FadeToValue(LevelStrategy):
             risk_money=sized.risk_money,
             stop_vol=abs(entry - stop) / unit if unit else 0.0,
             stop_scale=self.stop_floor_vol(interval) / (self.settings.min_stop_vol or 1.0),
-            hold=self.hold_for(interval, self.settings.max_hold),
+            hold=self.hold_for(interval),
             break_even_at=protect_at,
             trail_vol=protect_trail,
         )

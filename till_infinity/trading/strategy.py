@@ -179,7 +179,7 @@ class Strategy(ABC):
         bars = SECONDS.get(interval, 0.0)
         if bars <= 0:
             return 1.0
-        held = self.hold_for(interval, self.settings.max_hold)
+        held = self.hold_for(interval)
         if held <= 0:
             return 1.0
         grown = math.sqrt(max(held / bars, 1.0))
@@ -270,17 +270,42 @@ class Strategy(ABC):
             scaling.by_drawdown(peak, equity, settings.drawdown_halt_at),
         )
 
-    def hold_for(self, interval: str, ceiling: float) -> float:
-        """Seconds this strategy may hold a trade triggered on `interval`."""
+    @property
+    def ceiling(self) -> float:
+        """The longest this strategy may hold, by its own style.
+
+        Two ceilings rather than one, because one never governed both. `hold_for`
+        read `max_hold` only when a strategy named no hold of its own, so every
+        scalp was capped by a setting and every swing was capped by a hardcoded
+        `ClassVar` that no deployment could reach. A swing running six hours was
+        not a decision anybody made in configuration; it was a number in a class
+        body.
+        """
+        settings = self.settings
+        if self.style == "swing":
+            return settings.max_hold_swing or settings.max_hold
+        return settings.max_hold
+
+    def hold_for(self, interval: str) -> float:
+        """Seconds this strategy may hold a trade triggered on `interval`.
+
+        **No ceiling argument, deliberately.** It used to take one and every
+        caller passed `settings.max_hold` - the scalp ceiling - which is how a
+        swing came to be governed by a number written for a one-minute thesis
+        in three call sites and by a hardcoded `ClassVar` everywhere else. The
+        style knows which ceiling applies; a caller does not, and the ones that
+        thought they did were wrong.
+        """
         from ..structures.levels import SECONDS
 
         seconds = SECONDS.get(interval, 0.0)
-        want = self.hold_seconds or ceiling
+        limit = self.ceiling
+        want = min(self.hold_seconds, limit) if self.hold_seconds else limit
         if self.hold_bars <= 0 or seconds <= 0:
             return want
         return min(self.hold_bars * seconds, want)
 
-    def hold_bars_for(self, interval: str, ceiling: float) -> float:
+    def hold_bars_for(self, interval: str) -> float:
         """How many bars of `interval` the hold above actually covers.
 
         The number the stop has to survive, which is why it is derived from the
@@ -293,7 +318,7 @@ class Strategy(ABC):
         seconds = SECONDS.get(interval, 0.0)
         if seconds <= 0:
             return 1.0
-        return max(self.hold_for(interval, ceiling) / seconds, 1.0)
+        return max(self.hold_for(interval) / seconds, 1.0)
 
     #: Where a trade may be **triggered**. The lower timeframes: the entry is
     #: what decides the stop, and a tighter stop on faster data is the whole

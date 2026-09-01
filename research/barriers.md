@@ -165,6 +165,29 @@ exposure on any instrument that closes, and the session gate - which refuses to
 hold would refuse most FX and index entries outright rather than lengthening
 them.
 
+## One ceiling per style
+
+`max_hold` never governed both. `hold_for` read it only when a strategy named
+no hold of its own, so a scalp was capped by a setting and a swing by a
+hardcoded `ClassVar` no deployment could reach - and the three call sites that
+did pass a ceiling passed the *scalp* one, which is how a swing came to be
+governed by a number written for a one-minute thesis.
+
+Two settings now, chosen by the style each strategy already declares:
+
+| | | |
+| --- | --- | --- |
+| `TRADING_MAX_HOLD_S` | 1,800s | scalps - 1m, 3m, 5m |
+| `TRADING_MAX_HOLD_SWING_S` | 21,600s | swings - 15m, 30m, 1h |
+
+Both are **ceilings** rather than defaults: `council` asks for 2,700s as a
+scalp and is held to 1,800, where before it simply got what it asked for.
+`snap` asks for 120s and keeps it, because a ceiling must not lengthen a trade.
+
+And `hold_for` no longer takes a ceiling argument at all. That is the stronger
+fix: a caller cannot hand a swing the scalp ceiling by mistake, and every
+caller used to.
+
 ## The higher timeframes behave differently, and thinly
 
 | interval | n | far | back | neither |

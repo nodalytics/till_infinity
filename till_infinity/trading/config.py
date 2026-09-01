@@ -567,7 +567,31 @@ class Settings:
     #: that has been open an hour has become a swing trade nobody planned.
     #: A strategy may ask for longer - see `Strategy.hold_seconds` - because
     #: this default is a property of the trade being taken, not of the module.
+    #: The longest a **scalp** may be held, in seconds.
+    #:
+    #: Named `max_hold` still, because it is what the environment already sets
+    #: and what every scalp has always been capped by. What it never was is a
+    #: global ceiling: `hold_for` reads it only when a strategy names no hold
+    #: of its own, so a swing's four to six hours was governed by nothing at
+    #: all - a hardcoded `ClassVar` with no setting behind it. `max_hold_swing`
+    #: is the other half, and both are now real ceilings rather than defaults.
     max_hold: float = 1_800.0
+
+    #: The longest a **swing** may be held, in seconds. Six hours.
+    #:
+    #: The value the swing strategies already declare, made settable rather
+    #: than raised: measured on 1,394 setups, extending the higher timeframes
+    #: from four-to-six hours out to 48-72 changes **four** of them. The median
+    #: traversal from one origin to the other takes 101 seconds, so a trade
+    #: that is going to work does it in minutes and one that has not in six
+    #: hours has already hit its stop.
+    #:
+    #: What extending would cost is not nothing: overnight financing on every
+    #: night held, weekend gap exposure on any instrument that closes, and the
+    #: session gate refusing to *open* a trade whose hold does not fit before
+    #: its market shuts - which on a 48-hour hold is most of the FX and index
+    #: book. See research/barriers.md.
+    max_hold_swing: float = 21_600.0
 
     #: The shortest a trade may be held, in seconds. Zero is off.
     #:
@@ -1430,6 +1454,7 @@ class Settings:
             loss_cooldown=_float("TRADING_LOSS_COOLDOWN_S", 900.0),
             max_hold=_float("TRADING_MAX_HOLD_S", 1_800.0),
             min_hold=_float("TRADING_MIN_HOLD_S", 0.0),
+            max_hold_swing=_float("TRADING_MAX_HOLD_SWING_S", 21_600.0),
             crowding_share=_float("TRADING_CROWDING_SHARE", 0.0),
             volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),
             edge_full_at=_float("TRADING_EDGE_FULL_AT", 0.0),

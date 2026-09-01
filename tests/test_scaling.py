@@ -316,3 +316,57 @@ def test_the_heartbeat_sweeps_them():
     from till_infinity.trading import service
 
     assert "await self._orphans()" in inspect.getsource(service.Trader.sweep)
+
+
+# ------------------------------------------------ one ceiling per trading style
+
+
+def _engine(name, **over):
+    import till_infinity.trading as td
+    from till_infinity.trading.config import Settings
+
+    return td.STRATEGIES[name](Settings(**over))
+
+
+def test_a_swing_and_a_scalp_have_different_ceilings():
+    """`max_hold` was never a global cap - `hold_for` read it only when a
+    strategy named no hold of its own, so every swing was governed by a
+    hardcoded ClassVar no deployment could reach."""
+    assert _engine("swing-level").ceiling == 21_600.0
+    assert _engine("level-scalp").ceiling == 1_800.0
+
+
+def test_each_ceiling_is_settable():
+    assert _engine("swing-level", max_hold_swing=7_200.0).ceiling == 7_200.0
+    assert _engine("level-scalp", max_hold=600.0).ceiling == 600.0
+
+
+def test_a_strategy_asking_for_longer_than_its_style_is_capped():
+    """That is what makes these ceilings rather than defaults. `council` asks
+    for 2,700s as a scalp and is held to 1,800."""
+    engine = _engine("council")
+    assert engine.hold_seconds > engine.ceiling
+    assert engine.hold_for("1h") == engine.ceiling
+
+
+def test_a_strategy_asking_for_less_keeps_what_it_asked_for():
+    """`snap` wants 120 seconds and a ceiling must not lengthen a trade."""
+    assert _engine("snap").hold_for("1h") == 120.0
+
+
+def test_the_swing_ceiling_falls_back_to_the_scalp_one():
+    """Zero means unset, not "no hold at all" - a swing with no ceiling of its
+    own is capped like everything else rather than uncapped."""
+    assert _engine("swing-level", max_hold_swing=0.0).ceiling == 1_800.0
+
+
+def test_every_swing_entry_is_a_higher_timeframe():
+    """The split is by declared style rather than by name, and this is what
+    says the two agree: `approach-scalp` and `fade-to-value` are named like
+    scalps and classed as swings because of what they hold."""
+    import till_infinity.trading as td
+
+    for name, cls in td.STRATEGIES.items():
+        if cls.style != "swing" or not cls.entries:
+            continue
+        assert set(cls.entries) <= {"15m", "30m", "1h", "2h", "4h", "1d", "1w"}, name

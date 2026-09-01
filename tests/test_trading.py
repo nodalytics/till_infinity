@@ -3109,11 +3109,11 @@ def test_the_hold_is_expressed_in_bars_of_the_entry_interval():
     engine = LevelScalp(settings())
     LevelScalp.hold_bars = 20.0
     try:
-        assert engine.hold_for("1m", 1800.0) == pytest.approx(1200.0)
+        assert engine.hold_for("1m") == pytest.approx(1200.0)
         # Capped by wall clock, because twenty 15m bars is five hours.
-        assert engine.hold_for("15m", 1800.0) == pytest.approx(1800.0)
-        assert engine.hold_bars_for("1m", 1800.0) == pytest.approx(20.0)
-        assert engine.hold_bars_for("15m", 1800.0) == pytest.approx(2.0)
+        assert engine.hold_for("15m") == pytest.approx(1800.0)
+        assert engine.hold_bars_for("1m") == pytest.approx(20.0)
+        assert engine.hold_bars_for("15m") == pytest.approx(2.0)
     finally:
         LevelScalp.hold_bars = 0.0
 
@@ -3122,7 +3122,7 @@ def test_no_hold_bars_leaves_the_seconds_behaviour_alone():
     from till_infinity.trading.scalper import LevelScalp
 
     engine = LevelScalp(settings())
-    assert engine.hold_for("1m", 1800.0) == pytest.approx(engine.hold_seconds or 1800.0)
+    assert engine.hold_for("1m") == pytest.approx(engine.hold_seconds or 1800.0)
 
 
 # ------------------------------------------- recording what will be asked for
@@ -3755,7 +3755,7 @@ def test_snap_holds_for_as_long_as_the_interaction_lasts():
     made = settings()
     fast, slow = Snap(made), LevelScalp(made)
     assert fast.hold_seconds == pytest.approx(120.0)
-    assert fast.hold_for("1m", made.max_hold) < slow.hold_for("1m", made.max_hold) / 10
+    assert fast.hold_for("1m") < slow.hold_for("1m") / 10
 
 
 def test_snap_differs_from_level_scalp_in_exactly_one_respect():
@@ -4227,13 +4227,20 @@ def test_the_swing_hold_does_not_shrink_with_a_fast_trigger():
     engine = _htf()
     assert engine.hold_bars == 0.0
     # A 15m trigger gets the same hold a 4h trigger does.
-    assert engine.hold_for("15m", 1_800.0) == engine.hold_for("4h", 1_800.0)
+    assert engine.hold_for("15m") == engine.hold_for("4h")
 
 
 def test_the_swing_trade_is_not_capped_by_the_scalpers_hold():
     """max_hold is 1800s because that suits a one-minute thesis. Applied here
-    it would close the trade inside the first bar."""
-    assert _htf().hold_for("4h", 1_800.0) > 1_800.0
+    it would close the trade inside the first bar.
+
+    `hold_for` no longer takes a ceiling at all, which is the stronger form of
+    this: a caller cannot hand a swing the scalp ceiling by mistake, and every
+    caller used to.
+    """
+    engine = _htf()
+    assert engine.hold_for("4h") > 1_800.0
+    assert engine.ceiling > 1_800.0
 
 
 def test_the_swing_trade_rests_its_entry_whatever_the_deployment_says():
