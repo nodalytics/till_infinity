@@ -2957,6 +2957,79 @@ async def test_a_parked_signal_fires_when_price_comes_to_it():
     assert got.entry < 4400.5
 
 
+async def test_a_parked_signal_that_overshoots_its_trigger_still_fills():
+    """The regression that made resting entries useless.
+
+    `_turned_against` divided the spread by the distance price still had to
+    travel to reach the trigger. That gap collapses as price arrives - which
+    is the event being waited for - so the threshold collapsed with it and any
+    spread cleared the bar, and the check runs before the arrival check. Nine
+    live rests on 2026-09-01 produced no fills, no expiries, and five spread
+    withdrawals.
+
+    The suite missed it because the older fixture arrives *exactly* on the
+    trigger, where the gap is 0.0 and the guard skipped itself. Real ticks
+    overshoot, so this one does too.
+    """
+    bus = Bus()
+    made = settings(live=True, pullback_fraction=1.0)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.handle(
+        Message(
+            topic=SIGNALS,
+            payload=signal(features={"sweep_low": 4396.0, "expected_push_vol": 3.0, "wick_n": 6.0}),
+        )
+    )
+    held = trader._waiting["gold"]
+    assert held.resting is None, "no broker order in this deployment"
+
+    # A full point past the trigger, on a spread a quarter that size. Under the
+    # old arithmetic 0.5 > 1.0 * 0.25 withdrew it; the trade itself is
+    # untouched, since the spread is a small share of its target.
+    venue.observe(Tick("XAUUSD", bid=4394.5, ask=4395.0))
+    got = await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4394.5, "ask": 4395.0})
+    )
+    assert isinstance(got, Intent), got
+    assert "gold" not in trader._waiting
+    assert len(venue.sent) == 1
+
+
+async def test_a_resting_order_is_taken_back_when_the_spread_eats_its_target():
+    """The guard still guards. The broker's order cannot change its mind, so a
+    spread that would refuse the entry outright has to reach in and take it
+    back - measured against the target, as `risk.py` measures it."""
+    from till_infinity.trading.models import Side
+    from till_infinity.trading.service import Waiting
+
+    made = settings(live=True, max_spread_fraction=0.25)
+    trader = Trader(Bus(), settings=made, broker=RecordingBroker(made))
+    resting = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        entry=4396.0,
+        stop=4392.0,
+        target=4400.0,  # a four-point target
+        volume=0.1,
+    )
+    held = Waiting(
+        payload={}, feed="gold", trigger=4396.0, side=Side.BUY, until=1e18, resting=resting
+    )
+
+    # A quarter of the target is the limit: 1.2 is over it, 0.8 is under.
+    wide = trader._turned_against(held, Tick("XAUUSD", bid=4394.4, ask=4395.6))
+    assert "spread" in wide, wide
+    assert "30%" in wide, wide
+    fine = trader._turned_against(held, Tick("XAUUSD", bid=4394.6, ask=4395.4))
+    assert fine == "", fine
+
+
 async def test_a_parked_signal_that_never_comes_back_expires():
     """A resting order with no deadline is a trade taken on stale information."""
     bus = Bus()

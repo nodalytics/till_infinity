@@ -1698,11 +1698,30 @@ class Trader:
         # "several venues at once" rather than "any venue".
         if self.context.widened(held.feed):
             return "the venues went wide together"
+        # Against the **target**, which is what `risk.py` measures it against
+        # when the same setting refuses an entry. This used to divide by the
+        # distance price still had to travel to reach `trigger`, under a local
+        # named `risk` that made it read as the trade's risk. It was not: that
+        # gap shrinks to nothing as price arrives - which is the event the
+        # order is waiting for - so the threshold shrank with it and any spread
+        # at all cleared the bar. This check runs before the arrival check
+        # below, so every resting order was withdrawn on the tick it would
+        # have filled. Measured 2026-09-01: nine rests, no fills, no
+        # expiries, every resolution a spread withdrawal.
+        #
+        # Silent with no resting order, and that is not a gap. The point of
+        # this method is to reach in and take back the **broker's** order,
+        # which cannot change its mind; when there is none, arrival re-asks
+        # every gate through `on_signal` and a wide spread is refused there.
         spread = tick.spread
-        if spread > 0 and self.settings.max_spread_fraction > 0:
-            risk = abs(held.trigger - tick.entry(held.side))
-            if risk > 0 and spread > risk * self.settings.max_spread_fraction:
-                return f"the spread reached {spread:.5g}"
+        resting = held.resting
+        if spread > 0 and self.settings.max_spread_fraction > 0 and resting is not None:
+            reward = resting.reward
+            if reward > 0 and spread > reward * self.settings.max_spread_fraction:
+                return (
+                    f"the spread reached {spread / reward:.0%} of the target, "
+                    f"limit is {self.settings.max_spread_fraction:.0%}"
+                )
         return ""
 
     async def _leave_with_broker(self, intent: Intent, by: str, at: float, until: float) -> None:
