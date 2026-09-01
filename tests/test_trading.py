@@ -1765,7 +1765,7 @@ def test_a_strategy_separates_where_it_triggers_from_where_its_bias_comes_from()
     """
     made = settings()
     swing = td.STRATEGIES["swing-level"](made)
-    assert swing.intervals == ("1h",)
+    assert swing.intervals == ("1h", "2h", "4h", "1d", "1w")
     assert swing.anchors == ("2h", "4h", "1d", "1w")
     # Its lowest trigger is well below its highest anchor.
     assert swing.intervals[0] not in ("1d", "1w")
@@ -1834,7 +1834,7 @@ def test_a_strategy_declares_its_own_timeframes():
     assert td.STRATEGIES["level-scalp"](made).intervals == ("1m", "3m", "5m", "15m", "30m")
     # approach-scalp is a swing now, and swings enter on the middle set
     # rather than the fast one.
-    assert td.STRATEGIES["approach-scalp"](made).intervals == ("1h",)
+    assert td.STRATEGIES["approach-scalp"](made).intervals == ("1h", "2h", "4h", "1d", "1w")
     # The council takes whatever the operator allows and judges it itself.
     assert td.STRATEGIES["council"](made).intervals == made.intervals
 
@@ -5741,7 +5741,7 @@ def test_the_facing_side_does_not_leak_into_the_next_call():
 def test_the_origin_swing_is_a_swing_on_the_hour():
     engine = strategy("origin-swing")
     assert engine.style == "swing"
-    assert engine.intervals == ("1h",)
+    assert engine.intervals == ("1h", "2h", "4h", "1d", "1w")
     assert engine.candle_interval == "4h"
     assert engine.needs_both_witnesses is True
     assert engine.needs_context is True

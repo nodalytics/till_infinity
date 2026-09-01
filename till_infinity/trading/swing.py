@@ -120,7 +120,7 @@ class ApproachScalp(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
-    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
 
@@ -292,7 +292,7 @@ class Runner(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
-    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
 
@@ -354,7 +354,7 @@ class SwingLevel(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
-    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
 
@@ -436,7 +436,7 @@ class OriginSwing(LevelStrategy):
         "Between two origins: enter where price arrives first, run to the other."
     )
 
-    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
 
@@ -659,7 +659,7 @@ class FadeToValue(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
-    entries: ClassVar[tuple[str, ...]] = ("1h",)
+    entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
 

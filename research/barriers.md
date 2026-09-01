@@ -187,10 +187,19 @@ group at 44.6% far against 52.7% back, so the boundary now falls where the data
 puts it rather than where the naming did: the five swing strategies enter on
 **1h only**, and everything from 1m to 30m is a scalp.
 
-That is a narrow door for the swings - one interval - and it is the honest
-consequence of the table. 46 setups is a thin basis for it, so the thing that
-would revise this is more of them, which is what widening the replay harness
-past 1h is for.
+The swings enter at **1h and above** - 1h, 2h, 4h, 1d, 1w - rather than on 1h
+alone. The measurement is about where the *boundary* falls, not about capping
+the top: 1h is the fastest interval that separates, and nothing in the table
+argues that a 4h or daily level is worse than an hourly one.
+
+Two things about that are worth stating rather than assuming. The swing hold is
+4-6 hours whatever the entry interval, so a daily level is traded on a
+six-hour horizon - coherent, but it is a fast trade on a slow level rather than
+a slow trade. And 1w entries will almost never fire: weekly levels are rare and
+`min_hold` plus the session gate bind hardest there.
+
+46 setups at 1h is a thin basis for a boundary, so the thing that would revise
+it is more of them - which is what widening the replay past 1h is for.
 
 ## One ceiling per style
 
