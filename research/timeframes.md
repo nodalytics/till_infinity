@@ -67,3 +67,73 @@ Not the model - the arrival rate. 1h produces 1,297 touches to 1m's 34,755, so
 evidence accumulates about **twenty-seven times slower**. Any per-instrument or
 per-band question asked at 1h needs months of collection where the same
 question at 1m needs days.
+
+## Requiring agreement, and what that costs — 2026-09-01
+
+The context requirement was opt-in and most strategies opted out.
+`confluence-scalp` carried it as a class flag; the rest waited on
+`TRADING_SCALP_NEEDS_CONTEXT`, a staged switch. That switch is gone and
+`needs_context` now defaults to true for every strategy, guarded so that a
+strategy declaring no `context` at all — `council`, which delegates to members
+carrying their own — is not refused on agreement it never asked for.
+
+**The gate is thinner than it sounds.** Measured on the 1,876 resolutions
+carrying a confluence list, the first sample since the field reached the
+outcome context:
+
+| requirement | anchors | passes |
+|---|---|---|
+| scalps | 15m, 1h, 4h | 91.8% |
+| confluence-scalp | 15m, 1h, 4h, 1d | 92.2% |
+| momentum-scalp | 15m, 1h | 90.6% |
+| swings | 2h, 4h, 1d, 1w | 82.5% |
+| origin-swing, narrowed | 4h, 1d | 72.9% |
+
+The reason is the depth of the flow. The median call has **eight of ten
+timeframes agreeing**, and 5m appears on 1,796 of 1,876:
+
+```
+timeframes agreeing: 2:73  3:106  4:84  5:145  6:142  7:278  8:307  9:513  10:228
+```
+
+A level that nearly everything agrees on cannot separate much, which is the
+same thing [strength.md](strength.md) found scoring confluence depth at AUC
+0.476 and 0.452 — below the 0.5 that means no information. So this is not a
+filter that is expected to earn its keep on selection. It removes the ~8% of
+calls that no slower timeframe sees at all, and it makes the requirement
+uniform, which is worth having in itself: the old arrangement meant
+`level-scalp` and `confluence-scalp` differed on two axes at once and neither
+comparison was answerable.
+
+**origin-swing is the one real narrowing.** Its anchors drop from
+(2h, 4h, 1d, 1w) to (4h, 1d), taking ten points off what it will look at. The
+trade is the space between two origins, and an origin worth running to is not
+one that 2h agrees about — 2h sits close enough to a 1h entry bar that
+agreement there is nearly the same measurement twice. 1w is dropped from the
+other end: it is rare enough that requiring it would amount to requiring 4h and
+1d anyway. This strategy has never traded, so the narrowing costs nothing
+observed and is a claim about what it should wait for, not a measured
+improvement.
+
+## Parked entries do not fill — 2026-09-01
+
+Not a timeframe finding, but it surfaced while asking why the desk had gone
+24.5 hours without a trade, and it interacts with everything above: a parked
+entry blocks its whole feed while it waits.
+
+`entry_edge_vol = 1.5` parks an entry a volatility unit and a half better than
+the market. It shipped on a predicted 14.6% fill rate, never checked. Over the
+whole journal:
+
+| | |
+|---|---|
+| trades taken | 148 |
+| taken after a parked wait | 13 (8.8%) |
+| signals refused because the feed was already parked | 496 |
+
+Roughly 38 signals refused per parked entry that eventually filled — an upper
+bound, since some would have died on another gate. And the trades parking buys
+are not better: two closed, −19.73 each against −5.31 for the 147 that went
+straight in. n=2 settles nothing about quality; it is the finding about
+frequency. At 1.5v the resting price is not reached often enough to be a
+strategy, and while it waits it is a mute button on the feed.
