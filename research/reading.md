@@ -157,6 +157,47 @@ so the degenerate population cannot dominate the number.
 against a verifier; there is no verifier here that can be queried off-policy,
 because the only way to find out what price did is to have been there.
 
+## The triple-barrier method - the one idea here already in use
+
+Not from the four papers above, and worth its own section because this
+repository arrived at it from the trading side rather than the literature.
+
+**López de Prado, *Advances in Financial Machine Learning* (Wiley, 2018),
+chapter 3.** The method: instead of labelling a bar by its forward return, set
+three barriers - a profit target, a stop, and a **time limit** - and label the
+observation by which one price touches first.
+
+Why it is better posed than a return, and why it fits here:
+
+* **both outcomes are defined in advance.** A direction call has to be scored
+  against an arbitrary horizon; a barrier label is scored against the trade
+  that would actually have been taken.
+* **the vertical barrier is the part everyone forgets.** Without a time limit
+  an open position is labelled by whatever eventually happened, which is how a
+  weekend gap became a 27-volatility-unit rejection here once - and why
+  `GAP_FACTOR` exists.
+* **it is already the shape of the machinery.** A touch resolves when price
+  travels `resolve_vol` either way or the horizon expires. That *is* a
+  triple-barrier label, arrived at independently and named differently.
+
+[barriers.md](barriers.md) applies the frame to two levels with price between
+them, which is the trade `origin-swing` was written for.
+
+The adjacent chapters are the more valuable ones for the problems this
+repository keeps hitting, and are the honest "read next":
+
+* **chapter 7, purged and embargoed cross-validation.** The discipline that
+  stops the leakage found by hand in similarity.md and horizon.md.
+* **chapter 4, sample uniqueness and concurrency.** Overlapping labels are not
+  independent observations - directly the problem behind one grinding episode
+  counted as 171 touches.
+* **chapter 5, fractional differentiation.** Stationarity without throwing away
+  memory, which is the trade-off `volatility.py` makes by hand.
+
+The caution that applies to all of it: the book's own backtests are widely
+argued to be optimistic, and its value here is the *methodology* rather than
+any result. The triple-barrier method is a labelling discipline, not an edge.
+
 ## Where to read next
 
 Each of these has a literature behind it that is closer to this problem than the
