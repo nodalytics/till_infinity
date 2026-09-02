@@ -50,7 +50,9 @@ from .context import Context
 from .manage import Move, Take
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
+from .opportunity import PRESETS
 from .paper import PaperBroker
+from .policy import Policy
 from .risk import Guard
 from .sessions import Sessions
 from .sizing import lots, price_distance
@@ -376,6 +378,16 @@ class Trader:
         #: own barriers. See `Untaken`. Bounded per feed because this grows
         #: with strategies times signals and nothing else evicts it.
         self._untaken: dict[str, list[Untaken]] = {}
+        #: What each shape has been worth, and the chooser that reads it. Fed
+        #: from `_record_untaken` - which is full information, every arm on
+        #: every signal - and from real closes.
+        self.policy = Policy()
+        # Attached to whichever strategies read one. A strategy without a
+        # policy keeps its class defaults, which are the measured ones - so
+        # nothing is ever shaped by a guess, only by a default or by evidence.
+        for engine in self.strategies:
+            if hasattr(engine, "policy"):
+                engine.policy = self.policy
         #: Unresolved intents dropped for want of room. Counted because a
         #: silent eviction is a silent bias - see `MAX_UNTAKEN`.
         self._spilled: int = 0
@@ -2783,6 +2795,24 @@ class Trader:
             },
             tags=(shade.feed, shade.by, "untaken"),
         )
+        if how != "never filled":
+            self._credit(shade.by, shade.feed, shade.interval, reward)
+
+    def _credit(self, by: str, feed: str, interval: str, reward: float) -> None:
+        """Tell the policy what a strategy's shape was worth here.
+
+        Keyed by the **shape** rather than the strategy name, because the names
+        are not the thing being chosen between - `level-scalp` and
+        `sweep-aware` are the same point, and crediting them separately would
+        split one arm's evidence in half.
+        """
+        shape = PRESETS.get(by)
+        arm = shape.named() if shape is not None else ""
+        if not arm:
+            engine = next((e for e in self.strategies if e.name == by), None)
+            arm = str(getattr(engine, "arm", "") or "")
+        if arm:
+            self.policy.observe(feed, interval, arm, reward)
 
     async def _watch_shadows(self, feed: str, tick: Tick) -> None:
         """Follow stopped trades to see whether the target arrived anyway.

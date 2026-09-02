@@ -68,11 +68,16 @@ by `_also_wanted` on every signal without ever placing an order.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
+from .models import SymbolSpec, Tick, Verdict
 from .scalper import LevelStrategy
 from .strategy import register
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .policy import Policy
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,3 +235,64 @@ class Opportunity(LevelStrategy):
     #: Zero: the ceiling decides, not a clock of this strategy's own.
     hold_seconds: ClassVar[float] = 0.0
     pullback_fraction: ClassVar[float] = 1.0
+
+    #: Attached by the service when one exists. Absent means the class
+    #: defaults, which are the measured ones - so this strategy is a fixed,
+    #: reasonable shape until something has learned enough to improve on it,
+    #: and never a random one.
+    policy: Policy | None = None
+
+    #: The arm the last decision used, so the outcome can credit the right one.
+    #: A shape chosen and then scored against a different name is worse than
+    #: not scoring it.
+    arm: str = ""
+
+    def consider(
+        self,
+        payload: dict[str, Any],
+        *,
+        spec: SymbolSpec,
+        tick: Tick,
+        equity: float,
+        positions: Sequence[Any] = (),
+        peak: float = 0.0,
+    ) -> Verdict:
+        """Pick a shape for this opportunity, then decide with it.
+
+        **Spelled out rather than `**kw`.** A test walks `STRATEGIES` asserting
+        every `consider` accepts what the service passes, and it exists because
+        widening the base signature once left two overrides behind and stopped
+        the desk trading for two hours. `**kw` passes at runtime and fails that
+        test, which is the right way round.
+
+        Safe to set instance attributes here: `consider` is synchronous, so one
+        signal is shaped and decided before the next is looked at. The async
+        wrapper is around this, not inside it.
+        """
+        policy = self.policy
+        if policy is not None:
+            shape, why = policy.pick(
+                str(payload.get("feed") or ""), str(payload.get("interval") or "")
+            )
+            self.arm = shape.named()
+            self._wear(shape)
+            payload.setdefault("features", {})
+            if isinstance(payload["features"], dict):
+                payload["features"]["arm_reason"] = why
+        return super().consider(
+            payload, spec=spec, tick=tick, equity=equity, positions=positions, peak=peak
+        )
+
+    def _wear(self, shape: Shape) -> None:
+        """Take on a point in the space, as instance attributes.
+
+        Only the dimensions the engine actually reads - `Shape.WIRED`. Setting
+        the others would produce a policy that appears to vary something
+        nothing honours, which is the defect this repository keeps finding.
+        """
+        self.stop_multiple = shape.stop
+        self.target_multiple = shape.target
+        self.trail_vol = shape.trail
+        self.break_even_at = shape.protect
+        self.hold_seconds = shape.hold
+        self.pullback_fraction = shape.pullback

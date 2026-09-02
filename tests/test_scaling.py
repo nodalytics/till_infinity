@@ -756,3 +756,103 @@ def test_the_cap_is_sized_for_a_day_long_hold():
     from till_infinity.trading.service import Trader
 
     assert Trader.MAX_UNTAKEN >= 384
+
+
+# ----------------------------------------- choosing a shape from the record
+
+
+def test_a_cold_policy_returns_the_measured_default_not_a_guess():
+    """A policy that acts on four observations is how a five-stop sample became
+    an instrument-wide sizing rule."""
+    from till_infinity.trading.policy import Policy
+
+    policy = Policy()
+    shape, why = policy.pick("gold", "5m")
+    assert shape == policy.fallback
+    assert "cold" in why
+
+
+def test_an_arm_cannot_win_until_it_has_been_seen_enough():
+    from till_infinity.trading.policy import Policy
+
+    policy = Policy()
+    arm = next(iter(policy.arms))
+    for _ in range(policy.MIN_SEEN - 1):
+        policy.observe("gold", "5m", arm, 2.0)
+    assert policy.pick("gold", "5m")[0] == policy.fallback
+    policy.observe("gold", "5m", arm, 2.0)
+    assert policy.pick("gold", "5m")[0] == policy.arms[arm]
+
+
+def test_context_backs_off_rather_than_deciding_on_three_observations():
+    """A thin cell falls back to the broader one. The family split is the one
+    research/failing.md measures as actually separating."""
+    from till_infinity.trading.policy import Policy, context_of
+
+    assert context_of("boom_500_index", "5m") == ("boom|5m", "boom", "")
+    assert context_of("gold", "1h")[1] == "metals/oil"
+    assert context_of("volatility_75_index", "3m")[1] == "volatility"
+
+    policy = Policy()
+    arm = next(iter(policy.arms))
+    # Warm at the family level only.
+    for _ in range(policy.MIN_SEEN):
+        policy.observe("boom_500_index", "1h", arm, 1.5)
+    # A different interval on the same family still gets an answer.
+    shape, why = policy.pick("boom_1000_index", "5m")
+    assert shape == policy.arms[arm]
+    assert why.startswith("boom")
+
+
+def test_a_malformed_reward_cannot_own_the_policy():
+    """Five intents of 1,757 carried an implied RR up to 30,338, and one of
+    them touching produced +23R a trade across the whole book."""
+    from till_infinity.trading.policy import CLIP, Policy
+
+    policy = Policy()
+    arm = next(iter(policy.arms))
+    for _ in range(policy.MIN_SEEN):
+        policy.observe("gold", "5m", arm, 30_338.0)
+    score = policy.ledger.score("metals/oil|5m", arm)
+    assert score is not None
+    assert score.mean <= CLIP[1]
+
+
+def test_the_same_point_under_two_names_is_one_arm():
+    """`level-scalp` and `sweep-aware` are identical vectors. Crediting them
+    separately would split one arm's evidence in half."""
+    import till_infinity.trading as td
+    from till_infinity.trading.policy import Policy
+
+    policy = Policy()
+    assert td.PRESETS["level-scalp"].named() == td.PRESETS["sweep-aware"].named()
+    assert td.PRESETS["level-scalp"].named() in policy.arms
+
+
+def test_opportunity_wears_the_shape_it_was_given():
+    """And only the dimensions the engine reads - varying one nothing honours
+    is a policy that appears to work and does not."""
+    import till_infinity.trading as td
+    from till_infinity.trading.opportunity import Shape
+
+    engine = td.STRATEGIES["opportunity"](_scalp().settings)
+    engine._wear(Shape(stop=2.0, target=1.25, trail=0.5, protect=0.25, hold=99.0, pullback=0.0))
+    assert engine.stop_multiple == 2.0
+    assert engine.target_multiple == 1.25
+    assert engine.trail_vol == 0.5
+    assert engine.break_even_at == 0.25
+    assert engine.hold_seconds == 99.0
+    assert engine.pullback_fraction == 0.0
+
+
+def test_the_service_hands_its_policy_to_whatever_reads_one():
+    from till_infinity.bus import Bus
+    from till_infinity.trading.service import Trader
+
+    from till_infinity.trading.config import Settings
+
+    made = Settings(symbols=("gold",), strategies=("thesis-only", "opportunity"))
+    trader = Trader(Bus(), settings=made)
+    wearing = [e for e in trader.strategies if getattr(e, "policy", None) is not None]
+    assert wearing, "nothing was given the policy"
+    assert all(e.policy is trader.policy for e in wearing)
