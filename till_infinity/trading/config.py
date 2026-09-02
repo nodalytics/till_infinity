@@ -286,6 +286,11 @@ MAGIC_ORDER: tuple[str, ...] = (
     # keep resolving to the name that placed them.
     "high-timeframe",
     "origin-swing",
+    # 2026-09-02. The nine above are points in one parameter space and this is
+    # the space itself; see `trading/opportunity.py`. Appended like every other
+    # slot, because a magic that has been on a live order has to keep resolving
+    # to the name that placed it.
+    "opportunity",
 )
 
 

@@ -91,6 +91,7 @@ from .models import (
     Tick,
     Verdict,
 )
+from .opportunity import PRESETS, Opportunity, Shape
 from .paper import PaperBroker
 from .plans import PLANS, Plan
 from .report import Report, Trade
@@ -128,6 +129,7 @@ __all__ = [
     "OPTIONAL_SYMBOLS",
     "PAPER",
     "PLANS",
+    "PRESETS",
     "RPYC",
     "STRATEGIES",
     "SUFFIXES",
@@ -150,6 +152,7 @@ __all__ = [
     "Move",
     "NotConnectedError",
     "Opinion",
+    "Opportunity",
     "Order",
     "OrderResult",
     "OriginSwing",
@@ -165,6 +168,7 @@ __all__ = [
     "Runner",
     "Seen",
     "Settings",
+    "Shape",
     "Side",
     "Sizing",
     "Speeds",

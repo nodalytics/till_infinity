@@ -551,3 +551,83 @@ def test_the_pairs_survive_a_typo():
     assert _overshoot("boom_500_index=1.25") == (("boom_500_index", 1.25),)
     assert _overshoot("boom_500_index=oops,gold=1.1") == (("gold", 1.1),)
     assert _overshoot("") == ()
+
+
+# ------------------------------------------- one strategy instead of nine
+
+
+def test_opportunity_is_registered_and_attributable():
+    """A strategy without a slot in MAGIC_ORDER stamps a hashed magic with no
+    inverse, so every position it opens closes as "unattributed" and it cannot
+    be scored. Two strategies have already run live that way."""
+    import till_infinity.trading as td
+    from till_infinity.trading.config import MAGIC_ORDER, magic_for
+
+    assert "opportunity" in td.STRATEGIES
+    assert "opportunity" in MAGIC_ORDER
+    magics = {n: magic_for(777700, n) for n in td.STRATEGIES}
+    assert len(set(magics.values())) == len(magics)
+
+
+def test_opportunity_has_no_clock_of_its_own():
+    """91 closes ended on the clock rather than a barrier, and replaying them
+    without it turned -10.58R into -0.91R. `hold_seconds` 0 means the
+    deployment ceiling and nothing tighter."""
+    import till_infinity.trading as td
+
+    engine = td.STRATEGIES["opportunity"](_scalp().settings)
+    assert engine.hold_seconds == 0.0
+    assert engine.hold_for("1m") == engine.ceiling
+    assert engine.hold_for("4h") == engine.ceiling
+
+
+def test_opportunity_triggers_on_any_timeframe():
+    """There is no scalping and no swing trading, only opportunities. Empty
+    `entries` means whatever the deployment allows."""
+    import till_infinity.trading as td
+    from till_infinity.trading.config import Settings
+
+    made = Settings(intervals=("1m", "5m", "1h", "1d"))
+    engine = td.STRATEGIES["opportunity"](made)
+    assert engine.entries == ()
+    assert engine.intervals == ("1m", "5m", "1h", "1d")
+
+
+def test_the_presets_recover_the_named_strategies():
+    """The nine are points in this space, not separate things. If a preset
+    drifts from the class it names, the map is a lie."""
+    import till_infinity.trading as td
+    from till_infinity.trading.config import Settings
+
+    made = Settings()
+    for name, shape in td.PRESETS.items():
+        engine = td.STRATEGIES[name](made)
+        assert engine.stop_multiple == shape.stop, name
+        assert engine.target_multiple == shape.target, name
+        assert engine.trail_vol == shape.trail, name
+        assert engine.break_even_at == shape.protect, name
+        assert engine.hold_seconds == shape.hold, name
+        assert engine.pullback_fraction == shape.pullback, name
+        assert engine.stop_floor_vol("5m") == shape.floor, name
+
+
+def test_two_named_strategies_are_the_same_point():
+    """`level-scalp` and `sweep-aware` have identical exits and differ only in
+    an extra entry gate, which is the argument for this module in one line."""
+    import till_infinity.trading as td
+
+    assert td.PRESETS["level-scalp"] == td.PRESETS["sweep-aware"]
+
+
+def test_the_shape_matches_the_class_it_configures():
+    """`shape_of` and the ClassVars are two statements of one thing."""
+    import till_infinity.trading as td
+
+    cls = td.STRATEGIES["opportunity"]
+    shape = cls.shape_of
+    assert cls.stop_multiple == shape.stop
+    assert cls.target_multiple == shape.target
+    assert cls.trail_vol == shape.trail
+    assert cls.break_even_at == shape.protect
+    assert cls.hold_seconds == shape.hold
+    assert cls.pullback_fraction == shape.pullback
