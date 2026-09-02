@@ -627,6 +627,48 @@ async def test_a_stop_hit_is_reconciled_and_recorded_as_an_outcome(tmp_path):
         assert any(entry.parent for entry in entries)
 
 
+async def test_a_trade_that_was_in_profit_and_stopped_says_so(tmp_path):
+    """The give-back, recorded.
+
+    `_best` and `_worst` used to be discarded on the line above `_settle`, and
+    `_settle` is what writes `best_r` and `adverse_r` - both of which return
+    0.0 for a ticket they cannot find. So every close in the book's history
+    recorded exactly 0.000 for each: 188 and 85 of them, min and max both zero,
+    and not one stopped trade recorded as ever having been in front. "We were
+    up thirty dollars and gave it back" was watchable and unmeasurable.
+
+    So: open a trade, take it into profit, then take it to the stop.
+    """
+    bus = Bus()
+    async with Journal(tmp_path / "journal.db") as book:
+        trader = Trader(bus, settings=settings(), journal=book)
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        await trader.handle(Message(topic=SIGNALS, payload=signal()))
+        assert len(trader.open) == 1
+
+        # Well in front, then all the way back through the stop.
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4406.0, "ask": 4407.0})
+        )
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4395.0, "ask": 4396.0})
+        )
+        await trader.sweep()
+        assert not trader.open
+
+        outcomes = [
+            e.context
+            for e in read(tmp_path / "journal.db")
+            if isinstance(getattr(e, "context", None), dict) and "best_r" in e.context
+        ]
+        assert outcomes, "no outcome carried best_r"
+        best = max(float(c["best_r"]) for c in outcomes)
+        assert best > 0.0, f"a trade that reached 4406 recorded best_r {best}"
+
+
 async def test_the_second_call_on_the_same_instrument_is_refused_and_journalled(tmp_path):
     bus = Bus()
     async with Journal(tmp_path / "journal.db") as book:

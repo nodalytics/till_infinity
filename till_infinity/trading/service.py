@@ -2768,10 +2768,24 @@ class Trader:
                 if told is not None and told[0]:
                     price, profit, why = told[0], told[1], "closed"
             del self.open[ticket]
-            self._best.pop(ticket, None)
-            self._worst.pop(ticket, None)
             settled.append((live, price, why))
-            await self._settle(live, price, why, profit)
+            # Discarded *after* the outcome is written, not before.
+            #
+            # These two lines used to sit above `_settle`, which is what reads
+            # them - `_reach` and `_heat` both return 0.0 for a ticket they
+            # cannot find. So `best_r` and `adverse_r` were written as exactly
+            # 0.000 on every close the book ever made: 188 and 85 of them, min
+            # and max both zero, and not one stopped trade recorded as ever
+            # having been in profit. The tracking was correct, the recording
+            # was correct, and the state was thrown away in between.
+            #
+            # `finally`, so a raising `_settle` still cleans up rather than
+            # leaking a ticket's extremes for the life of the process.
+            try:
+                await self._settle(live, price, why, profit)
+            finally:
+                self._best.pop(ticket, None)
+                self._worst.pop(ticket, None)
         return settled
 
     async def _settle(
