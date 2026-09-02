@@ -847,9 +847,8 @@ def test_opportunity_wears_the_shape_it_was_given():
 
 def test_the_service_hands_its_policy_to_whatever_reads_one():
     from till_infinity.bus import Bus
-    from till_infinity.trading.service import Trader
-
     from till_infinity.trading.config import Settings
+    from till_infinity.trading.service import Trader
 
     made = Settings(symbols=("gold",), strategies=("thesis-only", "opportunity"))
     trader = Trader(Bus(), settings=made)
