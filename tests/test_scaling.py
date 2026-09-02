@@ -631,3 +631,116 @@ def test_the_shape_matches_the_class_it_configures():
     assert cls.break_even_at == shape.protect
     assert cls.hold_seconds == shape.hold
     assert cls.pullback_fraction == shape.pullback
+
+
+# ------------------------------------- feedback on the arms nobody pulled
+
+
+def _untaken(side="buy", entry=100.0, stop=99.0, target=103.0, hold=600.0):
+    from till_infinity.trading.models import Side
+    from till_infinity.trading.service import Untaken
+
+    return Untaken(
+        feed="gold",
+        by="level-scalp",
+        side=Side.BUY if side == "buy" else Side.SELL,
+        entry=entry,
+        stop=stop,
+        target=target,
+        interval="5m",
+        fill_by=1_000.0,
+        hold=hold,
+        placed_at=0.0,
+    )
+
+
+async def _walk(shade, quotes):
+    """Push quotes at one intent and return (finished, journalled rows)."""
+    from till_infinity.bus import Bus
+    from till_infinity.trading.models import Tick
+    from till_infinity.trading.service import Trader
+
+    trader = Trader(Bus(), settings=_scalp().settings)
+    rows = []
+
+    async def catch(_journal, title, **kw):
+        rows.append(kw.get("context") or {})
+
+    import till_infinity.trading.service as svc
+
+    real, svc.observe = svc.observe, catch
+    try:
+        for when, bid, ask in quotes:
+            if await trader._step_untaken(shade, Tick("XAUUSD", bid=bid, ask=ask, time=when)):
+                return True, rows
+    finally:
+        svc.observe = real
+    return False, rows
+
+
+@pytest.mark.asyncio
+async def test_an_untaken_intent_scores_when_its_target_arrives():
+    """The feedback channel for an arm nobody pulled."""
+    shade = _untaken()
+    done, rows = await _walk(
+        shade,
+        [(10.0, 99.9, 100.0), (20.0, 101.0, 101.1), (30.0, 103.5, 103.6)],
+    )
+    assert done
+    assert rows
+    assert rows[-1]["resolved"] == "target"
+    assert rows[-1]["reward_r"] == pytest.approx(3.0)
+
+
+@pytest.mark.asyncio
+async def test_an_untaken_intent_that_never_fills_scores_nothing_rather_than_zero():
+    """An absent trade is not a zero-reward trade. Averaging it in would
+    flatter strategies that rest their entry out of reach."""
+    shade = _untaken(entry=90.0)
+    done, rows = await _walk(shade, [(10.0, 99.9, 100.0), (1_001.0, 99.9, 100.0)])
+    assert done
+    assert rows[-1]["resolved"] == "never filled"
+    assert rows[-1]["reward_r"] is None
+    assert rows[-1]["filled"] is False
+
+
+@pytest.mark.asyncio
+async def test_an_untaken_intent_takes_the_stop_at_minus_one():
+    shade = _untaken()
+    done, rows = await _walk(shade, [(10.0, 99.9, 100.0), (20.0, 98.5, 98.6)])
+    assert done
+    assert rows[-1]["resolved"] == "stop"
+    assert rows[-1]["reward_r"] == pytest.approx(-1.0)
+
+
+@pytest.mark.asyncio
+async def test_an_untaken_intent_that_resolves_neither_way_is_marked_to_market():
+    """Exactly as the live trade would have been by its own clock."""
+    shade = _untaken(hold=100.0)
+    done, rows = await _walk(
+        shade, [(10.0, 99.9, 100.0), (20.0, 100.5, 100.6), (200.0, 100.5, 100.6)]
+    )
+    assert done
+    assert rows[-1]["resolved"] == "timeout"
+    assert rows[-1]["reward_r"] == pytest.approx(0.5, abs=0.01)
+
+
+def test_untaken_intents_are_bounded_per_feed():
+    """Strategies times signals grows quickly and nothing else evicts it."""
+    from till_infinity.bus import Bus
+    from till_infinity.trading.models import Intent, Side
+    from till_infinity.trading.service import Trader
+
+    trader = Trader(Bus(), settings=_scalp().settings)
+    intent = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        entry=100.0,
+        stop=99.0,
+        target=103.0,
+        volume=0.1,
+    )
+    for _ in range(trader.MAX_UNTAKEN + 25):
+        trader._remember_untaken("gold", "level-scalp", intent, "5m", 600.0, 0.0)
+    assert len(trader._untaken["gold"]) == trader.MAX_UNTAKEN

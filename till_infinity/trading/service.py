@@ -31,7 +31,7 @@ import asyncio
 import contextlib
 import time
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, ClassVar
 
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
@@ -173,6 +173,52 @@ class Waiting:
     #: stale intent waiting to be resurrected, it is a label.
     resting: Intent | None = None
     by: str = ""
+
+
+@dataclass(slots=True)
+class Untaken:
+    """A trade a strategy wanted and did not get, followed to its own barriers.
+
+    `_also_wanted` already asks every strategy what it would have done with a
+    signal another one took, and journals the answer with the prices it would
+    have used. Until this existed nothing resolved those intents, so the record
+    said what each strategy *wanted* and never what it would have *got* - and
+    the ranking that settles which strategy should own a signal had to be
+    computed by hand, off stored bars, after the fact.
+
+    This closes that loop on the live quote stream. Two stages, because an
+    intent is not a trade until it fills:
+
+    1. **Fill.** The named entry has to trade. Several strategies rest their
+       entry away from the market, and crediting them with a fill they never
+       got would hand them a better price than they would have had.
+    2. **Barriers.** From the fill, whichever of target or stop arrives first
+       inside the hold. Neither arriving is a timeout, marked to the last
+       price, exactly as the live trade would have been.
+
+    Costs one comparison per open intent per quote, on quotes already on the
+    bus. It is the feedback channel for arms nobody pulled, which is the thing
+    a bandit assumes it cannot have.
+    """
+
+    feed: str
+    by: str
+    side: Side
+    entry: float
+    stop: float
+    target: float
+    interval: str
+    #: When to give up waiting for the fill.
+    fill_by: float
+    #: How long the trade may run once filled.
+    hold: float
+    placed_at: float = 0.0
+    #: Zero until it fills, then the time it did.
+    filled_at: float = 0.0
+    #: When the barrier race ends. Set at fill.
+    until: float = 0.0
+    #: Last price seen since the fill, for a timeout's mark to market.
+    last: float = 0.0
 
 
 @dataclass(slots=True)
@@ -326,6 +372,10 @@ class Trader:
         self._waiting: dict[str, Waiting] = {}
         #: Stopped trades still being watched. See `Shadow`.
         self._shadows: dict[int, Shadow] = {}
+        #: Intents other strategies wanted, keyed by feed, followed to their
+        #: own barriers. See `Untaken`. Bounded per feed because this grows
+        #: with strategies times signals and nothing else evicts it.
+        self._untaken: dict[str, list[Untaken]] = {}
         #: feed -> the spread when it was last quoted, for the record.
         self._spread_of: dict[str, float] = {}
         #: feed -> this fill was waited for. Consumed when the trade is taken.
@@ -530,10 +580,11 @@ class Trader:
             self._quote(message.payload)
             feed = str(message.payload.get("feed") or "")
             symbol = self._symbol_of.get(feed)
-            if symbol and (feed in self._waiting or self._shadows):
+            if symbol and (feed in self._waiting or self._shadows or self._untaken.get(feed)):
                 got = await self._tick(symbol)
                 if got is not None:
                     await self._watch_shadows(feed, got)
+                    await self._resolve_untaken(feed, got)
                     if feed in self._waiting:
                         return await self._arrived(feed, got)
             return None
@@ -893,6 +944,18 @@ class Trader:
             wanted = isinstance(verdict, Intent)
             if wanted:
                 wanted_by.append((engine.name, verdict))
+                # Followed forward from here, so the record says what this
+                # strategy would have *got* and not only what it wanted. See
+                # `Untaken`: without this the ranking has to be recomputed by
+                # hand off stored bars, which is how it was done the first time.
+                self._remember_untaken(
+                    str(payload.get("feed") or ""),
+                    engine.name,
+                    verdict,
+                    str(payload.get("interval") or ""),
+                    engine.hold_for(str(payload.get("interval") or "")),
+                    tick.time,
+                )
             await observe(
                 self.journal,
                 f"{engine.name} would have {'taken' if wanted else 'passed'} {payload.get('feed')}",
@@ -2568,6 +2631,133 @@ class Trader:
     def money(self, amount: float, *, signed: bool = True) -> str:
         """An amount with the account's currency attached. See `models.money`."""
         return money(amount, self.currency, signed=signed)
+
+    #: Intents kept per feed. Strategies times signals grows quickly and an
+    #: unresolved intent is only worth what it can still tell us, so the oldest
+    #: go first.
+    MAX_UNTAKEN: ClassVar[int] = 60
+
+    def _remember_untaken(
+        self, feed: str, by: str, intent: Intent, interval: str, hold: float, now: float
+    ) -> None:
+        """Keep an intent a strategy wanted but did not get, to score later."""
+        if intent.entry <= 0 or intent.stop <= 0 or intent.target <= 0:
+            return
+        kept = self._untaken.setdefault(feed, [])
+        kept.append(
+            Untaken(
+                feed=feed,
+                by=by,
+                side=intent.side,
+                entry=intent.entry,
+                stop=intent.stop,
+                target=intent.target,
+                interval=interval,
+                # The same window a resting entry gets, so an intent nobody
+                # took is judged on the same patience as one that was.
+                fill_by=now + max(hold, 60.0),
+                hold=hold,
+                placed_at=now,
+            )
+        )
+        if len(kept) > self.MAX_UNTAKEN:
+            del kept[: len(kept) - self.MAX_UNTAKEN]
+
+    async def _resolve_untaken(self, feed: str, tick: Tick) -> None:
+        """Walk every unresolved intent on this feed one quote forward.
+
+        Fill first, then the barrier race. See `Untaken` for why the fill is
+        not assumed: crediting a rested entry with a price it never traded at
+        would rank it above strategies that paid the spread to be certain.
+        """
+        kept = self._untaken.get(feed)
+        if not kept:
+            return
+        alive: list[Untaken] = []
+        for shade in kept:
+            done = await self._step_untaken(shade, tick)
+            if not done:
+                alive.append(shade)
+        if alive:
+            self._untaken[feed] = alive
+        else:
+            self._untaken.pop(feed, None)
+
+    async def _step_untaken(self, shade: Untaken, tick: Tick) -> bool:
+        """One quote against one intent. True when it is finished with."""
+        sign = shade.side.sign
+        # Entry and exit sides, as a real trade would pay them.
+        coming = tick.entry(shade.side)
+        going = tick.bid if shade.side is Side.BUY else tick.ask
+
+        if not shade.filled_at:
+            reached = (coming - shade.entry) * sign <= 0
+            if reached:
+                shade.filled_at = tick.time
+                shade.until = tick.time + shade.hold
+                shade.last = going
+                return False
+            if tick.time >= shade.fill_by:
+                await self._record_untaken(shade, "never filled", 0.0, tick.time)
+                return True
+            return False
+
+        shade.last = going
+        risk = abs(shade.entry - shade.stop)
+        if risk <= 0:
+            return True
+        if (going - shade.target) * sign >= 0:
+            await self._record_untaken(
+                shade, "target", abs(shade.target - shade.entry) / risk, tick.time
+            )
+            return True
+        if (going - shade.stop) * sign <= 0:
+            await self._record_untaken(shade, "stop", -1.0, tick.time)
+            return True
+        if tick.time >= shade.until:
+            await self._record_untaken(
+                shade, "timeout", ((going - shade.entry) * sign) / risk, tick.time
+            )
+            return True
+        return False
+
+    async def _record_untaken(self, shade: Untaken, how: str, reward: float, when: float) -> None:
+        """Journal what an intent nobody took would have been worth.
+
+        `reward` is in units of the intent's own risk, which is the only
+        denominator that compares a strategy trading gold against one trading a
+        synthetic. A fill that never happened scores nothing and says so - it
+        is not a zero-reward trade, it is an absent one, and averaging it in
+        would flatter strategies that rest their entry out of reach.
+        """
+        await observe(
+            self.journal,
+            f"{shade.by} would have {how} on {shade.feed}",
+            rationale=(
+                f"entry {shade.entry:.5g} stop {shade.stop:.5g} target {shade.target:.5g}"
+                f" - {how} at {reward:+.2f}R"
+                if how != "never filled"
+                else f"price never traded {shade.entry:.5g} within the hold"
+            ),
+            actor="trading",
+            context={
+                "shape": "untaken",
+                "strategy": shade.by,
+                "feed": shade.feed,
+                "interval": shade.interval,
+                "side": shade.side.value if hasattr(shade.side, "value") else str(shade.side),
+                "resolved": how,
+                "filled": bool(shade.filled_at),
+                # Absent rather than zero when there was no fill, so a mean over
+                # this field is a mean over trades that happened.
+                "reward_r": round(reward, 4) if how != "never filled" else None,
+                "entry": round(shade.entry, 8),
+                "stop": round(shade.stop, 8),
+                "target": round(shade.target, 8),
+                "seconds": round(when - shade.placed_at, 1),
+            },
+            tags=(shade.feed, shade.by, "untaken"),
+        )
 
     async def _watch_shadows(self, feed: str, tick: Tick) -> None:
         """Follow stopped trades to see whether the target arrived anyway.
