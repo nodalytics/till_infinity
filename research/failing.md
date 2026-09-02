@@ -218,3 +218,72 @@ What is defensible is the negative: **boom, metals/oil, RR above 1.5, stated
 probability above 0.9, and 1m entries all lose with real n behind them.**
 Removing losers is the move that survives this sample size. Finding a winner
 does not.
+
+## Separating the probability inversion from its geometry — 2026-09-02
+
+"Calls rated above 0.9 win 27%" has two candidate causes: the probability is
+simply wrong (calibration), or high-probability calls systematically carry a
+distant target and RR 1.5+ is what loses (confounding). 130 closes carry both
+numbers.
+
+**They are entangled, and that half is confirmed.**
+
+| stated probability | n | mean RR | median RR | share at RR 1.5+ |
+| --- | ---: | ---: | ---: | ---: |
+| 0.7-0.8 | 33 | 1.35 | 1.13 | 36% |
+| 0.8-0.9 | 63 | 1.16 | 0.91 | 29% |
+| **0.9+** | 30 | **1.59** | **1.51** | **53%** |
+
+A call the model is most sure of gets a target half again as far away, and
+more than half of those trades sit in the worst RR bucket on the book. That is
+not a coincidence of sampling - `probability` and `expected_push_vol` are
+driven by the same underlying strength estimate, so confidence and target
+distance move together by construction. When the estimate is wrong, the
+direction call and the geometry fail in the same trade.
+
+**But the geometry does not explain it away.** Holding RR fixed, probability
+still fails to order outcomes - there is no RR band in which the 0.9+ group is
+the best group:
+
+| RR band | p 0.7-0.8 | p 0.8-0.9 | p 0.9+ |
+| --- | ---: | ---: | ---: |
+| <0.5 | 71% [7] | 47% [19] | 75% [4] |
+| 0.5-1.0 | 75% [8] | 62% [13] | 50% [4] |
+| 1.0-1.5 | 0% [6] | 54% [13] | 17% [6] |
+| 1.5+ | 8% [12] | 33% [18] | 12% [16] |
+
+Win rate, n in brackets. The cells are thin and only the RR-1.5+ row carries
+real weight, but in three of four bands the 0.8-0.9 group beats the 0.9+ one.
+
+**The calibration table is the one to trust**, at n=130 across four bands:
+
+| band | n | said | won | reached target | stopped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0.7-0.8 | 33 | 77% | 36% | 24% | 30% |
+| 0.8-0.9 | 63 | 85% | 48% | 14% | 24% |
+| **0.9+** | 30 | **93%** | **27%** | **10%** | **53%** |
+
+Said 93%, won 27%, and **stopped out 53% of the time** - more than double the
+next band. Higher confidence also means a *lower* target-hit rate, 10% against
+24%, which is the distance showing through.
+
+### The honest verdict: one mechanism, not two
+
+It is not calibration *or* geometry. Confidence and target distance come from
+the same estimate, so a confident call buys a further target and a stop that
+is proportionally nearer the noise. The trade then loses in the way the table
+shows: rarely reaching a target it was never close to, and stopping out at
+twice the rate.
+
+**One caveat that matters.** `probability` is the model's estimate that the
+*level holds*, not that the *trade wins*. Those are different questions, and
+comparing 93% to 27% is not a calibration test in the strict sense. A level
+can hold while an excursion takes the stop first - which is exactly what gold
+does, where 62% of stopped trades reached target *after* being stopped against
+26% book-wide.
+
+**So the deciding measurement has not been taken.** On the 0.9+ trades that
+stopped out, did price subsequently reach the target? If it did, the
+probability is fine and the stop placement is the whole problem. If it did
+not, the estimate is genuinely broken. Everything above is consistent with
+either, and they need opposite fixes.
