@@ -119,3 +119,79 @@ Worth noting honestly:
    add the gymnasium API only if something else wants to consume it. Fidelity
    to production matters more than the interface, and that is the part not yet
    established.
+
+## Strategy selection, asked against this document's own test — 2026-09-02
+
+The case not considered above, because the problem had not been measured yet:
+**which strategy should own a signal.** Nine of them race, `on_signal` returns
+on the first that gets through, and `TRADING_STRATEGIES` is a fixed priority
+list. Entry counts track queue position almost perfectly, and the strategy at
+the front scores worst on a common stream (see
+[failing.md](failing.md)). So the incumbent policy is not merely arbitrary in
+the way the agents' ten slots are — it is *measurably* mis-ordered.
+
+That looks like a bandit: arms are strategies, reward is realised R, context is
+the signal's features. `river.model_selection.BanditClassifier` and
+`river.bandit.BayesUCB` are both installed — river 0.25.0 is already a
+dependency, and `LinUCBDisjoint` gives the contextual version.
+
+**Apply the test at the top of this document and it fails.**
+
+> If you would have learned the outcome anyway, whatever you chose, it is not a
+> bandit problem.
+
+`_also_wanted` asks **every other strategy what it would have done** with each
+signal and journals the answer, and `TRADING_EVALUATE_ALL` is on. 1,757 of
+those shadow intents carry an entry, a stop and a target, and scoring them
+against 1m bars ranks all nine on identical signals. The counterfactual is
+observed, by a mechanism built for exactly this, whose docstring calls it *"the
+only honest way to rank them"*.
+
+So the exploration a bandit pays for buys nothing here. Confidence bounds and
+Thompson sampling exist to price an unobserved arm; every arm is observed.
+
+### What to use instead
+
+**Full-information expert weighting** — Hedge, or exponential weights — is the
+algorithm for choosing among experts whose losses are *all* observed each
+round. It is the same family as Exp3 with the exploration term removed, because
+that term solves the problem we do not have. In practice this is close to
+"score each strategy on a decayed window of its shadow record and take the
+argmax", which needs no new dependency at all.
+
+The contextual version is the same: with full feedback, contextual selection is
+a per-context supervised ranking, not `LinUCBDisjoint`. And it is needed — the
+ranking already differs sharply by instrument family, so one global arm choice
+would average boom, gold and the volatility indices together.
+
+`BanditClassifier` answers a different question again — which *model* predicts
+best — and the counterfactual there is observed too, for the reason
+[the alert gate section](#the-alert-gate-is-not-bandit-shaped) gives. Same
+verdict.
+
+### The one genuinely partial-feedback hole, and it is fixable
+
+`_also_wanted` runs **only after some strategy has got through**. If every
+strategy refuses a signal, no shadow record is written and no arm is scored on
+it. So the record is conditioned on at least one strategy having wanted the
+trade, which is precisely the sampling bias `_watch_calls` was built to avoid
+on the alerting side.
+
+That is a real gap and it is not a reason to reach for a bandit — it is a
+reason to close the gap. The cost is stated in `_also_wanted`'s own docstring:
+*"one arithmetic pass per strategy per signal"*. Evaluating every strategy on
+every signal, including the ones nobody took, would make the record complete
+and the ranking unbiased, and would remove the last argument for partial
+feedback here.
+
+### Recommendation, added to the four above
+
+5. **Do not use a bandit to pick strategies.** `evaluate_all` observes the
+   counterfactual; use decayed full-information weighting over the shadow
+   record instead.
+6. **Do run `_also_wanted` on refused signals too**, so the ranking is not
+   conditioned on someone having wanted the trade.
+7. **Do replace the fixed priority list with something that reads that
+   ranking.** This is the change with a measured case behind it: the list is
+   currently mis-ordered, and no amount of algorithm choice matters next to
+   the fact that position is doing the selecting.
