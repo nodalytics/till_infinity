@@ -855,3 +855,35 @@ def test_the_service_hands_its_policy_to_whatever_reads_one():
     wearing = [e for e in trader.strategies if getattr(e, "policy", None) is not None]
     assert wearing, "nothing was given the policy"
     assert all(e.policy is trader.policy for e in wearing)
+
+
+def test_an_untaken_intent_waits_exactly_as_long_as_a_real_resting_entry():
+    """The first version gave every intent up to 24 hours to fill, where a real
+    resting entry gets `pullback_bars` bars of its own interval and is
+    withdrawn. That credited fills the live system would never have seen, to
+    exactly the strategies that rest their entry furthest out of reach."""
+    from till_infinity.bus import Bus
+    from till_infinity.structures.levels import SECONDS
+    from till_infinity.trading.service import Trader
+
+    trader = Trader(Bus(), settings=_scalp().settings)
+    bars = trader.settings.pullback_bars
+    for interval in ("1m", "5m", "1h"):
+        assert trader._fill_window(interval, 86_400.0) == SECONDS[interval] * bars
+    # A 5m call gets fifty minutes, not a day.
+    assert trader._fill_window("5m", 86_400.0) == 3_000.0
+    # An unknown interval falls back to the hold, which is a real bound.
+    assert trader._fill_window("", 86_400.0) == 86_400.0
+
+
+def test_the_fill_window_matches_the_one_park_uses():
+    """Two expressions of one rule drift. This asserts they are one."""
+    import inspect
+
+    from till_infinity.trading import service
+
+    parked = inspect.getsource(service.Trader._park)
+    window = inspect.getsource(service.Trader._fill_window)
+    shared = "self.settings.pullback_bars if bars else"
+    assert shared in parked
+    assert shared in window

@@ -2675,9 +2675,7 @@ class Trader:
                 stop=intent.stop,
                 target=intent.target,
                 interval=interval,
-                # The same window a resting entry gets, so an intent nobody
-                # took is judged on the same patience as one that was.
-                fill_by=now + max(hold, 60.0),
+                fill_by=now + self._fill_window(interval, hold),
                 hold=hold,
                 placed_at=now,
             )
@@ -2699,6 +2697,27 @@ class Trader:
                     lost.feed,
                     now - lost.placed_at,
                 )
+
+    def _fill_window(self, interval: str, hold: float) -> float:
+        """How long an unfilled intent may wait, matching what `_park` allows.
+
+        **Corrected on 2026-09-02, hours after shipping the wrong version.**
+        The first cut gave every intent `max(hold, 60)` to fill, which is up to
+        twenty-four hours for `opportunity`. A real resting entry gets
+        `pullback_bars` bars of its own interval - fifty minutes on a 5m call -
+        and is withdrawn after that.
+
+        So the resolver was crediting fills the live system would never have
+        seen, and crediting them to exactly the strategies that rest their
+        entry furthest out of reach. `Untaken`'s own docstring says a fill must
+        not be assumed because it would rank those strategies above the ones
+        that paid the spread to be certain; the fill *window* is the same
+        argument and the first version got it wrong.
+
+        Same expression as `_park`, deliberately, so the two cannot drift.
+        """
+        bars = SECONDS.get(interval, 0.0)
+        return bars * self.settings.pullback_bars if bars else (hold or self.settings.max_hold)
 
     async def _resolve_untaken(self, feed: str, tick: Tick) -> None:
         """Walk every unresolved intent on this feed one quote forward.
