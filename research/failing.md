@@ -140,12 +140,81 @@ made it stricter still.
 1. **Stops that cost what they say.** 1.12R on `thesis-only` is most of its
    gap, and boom is most of the 1.12. `by_slippage` now sizes boom 500 at 0.8;
    the same measurement should be re-taken for the rest of the family.
-2. **A reward-to-risk floor.** Nothing currently refuses an RR-0.4 trade.
-   Setting `min_reward_to_risk` is a one-line change with a directly computable
-   effect on the breakeven win rate.
+2. ~~**A reward-to-risk floor.**~~ **Withdrawn the same day — the data says
+   the opposite.** Cut by reward-to-risk at entry, the book's only positive
+   bucket is RR **0.5-1.0** at +1.30 a close and a 62% win rate, and the worst
+   by a distance is RR **1.5+** at -12.66 a close, a 21% win rate and t=-4.63
+   over 57 closes. A floor pushes trades *into* the losing bucket. The
+   mechanism is visible in the win rates: a high RR is a distant target, a
+   distant target is rarely reached, and 21% x 1.5R loses to 62% x 0.75R. If
+   anything the evidence argues for a **ceiling**, or for distrusting the
+   modelled push at distance. See "What actually wins" below.
 3. **Let `runner` run.** Four hours cannot harvest a tail. Raise its hold, or
    accept it is a fixed-target strategy with an unusually wide target.
 4. **Gold.** Every scalp's worst instrument, −297.09 overall, and separately
    known to have stops so tight that 62% of its stopped trades reached target
    afterwards against 26% book-wide.
 5. **Attribute the last five closes.** +44.73 sitting outside every table.
+
+## What actually wins — 2026-09-02
+
+182 closes, cut seven ways. Slicing a sample this size many ways and reporting
+the best slice is how noise gets promoted to strategy, so: **none of the
+positive cells below is significant.** The trustworthy results here are the
+negative ones, because they are large effects with real n. What the book has is
+not a proven winning combination; it is several proven losing ones.
+
+**Discard the exit-kind cut first.** "Target exits win 100% of the time,
+t=+7.20" is a tautology - a target exit *is* a win - in the same family as the
+sub-60-second rejection that resolves upward 100% of the time. It measures the
+definition, not the market.
+
+### The stated probability is inverted at the top
+
+| probability | n | per close | win | t |
+| --- | ---: | ---: | ---: | ---: |
+| 0.8-0.9 | 63 | -1.48 | 48% | -0.53 |
+| 0.7-0.8 | 33 | -9.10 | 36% | -3.02 |
+| **0.9-1.01** | 30 | **-12.27** | **27%** | **-3.67** |
+
+The most confident calls are the worst. Trades the model rates above 0.9 win
+27% of the time. That is not a small miscalibration, and at t=-3.67 over 30
+closes it is not obviously noise either.
+
+### So is reward-to-risk
+
+| reward-to-risk | n | per close | win | t |
+| --- | ---: | ---: | ---: | ---: |
+| **0.5-1.0** | 37 | **+1.30** | **62%** | +0.49 |
+| 0-0.5 | 50 | -2.49 | 52% | -1.23 |
+| 1.0-1.5 | 38 | -4.24 | 32% | -1.11 |
+| **1.5+** | 57 | **-12.66** | **21%** | **-4.63** |
+
+### The rest
+
+| cut | best | worst |
+| --- | --- | --- |
+| family | volatility +1.73 (71% win, t=+0.44) | boom -11.87 (14%), metals/oil -8.51 (t=-3.04) |
+| interval | 15m -3.06 | 1m -8.09 (t=-2.27), 5m -5.87 |
+| entry | parked -3.32, 50% win | market -5.51, 39% win |
+| side | sell -4.82 | buy -5.78 |
+
+Faster is worse and the ordering is nearly monotone, which supports the move
+of 15m and 30m into scalp territory. Parked entries beat market entries per
+trade and on win rate, on 20 closes against 162 - the first evidence in favour
+of resting entries, and far too little of it.
+
+**Side says nothing** (-4.82 against -5.78), which is the same message
+`inverse` gives: this book is not losing because it picks the wrong direction.
+
+### The combination, stated honestly
+
+The best cell available is `thesis-only`, on volatility indices or indices,
+entered on 15m, parked, at RR 0.5-1.0 and a stated probability of 0.8-0.9,
+excluding boom. Every one of those is an in-sample selection on 182 closes and
+none is individually significant.
+
+What is defensible is the negative: **boom, metals/oil, RR above 1.5, stated
+probability above 0.9, and 1m entries all lose with real n behind them.**
+Removing losers is the move that survives this sample size. Finding a winner
+does not.
