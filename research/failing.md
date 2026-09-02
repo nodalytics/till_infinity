@@ -287,3 +287,95 @@ stopped out, did price subsequently reach the target? If it did, the
 probability is fine and the stop placement is the whole problem. If it did
 not, the estimate is genuinely broken. Everything above is consistent with
 either, and they need opposite fixes.
+
+## The post-stop replay: it is the stop, not the call — 2026-09-02
+
+The journal stops recording when the trade does, so this walks `quotes.db`
+forward from each stop and asks whether price went on to reach the target it
+was aiming at. 56 stopped trades carry a feed, side and target; 55 have quotes
+after the stop.
+
+| reached target within | n | share |
+| --- | ---: | ---: |
+| 30m | 14 / 55 | 25% |
+| 2h | 31 / 55 | 56% |
+| 4h | 38 / 55 | 69% |
+| 24h | 45 / 55 | **82%** |
+
+**And it is flat across the probability bands:**
+
+| stated probability | reached target after being stopped |
+| --- | ---: |
+| 0.7-0.8 | 9 of 10 — 90% |
+| 0.8-0.9 | 13 of 15 — 87% |
+| **0.9+** | **14 of 16 — 88%** |
+
+That comparison is the clean one. All three bands share the same horizon, so
+whatever inflates the absolute number inflates all of them equally. A call the
+model rated above 0.9 and which stopped out was still going the right way 88%
+of the time - exactly as often as one it rated 0.7. **The direction was not
+wrong. The trade was closed before it was right.**
+
+So of the two candidate causes, the evidence favours stop placement. The
+probability's contribution is indirect and already measured: it buys a further
+target (53% of 0.9+ trades sit at RR 1.5+ against 29% at 0.8-0.9), and a
+further target at the same risk fraction means an excursion that was always
+going to be survived on the way to a win instead takes the stop.
+
+### The caveat that stops this being conclusive
+
+**There is no null here.** Given 24 hours, a driftless process will touch a
+level roughly one risk-unit away most of the time, so "82% eventually reached
+target" is partly a statement about prices moving rather than about these
+calls. The 30m figure (25%) and the 2h figure (56%) are the ones near the
+trade's own horizon and are the ones worth weighing.
+
+What would settle it is the same replay from **random entry times on the same
+feeds** - if random entries also reach a target-distance level 82% of the time
+in 24h, this measures nothing. That has not been run.
+
+Also: widening or removing a stop is not free. The 18% that never came back
+would run much further than they did, and this measurement says nothing about
+how far.
+
+### One instrument breaks the pattern, and it is the one already flagged
+
+| instrument | recovered after stop |
+| --- | ---: |
+| XAUUSD | 9 of 9 — **100%** |
+| Wall Street 30 | 8 of 9 — 89% |
+| US Small Cap 2000 | 4 of 4 — 100% |
+| UK 100 / Germany 40 / US Tech 100 | 3 of 3 each — 100% |
+| **Boom 500 Index** | **2 of 5 — 40%** |
+
+Gold at 9 of 9 confirms the older finding from a second direction: its stops
+are too tight, full stop. **Boom 500 is the opposite** - when it stops you out,
+price genuinely does not come back, 40% against ~90% everywhere else. Its stops
+are firing correctly and the instrument is simply hostile. That is independent
+support for treating boom as an instrument problem rather than a stop problem,
+which is what `by_slippage` does.
+
+## Boom 1000 does not stop out at all
+
+Asked because its losses kept arriving. All five of its closes:
+
+| when | profit | R | exit | held | RR |
+| --- | ---: | ---: | --- | ---: | ---: |
+| 09-02 03:18 | −5.65 | −0.31 | hold | 549s | 0.30 |
+| 09-02 03:18 | −4.90 | −0.31 | hold | 536s | 0.30 |
+| 09-02 05:52 | −7.96 | −0.37 | stale | 1203s | 0.26 |
+| 09-02 10:20 | −12.71 | −0.65 | stale | 1213s | 0.43 |
+| 09-02 10:29 | −16.16 | −0.94 | hold | 1811s | 0.43 |
+
+**Not one stop.** Three timed out on `hold`, two went `stale`, every one of
+them underwater but none at −1R. It loses by sitting in a losing trade until
+the clock ends it, on targets that were already close (RR 0.26-0.43).
+
+That is a different failure from Boom 500's and needs a different answer - a
+size cut for stop slippage would do nothing here, because nothing is slipping.
+The candidates are a longer hold or not carrying the instrument, and five
+closes on one day cannot choose between them.
+
+**Unrelated but noticed:** `adverse_r` and `best_r` read 0.0 on the outcomes
+inspected, so the heat tracking is still not populating. Scoring it was already
+outstanding.
