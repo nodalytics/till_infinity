@@ -563,3 +563,16 @@ decided on an anecdote.
 This is the same shape as `STRUCTURES_FORMATION` and the eleven unpolled feeds:
 computed somewhere, arriving as a constant, and never contradicted because zero
 is a legal value.
+
+## Where the loss actually is — 2026-09-02
+
+The per-strategy and per-instrument tables above split the book by *who* traded
+and *what* they traded. Splitting it by *how far in front the trade got before
+it lost* is sharper than either: **31 of the 64 trades that reached 1R in
+front ended at a loss, costing −577.76**, which is roughly 60% of everything
+the book has lost.
+
+That cuts across strategy and instrument, and it is the finding to work from.
+See [giveback.md](giveback.md), which also records the two explanations for it
+that measurement killed.
+

@@ -17,6 +17,14 @@ what widening would have cost.
 
 ## What is blocking it
 
+**Unblocked 2026-09-02.** `adverse_r` and `best_r` read 0.0 on every outcome
+inspected, and the cause is now known and fixed: the extremes were discarded on
+the line above the code that records them. See [giveback.md](../giveback.md).
+Real values began arriving at 19:45 UTC, so this document's measurements can
+start once a few dozen closes carry them.
+
+The original blocker, kept because the shape recurs:
+
 **`adverse_r` and `best_r` read 0.0 on every outcome inspected on 2026-09-02.**
 The heat tracking is not populating. `_heat()` and `_heat_vol()` exist in
 `trading/service.py` and the fields reach the journal, so this is the familiar
