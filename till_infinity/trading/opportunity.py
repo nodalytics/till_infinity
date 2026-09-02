@@ -105,11 +105,61 @@ class Shape:
     #: Discovering that cost a failing test, which is the right way to find it.
     floor: float = 1.0
 
+    # ---------------------------------------------------------------------
+    # The rest of the decision surface. Everything above shapes the trade once
+    # it exists; everything below decides whether it exists, how it is
+    # entered, and how it is unwound. `Settings` already honours each of these
+    # as a deployment-wide constant - the point of naming them here is that
+    # they become **per-opportunity** choices instead.
+    # ---------------------------------------------------------------------
+
+    #: Take it at all. The leave arm.
+    take: bool = True
+
+    #: Leave the resting price with the broker as a limit order, rather than
+    #: polling and firing at market. `Settings.entry_pending`. This is the
+    #: market-or-limit choice, and it is not cosmetic: a poller misses the deep
+    #: wick that a limit fills, and a limit cannot change its mind.
+    resting: bool = True
+
+    #: Fraction of the risk budget this opportunity is worth, in (0, 1]. Only
+    #: ever reduces - `scaling.combined` and the guards keep the ceiling, and
+    #: a policy that can size *up* is one that turns an estimation error into a
+    #: margin call.
+    size: float = 1.0
+
+    #: R multiple at which part of the position comes off, and how much.
+    #: `Settings.scale_out_at` and `scale_out_fraction`. Zero banks nothing.
+    #:
+    #: This is the honest middle of the target argument: the push distribution
+    #: runs median 2.24v against p90 4.93v, and a single exit has to pick which
+    #: half to serve. Banking part at the median and letting the rest run
+    #: serves both - and it is the direct answer to giving back an open profit,
+    #: which `best_r` can finally measure.
+    bank_at: float = 0.0
+    bank_share: float = 0.5
+
     def named(self) -> str:
+        """A stable identity for this point, so a learner can key on it."""
+        if not self.take:
+            return "leave"
         return (
-            f"stop{self.stop:g}/target{self.target:g}/trail{self.trail:g}"
-            f"/protect{self.protect:g}/hold{self.hold:g}/pull{self.pullback:g}"
+            f"stop{self.stop:g}f{self.floor:g}/target{self.target:g}"
+            f"/trail{self.trail:g}/protect{self.protect:g}/hold{self.hold:g}"
+            f"/pull{self.pullback:g}{'L' if self.resting else 'M'}"
+            f"/size{self.size:g}/bank{self.bank_at:g}x{self.bank_share:g}"
         )
+
+    #: Which fields the engine reads today, against which are still deployment
+    #: constants that a per-opportunity choice would have to be threaded into.
+    #: Named here rather than left implicit, because a policy that varies a
+    #: dimension nothing honours is a policy that appears to work and does not.
+    WIRED: ClassVar[frozenset[str]] = frozenset(
+        {"stop", "target", "trail", "protect", "hold", "pullback", "floor"}
+    )
+    PENDING: ClassVar[frozenset[str]] = frozenset(
+        {"take", "resting", "size", "bank_at", "bank_share"}
+    )
 
 
 #: The named strategies as points, so the space is anchored to things that have
