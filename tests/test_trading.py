@@ -6757,3 +6757,30 @@ def test_an_unmapped_instrument_would_be_exempt_from_the_currency_limit():
     from till_infinity.trading.exposure import legs
 
     assert legs("not_a_real_instrument") == ("", "")
+
+
+def test_swing_level_aims_past_the_push_and_is_given_time_to_get_there():
+    """Asked for on 2026-09-02: wider take-profit and trail.
+
+    The hold moves with them. `runner` is the worked example of the failure
+    this avoids - it aims past the push and then closes 16 of 26 trades on a
+    four-hour clock, so the target it exists for is never reached.
+    """
+    import till_infinity.trading as td
+
+    engine = td.STRATEGIES["swing-level"](settings())
+    assert engine.target_multiple == 2.5
+    assert engine.trail_vol == 4.0
+    assert engine.hold_seconds == 24 * 3_600.0
+    # Still distinguishable from `runner`, which pushes the same idea further.
+    assert engine.target_multiple < td.STRATEGIES["runner"].target_multiple
+
+
+def test_a_wider_target_is_useless_past_the_ceiling():
+    """The hold has to survive `max_hold_swing`, or the clock undoes the aim."""
+    import till_infinity.trading as td
+
+    engine = td.STRATEGIES["swing-level"](settings(max_hold_swing=48 * 3_600.0))
+    assert engine.hold_for("1h") == 24 * 3_600.0
+    cramped = td.STRATEGIES["swing-level"](settings(max_hold_swing=2 * 3_600.0))
+    assert cramped.hold_for("1h") == 2 * 3_600.0
