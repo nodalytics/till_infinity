@@ -364,6 +364,22 @@ def _int(name: str, fallback: int) -> int:
         return fallback
 
 
+def _overshoot(raw: str) -> tuple[tuple[str, float], ...]:
+    """`feed=multiple` pairs, as in `boom_500_index=1.25,boom_1000_index=1.2`.
+
+    A malformed pair is dropped rather than raised on: this is a sizing
+    reduction, and a typo in it should cost the correction, not the desk.
+    """
+    out: list[tuple[str, float]] = []
+    for part in raw.split(","):
+        name, _, value = part.partition("=")
+        try:
+            out.append((name.strip().lower(), float(value)))
+        except ValueError:
+            continue
+    return tuple(out)
+
+
 def _names(raw: str) -> tuple[str, ...]:
     return tuple(part.strip().lower() for part in raw.split(",") if part.strip())
 
@@ -629,6 +645,25 @@ class Settings:
     #: of the Kelly family: full Kelly on an edge estimated from fifty touches
     #: is a way to be wiped out by an estimation error rather than by a market.
     edge_full_at: float = 0.0
+
+    #: What a stop actually costs on an instrument, in R, as `feed=multiple`
+    #: pairs. Anything unlisted is 1.0 and unscaled.
+    #:
+    #: A stop placed at 1R should cost 1R. Measured over the whole journal on
+    #: 2026-09-02, every instrument delivers that - a -1.04R median and -1.09R
+    #: worst across ten stops - except Boom 500 Index, which came back at a
+    #: -1.25R median, a -1.79R worst, and 60% of its stops past 1.1R. Deriv's
+    #: Boom indices move in discrete jumps by construction, and a stop can be
+    #: leapfrogged rather than filled.
+    #:
+    #: This is the only sizing input that is about **execution** rather than
+    #: about the signal. The others read the market or the book; this reads the
+    #: gap between the price this system chose and the price the broker got.
+    #:
+    #: Held as pairs rather than a dict because `Settings` is slotted and
+    #: frozen in spirit - a mapping default is a mutable shared between every
+    #: instance that ever forgets to pass one.
+    stop_overshoot: tuple[tuple[str, float], ...] = ()
 
     #: Drawdown from the equity peak at which size reaches its floor. Zero is
     #: off.
@@ -1459,6 +1494,7 @@ class Settings:
             volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),
             edge_full_at=_float("TRADING_EDGE_FULL_AT", 0.0),
             drawdown_halt_at=_float("TRADING_DRAWDOWN_HALT_AT", 0.0),
+            stop_overshoot=_overshoot(_env("TRADING_STOP_OVERSHOOT")),
             hold_extends_at=_float("TRADING_HOLD_EXTENDS_AT", 0.0),
             max_hold_multiple=_float("TRADING_MAX_HOLD_MULTIPLE", 4.0),
             news_before=_float("TRADING_NEWS_BEFORE_S", 600.0),

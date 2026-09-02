@@ -156,6 +156,32 @@ def by_drawdown(peak: float, equity: float, halt_at: float) -> float:
     return max(FLOOR, math.sqrt(1.0 - fallen / halt_at))
 
 
+def by_slippage(overshoot: float) -> float:
+    """Give back the size an instrument's stops overshoot by.
+
+    `overshoot` is what a stop on this instrument actually costs, in R, where
+    it was placed at 1R. A book that sizes every trade to risk one unit and
+    then loses 1.25 on that instrument is risking a quarter more than it
+    authorised, and no other model here notices: `by_volatility` reads the
+    instrument's volatility, which is the *planned* stop distance, and the plan
+    is not what went wrong.
+
+    So the correction is the reciprocal - 1.25 realised means 0.8 size, and the
+    trade risks what it said it would. Measured 2026-09-02 on till_infinity:
+    Boom 500 Index stops came back at a median -1.25R and a worst -1.79R, 60%
+    of them past 1.1R, where every other instrument on the book delivered
+    between -1.00R and -1.09R with none past 1.1R. Five stops, so the number is
+    thin - which the reciprocal handles gracefully, since a wrong estimate near
+    1.0 barely moves the size.
+
+    Never enlarges. An instrument whose stops come back *better* than 1R is not
+    a reason to trade it bigger; it is a reason to distrust the measurement.
+    """
+    if overshoot <= 1.0:
+        return 1.0
+    return max(FLOOR, 1.0 / overshoot)
+
+
 def combined(*multipliers: float) -> float:
     """Every reduction at once, bounded to [FLOOR, 1].
 

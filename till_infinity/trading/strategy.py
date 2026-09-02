@@ -268,6 +268,7 @@ class Strategy(ABC):
             ),
             scaling.by_edge(features.get("net_edge_vol"), settings.edge_full_at),
             scaling.by_drawdown(peak, equity, settings.drawdown_halt_at),
+            scaling.by_slippage(dict(settings.stop_overshoot).get(feed.strip().lower(), 1.0)),
         )
 
     @property

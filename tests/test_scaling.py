@@ -506,3 +506,48 @@ def test_origin_swing_anchors_on_the_high_timeframes_alone():
     import till_infinity.trading as td
 
     assert td.STRATEGIES["origin-swing"].context == ("4h", "1d")
+
+
+def test_a_stop_that_overshoots_gives_back_the_size_it_overshot_by():
+    """Boom 500 stops came back at -1.25R where they were placed at 1R, so a
+    trade sized to risk one unit risked a quarter more than it authorised.
+    0.8 size restores what the plan said."""
+    from till_infinity.trading import scaling
+
+    assert scaling.by_slippage(1.25) == pytest.approx(0.8)
+    assert scaling.by_slippage(1.79) == pytest.approx(1 / 1.79)
+
+
+def test_a_stop_that_behaves_is_left_alone():
+    from till_infinity.trading import scaling
+
+    assert scaling.by_slippage(1.0) == 1.0
+    assert scaling.by_slippage(0.0) == 1.0
+
+
+def test_a_stop_that_comes_back_better_than_1r_never_enlarges():
+    """An instrument whose stops beat their price is not a reason to trade it
+    bigger; it is a reason to distrust five observations."""
+    from till_infinity.trading import scaling
+
+    assert scaling.by_slippage(0.5) == 1.0
+
+
+def test_an_unlisted_instrument_is_unscaled():
+    """Every other feed must size exactly as it did before this existed."""
+    import till_infinity.trading as td
+    from till_infinity.trading.config import Settings
+
+    made = Settings(stop_overshoot=(("boom_500_index", 1.25),))
+    engine = td.STRATEGIES["level-scalp"](made)
+    assert engine.risk_scale("gold", {"vol_bps": 10.0}) == 1.0
+    assert engine.risk_scale("boom_500_index", {"vol_bps": 10.0}) == pytest.approx(0.8)
+
+
+def test_the_pairs_survive_a_typo():
+    """A malformed entry costs the correction, not the desk."""
+    from till_infinity.trading.config import _overshoot
+
+    assert _overshoot("boom_500_index=1.25") == (("boom_500_index", 1.25),)
+    assert _overshoot("boom_500_index=oops,gold=1.1") == (("gold", 1.1),)
+    assert _overshoot("") == ()
