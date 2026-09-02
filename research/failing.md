@@ -402,3 +402,89 @@ closes on one day cannot choose between them.
 **Unrelated but noticed:** `adverse_r` and `best_r` read 0.0 on the outcomes
 inspected, so the heat tracking is still not populating. Scoring it was already
 outstanding.
+
+## Most of "never trades" is queue position, not merit — 2026-09-02
+
+`on_signal` walks `self.strategies` in order and **returns on the first
+strategy that gets through**. A refusal continues to the next engine; anything
+else — a take, a park, a guard stop — ends the loop. `TRADING_STRATEGIES` is
+therefore a priority list, and `strategy.by_style` says so outright: *"the
+first taker wins"*.
+
+The deployed order on 2026-09-02:
+
+```
+thesis-only, runner, confluence-scalp, sweep-aware, fade-to-value,
+approach-scalp, swing-level, level-scalp, origin-swing
+```
+
+Entry counts against that order:
+
+| position | strategy | entries |
+| ---: | --- | ---: |
+| 1 | thesis-only | 65 |
+| 2 | runner | 27 |
+| 3 | confluence-scalp | 1 |
+| 4 | sweep-aware | 19 |
+| 5 | fade-to-value | 23 |
+| 6 | approach-scalp | 2 |
+| 7 | swing-level | 0 |
+| 8 | level-scalp | 2 |
+| 9 | origin-swing | 0 |
+
+It is not a perfect rank — `confluence-scalp` sits third and books one, because
+its 1d anchor refuses 25% of what it sees — but the shape is unmistakable, and
+it splits cleanly by style. Sub-hour calls are met by `thesis-only` first;
+1h-and-above calls pass the scalps on `interval` and are met by `runner` first.
+Both leaders book most of their style's trades. `level-scalp` at eight and
+`origin-swing` at nine see only what everything above them declined.
+
+**`level-scalp` is the sharpest case, because `thesis-only` is the same
+strategy with a wider stop.** Same entries, same anchors, same gates; only the
+stop and exit move, and `thesis_stop_vol` is 4.0. A wider stop clears
+`stops_level` where a tight one does not, so `thesis-only` is strictly the more
+permissive of the pair and it is listed first. `level-scalp` is left the
+residue — visible in its refusal mix, where `stops_level` is 7% and `through`
+14% against `thesis-only`'s 2% and 1%.
+
+### The guard for this exists and does not cover it
+
+`Trader._check_order` warns when a strategy that `refines` another is listed
+after its parent — *"it books nothing, forever, and every other signal says it
+is running: it loaded, it is enabled, it just never fires. That is the failure
+this catches, because it is the kind nobody finds by looking."*
+
+Only `sweep-aware` declares `refines = "level-scalp"`, and it is listed fourth
+against level-scalp's eighth, so the check passes. **`thesis-only`, `snap` and
+`runner` declare nothing**, so the warning stays silent on the case that is
+actually happening. The mechanism was anticipated; the declarations were not
+kept up with the strategies.
+
+### What this invalidates
+
+* **"`level-scalp` is not trading" is not a fact about `level-scalp`.** It is a
+  fact about it being eighth.
+* **The `confluence-scalp` vs `level-scalp` A/B cannot be run at all** in this
+  arrangement. They sit third and eighth behind a shared, more permissive
+  leader, so neither sees a representative sample and the pairing has produced
+  1 close against 0 in the system's life.
+* **The per-strategy P&L table above is not a comparison of strategies.** It
+  compares whatever each was left after the ones above it had chosen, which is
+  a different and much less interesting quantity. `thesis-only` being best per
+  trade may be skill or may be first pick, and this data cannot separate them.
+* **`origin-swing`'s 120 `momentum` refusals are real but secondary** — it is
+  last in the queue, so most calls never reach its confirmations at all.
+
+### What would fix it
+
+Nothing here is a bug; the priority list is deliberate. But a priority list and
+an A/B are incompatible, and this repository has been reading the second off
+the first. Either:
+
+* **rotate the order**, so position is not confounded with performance, or
+* **declare `refines` honestly** on `thesis-only`, `snap` and `runner`, so the
+  existing warning fires and nobody reads the table as a comparison again, or
+* **accept it and stop running A/Bs**, treating the tail of the list as
+  fallbacks rather than experiments.
+
+The cheapest of the three is the second, and it costs one line each.
