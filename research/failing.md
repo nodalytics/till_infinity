@@ -488,3 +488,78 @@ the first. Either:
   fallbacks rather than experiments.
 
 The cheapest of the three is the second, and it costs one line each.
+
+## The common-stream ranking, computed at last — 2026-09-02
+
+`_also_wanted` has been recording what every *other* strategy would have done
+with each signal, and `TRADING_EVALUATE_ALL` has been on. 1,757 of those shadow
+intents carry an entry, a stop and a target. Nothing had ever scored them, so
+the ranking its docstring promises — *"the only honest way to rank them"* — had
+never been computed. This is that, as a triple-barrier replay on 1m bars.
+
+| strategy | scored | unfilled | target | stop | timeout | win | total R | mean R | median R |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fade-to-value | 64 | 1 | 32 | 25 | 7 | 50% | +28.11 | **+0.439** | +0.469 |
+| approach-scalp | 92 | 3 | 67 | 24 | 1 | 73% | +11.37 | +0.124 | +0.308 |
+| confluence-scalp | 367 | 51 | 249 | 68 | 50 | 68% | +41.42 | +0.113 | +0.322 |
+| level-scalp | 434 | 59 | 291 | 94 | 49 | 67% | +41.98 | +0.097 | +0.342 |
+| sweep-aware | 364 | 38 | 240 | 79 | 45 | 66% | +30.90 | +0.085 | +0.338 |
+| runner | 59 | 0 | 19 | 38 | 2 | 32% | +0.36 | +0.006 | **−1.000** |
+| swing-level | 159 | 9 | 113 | 44 | 2 | 71% | +0.76 | +0.005 | +0.286 |
+| origin-swing | 2 | 0 | 1 | 1 | 0 | 50% | +0.01 | +0.005 | +0.005 |
+| **thesis-only** | 44 | 2 | 22 | 19 | 3 | 50% | −10.18 | **−0.231** | +0.244 |
+
+**The strategy at the front of the queue is last on the common stream.**
+`thesis-only` books 65 of the desk's trades and scores −0.231R here.
+`level-scalp` and `confluence-scalp`, starved at positions eight and three,
+carry the two largest samples and are positive.
+
+`thesis-only`'s shape explains itself: median R **+0.244** against a mean of
+−0.231 means it wins small and loses big, which is what a 4.0v stop buys. Its
+live record says the same thing from the other side — target exits at +0.66R,
+stop exits at −1.12R.
+
+`runner`'s median R is **−1.000**. More than half its scored intents hit the
+stop, on a strategy whose whole thesis is riding a tail.
+
+### What this does and does not license
+
+* **It does not model cost.** No spread, no slippage. Every row is optimistic,
+  and roughly equally so, which is why the *ordering* is the usable part and
+  the levels are not.
+* **1m bars, not ticks.** A barrier touched and left inside a minute is seen,
+  but not its sequence. Six intents spanned both barriers in one bar and were
+  counted as stops, the conservative reading.
+* **Only filled intents score.** Price has to trade through the named entry
+  inside the hold, so strategies that rest their entry are not handed a better
+  fill for free. `level-scalp` went unfilled 59 times of 434.
+* **`thesis-only`'s n is 44**, because a strategy that takes the trade is not
+  shadow-evaluated on it. It is the weakest row in the table.
+* **Five intents of 1,757 carried an impossible target** — implied RR up to
+  30,338 against a p95 of 1.80 — and on the first run one of them was touched
+  and produced +23R a trade across the book. They are excluded. This is the
+  same defect `max_push_vol` refuses live.
+
+## The give-back is real and completely invisible
+
+Reported from live observation on 2026-09-02: trades reach +$30 and reverse
+into the stop. The system cannot see this at all.
+
+| field | closes carrying it | non-zero | min | max |
+| --- | ---: | ---: | ---: | ---: |
+| `best_r` | 188 | **0** | 0.000 | 0.000 |
+| `adverse_r` | 85 | **0** | 0.000 | 0.000 |
+
+Both read exactly zero everywhere. **Stopped trades whose `best_r` > 0: zero**,
+which would mean no trade in the book's history has ever been in profit before
+being stopped — plainly false.
+
+Maximum favourable excursion *is* the give-back, and maximum adverse excursion
+is the room a winner needs. Every question about trailing, break-even and stop
+width is a question about these two distributions, and both are constants. The
+exits cannot be tuned until this is fixed; anything decided before then is
+decided on an anecdote.
+
+This is the same shape as `STRUCTURES_FORMATION` and the eleven unpolled feeds:
+computed somewhere, arriving as a constant, and never contradicted because zero
+is a legal value.
