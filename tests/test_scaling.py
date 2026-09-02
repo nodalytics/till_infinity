@@ -744,3 +744,15 @@ def test_untaken_intents_are_bounded_per_feed():
     for _ in range(trader.MAX_UNTAKEN + 25):
         trader._remember_untaken("gold", "level-scalp", intent, "5m", 600.0, 0.0)
     assert len(trader._untaken["gold"]) == trader.MAX_UNTAKEN
+    # Counted, not dropped silently: an eviction is a missing observation, and
+    # the ones it drops are the slowest to resolve.
+    assert trader._spilled == 25
+
+
+def test_the_cap_is_sized_for_a_day_long_hold():
+    """`opportunity` holds to the 24h ceiling and roughly sixteen intents an
+    hour arrive per busy feed, so a cap of 60 would evict most of them - and
+    evict the slow ones, which biases every mean it feeds."""
+    from till_infinity.trading.service import Trader
+
+    assert Trader.MAX_UNTAKEN >= 384

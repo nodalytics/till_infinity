@@ -376,6 +376,9 @@ class Trader:
         #: own barriers. See `Untaken`. Bounded per feed because this grows
         #: with strategies times signals and nothing else evicts it.
         self._untaken: dict[str, list[Untaken]] = {}
+        #: Unresolved intents dropped for want of room. Counted because a
+        #: silent eviction is a silent bias - see `MAX_UNTAKEN`.
+        self._spilled: int = 0
         #: feed -> the spread when it was last quoted, for the record.
         self._spread_of: dict[str, float] = {}
         #: feed -> this fill was waited for. Consumed when the trade is taken.
@@ -2632,10 +2635,17 @@ class Trader:
         """An amount with the account's currency attached. See `models.money`."""
         return money(amount, self.currency, signed=signed)
 
-    #: Intents kept per feed. Strategies times signals grows quickly and an
-    #: unresolved intent is only worth what it can still tell us, so the oldest
-    #: go first.
-    MAX_UNTAKEN: ClassVar[int] = 60
+    #: Intents kept per feed.
+    #:
+    #: Sized against what actually accumulates rather than guessed. Measured on
+    #: the live box within half an hour of shipping: twelve wanted intents in
+    #: thirty minutes across two feeds, and `opportunity` holds for the 24h
+    #: ceiling. At roughly sixteen an hour a single feed can carry several
+    #: hundred open at once, so the first cap of 60 would have evicted most of
+    #: them - and evicted the *slow* ones, biasing every mean towards intents
+    #: that resolved quickly. An `Untaken` is a slotted dataclass; four hundred
+    #: of them across forty feeds is nothing.
+    MAX_UNTAKEN: ClassVar[int] = 400
 
     def _remember_untaken(
         self, feed: str, by: str, intent: Intent, interval: str, hold: float, now: float
@@ -2661,7 +2671,22 @@ class Trader:
             )
         )
         if len(kept) > self.MAX_UNTAKEN:
-            del kept[: len(kept) - self.MAX_UNTAKEN]
+            spilled, kept[:] = (
+                kept[: len(kept) - self.MAX_UNTAKEN],
+                kept[len(kept) - self.MAX_UNTAKEN :],
+            )
+            # Said out loud rather than dropped silently. An evicted intent is
+            # a missing observation, and missing observations that correlate
+            # with *how long a trade takes* are the ones that quietly rewrite a
+            # mean - which is the whole reason this record exists.
+            for lost in spilled:
+                self._spilled += 1
+                log.debug(
+                    "trading: dropped an unresolved %s intent on %s after %.0fs",
+                    lost.by,
+                    lost.feed,
+                    now - lost.placed_at,
+                )
 
     async def _resolve_untaken(self, feed: str, tick: Tick) -> None:
         """Walk every unresolved intent on this feed one quote forward.
