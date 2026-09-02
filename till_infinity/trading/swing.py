@@ -362,8 +362,18 @@ class SwingLevel(LevelStrategy):
     #: hours of auction failed at this price; the same shape on the 1h entry
     #: bar is one hour's worth.
     candle_interval: ClassVar[str] = "4h"
-    #: Six hours. A daily level does not resolve inside a scalper's half hour.
-    hold_seconds: ClassVar[float] = 6 * 3_600.0
+    #: Twenty-four hours, raised from six on 2026-09-02 with the target below.
+    #:
+    #: The class docstring already named this as the setting most likely to be
+    #: wrong, and `runner` is the worked example of getting it wrong: it moves
+    #: its target out to catch a tail and then closes **16 of 26 trades on a
+    #: four-hour clock**, so the mechanism it exists for never operates. A
+    #: wider target that the hold forbids reaching is not a wider target, it is
+    #: a stop with extra steps.
+    #:
+    #: Still inside the 48h `max_hold_swing` ceiling, so the deployment can cut
+    #: it without a release.
+    hold_seconds: ClassVar[float] = 24 * 3_600.0
     #: More room than a scalp, because the level is placed on slower data and
     #: the noise around it is proportionally larger.
     stop_multiple: ClassVar[float] = 1.5
@@ -382,8 +392,35 @@ class SwingLevel(LevelStrategy):
     #: measured in sessions, where ordinary retracement passes 1R before the
     #: thesis has begun and a stop moved there is a scratch waiting to happen.
     break_even_at: ClassVar[float] = 1.5
-    #: Wide enough to survive a session's pullback rather than a minute's.
-    trail_vol: ClassVar[float] = 3.0
+    #: Wide enough to survive a session's pullback rather than a minute's,
+    #: widened from 3.0 on 2026-09-02 now that the target sits past the push.
+    #: The trail is what ends most of these trades once the target stops being
+    #: reachable in the ordinary case, so it has to tolerate a retracement that
+    #: a daily-anchored move makes on its way somewhere.
+    trail_vol: ClassVar[float] = 4.0
+
+    #: Two and a half times the modelled push, raised from the inherited 1.0.
+    #:
+    #: `expected_push_vol` is a **median** estimate. Measured over 54,529
+    #: resolutions the distribution runs median 2.24v, p75 3.37v, p90 4.93v,
+    #: p99 9.55v, so a target at the median gives away the entire upper half of
+    #: what these touches actually reach. A daily-anchored level is the case
+    #: where that tail is most worth waiting for.
+    #:
+    #: Below `runner`'s 3.0 deliberately: the two are meant to differ only in
+    #: how far they push the same idea, and an identical multiple would make
+    #: this a second copy of a strategy already losing 6.96 a close.
+    #:
+    #: **The measured argument against this.** Cut by reward-to-risk at entry,
+    #: the book's worst bucket is RR 1.5+ at -12.66 a close and a 21% win rate
+    #: over 57 closes (research/failing.md). Raising a target raises RR. The
+    #: reasons to do it anyway are that the finding is drawn almost entirely
+    #: from sub-hour scalps on a horizon where the tail has no time to arrive,
+    #: that this strategy has never traded so nothing is being made worse, and
+    #: that the hold above is raised in the same change - which is the half
+    #: `runner` is missing. If it fails it should fail the same way `runner`
+    #: does, on the clock, and that is a distinguishable outcome.
+    target_multiple: ClassVar[float] = 2.5
     #: Double the scalpers' momentum filter. 1.5v is a real run on a 3m chart
     #: and ordinary noise on a 4h one, so their number here would refuse most
     #: entries for movement this timeframe does not consider movement.

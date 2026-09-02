@@ -288,7 +288,23 @@ probability is fine and the stop placement is the whole problem. If it did
 not, the estimate is genuinely broken. Everything above is consistent with
 either, and they need opposite fixes.
 
-## The post-stop replay: it is the stop, not the call — 2026-09-02
+## The post-stop replay — 2026-09-02
+
+> **Retracted the same day by [null.md](null.md).** The conclusion below - that
+> the stops are early and the calls are right - does not survive its own null.
+> Signal-free entries on the same feeds reach a target-distance level 84% of
+> the time in 24h against these trades' 82%, and **45% within 30 minutes
+> against these trades' 25%**. The 82% measured prices moving. Being stopped
+> appears to select *against* near-term recovery, which is the opposite of what
+> was claimed. The section is kept as written, with the numbers intact, because
+> the reasoning is the thing worth being able to re-read.
+>
+> What survives is the *within-measurement* comparison: recovery is flat across
+> the model's confidence bands (90%, 87%, 88%), so the stated probability still
+> adds nothing to whether a stopped trade was going the right way. That
+> comparison holds one horizon fixed across three bands and is untouched by the
+> null.
+
 
 The journal stops recording when the trade does, so this walks `quotes.db`
 forward from each stop and asks whether price went on to reach the target it
@@ -322,6 +338,11 @@ target (53% of 0.9+ trades sit at RR 1.5+ against 29% at 0.8-0.9), and a
 further target at the same risk fraction means an excursion that was always
 going to be survived on the way to a win instead takes the stop.
 
+**[The null refuted this paragraph.](null.md)** The geometry half stands - the
+RR-1.5+ share really is 53% against 29% - but "the excursion would have been
+survived" does not, because a random entry survives to the same target more
+often than these trades do.
+
 ### The caveat that stops this being conclusive
 
 **There is no null here.** Given 24 hours, a driftless process will touch a
@@ -348,8 +369,10 @@ how far.
 | UK 100 / Germany 40 / US Tech 100 | 3 of 3 each — 100% |
 | **Boom 500 Index** | **2 of 5 — 40%** |
 
-Gold at 9 of 9 confirms the older finding from a second direction: its stops
-are too tight, full stop. **Boom 500 is the opposite** - when it stops you out,
+Gold at 9 of 9 looked like the older finding confirmed from a second
+direction. **It is not confirmed**: no per-instrument null has been run, and
+the book-wide null came back at 84%, so 100% of nine is two trades above a
+baseline nobody has measured for gold specifically. **Boom 500 is the opposite** - when it stops you out,
 price genuinely does not come back, 40% against ~90% everywhere else. Its stops
 are firing correctly and the instrument is simply hostile. That is independent
 support for treating boom as an instrument problem rather than a stop problem,
