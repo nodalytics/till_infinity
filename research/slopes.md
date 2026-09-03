@@ -121,6 +121,107 @@ about 7%), so this is mostly real and partly artifact.
 * **Pooled across instruments.** "Real market" mixes FX, indices, metals and
   crypto, which [failing.md](failing.md) shows behave differently.
 
+## 5. Does the slope add to the volatility estimate? It dominates it
+
+The obvious objection to section 2 is that a steep window is just a volatile
+window, and the book already carries `vol_bps`. So: bucket by **local
+volatility** — the standard deviation of one-bar changes over the *same* 20-bar
+window, which is what `vol_bps` is — and ask whether |slope| still separates
+inside each band.
+
+Correlation with |forward 60m return|, 961,957 samples:
+
+| | real market | synthetic control |
+| --- | ---: | ---: |
+| **\|slope\|** | **+0.3470** | +0.0366 |
+| local volatility | +0.1120 | +0.0464 |
+| the two with each other | +0.2288 | +0.4218 |
+
+**The slope correlates three times better with the next hour's movement than
+the volatility estimate does**, and the two are only weakly related, so they
+are not measuring the same thing.
+
+Conditionally — |forward return| by |slope| tercile *within* each volatility
+band:
+
+| local volatility band | \|slope\| low | mid | high | high/low |
+| --- | ---: | ---: | ---: | ---: |
+| flattest fifth | 0.1198 | 0.1699 | 0.2189 | **1.83** |
+| second | 0.1668 | 0.2225 | 0.3047 | 1.83 |
+| middle | 0.1290 | 0.1766 | 0.3065 | 2.38 |
+| fourth | 0.1118 | 0.1359 | 0.2846 | 2.54 |
+| most volatile fifth | 0.1211 | 0.1500 | 0.3870 | **3.20** |
+
+It separates in every band, and it separates *more* as volatility rises. The
+control shows ratios of 1.04–1.14 across the same cut, which is nothing.
+
+**The caveat.** "Local volatility" here is a 20-bar realised standard
+deviation. Production `vol_bps` is not that — there is a GARCH estimate and a
+`forecast_bps` beside it — so this establishes that the slope beats a simple
+realised volatility, not that it beats the best estimate already in the signal.
+That comparison needs the production fields and has not been run.
+
+## 6. At a level touch, the slope predicts whether it holds
+
+Joined to the thing the desk trades: 69,593 touches carrying a hold/break
+label, slope measured over the 20 bars ending at the touch.
+
+**A trap is a hold.** `reject`, `backcheck` and `trap` all mean price did not
+get through; only `break` did. Getting that wrong once inflated a break rate
+from 32.3% to 55.6% here and reversed two conclusions.
+
+Touches lasting at least five minutes — the cut that avoids the sub-minute
+tautology, where a fast resolution *is* a rejection by definition:
+
+| \|slope\| at the touch | n | break rate | vs base |
+| --- | ---: | ---: | ---: |
+| flattest fifth | 2,174 | **22.5%** | −7.1 |
+| second | 2,174 | 24.1% | −5.5 |
+| middle | 2,173 | 28.5% | −1.1 |
+| fourth | 2,173 | 33.6% | +4.0 |
+| steepest fifth | 2,175 | **39.4%** | +9.8 |
+| *flat, steep a window earlier* | 390 | **17.2%** | **−12.5** |
+
+Base break rate 29.6% over 10,869 touches. **A seventeen-point spread, and it
+is monotone.** At about 1,000 standard-error units of a percent per band, the
+ends are seven to ten standard errors from the base.
+
+The control, over the same cut, runs 38.8 / 44.9 / 41.9 / 39.9 / 38.6 against a
+40.8% base — no ordering, everything inside two standard errors, and
+flat-after-steep goes the *other* way (+4.4). The effect is real.
+
+**The strongest single state is "flat, having just been steep": a 17.2% break
+rate against 29.6%.** Note this is the same state section 3 shows is followed
+by *more* movement — so it predicts a large excursion that the level
+nonetheless survives, which is the definition of a trap.
+
+## 7. It improves the break model
+
+`structures/breaking.py` predicts a break from `approach_vol`, `depth_vol` and
+`slowing`. Scored the way the live model works — predict then update, one pass
+in time order, so every score is out-of-sample by construction:
+
+| features | AUC, all touches | AUC, >= 300s |
+| --- | ---: | ---: |
+| `breaking.py` as it stands | 0.6042 | 0.6104 |
+| + \|slope\| at the touch | 0.6154 | 0.6262 |
+| **+ \|slope\| and the prior window's** | **0.6194** | **0.6408** |
+| slope alone | 0.6065 | 0.5642 |
+
+On the five-minute cut, adding both slope terms lifts AUC from 0.6104 to
+0.6408 — **+0.030, which is a 28% increase in the model's edge over a coin**.
+
+And slope alone (0.5642) is *worse* than the three existing features, so it is
+complementary rather than a replacement. The prior window earns its place
+separately, which is consistent with section 3: the history of the slope
+carries information the current value does not.
+
+**What it would cost to use.** `Breaks` reads features off the signal, and no
+signal currently carries a slope — `structures/engine.py` would have to
+maintain a rolling regression per feed and interval and publish it, the way it
+already does for `slowing`. That is real work in the hot path, and it is the
+reason this is a measured recommendation rather than a shipped change.
+
 ## Where this would matter to the desk
 
 The book already estimates volatility (`vol_bps`, GARCH, `forecast_bps`). The
@@ -140,6 +241,4 @@ Two obvious uses, neither measured:
    from arrival speed and depth. "Flat after steep" at the touch is a different
    question from either and is cheap to add.
 
-The natural next measurement is the one this stopped short of: **the slope at a
-level touch, against whether the level held** — which joins this to the thing
-the desk actually trades.
+Sections 6 and 7 took that next measurement, and both came back positive.
