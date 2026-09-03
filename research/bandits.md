@@ -195,3 +195,49 @@ feedback here.
    ranking.** This is the change with a measured case behind it: the list is
    currently mis-ordered, and no amount of algorithm choice matters next to
    the fact that position is doing the selecting.
+
+## Is any of this reinforcement learning? — 2026-09-03
+
+Asked directly, and the honest answer is no.
+
+A multi-armed bandit is usually classed as a **degenerate case** of
+reinforcement learning: one state, no transitions, reward arriving immediately.
+So if this desk were running a bandit, "a very restricted form of RL" would be
+fair.
+
+**It is not running a bandit.** Two learners exist and neither is one:
+
+* `trading/policy.py` is **full-information exponential weighting**. Every arm
+  reports on every signal through the untaken record, so there is no unobserved
+  counterfactual for exploration to buy.
+* `structures/breaking.py` is **online logistic regression**, updated once per
+  resolved touch, predict-then-update.
+
+Both are **online supervised learning**. The three things that would make it RL
+are all absent:
+
+1. **The labels arrive whether or not we act.** A touch resolves, a zone is
+   broken or held, and the record is written either way. In RL the environment
+   only reveals the consequence of the action taken.
+2. **Nothing chooses actions to shape a future state.** A trade does not move
+   the market, and the next signal does not depend on the last decision except
+   through capacity - which is a constraint, not a transition function.
+3. **There is no credit assignment across time.** Every reward is attributed to
+   the single decision that produced it. No discounting, no bootstrapping, no
+   value function.
+
+So the accurate description is **"online learning, updated per resolution"**,
+which is unusual enough to be worth saying plainly and is not RL. Calling it
+reinforcement learning would be a claim the code does not support, and the cost
+of that claim is not cosmetic: it invites reaching for RL machinery -
+replay buffers, discounting, exploration schedules - to solve problems this
+system does not have, while the problems it does have are ordinary supervised
+ones about labels, leakage and sample size.
+
+**Where RL would genuinely begin.** If position slots, margin or the daily loss
+limit were modelled as *state* that a decision changes, then choosing a trade
+now would alter what is available later, and the sequence would matter. That is
+a real framing - it is the knapsack this desk already half-has, with
+`max_positions` refusing 1,270 signals - and it is a different project from
+anything built here.
+

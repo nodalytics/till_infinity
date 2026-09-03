@@ -2836,6 +2836,16 @@ class Trader:
         if how != "never filled":
             self._credit(shade.by, shade.feed, shade.interval, reward)
 
+    def _arm_of(self, by: str) -> str:
+        """The shape the named strategy last chose, or "" if it chooses none.
+
+        Read off the engine rather than remembered here: `Opportunity.consider`
+        sets it as it decides, and `consider` is synchronous, so the value is
+        the one this decision was made with.
+        """
+        engine = next((e for e in self.strategies if e.name == by), None)
+        return str(getattr(engine, "arm", "") or "")
+
     def _credit(self, by: str, feed: str, interval: str, reward: float) -> None:
         """Tell the policy what a strategy's shape was worth here.
 
@@ -3238,6 +3248,15 @@ class Trader:
             actor="trading",
             context={
                 "strategy": by,
+                # **Which shape the policy chose**, for the strategies that
+                # choose one. `opportunity` is a parameter vector rather than a
+                # fixed set of numbers, so "opportunity lost 15.90" says
+                # nothing without it - the arm is the thing being judged, and
+                # its first five trades were recorded with the arm absent.
+                #
+                # Empty for a strategy that has no policy, which is every
+                # other one today.
+                "arm": self._arm_of(by),
                 # What the spread actually was when this was sent. Three gates
                 # judge spread and none of them wrote down the number they
                 # judged, so "what did execution cost" could be argued about

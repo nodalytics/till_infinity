@@ -994,3 +994,26 @@ def test_leading_momentum_still_wants_the_candle():
 
     source = inspect.getsource(service.Trader._rejected_at)
     assert "both = both or leads" in source
+
+
+def test_the_chosen_arm_is_written_onto_the_decision():
+    """`opportunity` is a parameter vector, not a fixed set of numbers, so
+    "opportunity lost 15.90" says nothing without knowing which shape it wore.
+    Its first five trades were recorded with the arm absent."""
+    import inspect
+
+    from till_infinity.bus import Bus
+    from till_infinity.trading.config import Settings
+    from till_infinity.trading.service import Trader
+
+    source = inspect.getsource(Trader)
+    assert '"arm": self._arm_of(by)' in source
+
+    made = Settings(symbols=("gold",), strategies=("thesis-only", "opportunity"))
+    trader = Trader(Bus(), settings=made)
+    engine = next(e for e in trader.strategies if e.name == "opportunity")
+    engine.arm = "stop1/target3/trail1"
+    assert trader._arm_of("opportunity") == "stop1/target3/trail1"
+    # A strategy that chooses no shape reports none rather than guessing.
+    assert trader._arm_of("thesis-only") == ""
+    assert trader._arm_of("nothing-by-this-name") == ""
