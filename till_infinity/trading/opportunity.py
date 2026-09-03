@@ -237,12 +237,17 @@ class Opportunity(LevelStrategy):
     #: on 1m and 3m and scored **-0.450R** on the common stream, last of four
     #: arms and widening as its sample grew. A 15m level can still produce a
     #: trade that lasts seconds or days; a 1m level breaks under it.
-    entries: ClassVar[tuple[str, ...]] = ("15m", "30m", "1h", "2h", "4h", "1d", "1w")
+    #: Entry below the hour, floored at 15m. The trigger fixes the stop, and
+    #: a stop measured on 15m is a fraction of one measured on 4h for the same
+    #: idea. Judged on 1h-4h through `context` below.
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
 
-    #: Agreement from anywhere other than the entry bar. `anchored` already
-    #: excludes the entry interval, so this reads as "some other timeframe sees
-    #: this level too" at every speed rather than naming a hierarchy.
-    context: ClassVar[tuple[str, ...]] = ("15m", "30m", "1h", "2h", "4h", "1d", "1w")
+    #: **Analysis on 1h-4h**, which is where a level is judged rather than
+    #: triggered. Narrower than "anywhere else agrees", because agreement was
+    #: measured as nearly free - 92% of calls carry a scalp anchor and the
+    #: median call has eight of ten timeframes agreeing - while the *slow*
+    #: frames separate: 1h levels break 1.4% of the time against 57.9% at 1m.
+    context: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h")
 
     #: The defaults, as a `Shape`, expanded into the fields the base class
     #: reads. Kept beside them so the vector and the knobs cannot drift apart.

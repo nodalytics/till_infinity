@@ -500,12 +500,14 @@ def test_the_gate_reads_both():
     assert "self.needs_context and bool(self.context)" in source
 
 
-def test_origin_swing_anchors_on_the_high_timeframes_alone():
-    """Asked for on 2026-09-01: the space between two origins is only worth
-    trading when 4h or 1d says the far one is real."""
+def test_origin_swing_analyses_on_the_same_frame_as_the_rest():
+    """Was (4h, 1d) alone from 2026-09-01. Folded into the shared 1h-4h
+    analysis frame on 2026-09-03: the break rate flattens past 30m - 2.8% at
+    30m, 1.4% at 1h, 0.0% at 2h, 4.3% at 4h - so insisting on the daily buys
+    nothing over 4h and costs most of the signals."""
     import till_infinity.trading as td
 
-    assert td.STRATEGIES["origin-swing"].context == ("4h", "1d")
+    assert td.STRATEGIES["origin-swing"].context == ("1h", "2h", "4h")
 
 
 def test_a_stop_that_overshoots_gives_back_the_size_it_overshot_by():
@@ -589,11 +591,12 @@ def test_opportunity_will_not_trigger_below_fifteen_minutes():
     import till_infinity.trading as td
     from till_infinity.trading.config import Settings
 
-    made = Settings(intervals=("1m", "5m", "15m", "1h", "1d"))
+    made = Settings(intervals=("1m", "5m", "15m", "30m", "1h", "1d"))
     engine = td.STRATEGIES["opportunity"](made)
     assert "1m" not in engine.intervals
     assert "5m" not in engine.intervals
-    assert engine.intervals == ("15m", "1h", "1d")
+    # Entry below the hour: the trigger fixes the stop, the analysis does not.
+    assert engine.intervals == ("15m", "30m")
     # The hold is untouched: seconds to days, decided by the barriers.
     assert engine.hold_seconds == 0.0
 
@@ -1120,3 +1123,24 @@ def test_the_floor_actually_bites_on_an_alert_shaped_payload():
     assert "below the 15m floor" in made.rejects(alert("5m"))
     assert made.rejects(alert("15m")) == ""
     assert made.rejects(alert("4h")) == ""
+
+
+def test_every_swing_analyses_slow_and_enters_fast():
+    """Asked for on 2026-09-03: analysis on 1h-4h, entry below the hour, the
+    exit horizon at an hour or more. It is what `swing-level` already argued
+    for - the slow frame says *whether*, the fast one says *when* - and it was
+    only true of the context, never of the entries."""
+    import till_infinity.trading as td
+    from till_infinity.trading.config import Settings
+
+    made = Settings()
+    for name, cls in td.STRATEGIES.items():
+        if cls.style != "swing":
+            continue
+        engine = cls(made)
+        assert engine.entries == ("15m", "30m"), name
+        assert engine.context == ("1h", "2h", "4h"), name
+        # Nothing enters at or above the hour any more.
+        assert all(iv in ("15m", "30m") for iv in engine.entries), name
+        # And the exit horizon stays at an hour or more.
+        assert engine.hold_for("15m") >= 3600.0, name

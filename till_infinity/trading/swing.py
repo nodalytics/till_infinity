@@ -126,8 +126,27 @@ class ApproachScalp(LevelStrategy):
     #: has already happened. See `Strategy.momentum_leads`.
     momentum_leads: ClassVar[bool] = True
 
-    entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
-    context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
+    #: **Analysis on 1h-4h.** Where the level is judged, not where it is
+    #: triggered. Asked for on 2026-09-03, and it is what this file already
+    #: argued for: the slow frame says *whether* a price is worth trading and
+    #: the fast one says *when*.
+    #:
+    #: Narrower than the old (2h, 4h, 1d, 1w). 1w is dropped because it is rare
+    #: enough that requiring it is requiring 4h anyway, and 1d because a level
+    #: a day agrees with is not more tradable than one 4h agrees with - the
+    #: break rate flattens past 30m (2.8% at 30m, 1.4% at 1h, 0.0% at 2h, 4.3%
+    #: at 4h) rather than continuing to fall.
+    context: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h")
+
+    #: **Entry below the hour.** The trigger fixes the stop, and a stop
+    #: measured on 15m is a fraction of one measured on 4h for the identical
+    #: idea - that is risk reduction, not a different trade.
+    #:
+    #: Floored at 15m rather than open, because the timeframe that draws a
+    #: level is the largest quality signal on this book: 1m levels break 57.9%
+    #: of the time against 12.8% at 15m, and sub-15m trading is -821.75 over
+    #: 129 closes against +35.03 over 21 above it.
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
     needs_context: ClassVar[bool] = True
 
     #: The rejection has to show on 4h. A pin bar there is a claim that several
@@ -304,8 +323,27 @@ class Runner(LevelStrategy):
     #: has already happened. See `Strategy.momentum_leads`.
     momentum_leads: ClassVar[bool] = True
 
-    entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
-    context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
+    #: **Analysis on 1h-4h.** Where the level is judged, not where it is
+    #: triggered. Asked for on 2026-09-03, and it is what this file already
+    #: argued for: the slow frame says *whether* a price is worth trading and
+    #: the fast one says *when*.
+    #:
+    #: Narrower than the old (2h, 4h, 1d, 1w). 1w is dropped because it is rare
+    #: enough that requiring it is requiring 4h anyway, and 1d because a level
+    #: a day agrees with is not more tradable than one 4h agrees with - the
+    #: break rate flattens past 30m (2.8% at 30m, 1.4% at 1h, 0.0% at 2h, 4.3%
+    #: at 4h) rather than continuing to fall.
+    context: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h")
+
+    #: **Entry below the hour.** The trigger fixes the stop, and a stop
+    #: measured on 15m is a fraction of one measured on 4h for the identical
+    #: idea - that is risk reduction, not a different trade.
+    #:
+    #: Floored at 15m rather than open, because the timeframe that draws a
+    #: level is the largest quality signal on this book: 1m levels break 57.9%
+    #: of the time against 12.8% at 15m, and sub-15m trading is -821.75 over
+    #: 129 closes against +35.03 over 21 above it.
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
     needs_context: ClassVar[bool] = True
 
     #: The rejection has to show on 4h. A pin bar there is a claim that several
@@ -372,8 +410,27 @@ class SwingLevel(LevelStrategy):
     #: has already happened. See `Strategy.momentum_leads`.
     momentum_leads: ClassVar[bool] = True
 
-    entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
-    context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
+    #: **Analysis on 1h-4h.** Where the level is judged, not where it is
+    #: triggered. Asked for on 2026-09-03, and it is what this file already
+    #: argued for: the slow frame says *whether* a price is worth trading and
+    #: the fast one says *when*.
+    #:
+    #: Narrower than the old (2h, 4h, 1d, 1w). 1w is dropped because it is rare
+    #: enough that requiring it is requiring 4h anyway, and 1d because a level
+    #: a day agrees with is not more tradable than one 4h agrees with - the
+    #: break rate flattens past 30m (2.8% at 30m, 1.4% at 1h, 0.0% at 2h, 4.3%
+    #: at 4h) rather than continuing to fall.
+    context: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h")
+
+    #: **Entry below the hour.** The trigger fixes the stop, and a stop
+    #: measured on 15m is a fraction of one measured on 4h for the identical
+    #: idea - that is risk reduction, not a different trade.
+    #:
+    #: Floored at 15m rather than open, because the timeframe that draws a
+    #: level is the largest quality signal on this book: 1m levels break 57.9%
+    #: of the time against 12.8% at 15m, and sub-15m trading is -821.75 over
+    #: 129 closes against +35.03 over 21 above it.
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
     needs_context: ClassVar[bool] = True
 
     #: The rejection has to show on 4h. A pin bar there is a claim that several
@@ -497,16 +554,27 @@ class OriginSwing(LevelStrategy):
     #: has already happened. See `Strategy.momentum_leads`.
     momentum_leads: ClassVar[bool] = True
 
-    entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
-
-    #: The high timeframes alone, narrower than the other swings.
+    #: **Analysis on 1h-4h.** Where the level is judged, not where it is
+    #: triggered. Asked for on 2026-09-03, and it is what this file already
+    #: argued for: the slow frame says *whether* a price is worth trading and
+    #: the fast one says *when*.
     #:
-    #: The trade is the space between two origins, and an origin worth
-    #: running to is not one that 2h agrees about. 2h and 1w are dropped
-    #: for opposite reasons: 2h is close enough to the entry bar that
-    #: agreement there is nearly the same measurement twice, and 1w is
-    #: rare enough that requiring it would be requiring 4h and 1d anyway.
-    context: ClassVar[tuple[str, ...]] = ("4h", "1d")
+    #: Narrower than the old (2h, 4h, 1d, 1w). 1w is dropped because it is rare
+    #: enough that requiring it is requiring 4h anyway, and 1d because a level
+    #: a day agrees with is not more tradable than one 4h agrees with - the
+    #: break rate flattens past 30m (2.8% at 30m, 1.4% at 1h, 0.0% at 2h, 4.3%
+    #: at 4h) rather than continuing to fall.
+    context: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h")
+
+    #: **Entry below the hour.** The trigger fixes the stop, and a stop
+    #: measured on 15m is a fraction of one measured on 4h for the identical
+    #: idea - that is risk reduction, not a different trade.
+    #:
+    #: Floored at 15m rather than open, because the timeframe that draws a
+    #: level is the largest quality signal on this book: 1m levels break 57.9%
+    #: of the time against 12.8% at 15m, and sub-15m trading is -821.75 over
+    #: 129 closes against +35.03 over 21 above it.
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
 
     #: The rejection has to show on 4h - several hours of auction failing at
     #: this price, rather than one hour's worth on the entry bar.
@@ -733,8 +801,27 @@ class FadeToValue(LevelStrategy):
     #: has already happened. See `Strategy.momentum_leads`.
     momentum_leads: ClassVar[bool] = True
 
-    entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
-    context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
+    #: **Analysis on 1h-4h.** Where the level is judged, not where it is
+    #: triggered. Asked for on 2026-09-03, and it is what this file already
+    #: argued for: the slow frame says *whether* a price is worth trading and
+    #: the fast one says *when*.
+    #:
+    #: Narrower than the old (2h, 4h, 1d, 1w). 1w is dropped because it is rare
+    #: enough that requiring it is requiring 4h anyway, and 1d because a level
+    #: a day agrees with is not more tradable than one 4h agrees with - the
+    #: break rate flattens past 30m (2.8% at 30m, 1.4% at 1h, 0.0% at 2h, 4.3%
+    #: at 4h) rather than continuing to fall.
+    context: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h")
+
+    #: **Entry below the hour.** The trigger fixes the stop, and a stop
+    #: measured on 15m is a fraction of one measured on 4h for the identical
+    #: idea - that is risk reduction, not a different trade.
+    #:
+    #: Floored at 15m rather than open, because the timeframe that draws a
+    #: level is the largest quality signal on this book: 1m levels break 57.9%
+    #: of the time against 12.8% at 15m, and sub-15m trading is -821.75 over
+    #: 129 closes against +35.03 over 21 above it.
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
     needs_context: ClassVar[bool] = True
 
     #: The rejection has to show on 4h. A pin bar there is a claim that several

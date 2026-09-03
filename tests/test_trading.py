@@ -21,6 +21,7 @@ from till_infinity import trading as td
 from till_infinity.bus import ALERTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from till_infinity.journal import Journal, read
 from till_infinity.structures import cusum as td_cusum
+from till_infinity.structures.levels import SECONDS
 from till_infinity.trading import exposure as ex
 from till_infinity.trading import manage
 from till_infinity.trading import plans as tp
@@ -89,11 +90,16 @@ def signal(**over):
 
 
 def swing(**over):
-    """A level call as a swing strategy needs one: entered on 1h, with a
-    compulsory high timeframe agreeing. The four swings moved to this contract
-    when the entry/context split was made explicit."""
-    over.setdefault("interval", "1h")
-    over.setdefault("confluence", ["1h", "4h", "1d"])
+    """A level call as a swing strategy needs one.
+
+    **Entered below the hour, judged on 1h-4h.** The contract changed on
+    2026-09-03: the trigger fixes the stop, so it belongs on a fast bar, while
+    whether the level is worth trading is a question for the slow ones. Before
+    that these entered on 1h, which put the analysis and the trigger on the
+    same bar and gave away the tighter stop for nothing.
+    """
+    over.setdefault("interval", "15m")
+    over.setdefault("confluence", ["15m", "1h", "4h"])
     return signal(**over)
 
 
@@ -1809,8 +1815,9 @@ def test_a_strategy_separates_where_it_triggers_from_where_its_bias_comes_from()
     """
     made = settings()
     swing = td.STRATEGIES["swing-level"](made)
-    assert swing.intervals == ("1h", "2h", "4h", "1d", "1w")
-    assert swing.anchors == ("2h", "4h", "1d", "1w")
+    # Triggers below the hour, judged on 1h-4h. The gap is the whole point.
+    assert swing.intervals == ("15m", "30m")
+    assert swing.anchors == ("1h", "2h", "4h")
     # Its lowest trigger is well below its highest anchor.
     assert swing.intervals[0] not in ("1d", "1w")
     assert swing.hold_seconds > td.STRATEGIES["level-scalp"](made).hold_seconds
@@ -1820,7 +1827,8 @@ def test_a_strategy_that_needs_an_anchor_refuses_without_one():
     made = settings()
     swing = td.STRATEGIES["swing-level"](made)
 
-    lonely = signal(interval="1h", confluence=["1h"])
+    # Entered on 15m with only 15m agreeing: nothing on 1h-4h sees it.
+    lonely = signal(interval="15m", confluence=["15m"])
     swing.observe(lonely)
     got = swing.consider(
         lonely, spec=GOLD, tick=Tick("XAUUSD", bid=4399.5, ask=4400.5), equity=10_000.0
@@ -1878,7 +1886,7 @@ def test_a_strategy_declares_its_own_timeframes():
     assert td.STRATEGIES["level-scalp"](made).intervals == ("1m", "3m", "5m", "15m", "30m")
     # approach-scalp is a swing now, and swings enter on the middle set
     # rather than the fast one.
-    assert td.STRATEGIES["approach-scalp"](made).intervals == ("1h", "2h", "4h", "1d", "1w")
+    assert td.STRATEGIES["approach-scalp"](made).intervals == ("15m", "30m")
     # The council takes whatever the operator allows and judges it itself.
     assert td.STRATEGIES["council"](made).intervals == made.intervals
 
@@ -4324,11 +4332,16 @@ def _htf():
 
 
 def test_the_swing_trade_requires_a_high_timeframe():
-    """Not a preference. A 1h idea held for days on nothing but 15m agreement
-    is a fast trade wearing a swing's patience."""
+    """Not a preference. A 15m trigger held for hours on nothing but 15m
+    agreement is a fast trade wearing a swing's patience.
+
+    The analysis frame narrowed to 1h-4h on 2026-09-03: the break rate flattens
+    past 30m, so 1d and 1w cost signals without buying reliability."""
     engine = _htf()
     assert engine.needs_context is True
-    assert all(t in ("2h", "4h", "1d", "1w") for t in engine.context)
+    assert all(t in ("1h", "2h", "4h") for t in engine.context)
+    # And the trigger sits strictly below every timeframe that judges it.
+    assert all(SECONDS[e] < min(SECONDS[c] for c in engine.context) for e in engine.entries)
 
 
 def test_the_swing_trade_never_triggers_below_15m():
@@ -5855,10 +5868,11 @@ def test_the_facing_side_does_not_leak_into_the_next_call():
     assert engine._facing is None
 
 
-def test_the_origin_swing_is_a_swing_on_the_hour():
+def test_the_origin_swing_enters_fast_and_judges_slow():
     engine = strategy("origin-swing")
     assert engine.style == "swing"
-    assert engine.intervals == ("1h", "2h", "4h", "1d", "1w")
+    assert engine.intervals == ("15m", "30m")
+    assert engine.context == ("1h", "2h", "4h")
     assert engine.candle_interval == "4h"
     assert engine.needs_both_witnesses is True
     assert engine.needs_context is True
