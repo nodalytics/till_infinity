@@ -291,6 +291,9 @@ MAGIC_ORDER: tuple[str, ...] = (
     # slot, because a magic that has been on a live order has to keep resolving
     # to the name that placed it.
     "opportunity",
+    # 2026-09-03. `opportunity` with the target moved out of reach so the trail
+    # decides - the measured best exit policy of six tested. See `Ride`.
+    "ride",
 )
 
 

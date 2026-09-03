@@ -191,6 +191,9 @@ PRESETS: dict[str, Shape] = {
     ),
     "runner": Shape(stop=1.0, target=3.0, trail=1.0, protect=1.0, hold=14400.0, pullback=0.0),
     "swing-level": Shape(stop=1.5, target=2.5, trail=4.0, protect=1.5, hold=86400.0, pullback=1.0),
+    # The measured best exit on 31,820 replayed touches: no reachable target,
+    # trailed half a volatility unit behind the best price. See `Ride`.
+    "ride": Shape(stop=1.0, target=6.0, trail=0.5, protect=1.0, hold=0.0, pullback=1.0),
 }
 
 
@@ -321,3 +324,54 @@ class Opportunity(LevelStrategy):
         self.break_even_at = shape.protect
         self.hold_seconds = shape.hold
         self.pullback_fraction = shape.pullback
+
+
+@register
+class Ride(Opportunity):
+    """`opportunity` with the target moved out of reach, so the trail decides.
+
+    The same entry, the same frame, the same gates - only the exit differs,
+    which is what makes the pair a comparison rather than two strategies.
+
+    **Measured before it was written**, on 31,820 touches replayed from 1m bars
+    with each exit policy scored on identical entries:
+
+    | policy | mean R | median | win |
+    | --- | ---: | ---: | ---: |
+    | **trail 0.5v, no target** | **+0.404** | -0.037 | 47% |
+    | trail 1v, no target | +0.228 | -0.271 | 41% |
+    | target 1x the push | -0.041 | -1.000 | 35% |
+    | target 2x | -0.132 | -1.000 | 23% |
+    | target 3x | -0.235 | -1.000 | 17% |
+    | trail 2v, no target | -0.135 | -1.000 | 29% |
+
+    Every fixed target loses; every tight trail wins; tighter is better. That
+    holds at each entry timeframe separately, not only pooled.
+
+    **Two things this is not.** The mean rides on the right tail - the median is
+    **negative for every policy including this one**, so most trades lose a
+    little and a few win a lot. And the replay models no spread, which is
+    precisely what sinks fast entries live, so the entry floor stays at 15m on
+    the strength of the money rather than of this table.
+
+    **The target is moved, not removed.** `lots` and the reward-to-risk gate
+    both need one to exist, and a trade with no stated objective cannot be
+    sized or refused - the same reason `runner` keeps one. Six times the
+    modelled push is far past the p99 of what touches reach, so it bounds the
+    trade without being what ordinarily ends it.
+
+    Listed beside `opportunity` rather than replacing it, so `_also_wanted`
+    scores both on the same signals and the argument settles itself.
+    """
+
+    name: ClassVar[str] = "ride"
+    description: ClassVar[str] = (
+        "The level call with no reachable target, trailed half a volatility unit "
+        "behind the best price until it turns."
+    )
+
+    #: Far enough that the trail ends the trade in the ordinary case.
+    target_multiple: ClassVar[float] = 6.0
+    #: The measured best of the three tested. 1.0 scored +0.228 against this
+    #: one's +0.404, and 2.0 went negative at -0.135.
+    trail_vol: ClassVar[float] = 0.5

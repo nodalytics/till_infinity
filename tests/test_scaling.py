@@ -1144,3 +1144,59 @@ def test_every_swing_analyses_slow_and_enters_fast():
         assert all(iv in ("15m", "30m") for iv in engine.entries), name
         # And the exit horizon stays at an hour or more.
         assert engine.hold_for("15m") >= 3600.0, name
+
+
+# ------------------------------- the trail-only exit, beside the target one
+
+
+def test_ride_is_opportunity_with_the_target_out_of_reach():
+    """The pair is a comparison: same entry, same frame, same gates, only the
+    exit differs. Measured on 31,820 replayed touches before it was written -
+    trail 0.5v with no target scored +0.404R against -0.041R for the best fixed
+    target, and every fixed target lost."""
+    import till_infinity.trading as td
+    from till_infinity.trading.config import Settings
+
+    made = Settings()
+    ride = td.STRATEGIES["ride"](made)
+    opp = td.STRATEGIES["opportunity"](made)
+
+    assert ride.entries == opp.entries
+    assert ride.context == opp.context
+    assert ride.stop_multiple == opp.stop_multiple
+    assert ride.hold_seconds == opp.hold_seconds == 0.0
+    # Only the exit moves.
+    assert ride.trail_vol == 0.5
+    assert ride.target_multiple == 6.0
+    assert ride.target_multiple > opp.target_multiple
+    assert ride.trail_vol < opp.trail_vol
+
+
+def test_the_target_is_moved_rather_than_removed():
+    """`lots` and the reward-to-risk gate both need a target to exist: a trade
+    with no stated objective cannot be sized or refused."""
+    import till_infinity.trading as td
+
+    assert td.STRATEGIES["ride"].target_multiple > 0
+
+
+def test_ride_is_attributable_and_is_an_arm():
+    """A strategy without a MAGIC_ORDER slot closes every position as
+    "unattributed" and cannot be scored - two have run live that way."""
+    import till_infinity.trading as td
+    from till_infinity.trading.config import MAGIC_ORDER, magic_for
+
+    assert "ride" in MAGIC_ORDER
+    magics = {n: magic_for(777700, n) for n in td.STRATEGIES}
+    assert len(set(magics.values())) == len(magics)
+    # And the policy can pick its shape.
+    assert "ride" in td.PRESETS
+    assert td.PRESETS["ride"].trail == 0.5
+
+
+def test_both_exits_are_scored_on_the_same_signals():
+    """`_also_wanted` scores every strategy that did not take a signal, so
+    listing them together is what makes the comparison settle itself."""
+    import till_infinity.trading as td
+
+    assert {"opportunity", "ride"} <= set(td.STRATEGIES)

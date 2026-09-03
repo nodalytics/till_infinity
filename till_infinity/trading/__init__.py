@@ -91,7 +91,7 @@ from .models import (
     Tick,
     Verdict,
 )
-from .opportunity import PRESETS, Opportunity, Shape
+from .opportunity import PRESETS, Opportunity, Ride, Shape
 from .paper import PaperBroker
 from .plans import PLANS, Plan
 from .report import Report, Trade
@@ -165,6 +165,7 @@ __all__ = [
     "Release",
     "Report",
     "Resolution",
+    "Ride",
     "Runner",
     "Seen",
     "Settings",
