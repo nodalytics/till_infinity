@@ -1376,17 +1376,24 @@ class Trader:
         # refuse a clean fast turn for having no candle yet. A swing has the
         # time, and an origin price merely touched is not one that rejected it.
         both = bool(engine and engine.needs_both_witnesses)
+        # Momentum leads, and its absence is a refusal rather than a pass. See
+        # `Strategy.momentum_leads` for the leak this closes: the turn is read
+        # only after a pullback, so on any other entry the candle was the only
+        # witness asked and carried the trade alone.
+        leads = bool(engine and engine.momentum_leads and wants_turn)
+        both = both or leads
 
         asked: list[str] = []
         held: list[str] = []
         # The turn. Skipped entirely before a pullback, where the reading means
         # the opposite thing - so on a straight-to-market entry this witness is
         # not merely unsatisfied, it is not applicable.
-        if wants_turn and intent.features.get("after_pullback"):
+        if wants_turn and (intent.features.get("after_pullback") or leads):
             asked.append("turn")
             pressure = float(intent.features.get("pressure_vol") or 0.0)
             turned = pressure if intent.side is Side.BUY else -pressure
-            if turned >= self._turn_wanted(intent.feed):
+            wanted = self._turn_wanted(intent.feed)
+            if turned >= wanted:
                 log.info(
                     "trading: %s %s confirmed - turned %.2fv after the pullback",
                     intent.side,
@@ -1396,6 +1403,18 @@ class Trader:
                 if not both:
                     return None
                 held.append("turn")
+            elif leads:
+                # Refused here rather than folded into the "wants both" message
+                # below, because the reason is different and the operator
+                # should be able to tell them apart: this is not "one of two
+                # witnesses is missing", it is "the thing that has to come
+                # first did not happen".
+                return Refusal(
+                    "momentum",
+                    f"momentum leads here and has not turned: {turned:+.2f}v "
+                    f"against the {wanted:.2f}v it needs",
+                    intent.feed,
+                )
 
         if wants_candle:
             asked.append("candle")

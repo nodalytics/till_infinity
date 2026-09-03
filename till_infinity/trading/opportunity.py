@@ -211,6 +211,10 @@ class Opportunity(LevelStrategy):
         "the trade rather than a clock."
     )
 
+    #: Momentum leads; the candle confirms it. An opportunity that lasts
+    #: hours should not be opened on a bar that closed before it.
+    momentum_leads: ClassVar[bool] = True
+
     #: The ceiling picker, not a claim about the trade. See the docstring.
     style: ClassVar[str] = "swing"
 

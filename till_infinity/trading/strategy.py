@@ -380,6 +380,26 @@ class Strategy(ABC):
     #: failed here, the momentum ensemble says it is failing now.
     needs_both_witnesses: ClassVar[bool] = False
 
+    #: Momentum leads and the candle confirms it, rather than either carrying
+    #: the trade alone.
+    #:
+    #: The disjunction has a leak that only shows on a higher timeframe. The
+    #: turn is read **only after a pullback**, because before one the same
+    #: reading means the opposite thing - so on an entry that never pulled
+    #: back, "turn" is not an unsatisfied witness, it is an absent one, and the
+    #: candle is then the only thing asked. A 4h pin bar alone carries the
+    #: trade, with nothing saying price is actually turning now.
+    #:
+    #: With this set the turn is **required**, and its absence is a refusal
+    #: rather than a pass. The candle is then evidence on top: a hammer is a
+    #: momentum reversal compressed into one bar, so asking the bar to confirm
+    #: what the accumulator already saw is a second reading of one event, which
+    #: is worth having in that order and not in the other.
+    #:
+    #: For the higher timeframes, where a bar takes hours to close and a trade
+    #: taken on it alone is taken on evidence that has already happened.
+    momentum_leads: ClassVar[bool] = False
+
     #: How much of the sub-hour momentum ensemble must point the way the trade
     #: does, from 0 (ask nothing) to 1 (every timeframe).
     #:

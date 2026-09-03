@@ -943,3 +943,54 @@ def test_the_strategy_passes_the_interval_through():
     engine = td.STRATEGIES["level-scalp"](made)
     assert engine.risk_scale("gold", {"vol_bps": 10.0}, interval="1m") == 0.25
     assert engine.risk_scale("gold", {"vol_bps": 10.0}, interval="1h") == 1.0
+
+
+# --------------------------------------- momentum leads, the candle confirms
+
+
+def test_every_higher_timeframe_strategy_lets_momentum_lead():
+    """Asked for on 2026-09-03. On a higher timeframe a bar takes hours to
+    close, so a trade taken on the candle alone is taken on evidence that has
+    already happened."""
+    import till_infinity.trading as td
+
+    for name, cls in td.STRATEGIES.items():
+        if cls.style == "swing":
+            assert cls.momentum_leads is True, name
+
+
+def test_the_scalps_are_left_alone():
+    """The disjunction is right for a scalp: it cannot wait four hours for a
+    bar and would refuse a clean fast turn for having no candle yet."""
+    import till_infinity.trading as td
+
+    for name, cls in td.STRATEGIES.items():
+        if cls.style == "scalp":
+            assert cls.momentum_leads is False, name
+
+
+def test_a_leading_momentum_makes_the_turn_compulsory():
+    """The leak this closes: the turn is read only *after a pullback*, so on
+    any other entry it is an absent witness rather than an unsatisfied one -
+    and the candle was then the only thing asked, carrying the trade alone."""
+    import inspect
+
+    from till_infinity.trading import service
+
+    source = inspect.getsource(service.Trader._rejected_at)
+    # Asked for even without a pullback, once momentum leads.
+    assert 'intent.features.get("after_pullback") or leads' in source
+    # And its absence refuses rather than falling through to the candle.
+    assert "elif leads:" in source
+    assert '"momentum leads here and has not turned' in source
+
+
+def test_leading_momentum_still_wants_the_candle():
+    """It is confirmation, not a replacement: a hammer is a momentum reversal
+    compressed into one bar, which is worth having in that order."""
+    import inspect
+
+    from till_infinity.trading import service
+
+    source = inspect.getsource(service.Trader._rejected_at)
+    assert "both = both or leads" in source

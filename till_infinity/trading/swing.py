@@ -120,6 +120,12 @@ class ApproachScalp(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
+    #: Momentum leads; the 4h candle confirms it. Asked for on
+    #: 2026-09-03: on a higher timeframe a bar takes hours to close,
+    #: so a trade taken on the candle alone is taken on evidence that
+    #: has already happened. See `Strategy.momentum_leads`.
+    momentum_leads: ClassVar[bool] = True
+
     entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
@@ -292,6 +298,12 @@ class Runner(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
+    #: Momentum leads; the 4h candle confirms it. Asked for on
+    #: 2026-09-03: on a higher timeframe a bar takes hours to close,
+    #: so a trade taken on the candle alone is taken on evidence that
+    #: has already happened. See `Strategy.momentum_leads`.
+    momentum_leads: ClassVar[bool] = True
+
     entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
@@ -354,6 +366,12 @@ class SwingLevel(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
+    #: Momentum leads; the 4h candle confirms it. Asked for on
+    #: 2026-09-03: on a higher timeframe a bar takes hours to close,
+    #: so a trade taken on the candle alone is taken on evidence that
+    #: has already happened. See `Strategy.momentum_leads`.
+    momentum_leads: ClassVar[bool] = True
+
     entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
@@ -472,6 +490,12 @@ class OriginSwing(LevelStrategy):
     description: ClassVar[str] = (
         "Between two origins: enter where price arrives first, run to the other."
     )
+
+    #: Momentum leads; the 4h candle confirms it. Asked for on
+    #: 2026-09-03: on a higher timeframe a bar takes hours to close,
+    #: so a trade taken on the candle alone is taken on evidence that
+    #: has already happened. See `Strategy.momentum_leads`.
+    momentum_leads: ClassVar[bool] = True
 
     entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
 
@@ -703,6 +727,12 @@ class FadeToValue(LevelStrategy):
     #: *when*, through the momentum accumulator. Asking a 1m series whether a
     #: weekly level is real is asking the wrong series; asking a weekly bar to
     #: time an entry is asking it to answer four hours late.
+    #: Momentum leads; the 4h candle confirms it. Asked for on
+    #: 2026-09-03: on a higher timeframe a bar takes hours to close,
+    #: so a trade taken on the candle alone is taken on evidence that
+    #: has already happened. See `Strategy.momentum_leads`.
+    momentum_leads: ClassVar[bool] = True
+
     entries: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h", "1d", "1w")
     context: ClassVar[tuple[str, ...]] = ("2h", "4h", "1d", "1w")
     needs_context: ClassVar[bool] = True
