@@ -188,6 +188,15 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         "venue": signal.venue,
         "shape": str(signal.shape),
         "direction": signal.direction,
+        # The timeframe, so `NOTIFY_MIN_INTERVAL` has something to compare.
+        #
+        # It was absent, and its absence made that filter silently inert: the
+        # filter reads the interval off the alert, found none, and kept
+        # everything - so a floor could be configured, describe itself
+        # correctly in the log, pass its own tests, and drop nothing at all.
+        # The filter's own rule that a missing interval is *kept* is right for
+        # a trade or a fault and was hiding this.
+        "interval": signal.interval,
     }
     if signal.shape is not Shape.LEVEL:
         return {

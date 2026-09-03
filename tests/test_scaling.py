@@ -1082,3 +1082,36 @@ def test_the_floor_is_read_from_the_environment():
         assert Filter.from_env().floor == "30m"
     finally:
         del os.environ["NOTIFY_MIN_INTERVAL"]
+
+
+def test_a_level_alert_carries_its_timeframe():
+    """`NOTIFY_MIN_INTERVAL` reads the interval off the alert. It was absent,
+    so the floor was silently inert - configured, describing itself correctly,
+    passing its own tests, and dropping nothing. The filter's rule that a
+    missing interval is *kept* is right for a trade or a fault, and was exactly
+    what hid this."""
+    import inspect
+
+    from till_infinity.structures import service
+
+    source = inspect.getsource(service)
+    i = source.index('"instrument": signal.feed')
+    block = source[i : i + 900]
+    assert '"interval": signal.interval' in block
+
+
+def test_the_floor_actually_bites_on_an_alert_shaped_payload():
+    """The earlier check used a payload the filter reads differently - shape
+    lives under `fields`, so everything was rejected on shape and the floor was
+    never reached."""
+    from till_infinity.notifications.filters import Filter
+
+    made = Filter(shapes=frozenset({"level"}), floor="15m")
+
+    def alert(iv):
+        return {"fields": {"shape": "level", "instrument": "gold", "interval": iv}}
+
+    assert "below the 15m floor" in made.rejects(alert("1m"))
+    assert "below the 15m floor" in made.rejects(alert("5m"))
+    assert made.rejects(alert("15m")) == ""
+    assert made.rejects(alert("4h")) == ""
