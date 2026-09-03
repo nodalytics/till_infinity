@@ -670,6 +670,12 @@ class Settings:
     #: instance that ever forgets to pass one.
     stop_overshoot: tuple[tuple[str, float], ...] = ()
 
+    #: Risk multiplier per entry timeframe, as `interval=weight` pairs.
+    #: Anything unlisted sizes at full. See `scaling.by_interval` for the
+    #: measured table this comes from - sub-15m is -821.75 over 129 closes
+    #: against +35.03 over 21 at 15m and above.
+    interval_weight: tuple[tuple[str, float], ...] = ()
+
     #: Drawdown from the equity peak at which size reaches its floor. Zero is
     #: off.
     #:
@@ -1500,6 +1506,7 @@ class Settings:
             edge_full_at=_float("TRADING_EDGE_FULL_AT", 0.0),
             drawdown_halt_at=_float("TRADING_DRAWDOWN_HALT_AT", 0.0),
             stop_overshoot=_overshoot(_env("TRADING_STOP_OVERSHOOT")),
+            interval_weight=_overshoot(_env("TRADING_INTERVAL_WEIGHT")),
             hold_extends_at=_float("TRADING_HOLD_EXTENDS_AT", 0.0),
             max_hold_multiple=_float("TRADING_MAX_HOLD_MULTIPLE", 4.0),
             news_before=_float("TRADING_NEWS_BEFORE_S", 600.0),

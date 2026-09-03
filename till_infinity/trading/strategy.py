@@ -235,6 +235,7 @@ class Strategy(ABC):
         positions: Sequence[object] = (),
         equity: float = 0.0,
         peak: float = 0.0,
+        interval: str = "",
     ) -> float:
         """Every sizing reduction at once, as one multiplier in [0, 1].
 
@@ -269,6 +270,10 @@ class Strategy(ABC):
             scaling.by_edge(features.get("net_edge_vol"), settings.edge_full_at),
             scaling.by_drawdown(peak, equity, settings.drawdown_halt_at),
             scaling.by_slippage(dict(settings.stop_overshoot).get(feed.strip().lower(), 1.0)),
+            # The timeframe the trigger came from. Sub-15m is -821.75 over 129
+            # closes against +35.03 over 21 at 15m and above, monotone across
+            # every band between. See `scaling.by_interval`.
+            scaling.by_interval(interval, settings.interval_weight),
         )
 
     @property

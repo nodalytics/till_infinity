@@ -887,3 +887,59 @@ def test_the_fill_window_matches_the_one_park_uses():
     shared = "self.settings.pullback_bars if bars else"
     assert shared in parked
     assert shared in window
+
+
+# ------------------------------------------- sizing by the entry timeframe
+
+
+def test_the_entry_timeframe_sizes_the_trade():
+    """Sub-15m is -821.75 over 129 closes; 15m and above is +35.03 over 21,
+    and the ordering is monotone across every band between."""
+    from till_infinity.trading import scaling
+
+    weights = (("1m", 0.3), ("3m", 0.5), ("15m", 0.7))
+    assert scaling.by_interval("1m", weights) == 0.3
+    assert scaling.by_interval("15m", weights) == 0.7
+
+
+def test_an_unlisted_timeframe_sizes_at_full():
+    """Every interval must size exactly as it did before this existed unless
+    somebody named it."""
+    from till_infinity.trading import scaling
+
+    assert scaling.by_interval("4h", (("1m", 0.3),)) == 1.0
+    assert scaling.by_interval("1m", ()) == 1.0
+    assert scaling.by_interval("", (("1m", 0.3),)) == 1.0
+
+
+def test_the_interval_weight_never_enlarges():
+    """Same rule as every other model here: a sizing input that can size up is
+    one that turns an estimation error into a margin call."""
+    from till_infinity.trading import scaling
+
+    assert scaling.by_interval("1m", (("1m", 4.0),)) == 1.0
+    assert scaling.by_interval("1m", (("1m", -2.0),)) == scaling.FLOOR
+
+
+def test_it_is_off_until_somebody_sets_it():
+    from till_infinity.trading.config import Settings
+
+    assert Settings().interval_weight == ()
+
+
+def test_the_strategy_passes_the_interval_through():
+    """A weighting the sizing call never receives is a weighting that appears
+    to work and does not - which is the defect this repository keeps finding."""
+    import inspect
+
+    import till_infinity.trading as td
+    from till_infinity.trading import scalper
+    from till_infinity.trading.config import Settings
+
+    assert "interval" in inspect.signature(td.Strategy.risk_scale).parameters
+    assert "positions, equity, peak, interval" in inspect.getsource(scalper.LevelStrategy.consider)
+
+    made = Settings(interval_weight=(("1m", 0.25),))
+    engine = td.STRATEGIES["level-scalp"](made)
+    assert engine.risk_scale("gold", {"vol_bps": 10.0}, interval="1m") == 0.25
+    assert engine.risk_scale("gold", {"vol_bps": 10.0}, interval="1h") == 1.0

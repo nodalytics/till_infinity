@@ -156,6 +156,45 @@ def by_drawdown(peak: float, equity: float, halt_at: float) -> float:
     return max(FLOOR, math.sqrt(1.0 - fallen / halt_at))
 
 
+def by_interval(interval: str, weights: Sequence[tuple[str, float]]) -> float:
+    """Size by the timeframe the signal was triggered on.
+
+    The book's own record, 2026-09-03, per closed trade:
+
+    | interval | closes | per close | t |
+    | --- | ---: | ---: | ---: |
+    | 1m | 47 | -7.75 | -2.29 |
+    | 3m | 34 | -4.80 | -1.53 |
+    | 5m | 48 | -6.13 | -2.55 |
+    | 15m | 15 | -2.46 | -0.49 |
+    | 30m | 2 | +3.71 | |
+    | 1h | 3 | +18.67 | +1.83 |
+
+    Sub-15m is **-821.75 over 129 closes**; 15m and above is **+35.03 over
+    21**. The ordering is monotone and the three fastest are each individually
+    negative, two of them past two standard errors.
+
+    **Sizing is only half of what this timeframe problem needs, and the smaller
+    half.** 1m and 3m signals also produced 547 of the book's 1,270 capacity
+    refusals - `max_positions`, `already_open`, `waiting` - so the fast trades
+    are not merely losing money, they are occupying the slots a slow signal
+    needs when it finally arrives. A gold 4h level appeared *once* in 48 hours
+    against ninety-six 1m calls, and was refused for want of room. Making the
+    fast trade smaller does not give that slot back; only not taking it does.
+    See research/timeframes.md.
+
+    So this is the reversible half, shipped first because it cannot stop the
+    desk trading. Unlisted intervals size at full.
+    """
+    if not weights:
+        return 1.0
+    want = (interval or "").strip().lower()
+    for name, weight in weights:
+        if name == want:
+            return max(FLOOR, min(1.0, weight))
+    return 1.0
+
+
 def by_slippage(overshoot: float) -> float:
     """Give back the size an instrument's stops overshoot by.
 
