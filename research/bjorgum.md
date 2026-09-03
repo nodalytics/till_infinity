@@ -111,6 +111,50 @@ volatility predicting a break may be the same fact as
 clothes. And a wide zone is mechanically easier to be inside, which could bias
 the visit labelling that produces the label. Neither is checked.
 
+## Width is not volatility — but the test has a hole in it
+
+Chased on 2026-09-03 with [harness/width.py](harness/width.py), 1,103 visits at
+15m. Raw AUC against a break, where below 0.5 means the feature predicts a
+**hold**:
+
+| predictor | real market | control |
+| --- | ---: | ---: |
+| **zone width** | **0.1863** | 0.5262 |
+| volatility now | 0.4591 | 0.5777 |
+| volatility then | 0.4749 | 0.5749 |
+| width / volatility now | 0.2124 | 0.4386 |
+
+**Wide zones hold** — 0.1863 is 0.8137 read the other way, and the earlier
+"0.7602" was the fitted model having learned the sign. Volatility on its own is
+0.4591, which is nothing.
+
+And it survives conditioning. Break rate by width *within* volatility bands:
+
+| volatility now | n | narrow | wide | gap |
+| --- | ---: | ---: | ---: | ---: |
+| lowest quarter | 276 | 40.3% | 14.0% | **−26.3** |
+| second | 275 | 72.8% | 10.9% | **−61.9** |
+| third | 276 | 55.2% | 5.3% | **−50.0** |
+| highest | 276 | 40.8% | 11.2% | **−29.7** |
+
+Every band, and the control gives −16.4 / +0.9 / +0.7 / −2.9. The correlation
+tells the same story from another side: in the control, width and volatility
+correlate **+0.832** — on a generated process the band *is* the volatility and
+nothing else. On real instruments it is **+0.238**, so width carries something
+volatility does not.
+
+**The hole, and it may be the whole finding.** A visit is scored as a break
+when price closes beyond the *far edge of the zone* — and a wider zone has a
+further far edge. Wide zones may hold for the same reason a wider net catches
+more: geometry, not structure. That is exactly the shape of the sub-minute
+tautology in [failing.md](failing.md), where a touch resolving in seconds is a
+rejection by definition of the label.
+
+The test that separates them: define the break as a fixed distance from the
+**level** in ATR, independent of the band's width. If wide zones still hold
+under that label, the finding is real. Until that is run, the number above is
+not usable and neither is any gate built on it.
+
 ## The bandit question, answered against this repository's own test
 
 [bandits.md](bandits.md): *if you would have learned the outcome anyway,
@@ -132,7 +176,9 @@ trading.
    timeframe measured, and the intuition it came from is backwards.
 2. **"Proven" is the half worth keeping** — three to five prior visits is the
    best cell on the book at 4h, at 25.3% against a 37.3% base.
-3. **Chase zone width before anything else here**, and chase it against
-   `vol_bps` first, because the most likely explanation is that it is
-   volatility already measured elsewhere.
+3. ~~**Chase zone width against `vol_bps`.**~~ Done, and it is *not*
+   volatility: it survives conditioning inside every volatility band, and the
+   control shows width and volatility are the same thing there (+0.832) while
+   real instruments show +0.238. But the label is width-dependent, so re-run it
+   with a break defined in ATR from the level before believing any of it.
 4. **Flip needs 4h data it does not have.** Not refuted, not established.
