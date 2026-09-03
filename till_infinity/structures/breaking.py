@@ -67,8 +67,37 @@ from dataclasses import dataclass, field
 from .online import Logistic
 from .state import Restorable
 
-#: The two that separate, in the order the fitted weights are reported.
-NAMES: tuple[str, ...] = ("approach_vol", "depth_vol", "slowing")
+#: The features that separate, in the order the fitted weights are reported.
+#:
+#: `slope` and `prior_slope` were added 2026-09-03 on a measured lift. Scored
+#: the way this model works - predict then update, one pass in time order, so
+#: every score is out of sample - over 5,452 touches lasting five minutes or
+#: more:
+#:
+#: | features | AUC |
+#: | --- | --- |
+#: | the original three | 0.6104 |
+#: | + slope | 0.6262 |
+#: | + slope and prior_slope | **0.6408** |
+#: | slope alone | 0.5642 |
+#:
+#: +0.030 AUC, which is a 28% increase in this model's edge over a coin. The
+#: magnitude is taken, not the sign: which way the fit points is a directional
+#: question and this one is not.
+#:
+#: **Both, or neither.** `slope` alone is *worse* than the original three, and
+#: the pair beats either - a flat approach means one thing after quiet and
+#: another after a run, and only the prior window tells them apart. Over
+#: 10,869 five-minute touches "flat now, steep a window ago" breaks 17.2% of
+#: the time against a 29.6% base, the strongest hold signal measured here.
+#: See research/slopes.md.
+NAMES: tuple[str, ...] = ("approach_vol", "depth_vol", "slowing", "slope", "prior_slope")
+
+#: Features read as magnitudes rather than signed values. The slope's sign says
+#: which way price is going, which is a different question from whether the
+#: level survives - and leaving it signed would ask the model to learn "steep
+#: up and steep down both break" from scratch, on a linear fit that cannot.
+ABSOLUTE: frozenset[str] = frozenset({"slope", "prior_slope"})
 
 #: A **trap is not a break.** Price gets through, traps whoever followed it,
 #: and comes back - so the level ultimately held and the push lands in the hold
@@ -100,15 +129,21 @@ class Breaks(Restorable):
 
     @staticmethod
     def inputs(features: object) -> list[float]:
-        """The two, read off whatever carries them.
+        """Every feature, read off whatever carries them.
 
         Takes the object rather than importing `reactions.Features`, so this
         module stays cheap to import and to test - and so a caller can pass the
         plain feature dictionary a signal carries.
+
+        `ABSOLUTE` names are taken as magnitudes. A signed slope would ask a
+        linear fit to learn that steep up and steep down both break, which is
+        exactly the shape a linear fit cannot represent.
         """
         if isinstance(features, dict):
-            return [float(features.get(name) or 0.0) for name in NAMES]
-        return [float(getattr(features, name, 0.0) or 0.0) for name in NAMES]
+            raw = [float(features.get(name) or 0.0) for name in NAMES]
+        else:
+            raw = [float(getattr(features, name, 0.0) or 0.0) for name in NAMES]
+        return [abs(v) if name in ABSOLUTE else v for name, v in zip(NAMES, raw, strict=True)]
 
     def predict(self, features: object) -> float | None:
         """P(break), or None while there is not enough behind it.

@@ -16,10 +16,12 @@ from till_infinity.structures.breaking import BROKE, HELD, MIN_SEEN, NAMES, Brea
 
 
 class Touch:
-    def __init__(self, approach_vol=0.0, depth_vol=0.0, slowing=0.0):
+    def __init__(self, approach_vol=0.0, depth_vol=0.0, slowing=0.0, slope=0.0, prior_slope=0.0):
         self.approach_vol = approach_vol
         self.depth_vol = depth_vol
         self.slowing = slowing
+        self.slope = slope
+        self.prior_slope = prior_slope
 
 
 def teach(model, n=400, seed=3):
@@ -35,21 +37,39 @@ def teach(model, n=400, seed=3):
 # ------------------------------------------------------------- what it reads
 
 
-def test_it_reads_the_three_that_separate():
+def test_it_reads_the_features_that_separate():
     """`slowing` earns its place by being nearly orthogonal to `approach_vol` -
     correlation +0.008 - rather than by being strong. A weak separator that
-    disagrees adds; a strong one that agrees restates."""
-    assert NAMES == ("approach_vol", "depth_vol", "slowing")
+    disagrees adds; a strong one that agrees restates.
+
+    The two slope terms were added on the same argument and a measured lift:
+    0.6104 to 0.6408 AUC, out of sample, over 5,452 five-minute touches.
+    """
+    assert NAMES == ("approach_vol", "depth_vol", "slowing", "slope", "prior_slope")
 
 
 def test_it_takes_a_plain_dictionary_too():
     """A signal carries its features as a dict, not as a Features object."""
-    assert Breaks.inputs({"approach_vol": 1.5, "depth_vol": 0.5, "slowing": 0.8}) == [1.5, 0.5, 0.8]
-    assert Breaks.inputs(Touch(approach_vol=1.5, depth_vol=0.5, slowing=0.8)) == [1.5, 0.5, 0.8]
+    got = {"approach_vol": 1.5, "depth_vol": 0.5, "slowing": 0.8, "slope": 0.2, "prior_slope": 0.4}
+    assert Breaks.inputs(got) == [1.5, 0.5, 0.8, 0.2, 0.4]
+    assert Breaks.inputs(
+        Touch(approach_vol=1.5, depth_vol=0.5, slowing=0.8, slope=0.2, prior_slope=0.4)
+    ) == [1.5, 0.5, 0.8, 0.2, 0.4]
 
 
 def test_a_missing_feature_reads_as_zero_rather_than_shortening_the_vector():
-    assert Breaks.inputs({}) == [0.0, 0.0, 0.0]
+    assert Breaks.inputs({}) == [0.0, 0.0, 0.0, 0.0, 0.0]
+
+
+def test_the_slope_is_read_as_a_magnitude():
+    """Which way the fit points is a different question from whether the level
+    survives, and a signed slope would ask a linear model to learn that steep
+    up and steep down both break - the one shape it cannot represent."""
+    down = Breaks.inputs({"slope": -0.9, "prior_slope": -1.4, "approach_vol": -2.0})
+    up = Breaks.inputs({"slope": 0.9, "prior_slope": 1.4, "approach_vol": -2.0})
+    assert down == up
+    # And only the slopes are folded; the rest keep their sign.
+    assert down[0] == -2.0
 
 
 # --------------------------------------------------------- what it will say
@@ -303,3 +323,63 @@ def test_deceleration_needs_no_new_state():
 
     engine = Engine()
     assert engine._slowing("nothing", "5m") == 0.0
+
+
+# ------------------------------------------------- the slope, end to end
+
+
+class _Vol:
+    bps = 10.0
+    warm = True
+    tick = 0.01
+
+
+def test_the_slope_is_zero_without_enough_series():
+    """Forty closes, because the pair needs two windows. Zero reads as "no
+    reading" everywhere downstream."""
+    from till_infinity.structures.engine import Engine
+
+    engine = Engine()
+    assert engine._slope("nothing", "5m", _Vol()) == (0.0, 0.0)
+
+
+def _drive(engine, feed, interval, prices):
+    for price in prices:
+        engine._bar(feed, interval, price)
+
+
+def test_the_engine_publishes_the_slope_onto_the_touch():
+    """The check this repository keeps failing: computed correctly, recorded
+    where nothing reads it. `Breaks.inputs` names them, so the features object
+    has to carry them or every touch scores zero forever."""
+    import dataclasses
+    import inspect
+
+    from till_infinity.structures import reactions
+    from till_infinity.structures.breaking import NAMES
+
+    carried = {f.name for f in dataclasses.fields(reactions.Features)}
+    for name in NAMES:
+        assert name in carried, f"{name} is in NAMES and not on the features"
+
+    # And published, not merely held: `Breaks` reads a signal's dictionary.
+    published = inspect.getsource(reactions.Features.to_dict)
+    for name in NAMES:
+        assert f'"{name}"' in published, f"{name} never reaches the signal"
+
+    # And threaded through the builder the engine calls.
+    builder = inspect.signature(reactions.features_for).parameters
+    assert "slope" in builder
+    assert "prior_slope" in builder
+
+
+def test_the_engine_actually_calls_the_slope():
+    """A feature the engine computes and does not pass on is the defect that
+    left STRUCTURES_FORMATION inert for its whole life."""
+    import inspect
+
+    from till_infinity.structures import engine as eng
+
+    source = inspect.getsource(eng.Engine)
+    assert "self._slope(feed, interval, vol)" in source
+    assert '"slope", "prior_slope"' in source

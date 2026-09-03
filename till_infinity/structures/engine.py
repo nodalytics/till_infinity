@@ -1609,6 +1609,13 @@ class Engine:
                 # Whether price is easing off into the level or still coming.
                 # Orthogonal to the speed above it - see `_slowing`.
                 slowing=self._slowing(feed, interval),
+                # The regression slope into the level, and the one before it.
+                # See `_slope`: the pair separates a level approached flat
+                # because nothing is happening from one approached flat after a
+                # run, and those break at very different rates.
+                **dict(
+                    zip(("slope", "prior_slope"), self._slope(feed, interval, vol), strict=True)
+                ),
                 when=when,
             )
             touch = self.tracker.begin(level, price, features, when)
@@ -1730,6 +1737,65 @@ class Engine:
         if not previous:
             return 0.0
         return abs((latest - previous) / previous * 10_000) / vol.bps
+
+    #: Bars in the rolling regression. Twenty is the window every number in
+    #: research/slopes.md was measured on; a result that exists only at one
+    #: arbitrary window is one to distrust, and this is that window until
+    #: somebody checks another.
+    SLOPE_BARS: ClassVar[int] = 20
+
+    def _slope(self, feed: str, interval: str, vol) -> tuple[float, float]:
+        """The regression slope into this bar, and the one a window earlier.
+
+        Least squares of close on bar number over `SLOPE_BARS`, in **volatility
+        units per bar** so it pools across instruments - the same scale
+        `_speed` uses, and the same one research/slopes.md measured in.
+
+        Returns the current slope and the slope of the window before it,
+        because the pair separates two states that look identical from the
+        current value alone. A flat slope usually means quiet continues; a flat
+        slope that was steep one window ago is a pause inside a move, and over
+        10,869 touches lasting five minutes or more it carries a **17.2% break
+        rate against a 29.6% base** - the strongest single hold signal measured
+        here, and invisible to any feature the engine publishes today.
+
+        Signed, not absolute. The sign says which way the fit points, and the
+        consumer decides whether it cares: `Breaks` takes the magnitude, and a
+        directional consumer can have the sign for free.
+
+        **Why this is worth the arithmetic.** Over 961,957 samples the slope's
+        correlation with the next hour's movement is +0.3470 against +0.1120
+        for a rolling volatility over the same window, and it separates inside
+        every volatility band - so it is not the volatility estimate wearing a
+        different hat. Deriv's generated indices, which have no structure to
+        find, give +0.0366: the control says the measurement is not inventing
+        it.
+
+        Zero for both when the series is short or the volatility unit is not
+        warm, which everything downstream reads as "no reading".
+        """
+        series = self._series.get((feed, interval))
+        bars = self.SLOPE_BARS
+        if series is None or len(series.closes) < bars * 2 or not vol.bps:
+            return 0.0, 0.0
+        closes = list(series.closes)[-bars * 2 :]
+
+        def fit(window: list[float]) -> float:
+            # sum((i - mean) * x) / sum((i - mean)^2), with the denominator a
+            # constant for a fixed window length.
+            n = len(window)
+            middle = (n - 1) / 2
+            spread = sum((i - middle) ** 2 for i in range(n))
+            if not spread:
+                return 0.0
+            rise = sum((i - middle) * x for i, x in enumerate(window))
+            price = window[-1]
+            if not price:
+                return 0.0
+            # Price per bar -> basis points per bar -> volatility units per bar.
+            return (rise / spread) / price * 10_000 / vol.bps
+
+        return fit(closes[bars:]), fit(closes[:bars])
 
     def _slowing(self, feed: str, interval: str, near: int = 3, far: int = 3) -> float:
         """Speed over the last `near` bars, over the speed of the `far` before.

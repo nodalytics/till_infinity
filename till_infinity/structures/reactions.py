@@ -312,6 +312,10 @@ class Features(Restorable):
     #: enough series, or the earlier leg did not move and a ratio against
     #: nothing is not a deceleration.
     slowing: float = 0.0
+    #: Regression slope into the touch, in volatility units per bar, and the
+    #: slope of the window before it. See `Engine._slope`.
+    slope: float = 0.0
+    prior_slope: float = 0.0
 
     def distance(self, other: Features) -> float:
         """Similarity for kNN. Side is a hard constraint, not a dimension.
@@ -351,6 +355,8 @@ class Features(Restorable):
             "approach_vol": round(self.approach_vol, 4),
             "depth_vol": round(self.depth_vol, 4),
             "slowing": round(self.slowing, 4),
+            "slope": round(self.slope, 4),
+            "prior_slope": round(self.prior_slope, 4),
             "strength": round(self.strength, 4),
             "run_vol": round(self.run_vol, 4),
             "experience": round(self.experience, 4),
@@ -1345,6 +1351,8 @@ def features_for(
     approach_vol: float = 0.0,
     run_vol: float = 0.0,
     slowing: float = 0.0,
+    slope: float = 0.0,
+    prior_slope: float = 0.0,
     when: float | None = None,
 ) -> Features:
     """Describe one touch in the scale-free terms kNN compares."""
@@ -1361,6 +1369,8 @@ def features_for(
         regime=vol.regime,
         up_rate=up_rate_of(level.stats(side)),
         slowing=slowing,
+        slope=slope,
+        prior_slope=prior_slope,
     )
 
 
