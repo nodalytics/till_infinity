@@ -218,10 +218,26 @@ class Opportunity(LevelStrategy):
     #: The ceiling picker, not a claim about the trade. See the docstring.
     style: ClassVar[str] = "swing"
 
-    #: Empty, so it triggers on whatever the deployment allows. An opportunity
-    #: is not a timeframe, and the named strategies split 1m-30m from 1h-1w for
-    #: reasons that were about holding periods rather than about the level.
-    entries: ClassVar[tuple[str, ...]] = ()
+    #: 15m and slower. **This is a floor on the level, not on the trade.**
+    #:
+    #: The module docstring says there is no scalping and no swing trading,
+    #: only opportunities lasting seconds to days, and that still holds - it is
+    #: a claim about how long a trade is *held*, which `hold_seconds` of 0
+    #: leaves to the barriers. This is a different question: which timeframe
+    #: **drew the level**, and that turns out to be the largest quality signal
+    #: on the book.
+    #:
+    #: Break rate by the interval a level was drawn on, over 126,296
+    #: resolutions lasting five minutes or more against a 33.1% base: 1m
+    #: **57.9%**, 3m 26.8%, 5m 20.4%, 15m 12.8%, 30m 2.8%, 1h **1.4%**.
+    #: Monotone, fortyfold, and the money agrees with no scaling involved -
+    #: sub-15m is -821.75 over 129 closes against +35.03 over 21 above it.
+    #:
+    #: Added 2026-09-03 after this strategy took four of its first six trades
+    #: on 1m and 3m and scored **-0.450R** on the common stream, last of four
+    #: arms and widening as its sample grew. A 15m level can still produce a
+    #: trade that lasts seconds or days; a 1m level breaks under it.
+    entries: ClassVar[tuple[str, ...]] = ("15m", "30m", "1h", "2h", "4h", "1d", "1w")
 
     #: Agreement from anywhere other than the entry bar. `anchored` already
     #: excludes the entry interval, so this reads as "some other timeframe sees

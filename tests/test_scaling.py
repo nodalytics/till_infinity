@@ -581,16 +581,21 @@ def test_opportunity_has_no_clock_of_its_own():
     assert engine.hold_for("4h") == engine.ceiling
 
 
-def test_opportunity_triggers_on_any_timeframe():
-    """There is no scalping and no swing trading, only opportunities. Empty
-    `entries` means whatever the deployment allows."""
+def test_opportunity_will_not_trigger_below_fifteen_minutes():
+    """A floor on the level, not on the trade. How long it is *held* is still
+    left to the barriers - `hold_seconds` is 0. Which timeframe **drew** the
+    level is a different question, and the largest quality signal on the book:
+    1m levels break 57.9% of the time against 1.4% at 1h."""
     import till_infinity.trading as td
     from till_infinity.trading.config import Settings
 
-    made = Settings(intervals=("1m", "5m", "1h", "1d"))
+    made = Settings(intervals=("1m", "5m", "15m", "1h", "1d"))
     engine = td.STRATEGIES["opportunity"](made)
-    assert engine.entries == ()
-    assert engine.intervals == ("1m", "5m", "1h", "1d")
+    assert "1m" not in engine.intervals
+    assert "5m" not in engine.intervals
+    assert engine.intervals == ("15m", "1h", "1d")
+    # The hold is untouched: seconds to days, decided by the barriers.
+    assert engine.hold_seconds == 0.0
 
 
 def test_the_presets_recover_the_named_strategies():
