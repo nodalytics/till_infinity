@@ -64,6 +64,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..logging import get_logger
 from .online import Logistic
 from .state import Restorable
 
@@ -113,6 +114,17 @@ HELD = ("reject", "backcheck", "trap")
 #: How many resolutions before the estimate is worth publishing.
 MIN_SEEN = 200.0
 
+log = get_logger(__name__)
+
+#: What the model was trained on. Bump whenever the **meaning** of an input
+#: changes, so the saved statistics are dropped rather than carried.
+#:
+#: A module constant rather than a class attribute: on a `slots=True`
+#: dataclass, `Breaks.recipe` is the slot *descriptor*, not the default value,
+#: so comparing an instance against it always differs and the model would
+#: restart on every single restore.
+RECIPE = "2026-09-03 slowing capped at 10"
+
 
 @dataclass(slots=True)
 class Breaks(Restorable):
@@ -126,6 +138,22 @@ class Breaks(Restorable):
     """
 
     model: Logistic = field(default_factory=lambda: Logistic(rate=0.05))
+
+    #: What the model was trained on. Bump it whenever the **meaning** of an
+    #: input changes, and the saved state is dropped rather than carried.
+    #:
+    #: This exists because a fix landed and did nothing. `slowing` was an
+    #: unbounded ratio whose running mean in the standardiser had reached
+    #: **141,380,329**; it was capped at 10.0, and the cap could never take
+    #: effect - `Scaler` is plain Welford with no decay, so with n at 5,256 a
+    #: clamped observation moves the mean by (10 - 141M)/5256 and pulling it
+    #: back to a sane figure would take on the order of 1e11 samples. The input
+    #: was fixed and the statistics describing it were not, which is a fix that
+    #: reads as done and changes nothing.
+    #:
+    #: Adding an input is handled already - `Logistic` and `Scaler` rebuild on
+    #: a length change. Re-*meaning* one is not, and that is what this catches.
+    recipe: str = RECIPE
 
     @staticmethod
     def inputs(features: object) -> list[float]:
@@ -156,6 +184,36 @@ class Breaks(Restorable):
             return None
         return self.model.predict(self.inputs(features))
 
+    def _fresh_start_if_the_recipe_changed(self) -> None:
+        """Drop statistics gathered under a different meaning of the inputs.
+
+        Adding an input is handled already: `Logistic` and `Scaler` rebuild on
+        a length change. **Re-meaning one is not**, and that is the case this
+        catches. `slowing` was an unbounded ratio whose running mean in the
+        standardiser had reached 141,380,329; capping it at 10.0 fixed every
+        future value and could never fix the statistics, because `Scaler` is
+        plain Welford with no decay - at n=5,256 a clamped observation moves
+        the mean by (10 - 141M)/5256, and recovery would take on the order of
+        1e11 samples. The cap read as done and changed nothing.
+
+        Checked here rather than in `__setstate__`, which was tried and is a
+        trap: a `slots=True` dataclass is a new class object built after the
+        method bodies compile, so bare `super()` raises at unpickling time
+        only, and `Breaks.recipe` is the slot *descriptor* rather than the
+        default, so the comparison never matches.
+        """
+        if self.recipe == RECIPE:
+            return
+        log.warning(
+            "structures: the break model was trained on %r and this build "
+            "expects %r - starting it again rather than standardising new "
+            "inputs against statistics gathered under the old meaning",
+            self.recipe,
+            RECIPE,
+        )
+        self.model = Logistic(rate=0.05)
+        self.recipe = RECIPE
+
     def observe(self, features: object, outcome: str) -> float | None:
         """Take one resolved touch. Returns what it predicted beforehand.
 
@@ -169,6 +227,7 @@ class Breaks(Restorable):
             broke = False
         else:
             return None
+        self._fresh_start_if_the_recipe_changed()
         return self.model.observe(self.inputs(features), broke)
 
     def reading(self, features: object) -> dict[str, float]:

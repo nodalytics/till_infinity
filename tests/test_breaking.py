@@ -396,3 +396,42 @@ def test_slowing_is_bounded():
     assert SLOWING_CAP == 10.0
     src = __import__("inspect").getsource(Engine._slowing)
     assert "min(after / before, SLOWING_CAP)" in src
+
+
+def test_a_changed_recipe_drops_the_saved_model():
+    """A fix to an input is not a fix if the statistics describing it survive.
+
+    `slowing` was capped at 10.0 while its running mean in the standardiser was
+    141,380,329. `Scaler` is plain Welford with no decay, so at n=5,256 a
+    clamped observation moves the mean by (10 - 141M)/5256 and recovery would
+    take on the order of 1e11 samples. The cap read as done and changed
+    nothing.
+    """
+    from till_infinity.structures.breaking import RECIPE, Breaks
+
+    trained = teach(Breaks(), n=int(MIN_SEEN) + 50)
+    assert trained.warm
+    before = trained.model.seen
+
+    # Same recipe: nothing is thrown away.
+    trained.observe(Touch(approach_vol=1.0), "reject")
+    assert trained.model.seen >= before
+    assert trained.warm
+
+    # A different one: it starts again rather than trusting stale statistics.
+    stale = teach(Breaks(), n=int(MIN_SEEN) + 50)
+    stale.recipe = "trained when slowing was unbounded"
+    stale.observe(Touch(approach_vol=1.0), "reject")
+    assert stale.recipe == RECIPE
+    assert stale.model.seen <= 1.0
+    assert not stale.warm
+
+
+def test_adding_an_input_is_already_handled():
+    """`Logistic` and `Scaler` rebuild on a length change, so the recipe is for
+    re-*meaning* an input rather than adding one."""
+    import inspect
+
+    from till_infinity.structures import online
+
+    assert "len(x) != len(self.mean)" in inspect.getsource(online.Scaler.observe)
