@@ -150,10 +150,34 @@ more: geometry, not structure. That is exactly the shape of the sub-minute
 tautology in [failing.md](failing.md), where a touch resolving in seconds is a
 rejection by definition of the label.
 
-The test that separates them: define the break as a fixed distance from the
-**level** in ATR, independent of the band's width. If wide zones still hold
-under that label, the finding is real. Until that is run, the number above is
-not usable and neither is any gate built on it.
+### Run, and the answer is "half of it was geometry"
+
+[harness/atrbreak.py](harness/atrbreak.py) takes the width out of **both** ends
+of the label: a touch is price within 0.25x ATR of the level, a break is a close
+1.0x ATR beyond it, identical for every zone whatever band it would have had.
+779 visits at 15m, base break rate 34.5%:
+
+| width band | n | break | vs base |
+| --- | ---: | ---: | ---: |
+| narrowest quarter | 175 | 50.3% | **+15.8** |
+| second | 182 | 42.3% | +7.8 |
+| third | 226 | 23.9% | -10.6 |
+| widest | 196 | 25.5% | -9.0 |
+| *first visit (fresh)* | 118 | **60.2%** | **+25.6** |
+
+Width's AUC falls from **0.1863 to 0.3849** - 0.814 to 0.615 read in the hold
+direction. **So about half the effect was the label seeing the width**, exactly
+as suspected, and about half is real: a 25-point spread survives, roughly
+monotone, where the control gives an AUC of **0.4988** and no ordering at all
+(+0.6 / +3.9 / -8.2 / +3.2).
+
+**Freshness is untouched** - 60.2% against a 34.5% base, +25.6, against +6.1 in
+the control. It never depended on the band.
+
+Standing position: freshness is the solid finding, width is real at half the
+size first reported, and flipping is 15m-only. The suspicion was worth acting
+on - it halved a number that would otherwise have entered a gate at twice its
+true strength.
 
 ## The bandit question, answered against this repository's own test
 
