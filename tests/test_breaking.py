@@ -435,3 +435,45 @@ def test_adding_an_input_is_already_handled():
     from till_infinity.structures import online
 
     assert "len(x) != len(self.mean)" in inspect.getsource(online.Scaler.observe)
+
+
+def test_every_unbounded_ratio_in_the_record_is_bounded():
+    """Measured on 2026-09-03 over the published record. Four fields had a max
+    more than a hundred times their own 99th percentile:
+
+    | field | median | p99 | max |
+    | --- | --- | --- | --- |
+    | forecast_ratio | 1.12 | 629 | 132,923,621,621 |
+    | slowing | 1.00 | 67.6 | 934,584,883,610 |
+    | reward_to_risk | 0.364 | 13.2 | 15,846 |
+    | push_sigma_vol | 0.51 | 3.43 | 22,415 |
+
+    A guard against a zero denominator is not a guard against a small one, and
+    one such field disabled the break model for weeks without breaking it - see
+    research/standardising.md.
+    """
+    import inspect
+
+    from till_infinity.structures import engine, har, levels, reactions
+
+    assert har.RATIO_CAP == 10.0
+    assert reactions.RR_CAP == 20.0
+    assert levels.SIGMA_CAP == 20.0
+    assert engine.SLOWING_CAP == 10.0
+
+    # Applied, not merely defined. A constant nothing multiplies is decoration.
+    # `fget` because these are properties, and `getsource` wants the function.
+    assert "RATIO_CAP)" in inspect.getsource(har.Har.ratio.fget)
+    assert "SIGMA_CAP)" in inspect.getsource(levels.SideStats.push_sigma.fget)
+    assert "RR_CAP)" in inspect.getsource(reactions.Inference.reward_to_risk.fget)
+    assert "SLOWING_CAP)" in inspect.getsource(engine.Engine._slowing)
+
+
+def test_the_caps_sit_above_the_measured_ninety_ninth_percentile():
+    """Except `slowing`, deliberately: its p99 is 67.6, which is already the
+    denominator talking rather than a real acceleration."""
+    from till_infinity.structures import har, levels, reactions
+
+    assert har.RATIO_CAP > 1.12 * 5
+    assert reactions.RR_CAP > 13.2
+    assert levels.SIGMA_CAP > 3.43

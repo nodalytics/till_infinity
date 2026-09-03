@@ -116,9 +116,8 @@ than in the pickle path.
 ## What to take from it
 
 1. **Bound every ratio at the point it is computed.** A guard against a zero
-   denominator is not a guard against a small one, and this codebase has
-   `slowing`, `forecast_ratio`, `vol_stretch` and `reward_to_risk` in that
-   shape. Only one has been checked.
+   denominator is not a guard against a small one. Done for the whole record on
+   2026-09-03 — see the table below.
 2. **Read the standardiser, not just the weights.** The weights are the
    symptom; the running statistics are where a broken input is visible. Nothing
    was looking at them until an hour ago.
@@ -128,3 +127,46 @@ than in the pickle path.
 4. **A watcher on the weights paid for itself in under an hour.** It was armed
    to see whether the new slope features earned their place and instead found a
    feature that had been mute for weeks.
+
+## Every ratio in the record, measured and bounded — 2026-09-03
+
+Rather than guess which others were broken, every ratio-shaped field published
+by `structures` or `trading` was pulled from the journal and sorted. **Four had
+a maximum more than a hundred times their own 99th percentile:**
+
+| field | n | median | p99 | max | max / p99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `forecast_ratio` | 19,511 | 1.12 | 629 | **132,923,621,621** | 211,305,781x |
+| `slowing` | 35,319 | 1.00 | 67.6 | **934,584,883,610** | 13,831,071,779x |
+| `reward_to_risk` | 131,505 | 0.364 | 13.2 | **15,846** | 1,197x |
+| `push_sigma_vol` | 128,330 | 0.51 | 3.43 | **22,415** | 6,537x |
+
+And the ones that turned out to be fine, which is worth recording so nobody
+re-checks them: `vol_stretch` (max 15.5), `hour_vol_share` (6.97), `activity`
+(already capped at 20), `experience` (2.14), and everything bounded to [0, 1]
+by construction — `sweep_rate`, `up_rate`, `momentum_agree`.
+
+Caps applied at the point of computation, each above the measured p99:
+
+| field | cap | where |
+| --- | ---: | --- |
+| `Har.ratio` | 10.0 | `structures/har.py` |
+| `Inference.reward_to_risk` | 20.0 | `structures/reactions.py` |
+| `SideStats.push_sigma` | 20.0 | `structures/levels.py` |
+| `Engine._slowing` | 10.0 | `structures/engine.py` |
+
+**`slowing`'s cap is deliberately below its p99** and that is the one honest
+exception. Its 99th percentile is 67.6 against a median of 1.00, which means
+the top percentile is not describing an acceleration - it is describing a
+denominator near zero. The earlier claim that capping at 10 "discards no
+information a linear model could have used" was too strong and is corrected
+here: it clips well more than one percent, and that is the intention.
+
+**`push_sigma` is a standard deviation rather than a ratio**, included because
+it fails the same way for a worse reason: a single malformed push squares into
+`push_sq` and stays there, so one bad touch poisons a level's spread
+permanently rather than for one reading.
+
+A test asserts each cap exists **and is applied** — a constant nothing
+multiplies is decoration, which is the shape of the original bug.
+

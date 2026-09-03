@@ -91,6 +91,10 @@ def _model():
     )
 
 
+#: Ceiling on `Har.ratio`. Median 1.12 in the record, p99 629, max 1.3e11.
+RATIO_CAP = 10.0
+
+
 @dataclass(slots=True)
 class Har(Restorable):
     """A realised-volatility forecast from three horizons of its own history.
@@ -169,4 +173,14 @@ class Har(Restorable):
         latest = self._history[-1] if self._history else 0.0
         if latest <= 0 or not self.warm:
             return 1.0
-        return self.predict() / latest
+        # Bounded, and the record says why. Measured over 19,511 published
+        # values on 2026-09-03: median **1.12**, p99 **629**, max
+        # **132,923,621,621**. `latest <= 0` catches a zero denominator and
+        # nothing near one, so a quiet bar followed by an ordinary forecast
+        # produces a number with no meaning.
+        #
+        # A forecast ten times the last realised value is already an extreme
+        # claim about the next bar. Past that the ratio is describing the
+        # denominator, not the forecast. See research/standardising.md for what
+        # an unbounded ratio did to the break model's standardiser.
+        return min(self.predict() / latest, RATIO_CAP)

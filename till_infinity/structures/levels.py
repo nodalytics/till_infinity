@@ -278,6 +278,11 @@ class State(StrEnum):
     FLIPPED = "flipped"
 
 
+#: Ceiling on a level's push spread, in volatility units. Median 0.51,
+#: p99 3.43, max 22,415 in the record.
+SIGMA_CAP = 20.0
+
+
 @dataclass(slots=True)
 class Kalman(Restorable):
     """One-dimensional Kalman filter over a slowly drifting price.
@@ -494,7 +499,12 @@ class SideStats(Restorable):
             return 0.0
         mean = self.mean_push
         var = max(0.0, self.push_sq / self.touches - mean * mean)
-        return math.sqrt(var)
+        # Bounded like the ratios, for the same reason and from the same
+        # measurement: 128,330 published values run median 0.51, p99 3.43, max
+        # **22,415** volatility units. This is a standard deviation rather than
+        # a ratio, but a single malformed push squares into `push_sq` and stays
+        # there, so one bad touch poisons a level's spread permanently.
+        return min(math.sqrt(var), SIGMA_CAP)
 
     def probability_up(self, prior_up: float = 0.5, prior_weight: float = 4.0) -> float:
         """Beta-binomial posterior that the next push is upward.

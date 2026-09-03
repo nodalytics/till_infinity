@@ -241,6 +241,10 @@ def band_of(interval: str) -> int | None:
 TRAP_BARS = 6.0
 
 
+#: Ceiling on a reward-to-risk reading. Median 0.364, p99 13.2, max 15,846.
+RR_CAP = 20.0
+
+
 @dataclass(frozen=True, slots=True)
 class Features(Restorable):
     """What makes two touches comparable.
@@ -692,7 +696,14 @@ class Inference(Restorable):
         worth half what it risks is a losing trade; a 55% call worth three
         times it is not.
         """
-        return abs(self.net_push) / self.risk_vol if self.risk_vol else 0.0
+        if not self.risk_vol:
+            return 0.0
+        # Bounded: 131,505 published values run median 0.364, p99 13.2, max
+        # **15,846**. A risk distance near zero is what produces those, and a
+        # reward-to-risk of fifteen thousand is a statement about the
+        # denominator. Twenty is far outside anything actionable and well past
+        # the 99th percentile.
+        return min(abs(self.net_push) / self.risk_vol, RR_CAP)
 
     @property
     def actionable(self) -> bool:
