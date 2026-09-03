@@ -1017,3 +1017,68 @@ def test_the_chosen_arm_is_written_onto_the_decision():
     # A strategy that chooses no shape reports none rather than guessing.
     assert trader._arm_of("thesis-only") == ""
     assert trader._arm_of("nothing-by-this-name") == ""
+
+
+# ------------------------------------ keeping the fast timeframes off the wire
+
+
+def _filter(**kw):
+    from till_infinity.notifications.filters import Filter
+
+    return Filter(**kw)
+
+
+def test_a_fast_interval_is_kept_off_the_channel():
+    """Sub-15m is where the noise and the losses both are: 129 closes and
+    -821.75 below fifteen minutes against 21 closes and +35.03 at or above it.
+    On the wire the imbalance is worse - gold published 96 level rows on 1m in
+    48 hours against one on 4h."""
+    got = _filter(floor="15m")
+    assert "below the 15m floor" in got.rejects({"shape": "level", "interval": "1m"})
+    assert "below the 15m floor" in got.rejects({"shape": "level", "interval": "5m"})
+
+
+def test_the_floor_itself_and_anything_slower_gets_through():
+    got = _filter(floor="15m")
+    assert got.rejects({"shape": "level", "interval": "15m"}) == ""
+    assert got.rejects({"shape": "level", "interval": "1h"}) == ""
+    assert got.rejects({"shape": "level", "interval": "1d"}) == ""
+
+
+def test_an_alert_carrying_no_interval_is_kept():
+    """A trade opening and a service fault carry none, and dropping those would
+    be the opposite of the point."""
+    got = _filter(floor="15m")
+    assert got.rejects({"shape": "trade"}) == ""
+    assert got.rejects({"shape": "level", "interval": ""}) == ""
+
+
+def test_an_unknown_interval_is_kept_rather_than_guessed():
+    """A filter that silently drops what it cannot parse goes quiet for reasons
+    nobody can see."""
+    got = _filter(floor="15m")
+    assert got.rejects({"shape": "level", "interval": "7m"}) == ""
+    assert _filter(floor="nonsense").rejects({"shape": "level", "interval": "1m"}) == ""
+
+
+def test_it_reads_the_interval_from_the_alert_fields_too():
+    """Trade alerts nest their metadata under `fields`."""
+    got = _filter(floor="15m")
+    assert "below the 15m floor" in got.rejects({"shape": "level", "fields": {"interval": "3m"}})
+
+
+def test_no_floor_accepts_every_timeframe():
+    got = _filter()
+    assert got.rejects({"shape": "level", "interval": "1m"}) == ""
+
+
+def test_the_floor_is_read_from_the_environment():
+    import os
+
+    from till_infinity.notifications.filters import Filter
+
+    os.environ["NOTIFY_MIN_INTERVAL"] = "30m"
+    try:
+        assert Filter.from_env().floor == "30m"
+    finally:
+        del os.environ["NOTIFY_MIN_INTERVAL"]

@@ -71,6 +71,20 @@ class Filter:
     shapes: frozenset[str] = frozenset()
     #: Instruments to accept - `gold`, `btc`, …
     feeds: frozenset[str] = frozenset()
+    #: The fastest timeframe worth telling anyone about. Empty accepts every
+    #: timeframe, which is what this did before.
+    #:
+    #: Sub-15m is where the noise and the losses both live. Over the book's
+    #: own record: 1m -7.75 a close, 3m -4.80, 5m -6.13, against 15m -2.46 and
+    #: everything slower positive - **129 closes and -821.75 below fifteen
+    #: minutes against 21 closes and +35.03 at or above it**. On the alert side
+    #: the imbalance is worse than the money: gold published 96 level rows on
+    #: 1m in 48 hours against **one** on 4h, so the timeframe worth acting on
+    #: is the one least likely to survive an hourly cap.
+    #:
+    #: An alert with no interval is kept. A trade opening or a service fault
+    #: carries none, and dropping those would be the opposite of the point.
+    floor: str = ""
     cooldown: float = DEFAULT_COOLDOWN
     max_per_hour: int = DEFAULT_MAX_PER_HOUR
     _sent: OrderedDict[tuple[str, str, str], float] = field(default_factory=OrderedDict)
@@ -87,6 +101,7 @@ class Filter:
         return cls(
             shapes=_names(os.environ.get("NOTIFY_SHAPES", "")),
             feeds=_names(os.environ.get("NOTIFY_FEEDS", "")),
+            floor=os.environ.get("NOTIFY_MIN_INTERVAL", "").strip().lower(),
             cooldown=number("NOTIFY_COOLDOWN_S", DEFAULT_COOLDOWN),
             max_per_hour=int(number("NOTIFY_MAX_PER_HOUR", DEFAULT_MAX_PER_HOUR)),
         )
@@ -131,6 +146,8 @@ class Filter:
             return f"shape {shape!r} not in {sorted(self.shapes)}"
         if self.feeds and feed and feed.lower() not in self.feeds:
             return f"instrument {feed!r} not in {sorted(self.feeds)}"
+        if slow := self._too_fast(payload):
+            return slow
 
         last = self._sent.get(self.key(payload))
         if last is not None and when - last < self.cooldown:
@@ -144,6 +161,31 @@ class Filter:
         ):
             return f"{len(self._recent)} already sent this hour"
         return ""
+
+    def _too_fast(self, payload: dict[str, Any]) -> str:
+        """Why this timeframe is below the floor, or "".
+
+        Compared in **seconds** rather than by name, so "5m" against a "15m"
+        floor is arithmetic instead of a lookup table that has to be kept in
+        the same order as the intervals. An interval the table does not know is
+        kept: a filter that silently drops what it cannot parse is a filter
+        that goes quiet for reasons nobody can see.
+        """
+        if not self.floor:
+            return ""
+        from ..structures.levels import SECONDS
+
+        want = SECONDS.get(self.floor, 0.0)
+        if want <= 0:
+            return ""
+        raw = payload.get("interval") or (payload.get("fields") or {}).get("interval") or ""
+        name = str(raw).strip().lower()
+        if not name:
+            return ""
+        got = SECONDS.get(name, 0.0)
+        if got <= 0 or got >= want:
+            return ""
+        return f"{name} is below the {self.floor} floor"
 
     def accept(self, payload: dict[str, Any], when: float | None = None) -> bool:
         """Decide, and remember the decision. Call once per alert."""
@@ -165,6 +207,8 @@ class Filter:
         parts = []
         if self.shapes:
             parts.append(f"shapes {'/'.join(sorted(self.shapes))}")
+        if self.floor:
+            parts.append(f"{self.floor} and slower")
         if self.feeds:
             parts.append(f"instruments {'/'.join(sorted(self.feeds))}")
         parts.append(f"one per {self.cooldown / 60:.0f}m")
