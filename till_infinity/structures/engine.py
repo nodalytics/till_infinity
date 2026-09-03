@@ -90,6 +90,9 @@ SWEEP_SIGMAS = 1.0
 #: chart without the window itself becoming the thing being modelled.
 WINDOW = 500
 
+#: Ceiling on `Engine._slowing`, which is an unbounded ratio. See `_slowing`.
+SLOWING_CAP = 10.0
+
 #: Perceptually important points pulled from the window. Roughly one per ten
 #: bars: fewer and real swings are missed, more and noise becomes a level.
 PIP_COUNT = 50
@@ -1826,7 +1829,22 @@ class Engine:
         after = abs(late[-1] - late[0]) / max(len(late) - 1, 1)
         if before <= 0:
             return 0.0
-        return after / before
+        # Clamped, and the number is why. `slowing` is a ratio, so a near-zero
+        # denominator sends it to infinity - a guard on `before <= 0` catches
+        # zero and nothing else. Measured 2026-09-03 from the break model's own
+        # standardiser: the running mean of this feature was **141,380,329**,
+        # against 1.36 for `approach_vol` and 0.18 for `slope`.
+        #
+        # That poisons everything standardised beside it. One input whose
+        # variance is eight orders of magnitude larger than its neighbours'
+        # makes every other weight rescale each time a new extreme lands, which
+        # is exactly what the weight watcher caught: `approach_vol` moving from
+        # -0.313 to -0.034 in thirty minutes with no change in what it measures.
+        #
+        # `SLOWING_CAP` is far outside anything meaningful - a leg ten times
+        # faster than the one before it is already an extreme reading - so this
+        # discards no information a linear model could have used.
+        return min(after / before, SLOWING_CAP)
 
     # ---------------------------------------------------------------- state
 

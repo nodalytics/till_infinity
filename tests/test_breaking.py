@@ -383,3 +383,16 @@ def test_the_engine_actually_calls_the_slope():
     source = inspect.getsource(eng.Engine)
     assert "self._slope(feed, interval, vol)" in source
     assert '"slope", "prior_slope"' in source
+
+
+def test_slowing_is_bounded():
+    """It is a ratio and its denominator can be almost zero. The break model's
+    own standardiser had a running mean of 141,380,329 for this feature against
+    1.36 for `approach_vol` - one input eight orders of magnitude wider than
+    its neighbours, which makes every other weight rescale whenever a new
+    extreme lands."""
+    from till_infinity.structures.engine import SLOWING_CAP, Engine
+
+    assert SLOWING_CAP == 10.0
+    src = __import__("inspect").getsource(Engine._slowing)
+    assert "min(after / before, SLOWING_CAP)" in src
