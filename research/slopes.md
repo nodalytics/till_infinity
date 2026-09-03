@@ -242,3 +242,68 @@ Two obvious uses, neither measured:
    question from either and is cheap to add.
 
 Sections 6 and 7 took that next measurement, and both came back positive.
+
+## Shipped — 2026-09-03
+
+`Engine._slope` fits least squares of close on bar number over `SLOPE_BARS`
+(20) and returns **the slope and the slope of the window before it**, in
+volatility units per bar. No new state: the series window already holds five
+hundred closes, so this reads forty where `_speed` reads two.
+
+Both are carried on `reactions.Features`, published through `to_dict`, and
+added to `Breaks.NAMES`. They are read as **magnitudes**, via a new `ABSOLUTE`
+set — a signed slope would ask a linear fit to learn that steep up and steep
+down both break, which is the one shape a linear fit cannot represent.
+
+Confirmed live seventeen minutes after deploy, on touches that certainly began
+after the restart:
+
+```
+07:15:08 secs= 60  slope=0.0168  prior=-0.1666  usdcad/1m
+07:15:06 secs= 60  slope=0.1146  prior=-0.5719  usdcad/1m
+07:14:58 secs=120  slope=0.2457  prior=-0.1274  audusd/5m
+07:14:58 secs=120  slope=0.4169  prior=-0.4180  audusd/3m
+```
+
+15 of 15 carried both values. The first row is the state section 6 measures as
+the strongest hold signal on the book — nearly flat now, steep a window ago —
+and it was invisible to every feature the engine published before this.
+
+### Two things the verification taught, both worth keeping
+
+**The test guarded the wrong writer.** It asserted `Features.to_dict` carries
+the slope. The record that actually matters is written in
+`structures/service.py`, which builds its outcome context *field by field* and
+happens to spread `features.to_dict()` at the end. It was fine, but only by
+luck: a recorder that listed fields explicitly would have dropped the slope and
+passed the test. There are two outcome writers in that module and the test knew
+about neither. The lesson is the one this repository keeps relearning — assert
+against **the thing that writes the record**, not against a method that feeds
+it.
+
+**"Absent" looked exactly like the defect it was not.** For about twenty
+minutes every production row read `slope=ABSENT`, which is the precise
+signature of `STRUCTURES_FORMATION` being inert and of `best_r` recording zero
+on every close. It was not that: every touch resolving in that window had
+*begun before the deploy* and carried `Features` restored from the previous
+version. The distinguishing test was to wait for a touch that started after the
+restart, and the distinguishing evidence was that a freshly constructed
+`Features` inside the running container emitted the key correctly.
+
+Worth stating because the wrong conclusion was one step away, and it was
+available for twenty minutes: a feature can be correctly wired and still be
+missing from every record you can see, if the records you can see were made
+before it existed.
+
+**A third hand-written epoch constant was wrong**, producing "container up
+−1786 min". Three of them today, one of which produced a confident "0 closes
+since the fix" that was purely arithmetic. Scripts now parse the container's
+own `StartedAt` rather than carrying a number typed from a timestamp.
+
+### What has not happened yet
+
+`Breaks` learns online, so its weights will move only as resolutions
+accumulate. The +0.030 AUC in section 7 is what the offline pass measured over
+5,452 touches; the live model has to earn it again from its own stream, and
+nothing about the break gate's behaviour should be expected to change today.
+
