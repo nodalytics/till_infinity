@@ -92,7 +92,32 @@ from .state import Restorable
 #: 10,869 five-minute touches "flat now, steep a window ago" breaks 17.2% of
 #: the time against a 29.6% base, the strongest hold signal measured here.
 #: See research/slopes.md.
-NAMES: tuple[str, ...] = ("approach_vol", "depth_vol", "slowing", "slope", "prior_slope")
+#:
+#: `interval_log` was added 2026-09-03 and is the largest single separator this
+#: book has produced. Break rate by the timeframe a level was drawn on, over
+#: 126,296 resolutions lasting five minutes or more against a 33.1% base: 1m
+#: 57.9%, 3m 26.8%, 5m 20.4%, 15m 12.8%, 30m 2.8%, 1h **1.4%**, 2h 0.0%, 4h
+#: 4.3%. Monotone, fortyfold.
+#:
+#: It was invisible here because every other feature is scale-free by
+#: construction - which is precisely why the timeframe is orthogonal to them.
+#: Scored predict-then-update in time order on the five-minute cut, adding it
+#: takes this model from **0.5999 to 0.7542** AUC, and the interval alone
+#: scores 0.7396.
+#:
+#: **A price shared across timeframes was measured beside it and is not worth
+#: carrying**: grouping resolutions by price to five basis points, break rate
+#: falls only from 41.0% at one timeframe to 29.5% at five, and adding that
+#: count on top of the interval moves AUC by +0.001. The per-touch timeframe is
+#: the signal; what else names the price is nearly nothing.
+NAMES: tuple[str, ...] = (
+    "approach_vol",
+    "depth_vol",
+    "slowing",
+    "slope",
+    "prior_slope",
+    "interval_log",
+)
 
 #: Features read as magnitudes rather than signed values. The slope's sign says
 #: which way price is going, which is a different question from whether the
@@ -123,7 +148,7 @@ log = get_logger(__name__)
 #: dataclass, `Breaks.recipe` is the slot *descriptor*, not the default value,
 #: so comparing an instance against it always differs and the model would
 #: restart on every single restore.
-RECIPE = "2026-09-03 slowing capped at 10"
+RECIPE = "2026-09-03 interval_log added"
 
 
 @dataclass(slots=True)

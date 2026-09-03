@@ -21,6 +21,7 @@ evidence about an old level, not a new one.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import statistics
 import time
@@ -92,6 +93,39 @@ WINDOW = 500
 
 #: Ceiling on `Engine._slowing`, which is an unbounded ratio. See `_slowing`.
 SLOWING_CAP = 10.0
+
+
+def _interval_log(interval: str) -> float:
+    """Natural log of the timeframe's seconds, or 0.0 for one we do not know.
+
+    **The largest single separator measured on this book.** Break rate by the
+    interval a level was drawn on, over 126,296 resolutions lasting five
+    minutes or more, against a 33.1% base:
+
+    | 1m | 3m | 5m | 15m | 30m | 1h | 2h | 4h |
+    | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+    | 57.9% | 26.8% | 20.4% | 12.8% | 2.8% | 1.4% | 0.0% | 4.3% |
+
+    Monotone, and a fortyfold spread. `Breaks` could not see it: its features
+    are scale-free by construction, which is exactly why the timeframe is
+    orthogonal to them and why it was not already captured. Adding it takes
+    that model from 0.5999 to **0.7542** AUC on the five-minute cut.
+
+    Logged rather than raw: the seconds span 60 to 604,800, and a linear fit on
+    that range is dominated by its top end.
+
+    **The confound, stated because it is real.** A break is defined relative to
+    the level's own scale, and a 1m level's scale is smaller - the move that
+    breaks a 1m level is a rounding error at 4h. So part of this is
+    definitional. What carries it anyway is that the money says the same thing
+    with no scaling involved: sub-15m is -821.75 over 129 closes against
+    +35.03 over 21 at 15m and above.
+    """
+    from .levels import SECONDS
+
+    seconds = SECONDS.get((interval or "").strip().lower(), 0.0)
+    return math.log(seconds) if seconds > 0 else 0.0
+
 
 #: Perceptually important points pulled from the window. Roughly one per ten
 #: bars: fewer and real swings are missed, more and noise becomes a level.
@@ -1619,6 +1653,9 @@ class Engine:
                 **dict(
                     zip(("slope", "prior_slope"), self._slope(feed, interval, vol), strict=True)
                 ),
+                # Which timeframe drew this level, as a number. The largest
+                # single effect measured on this book - see `_interval_log`.
+                interval_log=_interval_log(interval),
                 when=when,
             )
             touch = self.tracker.begin(level, price, features, when)

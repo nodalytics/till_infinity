@@ -16,12 +16,21 @@ from till_infinity.structures.breaking import BROKE, HELD, MIN_SEEN, NAMES, Brea
 
 
 class Touch:
-    def __init__(self, approach_vol=0.0, depth_vol=0.0, slowing=0.0, slope=0.0, prior_slope=0.0):
+    def __init__(
+        self,
+        approach_vol=0.0,
+        depth_vol=0.0,
+        slowing=0.0,
+        slope=0.0,
+        prior_slope=0.0,
+        interval_log=0.0,
+    ):
         self.approach_vol = approach_vol
         self.depth_vol = depth_vol
         self.slowing = slowing
         self.slope = slope
         self.prior_slope = prior_slope
+        self.interval_log = interval_log
 
 
 def teach(model, n=400, seed=3):
@@ -45,20 +54,41 @@ def test_it_reads_the_features_that_separate():
     The two slope terms were added on the same argument and a measured lift:
     0.6104 to 0.6408 AUC, out of sample, over 5,452 five-minute touches.
     """
-    assert NAMES == ("approach_vol", "depth_vol", "slowing", "slope", "prior_slope")
+    assert NAMES == (
+        "approach_vol",
+        "depth_vol",
+        "slowing",
+        "slope",
+        "prior_slope",
+        "interval_log",
+    )
 
 
 def test_it_takes_a_plain_dictionary_too():
     """A signal carries its features as a dict, not as a Features object."""
-    got = {"approach_vol": 1.5, "depth_vol": 0.5, "slowing": 0.8, "slope": 0.2, "prior_slope": 0.4}
-    assert Breaks.inputs(got) == [1.5, 0.5, 0.8, 0.2, 0.4]
+    got = {
+        "approach_vol": 1.5,
+        "depth_vol": 0.5,
+        "slowing": 0.8,
+        "slope": 0.2,
+        "prior_slope": 0.4,
+        "interval_log": 6.8,
+    }
+    assert Breaks.inputs(got) == [1.5, 0.5, 0.8, 0.2, 0.4, 6.8]
     assert Breaks.inputs(
-        Touch(approach_vol=1.5, depth_vol=0.5, slowing=0.8, slope=0.2, prior_slope=0.4)
-    ) == [1.5, 0.5, 0.8, 0.2, 0.4]
+        Touch(
+            approach_vol=1.5,
+            depth_vol=0.5,
+            slowing=0.8,
+            slope=0.2,
+            prior_slope=0.4,
+            interval_log=6.8,
+        )
+    ) == [1.5, 0.5, 0.8, 0.2, 0.4, 6.8]
 
 
 def test_a_missing_feature_reads_as_zero_rather_than_shortening_the_vector():
-    assert Breaks.inputs({}) == [0.0, 0.0, 0.0, 0.0, 0.0]
+    assert Breaks.inputs({}) == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 
 def test_the_slope_is_read_as_a_magnitude():
@@ -477,3 +507,31 @@ def test_the_caps_sit_above_the_measured_ninety_ninth_percentile():
     assert har.RATIO_CAP > 1.12 * 5
     assert reactions.RR_CAP > 13.2
     assert levels.SIGMA_CAP > 3.43
+
+
+def test_the_timeframe_reaches_the_model():
+    """The largest single separator on this book: break rate by the interval a
+    level was drawn on runs 57.9% at 1m to 1.4% at 1h over 126,296
+    resolutions. It was invisible because every other feature is scale-free by
+    construction, which is exactly why it is orthogonal to them."""
+    from till_infinity.structures.breaking import NAMES
+    from till_infinity.structures.engine import _interval_log
+    from till_infinity.structures.reactions import Features
+
+    assert "interval_log" in NAMES
+    assert "interval_log" in {f.name for f in __import__("dataclasses").fields(Features)}
+    assert _interval_log("1m") < _interval_log("15m") < _interval_log("4h")
+    # An interval the table does not know reads as no reading, not as a fast one.
+    assert _interval_log("nonsense") == 0.0
+    assert _interval_log("") == 0.0
+
+
+def test_lengthening_the_vector_bumps_the_recipe():
+    """`Scaler` silently returns raw values when the vector length changes, so
+    a longer feature set without a reset standardises new inputs against
+    statistics gathered for a shorter one. That is the trap in
+    research/inert.md, and the recipe is what avoids walking into it."""
+    from till_infinity.structures.breaking import NAMES, RECIPE
+
+    assert len(NAMES) == 6
+    assert "interval_log" in RECIPE

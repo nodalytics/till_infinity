@@ -320,6 +320,9 @@ class Features(Restorable):
     #: slope of the window before it. See `Engine._slope`.
     slope: float = 0.0
     prior_slope: float = 0.0
+    #: Natural log of the seconds in the timeframe this level was drawn on.
+    #: See `Engine._interval_log` and `structures/breaking.py`.
+    interval_log: float = 0.0
 
     def distance(self, other: Features) -> float:
         """Similarity for kNN. Side is a hard constraint, not a dimension.
@@ -361,6 +364,7 @@ class Features(Restorable):
             "slowing": round(self.slowing, 4),
             "slope": round(self.slope, 4),
             "prior_slope": round(self.prior_slope, 4),
+            "interval_log": round(self.interval_log, 4),
             "strength": round(self.strength, 4),
             "run_vol": round(self.run_vol, 4),
             "experience": round(self.experience, 4),
@@ -1364,6 +1368,7 @@ def features_for(
     slowing: float = 0.0,
     slope: float = 0.0,
     prior_slope: float = 0.0,
+    interval_log: float = 0.0,
     when: float | None = None,
 ) -> Features:
     """Describe one touch in the scale-free terms kNN compares."""
@@ -1382,6 +1387,7 @@ def features_for(
         slowing=slowing,
         slope=slope,
         prior_slope=prior_slope,
+        interval_log=interval_log,
     )
 
 
