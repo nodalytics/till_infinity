@@ -32,7 +32,7 @@ What this harness asks of them, on our own bars:
 
 import sqlite3
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 import numpy as np
@@ -65,16 +65,33 @@ class Zone:
         return self.resistance != (not self.above)
 
 
-def pivots(high: np.ndarray, low: np.ndarray) -> tuple[list[int], list[int]]:
-    """Confirmed swing highs and lows, `LEFT` before and `RIGHT` after."""
-    highs, lows = [], []
-    for i in range(LEFT, len(high) - RIGHT):
-        window = slice(i - LEFT, i + RIGHT + 1)
-        if high[i] == high[window].max() and (high[window] == high[i]).sum() == 1:
-            highs.append(i)
-        if low[i] == low[window].min() and (low[window] == low[i]).sum() == 1:
-            lows.append(i)
-    return highs, lows
+#: Bars kept per feed, and feeds kept per family.
+#:
+#: Bounded because the first version was not: run unbounded inside the trading
+#: container it was OOM-killed (exit 137). The service survived - 0 restarts,
+#: 502MB of its 2.6GB - but a research pass has no business competing with a
+#: live desk for memory, and "it only killed my process" is luck, not design.
+MAX_BARS = 20_000
+MAX_FEEDS = 10
+
+
+def pivots(high: np.ndarray, low: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Confirmed swing highs and lows, `LEFT` before and `RIGHT` after.
+
+    Vectorised: a sliding-window extreme compared against the centre bar. The
+    loop version was O(bars x window) in Python and did not finish.
+    """
+    span = LEFT + RIGHT + 1
+    if high.size < span:
+        return np.array([], dtype=int), np.array([], dtype=int)
+    hw = np.lib.stride_tricks.sliding_window_view(high, span)
+    lw = np.lib.stride_tricks.sliding_window_view(low, span)
+    centre = np.arange(LEFT, high.size - RIGHT)
+    # Strictly the extreme of its window, so a flat run does not print a pivot
+    # at every bar in it.
+    is_high = (hw.max(axis=1) == high[centre]) & ((hw == high[centre, None]).sum(axis=1) == 1)
+    is_low = (lw.min(axis=1) == low[centre]) & ((lw == low[centre, None]).sum(axis=1) == 1)
+    return centre[is_high], centre[is_low]
 
 
 def atr(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
@@ -170,15 +187,21 @@ def main() -> None:
         return "real market"
 
     rows = defaultdict(list)
+    quota: Counter = Counter()
     for feed in feeds:
+        fam = family(feed)
+        if quota[fam] >= MAX_FEEDS:
+            continue
         bars = list(
             q.execute(
-                "select high, low, close from bars where feed=? and interval=? order by ts",
-                (feed, interval),
+                "select high, low, close from bars where feed=? and interval=? "
+                "order by ts desc limit ?",
+                (feed, interval, MAX_BARS),
             )
-        )
+        )[::-1]
         if len(bars) < 300:
             continue
+        quota[fam] += 1
         high = np.array([b[0] for b in bars], dtype=float)
         low = np.array([b[1] for b in bars], dtype=float)
         close = np.array([b[2] for b in bars], dtype=float)
