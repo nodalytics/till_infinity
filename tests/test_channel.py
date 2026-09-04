@@ -76,9 +76,7 @@ def test_an_absent_bound_is_omitted_rather_than_zeroed():
 
 
 def test_the_features_are_the_four_readings():
-    got = channel_of(
-        [_Zone(4324.0), _Zone(4334.0)], price=4330.0, unit=2.0, feed="gold"
-    ).features()
+    got = channel_of([_Zone(4324.0), _Zone(4334.0)], price=4330.0, unit=2.0, feed="gold").features()
 
     assert got == {
         "room_up_vol": pytest.approx(2.0),

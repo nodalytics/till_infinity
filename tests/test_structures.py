@@ -887,7 +887,8 @@ def test_the_schema_covers_the_subpackages_and_not_their_paths():
     # And the hash is built from basenames, so no path appears in it.
     shapes = store._schema()
     assert len(shapes) == 16
-    assert "drawing" not in shapes and "learning" not in shapes
+    assert "drawing" not in shapes
+    assert "learning" not in shapes
 
 
 def test_every_persisted_class_restores_a_field_it_predates():
