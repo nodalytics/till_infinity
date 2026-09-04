@@ -31,7 +31,6 @@ the previous state intact rather than a truncated file that fails to load.
 
 from __future__ import annotations
 
-import hashlib
 import pickle
 import sys
 from pathlib import Path
@@ -43,15 +42,27 @@ from ..logging import get_logger
 
 log = get_logger(__name__)
 
-FORMAT = 3
+FORMAT = 4
 #: The current file. `.pkl` is kept as the name of the **old** one so a build
 #: that has not migrated yet can still be rolled back to.
 STATE_FILE = "models.msgpack"
 LEGACY_FILE = "models.pkl"
 
 
-def _schema() -> str:
-    """A hash of the shape of everything we persist.
+def _schema() -> dict[str, str]:
+    """The shape of everything we persist, class by class.
+
+    **A map rather than one hash over the lot, and that is the whole point.**
+    A single fingerprint changes when *anything* changes, so adding a new model
+    - `learning/racing.Races`, say - discarded every level, the break model and
+    weeks of touches, for a class that was not in the old file at all and could
+    not conflict with anything in it. That happened twice in one day.
+
+    Compared key by key on load: a class in both the file and the build with
+    different fields is the danger this exists for, and a class in only one of
+    them is not. `Restorable.__setstate__` already defaults a field the state
+    predates, and `codec.unpack` already warns about a class the build has
+    dropped.
 
     Found by walking the package, because the hand-written list this replaces
     *was* the bug. It named seven classes and `Volatility` was not among them,
@@ -99,7 +110,7 @@ def _schema() -> str:
     # touches - for a change that alters no field of anything. It is the same
     # rule `codec.key_for` follows, for the same reason. Sorting on the
     # basename too, so the order is the one the flat walk produced.
-    shapes: list[str] = []
+    shapes: dict[str, str] = {}
     modules = {}
     for info in pkgutil.walk_packages(package_path, prefix=f"{__package__}."):
         modules[info.name.rsplit(".", 1)[-1]] = info.name
@@ -116,8 +127,8 @@ def _schema() -> str:
                 and cls.__module__ == module.__name__
                 and getattr(cls, "__slots__", None) is not None
             ):
-                shapes.append(f"{found}.{name}:{','.join(cls.__slots__)}")
-    return hashlib.sha256(";".join(shapes).encode()).hexdigest()[:16]
+                shapes[f"{found}.{name}"] = ",".join(cls.__slots__)
+    return shapes
 
 
 def _encode(payload: dict[str, Any]) -> bytes:
@@ -144,6 +155,23 @@ def _decode(raw: bytes) -> dict[str, Any]:
     if isinstance(payload, dict):
         payload["state"] = unpack(payload.get("state") or {})
     return payload
+
+
+def _reshaped(saved: Any, current: dict[str, str]) -> list[str]:
+    """Classes whose fields differ between the state and this build.
+
+    Only classes present in **both** can conflict. One that exists solely in
+    the build is new and has no state to be wrong about; one that exists solely
+    in the file has been dropped, and `codec.unpack` says so at the point of
+    use rather than costing the whole file here.
+
+    A `saved` that is not a map came from a format that stored a single hash.
+    There is nothing to compare key by key, so it is accepted - the alternative
+    is discarding exactly the state this change exists to stop discarding.
+    """
+    if not isinstance(saved, dict):
+        return []
+    return [name for name, fields in saved.items() if name in current and current[name] != fields]
 
 
 def _fingerprint() -> dict[str, Any]:
@@ -206,10 +234,15 @@ def load(directory: Path | str) -> dict[str, Any] | None:
     # to preserve, on the first deploy, with the message "format 2, this is 3 -
     # starting cold". The fields that follow are about whether the *contents*
     # can be trusted, and those still apply to both files.
-    checks = (
-        ("river", "python", "schema") if from_legacy else ("format", "river", "python", "schema")
-    )
-    if from_legacy and payload.get("format") not in (FORMAT, FORMAT - 1):
+    # `schema` is compared separately below, key by key, because it is now a
+    # map and `!=` on the whole thing is the blunt check this is replacing.
+    checks = ("river", "python") if from_legacy else ("format", "river", "python")
+    # Both readers accept the format before this one, for the same reason the
+    # legacy path does: a container change is exactly the case a migration
+    # exists for, and rejecting it here discards the state the migration is
+    # meant to carry. Checking the new number against the old file is the
+    # mistake that threw away 58MB on the first msgpack deploy.
+    if payload.get("format") not in (FORMAT, FORMAT - 1):
         log.warning(
             "structures: %s is format %s, too old to migrate into %s - starting cold",
             legacy,
@@ -218,6 +251,8 @@ def load(directory: Path | str) -> dict[str, Any] | None:
         )
         return None
     for field in checks:
+        if field == "format":
+            continue  # handled above, where the migration window is stated
         if payload.get(field) != want[field]:
             log.warning(
                 "structures: %s was written with %s %s, this is %s - starting cold",
@@ -227,6 +262,15 @@ def load(directory: Path | str) -> dict[str, Any] | None:
                 want[field],
             )
             return None
+
+    changed = _reshaped(payload.get("schema"), want["schema"])
+    if changed:
+        log.warning(
+            "structures: the shape of %s changed since this state was written (%s) - starting cold",
+            ", ".join(sorted(changed)),
+            path,
+        )
+        return None
 
     state = payload.get("state")
     return state if isinstance(state, dict) else None

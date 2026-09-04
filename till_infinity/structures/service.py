@@ -49,6 +49,7 @@ from .learning.baseline import Bench
 from .learning.baseline import vector as bench_vector
 from .learning.breaking import Breaks
 from .learning.drift import Drift
+from .learning.racing import Races
 from .models import Shape, Signal
 
 log = get_logger(__name__)
@@ -305,6 +306,11 @@ class Watcher:
         #: 0.658. See research/force.md. Publishes a number and decides
         #: nothing.
         self.breaks = Breaks()
+        #: Which wall price reaches first. Fed from the quote stream, so a
+        #: race resolves on the tick that touches a bound rather than on the
+        #: next call - resolving on calls would only ever see feeds that are
+        #: busy, and would miss a bound touched and left between them.
+        self.races = Races()
         #: The newest observation time already taken, so a re-read after a
         #: poll asks for the tail rather than for four hundred days again.
         self._macro_since = 0.0
@@ -453,6 +459,7 @@ class Watcher:
         self.activity = state.get("activity", self.activity)
         self.bench = state.get("bench", self.bench)
         self.breaks = state.get("breaks", self.breaks)
+        self.races = state.get("races", self.races)
         # Configuration re-applied over the restore, and this is not tidying.
         # The pickled engine carries the settings it was **first** built with,
         # so every one of these was inert from the moment a state file existed:
@@ -495,6 +502,7 @@ class Watcher:
                     "engine": self.engine,
                     "bench": self.bench,
                     "breaks": self.breaks,
+                    "races": self.races,
                     "clock": self.clock,
                     "activity": self.activity,
                 },
@@ -831,9 +839,31 @@ class Watcher:
 
     # -------------------------------------------------------------- running
 
+    def _step_races(self, payload: dict) -> None:
+        """Resolve any open channel race on this feed against the new price.
+
+        The label half of `learning/racing.py`, and the half that has to exist
+        before the model means anything. Nothing here predicts - the race was
+        opened with the features it was published with, and `step` scores those
+        against what actually happened.
+        """
+        feed = str(payload.get("feed") or "")
+        if not feed:
+            return
+        mid = payload.get("mid")
+        if not isinstance(mid, int | float) or mid <= 0:
+            bid, ask = payload.get("bid"), payload.get("ask")
+            if not isinstance(bid, int | float) or not isinstance(ask, int | float):
+                return
+            mid = (float(bid) + float(ask)) / 2
+        which = self.races.step(feed, float(mid))
+        if which:
+            log.debug("structures: %s channel resolved %s", feed, which)
+
     async def handle(self, message: Message) -> list[Signal]:
         """One bus message in, zero or more findings out."""
         if message.topic == QUOTES:
+            self._step_races(message.payload)
             signals = self.detector.observe(message.payload)
             calls = self.engine.observe_quote(message.payload)
             await self._watch_calls(calls)
@@ -982,7 +1012,15 @@ class Watcher:
             # `channel.py` for why this is not allowed to refuse anything yet.
             unit = call.level.price * vol.bps / 10_000 if vol.bps > 0 else 0.0
             band = channel_of(grouped[call.feed], call.price, unit, feed=call.feed)
-            signal = replace(signal, features={**signal.features, **band.features()})
+            reading = band.features()
+            # Which wall price reaches first, from the model that learns it,
+            # and the race it will be scored on. Opened here rather than on
+            # every quote because this is where the bounds are actually known,
+            # and a newer channel replaces an older one on the same feed.
+            reading.update(self.races.reading(reading))
+            if band.bounded:
+                self.races.watch(call.feed, band.upper.price, band.lower.price, band.features())
+            signal = replace(signal, features={**signal.features, **reading})
             zone = self._zone_for(grouped[call.feed], call.level)
             if zone is None:
                 loners.append(signal)

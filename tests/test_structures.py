@@ -680,8 +680,14 @@ def test_adding_a_field_invalidates_old_state(tmp_path, monkeypatch):
     store.save({"detector": Detector()}, tmp_path)
     assert store.load(tmp_path) is not None
 
-    # the shape of what we persist changes
-    monkeypatch.setattr(store, "_schema", lambda: "different")
+    # The shape of a class we persist changes. Expressed as a field change on
+    # a real class rather than a sentinel, because the check is per class now:
+    # a schema that merely *differs* is the case of a model being added, and
+    # that must not cost the file. See `_reshaped`.
+    bent = dict(store._schema())
+    name = next(iter(bent))
+    bent[name] = bent[name] + ",invented"
+    monkeypatch.setattr(store, "_schema", lambda: bent)
     assert store.load(tmp_path) is None
 
 
@@ -857,6 +863,40 @@ def test_a_volatility_saved_before_a_field_existed_still_loads():
     assert pickle.loads(pickle.dumps(book)).of("gold", "5m").tick == 0.0
 
 
+def test_adding_a_model_does_not_discard_the_state():
+    """A single fingerprint over the whole package changed when anything
+    changed, so adding `racing.Races` would have thrown away every level, the
+    break model and weeks of touches - for a class that was not in the old file
+    and could not conflict with anything in it. Twice in one day."""
+    from till_infinity.structures import store
+
+    current = store._schema()
+    without = {k: v for k, v in current.items() if not k.startswith("racing.")}
+
+    assert store._reshaped(without, current) == []
+
+
+def test_changing_a_persisted_class_still_discards_it():
+    """The other half. A class in both, with different fields, is the danger
+    the fingerprint exists for - `Volatility` gaining `_tick` is what it
+    missed."""
+    from till_infinity.structures import store
+
+    current = store._schema()
+    bent = dict(current)
+    bent["activity.Activity"] = current["activity.Activity"] + ",invented"
+
+    assert store._reshaped(bent, current) == ["activity.Activity"]
+
+
+def test_a_state_file_from_the_hash_era_is_still_readable():
+    """Format 3 stored one hash and there is nothing to compare key by key.
+    Rejecting it would discard exactly the state this change exists to keep."""
+    from till_infinity.structures import store
+
+    assert store._reshaped("1c464f3d6dbfafb5", store._schema()) == []
+
+
 def test_state_pickled_under_a_module_s_old_path_still_loads():
     """The gap in `codec`'s own reasoning, and it cost a cold start.
 
@@ -922,11 +962,11 @@ def test_the_schema_covers_the_subpackages_and_not_their_paths():
     assert {"activity", "breaking", "pips", "volatility"} <= covered
     assert len(covered) > 40
 
-    # And the hash is built from basenames, so no path appears in it.
+    # And it is keyed on basenames, so no folder appears in any key.
     shapes = store._schema()
-    assert len(shapes) == 16
-    assert "drawing" not in shapes
-    assert "learning" not in shapes
+    assert len(shapes) > 40
+    assert not [k for k in shapes if "drawing" in k or "learning" in k]
+    assert "activity.Activity" in shapes
 
 
 def test_every_persisted_class_restores_a_field_it_predates():
