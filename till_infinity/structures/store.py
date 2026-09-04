@@ -43,8 +43,11 @@ from ..logging import get_logger
 
 log = get_logger(__name__)
 
-FORMAT = 2
-STATE_FILE = "models.pkl"
+FORMAT = 3
+#: The current file. `.pkl` is kept as the name of the **old** one so a build
+#: that has not migrated yet can still be rolled back to.
+STATE_FILE = "models.msgpack"
+LEGACY_FILE = "models.pkl"
 
 
 def _schema() -> str:
@@ -99,6 +102,32 @@ def _schema() -> str:
     return hashlib.sha256(";".join(shapes).encode()).hexdigest()[:16]
 
 
+def _encode(payload: dict[str, Any]) -> bytes:
+    """msgpack, with our own classes already reduced to tagged mappings.
+
+    `codec.pack` is what buys path independence; msgpack is only the container.
+    That separation is deliberate - it means the guarantee does not depend on
+    which serialiser is installed, and a fallback container cannot quietly take
+    it away.
+    """
+    import msgpack
+
+    from .codec import pack
+
+    return msgpack.packb({**payload, "state": pack(payload.get("state") or {})}, use_bin_type=True)
+
+
+def _decode(raw: bytes) -> dict[str, Any]:
+    import msgpack
+
+    from .codec import unpack
+
+    payload = msgpack.unpackb(raw, raw=False, strict_map_key=False)
+    if isinstance(payload, dict):
+        payload["state"] = unpack(payload.get("state") or {})
+    return payload
+
+
 def _fingerprint() -> dict[str, Any]:
     return {
         "format": FORMAT,
@@ -116,7 +145,7 @@ def save(state: dict[str, Any], directory: Path | str) -> Path:
     payload = {**_fingerprint(), "state": state}
 
     temp = path.with_suffix(".tmp")
-    temp.write_bytes(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
+    temp.write_bytes(_encode(payload))
     temp.replace(path)  # atomic on POSIX
     log.debug("structures: saved model state to %s", path)
     return path
@@ -129,13 +158,22 @@ def load(directory: Path | str) -> dict[str, Any] | None:
     slow but correct; refusing to start at all would make a bad state file into
     an outage.
     """
-    path = Path(directory) / STATE_FILE
-    if not path.exists():
+    root = Path(directory)
+    path = root / STATE_FILE
+    legacy = root / LEGACY_FILE
+    if not path.exists() and not legacy.exists():
         return None
     try:
-        payload = pickle.loads(path.read_bytes())
+        if path.exists():
+            payload = _decode(path.read_bytes())
+        else:
+            # One-way migration. The old file is left where it is: the next
+            # save writes the new one beside it, and a rollback needs the old
+            # one to still be there.
+            log.info("structures: reading %s and migrating to %s", legacy, STATE_FILE)
+            payload = pickle.loads(legacy.read_bytes())
     except Exception as exc:
-        log.warning("structures: could not read %s (%s) - starting cold", path, exc)
+        log.warning("structures: could not read state (%s) - starting cold", exc)
         return None
 
     if not isinstance(payload, dict):

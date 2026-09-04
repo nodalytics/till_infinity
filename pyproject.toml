@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "rich>=15.0.0",
     "ccxt>=4.4.0",
+    "msgpack>=1.1.0",
     "river[pandas]>=0.25.0",
     "tenacity>=9.1.4",
     "yfinance>=1.5.2",
@@ -138,6 +139,10 @@ max-returns = 8
 # been extracted to methods on their own merits, and further extraction would
 # be done to satisfy the counter rather than to make anything clearer.
 "till_infinity/trading/strategies/scalper.py" = ["ARG002", "PLR0911", "PLR0912"]
+# `codec.unpack` is one return per wire type. Collapsing eight tagged
+# shapes into a table would put the mapping somewhere other than beside
+# the code that reads it, for no gain but a lint score.
+"till_infinity/structures/codec.py" = ["PLR0911"]
 # The swing strategies moved out of scalper.py and brought its exemptions:
 # `FadeToValue.consider` overrides the whole chain and returns a refusal at
 # each stage, which is the shape, not a smell.
