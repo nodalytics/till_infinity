@@ -1,9 +1,9 @@
 # Features that ship, configure, log correctly, and do nothing
 
-Four in one day, 2026-09-03. Each passed its tests, each described itself
-accurately in the logs, and each changed nothing about the running system. They
-are collected here because the pattern is now the most common defect in this
-repository and the individual write-ups bury it.
+Four in one day on 2026-09-03, and more the day after. Each passed its tests,
+each described itself accurately in the logs, and each changed nothing about
+the running system. They are collected here because the pattern is now the most
+common defect in this repository and the individual write-ups bury it.
 
 ## The four
 
@@ -17,6 +17,63 @@ repository and the individual write-ups bury it.
 Two more from the same week: eleven new synthetic feeds polled by nothing and
 then warmed by nothing, and `confluence` absent from every outcome so 12,504
 resolutions recorded zero agreeing timeframes.
+
+## The fifth, and the one that reported a result — 2026-09-04
+
+| what | why it did nothing | how long |
+| --- | --- | --- |
+| `max_spread` / `min_days` on the ccxt board | `fetch_tickers` carries neither field, and `_rejects` skips a zero reading on purpose | since written |
+| `drift.py`'s "settled" report | read `models.pkl`, which stopped being the live state when the store moved to msgpack | ~12 hours |
+
+The first is the familiar shape. Measured against the live Binance board, all
+762 rows came back `bid=0, ask=0` and `listed_days=0`, so a `max_spread` of
+1e-9 rejected nothing and a `min_days` of 10,000 rejected nothing, while a
+control `min_volume` of 1e12 correctly rejected all 762. Two of six filters were
+decoration, and the fixtures hid it by setting both fields by hand.
+
+**The second is worse than inert and belongs in a category of its own: it
+produced a confident, specific, wrong answer, and I relayed it.** `drift.py`
+watches the break model's weights and reports whether they are settling. Its
+path was hardcoded to `models.pkl`. When the store moved to msgpack that file
+stopped being written, and from 07:05 onwards every check compared one frozen
+snapshot against itself. Movement came out at exactly 0.000 three times running
+and it announced the model **SETTLED**.
+
+It had not settled. Against the live state the weights were
+
+    approach_vol -0.371 · depth_vol -0.285 · slowing -0.153
+    prior_slope  +0.121 · interval_log -0.078 · slope  +0.057
+
+against the stale file's `-0.166 / -0.492 / +0.011 / -0.138 / +0.067 / -0.100`:
+three signs flipped, the ordering changed, total movement **1.135**.
+
+Everything above this section is about a feature that goes quiet. This one
+*spoke*, and what it said was the strongest possible version of the claim it
+was built to test. **A monitor reading a stale source does not fall silent - it
+reports perfect stability**, because an unchanging file is indistinguishable
+from a converged model by every measure the monitor has. That is the most
+dangerous form of this defect, since silence invites a check and a clean result
+ends one.
+
+The same script also killed the link alert it rode on. It unpickled by hand
+rather than through `store.load`, so once `structures/` grew subpackages it
+died with `No module named 'till_infinity.structures.anomaly'` - and because it
+ran last over ssh, **its exit code became the link's**. The watcher reported the
+host unreachable for an hour while the host was answering every request. A
+failing component inside a health check is reported as the health of the whole.
+
+### What it added to the list
+
+* **A watcher needs a check that it is watching.** Movement is now only counted
+  when the state file's mtime has changed; otherwise it says so. Two checks
+  inside one save window read identical bytes and would otherwise score a
+  perfect 0.000 - the same trap one level down.
+* **Operational scripts rot faster than code and are tested by nobody.** These
+  two lived only in `/tmp` on the box. Nothing imported them, no test ran them,
+  and the refactor that moved `structures/` could not have known they existed.
+  They are in `research/harness/` now.
+* **Zero movement is not evidence of convergence.** It is evidence of *nothing
+  having been read*, until the source is shown to have changed.
 
 ## What they have in common
 
@@ -58,6 +115,11 @@ Not tests, in every case so far. What found them:
    notification floor was caught because a probe said "1h kept: False". Under
    the story I was telling, that was impossible - and it was the *wrong*
    answer, from a probe that was itself wrong, that made me look again.
+4. **A false alarm, chased rather than dismissed.** `drift.py` was found only
+   because a link-down alert fired while the link was demonstrably up. The
+   alert was wrong, the thing it was wrong about was real, and the twelve
+   hours of "SETTLED" would still be uncorrected if the noisy alert had been
+   silenced instead of explained.
 
 ## The verification that is worth doing
 
