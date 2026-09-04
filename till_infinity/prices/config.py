@@ -854,6 +854,13 @@ def _env(name: str) -> str | None:
     return os.environ.get(name) or None
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in ("0", "false", "no", "off")
+
+
 def _env_int(default: int, name: str) -> int:
     raw = _env(name)
     return int(raw) if raw else default
@@ -903,6 +910,22 @@ class Settings:
     tv_request_gap: float = 0.25
 
     # Yahoo (yfinance is blocking; it runs in a thread pool)
+    #: Which exchange `CcxtSource` talks to, by ccxt's own name.
+    ccxt_exchange: str = "binance"
+    #: Pair selection. Every threshold is off at zero - see `crypto.Filters`
+    #: for why a default nobody chose is worse than collecting too much.
+    #: `swap` for perpetuals, `spot` for spot. Swaps have positions with a
+    #: side, which is the model `trading` is built around.
+    ccxt_market_type: str = "swap"
+    ccxt_swaps_only: bool = True
+    ccxt_top: int = 0
+    ccxt_min_volume: float = 0.0
+    ccxt_min_days: float = 0.0
+    ccxt_max_spread: float = 0.0
+    ccxt_min_price: float = 0.0
+    ccxt_min_range: float = 0.0
+    ccxt_quotes: tuple[str, ...] = ()
+
     yahoo_concurrency: int = 4
     yahoo_request_gap: float = 0.2
 
@@ -949,6 +972,20 @@ class Settings:
             tv_ws_url=_env("PRICES_TV_WS_URL") or DEFAULT_TV_WS_URL,
             tv_origin=_env("PRICES_TV_ORIGIN") or DEFAULT_TV_ORIGIN,
             tv_auth_token=_env("PRICES_TV_TOKEN") or DEFAULT_TV_TOKEN,
+            ccxt_exchange=(os.environ.get("PRICES_CCXT_EXCHANGE") or "binance").strip(),
+            ccxt_market_type=(os.environ.get("PRICES_CCXT_MARKET_TYPE") or "swap").strip(),
+            ccxt_swaps_only=_env_flag("PRICES_CCXT_SWAPS_ONLY", True),
+            ccxt_top=_env_int(0, "PRICES_CCXT_TOP"),
+            ccxt_min_volume=_env_float(0.0, "PRICES_CCXT_MIN_VOLUME"),
+            ccxt_min_days=_env_float(0.0, "PRICES_CCXT_MIN_DAYS"),
+            ccxt_max_spread=_env_float(0.0, "PRICES_CCXT_MAX_SPREAD"),
+            ccxt_min_price=_env_float(0.0, "PRICES_CCXT_MIN_PRICE"),
+            ccxt_min_range=_env_float(0.0, "PRICES_CCXT_MIN_RANGE"),
+            ccxt_quotes=tuple(
+                q.strip().upper()
+                for q in (os.environ.get("PRICES_CCXT_QUOTES") or "").split(",")
+                if q.strip()
+            ),
             yahoo_concurrency=_env_int(4, "PRICES_YAHOO_CONCURRENCY"),
             quote_poll_seconds=_env_float(15.0, "PRICES_QUOTE_POLL"),
             quote_concurrency=_env_int(8, "PRICES_QUOTE_CONCURRENCY"),

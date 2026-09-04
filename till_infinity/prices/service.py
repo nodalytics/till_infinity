@@ -25,6 +25,7 @@ from ..bus import BARS, Bus
 from ..logging import get_logger
 from .broker import BrokerSource
 from .config import DEFAULT_SOURCES, Feed, Settings
+from .crypto import CcxtSource
 from .models import INTERVALS, Bar, Interval, SeriesKey, WriteResult
 from .source import Job, Source, TransientError, first_cause
 from .store import Store
@@ -37,6 +38,7 @@ SOURCES: dict[str, type[Source]] = {
     TradingViewSource.name: TradingViewSource,
     YahooSource.name: YahooSource,
     BrokerSource.name: BrokerSource,
+    CcxtSource.name: CcxtSource,
 }
 
 

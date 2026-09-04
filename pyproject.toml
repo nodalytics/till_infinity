@@ -16,6 +16,7 @@ dependencies = [
     "pydantic-ai-slim[anthropic]>=2.28.0",
     "python-dotenv>=1.2.2",
     "rich>=15.0.0",
+    "ccxt>=4.4.0",
     "river[pandas]>=0.25.0",
     "tenacity>=9.1.4",
     "yfinance>=1.5.2",
