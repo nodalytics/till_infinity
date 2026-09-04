@@ -535,3 +535,20 @@ def test_lengthening_the_vector_bumps_the_recipe():
 
     assert len(NAMES) == 6
     assert "interval_log" in RECIPE
+
+
+def test_the_learning_rate_favours_a_stable_gate():
+    """Swept over the whole record: 0.05 scored 0.7304 AUC at 2.751 drift per
+    100 observations, 0.02 scored 0.7206 at 1.110. Accuracy saturates long
+    before stability does, and `max_break_risk` acts on this model's output -
+    at the old rate the live weights moved 1.652, 1.174, 1.840 and 1.441 in
+    four consecutive half-hours."""
+    from till_infinity.structures.breaking import RATE, Breaks
+
+    assert RATE == 0.02
+    assert Breaks().model.rate == RATE
+    # And a restart uses the same one rather than a second copy of the number.
+    model = Breaks()
+    model.recipe = "something older"
+    model.observe(Touch(approach_vol=1.0), "reject")
+    assert model.model.rate == RATE

@@ -148,6 +148,33 @@ log = get_logger(__name__)
 #: dataclass, `Breaks.recipe` is the slot *descriptor*, not the default value,
 #: so comparing an instance against it always differs and the model would
 #: restart on every single restore.
+#: How fast the fit moves. Swept over the whole record on 2026-09-04,
+#: predict-then-update in time order, reporting accuracy against **drift** -
+#: the mean absolute weight change per observation, measured over the last
+#: third of the run once the fit should have settled:
+#:
+#: | rate | AUC | drift per 100 |
+#: | ---: | ---: | ---: |
+#: | 0.005 | 0.6848 | 0.281 |
+#: | 0.010 | 0.7071 | 0.559 |
+#: | **0.020** | **0.7206** | **1.110** |
+#: | 0.050 | 0.7304 | 2.751 |
+#: | 0.100 | 0.7312 | 5.468 |
+#:
+#: **Accuracy saturates long before stability does.** 0.05 to 0.10 buys 0.0008
+#: AUC for double the drift; coming down to 0.02 costs 0.0098 and cuts drift to
+#: 40%.
+#:
+#: The cost of the old rate was not academic. The live weights moved 1.652,
+#: 1.174, 1.840 and 1.441 in four consecutive half-hours, and `interval_log`
+#: changed sign three times - so `max_break_risk`, which acts on this model's
+#: output, could refuse a level on one pass and accept the same features on the
+#: next. That is not a rule being applied.
+#:
+#: Not a `RECIPE` change: the rate alters how fast the fit moves, not what any
+#: input means, so the standardiser's statistics stay valid.
+RATE = 0.02
+
 RECIPE = "2026-09-03 interval_log added"
 
 
@@ -162,7 +189,7 @@ class Breaks(Restorable):
     touches.
     """
 
-    model: Logistic = field(default_factory=lambda: Logistic(rate=0.05))
+    model: Logistic = field(default_factory=lambda: Logistic(rate=RATE))
 
     #: What the model was trained on. Bump it whenever the **meaning** of an
     #: input changes, and the saved state is dropped rather than carried.
@@ -236,7 +263,7 @@ class Breaks(Restorable):
             self.recipe,
             RECIPE,
         )
-        self.model = Logistic(rate=0.05)
+        self.model = Logistic(rate=RATE)
         self.recipe = RECIPE
 
     def observe(self, features: object, outcome: str) -> float | None:
