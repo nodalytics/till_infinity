@@ -143,7 +143,7 @@ def main():
         taken = [(r, w) for r, w in taken if w]
         right = sum(1 for r, w in taken if r["push"] and (1 if r["push"] > 0 else -1) == w)
         rs = [score(r, w, 1.0, 1.5) for r, w in taken]
-        print(f"{rule:10s} {len(taken):7,} {right/len(taken):8.1%} {sum(rs)/len(rs):+9.3f}")
+        print(f"{rule:10s} {len(taken):7,} {right / len(taken):8.1%} {sum(rs) / len(rs):+9.3f}")
 
     print("\nmomentum, split by how hard price arrived:")
     print(f"{'arrival':14s} {'n':>7s} {'hold R':>9s} {'break R':>9s}")
@@ -154,7 +154,7 @@ def main():
             continue
         h = [score(r, side_of("hold", r), 1.0, 1.5) for r in band]
         b = [score(r, side_of("break", r), 1.0, 1.5) for r in band]
-        print(f"{name:14s} {len(band):7,} {sum(h)/len(h):+9.3f} {sum(b)/len(b):+9.3f}")
+        print(f"{name:14s} {len(band):7,} {sum(h) / len(h):+9.3f} {sum(b) / len(b):+9.3f}")
 
 
 if __name__ == "__main__":

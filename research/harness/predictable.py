@@ -45,10 +45,7 @@ FEWEST = 30
 
 def load(db):
     con = sqlite3.connect(db)
-    q = (
-        "select time,context from entries where actor='structures' "
-        "and kind='outcome' order by time"
-    )
+    q = "select time,context from entries where actor='structures' and kind='outcome' order by time"
     series = defaultdict(list)
     for _t, ctx in con.execute(q):
         d = json.loads(ctx or "{}")

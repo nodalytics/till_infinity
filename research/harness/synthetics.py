@@ -54,9 +54,9 @@ def when(raw) -> float:
     if isinstance(raw, int | float):
         return float(raw)
     try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).replace(
-            tzinfo=UTC
-        ).timestamp()
+        return (
+            datetime.fromisoformat(str(raw).replace("Z", "+00:00")).replace(tzinfo=UTC).timestamp()
+        )
     except ValueError:
         return 0.0
 

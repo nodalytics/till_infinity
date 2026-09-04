@@ -127,7 +127,11 @@ def main():
             else:
                 cells.append(f"{'-':>14s}")
         every = [score(t, stop, stop * mult) for t in rows]
-        print(f"{stop:5.1f} " + " ".join(f"{c:>14s}" for c in cells) + f" {sum(every)/len(every):+9.3f}")
+        print(
+            f"{stop:5.1f} "
+            + " ".join(f"{c:>14s}" for c in cells)
+            + f" {sum(every) / len(every):+9.3f}"
+        )
 
     # The question the edge recording was added for. Only meaningful once
     # touches recorded after that change have resolved.
@@ -142,7 +146,7 @@ def main():
             if len(band) < 30:
                 continue
             r = [score(t, 2.0, 3.0) for t in band]
-            print(f"{low:.2f}-{high:.2f} {len(band):7,} {sum(r)/len(r):+9.3f}")
+            print(f"{low:.2f}-{high:.2f} {len(band):7,} {sum(r) / len(r):+9.3f}")
     else:
         print("  too few to band - the edge is recorded from 2026-08-27 only.")
 

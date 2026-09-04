@@ -94,8 +94,10 @@ def main():
         narrow, broad = wide[:half], wide[half:]
         print("does a wider stop overrun less, in R?")
         at = wide[half]["stop_vol"]
-        print(f"  narrower than {at:.2f}v: {mean([r['past'] for r in narrow]):+.3f}R"
-              f"  (n={len(narrow)})")
+        print(
+            f"  narrower than {at:.2f}v: {mean([r['past'] for r in narrow]):+.3f}R"
+            f"  (n={len(narrow)})"
+        )
         print(f"  wider:                {mean([r['past'] for r in broad]):+.3f}R  (n={len(broad)})")
         print("  a fixed price slippage is a smaller share of a wider stop, so")
         print("  this falling would make stop_hold_scaling a fix for the overrun too")

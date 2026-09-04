@@ -57,8 +57,10 @@ def main():
     print(f"{len(rows):,} resolved touches")
     print(f"stop {STOP}v beyond the level, target {TARGET}v, entry moved toward the stop\n")
 
-    print(f"{'entry depth':>12s} {'filled':>8s} {'fill rate':>10s} "
-          f"{'R per fill':>11s} {'R per signal':>13s}")
+    print(
+        f"{'entry depth':>12s} {'filled':>8s} {'fill rate':>10s} "
+        f"{'R per fill':>11s} {'R per signal':>13s}"
+    )
     print("-" * 60)
     for depth in DEPTHS:
         scored = [outcome(t, depth) for t in rows]
@@ -69,8 +71,10 @@ def main():
         # Every signal counts. An unfilled one earns nothing, which is the
         # cost of waiting and the thing a fills-only comparison hides.
         per_signal = sum(filled) / len(scored)
-        print(f"{depth:>11.2f}v {len(filled):>8,} {len(filled) / len(scored):>9.1%} "
-              f"{per_fill:>11.3f} {per_signal:>13.3f}")
+        print(
+            f"{depth:>11.2f}v {len(filled):>8,} {len(filled) / len(scored):>9.1%} "
+            f"{per_fill:>11.3f} {per_signal:>13.3f}"
+        )
 
     print("\nR per fill rises because the risk shrinks and the run grows.")
     print("R per signal is what the account sees, and it is the one that decides.")

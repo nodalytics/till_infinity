@@ -42,10 +42,7 @@ NEAR_VOL = 0.5
 
 def load(db):
     con = sqlite3.connect(db)
-    q = (
-        "select context from entries where actor='structures' "
-        "and kind='outcome' order by time"
-    )
+    q = "select context from entries where actor='structures' and kind='outcome' order by time"
     out = []
     for (ctx,) in con.execute(q):
         d = json.loads(ctx or "{}")
@@ -130,8 +127,10 @@ def main():
     for i in range(6):
         chunk = ordered[i * size : (i + 1) * size] if i < 5 else ordered[5 * size :]
         if chunk:
-            print(f"  {chunk[0]['distance_vol']:>6.2f}-{chunk[-1]['distance_vol']:<7.2f} "
-                  f"{len(chunk):>7,} {mean_r(chunk):>8.3f}")
+            print(
+                f"  {chunk[0]['distance_vol']:>6.2f}-{chunk[-1]['distance_vol']:<7.2f} "
+                f"{len(chunk):>7,} {mean_r(chunk):>8.3f}"
+            )
 
     print("\nfreshness: an origin price has already worked through is a weaker claim")
     fresh = [r for r in judged if r["revisits"] == 0]
@@ -139,5 +138,7 @@ def main():
     if min(len(fresh), len(worn)) > 100:
         print(f"  never revisited: {len(fresh):>7,} {mean_r(fresh):>8.3f}")
         print(f"  twice or more:   {len(worn):>7,} {mean_r(worn):>8.3f}")
+
+
 if __name__ == "__main__":
     main()

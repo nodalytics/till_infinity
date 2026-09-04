@@ -11,6 +11,7 @@ Read from stored bars, forward from each stopped trade's own entry, over its
 own intended hold. Nothing is assumed about what "would have happened" beyond
 what the bars actually printed.
 """
+
 import json, sqlite3, statistics as st
 from collections import Counter
 
@@ -41,12 +42,14 @@ print(f"{len(trades)} closed trades: " + ", ".join(f"{k} {v}" for k, v in ended.
 stopped = [t for t in trades if str(t.get("exit_kind") or "") == "stop"]
 print(f"\n{len(stopped)} stopped out\n")
 
+
 def bars(feed, interval, since, until):
     return p.execute(
         "select ts, high, low from bars where feed=? and interval=? and ts>=? and ts<=?"
         " order by ts asc",
         (feed, interval, since, until),
     ).fetchall()
+
 
 early = wrong = unknown = ambiguous = 0
 early_money = wrong_money = 0.0
@@ -63,7 +66,7 @@ for t in stopped:
         unknown += 1
         continue
     started = t["_closed"] - held
-    window = bars(feed, interval, started, started + max(want, held) )
+    window = bars(feed, interval, started, started + max(want, held))
     if len(window) < 2:
         unknown += 1
         continue
@@ -96,8 +99,10 @@ print(f"   no bars to judge                               : {unknown:3d}")
 if reached_after:
     reached_after.sort()
     q = lambda f: reached_after[min(len(reached_after) - 1, int(f * len(reached_after)))]
-    print(f"\n   after the stop it took: median {st.median(reached_after):.0f}s, "
-          f"p25 {q(.25):.0f}s, p75 {q(.75):.0f}s")
+    print(
+        f"\n   after the stop it took: median {st.median(reached_after):.0f}s, "
+        f"p25 {q(0.25):.0f}s, p75 {q(0.75):.0f}s"
+    )
 
 # How far past the stop did price actually go before turning? That sizes the fix.
 overshoot = []
@@ -113,4 +118,6 @@ for t in stopped:
 if overshoot:
     overshoot.sort()
     print(f"\n   worst excursion as a multiple of the stop, on {len(overshoot)} trades:")
-    print(f"      median {st.median(overshoot):.2f}x   p75 {overshoot[int(.75*len(overshoot))]:.2f}x")
+    print(
+        f"      median {st.median(overshoot):.2f}x   p75 {overshoot[int(0.75 * len(overshoot))]:.2f}x"
+    )

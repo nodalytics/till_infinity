@@ -39,10 +39,7 @@ SKIP = {"level", "when", "seconds", "push_vol"}
 
 def load(db):
     con = sqlite3.connect(db)
-    q = (
-        "select context from entries where actor='structures' "
-        "and kind='outcome' order by time"
-    )
+    q = "select context from entries where actor='structures' and kind='outcome' order by time"
     series = defaultdict(lambda: defaultdict(list))
     for (ctx,) in con.execute(q):
         d = json.loads(ctx or "{}")

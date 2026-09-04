@@ -116,8 +116,12 @@ def main() -> None:
     lengths = sorted(len(v) for v in runs.values())
     print("=== 0. how much history a level actually has")
     for q in (50, 75, 90, 99, 100):
-        print(f"    p{q:<4} {lengths[min(int(len(lengths) * q / 100), len(lengths) - 1)]:>4} touches")
-    print(f"    a two-state transition matrix needs four counts; the median level has {lengths[len(lengths) // 2]}")
+        print(
+            f"    p{q:<4} {lengths[min(int(len(lengths) * q / 100), len(lengths) - 1)]:>4} touches"
+        )
+    print(
+        f"    a two-state transition matrix needs four counts; the median level has {lengths[len(lengths) // 2]}"
+    )
 
     print("\n=== 1. is behaviour stationary - first half against second")
     firsts = seconds = first_held = second_held = 0
@@ -182,7 +186,9 @@ def main() -> None:
     for name, seen in after.items():
         hits = sum(seen)
         lo, hi = wilson(hits, len(seen))
-        print(f"    {name:<22} {len(seen):>7} {hits / len(seen):>15.1%} {f'{lo:.1%} - {hi:.1%}':>18}")
+        print(
+            f"    {name:<22} {len(seen):>7} {hits / len(seen):>15.1%} {f'{lo:.1%} - {hi:.1%}':>18}"
+        )
     print(f"    {'pooled':<22} {len(rows):>7} {rate:>15.1%}")
 
 

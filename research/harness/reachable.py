@@ -123,7 +123,9 @@ def main() -> None:
 
     print()
     if not at:
-        empty = next((n for (n, c), (_, p) in zip(steps[1:], steps, strict=False) if c == 0 and p), None)
+        empty = next(
+            (n for (n, c), (_, p) in zip(steps[1:], steps, strict=False) if c == 0 and p), None
+        )
         print(f"nothing survives. the set empties at: {empty}")
     else:
         print(f"{len(at)} signals cleared every condition")
