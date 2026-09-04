@@ -35,6 +35,7 @@ filter that will one day silently empty the board.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Self
@@ -238,23 +239,77 @@ class CcxtSource(Source):
             await self._exchange.close()
             self._exchange = None
 
+    async def _top_of_book(self) -> dict[str, tuple[float, float]]:
+        """Bid and ask per symbol, from the book rather than the day summary.
+
+        **`fetch_tickers` does not carry them here.** Binance answers it from
+        the 24h statistics endpoint, which has no top of book: all 762 swap
+        rows came back `bid=0, ask=0`, and since `spread_share` reports 0.0
+        when it cannot be computed, `max_spread` could not reject a single
+        pair at any threshold - 1e-9 dropped none of them. The filter was
+        decorative. `fetch_bids_asks` is the bookTicker endpoint and returns
+        all 762 populated.
+
+        Best-effort: an exchange without it keeps the old behaviour, where an
+        unknown spread costs a pair nothing.
+        """
+        if not self._exchange.has.get("fetchBidsAsks"):
+            return {}
+        try:
+            rows = await self._exchange.fetch_bids_asks()
+        except Exception as exc:  # a missing spread must not cost us the board
+            log.info("prices: ccxt could not fetch top of book: %s", exc)
+            return {}
+        out: dict[str, tuple[float, float]] = {}
+        for symbol, row in rows.items():
+            if isinstance(row, dict):
+                out[str(symbol)] = (float(row.get("bid") or 0.0), float(row.get("ask") or 0.0))
+        return out
+
+    async def _listed_at(self) -> dict[str, float]:
+        """When each market was created, in epoch milliseconds.
+
+        `listed_days` was never assigned anywhere in this module - the field
+        existed, defaulted to 0.0, and `min_days` was written to skip a zero
+        reading, so a 10,000-day threshold rejected nothing. ccxt's unified
+        `market["created"]` carries it, populated on all 911 Binance swaps.
+        """
+        try:
+            markets = await self._exchange.load_markets()
+        except Exception as exc:
+            log.info("prices: ccxt could not load markets: %s", exc)
+            return {}
+        out: dict[str, float] = {}
+        for symbol, market in markets.items():
+            if isinstance(market, dict) and market.get("created"):
+                out[str(symbol)] = float(market["created"])
+        return out
+
     async def board(self) -> list[Board]:
         """Every pair the exchange lists, as the filters want to see it."""
         if self._exchange is None:
             raise PermanentError("the exchange is not open")
         tickers = await self._exchange.fetch_tickers()
+        # Both are needed because `fetch_tickers` carries neither, and a filter
+        # reading a field nothing populates is off however it is configured.
+        book = await self._top_of_book()
+        listed = await self._listed_at()
+        now = time.time() * 1000.0
         out = []
         for symbol, row in tickers.items():
             if not isinstance(row, dict):
                 continue
             high, low = row.get("high") or 0.0, row.get("low") or 0.0
             last = float(row.get("last") or 0.0)
+            bid, ask = book.get(str(symbol), (0.0, 0.0))
+            created = listed.get(str(symbol), 0.0)
             out.append(
                 Board(
                     symbol=str(symbol),
                     quote_volume=float(row.get("quoteVolume") or 0.0),
-                    bid=float(row.get("bid") or 0.0),
-                    ask=float(row.get("ask") or 0.0),
+                    bid=bid or float(row.get("bid") or 0.0),
+                    ask=ask or float(row.get("ask") or 0.0),
+                    listed_days=(now - created) / 86_400_000.0 if created > 0 else 0.0,
                     last=last,
                     # The day's range as a share of price, which is the cheap
                     # version of freqtrade's range-stability idea: a pair that
@@ -297,6 +352,49 @@ class CcxtSource(Source):
             total += await sink(job.key(interval), self.keep(got, interval))
             await asyncio.sleep(0)
         return total
+
+
+def filters_from(settings: Any) -> Filters:
+    """The configured filter set, read off `Settings`."""
+    return Filters(
+        top=int(getattr(settings, "ccxt_top", 0) or 0),
+        min_volume=float(getattr(settings, "ccxt_min_volume", 0.0) or 0.0),
+        min_days=float(getattr(settings, "ccxt_min_days", 0.0) or 0.0),
+        max_spread=float(getattr(settings, "ccxt_max_spread", 0.0) or 0.0),
+        min_price=float(getattr(settings, "ccxt_min_price", 0.0) or 0.0),
+        min_range=float(getattr(settings, "ccxt_min_range", 0.0) or 0.0),
+        quotes=tuple(getattr(settings, "ccxt_quotes", ()) or ()),
+        swaps_only=bool(getattr(settings, "ccxt_swaps_only", False)),
+    )
+
+
+async def discover_ccxt(settings: Any) -> tuple[str, ...]:
+    """The pairs worth carrying on the configured exchange, best first.
+
+    The step that was missing. `pairs_for` was exported and called by nothing,
+    no feed carried a CCXT symbol, and `ccxt_top` and its five companions were
+    read from the environment into `Settings` and never consulted - so adding
+    `ccxt` to `PRICES_SOURCES` would have started a source with no work, which
+    looks exactly like an exchange that is down.
+
+    Returns ccxt pair names for `register_ccxt_feeds`, or `()` if the exchange
+    cannot be reached: a board that does not answer must not take the rest of
+    the desk down with it.
+    """
+    try:
+        async with CcxtSource(settings) as source:
+            board = await source.board()
+    except Exception as exc:  # an unreachable exchange is not a fatal error
+        log.warning("prices: ccxt discovery failed: %s", exc)
+        return ()
+    picked = pairs_for(board, filters_from(settings))
+    log.info(
+        "prices: ccxt board %d pairs, %d carried on %s",
+        len(board),
+        len(picked),
+        getattr(settings, "ccxt_exchange", "?"),
+    )
+    return tuple(symbol.ticker for symbol in picked)
 
 
 def pairs_for(board: Sequence[Board], filters: Filters) -> tuple[Symbol, ...]:

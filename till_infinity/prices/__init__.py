@@ -25,12 +25,14 @@ from .config import (
     Settings,
     bar_source_names,
     broker_feed_names,
+    ccxt_feed_names,
     quote_source_names,
     register_broker_feeds,
+    register_ccxt_feeds,
     resolve_feeds,
     resolve_symbols,
 )
-from .crypto import Board, CcxtSource, Filters, pairs_for
+from .crypto import Board, CcxtSource, Filters, discover_ccxt, filters_from, pairs_for
 from .models import (
     DEFAULT_INTERVALS,
     INTERVALS,
@@ -113,13 +115,17 @@ __all__ = [
     "broker_feed_names",
     "build_quote_sources",
     "build_sources",
+    "ccxt_feed_names",
     "collect",
+    "discover_ccxt",
+    "filters_from",
     "iter_bars",
     "open_store",
     "pairs_for",
     "poll_once",
     "quote_source_names",
     "register_broker_feeds",
+    "register_ccxt_feeds",
     "resolve_feeds",
     "resolve_intervals",
     "resolve_symbols",

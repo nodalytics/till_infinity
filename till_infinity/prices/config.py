@@ -20,6 +20,7 @@ YAHOO = "yahoo"
 #: The trading terminal's own book, over the MT5 bridge. Off unless asked for -
 #: see `BrokerQuotes` and `broker_feeds`.
 BROKER = "broker"
+CCXT = "ccxt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -745,6 +746,47 @@ def register_broker_feeds(names: Sequence[str]) -> tuple[str, ...]:
     return added
 
 
+#: Slugs registered from a ccxt board, for the same reason `_BROKER_ONLY`
+#: exists: `resolve_symbols` returns only what `SYMBOLS` names, so a pair
+#: discovered from the exchange has to be carried explicitly or it is
+#: registered and collected by nothing.
+_CCXT_ONLY: set[str] = set()
+
+
+def ccxt_feed_names() -> tuple[str, ...]:
+    """Feeds that exist only because a ccxt board discovered them."""
+    return tuple(sorted(_CCXT_ONLY))
+
+
+def ccxt_feeds(pairs: Sequence[str]) -> dict[str, Feed]:
+    """Feeds for ccxt pairs, keyed by a slug of the pair.
+
+    The ccxt symbol is kept verbatim - `BTC/USDT:USDT` is what `fetch_ohlcv`
+    answers to, and the slug (`btc_usdt_usdt`) is what journal keys and log
+    lines carry, where slashes and colons are a nuisance.
+    """
+    made: dict[str, Feed] = {}
+    for raw in pairs:
+        pair = raw.strip()
+        if not pair:
+            continue
+        slug = slugify(pair).lower()
+        if not slug or slug in made:
+            continue
+        made[slug] = Feed(name=slug, symbols={CCXT: (Symbol(CCXT.upper(), pair),)})
+    return made
+
+
+def register_ccxt_feeds(pairs: Sequence[str]) -> tuple[str, ...]:
+    """Add discovered ccxt pairs to the catalogue. Returns the slugs added."""
+    made = ccxt_feeds(pairs)
+    added = tuple(slug for slug in made if slug not in FEEDS)
+    for slug in added:
+        FEEDS[slug] = made[slug]
+    _CCXT_ONLY.update(made)
+    return added
+
+
 def bar_source_names() -> tuple[str, ...]:
     """Which candle providers to run, from the environment.
 
@@ -759,10 +801,11 @@ def bar_source_names() -> tuple[str, ...]:
     """
     raw = _env("PRICES_SOURCES") or ""
     chosen = tuple(n.strip() for n in raw.split(",") if n.strip()) or DEFAULT_SOURCES
-    if BROKER in chosen:
-        return chosen
-    if any(BROKER in feed.symbols for feed in FEEDS.values()):
-        return (*chosen, BROKER)
+    for name in (BROKER, CCXT):
+        if name in chosen:
+            continue
+        if any(name in feed.symbols for feed in FEEDS.values()):
+            chosen = (*chosen, name)
     return chosen
 
 

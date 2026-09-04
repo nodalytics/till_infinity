@@ -368,12 +368,21 @@ class Stack:
         # `resolve_symbols` stays pure. A one-off `prices bars --symbols gold`
         # should get gold, not the whole synthetic book; this is the running
         # deployment, where the two lists are meant to describe one intent.
+        # The exchange is asked what it lists before the feed set is settled,
+        # because a ccxt pair has no entry in `SYMBOLS` to resolve - it is
+        # discovered, filtered and registered, or it does not exist. Skipped
+        # entirely unless a filter says how much to carry, so a deployment that
+        # has not opted in pays no start-up call.
+        if settings.ccxt_top or settings.ccxt_min_volume or settings.ccxt_quotes:
+            carried = await px.discover_ccxt(settings)
+            if carried:
+                px.register_ccxt_feeds(carried)
         known = {feed.name for feed in feeds}
-        extra = tuple(n for n in px.broker_feed_names() if n not in known)
+        extra = tuple(n for n in (*px.broker_feed_names(), *px.ccxt_feed_names()) if n not in known)
         if extra:
             feeds = feeds + px.resolve_symbols(extra)
             log.info(
-                "stack: %d broker-only feed(s) carried that SYMBOLS does not name: %s",
+                "stack: %d source-only feed(s) carried that SYMBOLS does not name: %s",
                 len(extra),
                 ", ".join(extra),
             )

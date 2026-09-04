@@ -2421,6 +2421,69 @@ compares a horizon-scale push against a one-bar stop, which flatters every
 trade that passes it - and `reward_to_risk` is already the largest single
 refusal reason at 143, so the gate is both busy and measuring the wrong ratio.
 
+## 6m. Trade crypto - spot and futures - on what ccxt now collects, added 2026-09-04
+
+The collection half is built and wired: `prices/crypto.py` discovers a board
+from any ccxt exchange, filters it freqtrade-style (rank by quote volume, then
+reject), registers the survivors as ordinary feeds, and `bar_source_names()`
+turns the source on once any exist. **Nothing trades them.** `trading` reaches
+the market through `Broker`, and there is no ccxt implementation of it.
+
+### What has to be decided before any of it is built
+
+**Spot or futures, and they are not the same instrument.** `CcxtSource`
+defaults to `defaultType: swap` on purpose: a perpetual has a position with a
+size and a side, which is the model `trading` is built around, where spot has
+balances and no such thing as a short. Trading spot would mean either a
+long-only book or a second position model. Collecting one and trading the other
+is worse than either - the basis is small but the liquidations that move a
+perpetual do not exist on spot, so a level learned on one is not the level
+being traded.
+
+**Funding is a cost this desk does not model.** A perpetual charges funding
+every eight hours, and it is paid by whoever holds through the stamp. It is
+not spread and it is not commission - it is a carry that scales with *time in
+the trade*, which is the one dimension `research/paying.md` does not price.
+A trailing scalp-to-swing hold is exactly the shape that pays it most.
+
+**24/7 breaks the session model.** `_warm_sessions`, `_undealable`'s shut-market
+test and the weekend logic all assume an instrument that closes. Crypto never
+does, so the "could not close a us30 position for twenty minutes" failure that
+motivated that code cannot happen - but neither can the code's assumption that
+a stale quote means a shut market. It would read a dead socket as a holiday.
+
+### What freqtrade is worth taking from, beyond the pairlists
+
+The filters are already borrowed and reimplemented. The rest of what it has
+solved and this desk has not:
+
+* **Leverage and margin mode as per-pair settings**, not a global. Isolated vs
+  cross changes what a liquidation costs, and it is set per position at the
+  exchange, so it belongs beside `SymbolSpec`.
+* **A liquidation price that is tracked, not assumed.** The stop is not the
+  worst case on a leveraged perpetual; the liquidation is, and it moves with
+  funding and with unrealised P&L on cross margin.
+* **Exchange-specific order behaviour.** freqtrade carries a per-exchange table
+  of what actually works - which order types are honoured, what the minimum
+  notional is, how `reduceOnly` behaves. ccxt unifies the call and not the
+  semantics, and that table is most of its exchange support.
+* **Precision and notional floors before sizing, not after.** A size that
+  rounds to zero is a silent no-trade, which is the shape of failure this
+  project keeps finding.
+
+### Order to build it in
+
+1. **Collect and learn only.** Feeds are registered now; let levels form on
+   them and check the models say something before any money is involved. The
+   null is cheap here - `research/null.md`'s argument applies unchanged.
+2. **Paper against ccxt quotes.** `PaperBroker` already holds its own stops and
+   needs a quote stream; there is no ccxt quote transport yet, which is the
+   next concrete gap (`quote_source_names()` has no ccxt entry).
+3. **A `CcxtBroker`**, testnet first, perpetuals only, one exchange.
+
+**Not started, and deliberately behind the trading fixes.** The give-back bug
+(`research/inert.md`) is worth more than a new venue.
+
 ## 7. BOCPD
 
 Documented in [structures.md](structures.md) as a way to *grade* a regime change
