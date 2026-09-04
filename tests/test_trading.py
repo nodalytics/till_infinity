@@ -6781,6 +6781,73 @@ def test_the_excursion_is_forgotten_when_the_trade_closes():
     assert live.position.ticket not in trader._worst
 
 
+async def _skip_said(trader, live, caplog):
+    """Run one `_manage` pass over an open position and return what it logged."""
+    import logging
+
+    trader.open[live.position.ticket] = live
+    with caplog.at_level(logging.INFO, logger="till_infinity.trading.service"):
+        await trader._manage()
+    return " ".join(caplog.messages)
+
+
+async def test_a_skipped_position_says_whether_quotes_arrived(caplog):
+    """`no best price tracked` fired 249 times in one uptime and named nothing.
+
+    It has two causes and they need opposite fixes: either no quote ever
+    reached `_mark_best` for that feed, or quotes did reach it and the symbol
+    did not match the position's. A count alone cannot separate them, which is
+    why the first version of this diagnostic narrowed the four give-backs
+    (2.75R to 4.32R in front, closed at the original stop for -68.71) to a
+    guard and no further.
+    """
+    trader = Trader(Bus(), settings=settings(break_even_at=1.0))
+    await trader.start()
+    # Quotes arrived for the feed, so `_mark_best` ran - and did not match,
+    # because the broker calls this position something else.
+    trader._quotes_seen["gold"] = 42
+    live = _live(position=position(volume=1.0, symbol="XAUUSD.raw"))
+
+    said = await _skip_said(trader, live, caplog)
+
+    assert "no best for gold" in said
+    assert "XAUUSD.raw" in said  # what the position carries
+    assert repr(trader._symbol_of.get("gold")) in said  # what the feed maps to
+    assert "42 quotes" in said  # and that quotes were not the missing half
+
+
+async def test_a_feed_that_never_quoted_is_not_blamed_on_the_symbol(caplog):
+    """The other half of the same message, and the opposite fix."""
+    trader = Trader(Bus(), settings=settings(break_even_at=1.0))
+    await trader.start()
+
+    said = await _skip_said(trader, _live(), caplog)
+
+    assert "no best for gold" in said
+    assert "0 quotes" in said
+
+
+async def test_a_quote_on_the_bus_is_enough_to_manage_a_position(caplog):
+    """The end of the path that was broken in production: a quote arrives on
+    the bus, `_quote` resolves the feed to a broker symbol, `_mark_best` marks
+    the ticket, and `_manage` gets past the guard. Every step of this was
+    checked from outside the process and looked correct while no position was
+    ever managed, so it is checked from inside one here."""
+    trader = Trader(Bus(), settings=settings(break_even_at=1.0))
+    await trader.start()
+    live = _live()
+    trader.open[live.position.ticket] = live
+
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+
+    assert trader._quotes_seen["gold"] == 1
+    assert trader._best.get(live.position.ticket) == 4399.5
+    said = await _skip_said(trader, live, caplog)
+    assert "no best for" not in said
+
+
 def test_every_carried_synthetic_is_registered_in_all_four_tables():
     """An instrument needs a name the broker answers to, an exposure leg, a
     price feed and a place in the symbol list. All four were once written by

@@ -1216,7 +1216,15 @@ def test_the_manage_loop_says_why_it_skipped_a_position():
     # The two guards report separately - "no spec" and "no best" need different
     # fixes, and one message for both would not distinguish them.
     assert 'skipped[f"no spec for {live.intent.feed!r}"]' in source
-    assert 'skipped["no best price tracked"]' in source
+    # "no best" turned out to have two causes that need opposite fixes - no
+    # quote ever reached `_mark_best` for that feed, or quotes did reach it and
+    # the symbol did not match - and the first version of this counter could
+    # not tell them apart across 249 skips. So the message carries the three
+    # facts that separate them. See
+    # `test_a_skipped_position_says_whether_quotes_arrived`.
+    assert "no best for" in source
+    assert "self._symbol_of.get(live.intent.feed)" in source
+    assert "self._quotes_seen.get(live.intent.feed" in source
     # And a loop that reached `advance` and moved nothing says so too, which is
     # the third possibility and the one a guard count alone would hide.
     assert "managed nothing across" in source
