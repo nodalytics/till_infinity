@@ -365,6 +365,11 @@ class Trader:
         #: `price_current` is a snapshot and a trail anchored to snapshots
         #: follows whatever the last poll happened to catch.
         self._best: dict[int, float] = {}
+        #: feed -> how many quotes `_quote` has resolved a symbol for. Only
+        #: read by the `_manage` skip diagnostic, which cannot otherwise
+        #: distinguish "no quote ever arrived for this feed" from "quotes
+        #: arrived and `_mark_best` did not match them to the position".
+        self._quotes_seen: Counter[str] = Counter()
         #: The worst price each open trade has seen. The mirror of `_best`, and
         #: it was missing: the trailing rules need the favourable extreme so
         #: that one was tracked, and nothing needed the adverse one so nobody
@@ -701,6 +706,7 @@ class Trader:
             observed = getattr(venue, "observe", None)
             if observed is not None:
                 observed(tick)
+        self._quotes_seen[feed] += 1
         self._mark_best(symbol, float(bid), float(ask))
 
     def _undealable(self, feed: str, spec: SymbolSpec, tick: Tick | None) -> Refusal | None:
@@ -2210,7 +2216,15 @@ class Trader:
                 skipped[f"no spec for {live.intent.feed!r}"] += 1
                 continue
             if best is None:
-                skipped["no best price tracked"] += 1
+                # Not just *that* it is untracked, but which half failed:
+                # a feed with no quotes never reached `_mark_best`, and a
+                # feed with quotes reached it and did not match the symbol.
+                skipped[
+                    f"no best for {live.intent.feed}: position "
+                    f"{live.position.symbol!r} vs mapped "
+                    f"{self._symbol_of.get(live.intent.feed)!r}, "
+                    f"{self._quotes_seen.get(live.intent.feed, 0)} quotes"
+                ] += 1
                 continue
             if not live.scaled and await self._bank(live, spec, best):
                 moved += 1
