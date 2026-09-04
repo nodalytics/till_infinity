@@ -37,10 +37,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from ..logging import get_logger
+from ...logging import get_logger
+from ..config import INSTRUMENTS, SUFFIXES, Settings
+from ..models import SymbolSpec
 from .broker import Broker
-from .config import INSTRUMENTS, SUFFIXES, Settings
-from .models import SymbolSpec
 
 log = get_logger(__name__)
 

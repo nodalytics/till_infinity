@@ -42,22 +42,24 @@ from ..structures.holds import Book as HoldBook
 from ..structures.levels import SECONDS
 from ..structures.reach import Reaches
 from ..structures.trend import Trend
-from . import manage, plans, replicate, strategy
-from . import symbols as sym
-from .broker import Broker, BrokerError, build
+from . import manage, plans
 from .candles import confirms
 from .config import Settings, magic_for, strategy_for
 from .context import Context
 from .manage import Move, Take
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
-from .opportunity import PRESETS
-from .paper import PaperBroker
-from .policy import Policy
 from .risk import Guard
 from .sessions import Sessions
 from .sizing import lots, price_distance
-from .strategy import Strategy
+from .strategies import strategy
+from .strategies.opportunity import PRESETS
+from .strategies.policy import Policy
+from .strategies.strategy import Strategy
+from .venues import replicate
+from .venues import symbols as sym
+from .venues.broker import Broker, BrokerError, build
+from .venues.paper import PaperBroker
 
 log = get_logger(__name__)
 

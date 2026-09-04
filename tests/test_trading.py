@@ -27,16 +27,16 @@ from till_infinity.trading import manage
 from till_infinity.trading import plans as tp
 from till_infinity.trading import report as tr
 from till_infinity.trading import sessions as td_sessions
-from till_infinity.trading import strategy as td_strategy
 from till_infinity.trading.book import Book, Seen
 from till_infinity.trading.context import Context
 from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick
-from till_infinity.trading.paper import PaperBroker
 from till_infinity.trading.risk import Guard
 from till_infinity.trading.service import Live, Trader, _intent_from, _market_closed
 from till_infinity.trading.sizing import lots, price_distance, stop_for, target_for
 from till_infinity.trading.speeds import Speeds
-from till_infinity.trading.symbols import resolve
+from till_infinity.trading.strategies import strategy as td_strategy
+from till_infinity.trading.venues.paper import PaperBroker
+from till_infinity.trading.venues.symbols import resolve
 
 #: Signals carry wall-clock times, and the level book forgets by age. Using a
 #: small constant here would put every level in 1970 and expire it instantly.
@@ -1297,8 +1297,8 @@ def test_the_rpyc_backend_reuses_the_native_trading_logic():
 
     A second copy is a second place for the filling-mode logic to drift.
     """
-    from till_infinity.trading.mt5_native import NativeBroker
-    from till_infinity.trading.mt5_rpyc import RpycBroker
+    from till_infinity.trading.venues.mt5_native import NativeBroker
+    from till_infinity.trading.venues.mt5_rpyc import RpycBroker
 
     assert issubclass(RpycBroker, NativeBroker)
     for shared in ("send", "close_position", "modify", "spec", "positions", "_filling"):
@@ -1322,7 +1322,7 @@ def test_a_terminal_is_configured_by_any_of_the_routes():
 
 
 def http_broker(**over):
-    from till_infinity.trading.mt5_http import HttpBroker
+    from till_infinity.trading.venues.mt5_http import HttpBroker
 
     made = settings(url="http://bridge:8000", **over)
     return HttpBroker(made)
@@ -1330,7 +1330,7 @@ def http_broker(**over):
 
 async def test_an_order_reply_is_read_from_the_terminals_own_result():
     """The result carries the ticket and retcode; the stored row is a fallback."""
-    from till_infinity.trading.mt5_http import HttpBroker
+    from till_infinity.trading.venues.mt5_http import HttpBroker
 
     broker = http_broker()
     sent = {}
@@ -1358,7 +1358,7 @@ async def test_an_order_reply_is_read_from_the_terminals_own_result():
 
 async def test_an_older_bridge_that_returns_only_the_row_still_works():
     """Back-compat: earlier builds returned no `result` at all."""
-    from till_infinity.trading.mt5_http import HttpBroker
+    from till_infinity.trading.venues.mt5_http import HttpBroker
 
     broker = http_broker()
 
@@ -1376,7 +1376,7 @@ async def test_an_older_bridge_that_returns_only_the_row_still_works():
 
 async def test_a_stop_is_moved_by_ticket_over_the_bridge():
     """Without the ticket route this backend could not trail a stop at all."""
-    from till_infinity.trading.mt5_http import HttpBroker
+    from till_infinity.trading.venues.mt5_http import HttpBroker
 
     broker = http_broker()
     sent = {}
@@ -1395,7 +1395,7 @@ async def test_a_stop_is_moved_by_ticket_over_the_bridge():
 
 
 async def test_a_rejected_order_is_not_read_as_a_fill():
-    from till_infinity.trading.mt5_http import HttpBroker
+    from till_infinity.trading.venues.mt5_http import HttpBroker
 
     broker = http_broker()
 
@@ -1544,7 +1544,7 @@ def test_the_index_names_include_the_spaced_forms():
     assert "US TECH 100" in td.INSTRUMENTS["us100"]
     assert "US SP 500" in td.INSTRUMENTS["spx500"]
 
-    from till_infinity.trading.symbols import matches
+    from till_infinity.trading.venues.symbols import matches
 
     listing = ["US Tech 100", "US SP 500", "USDJPY", "USDJPYmicro"]
     assert matches("us100", listing) == ["US Tech 100"]
@@ -1561,7 +1561,7 @@ def test_bybit_style_suffixed_names_resolve():
     comes from the suffix list. The probe matters because the HTTP bridge
     cannot enumerate symbols on every build.
     """
-    from till_infinity.trading.symbols import candidates, matches
+    from till_infinity.trading.venues.symbols import candidates, matches
 
     listing = ["SP500.s", "NAS100.s", "XAUUSD.s", "EURUSD.s", "BTCUSDT"]
     assert matches("spx500", listing) == ["SP500.s"]
@@ -1577,7 +1577,7 @@ def test_bybit_style_suffixed_names_resolve():
 
 
 def opinion(side="buy", conviction=0.7, stop=1.0, target=1.6, because="because"):
-    from till_infinity.trading.council import Opinion
+    from till_infinity.trading.strategies.council import Opinion
 
     return Opinion(
         side=side, conviction=conviction, stop_vol=stop, target_vol=target, because=because
@@ -1585,7 +1585,7 @@ def opinion(side="buy", conviction=0.7, stop=1.0, target=1.6, because="because")
 
 
 def council(**over):
-    from till_infinity.trading.council import Council
+    from till_infinity.trading.strategies.council import Council
 
     return Council(**over)
 
@@ -1640,7 +1640,7 @@ def test_weak_conviction_is_not_worth_the_spread():
 
 def test_an_absurd_stop_is_clamped_rather_than_obeyed():
     """A model asking for a forty-unit stop is failing, not being bold."""
-    from till_infinity.trading.council import MAX_STOP_VOL, MAX_TARGET_VOL, MIN_STOP_VOL
+    from till_infinity.trading.strategies.council import MAX_STOP_VOL, MAX_TARGET_VOL, MIN_STOP_VOL
 
     side, stop, target, _ = council(quorum=2).resolve(
         {
@@ -1660,7 +1660,7 @@ def test_an_absurd_stop_is_clamped_rather_than_obeyed():
 
 def test_the_evidence_pack_is_the_same_for_every_voice_and_carries_no_free_text():
     """Deterministic, and nothing for a headline to smuggle an instruction through."""
-    from till_infinity.trading.council import evidence
+    from till_infinity.trading.strategies.council import evidence
 
     pack = evidence(signal(), Tick("XAUUSD", bid=4399.5, ask=4400.5), GOLD, "gold")
     assert "gold (XAUUSD)" in pack
@@ -1678,7 +1678,7 @@ async def test_a_voice_that_fails_reads_as_an_abstention():
     try/except it was meant to prove - and passed for the wrong reason until
     the exception escaped `deliberate`.
     """
-    from till_infinity.trading.council import Council, Voice
+    from till_infinity.trading.strategies.council import Council, Voice
 
     panel = Council(voices=(Voice("a", "x"), Voice("b", "y")), quorum=1, discuss=False)
 
@@ -1695,7 +1695,7 @@ async def test_a_voice_that_fails_reads_as_an_abstention():
 async def test_a_voice_that_times_out_reads_as_an_abstention():
     import asyncio as aio
 
-    from till_infinity.trading.council import Council, Voice
+    from till_infinity.trading.strategies.council import Council, Voice
 
     panel = Council(voices=(Voice("a", "x"),), quorum=1, discuss=False, timeout=0.05)
 
@@ -1709,7 +1709,7 @@ async def test_a_voice_that_times_out_reads_as_an_abstention():
 
 
 async def test_the_desk_discusses_once_and_may_change_its_mind():
-    from till_infinity.trading.council import Council, Voice
+    from till_infinity.trading.strategies.council import Council, Voice
 
     panel = Council(voices=(Voice("a", "x"), Voice("b", "y")), quorum=1, discuss=True)
     seen = []
@@ -1732,7 +1732,7 @@ async def test_the_desk_discusses_once_and_may_change_its_mind():
 
 async def test_a_voice_failing_the_second_round_keeps_its_first_answer():
     """A timeout is not a retraction."""
-    from till_infinity.trading.council import Council, Voice
+    from till_infinity.trading.strategies.council import Council, Voice
 
     panel = Council(voices=(Voice("a", "x"),), quorum=1, discuss=True)
     calls = []
@@ -1748,7 +1748,7 @@ async def test_a_voice_failing_the_second_round_keeps_its_first_answer():
 
 
 async def test_the_council_produces_a_sized_intent():
-    from till_infinity.trading.council import CouncilStrategy
+    from till_infinity.trading.strategies.council import CouncilStrategy
 
     engine = CouncilStrategy(settings(strategies=("council",)))
 
@@ -1766,7 +1766,7 @@ async def test_the_council_produces_a_sized_intent():
 
 
 async def test_the_council_respects_its_daily_call_ceiling():
-    from till_infinity.trading.council import CouncilStrategy
+    from till_infinity.trading.strategies.council import CouncilStrategy
 
     engine = CouncilStrategy(settings(council_daily_calls=4))
     engine.calls = 4
@@ -1781,7 +1781,7 @@ def test_the_arithmetic_strategies_stay_synchronous():
     """Making every strategy async would be a lie about what the others cost."""
     import inspect
 
-    from till_infinity.trading.strategy import Strategy
+    from till_infinity.trading.strategies.strategy import Strategy
 
     plain = td.STRATEGIES["level-scalp"]
     assert not inspect.iscoroutinefunction(plain.consider)
@@ -2192,7 +2192,7 @@ async def test_the_closing_deal_is_the_one_that_left_the_position():
     Costs are folded in, because what the account received is the number worth
     scoring - not the gross move.
     """
-    from till_infinity.trading.mt5_http import HttpBroker
+    from till_infinity.trading.venues.mt5_http import HttpBroker
 
     broker = http_broker()
 
@@ -2220,7 +2220,7 @@ async def test_the_closing_deal_is_the_one_that_left_the_position():
 
 
 async def test_a_position_with_no_closing_deal_yet_returns_nothing():
-    from till_infinity.trading.mt5_http import HttpBroker
+    from till_infinity.trading.venues.mt5_http import HttpBroker
 
     broker = http_broker()
 
@@ -2494,7 +2494,7 @@ async def test_the_right_order_is_not_complained_about(caplog):
 
 def test_a_refinement_names_a_strategy_that_exists():
     """A typo in `refines` would silently disable the check it exists for."""
-    from till_infinity.trading.strategy import STRATEGIES
+    from till_infinity.trading.strategies.strategy import STRATEGIES
 
     for name, cls in STRATEGIES.items():
         if cls.refines:
@@ -3229,7 +3229,7 @@ def test_the_scaling_is_capped():
 
 def test_the_hold_is_expressed_in_bars_of_the_entry_interval():
     """Thirty minutes is thirty bars to a 1m strategy and two to a 15m one."""
-    from till_infinity.trading.scalper import LevelScalp
+    from till_infinity.trading.strategies.scalper import LevelScalp
 
     engine = LevelScalp(settings())
     LevelScalp.hold_bars = 20.0
@@ -3244,7 +3244,7 @@ def test_the_hold_is_expressed_in_bars_of_the_entry_interval():
 
 
 def test_no_hold_bars_leaves_the_seconds_behaviour_alone():
-    from till_infinity.trading.scalper import LevelScalp
+    from till_infinity.trading.strategies.scalper import LevelScalp
 
     engine = LevelScalp(settings())
     assert engine.hold_for("1m") == pytest.approx(engine.hold_seconds or 1800.0)
@@ -3625,7 +3625,7 @@ def test_the_floor_is_per_direction_because_the_distributions_differ():
     0.824. So one floor at 0.75 passed 96% of sells and 80% of buys, and the
     book came out 21 sells to 4 buys with no rule saying it should.
     """
-    from till_infinity.trading.floors import WARMUP, Floors
+    from till_infinity.trading.strategies.floors import WARMUP, Floors
 
     book = Floors(percentile=0.5)
     # Two directions with genuinely different distributions.
@@ -3642,7 +3642,7 @@ def test_the_floor_is_per_direction_because_the_distributions_differ():
 def test_a_cold_direction_falls_back_to_the_absolute_floor():
     """A quantile of forty observations is a statement about forty
     observations."""
-    from till_infinity.trading.floors import Floors
+    from till_infinity.trading.strategies.floors import Floors
 
     book = Floors(percentile=0.8)
     for _ in range(40):
@@ -3652,7 +3652,7 @@ def test_a_cold_direction_falls_back_to_the_absolute_floor():
 
 def test_the_percentile_never_opens_a_door_the_absolute_floor_shut():
     """It exists to correct an asymmetry, not to relax anything."""
-    from till_infinity.trading.floors import WARMUP, Floors
+    from till_infinity.trading.strategies.floors import WARMUP, Floors
 
     book = Floors(percentile=0.1)
     for _ in range(WARMUP + 10):
@@ -3666,7 +3666,7 @@ def test_the_floor_does_not_move_with_outcomes():
     what happened next, so a losing streak cannot tighten it."""
     import inspect
 
-    from till_infinity.trading.floors import Floors
+    from till_infinity.trading.strategies.floors import Floors
 
     src = inspect.getsource(Floors)
     for word in ("profit", "outcome", "won", "loss"):
@@ -3692,8 +3692,8 @@ def test_the_shared_gates_live_in_one_place():
     """A copied block is two implementations that can drift; this is one."""
     import inspect
 
-    from till_infinity.trading.scalper import LevelStrategy
-    from till_infinity.trading.swing import FadeToValue
+    from till_infinity.trading.strategies.scalper import LevelStrategy
+    from till_infinity.trading.strategies.swing import FadeToValue
 
     assert hasattr(LevelStrategy, "quality")
     # Both paths call it rather than repeating it.
@@ -3707,7 +3707,7 @@ def test_fade_to_value_is_still_exempt_from_the_chase_gate():
     premise - the gate would refuse every trade it ever wanted."""
     import inspect
 
-    from till_infinity.trading.swing import FadeToValue
+    from till_infinity.trading.strategies.swing import FadeToValue
 
     assert "_chasing(" not in inspect.getsource(FadeToValue.consider)
 
@@ -3875,7 +3875,7 @@ def test_snap_holds_for_as_long_as_the_interaction_lasts():
     """Measured over 53,372 resolutions: the median touch resolves in 18
     seconds, 53% inside 30 and 72% inside 120. Every other strategy holds for
     a fraction of an hour, which is about a hundred times the event."""
-    from till_infinity.trading.scalper import LevelScalp, Snap
+    from till_infinity.trading.strategies.scalper import LevelScalp, Snap
 
     made = settings()
     fast, slow = Snap(made), LevelScalp(made)
@@ -3885,7 +3885,7 @@ def test_snap_holds_for_as_long_as_the_interaction_lasts():
 
 def test_snap_differs_from_level_scalp_in_exactly_one_respect():
     """The comparison only says something if one thing changes."""
-    from till_infinity.trading.scalper import LevelScalp, Snap
+    from till_infinity.trading.strategies.scalper import LevelScalp, Snap
 
     assert Snap.entries == LevelScalp.entries
     assert Snap.context == LevelScalp.context
@@ -3907,7 +3907,7 @@ def test_a_fast_strategy_protects_faster_than_a_slow_one():
     2v trail - and on a two-minute trade that is most of its life spent
     unprotected, missing exactly the case a fast strategy exists for.
     """
-    from till_infinity.trading.scalper import LevelScalp, Snap
+    from till_infinity.trading.strategies.scalper import LevelScalp, Snap
 
     assert Snap.break_even_at < 1.0
     assert Snap.trail_vol < 2.0
@@ -3964,7 +3964,7 @@ def test_every_registered_strategy_has_a_magic_slot():
     `snap` and `thesis-only` ran live for an hour that way, and their trades
     are unattributable in the record.
     """
-    from till_infinity.trading.strategy import STRATEGIES
+    from till_infinity.trading.strategies.strategy import STRATEGIES
 
     missing = [n for n in STRATEGIES if n not in td.MAGIC_ORDER]
     assert not missing, f"no magic slot for {missing} - their trades cannot be attributed"
@@ -4196,7 +4196,7 @@ async def test_the_stale_exit_is_off_by_default():
 
 
 def test_inverse_flips_the_side():
-    from till_infinity.trading.scalper import Inverse, LevelScalp
+    from till_infinity.trading.strategies.scalper import Inverse, LevelScalp
 
     assert Inverse(settings()).orient(Side.BUY) is Side.SELL
     assert Inverse(settings()).orient(Side.SELL) is Side.BUY
@@ -4212,7 +4212,7 @@ def test_inverse_gates_on_the_side_the_call_named():
     """
     import inspect
 
-    from till_infinity.trading.scalper import LevelStrategy
+    from till_infinity.trading.strategies.scalper import LevelStrategy
 
     source = inspect.getsource(LevelStrategy.consider)
     gate = source.index("self.quality(")
@@ -4228,7 +4228,7 @@ EURGBP = SymbolSpec(symbol="EURGBP", digits=5, point=1e-05, tick_size=1e-05, sto
 
 def _floor_for(spread, margin=1.25, anchored=0.85750):
     """The stop a buy at 0.85754 ends up with, given a near-entry anchor."""
-    from till_infinity.trading.scalper import LevelScalp
+    from till_infinity.trading.strategies.scalper import LevelScalp
 
     engine = LevelScalp(settings(stops_level_margin=margin, min_stop_vol=0.0))
     return engine._floored_stop(EURGBP, Side.BUY, 0.85754, anchored, unit=1e-05, spread=spread)
@@ -4380,7 +4380,7 @@ def test_the_swing_trade_rests_its_entry_whatever_the_deployment_says():
 
 
 def test_a_scalper_still_defers_to_the_deployment():
-    from till_infinity.trading.scalper import LevelScalp
+    from till_infinity.trading.strategies.scalper import LevelScalp
 
     assert LevelScalp(settings()).pullback_fraction == 0.0
 
@@ -4431,7 +4431,7 @@ def _candle(o, h, lo, c):
 
 def _momentum(pressure, side=Side.BUY, limit=1.5):
     """The gate's verdict for this much accumulated pressure."""
-    from till_infinity.trading.scalper import SweepAware
+    from till_infinity.trading.strategies.scalper import SweepAware
 
     engine = SweepAware(settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0))
     assert engine.max_against_vol == limit
@@ -4467,7 +4467,7 @@ def test_a_small_run_against_is_tolerated():
 
 def test_strategies_that_did_not_ask_are_unaffected():
     """It is a filter strategies opt into, not a new global gate."""
-    from till_infinity.trading.scalper import LevelScalp
+    from till_infinity.trading.strategies.scalper import LevelScalp
 
     engine = LevelScalp(settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0))
     assert engine.max_against_vol == 0.0
@@ -4478,7 +4478,7 @@ def test_strategies_that_did_not_ask_are_unaffected():
 def test_the_inverse_control_carries_the_filter():
     """Fading a live run is the worst version of what it does, and would
     confound the direction test it exists for."""
-    from till_infinity.trading.scalper import Inverse
+    from till_infinity.trading.strategies.scalper import Inverse
 
     assert Inverse(settings()).max_against_vol > 0
 
@@ -4639,7 +4639,7 @@ def test_a_gate_that_believes_in_itself_but_cannot_fire_still_warns(monkeypatch)
 
 
 def _chop(ratio, floor=0.3):
-    from till_infinity.trading.scalper import LevelScalp
+    from till_infinity.trading.strategies.scalper import LevelScalp
 
     engine = LevelScalp(
         settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0, min_efficiency=floor)
@@ -4660,7 +4660,7 @@ def test_a_trend_is_not_refused():
 def test_an_unknown_context_is_not_refused():
     """A feed without enough history trades as it did before this existed -
     silence is not evidence of chop."""
-    from till_infinity.trading.scalper import LevelScalp
+    from till_infinity.trading.strategies.scalper import LevelScalp
 
     engine = LevelScalp(
         settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0, min_efficiency=0.3)
@@ -4673,7 +4673,7 @@ def test_the_chop_gate_is_off_by_default():
 
 
 def _scale(ratio, span=0.3):
-    from till_infinity.trading.scalper import LevelScalp
+    from till_infinity.trading.strategies.scalper import LevelScalp
 
     engine = LevelScalp(settings(trend_sizing=span))
     return engine.trend_scale({} if ratio is None else {"efficiency": ratio})
@@ -4697,7 +4697,7 @@ def test_sizing_scales_the_fraction_so_every_cap_still_binds():
     """
     import inspect
 
-    from till_infinity.trading.scalper import LevelStrategy
+    from till_infinity.trading.strategies.scalper import LevelStrategy
 
     source = inspect.getsource(LevelStrategy.consider)
     # Every size factor multiplies the *fraction*, never the lot count, so
@@ -4781,7 +4781,7 @@ class _Records:
 
 
 async def _closed_with(volume):
-    from till_infinity.trading.mt5_http import HttpBroker
+    from till_infinity.trading.venues.mt5_http import HttpBroker
 
     broker = HttpBroker(settings())
     client = _Records()
@@ -5084,7 +5084,7 @@ class _Refuses:
     """A broker that will not close, as a market in its daily break will not."""
 
     async def close_position(self, ticket, volume=0.0):
-        raise td.broker.BrokerError("POST /positions/close: 400")
+        raise td.venues.broker.BrokerError("POST /positions/close: 400")
 
 
 async def test_a_refused_stale_close_does_not_stamp_the_exit():
@@ -5336,7 +5336,7 @@ def test_a_rejection_carries_whatever_the_bridge_said():
     one day - a stops-level miss, an impossible target, and a closed market -
     each needing its own investigation.
     """
-    from till_infinity.trading import mt5_http
+    from till_infinity.trading.venues import mt5_http
 
     class _Body:
         status_code = 400
@@ -5346,13 +5346,13 @@ def test_a_rejection_carries_whatever_the_bridge_said():
         def json():
             return {"success": False, "message": "Invalid stops"}
 
-    with pytest.raises(td.broker.RejectedError) as raised:
+    with pytest.raises(td.venues.broker.RejectedError) as raised:
         mt5_http._body(_Body(), "POST", "/trading/order")
     assert "Invalid stops" in str(raised.value)
 
 
 def test_a_rejection_with_no_known_key_still_carries_the_body():
-    from till_infinity.trading import mt5_http
+    from till_infinity.trading.venues import mt5_http
 
     class _Odd:
         status_code = 400
@@ -5362,7 +5362,7 @@ def test_a_rejection_with_no_known_key_still_carries_the_body():
         def json():
             return {"whatever": 7}
 
-    with pytest.raises(td.broker.RejectedError) as raised:
+    with pytest.raises(td.venues.broker.RejectedError) as raised:
         mt5_http._body(_Odd(), "POST", "/trading/order")
     assert "whatever" in str(raised.value)
 
@@ -5995,7 +5995,7 @@ def test_a_mixed_case_instrument_name_still_matches():
     """The matcher upper-cased the listing and not the configured name, which
     every entry survived by being upper-case already. `Volatility 75 Index`
     matched nothing, and the failure read as "the broker does not carry it"."""
-    from till_infinity.trading.symbols import matches
+    from till_infinity.trading.venues.symbols import matches
 
     listing = ["Volatility 75 Index", "Volatility 75 (1s) Index", "XAUUSD"]
     assert matches("volatility_75_index", listing) == ["Volatility 75 Index"]
@@ -6005,7 +6005,7 @@ def test_every_synthetic_resolves_against_the_brokers_own_listing():
     """The exact names, as the account lists them."""
     from till_infinity.prices.models import slugify
     from till_infinity.trading.config import SYNTHETICS
-    from till_infinity.trading.symbols import matches
+    from till_infinity.trading.venues.symbols import matches
 
     listing = [*SYNTHETICS, "XAUUSD", "Wall Street 30"]
     for name in SYNTHETICS:
@@ -6123,7 +6123,7 @@ def test_a_contradicted_tick_value_is_corrected_to_the_contract():
 
     Sizing believed it risked 9.47 and risked about 886, which is 9.5% of the
     account on one position against an intended 0.25%."""
-    from till_infinity.trading.mt5_http import _spec_from
+    from till_infinity.trading.venues.mt5_http import _spec_from
 
     raw = {
         "name": "Volatility 75 Index",
@@ -6143,7 +6143,7 @@ def test_a_contradicted_tick_value_is_corrected_to_the_contract():
 def test_an_agreeing_tick_value_is_left_alone():
     """Every other instrument on the account already agrees, and correcting a
     right answer is how a fix becomes the next bug."""
-    from till_infinity.trading.mt5_http import _spec_from
+    from till_infinity.trading.venues.mt5_http import _spec_from
 
     gold = {
         "name": "XAUUSD",
@@ -6172,7 +6172,7 @@ def test_a_foreign_settlement_currency_is_never_corrected():
     """The tick value carries a conversion there - USDJPY settles in yen and
     its ratio is nowhere near its contract size - so the invariant does not
     hold and applying it would break the instruments that are right."""
-    from till_infinity.trading.mt5_http import _spec_from
+    from till_infinity.trading.venues.mt5_http import _spec_from
 
     usdjpy = {
         "name": "USDJPY",
@@ -6189,7 +6189,7 @@ def test_a_foreign_settlement_currency_is_never_corrected():
 def test_an_unknown_account_currency_changes_nothing():
     """Before `connect` there is nothing to compare against, and guessing would
     be worse than leaving the broker's number alone."""
-    from till_infinity.trading.mt5_http import _spec_from
+    from till_infinity.trading.venues.mt5_http import _spec_from
 
     raw = {
         "name": "Volatility 75 Index",

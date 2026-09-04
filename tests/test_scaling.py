@@ -159,7 +159,7 @@ def test_it_never_reaches_zero():
 def test_a_strategy_applies_all_four():
     import inspect
 
-    from till_infinity.trading.strategy import Strategy
+    from till_infinity.trading.strategies.strategy import Strategy
 
     source = inspect.getsource(Strategy.risk_scale)
     for name in ("crowding", "by_volatility", "by_edge", "by_drawdown"):
@@ -169,7 +169,7 @@ def test_a_strategy_applies_all_four():
 def test_sizing_reads_it():
     import inspect
 
-    from till_infinity.trading import scalper
+    from till_infinity.trading.strategies import scalper
 
     assert "self.risk_scale(" in inspect.getsource(scalper.LevelStrategy.consider)
 
@@ -297,7 +297,7 @@ async def test_it_does_nothing_when_resting_orders_are_off():
 @pytest.mark.asyncio
 async def test_a_broker_that_will_not_answer_is_not_a_fault():
     """Sweeping is recovery, not machinery: it must not stop the heartbeat."""
-    from till_infinity.trading.broker import BrokerError
+    from till_infinity.trading.venues.broker import BrokerError
 
     class Broken(_Broker):
         async def resting(self):
@@ -494,7 +494,7 @@ def test_a_strategy_naming_no_context_is_not_gated():
 def test_the_gate_reads_both():
     import inspect
 
-    from till_infinity.trading import scalper
+    from till_infinity.trading.strategies import scalper
 
     source = inspect.getsource(scalper.LevelStrategy.consider)
     assert "self.needs_context and bool(self.context)" in source
@@ -772,7 +772,7 @@ def test_the_cap_is_sized_for_a_day_long_hold():
 def test_a_cold_policy_returns_the_measured_default_not_a_guess():
     """A policy that acts on four observations is how a five-stop sample became
     an instrument-wide sizing rule."""
-    from till_infinity.trading.policy import Policy
+    from till_infinity.trading.strategies.policy import Policy
 
     policy = Policy()
     shape, why = policy.pick("gold", "5m")
@@ -781,7 +781,7 @@ def test_a_cold_policy_returns_the_measured_default_not_a_guess():
 
 
 def test_an_arm_cannot_win_until_it_has_been_seen_enough():
-    from till_infinity.trading.policy import Policy
+    from till_infinity.trading.strategies.policy import Policy
 
     policy = Policy()
     arm = next(iter(policy.arms))
@@ -795,7 +795,7 @@ def test_an_arm_cannot_win_until_it_has_been_seen_enough():
 def test_context_backs_off_rather_than_deciding_on_three_observations():
     """A thin cell falls back to the broader one. The family split is the one
     research/failing.md measures as actually separating."""
-    from till_infinity.trading.policy import Policy, context_of
+    from till_infinity.trading.strategies.policy import Policy, context_of
 
     assert context_of("boom_500_index", "5m") == ("boom|5m", "boom", "")
     assert context_of("gold", "1h")[1] == "metals/oil"
@@ -815,7 +815,7 @@ def test_context_backs_off_rather_than_deciding_on_three_observations():
 def test_a_malformed_reward_cannot_own_the_policy():
     """Five intents of 1,757 carried an implied RR up to 30,338, and one of
     them touching produced +23R a trade across the whole book."""
-    from till_infinity.trading.policy import CLIP, Policy
+    from till_infinity.trading.strategies.policy import CLIP, Policy
 
     policy = Policy()
     arm = next(iter(policy.arms))
@@ -830,7 +830,7 @@ def test_the_same_point_under_two_names_is_one_arm():
     """`level-scalp` and `sweep-aware` are identical vectors. Crediting them
     separately would split one arm's evidence in half."""
     import till_infinity.trading as td
-    from till_infinity.trading.policy import Policy
+    from till_infinity.trading.strategies.policy import Policy
 
     policy = Policy()
     assert td.PRESETS["level-scalp"].named() == td.PRESETS["sweep-aware"].named()
@@ -841,7 +841,7 @@ def test_opportunity_wears_the_shape_it_was_given():
     """And only the dimensions the engine reads - varying one nothing honours
     is a policy that appears to work and does not."""
     import till_infinity.trading as td
-    from till_infinity.trading.opportunity import Shape
+    from till_infinity.trading.strategies.opportunity import Shape
 
     engine = td.STRATEGIES["opportunity"](_scalp().settings)
     engine._wear(Shape(stop=2.0, target=1.25, trail=0.5, protect=0.25, hold=99.0, pullback=0.0))
@@ -941,8 +941,8 @@ def test_the_strategy_passes_the_interval_through():
     import inspect
 
     import till_infinity.trading as td
-    from till_infinity.trading import scalper
     from till_infinity.trading.config import Settings
+    from till_infinity.trading.strategies import scalper
 
     assert "interval" in inspect.signature(td.Strategy.risk_scale).parameters
     assert "positions, equity, peak, interval" in inspect.getsource(scalper.LevelStrategy.consider)

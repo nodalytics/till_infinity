@@ -53,12 +53,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from ..logging import get_logger
+from ...logging import get_logger
+from ..config import Settings
+from ..models import Intent, Order, SymbolSpec
+from ..sizing import lots
 from . import symbols as sym
 from .broker import Broker, BrokerError
-from .config import Settings
-from .models import Intent, Order, SymbolSpec
-from .sizing import lots
 
 log = get_logger(__name__)
 

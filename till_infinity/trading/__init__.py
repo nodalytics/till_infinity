@@ -43,18 +43,8 @@ The pieces, in dependency order:
 
 from __future__ import annotations
 
-from . import exposure, report
+from . import exposure, report, strategies, venues
 from .book import Book, Seen
-from .broker import (
-    Broker,
-    BrokerError,
-    NotConnectedError,
-    RejectedError,
-    TransientError,
-    available,
-    build,
-    choose,
-)
 from .config import (
     BACKENDS,
     DEFAULT_MAGIC,
@@ -76,7 +66,6 @@ from .config import (
     strategy_for,
 )
 from .context import Context, Release
-from .council import Council, CouncilStrategy, Opinion, Voice
 from .exposure import Exposure
 from .manage import Move, advance
 from .models import (
@@ -91,31 +80,42 @@ from .models import (
     Tick,
     Verdict,
 )
-from .opportunity import PRESETS, Opportunity, Ride, Shape
-from .paper import PaperBroker
 from .plans import PLANS, Plan
 from .report import Report, Trade
 from .risk import Guard
-from .scalper import (
+from .service import Trader, listen
+from .sizing import Sizing, lots, price_distance
+from .speeds import Speeds
+from .strategies.council import Council, CouncilStrategy, Opinion, Voice
+from .strategies.opportunity import PRESETS, Opportunity, Ride, Shape
+from .strategies.scalper import (
     ConfluenceScalp,
     LevelScalp,
     LevelStrategy,
     MomentumScalp,
     SweepAware,
 )
-from .service import Trader, listen
-from .sizing import Sizing, lots, price_distance
-from .speeds import Speeds
-from .strategy import STRATEGIES, Strategy, catalogue
-from .swing import (
+from .strategies.strategy import STRATEGIES, Strategy, catalogue
+from .strategies.swing import (
     ApproachScalp,
     FadeToValue,
     OriginSwing,
     Runner,
     SwingLevel,
 )
-from .symbols import Resolution, resolve
 from .valuation import Priced, Valuation, price_it
+from .venues.broker import (
+    Broker,
+    BrokerError,
+    NotConnectedError,
+    RejectedError,
+    TransientError,
+    available,
+    build,
+    choose,
+)
+from .venues.paper import PaperBroker
+from .venues.symbols import Resolution, resolve
 
 __all__ = [
     "BACKENDS",
@@ -200,5 +200,7 @@ __all__ = [
     "report",
     "resolve",
     "resolve_symbols",
+    "strategies",
     "strategy_for",
+    "venues",
 ]

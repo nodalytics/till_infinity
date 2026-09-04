@@ -63,11 +63,11 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-from ..logging import get_logger
+from ...logging import get_logger
+from ..candles import Bar
+from ..config import Settings, ours
+from ..models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
 from .broker import Broker, BrokerError, NotConnectedError, RejectedError, TransientError
-from .candles import Bar
-from .config import Settings, ours
-from .models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
 
 log = get_logger(__name__)
 

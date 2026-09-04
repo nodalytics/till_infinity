@@ -481,3 +481,44 @@ means the cheaper answer silently wins.
 quiet, a gate never firing, an agent never waking, a filter dropping everything:
 all present as nothing happening. Every such place needs a positive signal
 saying which it is.
+
+## Why `structures/` is not organised into folders — 2026-09-04
+
+`trading/` was grouped into `strategies/` and `venues/` on this date. The same
+was asked of `structures/` and **it is not safe**, for a reason worth writing
+down before somebody tries again.
+
+`structures` saves its learned state as a pickle - `models.pkl`, 58MB and
+growing - and **pickle stores the module path of every class it holds**.
+Reading the file confirms it: strings like `till_infinity.structures.anomaly`
+are embedded in the bytes.
+
+**32 of its modules define `Restorable` subclasses**, all of which end up in
+that file: `levels`, `engine`, `reactions`, `breaking`, `volatility`, `har`,
+`cusum`, `online`, `attention`, `patterns`, `origins`, `holds`, `sessions` and
+the rest. Moving any one of them to `structures/models/x.py` changes the path
+recorded in the state, and the next restore fails to find the class.
+
+What that costs is not a restart. It is every level the engine has drawn, the
+break model, the volatility estimators, the trend context and the touch history
+behind them - weeks of accumulated evidence, and the thing every measurement in
+`research/` is computed from.
+
+`trading/` has no such constraint: nothing there is persisted, which is why it
+could be moved freely and in one pass.
+
+**If it ever has to happen**, the options in order of preference:
+
+1. **Leave it.** Thirty-odd modules in one directory is a navigation problem;
+   losing the state is a measurement problem, and this project is short of
+   evidence rather than short of directories.
+2. **Shim every moved module** - keep `structures/anomaly.py` as a two-line
+   re-export so the old path still resolves. Correct, and it leaves thirty
+   files whose only purpose is to be found by a pickle.
+3. **Migrate the state**: load it under the old layout, walk it, and re-save
+   under the new one, once. A `pickle.Unpickler` with `find_class` overridden
+   maps old paths to new. This is the only version that ends clean, and it
+   needs a tested rollback because a half-migrated 58MB state is worse than
+   either layout.
+
+Related: [inert.md](inert.md), on state that survives a change it should not.

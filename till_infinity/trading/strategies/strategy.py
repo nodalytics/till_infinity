@@ -30,10 +30,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
-from ..logging import get_logger
-from .config import Settings
+from ...logging import get_logger
+from ..config import Settings
+from ..models import SymbolSpec, Tick, Verdict
 from .floors import Floors
-from .models import SymbolSpec, Tick, Verdict
 
 log = get_logger(__name__)
 
@@ -174,7 +174,7 @@ class Strategy(ABC):
         """
         import math
 
-        from ..structures.levels import SECONDS
+        from ...structures.levels import SECONDS
 
         bars = SECONDS.get(interval, 0.0)
         if bars <= 0:
@@ -248,7 +248,7 @@ class Strategy(ABC):
         measurement error into a margin call, and every input here rests on a
         few hundred observations.
         """
-        from . import scaling
+        from .. import scaling
 
         settings = self.settings
         return scaling.combined(
@@ -302,7 +302,7 @@ class Strategy(ABC):
         style knows which ceiling applies; a caller does not, and the ones that
         thought they did were wrong.
         """
-        from ..structures.levels import SECONDS
+        from ...structures.levels import SECONDS
 
         seconds = SECONDS.get(interval, 0.0)
         limit = self.ceiling
@@ -319,7 +319,7 @@ class Strategy(ABC):
         the ceiling is fewer bars of noise, and pretending otherwise would size
         the stop for time the trade will not be given.
         """
-        from ..structures.levels import SECONDS
+        from ...structures.levels import SECONDS
 
         seconds = SECONDS.get(interval, 0.0)
         if seconds <= 0:

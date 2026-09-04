@@ -68,9 +68,9 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
-from ..logging import get_logger
-from .models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
-from .sizing import lots, respects_stops_level
+from ...logging import get_logger
+from ..models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
+from ..sizing import lots, respects_stops_level
 from .strategy import Strategy, register
 
 log = get_logger(__name__)
@@ -215,8 +215,8 @@ class Council:
         if voice.name not in self._agent_cache:
             from pydantic_ai import Agent
 
-            from ..agents.analyst import build_model
-            from ..agents.config import Settings as AgentSettings
+            from ...agents.analyst import build_model
+            from ...agents.config import Settings as AgentSettings
 
             instructions = (
                 "You are one voice on a small trading desk deciding whether to take a "

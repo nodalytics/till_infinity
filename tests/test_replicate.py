@@ -6,7 +6,6 @@ and a quarter percent of a 2,000-unit one - five times the authorised risk, on
 the account least able to carry it.
 """
 
-from till_infinity.trading import replicate as rp
 from till_infinity.trading.config import Settings
 from till_infinity.trading.models import (
     Intent,
@@ -15,6 +14,7 @@ from till_infinity.trading.models import (
     Side,
     SymbolSpec,
 )
+from till_infinity.trading.venues import replicate as rp
 
 GOLD = SymbolSpec(
     symbol="XAUUSD",

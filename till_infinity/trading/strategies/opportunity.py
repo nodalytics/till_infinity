@@ -72,7 +72,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from .models import SymbolSpec, Tick, Verdict
+from ..models import SymbolSpec, Tick, Verdict
 from .scalper import LevelStrategy
 from .strategy import register
 

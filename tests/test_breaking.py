@@ -326,7 +326,7 @@ def test_every_strategy_runs_it_rather_than_one():
     configuration and the exempt strategy was taking most of the trades."""
     import inspect
 
-    from till_infinity.trading import scalper
+    from till_infinity.trading.strategies import scalper
 
     assert "max_break_risk" in inspect.getsource(scalper.LevelStrategy.quality)
 
