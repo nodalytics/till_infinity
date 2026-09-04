@@ -22,8 +22,8 @@ import statistics as st
 
 import httpx
 
-from till_infinity.structures.profile import nodes
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.drawing.profile import nodes
+from till_infinity.structures.vol.volatility import Volatility
 
 PRICES = "file:/app/.data/prices/prices.db?mode=ro"
 URL = os.environ["TRADING_MT5_URL"]

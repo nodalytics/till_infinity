@@ -37,11 +37,11 @@ from typing import Any, ClassVar
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
-from ..structures.cusum import Cusum, Ensemble, adaptive_threshold
-from ..structures.holds import Book as HoldBook
+from ..structures.context.cusum import Cusum, Ensemble, adaptive_threshold
+from ..structures.context.holds import Book as HoldBook
+from ..structures.context.reach import Reaches
+from ..structures.context.trend import Trend
 from ..structures.levels import SECONDS
-from ..structures.reach import Reaches
-from ..structures.trend import Trend
 from . import manage, plans
 from .candles import confirms
 from .config import Settings, magic_for, strategy_for

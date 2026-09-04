@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from till_infinity.structures.holds import FEWEST, Book, Holds
+from till_infinity.structures.context.holds import FEWEST, Book, Holds
 
 
 def _fed(values, **over):

@@ -45,8 +45,8 @@ import sqlite3
 import statistics as st
 from collections import defaultdict
 
-from till_infinity.structures.cusum import Ensemble, adaptive_threshold
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.context.cusum import Ensemble, adaptive_threshold
+from till_infinity.structures.vol.volatility import Volatility
 
 PRICES = "file:/app/.data/prices/prices.db?mode=ro"
 JOURNAL = "file:/app/.data/journal/journal.db?mode=ro"

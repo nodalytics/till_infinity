@@ -8,8 +8,8 @@ import warnings
 
 import pytest
 
-from till_infinity.structures import facto
-from till_infinity.structures.facto import Example, Model, encode, evaluate
+from till_infinity.structures.learning import facto
+from till_infinity.structures.learning.facto import Example, Model, encode, evaluate
 
 
 def _example(when: float, target: float, *, predicted: float | None = None, **features) -> Example:
@@ -221,7 +221,7 @@ def test_a_non_finite_prediction_is_no_opinion_rather_than_a_nan():
     """A NaN propagates through MAE and reads as 'not better', not as broken."""
     import math
 
-    from till_infinity.structures.facto import Model
+    from till_infinity.structures.learning.facto import Model
 
     model = Model()
     model.learn({"a": 1.0, "b": 2.0}, 1.0)

@@ -26,7 +26,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ..prices.models import slugify
-from ..structures import confluence
+from ..structures.drawing import confluence
 
 #: Broker names for each instrument the price side tracks, best first.
 #:

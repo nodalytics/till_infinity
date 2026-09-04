@@ -15,7 +15,7 @@ import pytest
 
 from till_infinity.journal.ledger import ledger, outcomes, report, totals
 from till_infinity.structures.levels import Kalman, Level, Side, agree, dedupe, merge
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.vol.volatility import Volatility
 
 
 def warm(base=4400.0, noise=4.0, bars=400, seed=1):

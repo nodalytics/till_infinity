@@ -407,7 +407,7 @@ def next_levels(state_dir: Path, feed: str, price: float, limit: int = 5) -> lis
     engine = _engine(state_dir)
     if engine is None:
         return [{"error": "no level state yet - the structures service has not run"}]
-    from ..structures import timing
+    from ..structures.context import timing
 
     vol = engine.reference(feed)
     out: list[dict[str, Any]] = []

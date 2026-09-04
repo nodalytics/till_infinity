@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import random
 
-from till_infinity.structures import pips, runs
-from till_infinity.structures.pips import Swing
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.drawing import pips, runs
+from till_infinity.structures.drawing.pips import Swing
+from till_infinity.structures.vol.volatility import Volatility
 
 
 def _vol(bps: float = 20.0) -> Volatility:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from till_infinity.structures.trend import Trend
+from till_infinity.structures.context.trend import Trend
 
 
 def _fed(prices, window=12):

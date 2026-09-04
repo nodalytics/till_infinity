@@ -30,7 +30,7 @@ import sqlite3
 import sys
 from collections import defaultdict, deque
 
-from till_infinity.structures.origins import Origins
+from till_infinity.structures.drawing.origins import Origins
 
 from .replay import score
 

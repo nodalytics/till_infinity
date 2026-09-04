@@ -20,7 +20,7 @@ import pytest
 from till_infinity import trading as td
 from till_infinity.bus import ALERTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from till_infinity.journal import Journal, read
-from till_infinity.structures import cusum as td_cusum
+from till_infinity.structures.context import cusum as td_cusum
 from till_infinity.structures.levels import SECONDS
 from till_infinity.trading import exposure as ex
 from till_infinity.trading import manage
@@ -1801,7 +1801,7 @@ def test_the_service_accepts_every_timeframe_a_level_forms_on():
     meant a live 3m EURUSD call was delivered to Telegram and ignored by the
     trader in the same second.
     """
-    from till_infinity.structures import confluence
+    from till_infinity.structures.drawing import confluence
 
     assert td.Settings().intervals == confluence.TIMEFRAMES
 
@@ -5210,7 +5210,7 @@ async def test_the_hold_estimate_reaches_the_decision_once_it_is_known():
     """Fed from resolutions, which the trader already subscribes to, and put
     where `_features` reads - the same dictionary three earlier features were
     written to the wrong side of."""
-    from till_infinity.structures.holds import FEWEST
+    from till_infinity.structures.context.holds import FEWEST
 
     trader = Trader(Bus(), settings=settings())
     await trader.start()
@@ -5246,7 +5246,7 @@ async def test_the_reach_estimates_arrive_once_there_is_a_sample():
     clear, fed from resolutions and recorded on the decision - so the journal
     can say whether `pullback_fraction` and `min_stop_vol` sit anywhere near
     where the instrument actually trades."""
-    from till_infinity.structures.reach import FEWEST
+    from till_infinity.structures.context.reach import FEWEST
 
     trader = Trader(Bus(), settings=settings())
     await trader.start()
@@ -5290,7 +5290,7 @@ async def test_the_reach_estimates_survive_a_restart(tmp_path):
     values absent from every decision on a minutes-old container.
     """
     from till_infinity.journal import Journal, decide, outcome
-    from till_infinity.structures.reach import FEWEST
+    from till_infinity.structures.context.reach import FEWEST
 
     book = Journal(tmp_path / "j.db")
     await book.open()

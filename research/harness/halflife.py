@@ -27,7 +27,7 @@ import sqlite3
 
 from till_infinity.prices.config import FEEDS
 from till_infinity.structures.engine import Engine
-from till_infinity.structures.volatility import Book as VolBook
+from till_infinity.structures.vol.volatility import Book as VolBook
 
 DB = ".data/prices/prices.db"
 INTERVALS = ("1m", "5m", "15m", "1h")

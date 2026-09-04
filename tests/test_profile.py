@@ -10,16 +10,16 @@ could never cluster anything. Three levels out of 1,808 in production.
 import random
 
 from till_infinity.structures import levels as lv
-from till_infinity.structures import pips
-from till_infinity.structures.pips import Swing
-from till_infinity.structures.profile import (
+from till_infinity.structures.drawing import pips
+from till_infinity.structures.drawing.pips import Swing
+from till_infinity.structures.drawing.profile import (
     BANDWIDTH_VOL,
     MODE_OF_PEAK,
     modes,
     nodes,
     points,
 )
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.vol.volatility import Volatility
 
 
 def warm(prices, steps=400):

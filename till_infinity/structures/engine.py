@@ -33,29 +33,28 @@ from pathlib import Path
 from typing import ClassVar
 
 from ..logging import get_logger
-from . import (
+from . import levels as lv
+from . import reactions
+from .config import DEFAULT_FORMATION
+from .context import sessions
+from .drawing import (
     confluence,
     equals,
     gaps,
     origin_points,
     origins,
-    patterns,
     pips,
     pivots,
     profile,
-    reactions,
-    regimes,
     rounds,
     runs,
-    sessions,
     sweeps,
 )
-from . import levels as lv
-from .config import DEFAULT_FORMATION
+from .learning import patterns, regimes
 from .models import Shape, Signal
 from .state import Restorable
-from .volatility import Book as VolBook
-from .volatility import Volatility
+from .vol.volatility import Book as VolBook
+from .vol.volatility import Volatility
 
 
 @dataclass(frozen=True, slots=True)

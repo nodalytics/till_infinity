@@ -20,8 +20,8 @@ import statistics as st
 from collections import defaultdict
 import httpx
 
-from till_infinity.structures.origins import Origins
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.drawing.origins import Origins
+from till_infinity.structures.vol.volatility import Volatility
 
 PRICES = "file:/app/.data/prices/prices.db?mode=ro"
 URL = os.environ["TRADING_MT5_URL"]

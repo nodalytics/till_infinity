@@ -84,9 +84,27 @@ def _schema() -> str:
 
     from . import __path__ as package_path
 
+    # `walk_packages` and a **basename** key, both deliberately.
+    #
+    # The walk, because `iter_modules` is flat and the package grew subpackages
+    # on 2026-09-04: it went on finding the eleven modules left at the top and
+    # silently stopped covering the other thirty-five, so a new field on one of
+    # them would not have invalidated saved state and the restore would have
+    # crashed instead of starting cold - which is the exact failure this hash
+    # exists to prevent.
+    #
+    # The basename, because the fingerprint must not change when a module
+    # moves. Hashing the dotted path would have made this reorganisation
+    # invalidate 58MB of learned state - every level, the break model, weeks of
+    # touches - for a change that alters no field of anything. It is the same
+    # rule `codec.key_for` follows, for the same reason. Sorting on the
+    # basename too, so the order is the one the flat walk produced.
     shapes: list[str] = []
-    for found in sorted(module.name for module in pkgutil.iter_modules(package_path)):
-        module = importlib.import_module(f"{__package__}.{found}")
+    modules = {}
+    for info in pkgutil.walk_packages(package_path, prefix=f"{__package__}."):
+        modules[info.name.rsplit(".", 1)[-1]] = info.name
+    for found in sorted(modules):
+        module = importlib.import_module(modules[found])
         for name in sorted(dir(module)):
             cls = getattr(module, name)
             # Defined here rather than imported into here, or a class would be

@@ -11,11 +11,11 @@ import random
 
 import pytest
 
-from till_infinity.structures import equals, gaps, pips, rounds
 from till_infinity.structures import levels as lv
+from till_infinity.structures.drawing import equals, gaps, pips, rounds
+from till_infinity.structures.drawing.pips import Point, Swing
 from till_infinity.structures.engine import Engine
-from till_infinity.structures.pips import Point, Swing
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.vol.volatility import Volatility
 
 
 def warm(prices, steps=400):

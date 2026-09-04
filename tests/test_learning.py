@@ -12,11 +12,11 @@ import random
 
 import pytest
 
-from till_infinity.structures import sequences
-from till_infinity.structures.attention import Attention, Embedding
-from till_infinity.structures.baseline import NAMES, Bench, vector
-from till_infinity.structures.online import Linear, Logistic, Scaler
-from till_infinity.structures.returns import FEATURES, Returns
+from till_infinity.structures.learning import sequences
+from till_infinity.structures.learning.attention import Attention, Embedding
+from till_infinity.structures.learning.baseline import NAMES, Bench, vector
+from till_infinity.structures.learning.online import Linear, Logistic, Scaler
+from till_infinity.structures.vol.returns import FEATURES, Returns
 
 
 class Touch:

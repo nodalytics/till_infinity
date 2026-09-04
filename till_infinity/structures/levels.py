@@ -50,9 +50,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from .pips import Point
+from .drawing.pips import Point
 from .state import Restorable
-from .volatility import Volatility
+from .vol.volatility import Volatility
 
 #: How wide a level's zone is, as a multiple of its own uncertainty. Two
 #: standard deviations: price inside this band is touching the level in any

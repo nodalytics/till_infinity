@@ -10,10 +10,11 @@ import time
 import pytest
 
 from till_infinity.structures import levels as lv
-from till_infinity.structures import pips, pivots, reactions
+from till_infinity.structures import reactions
+from till_infinity.structures.drawing import pips, pivots
 from till_infinity.structures.engine import STALE_BARS, Engine
 from till_infinity.structures.levels import Kalman, Level, Outcome, Side, State
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.vol.volatility import Volatility
 
 
 def _vol(bps: float = 5.0) -> Volatility:

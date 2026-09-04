@@ -16,8 +16,8 @@ import time
 import pytest
 
 from till_infinity.bus import MACRO, Bus, Message
-from till_infinity.structures import macro as mc
 from till_infinity.structures.config import Settings
+from till_infinity.structures.context import macro as mc
 from till_infinity.structures.models import Shape, Signal
 from till_infinity.structures.service import TOPICS, Watcher
 

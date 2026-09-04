@@ -14,8 +14,8 @@ them carries information no single feed does. So a venue is measured against
 the median of the others, taken without it.
 
 ```python
-from till_infinity.bus import Bus
-from till_infinity.structures import watch
+from ..bus import Bus
+from . import watch
 
 await watch(Bus(redis_url="redis://localhost:6379"))
 ```
@@ -23,21 +23,24 @@ await watch(Bus(redis_url="redis://localhost:6379"))
 
 from __future__ import annotations
 
-from . import confluence, patterns, pips, reactions, timing
-from .anomaly import Detector
+from . import reactions
 from .config import DRIFT_INTERVALS, INTERVALS, Settings
-from .confluence import Zone, combine
-from .drift import Drift
+from .context import timing
+from .context.timing import Approach, bars_to_reach, estimate, next_levels, probability_within
+from .drawing import confluence, pips
+from .drawing.confluence import Zone, combine
 from .engine import Call, Engine
-from .facto import Example, Model, Report, dataset, evaluate, fit
 from .features import Book, Books, Reading
+from .learning import patterns
+from .learning.anomaly import Detector
+from .learning.drift import Drift
+from .learning.facto import Example, Model, Report, dataset, evaluate, fit
 from .levels import Level, Outcome, Side, State, nearby
 from .models import Consensus, Shape, Signal
 from .reactions import Features, Inference, Memory, Touch, Tracker
 from .service import TOPICS, UNAMBIGUOUS, BarConsensus, Watcher, watch
 from .store import load, save
-from .timing import Approach, bars_to_reach, estimate, next_levels, probability_within
-from .volatility import Volatility
+from .vol.volatility import Volatility
 
 __all__ = [
     "DRIFT_INTERVALS",

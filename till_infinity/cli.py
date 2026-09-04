@@ -26,7 +26,7 @@ from . import structures as sx
 from . import trading as td
 from .bus import Bus
 from .logging import console, get_logger, setup_logging
-from .structures import confluence as cf
+from .structures.drawing import confluence as cf
 from .trading import plans as tp
 from .trading import report as tr
 

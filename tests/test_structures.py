@@ -14,8 +14,8 @@ import pytest
 from till_infinity import structures as sx
 from till_infinity.bus import ALERTS, BARS, QUOTES, SIGNALS, Bus, Message
 from till_infinity.structures import features, store
-from till_infinity.structures.anomaly import Detector, _describe, _sigma_to_score
-from till_infinity.structures.drift import Drift
+from till_infinity.structures.learning.anomaly import Detector, _describe, _sigma_to_score
+from till_infinity.structures.learning.drift import Drift
 from till_infinity.structures.levels import Side
 from till_infinity.structures.models import Shape, Signal
 from till_infinity.structures.service import BarConsensus, Watcher
@@ -495,7 +495,7 @@ def _run(vol, sigma, steps, seed=2):
 
 def test_the_regime_percentile_says_what_the_number_cannot():
     """'25bps' means nothing without knowing what this instrument usually does."""
-    from till_infinity.structures.volatility import Volatility
+    from till_infinity.structures.vol.volatility import Volatility
 
     vol = _run(Volatility(), 0.00003, 400)
     calm = vol.regime
@@ -505,7 +505,7 @@ def test_the_regime_percentile_says_what_the_number_cannot():
 
 
 def test_a_quiet_market_reads_low_rather_than_merely_small():
-    from till_infinity.structures.volatility import Volatility
+    from till_infinity.structures.vol.volatility import Volatility
 
     vol = _run(Volatility(), 0.0008, 300)
     _run(vol, 0.00002, 400)
@@ -513,7 +513,7 @@ def test_a_quiet_market_reads_low_rather_than_merely_small():
 
 
 def test_no_regime_is_claimed_before_there_is_history():
-    from till_infinity.structures.volatility import Volatility
+    from till_infinity.structures.vol.volatility import Volatility
 
     assert Volatility().regime == 0.5
 
@@ -705,8 +705,11 @@ def test_the_schema_follows_the_fields_of_every_persisted_class():
     import till_infinity.structures as package
 
     persisted = []
-    for found in pkgutil.iter_modules(package.__path__):
-        module = importlib.import_module(f"till_infinity.structures.{found.name}")
+    # `walk_packages`, not `iter_modules`: the package has subpackages since
+    # 2026-09-04 and a flat walk finds only the eleven modules left at the top,
+    # which is how this test caught the move rather than passing through it.
+    for found in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
+        module = importlib.import_module(found.name)
         for name in dir(module):
             cls = getattr(module, name)
             if (
@@ -740,8 +743,8 @@ def test_a_restored_but_empty_engine_still_warms(tmp_path, monkeypatch):
     """The bug: a state file saved before any history existed made emptiness
     permanent, because every restart restored nothing and skipped warming on
     the grounds that the restore had succeeded."""
-    from till_infinity.structures.anomaly import Detector
-    from till_infinity.structures.drift import Drift
+    from till_infinity.structures.learning.anomaly import Detector
+    from till_infinity.structures.learning.drift import Drift
 
     settings = sx.Settings(state_dir=tmp_path, prices_db=tmp_path / "p.db")
     store.save({"detector": Detector(), "drift": Drift(), "engine": sx.Engine()}, tmp_path)
@@ -827,7 +830,7 @@ def test_a_volatility_saved_before_a_field_existed_still_loads():
     """
     import pickle
 
-    from till_infinity.structures.volatility import Book, Volatility
+    from till_infinity.structures.vol.volatility import Book, Volatility
 
     vol = Volatility()
     price = 100.0
@@ -854,6 +857,39 @@ def test_a_volatility_saved_before_a_field_existed_still_loads():
     assert pickle.loads(pickle.dumps(book)).of("gold", "5m").tick == 0.0
 
 
+def test_the_schema_covers_the_subpackages_and_not_their_paths():
+    """Two failures the 2026-09-04 folder move could have caused, and the
+    fingerprint has to avoid both.
+
+    **Covering too little.** `_schema` walked with `iter_modules`, which is
+    flat. After the move it went on finding the eleven modules left at the top
+    and silently stopped covering the other thirty-five, so a new field on
+    `context.activity.Activity` would not have invalidated saved state and the
+    restore would have crashed on it instead of starting cold - the exact
+    failure this hash exists to prevent.
+
+    **Covering too much.** Hashing the dotted path instead of the basename
+    would make the fingerprint change when a module *moves*, cold-starting 58MB
+    of learned state for a change that alters no field of anything.
+    """
+    import pkgutil
+
+    import till_infinity.structures as package
+    from till_infinity.structures import store
+
+    covered = set()
+    for info in pkgutil.walk_packages(package.__path__, prefix=package.__name__ + "."):
+        covered.add(info.name.rsplit(".", 1)[-1])
+    # The walk reaches into the folders, not just the top of the package.
+    assert {"activity", "breaking", "pips", "volatility"} <= covered
+    assert len(covered) > 40
+
+    # And the hash is built from basenames, so no path appears in it.
+    shapes = store._schema()
+    assert len(shapes) == 16
+    assert "drawing" not in shapes and "learning" not in shapes
+
+
 def test_every_persisted_class_restores_a_field_it_predates():
     """The companion guard to the schema hash, and the one that walks.
 
@@ -875,8 +911,11 @@ def test_every_persisted_class_restores_a_field_it_predates():
     from till_infinity.structures.state import Restorable
 
     checked = 0
-    for found in pkgutil.iter_modules(package.__path__):
-        module = importlib.import_module(f"till_infinity.structures.{found.name}")
+    # `walk_packages`, not `iter_modules`: the package has subpackages since
+    # 2026-09-04 and a flat walk finds only the eleven modules left at the top,
+    # which is how this test caught the move rather than passing through it.
+    for found in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
+        module = importlib.import_module(found.name)
         for name in dir(module):
             cls = getattr(module, name)
             if not (
@@ -1072,7 +1111,7 @@ def test_a_live_bar_carries_its_extremes():
 def test_activity_is_a_ratio_because_the_underlying_count_is_not_comparable():
     """Tick volume counts price changes, differently per venue, and spot FX
     reports none at all. Only "against this instrument's own normal" travels."""
-    from till_infinity.structures.activity import Book
+    from till_infinity.structures.context.activity import Book
 
     book = Book()
     for _ in range(40):
@@ -1137,8 +1176,8 @@ def test_the_mean_reverting_estimate_reduces_to_the_existing_one():
     The equivalence is the argument that this adds one property and changes
     nothing else, so it is a test rather than a claim in a docstring.
     """
-    from till_infinity.structures.garch import Garch
-    from till_infinity.structures.volatility import Volatility
+    from till_infinity.structures.vol.garch import Garch
+    from till_infinity.structures.vol.volatility import Volatility
 
     plain = Volatility(half_life=30.0)
     same = Garch(half_life=30.0, persistence=1.0)
@@ -1151,7 +1190,7 @@ def test_the_mean_reverting_estimate_reduces_to_the_existing_one():
 
 def test_a_shock_fades_toward_the_long_run_level():
     """What an exponentially weighted mean cannot do: have a destination."""
-    from till_infinity.structures.garch import Garch
+    from till_infinity.structures.vol.garch import Garch
 
     model = Garch(half_life=10.0, persistence=0.9, long_half_life=200.0)
     for i in range(500):
@@ -1171,7 +1210,7 @@ def test_a_shock_fades_toward_the_long_run_level():
 def test_the_long_run_level_is_not_just_the_estimate_again():
     """If the anchor moved at the speed of the estimate there would be nothing
     to revert to."""
-    from till_infinity.structures.garch import Garch
+    from till_infinity.structures.vol.garch import Garch
 
     model = Garch(half_life=10.0, long_half_life=5_000.0)
     for i in range(400):
@@ -1187,7 +1226,7 @@ def test_the_long_run_level_is_not_just_the_estimate_again():
 def test_the_scale_conversion_is_applied_before_anything_is_averaged():
     """Averaging a mean absolute deviation against a standard deviation gives
     a number that is neither, and every threshold here would shift by ~20%."""
-    from till_infinity.structures.consensus_vol import MAD_TO_SIGMA, Ensemble
+    from till_infinity.structures.vol.consensus_vol import MAD_TO_SIGMA, Ensemble
 
     book = Ensemble()
     # Two members reporting the *same underlying* volatility, one on each
@@ -1197,7 +1236,7 @@ def test_the_scale_conversion_is_applied_before_anything_is_averaged():
 
 
 def test_a_member_is_scored_against_what_actually_happened():
-    from till_infinity.structures.consensus_vol import SCORE_WARMUP, Ensemble
+    from till_infinity.structures.vol.consensus_vol import SCORE_WARMUP, Ensemble
 
     book = Ensemble()
     for _ in range(SCORE_WARMUP + 20):
@@ -1210,7 +1249,7 @@ def test_a_member_is_scored_against_what_actually_happened():
 def test_the_combination_is_equal_weight_until_told_otherwise():
     """The simple average routinely beats fitted weights out of sample, and
     edge.md is this repository's own version of that warning."""
-    from till_infinity.structures.consensus_vol import Ensemble
+    from till_infinity.structures.vol.consensus_vol import Ensemble
 
     plain = Ensemble()
     plain.observe({"a": 10.0, "b": 20.0})
@@ -1225,7 +1264,7 @@ def test_the_combination_is_equal_weight_until_told_otherwise():
 
 def test_nothing_earns_a_weight_before_it_has_been_scored():
     """Zero accuracy everywhere is not the same as everything weighing zero."""
-    from till_infinity.structures.consensus_vol import Ensemble
+    from till_infinity.structures.vol.consensus_vol import Ensemble
 
     book = Ensemble(weighted=True)
     book.observe({"a": 10.0, "b": 20.0})
@@ -1299,7 +1338,7 @@ def test_regime_labels_are_ordered_rather_than_arbitrary():
     conditions. Sorting by how energetic the centre is makes the names mean the
     same thing across restarts even as the centres move.
     """
-    from till_infinity.structures.regimes import NAMES, WARMUP, Regimes
+    from till_infinity.structures.learning.regimes import NAMES, WARMUP, Regimes
 
     book = Regimes()
     # Two clearly separated conditions, fed alternately.
@@ -1350,7 +1389,7 @@ def test_regime_labels_are_ordered_rather_than_arbitrary():
 
 def test_a_cold_classifier_says_nothing():
     """A label from twenty points is a statement about the first twenty points."""
-    from till_infinity.structures.regimes import Regimes
+    from till_infinity.structures.learning.regimes import Regimes
 
     book = Regimes()
     for _ in range(20):
@@ -1383,7 +1422,7 @@ def test_a_cold_classifier_says_nothing():
 def test_the_scoreboard_sorts_worst_first():
     """The useful question of a scoreboard like this is which pairing to stop,
     and a list sorted best-first buries it."""
-    from till_infinity.structures.regimes import Regimes
+    from till_infinity.structures.learning.regimes import Regimes
 
     book = Regimes()
     book.record("quiet", "level-scalp", 1.2)
@@ -1407,8 +1446,8 @@ def test_the_regime_features_only_call_methods_the_clock_has():
     passed. This asserts the seam directly: every attribute the regime features
     read has to exist on the object that will be passed at runtime.
     """
-    from till_infinity.structures.sessions import Clock
-    from till_infinity.structures.volatility import Volatility
+    from till_infinity.structures.context.sessions import Clock
+    from till_infinity.structures.vol.volatility import Volatility
 
     clock = Clock()
     vol = Volatility()
@@ -1421,7 +1460,9 @@ def test_the_regime_features_only_call_methods_the_clock_has():
         "forecast_ratio": vol.forecast_ratio,
         "sweep_rate": 0.0,
     }
-    assert set(features) == set(sx.regimes.FEATURES)
+    from till_infinity.structures.learning import regimes
+
+    assert set(features) == set(regimes.FEATURES)
     assert all(isinstance(v, float) for v in features.values())
 
 
@@ -1600,7 +1641,7 @@ def test_a_cold_volatility_estimate_is_not_warm():
     `floor_bps`, every distance here is a price divided by it, and a brent call
     went out claiming an expected push of 10,229 volatility units.
     """
-    from till_infinity.structures.volatility import WARMUP, Volatility
+    from till_infinity.structures.vol.volatility import WARMUP, Volatility
 
     vol = Volatility()
     assert vol.warm is False
@@ -1612,7 +1653,7 @@ def test_a_cold_volatility_estimate_is_not_warm():
 def test_the_volatility_floor_sits_below_anything_real():
     """0.05 bps was an order of magnitude under the lowest volatility ever
     seen live (0.517) and did not bound what it was written to bound."""
-    from till_infinity.structures.volatility import MIN_VOL_BPS
+    from till_infinity.structures.vol.volatility import MIN_VOL_BPS
 
     assert 0.1 <= MIN_VOL_BPS <= 0.5
 
@@ -1688,7 +1729,7 @@ def test_the_origin_zone_is_published_in_prices():
     is enough to judge a level and not enough to enter at one. Resting an order
     at the edge of the zone needs the edge, and `origin_distance_vol` is an
     absolute distance that has lost its direction."""
-    from till_infinity.structures import origins
+    from till_infinity.structures.drawing import origins
 
     origin = origins.Origin(
         price=100.0,
@@ -1841,7 +1882,7 @@ def test_an_origin_must_break_structure():
     runs constantly inside a range, and every one of those is a "last opposing
     bar before an impulse" that meant nothing. What separates the ones that
     matter is that the impulse took out the extreme that had been holding."""
-    from till_infinity.structures.origins import Origins
+    from till_infinity.structures.drawing.origins import Origins
 
     unit = 1.0
     # A range between 90 and 110, then a turn at 100 that runs to 95 - a large
@@ -1859,7 +1900,7 @@ def test_an_origin_must_break_structure():
 def test_the_impulse_still_has_to_be_volatile():
     """`MOVE_VOL` is the other half: a drift that breaks structure slowly is
     not an impulse, and leaves nothing stranded behind it."""
-    from till_infinity.structures.origins import Origins
+    from till_infinity.structures.drawing.origins import Origins
 
     drift = [100.0 - i * 0.1 for i in range(30)]
     times = [float(i) for i in range(len(drift))]
@@ -1909,7 +1950,7 @@ def test_an_origins_time_is_its_turn_and_its_settling_is_the_break():
     was the detection window's start, which sits at or before it. And an origin
     is not knowable until its impulse breaks structure, which is later still:
     reading `when` as the knowable moment is a look-ahead bug."""
-    from till_infinity.structures.origins import Origins
+    from till_infinity.structures.drawing.origins import Origins
 
     prices = [90.0, 110.0, 95.0, 108.0, 100.0, 97.0, 94.0, 91.0, 88.0, 85.0]
     times = [float(i) for i in range(len(prices))]
@@ -1928,7 +1969,7 @@ def test_an_impulse_that_barely_clears_the_extremum_is_not_an_origin():
     """Measured on 3,458 first returns: clearing by under 0.5 units held 49.7%,
     against 60.4% on a generated process with no structure at all. Barely
     clearing is worse than nothing, so it is a floor rather than a preference."""
-    from till_infinity.structures.origins import Origins
+    from till_infinity.structures.drawing.origins import Origins
 
     times = [float(i) for i in range(12)]
     # Falls to 88, recovers, then an impulse that stops a whisker below it.
@@ -1945,7 +1986,7 @@ def test_an_impulse_that_barely_clears_the_extremum_is_not_an_origin():
 def test_the_margin_past_the_extremum_is_recorded():
     """Kept so a consumer can weigh the two tests instead of taking both as
     pass/fail, and so the journal can say which mattered."""
-    from till_infinity.structures.origins import Origins
+    from till_infinity.structures.drawing.origins import Origins
 
     prices = [90.0, 110.0, 95.0, 108.0, 100.0, 97.0, 94.0, 91.0, 88.0, 85.0]
     times = [float(i) for i in range(len(prices))]

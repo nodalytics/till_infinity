@@ -23,7 +23,7 @@ def test_a_class_is_keyed_by_its_file_and_name_not_its_import_path():
     """The basename is the whole trick: moving `anomaly.py` into a subpackage
     keeps the key `anomaly.Detector`, so the package can be reorganised - which
     is the thing pickle made unsafe."""
-    from till_infinity.structures.breaking import Breaks
+    from till_infinity.structures.learning.breaking import Breaks
 
     assert key_for(Breaks) == "breaking.Breaks"
     assert "till_infinity" not in key_for(Breaks)
@@ -103,7 +103,7 @@ def test_a_river_model_is_carried_opaquely():
 
 
 def test_a_saved_file_carries_no_import_path_of_ours(tmp_path):
-    """The defect this replaces: `till_infinity.structures.anomaly` was in the
+    """The defect this replaces: `till_infinity.structures.learning.anomaly` was in the
     bytes of the old file, so the directory layout was part of the format."""
     store.save({"holder": Holder(n=3.0)}, tmp_path)
     raw = (tmp_path / store.STATE_FILE).read_bytes()

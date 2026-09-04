@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from till_infinity.structures.reach import FEWEST, WINDOW, Reach, Reaches
+from till_infinity.structures.context.reach import FEWEST, WINDOW, Reach, Reaches
 
 
 def _fed(values):

@@ -30,7 +30,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.vol.volatility import Volatility
 
 DB = ".data/prices/prices.db"  # run from the repository root
 INTERVALS = ("1m", "5m", "15m", "1h", "1d")

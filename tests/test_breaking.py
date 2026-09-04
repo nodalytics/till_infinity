@@ -12,7 +12,7 @@ import random
 
 import pytest
 
-from till_infinity.structures.breaking import BROKE, HELD, MIN_SEEN, NAMES, Breaks
+from till_infinity.structures.learning.breaking import BROKE, HELD, MIN_SEEN, NAMES, Breaks
 
 
 class Touch:
@@ -386,7 +386,7 @@ def test_the_engine_publishes_the_slope_onto_the_touch():
     import inspect
 
     from till_infinity.structures import reactions
-    from till_infinity.structures.breaking import NAMES
+    from till_infinity.structures.learning.breaking import NAMES
 
     carried = {f.name for f in dataclasses.fields(reactions.Features)}
     for name in NAMES:
@@ -437,7 +437,7 @@ def test_a_changed_recipe_drops_the_saved_model():
     take on the order of 1e11 samples. The cap read as done and changed
     nothing.
     """
-    from till_infinity.structures.breaking import RECIPE, Breaks
+    from till_infinity.structures.learning.breaking import RECIPE, Breaks
 
     trained = teach(Breaks(), n=int(MIN_SEEN) + 50)
     assert trained.warm
@@ -462,7 +462,7 @@ def test_adding_an_input_is_already_handled():
     re-*meaning* an input rather than adding one."""
     import inspect
 
-    from till_infinity.structures import online
+    from till_infinity.structures.learning import online
 
     assert "len(x) != len(self.mean)" in inspect.getsource(online.Scaler.observe)
 
@@ -484,7 +484,8 @@ def test_every_unbounded_ratio_in_the_record_is_bounded():
     """
     import inspect
 
-    from till_infinity.structures import engine, har, levels, reactions
+    from till_infinity.structures import engine, levels, reactions
+    from till_infinity.structures.vol import har
 
     assert har.RATIO_CAP == 10.0
     assert reactions.RR_CAP == 20.0
@@ -502,7 +503,8 @@ def test_every_unbounded_ratio_in_the_record_is_bounded():
 def test_the_caps_sit_above_the_measured_ninety_ninth_percentile():
     """Except `slowing`, deliberately: its p99 is 67.6, which is already the
     denominator talking rather than a real acceleration."""
-    from till_infinity.structures import har, levels, reactions
+    from till_infinity.structures import levels, reactions
+    from till_infinity.structures.vol import har
 
     assert har.RATIO_CAP > 1.12 * 5
     assert reactions.RR_CAP > 13.2
@@ -514,8 +516,8 @@ def test_the_timeframe_reaches_the_model():
     level was drawn on runs 57.9% at 1m to 1.4% at 1h over 126,296
     resolutions. It was invisible because every other feature is scale-free by
     construction, which is exactly why it is orthogonal to them."""
-    from till_infinity.structures.breaking import NAMES
     from till_infinity.structures.engine import _interval_log
+    from till_infinity.structures.learning.breaking import NAMES
     from till_infinity.structures.reactions import Features
 
     assert "interval_log" in NAMES
@@ -531,7 +533,7 @@ def test_lengthening_the_vector_bumps_the_recipe():
     a longer feature set without a reset standardises new inputs against
     statistics gathered for a shorter one. That is the trap in
     research/inert.md, and the recipe is what avoids walking into it."""
-    from till_infinity.structures.breaking import NAMES, RECIPE
+    from till_infinity.structures.learning.breaking import NAMES, RECIPE
 
     assert len(NAMES) == 6
     assert "interval_log" in RECIPE
@@ -543,7 +545,7 @@ def test_the_learning_rate_favours_a_stable_gate():
     before stability does, and `max_break_risk` acts on this model's output -
     at the old rate the live weights moved 1.652, 1.174, 1.840 and 1.441 in
     four consecutive half-hours."""
-    from till_infinity.structures.breaking import RATE, Breaks
+    from till_infinity.structures.learning.breaking import RATE, Breaks
 
     assert RATE == 0.02
     assert Breaks().model.rate == RATE

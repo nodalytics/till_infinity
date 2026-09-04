@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from till_infinity.structures import timing
+from till_infinity.structures.context import timing
 from till_infinity.structures.levels import Kalman, Level, Side
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.vol.volatility import Volatility
 
 
 def _vol(bps: float = 5.0) -> Volatility:

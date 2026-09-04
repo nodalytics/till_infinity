@@ -6,10 +6,11 @@ import math
 
 import pytest
 
-from till_infinity.structures import confluence, patterns
+from till_infinity.structures.drawing import confluence
+from till_infinity.structures.learning import patterns
+from till_infinity.structures.learning.patterns import Library, Shape, dtw, normalise
 from till_infinity.structures.levels import Kalman, Level, Outcome, Side, State
-from till_infinity.structures.patterns import Library, Shape, dtw, normalise
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.vol.volatility import Volatility
 
 PEAK = [1.0, 3.0, 5.0, 3.0, 1.0]
 STRETCHED = [1.0, 2.0, 3.0, 4.0, 5.0, 4.5, 3.0, 2.0, 1.0]
@@ -364,7 +365,7 @@ def test_the_engine_resolves_each_level_on_its_own_timeframe():
 
 def test_each_timeframe_keeps_its_own_estimate():
     """A typical 4h move is not a typical 5m move, and one number cannot be both."""
-    from till_infinity.structures.volatility import Book
+    from till_infinity.structures.vol.volatility import Book
 
     book = Book()
     for interval, bps in (("5m", 1.7), ("4h", 22.0)):
@@ -378,7 +379,7 @@ def test_each_timeframe_keeps_its_own_estimate():
 
 
 def test_the_tick_estimate_is_separate_from_every_timeframe():
-    from till_infinity.structures.volatility import Book
+    from till_infinity.structures.vol.volatility import Book
 
     book = Book()
     book.update("gold", 4400.0, "4h")
@@ -401,7 +402,7 @@ def test_the_reference_falls_back_when_no_quotes_have_arrived():
 
 def test_three_minutes_ranks_between_one_and_five():
     """An interval missing from ORDER sorts last, which reverses to first."""
-    from till_infinity.structures.confluence import ORDER, TIMEFRAMES, rank
+    from till_infinity.structures.drawing.confluence import ORDER, TIMEFRAMES, rank
 
     assert rank("1m") < rank("3m") < rank("5m") < rank("1d")
     # Every timeframe levels are built on must be rankable, or the coarsest
@@ -412,9 +413,9 @@ def test_three_minutes_ranks_between_one_and_five():
 
 def test_a_zone_band_is_never_inverted():
     """Overlap chains: A touches B, B touches C, A and C do not."""
-    from till_infinity.structures.confluence import Zone
+    from till_infinity.structures.drawing.confluence import Zone
     from till_infinity.structures.levels import Kalman, Level
-    from till_infinity.structures.volatility import Volatility
+    from till_infinity.structures.vol.volatility import Volatility
 
     vol = Volatility()
     for _ in range(200):

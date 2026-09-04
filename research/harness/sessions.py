@@ -43,7 +43,7 @@ SESSIONS = (
 
 def volatility(conn) -> dict[str, float]:
     """One volatility estimate per feed, from its 5m closes."""
-    from till_infinity.structures.volatility import Volatility
+    from till_infinity.structures.vol.volatility import Volatility
 
     out: dict[str, float] = {}
     feeds = [f for (f,) in conn.execute("SELECT DISTINCT feed FROM bars")]

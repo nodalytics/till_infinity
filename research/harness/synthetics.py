@@ -26,8 +26,8 @@ from datetime import UTC, datetime
 
 import httpx
 
-from till_infinity.structures.origins import Origins
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.drawing.origins import Origins
+from till_infinity.structures.vol.volatility import Volatility
 
 URL = os.environ["TRADING_MT5_URL"]
 KEY = os.environ.get("TRADING_MT5_API_KEY", "")

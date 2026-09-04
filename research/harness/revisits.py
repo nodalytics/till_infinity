@@ -29,8 +29,8 @@ import sqlite3
 import statistics as st
 from collections import defaultdict
 
-from till_infinity.structures.origins import Origins
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.drawing.origins import Origins
+from till_infinity.structures.vol.volatility import Volatility
 
 PRICES = "file:/app/.data/prices/prices.db?mode=ro"
 FEEDS = ["gold", "eurusd", "us100", "btc", "spx500", "ger40"]

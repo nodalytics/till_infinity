@@ -39,8 +39,8 @@ from collections.abc import Sequence
 from typing import Any, ClassVar
 
 from ...logging import get_logger
+from ...structures.context.timing import probability_within
 from ...structures.levels import SECONDS
-from ...structures.timing import probability_within
 from ..book import Book, Seen
 from ..models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
 from ..sizing import lots, price_distance, respects_stops_level, stop_for

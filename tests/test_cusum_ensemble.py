@@ -1,6 +1,6 @@
 """The momentum ensemble: one CUSUM per sub-hour timeframe, read together."""
 
-from till_infinity.structures.cusum import CADENCE, SUB_HOUR, Cusum, Ensemble
+from till_infinity.structures.context.cusum import CADENCE, SUB_HOUR, Cusum, Ensemble
 
 
 def test_every_member_is_below_an_hour():
@@ -100,7 +100,7 @@ def test_a_member_is_an_ordinary_cusum():
 def test_the_threshold_is_sized_to_the_instruments_own_push():
     """eurusd pushes 1.66v and brent 2.75v - a 1.7x spread that one number
     cannot serve. A threshold right for one is late for the other."""
-    from till_infinity.structures.cusum import adaptive_threshold
+    from till_infinity.structures.context.cusum import adaptive_threshold
 
     assert adaptive_threshold(1.66) < adaptive_threshold(2.75)
 
@@ -108,7 +108,7 @@ def test_the_threshold_is_sized_to_the_instruments_own_push():
 def test_the_floor_holds_when_the_push_is_unknown():
     """A threshold of zero makes every tick an event. An estimate that is
     missing, cold or absurd must not be able to produce one."""
-    from till_infinity.structures.cusum import FLOOR, THRESHOLD, adaptive_threshold
+    from till_infinity.structures.context.cusum import FLOOR, THRESHOLD, adaptive_threshold
 
     assert adaptive_threshold(0.0) == FLOOR
     assert adaptive_threshold(-5.0) == FLOOR
@@ -119,7 +119,7 @@ def test_the_floor_holds_when_the_push_is_unknown():
 def test_the_old_fixed_threshold_was_silent_through_half_of_all_moves():
     """Measured over 59,982 resolutions: median realised push 2.07v, so a 2.0v
     threshold confirms as the move ends. Every adaptive value is under it."""
-    from till_infinity.structures.cusum import THRESHOLD, adaptive_threshold
+    from till_infinity.structures.context.cusum import THRESHOLD, adaptive_threshold
 
     for push in (1.37, 1.66, 2.07, 2.75, 3.04):
         assert adaptive_threshold(push) < THRESHOLD

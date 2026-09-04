@@ -29,7 +29,7 @@ from collections import defaultdict
 
 import httpx
 
-from till_infinity.structures.volatility import Volatility
+from till_infinity.structures.vol.volatility import Volatility
 
 JOURNAL = "file:/app/.data/journal/journal.db?mode=ro"
 URL = os.environ["TRADING_MT5_URL"]

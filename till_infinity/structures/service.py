@@ -36,19 +36,20 @@ from pathlib import Path
 from ..bus import ALERTS, BARS, MACRO, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
-from . import confluence as cf
 from . import store
-from .activity import Book as ActivityBook
-from .anomaly import Detector
-from .baseline import Bench
-from .baseline import vector as bench_vector
-from .breaking import Breaks
 from .config import DRIFT_INTERVALS, Settings
-from .drift import Drift
+from .context.activity import Book as ActivityBook
+from .context.macro import Macro, since_default, stored
+from .context.sessions import Clock
+from .drawing import confluence as cf
+from .drawing.channel import channel_of
 from .engine import Engine
-from .macro import Macro, since_default, stored
+from .learning.anomaly import Detector
+from .learning.baseline import Bench
+from .learning.baseline import vector as bench_vector
+from .learning.breaking import Breaks
+from .learning.drift import Drift
 from .models import Shape, Signal
-from .sessions import Clock
 
 log = get_logger(__name__)
 
@@ -973,6 +974,15 @@ class Watcher:
             signal = replace(signal, features={**signal.features, **extra})
             if call.feed not in grouped:
                 grouped[call.feed] = self._zones(call.feed)
+            # The two zones price is between, which is the pair a person reads
+            # off a chart and nothing here has ever published. A single level
+            # answers "what happens next"; it cannot answer "how far can this
+            # go", because that is bounded by the next structure in the way and
+            # a target set from a stop multiple never asks. Features only - see
+            # `channel.py` for why this is not allowed to refuse anything yet.
+            unit = call.level.price * vol.bps / 10_000 if vol.bps > 0 else 0.0
+            band = channel_of(grouped[call.feed], call.price, unit, feed=call.feed)
+            signal = replace(signal, features={**signal.features, **band.features()})
             zone = self._zone_for(grouped[call.feed], call.level)
             if zone is None:
                 loners.append(signal)

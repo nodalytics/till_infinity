@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from till_infinity.structures.cusum import Cusum
+from till_infinity.structures.context.cusum import Cusum
 
 
 def _run(prices, unit=1.0, threshold=2.0):

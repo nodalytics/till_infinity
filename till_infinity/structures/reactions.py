@@ -62,7 +62,7 @@ from .levels import (
     SideStats,
 )
 from .state import Restorable
-from .volatility import Volatility
+from .vol.volatility import Volatility
 
 #: Neighbours consulted for the cold-start prior.
 DEFAULT_K = 12

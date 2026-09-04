@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from till_infinity.structures.origins import Origin, Origins
+from till_infinity.structures.drawing.origins import Origin, Origins
 
 
 def _series(prices):
@@ -161,7 +161,7 @@ class _Bar:
 
 
 def test_a_normal_bar_gives_its_whole_range():
-    from till_infinity.structures.origins import zone_of
+    from till_infinity.structures.drawing.origins import zone_of
 
     assert zone_of(_Bar(100, 100.5, 99.5, 100.2), unit=1.0) == (99.5, 100.5)
 
@@ -169,7 +169,7 @@ def test_a_normal_bar_gives_its_whole_range():
 def test_a_huge_bar_gives_its_body_instead():
     """Mostly wick: price went there and did not stay, so the open to the
     close is the part that traded rather than probed."""
-    from till_infinity.structures.origins import zone_of
+    from till_infinity.structures.drawing.origins import zone_of
 
     low, high = zone_of(_Bar(100, 105, 95, 101), unit=1.0)
     assert (low, high) == (100.0, 101.0)
@@ -177,7 +177,7 @@ def test_a_huge_bar_gives_its_body_instead():
 
 def test_a_huge_doji_keeps_its_range():
     """With no body to fall back on, the range is all there is."""
-    from till_infinity.structures.origins import zone_of
+    from till_infinity.structures.drawing.origins import zone_of
 
     assert zone_of(_Bar(100, 105, 95, 100), unit=1.0) == (95.0, 105.0)
 

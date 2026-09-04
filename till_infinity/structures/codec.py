@@ -4,7 +4,7 @@
 
 `store` persisted with pickle, and **pickle records the module path of every
 class it holds**. Reading the 58MB state file showed
-`till_infinity.structures.anomaly` embedded in the bytes. That makes the
+`till_infinity.structures.learning.anomaly` embedded in the bytes. That makes the
 directory layout part of the file format: moving `anomaly.py` into a
 subpackage - the ordinary housekeeping `trading/` had done to it on the same
 day - would make weeks of learned levels, the break model and every volatility
