@@ -51,8 +51,10 @@ and refuses on - rather than to our own file layout.
 from __future__ import annotations
 
 import dataclasses
+import io
 import pickle
 from collections import deque
+from functools import cache
 from typing import Any
 
 from ..logging import get_logger
@@ -140,6 +142,53 @@ def pack(value: Any) -> Any:
     return {TAG: RAW, "b": pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)}
 
 
+@cache
+def _homes() -> dict[str, str]:
+    """Module basename -> where that module lives now.
+
+    Built the same way `registry` is built, and cached for the same reason:
+    walking the package on every raw blob would be paid thousands of times
+    reading one state file.
+    """
+    import pkgutil
+
+    from . import __path__ as package_path
+
+    return {
+        info.name.rsplit(".", 1)[-1]: info.name
+        for info in pkgutil.walk_packages(package_path, prefix=f"{__package__}.")
+    }
+
+
+class _Relocating(pickle.Unpickler):
+    """An unpickler that follows a module to its new folder.
+
+    The gap in this codec's own reasoning, found the hard way. The docstring
+    above says raw blobs pickle *river's* classes and this project does not
+    move those - so a reorganisation was safe. It is not quite true: at least
+    one blob referenced `till_infinity.structures.anomaly`, and after that
+    module moved into `learning/` the whole 59MB file failed to read with
+    `No module named 'till_infinity.structures.anomaly'` and structures
+    started cold.
+
+    So the basename rule that protects the *named* classes has to protect the
+    pickled ones too. `find_class` maps any `till_infinity.structures.X` to
+    wherever X lives now, which is the `find_class` override
+    `research/handoff.md` listed as the only migration that ends clean.
+    """
+
+    def find_class(self, module: str, name: str) -> Any:
+        if module.startswith(f"{__package__}."):
+            home = _homes().get(module.rsplit(".", 1)[-1])
+            if home is not None and home != module:
+                module = home
+        return super().find_class(module, name)
+
+
+def _unpickle(blob: bytes) -> Any:
+    return _Relocating(io.BytesIO(blob)).load()
+
+
 def unpack(value: Any, known: dict[str, type] | None = None) -> Any:
     """Rebuild state written by `pack`."""
     known = registry() if known is None else known
@@ -159,7 +208,7 @@ def unpack(value: Any, known: dict[str, type] | None = None) -> Any:
     if kind == "deque":
         return deque((unpack(v, known) for v in value["v"]), maxlen=value.get("n"))
     if kind == RAW:
-        return pickle.loads(value["b"])
+        return _unpickle(value["b"])
     name = str(kind)
     cls = known.get(name) or known.get(ALIASES.get(name, ""))
     if cls is None:

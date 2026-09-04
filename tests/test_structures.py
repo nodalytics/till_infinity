@@ -857,6 +857,44 @@ def test_a_volatility_saved_before_a_field_existed_still_loads():
     assert pickle.loads(pickle.dumps(book)).of("gold", "5m").tick == 0.0
 
 
+def test_state_pickled_under_a_module_s_old_path_still_loads():
+    """The gap in `codec`'s own reasoning, and it cost a cold start.
+
+    That docstring says raw blobs pickle *river's* classes and this project
+    does not move those, so a reorganisation was safe. At least one blob
+    referenced `till_infinity.structures.anomaly` instead, and when that module
+    moved into `learning/` the whole 59MB file failed to read with `No module
+    named 'till_infinity.structures.anomaly'` - every level, the break model
+    and weeks of touches, discarded on the first deploy after the move.
+
+    So the basename rule that protects the named classes has to protect the
+    pickled ones too.
+    """
+    import pickle
+
+    from till_infinity.structures import codec
+    from till_infinity.structures.learning.anomaly import Detector
+
+    # A GLOBAL opcode naming the module where `anomaly` used to live. This is
+    # what the real state file contains.
+    old = b"ctill_infinity.structures.anomaly\nDetector\n."
+    with pytest.raises((ModuleNotFoundError, AttributeError)):
+        pickle.loads(old)
+
+    assert codec._unpickle(old) is Detector
+
+
+def test_the_relocator_leaves_other_packages_alone():
+    """It maps this package's modules and nothing else - river's paths are
+    river's business, and rewriting them would break on a version bump."""
+    import pickle
+
+    from till_infinity.structures import codec
+
+    blob = pickle.dumps(pickle.loads)
+    assert codec._unpickle(blob) is pickle.loads
+
+
 def test_the_schema_covers_the_subpackages_and_not_their_paths():
     """Two failures the 2026-09-04 folder move could have caused, and the
     fingerprint has to avoid both.
