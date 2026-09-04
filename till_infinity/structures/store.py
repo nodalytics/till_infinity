@@ -163,6 +163,7 @@ def load(directory: Path | str) -> dict[str, Any] | None:
     legacy = root / LEGACY_FILE
     if not path.exists() and not legacy.exists():
         return None
+    from_legacy = not path.exists()
     try:
         if path.exists():
             payload = _decode(path.read_bytes())
@@ -181,7 +182,24 @@ def load(directory: Path | str) -> dict[str, Any] | None:
         return None
 
     want = _fingerprint()
-    for field in ("format", "river", "python", "schema"):
+    # `format` describes the **container**, and migration is exactly the case
+    # where it differs - so the legacy file is allowed to carry the format that
+    # wrote it. Checking it here discarded the 58MB state this migration exists
+    # to preserve, on the first deploy, with the message "format 2, this is 3 -
+    # starting cold". The fields that follow are about whether the *contents*
+    # can be trusted, and those still apply to both files.
+    checks = (
+        ("river", "python", "schema") if from_legacy else ("format", "river", "python", "schema")
+    )
+    if from_legacy and payload.get("format") not in (FORMAT, FORMAT - 1):
+        log.warning(
+            "structures: %s is format %s, too old to migrate into %s - starting cold",
+            legacy,
+            payload.get("format"),
+            FORMAT,
+        )
+        return None
+    for field in checks:
         if payload.get(field) != want[field]:
             log.warning(
                 "structures: %s was written with %s %s, this is %s - starting cold",

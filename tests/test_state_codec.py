@@ -116,7 +116,10 @@ def test_it_reads_the_old_pickle_once_and_writes_the_new_one(tmp_path):
     something to roll back to."""
     legacy = tmp_path / store.LEGACY_FILE
     payload = {**store._fingerprint(), "state": {"holder": Holder(n=7.0)}}
-    payload["format"] = store.FORMAT
+    # The format the *old* file was written with. Checking this against the new
+    # number is what discarded 58MB of live state on the first deploy - the
+    # container version is the one thing migration exists to change.
+    payload["format"] = store.FORMAT - 1
     legacy.write_bytes(pickle.dumps(payload))
 
     got = store.load(tmp_path)
@@ -137,3 +140,12 @@ def test_a_corrupt_file_starts_cold_rather_than_raising(tmp_path):
 @pytest.mark.parametrize("value", [None, True, 1, 2.5, "x", b"y", [1, [2]], {"a": {"b": 1}}])
 def test_plain_values_pass_through(value):
     assert unpack(pack(value)) == value
+
+
+def test_a_legacy_file_two_formats_behind_is_not_migrated(tmp_path):
+    """Accepting the previous format is a migration; accepting any format is a
+    guess about a file this code has never seen."""
+    payload = {**store._fingerprint(), "state": {"holder": Holder(n=1.0)}}
+    payload["format"] = store.FORMAT - 2
+    (tmp_path / store.LEGACY_FILE).write_bytes(pickle.dumps(payload))
+    assert store.load(tmp_path) is None
