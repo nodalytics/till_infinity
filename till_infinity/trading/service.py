@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
 
@@ -2187,10 +2188,27 @@ class Trader:
         if not rules:
             return 0
         moved = 0
+        looked = 0
+        skipped: Counter[str] = Counter()
         for ticket, live in list(self.open.items()):
+            looked += 1
             spec = self.specs.get(live.intent.feed)
             best = self._best.get(ticket)
-            if spec is None or best is None:
+            # Said out loud rather than skipped in silence.
+            #
+            # Four trades on 2026-09-04 reached 2.75R to 4.32R in front and
+            # closed at their **original** stop for -68.71 between them, with
+            # `break_even_at` 1.0, `trail_vol` 2.0 and `scale_out_at` 1.0 all
+            # configured. This loop had produced two stop moves in 181,039 log
+            # lines and no scale-outs at all, with no errors anywhere: every
+            # position was falling through one of these two guards and nothing
+            # recorded which. That is the shape of every inert feature in
+            # research/inert.md - a legal-looking silence.
+            if spec is None:
+                skipped[f"no spec for {live.intent.feed!r}"] += 1
+                continue
+            if best is None:
+                skipped["no best price tracked"] += 1
                 continue
             if not live.scaled and await self._bank(live, spec, best):
                 moved += 1
@@ -2217,6 +2235,15 @@ class Trader:
                 moved += 1
                 log.info("trading: %s", move)
                 await self._announce_move(live, move)
+        if looked and not moved:
+            # Only when nothing moved, and only with open positions to move -
+            # a quiet book is not a fault and should not be logged as one.
+            log.info(
+                "trading: managed nothing across %d open position(s)%s%s",
+                looked,
+                f" - {dict(skipped)}" if skipped else "",
+                "" if skipped else " - every one reached `advance` and it proposed no better stop",
+            )
         return moved
 
     async def _bank(self, live: Live, spec: SymbolSpec, best: float) -> bool:

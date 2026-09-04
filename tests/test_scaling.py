@@ -1200,3 +1200,34 @@ def test_both_exits_are_scored_on_the_same_signals():
     import till_infinity.trading as td
 
     assert {"opportunity", "ride"} <= set(td.STRATEGIES)
+
+
+def test_the_manage_loop_says_why_it_skipped_a_position():
+    """Four trades reached 2.75R to 4.32R in front and closed at their original
+    stop for -68.71, with break-even, trailing and scale-out all configured.
+    This loop had produced two stop moves in 181,039 log lines and no
+    scale-outs, with no errors: every position fell through a guard and nothing
+    recorded which one."""
+    import inspect
+
+    from till_infinity.trading import service
+
+    source = inspect.getsource(service.Trader._manage)
+    # The two guards report separately - "no spec" and "no best" need different
+    # fixes, and one message for both would not distinguish them.
+    assert 'skipped[f"no spec for {live.intent.feed!r}"]' in source
+    assert 'skipped["no best price tracked"]' in source
+    # And a loop that reached `advance` and moved nothing says so too, which is
+    # the third possibility and the one a guard count alone would hide.
+    assert "managed nothing across" in source
+    assert "proposed no better stop" in source
+
+
+def test_a_quiet_book_is_not_reported_as_a_fault():
+    """`looked and not moved` - with no open positions there is nothing to
+    manage, and logging that every minute would bury the case that matters."""
+    import inspect
+
+    from till_infinity.trading import service
+
+    assert "if looked and not moved:" in inspect.getsource(service.Trader._manage)
