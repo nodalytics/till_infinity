@@ -103,14 +103,15 @@ RATE = 0.02
 #: Bump when the **meaning** of an input changes, so saved statistics gathered
 #: under the old meaning are dropped rather than carried. Adding an input is
 #: handled by `Logistic` rebuilding on a length change; re-meaning one is not.
-RECIPE = "2026-09-05 range renamed to range"
-#: Bumped for a **rename**, which is worth saying because it looks like it
+#:
+#: Bumped once for a **rename**, which is worth saying because it looks like it
 #: should not need one. The keys the model reads are the keys the features
-#: arrive under: `range_position` became `range_position`, so state saved
-#: under the old names would restore into a model that reads the new ones and
+#: arrive under: `channel_position` became `range_position`, so state saved
+#: under the old names would restore into a model reading the new ones and
 #: quietly find nothing - every input zero, no error, a model that had been
 #: trained and now predicts from a constant. Renaming an input is re-meaning
 #: it as far as this is concerned.
+RECIPE = "2026-09-05 channel renamed to range"
 
 #: A race left open longer than this is discarded rather than resolved. Twelve
 #: hours: long enough that an intraday range resolves inside it, short enough

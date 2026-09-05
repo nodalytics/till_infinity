@@ -43,7 +43,7 @@ def test_a_resolved_race_is_not_resolved_twice():
     assert race.model.seen == 1
 
 
-def test_a_newer_channel_supersedes_the_one_open_on_that_feed():
+def test_a_newer_range_supersedes_the_one_open_on_that_feed():
     """Two races on one instrument would resolve on the same tick and enter the
     same observation twice."""
     race = Races()
@@ -51,12 +51,12 @@ def test_a_newer_channel_supersedes_the_one_open_on_that_feed():
     race.watch("gold", upper=4350.0, lower=4330.0, features=band())
 
     assert len(race.open) == 1
-    # The old ceiling is inside the new channel, so it must not resolve.
+    # The old ceiling is inside the new range, so it must not resolve.
     assert race.step("gold", 4341.0) is None
     assert race.step("gold", 4351.0) == "upper"
 
 
-def test_a_one_sided_channel_is_not_a_race():
+def test_a_one_sided_range_is_not_a_race():
     """With no ceiling there is nothing for the floor to beat, and opening one
     would put a resolution in the record the model could never have
     predicted."""
@@ -66,7 +66,7 @@ def test_a_one_sided_channel_is_not_a_race():
     assert race.open == {}
 
 
-def test_an_inverted_channel_is_refused():
+def test_an_inverted_range_is_refused():
     race = Races()
     race.watch("gold", upper=4320.0, lower=4340.0, features=band())
 
@@ -74,7 +74,7 @@ def test_an_inverted_channel_is_refused():
 
 
 def test_a_stale_race_is_dropped_rather_than_resolved():
-    """A channel this old was drawn against levels that have since moved.
+    """A range this old was drawn against levels that have since moved.
     Letting it resolve would credit the model for a prediction about a picture
     that no longer exists."""
     race = Races()
@@ -114,7 +114,7 @@ def test_a_warm_model_reports_a_probability_and_its_sample():
     assert got["up_first_seen"] == pytest.approx(round(race.model.seen, 1))
 
 
-def test_a_warm_model_still_declines_a_one_sided_channel():
+def test_a_warm_model_still_declines_a_one_sided_range():
     """The reading is about two distances. With one missing there is no race,
     whatever the weights say."""
     race = Races()
@@ -129,7 +129,7 @@ def test_a_warm_model_still_declines_a_one_sided_channel():
 
 def test_it_learns_the_side_it_is_shown():
     """The cheapest possible check that the label reaches the weights: feed it
-    channels that always resolve upward and it must lean upward."""
+    ranges that always resolve upward and it must lean upward."""
     race = Races()
     for _ in range(int(MIN_SEEN) + 40):
         race.watch(
