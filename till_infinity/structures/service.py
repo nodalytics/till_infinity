@@ -31,6 +31,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..bus import ALERTS, BARS, MACRO, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
@@ -173,6 +174,17 @@ def _same_unit(prices: list[float]) -> list[float]:
     return [p for p in prices if 1 / SCALE_LIMIT <= p / middle <= SCALE_LIMIT]
 
 
+def _stamp(signal: Signal) -> str:
+    """The signal's own time, not the moment the alert was built.
+
+    They differ by however long the pipeline took, and a reader comparing the
+    alert against a chart is looking for the bar it fired on.
+    """
+    when = getattr(signal, "time", 0.0) or 0.0
+    moment = datetime.fromtimestamp(when, UTC) if when else datetime.now(UTC)
+    return moment.strftime("%d %b %H:%M UTC")
+
+
 def alert_payload(signal: Signal) -> dict[str, object]:
     """The message a person actually reads, as opposed to the record.
 
@@ -220,29 +232,44 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     risk = got.get("risk_vol", 0.0)
     push = got.get("expected_push_vol", 0.0)
 
-    story = (
-        f"confirmed by {', '.join(t for t in signal.confluence if t != signal.interval)}"
-        if len(signal.confluence) > 1
-        else "this timeframe only"
-    )
-    body = [
-        f"level {price:.5g} · {story}",
+    # A rule per line, each opening with the thing it answers, because the
+    # previous version was five sentences of numbers and the reader had to
+    # parse it to find the one they wanted. Nothing here is new evidence - it
+    # is the same fields, laid out so the eye can skip.
+    rule = "━" * 22
+    lit = "🟢" if up else "🔴"
+    head = [
+        rule,
+        f"{lit} {signal.feed.upper().replace('_', ' ')} · LEVEL · {signal.direction.upper()}",
+        rule,
+        f"📊 {signal.venue} · {signal.interval} · {_stamp(signal)}",
         "",
-        f"{signal.direction} {probability:.0%} - against a {base:.0%} base rate",
-        f"expected push {push:+.2f}v" + (f" · risk {risk:.2f}v" if risk else ""),
-        f"{touches:.0f} touches here + {similar} similar · strength {got.get('strength', 0.0):.2f}",
+        f"📍 {price:.5g} · {touches:.0f} touches here + {similar} similar · "
+        f"strength {got.get('strength', 0.0):.2f}",
+        f"{'📈' if up else '📉'} {signal.direction} {probability:.0%} "
+        f"against a {base:.0%} base rate",
     ]
+    body = list(head)
+    # Push and risk together, with the ratio spelled out. Two numbers a reader
+    # would otherwise divide in their head, and the division is the decision.
+    if risk > 0:
+        body.append(f"📏 push {push:+.2f}v · risk {risk:.2f}v · {abs(push) / risk:.1f} to 1")
+    else:
+        body.append(f"📏 push {push:+.2f}v")
+    # **Nothing agreeing is information, not a blank.** The first cut of this
+    # layout printed the line only when there was confluence, so a level no
+    # other timeframe confirmed looked identical to one where the question had
+    # not been asked.
+    story = [t for t in signal.confluence if t != signal.interval]
+    body.append(f"🔭 confirmed by {', '.join(story)}" if story else "🔭 this timeframe only")
     # How likely the level is to give way, when there is an estimate. A
     # separate question from the direction above it, and the evidence that they
     # are separate is that `up_rate` - which carries almost all of the
     # direction - predicts a break at AUC 0.4892. See research/force.md.
-    #
-    # Read to a person and acted on by nothing. It is here because a number
-    # nobody sees is a number nobody can sanity-check, and this one is new
-    # enough to want checking against what the chart actually did.
     breaking = got.get("break_probability")
     if breaking is not None:
-        body.append(f"break risk {breaking:.0%} · from arrival speed and depth")
+        body.append(f"💥 break risk {breaking:.0%} · from arrival speed and depth")
+
     # The range this level sits in, and which wall the model expects first.
     #
     # Read to a person and acted on by nothing, the same standing as the break
@@ -256,17 +283,25 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         where = got.get("range_position")
         body.append("")
         body.append(
-            f"range {lower:.5g} .. {upper:.5g} · {got.get('range_width_vol', 0.0):.1f}v wide"
-            + (f", price {where:.0%} up it" if where is not None else "")
+            f"📐 range {lower:.5g} .. {upper:.5g} · {got.get('range_width_vol', 0.0):.1f}v wide"
+            + (f" · price {where:.0%} up it" if where is not None else "")
         )
-        body.append(f"{room_up:.2f}v to the ceiling · {room_down:.2f}v to the floor")
+        # The far wall is the target and the near one is what is in the way, so
+        # they are named that way round rather than by compass direction.
+        ahead, behind = (room_up, room_down) if up else (room_down, room_up)
+        body.append(f"🎯 {ahead:.2f}v to the far side · {behind:.2f}v back to the near one")
         # Only when the race model has an opinion. `None` while it is cold, and
         # the line is simply absent rather than reading 50%.
         first = got.get("up_first")
         if first is not None:
             wall = "ceiling" if first >= 0.5 else "floor"
             confidence = first if first >= 0.5 else 1.0 - first
-            body.append(f"{wall} first {confidence:.0%} · from where price sits in it")
+            agrees = (wall == "ceiling") == up
+            body.append(
+                f"🎲 {wall} first {confidence:.0%} · "
+                + ("agrees with the call" if agrees else "against the call")
+            )
+    body.append(rule)
     return {
         "title": f"{signal.feed.upper()} {signal.interval} - {signal.direction}",
         "body": "\n".join(body),

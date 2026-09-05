@@ -28,6 +28,84 @@ at a price - which needs nothing but bars, works on any instrument, and does
 not depend on a venue willing to sell its tape. Where both can be computed they
 are asking the same question with different evidence.
 
+## What "fair value" means here, and what it rests on
+
+The phrase is doing a lot of work, so it is worth saying exactly what is being
+claimed and what is not.
+
+**Fair value here is a price at which the marginal buyer and the marginal
+seller both decline to act.** Not a valuation in the accounting sense, not an
+estimate of what the thing is worth to hold forever. It is the price where
+disagreement runs out. Above it, someone would rather sell than own; below it,
+someone would rather own than sell; at it, neither has a reason to move, and
+price stops for a while. That is all a level is.
+
+Read that way, fair value is **a fact about the participants, not about the
+instrument.** It is the current state of a disagreement, which is why it moves,
+why it can be wrong, and why it has to be re-estimated from every touch rather
+than solved once.
+
+### Whether anything sits underneath it
+
+For a share there is something: the cash it will produce. For a currency pair
+there is less but not nothing - rate differentials, trade flows, a central bank
+with an opinion. For a **synthetic index there is nothing at all.** It is a
+generated process. No earnings, no underlying, no supply, no story. The number
+is produced by a definition, and the definition does not care what anyone
+thinks of it.
+
+And levels form on it anyway. They hold, they break, they get retested, and the
+per-side statistics behave the way they behave on gold. That is the awkward
+fact this project is built on top of, and it points one way: **whatever fair
+value is, it cannot require the instrument to be worth something.** If it did,
+half the book would produce noise, and it does not.
+
+So the honest position is that there is no floor under the estimate. Fair value
+is not discovered, it is *agreed* - and the agreement is made out of nothing
+firmer than what the participants did last time they were here. On an
+instrument with cash flows the agreement has something to be about; on a
+synthetic it has only itself. The machinery cannot tell the two apart and does
+not try to, which is a claim rather than an oversight: whatever anchors a price,
+its only observable trace is where volatility turned.
+
+That leaves the estimate resting on something circular, and the circularity is
+not a defect in the reasoning - it is the mechanism. The level holds because
+enough people expect it to hold, and their expectation is legible in the record
+of what happened there before. A self-fulfilling belief is still a belief you
+can measure, and a measurable belief is tradeable whether or not it is *about*
+anything.
+
+### The two measurements that keep this from being a story
+
+A claim this loose could absorb any evidence, so it is worth naming what the
+data has already said, both ways.
+
+**It is not a magnet.** Across 22,219 bars a level was reached within twenty
+bars 44.9% of the time, against 49.5% for an arbitrary price the same distance
+away. If fair value were a centre that price was pulled toward, that number
+would have come back the other way round. It did not, so it is not - the
+distance to a level is an *opportunity*, not a force.
+
+**It does have memory.** A level's own record predicts the next turn: the hold
+rate on the side price is arriving from separates 59% to 92% across four bands,
+an AUC of 0.648. So the thing being estimated is real enough to be estimated
+badly or well.
+
+Those two together are the whole position, and they are more restrictive than
+they look. Fair value is not somewhere price wants to be. It is somewhere
+opinions have changed before, and are more likely to change again. Everything
+downstream - the per-side statistics, the base rates, the refusal to forecast -
+follows from taking that seriously rather than from preferring it.
+
+### What would overturn it
+
+If levels on synthetics behaved measurably worse than levels on instruments
+with an underlying, once cost and volatility were accounted for, the argument
+above would be wrong and fair value would need something real beneath it after
+all. That is checkable with what is already stored, and it has not been checked
+- `research/catalogue.md` compares what they cost to trade, not what their
+levels are worth. It is the most load-bearing untested claim in this document.
+
 ## Not forecasting is a design constraint, not modesty
 
 The system never answers "which way will price go". It answers "what is this

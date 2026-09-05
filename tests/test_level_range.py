@@ -166,8 +166,42 @@ def test_the_alert_shows_the_range_and_the_room_on_each_side():
     assert "range 4320 .. 4340" in got
     assert "4.0v wide" in got
     assert "price 50% up it" in got
-    assert "2.00v to the ceiling" in got
-    assert "2.00v to the floor" in got
+    # Named far/near rather than up/down: the far wall is the target and the
+    # near one is what is in the way, and which is which depends on the call.
+    assert "2.00v to the far side" in got
+    assert "2.00v back to the near one" in got
+
+
+def test_the_room_is_named_by_the_call_not_by_the_compass():
+    """A short's target is the floor. Reporting "to the ceiling" for it would
+    put the number the reader wants under the wrong word."""
+    from till_infinity.structures.models import Shape, Signal
+    from till_infinity.structures.service import alert_payload
+
+    common = {
+        "level": 4330.0,
+        "range_upper": 4340.0,
+        "range_lower": 4320.0,
+        "range_width_vol": 4.0,
+        "room_up_vol": 1.0,
+        "room_down_vol": 3.0,
+    }
+    down = alert_payload(
+        Signal(
+            shape=Shape.LEVEL,
+            feed="gold",
+            venue="consensus",
+            score=0.3,
+            direction="down",
+            features=common,
+        )
+    )["body"]
+
+    # Falling: the floor is the target, three units away.
+    assert "3.00v to the far side" in down
+    assert "1.00v back to the near one" in down
+    # And rising, the same numbers swap sides.
+    assert "1.00v to the far side" in _body(**common)
 
 
 def test_the_alert_names_the_wall_the_model_expects_first():
