@@ -26,12 +26,9 @@
 
 <p align="center">
   <a href="https://t.me/till_infinity_signals">
-    <img src="docs/telegram-qr.png" alt="Scan to join t.me/till_infinity_signals" width="140">
+    <img src="docs/telegram-qr.png" alt="Scan for live alerts on Telegram" width="140">
   </a>
-</p>
-
-<p align="center">
-  <b>Live alerts</b> - scan, or <a href="https://t.me/till_infinity_signals">t.me/till_infinity_signals</a>
+  <br><b>Live alerts</b> - scan, or use the badge above
 </p>
 
 ## The idea
@@ -250,35 +247,6 @@ uv run till-infinity agents roles         # market, macro, risk
 
 Every store an analyst reads is opened read-only, so a prompt injection in a
 headline reaches a model whose only verbs are SELECT.
-
-## Journal
-
-What was decided, why at that moment, and what happened next.
-
-```bash
-uv run till-infinity journal listen --redis redis://localhost:6379  # record
-uv run till-infinity journal list
-uv run till-infinity journal add "Widened the spread threshold to 12bps" \
-    --why "8bps fired six times overnight on TVC, none of them real"
-uv run till-infinity journal export -o data/journal.jsonl
-```
-
-Append-only and point-in-time: the state behind a decision is copied in, not
-referenced, so an entry read back a year later still shows the world it was
-
-## Notifications
-
-Alerts to Telegram and Discord, fanned out across as many chats or webhooks as
-you list, with per-channel level routing.
-
-```bash
-uv run till-infinity notify chats          # discover Telegram chat ids
-uv run till-infinity notify listen         # deliver what the agents publish
-uv run till-infinity notify send "..." -l warning
-```
-
-What this instance publishes goes to
-**[t.me/till_infinity_signals](https://t.me/till_infinity_signals)**.
 
 ## How the parts talk
 

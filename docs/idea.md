@@ -38,7 +38,62 @@ seller both decline to act.** Not a valuation in the accounting sense, not an
 estimate of what the thing is worth to hold forever. It is the price where
 disagreement runs out. Above it, someone would rather sell than own; below it,
 someone would rather own than sell; at it, neither has a reason to move, and
-price stops for a while. That is all a level is.
+price stops for a while.
+
+### Which means it is found at the start of a move, not at the end of one
+
+That definition is a description. The thing that makes it usable is knowing
+where to look, and the answer is the part worth stating plainly, because
+everything else here is downstream of it:
+
+> **A sustained move is evidence that agreement broke. The price it broke from
+> was the last one anybody agreed on. That price is the estimate.**
+
+Price rising for eight hours is not eight hours of information about where value
+is - it is eight hours of demand exceeding supply, which is a statement that the
+market had the price wrong when the move began. The run is the *proof* of
+mispricing, and the interesting quantity is not how far it went but what it left
+from. Everything above the start was the market discovering that the start was
+too cheap.
+
+So the estimate is not extracted from the move. It is the point the move
+**departed from**, and the move is only the evidence that the point mattered.
+This is why an origin is the last extreme *before* an impulse rather than the
+extreme the impulse reached: the far end is where the imbalance exhausted
+itself, which is a different event with different people behind it.
+
+It also explains what a retest is, which otherwise has to be asserted. Price
+coming back to an origin is the market putting the old agreement to the
+question a second time - with the difference that the participants now know
+what happened last time. That is why statistics are kept **per approach side**:
+arriving from the direction the move went is a different question from arriving
+from the direction it left, and averaging them describes nobody.
+
+And it is why an untouched origin is worth more than a worked-over one. The
+disagreement that stopped price there has never been spent; each retest eats
+into it. A level's state is tracked for exactly that reason, and "fresh" is a
+claim about how much of the original imbalance is still sitting there.
+
+### Fair value is a sequence, not a number
+
+The awkward consequence, and it is better faced than smoothed over: if every
+sustained move creates an origin, a trending instrument is manufacturing new
+fair values continuously, each further along than the last. There is no single
+number to converge on.
+
+That is not a flaw in the definition - it is what a market in one direction
+actually looks like, and any definition producing a single stable value would
+be describing something else. What it forces is a hierarchy: an origin left by
+a move that ran for a day is a wider agreement than one left by a move that ran
+for twenty minutes, because more participants had to change their minds to
+produce it.
+
+Which is where the timeframes come from. They are not a resolution setting;
+they are **how large a disagreement had to be before it counted**. A level
+several timeframes agree on is one where the small and the large repricing
+happened to stop in the same place, and the higher timeframe carries the
+significance while the lower one carries the placement - the coarse view knows
+which agreements were big, the fine view knows exactly where they were.
 
 Read that way, fair value is **a fact about the participants, not about the
 instrument.** It is the current state of a disagreement, which is why it moves,
@@ -85,6 +140,15 @@ bars 44.9% of the time, against 49.5% for an arbitrary price the same distance
 away. If fair value were a centre that price was pulled toward, that number
 would have come back the other way round. It did not, so it is not - the
 distance to a level is an *opportunity*, not a force.
+
+That result is exactly what the definition above predicts, which is worth
+noticing because it could have gone the other way. If fair value is the last
+price anybody agreed on before a repricing, there is nothing to pull price
+back to it: the agreement was *abandoned*, and the market has been operating on
+a different one since. What survives is only the record of who was willing to
+act there. So an origin should be a place where something informative happens
+**if** price returns, and should not make returning any more likely. Which is
+what the two numbers say.
 
 **It does have memory.** A level's own record predicts the next turn: the hold
 rate on the side price is arriving from separates 59% to 92% across four bands,

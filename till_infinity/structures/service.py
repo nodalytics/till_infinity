@@ -250,12 +250,27 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         f"against a {base:.0%} base rate",
     ]
     body = list(head)
-    # Push and risk together, with the ratio spelled out. Two numbers a reader
-    # would otherwise divide in their head, and the division is the decision.
+    # Push against risk, with the division spelled out - and **called an
+    # average**, because it is one.
+    #
+    # The first version of this line printed "2.4 to 1", which a reader takes
+    # for a reward-to-risk ratio: target over stop. It is not. `expected_push`
+    # is the *mean* outcome over every resolved touch, the bad ones included,
+    # so it is already something closer to an expected value than to a target -
+    # a better number, under a label that meant something else.
+    #
+    # The dispersion goes beside it for the reason `Inference` states in one
+    # line: "a large mean with a larger sigma is not a call". A reader who
+    # cannot see the spread cannot tell those apart.
+    spread = got.get("push_sigma_vol", 0.0)
+    scale = f" ± {spread:.2f}v" if spread else ""
     if risk > 0:
-        body.append(f"📏 push {push:+.2f}v · risk {risk:.2f}v · {abs(push) / risk:.1f} to 1")
+        body.append(
+            f"📏 push {push:+.2f}v{scale} on average · risk {risk:.2f}v "
+            f"· {abs(push) / risk:.1f}x risk"
+        )
     else:
-        body.append(f"📏 push {push:+.2f}v")
+        body.append(f"📏 push {push:+.2f}v{scale} on average")
     # **Nothing agreeing is information, not a blank.** The first cut of this
     # layout printed the line only when there was confluence, so a level no
     # other timeframe confirmed looked identical to one where the question had
