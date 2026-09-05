@@ -10,6 +10,41 @@ nobody else. And five closes worth +44.73 are still `unattributed` — closes th
 process never tied back to a decision — so every table below is missing a
 little.
 
+## The thesis-only experiment has an answer — 2026-09-05
+
+`thesis-only` was built to decide between two explanations for losing money,
+and its docstring set the test before the data existed:
+
+> If it beats them, the stops were the problem and the fixes have been treating
+> a symptom. If it loses, the theses were wrong and no amount of room would
+> have saved them.
+
+It moves the stop out to `thesis_stop_vol` - a circuit breaker rather than a
+trade decision - leaves the target alone, and takes a proportionally smaller
+position because the same risk money over a wider stop buys fewer lots. Same
+calls, same gates, same sizing rule, one difference.
+
+| strategy | n | net | total R | win | mean R |
+| --- | --- | --- | --- | --- | --- |
+| thesis-only | 144 | -363.37 | -18.92 | 45% | **-0.131** |
+| runner | 17 | -38.69 | -2.16 | 41% | **-0.127** |
+
+**It did not beat them.** Several times the room, and the mean R is
+indistinguishable from a normal-stop strategy on the same calls. So by the
+test it set itself: the theses are wrong, and moving stops has been treating a
+symptom.
+
+Two things support that rather than resting on one comparison. Winners barely
+use the stop they have - adverse excursion p90 of **0.333R** over 71 fully
+tracked closes ([excursion.md](excursion.md)) - so the stop was never the
+binding constraint. And `thesis-only` is **144 of 177 closes**, 81% of the
+book, so "the desk is losing" and "these theses are wrong" are nearly the same
+sentence.
+
+What it does not license: `runner` has 17 closes. The direction of the finding
+is clear and its precision is not, and a comparison group that small cannot
+carry a decision on its own.
+
 ## The headline: the calls are not the problem
 
 `inverse` exists to answer exactly this. It takes the same entries, the same
