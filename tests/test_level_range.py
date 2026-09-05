@@ -181,7 +181,7 @@ def test_the_alert_shows_the_range_and_the_room_on_each_side():
 
     assert "range 4,320 .. 4,340" in got
     assert "4.0v wide" in got
-    assert "price 50% up it" in got
+    assert "price 50% of the way up" in got
     # Named far/near rather than up/down: the far wall is the target and the
     # near one is what is in the way, and which is which depends on the call.
     assert "2.00v to the far side" in got

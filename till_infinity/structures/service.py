@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import sqlite3
 import statistics
 import time
@@ -119,7 +120,23 @@ def sole_source(feed: str) -> str:
     symbols = next(iter(got.symbols.values()), ())
     if len({s.venue for s in symbols}) != 1:
         return "consensus"
-    return symbols[0].venue.lower()
+    return _named(symbols[0].venue.lower())
+
+
+def _named(venue: str) -> str:
+    """A venue's name as a person knows it.
+
+    `broker` is accurate and says nothing - the reader wants to know *which*
+    broker, and on this desk it is Deriv. `PRICES_BROKER_LABEL` carries that.
+
+    **Display only, and deliberately not the venue tag itself.** Stored bars
+    and quotes are keyed by venue, so renaming `BROKER` to `DERIV` at the
+    source would orphan every row already written under the old key - a
+    cosmetic change that silently discards history.
+    """
+    if venue != "broker":
+        return venue
+    return (os.environ.get("PRICES_BROKER_LABEL") or "broker").strip().lower() or "broker"
 
 
 def single_source_feeds() -> frozenset[str]:
@@ -381,7 +398,7 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         body.append(
             f"📐 range {_price(lower)} .. {_price(upper)} · "
             f"{got.get('range_width_vol', 0.0):.1f}v wide"
-            + (f" · price {where:.0%} up it" if where is not None else "")
+            + (f" · price {where:.0%} of the way up" if where is not None else "")
         )
         # The far wall is the target and the near one is what is in the way, so
         # they are named that way round rather than by compass direction.

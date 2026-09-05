@@ -186,6 +186,66 @@ hundred closes, so `_slowing` reads six of them where `_speed` reads two. The
 That is worth recording as its own lesson. A feature was parked for a day on a
 guess about the plumbing, and the guess was wrong.
 
+## Scored against a constant, it loses — 2026-09-05
+
+The model has been live long enough to be checked against the only benchmark
+that matters for a probability, and it does not clear it.
+
+Over **141,230** resolved hold/break touches in the journal:
+
+| | log loss | accuracy |
+| --- | --- | --- |
+| quoting the base rate every time | **0.2493** | **93.2%** |
+| `breaking.Breaks`, self-scored walk-forward | 0.3624 | 87.4% |
+
+**Breaks are 6.8% of resolutions.** That is the number the whole thing turns
+on: with a class that rare, "always hold" is right 93.2% of the time, and a
+constant 0.068 scores a log loss of 0.2493. The model is worse on both.
+
+That is not a small miss. It is the model paying for its confidence: it moves
+away from the base rate often enough to lose more when wrong than it gains
+when right, which is exactly what log loss is for and what accuracy alone
+would have hidden.
+
+### Why the AUC and this are both true
+
+`research/force.md` above measures **AUC 0.658** for `approach_vol` and
+`depth_vol` together, and that stands - it is a *ranking* claim, that touches
+more likely to break score higher than touches less likely to. Calibration is a
+different claim, that the number attached is the right probability, and nothing
+here ever checked it. A model can rank well and be badly calibrated, and this
+one is.
+
+### What it is currently doing with money
+
+`TRADING_MAX_BREAK_RISK` refuses trades on this output, and the alert prints
+`break risk 89%` to a reader. Both are consuming a probability that scores
+worse than a constant, so both are acting on a number that would be improved by
+replacing it with 0.068.
+
+### What to do about it, in order
+
+1. **Calibrate before anything else.** Isotonic or Platt on the existing
+   stream costs nothing and is the standard answer to "ranks well, calibrated
+   badly". If the AUC is real, calibration converts it into a usable
+   probability.
+2. **Re-check the gate afterwards**, not before. `MIN_REWARD_TO_RISK` is the
+   standing warning here: the best-reasoned gate in the book inverted the
+   return, so `TRADING_MAX_BREAK_RISK` needs measuring against outcomes rather
+   than switching off on this result alone.
+3. **Leave the alert line**, which is read by a person and says where the
+   number came from. A miscalibrated probability shown to a human who can
+   discount it is a different risk from one silently refusing trades.
+
+### The weights are also still moving
+
+Recorded because it may be the same story: total absolute weight movement
+between half-hourly checks has been **0.97, 1.36, 1.76, 1.63** - rising, not
+settling - with `interval_log` running +0.492, -0.226, -0.807 and changing
+sign twice. `seen` has saturated at its decay ceiling of 2000 while the
+standardiser has 29,447 samples behind it, so the model is weighting recent
+history far more heavily than the scale of its inputs suggests it should.
+
 ## Applied, and deciding nothing
 
 `structures/breaking.py`. A single online logistic on the two features, one
