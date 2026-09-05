@@ -2148,6 +2148,25 @@ class Trader:
             self.guard.summary(),
         )
 
+    @staticmethod
+    def _known() -> dict[str, type]:
+        """Classes this file can hold, from **both** packages.
+
+        The payload mixes them: `Live` and `Policy` are trading's, `Cusum` and
+        `Ensemble` are structures'. Reading it with trading's registry alone
+        left every `cusum.*` unresolved - they came back as plain mappings of
+        their fields, and the first quote after a restart would have called
+        `.push()` on a dict.
+
+        Trading is applied second so it wins the one collision. Keys are
+        `basename.ClassName` and `config.Settings` exists in both packages;
+        neither is ever persisted here, so which one wins decides nothing - but
+        it is decided on purpose rather than by iteration order.
+        """
+        from .. import structures
+
+        return {**registry(structures), **registry(trading)}
+
     def _remember_marks(self) -> None:
         """Write the extremes for whatever is still open.
 
@@ -2212,7 +2231,7 @@ class Trader:
 
             payload = unpack(
                 msgpack.unpackb(self._marks.read_bytes(), raw=False, strict_map_key=False),
-                registry(trading),
+                self._known(),
             )
         except Exception as exc:
             log.debug("trading: could not read %s: %s", self._marks, exc)
@@ -2241,15 +2260,29 @@ class Trader:
         got = payload.get("policy")
         if type(got).__name__ == "Policy":
             self.policy = got
-        for name, into in (
-            ("untaken", self._untaken),
-            ("push", self._push),
-            ("ensemble", self._ensemble),
-            ("waiting", self._waiting),
+        # **Only values that came back as the right class.** A key the registry
+        # could not resolve unpacks to a plain mapping of its fields, and
+        # `_quote` does `self._push.setdefault(feed, Cusum()).push(...)` - so a
+        # dict landing there is an `AttributeError` on the next quote, on every
+        # feed, for the life of the process. Type-checked rather than trusted.
+        for name, into, want in (
+            ("untaken", self._untaken, list),
+            ("push", self._push, Cusum),
+            ("ensemble", self._ensemble, Ensemble),
+            ("waiting", self._waiting, Waiting),
         ):
             stored = payload.get(name)
-            if isinstance(stored, dict):
-                into.update(stored)
+            if not isinstance(stored, dict):
+                continue
+            usable = {k: v for k, v in stored.items() if isinstance(v, want)}
+            if len(usable) != len(stored):
+                log.warning(
+                    "trading: dropped %d unreadable %s entry(s) from %s",
+                    len(stored) - len(usable),
+                    name,
+                    self._marks.name,
+                )
+            into.update(usable)
         shadows = payload.get("shadows")
         if isinstance(shadows, dict):
             with contextlib.suppress(TypeError, ValueError):

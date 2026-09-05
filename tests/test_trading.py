@@ -7141,3 +7141,48 @@ def test_a_file_from_an_older_build_is_missing_keys_not_wrong(tmp_path):
 
     assert trader._rearm == []
     assert trader.taken == 0
+
+
+def test_pressure_comes_back_as_an_object_not_a_mapping(tmp_path):
+    """`Cusum` and `Ensemble` live in *structures* while `Policy` and `Live`
+    live here, so the file mixes two packages. Read with trading's registry
+    alone, every `cusum.*` key was unresolvable and came back as a plain
+    mapping of its fields - and `_quote` does
+    `self._push.setdefault(feed, Cusum()).push(...)`, which is an
+    `AttributeError` on the next quote, on every feed, for the life of the
+    process."""
+    from till_infinity.structures.context.cusum import Cusum
+
+    made = settings(state_dir=tmp_path)
+    trader = Trader(Bus(), settings=made)
+    trader._push["gold"] = Cusum()
+    trader._push["gold"].push(4400.0, 1.0, when=1.0)
+    trader._remember_marks()
+
+    after = Trader(Bus(), settings=made)
+    after._recall_marks()
+
+    assert isinstance(after._push.get("gold"), Cusum)
+    # And it is usable, which is the thing that actually broke.
+    after._push["gold"].push(4401.0, 1.0, when=2.0)
+
+
+def test_an_unresolvable_entry_is_dropped_rather_than_inserted(tmp_path, caplog):
+    """Type-checked rather than trusted: a key a future build cannot resolve
+    must not land in a dict whose values get methods called on them."""
+    import logging
+
+    import msgpack
+
+    from till_infinity.structures.codec import pack
+
+    made = settings(state_dir=tmp_path)
+    blob = pack({"best": {}, "worst": {}, "push": {"gold": {"not": "a cusum"}}})
+    (tmp_path / "day.json").write_bytes(msgpack.packb(blob, use_bin_type=True))
+    trader = Trader(Bus(), settings=made)
+
+    with caplog.at_level(logging.WARNING, logger="till_infinity.trading.service"):
+        trader._recall_marks()
+
+    assert "gold" not in trader._push
+    assert "unreadable" in " ".join(caplog.messages)
