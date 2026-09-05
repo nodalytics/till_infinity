@@ -41,83 +41,24 @@
 Price does not stop at a level because the line is special. It stops because
 enough of the market agrees, for now, that the instrument is worth about that
 much - and a price away from it is a price somebody is prepared to trade back.
-The turn is the *consequence* of fair value, not the definition of it, and that
-distinction is what makes a level worth anything: it says the level is a claim
-about value that can be wrong, rather than a shape on a chart that either
-repeats or does not.
-
-Two things follow, and they are the whole system.
+The turn is the *consequence* of fair value, not the definition of it: the
+level is a claim about value that can be wrong, rather than a shape on a chart
+that either repeats or does not.
 
 **So we price the market, and take a stance relative to where that price
-lands.** That is the whole loop. Fair value comes out above the market and the
-stance is long; it comes out below and the stance is short. The distance
-between the two is what the trade is worth, and it is the only quantity that
-has to be estimated.
-
-That is a familiar instinct: volume profile and its point of control chase the
-same thing. The difference is where the estimate comes from. A POC is built
-from *where volume traded*; this is built from **where volatility turned**,
-which needs nothing but bars, works on any instrument, and does not depend on a
-venue willing to sell its tape.
-
-**And it asks for no forecast.** This is the part that matters most, because
-it is what the rest of the design exists to protect. Direction is never
-predicted here - it is *read off*. The question is not "which way will price
-go", which is what almost everything in this field is quietly asking and almost
-nothing answers. It is "what is this worth, and where is it trading" - a
-**valuation**, and the side is then arithmetic. Nothing has to be foreseen for
-the stance to be well defined.
-
-It also explains why so much of the received wisdom fails when it is tested.
-Break of structure, liquidity sweeps, premium and discount - measured as
-*direction predictors* they come out at a coin flip, here and elsewhere. They
-were never predictions of direction. Read as evidence about where fair value
-sits and how firmly it is held, the same observations have somewhere to go.
-
-**Volatility is not the unit, it is half the valuation.** A price five dollars
-from fair value is not a fact about anything until you know what five dollars
-means for that instrument this hour. Fair value is therefore not a point but a
-**distribution** - an estimate with a width - and volatility is that width.
-Distance only becomes *mispricing* when it is large against it: one unit away
-is noise and says nothing, three units is a statement.
-
-It does the work three times over. It decides whether the market is far enough
-from fair value to be worth a trade; it sets where being wrong starts, because
-the stop belongs outside the noise and not at a round number; and it sizes the
-position, since risk is distance times size and only one of those is chosen.
-Get volatility wrong and every one of the three is wrong with it - which is why
-it is estimated per instrument *and* per timeframe, and why a bug in its
-denominator was the most expensive one this project has had.
-
-**Locating it is the hard part, and the wick is not it.** A level is where the
-leg in and the leg out meet - an *origin* - and the wick beyond it is the
-zone's **width, not its position**. Price poking through is the market testing
-the claim, not revising it. The origin is tracked as a **Kalman state** rather
-than a line, because each touch is a noisy observation of where fair value
-sits, and the filter's variance *is* the zone.
+lands.** Fair value above the market and the stance is long; below it and the
+stance is short. The distance between the two is what the trade is worth, and
+it is the only quantity that has to be estimated.
 
 Everything is measured in **volatility units**, so gold and EURUSD, 3m and 1w
-are comparable without per-instrument tuning - and so "how far from fair value"
-means the same thing everywhere.
+compare without per-instrument tuning - and "how far from fair value" means
+the same thing everywhere.
 
-### What is measured, and what is assumed
-
-Fair value is a thesis, and parts of it have been tested here rather than
-asserted.
-
-What holds up: **a level's own record predicts the next turn**. Its hold rate
-on the side price is arriving from separates 59% to 92% across four bands, an
-AUC of 0.648 - the strongest single thing a level knows about itself, and it
-strengthened when a measurement bug was fixed.
-
-What does not: **price is not drawn to a level.** Across 22,219 bars a level
-was reached within twenty bars 44.9% of the time against 49.5% for an arbitrary
-price the same distance away. So the distance is an *opportunity*, not a
-magnet - a target worth taking because the level is a place with statistics
-attached, not because price is pulled to it.
-
-Read together, those two say the same thing: the evidence is in what a level
-has done at the turn, and the distance is what that evidence is worth.
+Two things have been tested rather than asserted. **A level's own record
+predicts the next turn**: hold rate on the arriving side separates 59% to 92%
+across four bands, AUC 0.648. **Price is not drawn to a level**: reached within
+twenty bars 44.9% of the time against 49.5% for an arbitrary price the same
+distance away. So the distance is an *opportunity*, not a magnet.
 
 ### The parts
 
@@ -132,8 +73,6 @@ Six, in dependency order:
 | `trading` | the only part that can lose money, and the only one armed by a switch of its own - MT5 on Windows, the same code over a Wine bridge on Linux |
 | `journal` | what was decided, **why at that moment**, and what followed. Prices can be recomputed forever; the reasoning cannot be reconstructed once lost |
 
-**[The full version, with the reasoning behind each choice →](docs/idea.md)**
-
 ## Run it
 
 ### On a server
@@ -144,7 +83,6 @@ docker compose up -d        # one container per service, over Redis
 
 Or push to `main` and let CI build, publish and deploy it. Sizing matters more
 than preference - six services need about 861 MB, so a small box wants the
-single process instead. Full guide: **[docs/deployment.md](docs/deployment.md)**.
 
 ### Locally
 
@@ -185,7 +123,8 @@ separately; see [how the parts talk](#how-the-parts-talk).
 ## Prices
 
 OHLCV candles and realtime bid/ask for the same instrument across many brokers,
-from TradingView, Yahoo, and - when asked for - the trading terminal itself.
+from TradingView, Yahoo, ccxt, and - when asked for - the trading terminal
+itself.
 
 ```bash
 uv run till-infinity prices backfill      # deep history
@@ -205,7 +144,16 @@ and `-s` also takes `VENUE:TICKER` or a bare Yahoo ticker.
 terminal over the MT5 bridge. That is the only way to reach the ones no
 consensus venue carries - **synthetics**, which have no underlying and so no
 other source at all, and which are the only instruments here that trade at a
-weekend. Full guide: **[docs/prices.md](docs/prices.md)**.
+weekend.
+
+**Crypto is the exception to all of that: it is discovered, not listed.**
+`PRICES_CCXT_*` gives ccxt filters rather than symbols - it reads each
+exchange's board, drops what is wide, dead, newly listed or not a perpetual on
+*that* exchange, ranks what survives by summed 24h volume *across* exchanges,
+and carries the top slice. A pair several of them list becomes one feed with a
+symbol per exchange, which is the same shape a TradingView instrument has, so
+the consensus layer compares crypto venues exactly as it compares FX brokers.
+Off until a filter says how much to carry.
 
 ## News
 
@@ -219,7 +167,7 @@ uv run till-infinity news latest          # recent headlines
 ```
 
 Two calendars are kept side by side on purpose, so a print can be cross-checked
-between providers. Full guide: **[docs/news.md](docs/news.md)**.
+between providers.
 
 ## Structures
 
@@ -235,121 +183,22 @@ uv run till-infinity structures watch             # run it on its own
 A level is tracked as a **Kalman state** rather than a line - each touch is a
 noisy observation of where it sits, so the filter's variance *is* the zone.
 Statistics are kept **per approach side**, because the same price met from
-above and from below are two different objects:
-
-```
-gold arriving at 4405.5
-  · 4405.5  (from above)  ↑ 59% vs 47% base   push +0.42v
-  ! 4401.3  (from above)  ↑ 80% vs 47% base   push +1.78v
-```
-
-Every conditional sits beside its base rate. A level whose P(up) matches the
-unconditional rate has said nothing, however confident it looks.
-
-Three things happen at a level and the model tells them apart, because one with
-only "held" and "broke" scores the other two wrong - on the stored history
-**27 of 70 breakout attempts were false**, and every one had counted as a break
-that worked:
-
-| | what it is |
-|---|---|
-| **break** | through, and it stayed through |
-| **false breakout** | through, then given back |
-| **back check** | broke, pulled back, held, carried on - risk defined by the flipped level |
+above and from below are two different objects, and every conditional sits
+beside its base rate: a level whose P(up) matches the unconditional rate has
+said nothing, however confident it looks.
 
 Built on **1m through 1w**, each timeframe with its own volatility and its own
 rate of forgetting - one volatility unit on gold is $0.75 on 5m and $52.23 on
-1w, seventy times end to end. Levels at one price across timeframes combine,
-the higher carrying significance and the lower placement.
+1w. Levels at one price across timeframes combine, the higher carrying
+significance and the lower placement.
 
-Guides: **[docs/structures.md](docs/structures.md)** and
-**[docs/levels.md](docs/levels.md)**.
-
-## Reading a signal
-
-Everything published says the same three things: **what happened**, **how
-unusual that is for this venue**, and **what it is being compared against**.
-The last one is the part most signals leave out.
-
-### Cross-venue signals
-
-```
-stale        BINANCE btc      has not moved in 67s while 4 other venues have
-spread       FOREXCOM gold    2.4x the group at 2.11bps, wide even for this venue
-dislocation  DERIV btc        +3.93bps from consensus, outside anything this venue normally does
-```
-
-| | what it means | needs a human? |
-|---|---|---|
-| `stale` | this venue stopped updating while the others carried on | **yes, now** - a dead feed needs no interpretation |
-| `spread` | its spread is wide for the group *and* for its own history | only with context |
-| `dislocation` | its price is away from where the others agree | only with context |
-| `drift` | the volatility regime itself changed | it invalidates thresholds |
-
-"Wide even for this venue" is doing real work. A venue quoting BTC at 20bps is
-not wide; EURUSD at 3bps is. Each venue is scored against its own distribution,
-so one number never has to be right for both.
-
-### Level signals
-
-A level is a price the market has turned at before. What it produces looks like:
-
-```
-us100 1h  29618   tested   from above 7.6x +1.87v   from below 6.6x -1.52v   strength 0.94
-us100 1h  29391   tested   from above 17.3x +1.57v  from below 6.1x -1.71v   strength 0.88
-```
-
-Read left to right: the instrument and timeframe, the price, its state, then
-**what it did to price arriving from each side** and how much evidence there is.
-
-- **`7.6x`** - effective touches, decayed by age. Ten touches last quarter count
-  for less than three this week, and the number already accounts for that.
-- **`+1.87v`** - the average push in **volatility units**: `1v` is one typical
-  move for that instrument on that timeframe. On gold 5m that is about $0.75;
-  on gold weekly, about $52. It is the same number on BTC and EURUSD, which is
-  the point.
-- **`from above` / `from below`** - kept apart because they are different
-  objects. At 29618 price arriving from above gets pushed **up** and arriving
-  from below gets pushed **down**: that is a level holding both ways, and an
-  average over the two would show roughly nothing.
-
-### When price arrives
-
-```
-gold arriving at 4405.5
-  · 4405.5  (from above, ~4.2h)  ↑ 59% vs 47% base   push +0.42v
-  ! 4401.3  (from above, ~3.2d)  ↑ 80% vs 47% base   push +1.78v
-```
-
-**`vs 47% base` is the whole thing.** 59% sounds like an edge until you see the
-unconditional rate is 47%; 80% against the same 47% is one. A level whose
-probability matches the base rate has told you nothing, and you will see that
-rather than a confident-looking number. `!` marks the ones clearing all three
-bars - enough evidence, enough separation from the base rate, and a move big
-enough to be worth the risk.
-
-`~4.2h` is how long price typically takes to get there, from the distance and
-current volatility. Time goes as the **square** of distance, so a level twice as
-far away is four times as long, not twice.
-
-### The three things that happen at a level
-
-| | |
-|---|---|
-| **break** | through, and it stayed through - provisional until it survives |
-| **false breakout** | through, then given back. Recorded with the push it *ended* on |
-| **back check** | broke, pulled back, held, carried on - the stop is the flipped level |
-
-Told apart because a model with only "held" and "broke" scores a trap as a
-break that worked. On the stored history **27 of 70 breakout attempts were
-false**.
-
-### What is not claimed
-
-No performance figures, and none until there are enough resolved outcomes to
-compute them honestly. The system records every call with the state it was made
-from and attaches what followed, so that question becomes answerable - it is
-not answerable yet.
+Beyond the single level, it also publishes the **level range** price is sitting
+in - the nearest agreed price above and below - with the room to each in
+volatility units, and a model of **which wall gets reached first**. That is an
+entry and a target made of prices the market drew rather than a stop multiple.
+Both are published as features and read by nothing yet, which is deliberate:
+the record gets to say whether they predict anything before they are worth
+money.
 
 ## Trading
 
@@ -388,10 +237,6 @@ speeds of recent edge to agree, or buy up to the level above and sell down to
 the one below. Risk is set by named plan rather than ten loose numbers, so the
 per-trade risk and the daily stop cannot silently disagree.
 
-Full guide: **[docs/trading.md](docs/trading.md)**, including the strategy that
-was written and removed because [docs/edge.md](docs/edge.md) had already
-measured it losing.
-
 ## Agents
 
 A model over the stored data - ask it a question, or leave one watching and
@@ -404,8 +249,7 @@ uv run till-infinity agents roles         # market, macro, risk
 ```
 
 Every store an analyst reads is opened read-only, so a prompt injection in a
-headline reaches a model whose only verbs are SELECT. Full guide:
-**[docs/agents.md](docs/agents.md)**.
+headline reaches a model whose only verbs are SELECT.
 
 ## Journal
 
@@ -421,7 +265,6 @@ uv run till-infinity journal export -o data/journal.jsonl
 
 Append-only and point-in-time: the state behind a decision is copied in, not
 referenced, so an entry read back a year later still shows the world it was
-actually made in. Full guide: **[docs/journal.md](docs/journal.md)**.
 
 ## Notifications
 
@@ -436,8 +279,6 @@ uv run till-infinity notify send "..." -l warning
 
 What this instance publishes goes to
 **[t.me/till_infinity_signals](https://t.me/till_infinity_signals)**.
-
-Full guide: **[docs/notifications.md](docs/notifications.md)**.
 
 ## How the parts talk
 
@@ -511,8 +352,6 @@ uv run till-infinity journal listen    --redis   redis://localhost:6379 &
 uv run till-infinity notify listen     --redis   redis://localhost:6379 &
 ```
 
-Full guide: **[docs/bus.md](docs/bus.md)**.
-
 ## Where it lands
 
 SQLite by default, under `.data/` and gitignored. JSONL alongside it with
@@ -532,23 +371,6 @@ Everything is stored as epoch seconds in **UTC** - local time never enters the
 project. Re-running a collector is cheap and safe: bars key on their open time,
 headlines on their id, calendar events get rewritten in place when the print
 lands, and journal entries are content-addressed.
-
-## Docs
-
-| | |
-|---|---|
-| [docs/getting-started.md](docs/getting-started.md) | **start here** - install to stored data, and how to read it back |
-| [docs/prices.md](docs/prices.md) | candles, quotes, sources, storage, schema, library use |
-| [docs/news.md](docs/news.md) | headlines, economic calendar, event storage |
-| [docs/structures.md](docs/structures.md) | online models, cross-venue features, avoiding false positives |
-| [docs/levels.md](docs/levels.md) | key levels - PIP swings, Kalman tracking, per-side directional inference |
-| [docs/agents.md](docs/agents.md) | analysts, tools, models, read-only access, watching the bus |
-| [docs/journal.md](docs/journal.md) | decisions, reasoning, outcomes, exporting for training |
-| [docs/ledger.md](docs/ledger.md) | what each level made or lost, and why a level's price is not its name |
-| [docs/notifications.md](docs/notifications.md) | Telegram and Discord alerts, channels, chat discovery |
-| [docs/bus.md](docs/bus.md) | topics, publishing, fan-out, Redis |
-| [docs/deployment.md](docs/deployment.md) | one process, compose, or CI to a server - and how to size it |
-| [docs/logging.md](docs/logging.md) | log levels, JSON log files, adding a logger |
 
 ## Development
 

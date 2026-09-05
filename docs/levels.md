@@ -2236,14 +2236,30 @@ triples needed to answer that properly, which is also the precondition for
 - Reference implementations: [cmosongo/Perceptually-Important-Points](https://github.com/cmosongo/Perceptually-Important-Points),
   [intelie/python-fastpip](https://github.com/intelie/python-fastpip).
 
+## The pair, not just the one
+
+A level is one price. The two levels price sits *between* are a different
+object and answer a different question - how far this can go, which is what a
+target is. That is `drawing/level_range.py`, and the model of which wall gets
+reached first is `learning/racing.py`; both are described in
+[structures.md](structures.md#level-ranges-and-which-wall-gets-reached-first).
+
+Worth stating here because it changes what a level is *for*. Everything above
+treats a level as the thing price is arriving at. In a range it is also a
+**boundary of somewhere else's target** - the ceiling of the range below it is
+the floor of the range above - and the same zone therefore carries evidence for
+two different trades.
+
 ## Where the code is
 
 | | |
 |---|---|
-| `structures/pips.py` | swing extraction, confirmation, `as_of` |
-| `structures/runs.py` | swings as run boundaries - the second formation |
-| `structures/volatility.py` | the unit everything is measured in |
+| `structures/drawing/pips.py` | swing extraction, confirmation, `as_of` |
+| `structures/drawing/runs.py` | swings as run boundaries - the second formation |
+| `structures/vol/volatility.py` | the unit everything is measured in |
 | `structures/levels.py` | Kalman state, zones, per-side stats, decay, clustering, `agree` |
-| `structures/pivots.py` | sessions and the floor-trader set |
+| `structures/drawing/pivots.py` | sessions and the floor-trader set |
 | `structures/reactions.py` | touch tracking, kNN, inference, the guards |
 | `structures/engine.py` | bars and quotes in, calls out |
+| `structures/drawing/level_range.py` | the two zones price sits between, and the room to each |
+| `structures/learning/racing.py` | which wall gets reached first, and the geometric control |

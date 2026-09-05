@@ -117,6 +117,56 @@ began - and not the wick's extreme. The extreme is not a second level; it is how
 far past the first one price was pushed, which is what makes the zone
 [asymmetric](levels.md#5b-the-origin-and-why-it-is-not-the-extreme).
 
+## Level ranges, and which wall gets reached first
+
+A single level answers "what happens next". It cannot answer "how far can this
+go", because that is bounded by the next structure in the way - and a target set
+from a multiple of the stop never asks. `drawing/level_range.py` finds the pair
+price is currently between: the nearest confluence zone below and the nearest
+above.
+
+It is built from **zones, not raw levels**. A single 5m level is not a ceiling,
+and treating one as such would put a bound almost anywhere - a box whose walls
+are noise measures nothing. Where a side has no zone the bound is **absent**,
+and the room that way is `None` rather than a large number: open air and a
+distant ceiling are different claims, and substituting one for the other makes
+them indistinguishable in the record.
+
+What it publishes on a level signal:
+
+| feature | what it is |
+| --- | --- |
+| `range_upper` / `range_lower` | the two bound prices |
+| `range_width_vol` | how tall the range is, in volatility units |
+| `range_position` | 0.0 at the floor, 1.0 at the ceiling |
+| `room_up_vol` / `room_down_vol` | distance to each wall - the target a long or a short is actually playing for |
+
+`learning/racing.py` then learns **which wall gets reached first**, published as
+`up_first`. The label is symmetric and complete - a range resolves upward or
+downward, with no third outcome except running out of time - and the
+counterfactual is observed, since price reaches a bound whether or not anybody
+traded it. That makes it supervised rather than a bandit.
+
+The label half is the larger half. A race opens when a range is published,
+carrying the features it was published with, and resolves on the **quote**
+stream: resolving on calls would only ever see busy feeds and would miss a bound
+touched and left between them. One race per feed, since two on the same
+instrument would resolve on the same tick and enter the same observation twice.
+A race older than twelve hours is dropped rather than resolved - those bounds
+were drawn against levels that have since moved.
+
+**The control travels with the model, and it is the only number worth reading.**
+Which wall is reached first is close to a geometric fact - usually the nearer
+one - so a high accuracy is the expected result of learning nothing but the
+shape of the range, and is indistinguishable from a high accuracy for a real
+edge. `naive_right`/`naive_seen` score the rule "the nearer bound wins" on
+exactly the same races, updated before the model in the same call, and `edge`
+is the difference. It can be negative.
+
+Nothing reads any of this yet. It lands on the signal and in the journal beside
+what actually happened, and the record gets to say whether it predicts anything
+before it is allowed to size a trade.
+
 ## The four shapes
 
 | shape | what happened | needs an agent? |

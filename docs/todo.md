@@ -7,7 +7,7 @@ duplicated here.
 
 ## Strategies on break risk, added 2026-08-31
 
-`structures/breaking.py` publishes `break_probability` on every level call and
+`structures/learning/breaking.py` publishes `break_probability` on every level call and
 nothing acts on it. These are the strategies it makes possible, and what each
 needs before it can be trusted with money.
 
@@ -325,7 +325,7 @@ here.
 
 ## 0m. Momentum has one detector, and levels have a whole discipline
 
-Raised 2026-08-27, after `structures/cusum.py` went in and momentum became the
+Raised 2026-08-27, after `structures/context/cusum.py` went in and momentum became the
 **primary** entry confirmation, with candlestick patterns demoted to a
 fallback. The reasoning for that demotion is sound and is recorded in
 `trading/candles.py`: candles are bar-quantised and single-broker, while the
