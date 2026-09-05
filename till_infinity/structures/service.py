@@ -1193,7 +1193,16 @@ class Watcher:
             # a target set from a stop multiple never asks. Features only - see
             # `level_range.py` for why this is not allowed to refuse anything yet.
             unit = call.level.price * vol.bps / 10_000 if vol.bps > 0 else 0.0
-            band = level_range_of(grouped[call.feed], call.price, unit, feed=call.feed)
+            band = level_range_of(
+                grouped[call.feed],
+                call.price,
+                unit,
+                feed=call.feed,
+                # The call's own timeframe is the floor. A ceiling from 1h and
+                # a floor from 5m are not two ends of one thing, and the width
+                # between them is a number with nothing behind it.
+                interval=call.interval,
+            )
             reading = band.features()
             # Which wall price reaches first, from the model that learns it,
             # and the race it will be scored on. Opened here rather than on

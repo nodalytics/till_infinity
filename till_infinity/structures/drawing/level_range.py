@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ...logging import get_logger
+from .confluence import rank
 
 log = get_logger(__name__)
 
@@ -179,12 +180,49 @@ class LevelRange:
         )
 
 
-def level_range_of(zones: Any, price: float, unit: float, *, feed: str = "") -> LevelRange:
+def at_or_above(zones: Any, interval: str) -> list[Any]:
+    """Zones drawn on `interval` or something slower.
+
+    **A range with a 1h ceiling and a 5m floor is not a range.** The two bounds
+    have to be the same kind of object or the box measures nothing: a 5m zone
+    is a place price paused for a few bars, a 1h zone is a place it turned, and
+    the distance between one of each is a number with no meaning attached.
+
+    So the span is filtered to the call's own timeframe and coarser. Higher is
+    the safe direction - a 4h zone is a real boundary for a 15m trade, while a
+    15m zone is noise inside a 4h one - which is the same asymmetry
+    `confluence` already relies on when it lets the higher timeframe carry the
+    significance and the lower carry the placement.
+
+    A zone with no members has no span and is dropped: it cannot be shown to
+    belong.
+    """
+    if not interval:
+        return list(zones)
+    # `ORDER` runs fine to coarse, so a coarser timeframe has the **higher**
+    # rank and "at or above" is `>=`.
+    floor = rank(interval)
+    kept = []
+    for zone in zones:
+        span = getattr(zone, "span", "")
+        if span and rank(span) >= floor:
+            kept.append(zone)
+    return kept
+
+
+def level_range_of(
+    zones: Any, price: float, unit: float, *, feed: str = "", interval: str = ""
+) -> LevelRange:
     """The nearest zone below price and the nearest above it.
 
     `unit` is one volatility unit as a price distance - the same conversion
     every other reading here uses, passed in rather than recomputed so a
     range cannot disagree with the signal it is attached to.
+
+    `interval` keeps the two bounds comparable: only zones drawn on that
+    timeframe or a coarser one are considered, because a ceiling from 1h and a
+    floor from 5m are not two ends of one thing. Empty means take them all,
+    which is what the tests and any caller without a timeframe want.
 
     A zone sitting exactly at `price` is treated as **below**, matching
     `Level.side_of`, which resolves the same tie the same way. Consistency
@@ -193,7 +231,7 @@ def level_range_of(zones: Any, price: float, unit: float, *, feed: str = "") -> 
     range.
     """
     lower = upper = None
-    for zone in zones:
+    for zone in at_or_above(zones, interval):
         at = getattr(zone, "price", None)
         if not isinstance(at, int | float) or not at:
             continue

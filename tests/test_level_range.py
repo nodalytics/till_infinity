@@ -284,3 +284,58 @@ def test_the_bound_prices_are_not_model_inputs():
     assert "range_upper" not in NAMES
     assert "range_lower" not in NAMES
     assert len(Races.inputs(got)) == len(NAMES)
+
+
+# --------------------------------------------- the bounds have to be comparable
+
+
+class _Zoned:
+    """A zone with a span, which is what the filter reads."""
+
+    def __init__(self, price, span):
+        self.price = price
+        self.span = span
+
+
+def test_a_ceiling_from_1h_and_a_floor_from_5m_is_not_a_range():
+    """The two bounds have to be the same kind of object. A 5m zone is a place
+    price paused for a few bars; a 1h zone is a place it turned; the distance
+    between one of each is a number with nothing behind it."""
+    from till_infinity.structures.drawing.level_range import level_range_of
+
+    zones = [_Zoned(4320.0, "5m"), _Zoned(4300.0, "1h"), _Zoned(4340.0, "1h")]
+
+    got = level_range_of(zones, price=4330.0, unit=1.0, interval="1h")
+
+    # The 5m floor at 4320 is nearer, and is refused for being finer.
+    assert got.lower.price == 4300.0
+    assert got.upper.price == 4340.0
+
+
+def test_a_coarser_zone_is_kept_because_higher_is_the_safe_direction():
+    """A 4h zone is a real boundary for a 15m trade; a 15m zone is noise inside
+    a 4h one."""
+    from till_infinity.structures.drawing.level_range import at_or_above
+
+    zones = [_Zoned(1.0, "5m"), _Zoned(2.0, "15m"), _Zoned(3.0, "4h"), _Zoned(4.0, "1d")]
+
+    kept = {z.span for z in at_or_above(zones, "15m")}
+
+    assert kept == {"15m", "4h", "1d"}
+
+
+def test_no_timeframe_means_take_them_all():
+    """What a caller without one wants, and what the older tests assume."""
+    from till_infinity.structures.drawing.level_range import at_or_above
+
+    zones = [_Zoned(1.0, "5m"), _Zoned(2.0, "4h")]
+
+    assert len(at_or_above(zones, "")) == 2
+
+
+def test_a_zone_with_no_span_cannot_be_shown_to_belong():
+    from till_infinity.structures.drawing.level_range import at_or_above
+
+    zones = [_Zoned(1.0, ""), _Zoned(2.0, "4h")]
+
+    assert [z.span for z in at_or_above(zones, "1h")] == ["4h"]
