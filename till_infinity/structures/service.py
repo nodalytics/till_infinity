@@ -174,6 +174,26 @@ def _same_unit(prices: list[float]) -> list[float]:
     return [p for p in prices if 1 / SCALE_LIMIT <= p / middle <= SCALE_LIMIT]
 
 
+#: A glyph per fault, so the kind is legible before a word is read.
+FAULTS: dict[str, str] = {
+    "stale": "🧊",
+    "spread": "💧",
+    "dislocation": "🪞",
+    "lagging": "🐢",
+    "drift": "🌊",
+}
+
+#: What each one means, and **whether it needs anybody**. `stale` is the only
+#: shape that interprets itself: a dead feed needs no context and no model.
+MEANS: dict[str, str] = {
+    "stale": "this venue stopped updating while the others carried on - needs a look now",
+    "spread": "wide for the group and for its own history - only matters with context",
+    "dislocation": "priced away from where the others agree - only matters with context",
+    "lagging": "consistently late to the same move the others already made",
+    "drift": "the volatility regime itself moved - it invalidates thresholds",
+}
+
+
 def _stamp(signal: Signal) -> str:
     """The signal's own time, not the moment the alert was built.
 
@@ -213,9 +233,28 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         "interval": signal.interval,
     }
     if signal.shape is not Shape.LEVEL:
+        # The venue faults, laid out like the level alert rather than left as a
+        # bare title with an **empty body** - which is what this was, so
+        # everything the detector had worked out arrived as one run-on sentence
+        # in the subject line and the score was visible only to the filter.
+        mark = FAULTS.get(str(signal.shape), "⚠️")
+        lines = [
+            rule := "━" * 22,
+            f"{mark} {signal.feed.upper().replace('_', ' ')} · {str(signal.shape).upper()}",
+            rule,
+            f"📊 {signal.venue} · {signal.interval or 'live'} · {_stamp(signal)}",
+            "",
+        ]
+        if signal.detail:
+            lines.append(f"📍 {signal.detail}")
+        # The score is what decided this was worth sending, so it belongs where
+        # a reader can disagree with it.
+        lines.append(f"📊 score {signal.score:.2f}")
+        lines.append(f"🧭 {MEANS.get(str(signal.shape), 'unusual for this venue')}")
+        lines.append(rule)
         return {
             "title": signal.title,
-            "body": "",
+            "body": "\n".join(lines),
             "level": "warning",
             "fields": {**fields, "score": f"{signal.score:.3f}"},
             "source": "structures",

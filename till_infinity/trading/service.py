@@ -258,6 +258,36 @@ class Shadow:
     stopped_at: float = 0.0
 
 
+def _closed_body(
+    live: Live, price: float, profit: float, why: str, money: str, standing: str
+) -> str:
+    """A close, laid out like the fill it answers.
+
+    The R multiple leads, because it is the only figure that compares one trade
+    against another - the money says what this one did and the R says whether
+    the rule is working.
+    """
+    rule = "━" * 22
+    won = profit >= 0
+    risk = abs(live.intent.entry - live.intent.stop)
+    got = ((price - live.position.price_open) * live.position.side.sign / risk) if risk else 0.0
+    lines = [
+        rule,
+        f"{'✅' if won else '❌'} {live.intent.feed.upper().replace('_', ' ')} · "
+        f"CLOSED · {why.upper()}",
+        rule,
+        f"📊 {live.by or 'trading'} · #{live.position.ticket}",
+        "",
+        f"📍 {live.position.side} {live.position.volume:g} @ "
+        f"{live.position.price_open:.5g} → {price:.5g}",
+        f"{'💚' if won else '💔'} {money} · {got:+.2f}R",
+    ]
+    if standing:
+        lines.append(f"📅 {standing}")
+    lines.append(rule)
+    return "\n".join(lines)
+
+
 class Trader:
     """Watches the bus, trades what it likes, records everything."""
 
@@ -3340,15 +3370,30 @@ class Trader:
     async def _announce_fill(self, intent: Intent, price: float, ticket: int, by: str = "") -> None:
         if not (self.settings.notify and self.settings.notify_fills):
             return
+        # Same layout as a level alert, so a phone full of both can be read
+        # without switching gear - one rule per line, each opening with the
+        # thing it answers.
+        rule = "━" * 22
+        up = intent.side.sign > 0
         body = [
-            f"{intent.side} {intent.volume:g} lots @ {price:.5g}",
+            rule,
+            f"{'🟢' if up else '🔴'} {intent.feed.upper().replace('_', ' ')} · "
+            f"FILLED · {str(intent.side).upper()}",
+            rule,
+            f"📊 {self.broker.name} · {by or 'trading'} · #{ticket}",
             "",
-            f"stop {intent.stop:.5g} · target {intent.target:.5g} · {intent.reward_to_risk:.1f}R",
-            f"risking {self.money(intent.risk_money, signed=False)} "
-            f"({intent.risk_money / self.equity:.2%})"
+            f"📍 {intent.volume:g} lots @ {price:.5g}",
+            # Stop and target with the ratio between them - and this one **is**
+            # a reward-to-risk, unlike the level alert's push line, because
+            # both ends are prices this trade will actually exit at.
+            f"🛑 stop {intent.stop:.5g} · 🎯 target {intent.target:.5g} "
+            f"· {intent.reward_to_risk:.1f} to 1",
+            f"💰 risking {self.money(intent.risk_money, signed=False)} "
+            f"({intent.risk_money / self.equity:.2%} of the book)"
             if self.equity
-            else "",
-            intent.reason,
+            else f"💰 risking {self.money(intent.risk_money, signed=False)}",
+            f"📝 {intent.reason}" if intent.reason else "",
+            rule,
         ]
         await self.bus.publish(
             ALERTS,
@@ -3435,9 +3480,8 @@ class Trader:
                     f"{self.settings.mode}: {live.intent.feed} closed "
                     f"{self.money(profit)} ({why})" + (f" · {live.by}" if live.by else "")
                 ),
-                "body": (
-                    f"{live.position.side} {live.position.volume:g} @ "
-                    f"{live.position.price_open:.5g} → {price:.5g}\n\n{self.guard.summary()}"
+                "body": _closed_body(
+                    live, price, profit, why, self.money(profit), self.guard.summary()
                 ),
                 "level": "info" if profit >= 0 else "warning",
                 "fields": {
