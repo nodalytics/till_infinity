@@ -36,8 +36,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
+from contextlib import suppress
+from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Self
 
 from ..logging import get_logger
@@ -197,13 +199,17 @@ class CcxtSource(Source):
 
     def __init__(self, settings: Any) -> None:
         super().__init__(settings)
-        self._exchange: Any = None
+        #: exchange name -> the open ccxt client.
+        self._exchanges: dict[str, Any] = {}
 
     @property
     def concurrency(self) -> int:
-        # One exchange, one rate limit. ccxt's own throttle serialises anyway,
-        # so more workers buy queueing rather than throughput.
-        return 2
+        # Two per exchange. Each has its own rate limit and ccxt's throttle
+        # serialises *within* one, so workers beyond that buy queueing rather
+        # than throughput - but a second exchange is a second budget, and
+        # sharing one pair of workers across them would leave both idle in
+        # turn.
+        return max(2, 2 * len(exchange_names(self.settings)))
 
     def supported(self, intervals: Sequence[Interval]) -> tuple[Interval, ...]:
         return tuple(i for i in intervals if i.name in TIMEFRAMES)
@@ -215,10 +221,13 @@ class CcxtSource(Source):
             raise PermanentError(
                 "ccxt is not installed; add it or drop 'ccxt' from PRICES_SOURCES"
             ) from exc
-        name = getattr(self.settings, "ccxt_exchange", "") or "binance"
-        maker = getattr(ccxt, name, None)
-        if maker is None:
-            raise PermanentError(f"ccxt has no exchange called {name!r}")
+        wanted = exchange_names(self.settings)
+        makers = {}
+        for name in wanted:
+            maker = getattr(ccxt, name, None)
+            if maker is None:
+                raise PermanentError(f"ccxt has no exchange called {name!r}")
+            makers[name] = maker
         # `enableRateLimit` is the whole reason to let ccxt own the throttle:
         # it knows each exchange's published limit and this does not.
         #
@@ -231,15 +240,31 @@ class CcxtSource(Source):
         # basis between them is small but the liquidations that move a
         # perpetual do not exist on spot at all.
         kind = (getattr(self.settings, "ccxt_market_type", "") or "swap").strip()
-        self._exchange = maker({"enableRateLimit": True, "options": {"defaultType": kind}})
+        for name, maker in makers.items():
+            self._exchanges[name] = maker(
+                {"enableRateLimit": True, "options": {"defaultType": kind}}
+            )
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
-        if self._exchange is not None:
-            await self._exchange.close()
-            self._exchange = None
+        for exchange in self._exchanges.values():
+            with suppress(Exception):
+                await exchange.close()
+        self._exchanges.clear()
 
-    async def _top_of_book(self) -> dict[str, tuple[float, float]]:
+    def _pick(self, name: str) -> Any:
+        """The open client for this exchange, by name or by being the only one."""
+        if not self._exchanges:
+            raise PermanentError("no ccxt exchange is open")
+        wanted = (name or "").lower()
+        got = self._exchanges.get(wanted)
+        if got is not None:
+            return got
+        if not wanted or len(self._exchanges) == 1:
+            return next(iter(self._exchanges.values()))
+        raise PermanentError(f"ccxt exchange {name!r} is not open")
+
+    async def _top_of_book(self, exchange: Any) -> dict[str, tuple[float, float]]:
         """Bid and ask per symbol, from the book rather than the day summary.
 
         **`fetch_tickers` does not carry them here.** Binance answers it from
@@ -253,10 +278,10 @@ class CcxtSource(Source):
         Best-effort: an exchange without it keeps the old behaviour, where an
         unknown spread costs a pair nothing.
         """
-        if not self._exchange.has.get("fetchBidsAsks"):
+        if not exchange.has.get("fetchBidsAsks"):
             return {}
         try:
-            rows = await self._exchange.fetch_bids_asks()
+            rows = await exchange.fetch_bids_asks()
         except Exception as exc:  # a missing spread must not cost us the board
             log.info("prices: ccxt could not fetch top of book: %s", exc)
             return {}
@@ -266,7 +291,7 @@ class CcxtSource(Source):
                 out[str(symbol)] = (float(row.get("bid") or 0.0), float(row.get("ask") or 0.0))
         return out
 
-    async def _listed_at(self) -> dict[str, float]:
+    async def _listed_at(self, exchange: Any) -> dict[str, float]:
         """When each market was created, in epoch milliseconds.
 
         `listed_days` was never assigned anywhere in this module - the field
@@ -275,7 +300,7 @@ class CcxtSource(Source):
         `market["created"]` carries it, populated on all 911 Binance swaps.
         """
         try:
-            markets = await self._exchange.load_markets()
+            markets = await exchange.load_markets()
         except Exception as exc:
             log.info("prices: ccxt could not load markets: %s", exc)
             return {}
@@ -285,15 +310,19 @@ class CcxtSource(Source):
                 out[str(symbol)] = float(market["created"])
         return out
 
-    async def board(self) -> list[Board]:
-        """Every pair the exchange lists, as the filters want to see it."""
-        if self._exchange is None:
-            raise PermanentError("the exchange is not open")
-        tickers = await self._exchange.fetch_tickers()
+    async def board(self, exchange_name: str = "") -> list[Board]:
+        """Every pair one exchange lists, as the filters want to see it.
+
+        Named rather than assumed: with several exchanges open, "the board" is
+        not a thing - each has its own, and they are ranked against each other
+        by `discover_ccxt`.
+        """
+        exchange = self._pick(exchange_name)
+        tickers = await exchange.fetch_tickers()
         # Both are needed because `fetch_tickers` carries neither, and a filter
         # reading a field nothing populates is off however it is configured.
-        book = await self._top_of_book()
-        listed = await self._listed_at()
+        book = await self._top_of_book(exchange)
+        listed = await self._listed_at(exchange)
         now = time.time() * 1000.0
         out = []
         for symbol, row in tickers.items():
@@ -322,17 +351,18 @@ class CcxtSource(Source):
     async def fetch(self, job: Job, bars: int, sink: Any) -> Any:
         from .models import WriteResult
 
-        if self._exchange is None:
-            raise PermanentError("the exchange is not open")
+        # The venue on the job names which exchange to ask. A pair carried by
+        # three of them is one feed with three symbols, exactly as a
+        # TradingView instrument is - and the consensus layer downstream is
+        # what makes that worth doing.
+        exchange = self._pick(job.symbol.venue)
         total = WriteResult()
         for interval in job.intervals:
             code = TIMEFRAMES.get(interval.name)
             if code is None:
                 continue
             try:
-                candles = await self._exchange.fetch_ohlcv(
-                    job.symbol.ticker, timeframe=code, limit=bars
-                )
+                candles = await exchange.fetch_ohlcv(job.symbol.ticker, timeframe=code, limit=bars)
             except Exception as exc:  # ccxt raises a wide family
                 # Transient: a rate limit or a dropped socket should be retried
                 # by the caller rather than disabling the pair for the run.
@@ -354,6 +384,25 @@ class CcxtSource(Source):
         return total
 
 
+def exchange_names(settings: Any) -> tuple[str, ...]:
+    """Which exchanges to ask, lowered and de-duplicated in the order given.
+
+    `PRICES_CCXT_EXCHANGES` if set, else the single `PRICES_CCXT_EXCHANGE`,
+    else binance. Several is the point: one venue's board is one venue's
+    opinion of what is liquid.
+    """
+    raw = getattr(settings, "ccxt_exchanges", ()) or ()
+    if not raw:
+        one = (getattr(settings, "ccxt_exchange", "") or "binance").strip()
+        raw = (one,)
+    seen: dict[str, None] = {}
+    for name in raw:
+        cleaned = str(name).strip().lower()
+        if cleaned:
+            seen.setdefault(cleaned, None)
+    return tuple(seen) or ("binance",)
+
+
 def filters_from(settings: Any) -> Filters:
     """The configured filter set, read off `Settings`."""
     return Filters(
@@ -368,33 +417,70 @@ def filters_from(settings: Any) -> Filters:
     )
 
 
-async def discover_ccxt(settings: Any) -> tuple[str, ...]:
-    """The pairs worth carrying on the configured exchange, best first.
+async def discover_ccxt(settings: Any) -> dict[str, tuple[str, ...]]:
+    """The pairs worth carrying, and which exchanges carry each one.
 
-    The step that was missing. `pairs_for` was exported and called by nothing,
-    no feed carried a CCXT symbol, and `ccxt_top` and its five companions were
-    read from the environment into `Settings` and never consulted - so adding
-    `ccxt` to `PRICES_SOURCES` would have started a source with no work, which
-    looks exactly like an exchange that is down.
+    **Ranked across the exchanges, not within them.** One venue's board is one
+    venue's opinion of what is liquid; the desk wants the pairs that are liquid
+    *in the market*, which is the same reason gold is quoted from six venues
+    and not from whichever one answered first. So the quality filters run per
+    exchange - a pair that is wide or dead or newly listed *there* is dropped
+    from *there* - and the volume ranking is then taken over the summed volume
+    of what survives.
 
-    Returns ccxt pair names for `register_ccxt_feeds`, or `()` if the exchange
-    cannot be reached: a board that does not answer must not take the rest of
-    the desk down with it.
+    The cut is applied last, once, globally. Applying `top` per exchange and
+    then merging would give the union of several top-250s, which is neither 250
+    pairs nor the 250 largest.
+
+    Returns pair -> the exchanges carrying it, busiest first, so a feed's
+    symbols are ordered the way the TradingView feeds are.
     """
+    wanted = exchange_names(settings)
+    rules = filters_from(settings)
+    # `top` is the global cut and must not fire per exchange.
+    local = replace(rules, top=0)
+
+    volume: dict[str, float] = defaultdict(float)
+    carried: dict[str, list[tuple[float, str]]] = defaultdict(list)
+    reached = 0
     try:
         async with CcxtSource(settings) as source:
-            board = await source.board()
-    except Exception as exc:  # an unreachable exchange is not a fatal error
+            for name in wanted:
+                try:
+                    board = await source.board(name)
+                except Exception as exc:  # one venue down is not all of them
+                    log.warning("prices: ccxt %s board failed: %s", name, exc)
+                    continue
+                reached += 1
+                kept, dropped = local.choose(board)
+                log.info(
+                    "prices: ccxt %s - %d of %d pairs kept%s",
+                    name,
+                    len(kept),
+                    len(board),
+                    f", dropped {dict(dropped)}" if dropped else "",
+                )
+                for pair in kept:
+                    volume[pair.symbol] += pair.quote_volume
+                    carried[pair.symbol].append((pair.quote_volume, name))
+    except Exception as exc:  # an unreachable exchange must not take the desk down
         log.warning("prices: ccxt discovery failed: %s", exc)
-        return ()
-    picked = pairs_for(board, filters_from(settings))
+        return {}
+    if not reached:
+        log.warning("prices: no ccxt exchange answered - carrying nothing")
+        return {}
+
+    ranked = sorted(volume, key=lambda pair: -volume[pair])
+    if rules.top > 0:
+        ranked = ranked[: rules.top]
+    out = {pair: tuple(name for _, name in sorted(carried[pair], reverse=True)) for pair in ranked}
     log.info(
-        "prices: ccxt board %d pairs, %d carried on %s",
-        len(board),
-        len(picked),
-        getattr(settings, "ccxt_exchange", "?"),
+        "prices: ccxt %d pair(s) carried across %d exchange(s) - %d on more than one",
+        len(out),
+        reached,
+        sum(1 for names in out.values() if len(names) > 1),
     )
-    return tuple(symbol.ticker for symbol in picked)
+    return out
 
 
 def pairs_for(board: Sequence[Board], filters: Filters) -> tuple[Symbol, ...]:

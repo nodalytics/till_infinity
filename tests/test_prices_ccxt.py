@@ -130,9 +130,9 @@ class _FakeExchange:
         return made
 
 
-def _source(exchange):
+def _source(exchange, name="binance"):
     source = CcxtSource.__new__(CcxtSource)
-    source._exchange = exchange
+    source._exchanges = {name: exchange}
     return source
 
 
@@ -221,3 +221,83 @@ def test_the_configured_thresholds_reach_the_filters():
     assert got.max_spread == 0.002
     assert got.min_days == 30.0
     assert got.quotes == ("USDT",)
+
+
+# ------------------------------------------------ several exchanges, one book
+
+
+def test_the_exchange_list_is_read_in_order_without_duplicates():
+    from till_infinity.prices.crypto import exchange_names
+
+    class _S:
+        ccxt_exchanges = ("Binance", "bybit", "BINANCE", " okx ", "")
+        ccxt_exchange = "ignored"
+
+    assert exchange_names(_S()) == ("binance", "bybit", "okx")
+
+
+def test_a_single_exchange_setting_still_works():
+    from till_infinity.prices.crypto import exchange_names
+
+    class _S:
+        ccxt_exchanges = ()
+        ccxt_exchange = "okx"
+
+    assert exchange_names(_S()) == ("okx",)
+
+
+def test_a_pair_on_three_exchanges_is_one_feed_with_three_symbols():
+    """The shape a TradingView instrument has, and for the same reason: the
+    consensus layer compares venues against each other and cannot do that with
+    one."""
+    from till_infinity.prices.config import ccxt_feeds
+
+    made = ccxt_feeds({"BTC/USDT:USDT": ("binance", "bybit", "okx")})
+
+    feed = made["btc_usdt_usdt"]
+    symbols = feed.symbols["ccxt"]
+    assert [s.venue for s in symbols] == ["BINANCE", "BYBIT", "OKX"]
+    # The ccxt pair is kept verbatim - it is what `fetch_ohlcv` answers to.
+    assert {s.ticker for s in symbols} == {"BTC/USDT:USDT"}
+
+
+def test_a_bare_list_of_pairs_is_still_accepted():
+    from till_infinity.prices.config import ccxt_feeds
+
+    made = ccxt_feeds(["ETH/USDT:USDT"])
+
+    assert [s.venue for s in made["eth_usdt_usdt"].symbols["ccxt"]] == ["CCXT"]
+
+
+def test_the_source_asks_the_exchange_the_job_names():
+    """A pair carried by three exchanges produces three jobs, and each has to
+    reach the venue it was drawn from."""
+    from till_infinity.prices.crypto import CcxtSource
+
+    source = CcxtSource.__new__(CcxtSource)
+    source._exchanges = {"binance": "B", "bybit": "Y"}
+
+    assert source._pick("BYBIT") == "Y"
+    assert source._pick("binance") == "B"
+
+
+def test_an_unknown_venue_is_refused_rather_than_guessed():
+    """Silently falling back to whichever exchange happened to be first would
+    collect one venue's candles under another's name."""
+    from till_infinity.prices.crypto import CcxtSource, PermanentError
+
+    source = CcxtSource.__new__(CcxtSource)
+    source._exchanges = {"binance": "B", "bybit": "Y"}
+
+    with pytest.raises(PermanentError):
+        source._pick("kraken")
+
+
+def test_one_open_exchange_answers_whatever_it_is_asked():
+    """The single-venue case, where the venue tag predates the exchange list."""
+    from till_infinity.prices.crypto import CcxtSource
+
+    source = CcxtSource.__new__(CcxtSource)
+    source._exchanges = {"binance": "B"}
+
+    assert source._pick("CCXT") == "B"

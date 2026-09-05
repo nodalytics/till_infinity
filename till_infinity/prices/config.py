@@ -758,26 +758,42 @@ def ccxt_feed_names() -> tuple[str, ...]:
     return tuple(sorted(_CCXT_ONLY))
 
 
-def ccxt_feeds(pairs: Sequence[str]) -> dict[str, Feed]:
+def ccxt_feeds(pairs: Mapping[str, Sequence[str]] | Sequence[str]) -> dict[str, Feed]:
     """Feeds for ccxt pairs, keyed by a slug of the pair.
 
-    The ccxt symbol is kept verbatim - `BTC/USDT:USDT` is what `fetch_ohlcv`
-    answers to, and the slug (`btc_usdt_usdt`) is what journal keys and log
-    lines carry, where slashes and colons are a nuisance.
+    Takes pair -> the exchanges carrying it, so a pair listed on three of them
+    becomes **one feed with three symbols** - exactly the shape a TradingView
+    instrument has, and for the same reason: the consensus layer downstream
+    compares venues against each other and cannot do that with one.
+
+    The venue on each symbol is the exchange name, which is what
+    `CcxtSource.fetch` reads to know who to ask. The ccxt pair is kept verbatim
+    - `BTC/USDT:USDT` is what `fetch_ohlcv` answers to - and the slug
+    (`btc_usdt_usdt`) is what journal keys and log lines carry, where slashes
+    and colons are a nuisance.
+
+    A bare sequence of pairs is still accepted and means "one exchange, the
+    configured one".
     """
+    if not isinstance(pairs, Mapping):
+        pairs = dict.fromkeys(pairs, ())
     made: dict[str, Feed] = {}
-    for raw in pairs:
-        pair = raw.strip()
+    for raw, venues in pairs.items():
+        pair = str(raw).strip()
         if not pair:
             continue
         slug = slugify(pair).lower()
         if not slug or slug in made:
             continue
-        made[slug] = Feed(name=slug, symbols={CCXT: (Symbol(CCXT.upper(), pair),)})
+        names = tuple(str(v).strip().lower() for v in venues if str(v).strip()) or (CCXT,)
+        made[slug] = Feed(
+            name=slug,
+            symbols={CCXT: tuple(Symbol(name.upper(), pair) for name in names)},
+        )
     return made
 
 
-def register_ccxt_feeds(pairs: Sequence[str]) -> tuple[str, ...]:
+def register_ccxt_feeds(pairs: Mapping[str, Sequence[str]] | Sequence[str]) -> tuple[str, ...]:
     """Add discovered ccxt pairs to the catalogue. Returns the slugs added."""
     made = ccxt_feeds(pairs)
     added = tuple(slug for slug in made if slug not in FEEDS)
@@ -955,6 +971,11 @@ class Settings:
     # Yahoo (yfinance is blocking; it runs in a thread pool)
     #: Which exchange `CcxtSource` talks to, by ccxt's own name.
     ccxt_exchange: str = "binance"
+    #: Several of them, ranked against each other. One venue's board is one
+    #: venue's opinion of what is liquid, which is the same reason gold is
+    #: quoted from six venues rather than from whichever answered first.
+    #: Empty falls back to `ccxt_exchange`.
+    ccxt_exchanges: tuple[str, ...] = ()
     #: Pair selection. Every threshold is off at zero - see `crypto.Filters`
     #: for why a default nobody chose is worse than collecting too much.
     #: `swap` for perpetuals, `spot` for spot. Swaps have positions with a
@@ -1016,6 +1037,11 @@ class Settings:
             tv_origin=_env("PRICES_TV_ORIGIN") or DEFAULT_TV_ORIGIN,
             tv_auth_token=_env("PRICES_TV_TOKEN") or DEFAULT_TV_TOKEN,
             ccxt_exchange=(os.environ.get("PRICES_CCXT_EXCHANGE") or "binance").strip(),
+            ccxt_exchanges=tuple(
+                name.strip().lower()
+                for name in (os.environ.get("PRICES_CCXT_EXCHANGES") or "").split(",")
+                if name.strip()
+            ),
             ccxt_market_type=(os.environ.get("PRICES_CCXT_MARKET_TYPE") or "swap").strip(),
             ccxt_swaps_only=_env_flag("PRICES_CCXT_SWAPS_ONLY", True),
             ccxt_top=_env_int(0, "PRICES_CCXT_TOP"),

@@ -243,6 +243,30 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     breaking = got.get("break_probability")
     if breaking is not None:
         body.append(f"break risk {breaking:.0%} · from arrival speed and depth")
+    # The channel this level sits in, and which wall the model expects first.
+    #
+    # Read to a person and acted on by nothing, the same standing as the break
+    # risk above. It is here because it is the pair of numbers an entry and a
+    # target are actually made of - the far bound is a target the market drew
+    # rather than one the position sizer did - and because a number nobody sees
+    # is a number nobody can sanity-check against what the chart then did.
+    upper, lower = got.get("channel_upper"), got.get("channel_lower")
+    if upper and lower:
+        room_up, room_down = got.get("room_up_vol", 0.0), got.get("room_down_vol", 0.0)
+        where = got.get("channel_position")
+        body.append("")
+        body.append(
+            f"channel {lower:.5g} .. {upper:.5g} · {got.get('channel_width_vol', 0.0):.1f}v wide"
+            + (f", price {where:.0%} up it" if where is not None else "")
+        )
+        body.append(f"{room_up:.2f}v to the ceiling · {room_down:.2f}v to the floor")
+        # Only when the race model has an opinion. `None` while it is cold, and
+        # the line is simply absent rather than reading 50%.
+        first = got.get("up_first")
+        if first is not None:
+            wall = "ceiling" if first >= 0.5 else "floor"
+            confidence = first if first >= 0.5 else 1.0 - first
+            body.append(f"{wall} first {confidence:.0%} · from where price sits in it")
     return {
         "title": f"{signal.feed.upper()} {signal.interval} - {signal.direction}",
         "body": "\n".join(body),

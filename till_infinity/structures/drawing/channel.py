@@ -155,6 +155,17 @@ class Channel:
             here = self.position
             if here is not None:
                 out["channel_position"] = here
+            # The bounds as prices, for the alert - a person placing an entry
+            # wants the number to type, and "2.1v above" is not it.
+            #
+            # Raw prices in a feature dictionary are not free: `facto` learns
+            # from every key it is given, so a value in the thousands sits
+            # beside ratios in the units. `level` is already there and already
+            # does this, so these two do not introduce the problem - but they
+            # do enlarge it, and it is worth someone deciding on purpose rather
+            # than inheriting. `racing` is unaffected: it reads `NAMES` only.
+            out["channel_upper"] = self.upper.price
+            out["channel_lower"] = self.lower.price
         return out
 
     def __str__(self) -> str:

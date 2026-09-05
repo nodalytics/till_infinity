@@ -75,7 +75,10 @@ def test_an_absent_bound_is_omitted_rather_than_zeroed():
     assert got["room_down_vol"] == pytest.approx(6.0)
 
 
-def test_the_features_are_the_four_readings():
+def test_the_features_are_the_readings_plus_the_bounds():
+    """The four scale-free readings the model is fitted on, and the two bound
+    prices, which exist for the alert - a person placing an entry wants the
+    number to type, and "2v above" is not it."""
     got = channel_of([_Zone(4324.0), _Zone(4334.0)], price=4330.0, unit=2.0, feed="gold").features()
 
     assert got == {
@@ -83,6 +86,8 @@ def test_the_features_are_the_four_readings():
         "room_down_vol": pytest.approx(3.0),
         "channel_width_vol": pytest.approx(5.0),
         "channel_position": pytest.approx(0.6),
+        "channel_upper": pytest.approx(4334.0),
+        "channel_lower": pytest.approx(4324.0),
     }
 
 
@@ -118,3 +123,112 @@ def test_a_zero_volatility_unit_reports_nothing_rather_than_dividing():
     assert got.room_up_vol is None
     assert got.room_down_vol is None
     assert got.width_vol == 0.0
+
+
+# ------------------------------------------------------- what a person reads
+
+
+def _signal(**features):
+    from till_infinity.structures.models import Shape, Signal
+
+    base = {"level": 4330.0, "probability_up": 0.7}
+    base.update(features)
+    return Signal(
+        shape=Shape.LEVEL,
+        feed="gold",
+        venue="consensus",
+        score=0.3,
+        direction="up",
+        features=base,
+    )
+
+
+def _body(**features):
+    from till_infinity.structures.service import alert_payload
+
+    return alert_payload(_signal(**features))["body"]
+
+
+def test_the_alert_shows_the_channel_and_the_room_on_each_side():
+    """The pair of numbers an entry and a target are actually made of - the far
+    bound is a target the market drew rather than one the sizer did."""
+    got = _body(
+        channel_upper=4340.0,
+        channel_lower=4320.0,
+        channel_width_vol=4.0,
+        channel_position=0.5,
+        room_up_vol=2.0,
+        room_down_vol=2.0,
+    )
+
+    assert "channel 4320 .. 4340" in got
+    assert "4.0v wide" in got
+    assert "price 50% up it" in got
+    assert "2.00v to the ceiling" in got
+    assert "2.00v to the floor" in got
+
+
+def test_the_alert_names_the_wall_the_model_expects_first():
+    got = _body(
+        channel_upper=4340.0,
+        channel_lower=4320.0,
+        channel_width_vol=4.0,
+        channel_position=0.8,
+        room_up_vol=0.8,
+        room_down_vol=3.2,
+        up_first=0.74,
+    )
+
+    assert "ceiling first 74%" in got
+
+
+def test_the_wall_named_is_the_one_actually_favoured():
+    """0.26 for the ceiling is 74% for the floor, and reporting "ceiling 26%"
+    would read as a weak call for the ceiling rather than a strong one against
+    it."""
+    got = _body(
+        channel_upper=4340.0,
+        channel_lower=4320.0,
+        channel_width_vol=4.0,
+        channel_position=0.2,
+        room_up_vol=3.2,
+        room_down_vol=0.8,
+        up_first=0.26,
+    )
+
+    assert "floor first 74%" in got
+
+
+def test_a_cold_race_model_adds_no_line_rather_than_saying_fifty():
+    """Silence rather than 50%, for the same reason `predict` returns None."""
+    got = _body(
+        channel_upper=4340.0,
+        channel_lower=4320.0,
+        channel_width_vol=4.0,
+        channel_position=0.5,
+        room_up_vol=2.0,
+        room_down_vol=2.0,
+    )
+
+    assert "channel 4320 .. 4340" in got
+    assert "first" not in got.split("channel")[1]
+
+
+def test_an_unbounded_channel_adds_nothing_to_the_alert():
+    """One wall is not a channel, and half a box is not worth a line."""
+    got = _body(room_down_vol=2.0)
+
+    assert "channel" not in got
+    assert "ceiling" not in got
+
+
+def test_the_bound_prices_are_not_model_inputs():
+    """`racing` reads `NAMES` only. A raw price among standardised ratios would
+    dominate any linear fit given it."""
+    from till_infinity.structures.learning.racing import NAMES, Races
+
+    got = channel_of([_Zone(4324.0), _Zone(4334.0)], price=4330.0, unit=2.0).features()
+
+    assert "channel_upper" not in NAMES
+    assert "channel_lower" not in NAMES
+    assert len(Races.inputs(got)) == len(NAMES)
