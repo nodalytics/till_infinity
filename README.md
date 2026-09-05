@@ -117,55 +117,6 @@ environment variables winning, so a deployment is never overridden by a file.
 For a shared bus across machines, set `TILL_REDIS_URL` and run the services
 separately; see [how the parts talk](#how-the-parts-talk).
 
-## Prices
-
-OHLCV candles and realtime bid/ask for the same instrument across many brokers,
-from TradingView, Yahoo, ccxt, and - when asked for - the trading terminal
-itself.
-
-```bash
-uv run till-infinity prices backfill      # deep history
-uv run till-infinity prices collect       # bars + quotes together, with a ticker
-uv run till-infinity prices bars          # new bars every 60s, forever
-uv run till-infinity prices quotes        # stream live bid/ask, forever
-uv run till-infinity prices info          # what is stored
-```
-
-Fourteen instruments by default - the **seven FX majors**, **gold**, **BTC**,
-**ETH**, **SOL**, **USDCNH**, **US100** (Nasdaq 100) and **SPX500** - each from
-five to seven venues, on intervals from 1m to 1w. They answer to whatever you
-call them (`-s nasdaq`, `-s sp500`, `-s kiwi`, `-s solana`),
-and `-s` also takes `VENUE:TICKER` or a bare Yahoo ticker.
-
-`PRICES_BROKER_SYMBOLS` adds instruments read straight from the trading
-terminal over the MT5 bridge. That is the only way to reach the ones no
-consensus venue carries - **synthetics**, which have no underlying and so no
-other source at all, and which are the only instruments here that trade at a
-weekend.
-
-**Crypto is the exception to all of that: it is discovered, not listed.**
-`PRICES_CCXT_*` gives ccxt filters rather than symbols - it reads each
-exchange's board, drops what is wide, dead, newly listed or not a perpetual on
-*that* exchange, ranks what survives by summed 24h volume *across* exchanges,
-and carries the top slice. A pair several of them list becomes one feed with a
-symbol per exchange, which is the same shape a TradingView instrument has, so
-the consensus layer compares crypto venues exactly as it compares FX brokers.
-Off until a filter says how much to carry.
-
-## News
-
-Headlines, the economic calendar around them, and central bank reserves - from
-five RSS feeds, TradingView, ForexFactory and the IMF.
-
-```bash
-uv run till-infinity news collect         # poll headlines + calendars + IMF
-uv run till-infinity news upcoming --high # next high-impact releases
-uv run till-infinity news latest          # recent headlines
-```
-
-Two calendars are kept side by side on purpose, so a print can be cross-checked
-between providers.
-
 ## Structures
 
 Online models over the price data: every venue measured against the consensus
@@ -196,57 +147,6 @@ entry and a target made of prices the market drew rather than a stop multiple.
 Both are published as features and read by nothing yet, which is deliberate:
 the record gets to say whether they predict anything before they are worth
 money.
-
-## Trading
-
-Scalping the level calls, on MetaTrader 5 or on paper. Gold and BTC by default;
-the other twelve instruments trade only if the broker actually quotes them.
-
-```bash
-uv run till-infinity trading doctor       # what this host can reach, and why not
-uv run till-infinity trading symbols      # what the broker actually offers
-uv run till-infinity trading strategies   # four ways of acting on a call
-uv run till-infinity trading plans        # conservative | standard | aggressive
-TRADING_ENABLED=1 uv run till-infinity run
-```
-
-**Two switches, and neither implies the other.** `TRADING_ENABLED` starts the
-service; `TRADING_LIVE` is the only thing that sends an order to an account.
-Configuring a terminal does not arm it. On paper the whole path still runs -
-symbols resolved, positions sized, stops placed, fills simulated against the
-live bid/ask, outcomes journalled - and the mode is printed at start-up.
-
-**Windows and Linux both work, by three different routes.** The `MetaTrader5`
-package is a binding onto a running Windows terminal, so there is no Linux
-wheel and never will be. On Windows it is used in-process. Everywhere else the
-same code reaches a terminal either by proxying the module itself over **RPyC**
-out of a Wine prefix - the `mt5linux` arrangement, and the faster and more
-complete of the two - or over **HTTP** through
-[`metatrader-terminal`](https://github.com/nodalytics/metatrader-terminal),
-which is the one that can safely face a network. The backend is chosen from
-what the host can reach and is always announced, because falling back to paper
-quietly is how a strategy runs for a week against nothing.
-
-Four strategies, none claiming an edge of its own - they read the same measured
-signal and differ in which calls they act on and where the stop and target go:
-take the call as published, require another timeframe to agree, require three
-speeds of recent edge to agree, or buy up to the level above and sell down to
-the one below. Risk is set by named plan rather than ten loose numbers, so the
-per-trade risk and the daily stop cannot silently disagree.
-
-## Agents
-
-A model over the stored data - ask it a question, or leave one watching and
-alerting when price and fundamentals line up.
-
-```bash
-uv run till-infinity agents ask "is anyone quoting gold out of line?"
-uv run till-infinity agents watch --redis redis://localhost:6379
-uv run till-infinity agents roles         # market, macro, risk
-```
-
-Every store an analyst reads is opened read-only, so a prompt injection in a
-headline reaches a model whose only verbs are SELECT.
 
 ## How the parts talk
 
