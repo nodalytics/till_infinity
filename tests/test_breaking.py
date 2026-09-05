@@ -198,8 +198,45 @@ def test_it_predicts_before_it_learns():
 def test_the_reading_is_floats_for_the_journal():
     model = teach(Breaks(), n=1200)
     got = model.reading(Touch(approach_vol=1.0))
-    assert set(got) == {"break_probability", "break_seen"}
+    # The raw estimate is always there. The calibrated one joins it once the
+    # correction has enough behind it, **beside** the raw number rather than in
+    # place of it - the record decides which is better before either is used.
+    assert {"break_probability", "break_seen"} <= set(got)
+    assert set(got) <= {
+        "break_probability",
+        "break_seen",
+        "break_probability_calibrated",
+        "calibrated_loss",
+        "uncalibrated_loss",
+    }
     assert all(isinstance(v, float) for v in got.values())
+
+
+def test_the_correction_is_published_beside_the_raw_number_never_instead():
+    """A calibrated probability that silently replaced the raw one would make
+    the comparison unrecoverable from the journal."""
+    model = teach(Breaks(), n=1200)
+
+    got = model.reading(Touch(approach_vol=1.0))
+
+    if "break_probability_calibrated" in got:
+        assert "break_probability" in got
+        assert {"calibrated_loss", "uncalibrated_loss"} <= set(got)
+
+
+def test_the_correction_does_not_outlive_the_model_it_corrects():
+    """It is fitted on this model's output. Carried across a reset it would be
+    correcting a stream that no longer exists."""
+    import till_infinity.structures.learning.breaking as br
+
+    model = teach(Breaks(), n=1200)
+    assert model.calibrator.seen > 0
+
+    model.recipe = "something else"
+    model.observe(Touch(approach_vol=1.0), "break")
+
+    assert model.calibrator.seen <= 1
+    assert model.recipe == br.RECIPE
 
 
 def test_the_service_learns_from_every_resolution_and_publishes_it():

@@ -66,6 +66,7 @@ from dataclasses import dataclass, field
 
 from ...logging import get_logger
 from ..state import Restorable
+from .calibration import Platt, Reliability
 from .online import Logistic
 
 #: The features that separate, in the order the fitted weights are reported.
@@ -190,6 +191,17 @@ class Breaks(Restorable):
     """
 
     model: Logistic = field(default_factory=lambda: Logistic(rate=RATE))
+    #: The correction, and the picture behind it.
+    #:
+    #: Measured on 2026-09-05 over 141,230 resolved touches, this model scored
+    #: **worse than quoting the base rate**: log loss 0.3624 against 0.2493,
+    #: accuracy 87.4% against 93.2% for always-hold, on a class that breaks
+    #: 6.8% of the time. That is over-confidence, not a broken ranking - the
+    #: AUC of 0.658 in research/force.md is a separate claim and still stands -
+    #: and a monotone correction cannot change the ranking while it fixes the
+    #: numbers. See `learning/calibration.py`.
+    calibrator: Platt = field(default_factory=Platt)
+    reliability: Reliability = field(default_factory=Reliability)
 
     #: What the model was trained on. Bump it whenever the **meaning** of an
     #: input changes, and the saved state is dropped rather than carried.
@@ -264,6 +276,11 @@ class Breaks(Restorable):
             RECIPE,
         )
         self.model = Logistic(rate=RATE)
+        # The correction is fitted on *this* model's output, so it cannot
+        # outlive it - carried across a reset it would be correcting a stream
+        # that no longer exists.
+        self.calibrator = Platt()
+        self.reliability = Reliability()
         self.recipe = RECIPE
 
     def observe(self, features: object, outcome: str) -> float | None:
@@ -280,14 +297,29 @@ class Breaks(Restorable):
         else:
             return None
         self._fresh_start_if_the_recipe_changed()
-        return self.model.observe(self.inputs(features), broke)
+        said = self.model.observe(self.inputs(features), broke)
+        # Scored on the raw output, after the model has spoken and before
+        # anything reads the correction - so the calibrator is out of sample
+        # for the same reason the model is.
+        self.calibrator.observe(said, broke)
+        self.reliability.observe(said, broke)
+        return said
 
     def reading(self, features: object) -> dict[str, float]:
         """The estimate as a float dictionary, for a signal's features."""
         said = self.predict(features)
         if said is None:
             return {}
-        return {"break_probability": round(said, 5), "break_seen": round(self.model.seen, 1)}
+        out = {"break_probability": round(said, 5), "break_seen": round(self.model.seen, 1)}
+        # **Published beside the raw number, not in place of it.** Nothing
+        # consumes the corrected value yet: the record gets to say which is
+        # better before either decides anything, and `improvement` going
+        # negative is the signal to remove the calibrator rather than trust it.
+        fixed = self.calibrator.apply(said)
+        if self.calibrator.warm:
+            out["break_probability_calibrated"] = round(fixed, 5)
+            out.update(self.calibrator.reading())
+        return out
 
     @property
     def warm(self) -> bool:
