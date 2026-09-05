@@ -291,23 +291,37 @@ class CcxtSource(Source):
                 out[str(symbol)] = (float(row.get("bid") or 0.0), float(row.get("ask") or 0.0))
         return out
 
-    async def _listed_at(self, exchange: Any) -> dict[str, float]:
-        """When each market was created, in epoch milliseconds.
+    async def _markets(self, exchange: Any) -> dict[str, tuple[float, float]]:
+        """Per symbol: when it was created, and how much base one contract is.
 
-        `listed_days` was never assigned anywhere in this module - the field
-        existed, defaulted to 0.0, and `min_days` was written to skip a zero
-        reading, so a 10,000-day threshold rejected nothing. ccxt's unified
-        `market["created"]` carries it, populated on all 911 Binance swaps.
+        Two fields from one call. `created` fills `listed_days`, which was
+        never assigned anywhere in this module - the field existed, defaulted
+        to 0.0, and `min_days` was written to skip a zero reading, so a
+        10,000-day threshold rejected nothing.
+
+        `contractSize` is here because **okx reports no `quoteVolume` at all**
+        - None on all 470 of its swaps - so `min_volume` rejected every pair it
+        listed and one of the largest perpetual venues contributed nothing to
+        the board, silently. Its `baseVolume` is in *contracts*, and a contract
+        is not a coin: BTC-USDT-SWAP is 0.01 BTC, so multiplying the raw count
+        by the price overstates the notional a hundredfold. This is the same
+        unit trap `positioning.py` documents for open interest, on a different
+        field.
         """
         try:
             markets = await exchange.load_markets()
         except Exception as exc:
             log.info("prices: ccxt could not load markets: %s", exc)
             return {}
-        out: dict[str, float] = {}
+        out: dict[str, tuple[float, float]] = {}
         for symbol, market in markets.items():
-            if isinstance(market, dict) and market.get("created"):
-                out[str(symbol)] = float(market["created"])
+            if not isinstance(market, dict):
+                continue
+            size = market.get("contractSize")
+            out[str(symbol)] = (
+                float(market.get("created") or 0.0),
+                float(size) if isinstance(size, int | float) and size > 0 else 1.0,
+            )
         return out
 
     async def board(self, exchange_name: str = "") -> list[Board]:
@@ -322,7 +336,7 @@ class CcxtSource(Source):
         # Both are needed because `fetch_tickers` carries neither, and a filter
         # reading a field nothing populates is off however it is configured.
         book = await self._top_of_book(exchange)
-        listed = await self._listed_at(exchange)
+        markets = await self._markets(exchange)
         now = time.time() * 1000.0
         out = []
         for symbol, row in tickers.items():
@@ -331,11 +345,18 @@ class CcxtSource(Source):
             high, low = row.get("high") or 0.0, row.get("low") or 0.0
             last = float(row.get("last") or 0.0)
             bid, ask = book.get(str(symbol), (0.0, 0.0))
-            created = listed.get(str(symbol), 0.0)
+            created, contract = markets.get(str(symbol), (0.0, 1.0))
+            # Built from base volume where the exchange gives no quote volume,
+            # through the contract size - without which okx is excluded from
+            # its own board.
+            turnover = float(row.get("quoteVolume") or 0.0)
+            if turnover <= 0:
+                base = float(row.get("baseVolume") or 0.0)
+                turnover = base * contract * last if base > 0 and last > 0 else 0.0
             out.append(
                 Board(
                     symbol=str(symbol),
-                    quote_volume=float(row.get("quoteVolume") or 0.0),
+                    quote_volume=turnover,
                     bid=bid or float(row.get("bid") or 0.0),
                     ask=ask or float(row.get("ask") or 0.0),
                     listed_days=(now - created) / 86_400_000.0 if created > 0 else 0.0,
@@ -357,9 +378,25 @@ class CcxtSource(Source):
         # what makes that worth doing.
         exchange = self._pick(job.symbol.venue)
         total = WriteResult()
+        # What *this* exchange offers, not what ccxt names in general.
+        #
+        # `supported` filters against `TIMEFRAMES`, which is one map for every
+        # venue - so with several open, every 3m job went to mexc, which does
+        # not carry 3m, and came back `{"code":600,"message":"Parameter
+        # error"}`. One warning per pair per cycle, and a request spent to
+        # earn it. The client knows its own list without a network call.
+        offers = getattr(exchange, "timeframes", None) or {}
         for interval in job.intervals:
             code = TIMEFRAMES.get(interval.name)
             if code is None:
+                continue
+            if offers and code not in offers:
+                log.debug(
+                    "prices: %s does not carry %s, skipping %s",
+                    job.symbol.venue,
+                    interval.name,
+                    job.symbol.ticker,
+                )
                 continue
             try:
                 candles = await exchange.fetch_ohlcv(job.symbol.ticker, timeframe=code, limit=bars)

@@ -464,7 +464,7 @@ class Call(Restorable):
 
         detail = (
             f"{self.inference.direction} from {self.inference.side} at "
-            f"{self.level.price:.5g} - p={self.inference.probability:.0%} "
+            f"{self.level.price:,.6g} - p={self.inference.probability:.0%} "
             f"vs {self.inference.base_rate:.0%} base, "
             f"push {self.inference.expected_push:+.2f}v"
         )
