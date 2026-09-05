@@ -6907,3 +6907,61 @@ def test_a_wider_target_is_useless_past_the_ceiling():
     assert engine.hold_for("1h") == 24 * 3_600.0
     cramped = td.STRATEGIES["swing-level"](settings(max_hold_swing=2 * 3_600.0))
     assert cramped.hold_for("1h") == 2 * 3_600.0
+
+
+def test_the_scale_out_names_the_reason_it_declined():
+    """`scale_out_at` has been 1.0 for the life of this desk and not one
+    scale-out has fired. `partial` declined from five places and every one
+    returned a bare `None`, so there was no way to ask which."""
+    from till_infinity.trading import manage
+
+    made = settings(scale_out_at=1.0, scale_out_fraction=0.5)
+    spec = td.SymbolSpec(symbol="XAUUSD", volume_min=0.01, volume_step=0.01, tick_size=0.01)
+    pos = position(volume=1.0, price_open=4400.0, side=Side.BUY)
+    want = intent(entry=4400.0, stop=4395.0)
+
+    # Short of the trigger: the reason says by how much, in the unit the
+    # trigger is set in.
+    assert manage.partial(pos, want, spec, made, best=4402.0, current=4401.0) is None
+    assert "short of the 1.00R trigger" in manage.why_no_bank()
+    assert "+0.20R" in manage.why_no_bank()
+
+    # Off entirely.
+    manage.partial(pos, want, spec, settings(scale_out_at=0.0), best=4410.0, current=4410.0)
+    assert manage.why_no_bank() == "scale_out_at is off"
+
+
+def test_a_position_that_cannot_be_halved_says_so():
+    """The volume floor was the first suspicion and the measurement cleared it
+    - 0 of 295 trades blocked - but it is still one of the five exits and has
+    to name itself like the rest."""
+    from till_infinity.trading import manage
+
+    made = settings(scale_out_at=1.0, scale_out_fraction=0.5)
+    spec = td.SymbolSpec(symbol="XAUUSD", volume_min=0.1, volume_step=0.1, tick_size=0.01)
+    pos = position(volume=0.1, price_open=4400.0, side=Side.BUY)
+
+    got = manage.partial(
+        pos, intent(entry=4400.0, stop=4395.0), spec, made, best=4410.0, current=4410.0
+    )
+
+    assert got is None
+    assert "will not split into two above the 0.1 minimum" in manage.why_no_bank()
+
+
+def test_a_successful_bank_leaves_no_stale_reason_behind():
+    """Otherwise the next decline reports the one before it."""
+    from till_infinity.trading import manage
+
+    made = settings(scale_out_at=1.0, scale_out_fraction=0.5)
+    spec = td.SymbolSpec(symbol="XAUUSD", volume_min=0.01, volume_step=0.01, tick_size=0.01)
+    pos = position(volume=1.0, price_open=4400.0, side=Side.BUY)
+    manage.partial(pos, intent(entry=4400.0, stop=4395.0), spec, made, best=4402.0, current=4401.0)
+    assert manage.why_no_bank()
+
+    got = manage.partial(
+        pos, intent(entry=4400.0, stop=4395.0), spec, made, best=4410.0, current=4410.0
+    )
+
+    assert got is not None
+    assert manage.why_no_bank() == ""

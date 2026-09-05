@@ -398,7 +398,12 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         body.append(
             f"📐 range {_price(lower)} .. {_price(upper)} · "
             f"{got.get('range_width_vol', 0.0):.1f}v wide"
-            + (f" · price {where:.0%} of the way up" if where is not None else "")
+            # **Position, not movement.** "69% up it" and "69% of the way up"
+            # both read as price having *risen* 69%, which is wrong whenever it
+            # arrived at that height by falling from the ceiling. Naming both
+            # bounds takes the verb out: it can only be read as where price
+            # sits between two prices printed on the same line.
+            + (f" · price {where:.0%} of floor-to-ceiling" if where is not None else "")
         )
         # The far wall is the target and the near one is what is in the way, so
         # they are named that way round rather than by compass direction.

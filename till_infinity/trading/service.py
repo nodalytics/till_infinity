@@ -2256,7 +2256,18 @@ class Trader:
                     f"{self._quotes_seen.get(live.intent.feed, 0)} quotes"
                 ] += 1
                 continue
-            if not live.scaled and await self._bank(live, spec, best):
+            banked = False
+            if not live.scaled:
+                banked = await self._bank(live, spec, best)
+                if not banked:
+                    # Said out loud for the same reason the guards above are.
+                    # `scale_out_at` has been 1.0 for the life of this desk and
+                    # not one scale-out has fired, and `partial` declined from
+                    # five places without saying which.
+                    why = manage.why_no_bank()
+                    if why:
+                        skipped[f"no bank: {why}"] += 1
+            if banked:
                 moved += 1
                 # The position is a different size now, and the stop rules
                 # below read `live.position.volume`. Left to the next pass

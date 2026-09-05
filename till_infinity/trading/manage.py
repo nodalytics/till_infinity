@@ -68,6 +68,28 @@ class Take:
         return f"#{self.ticket} take {self.volume:g} off ({self.reason})"
 
 
+#: Why `partial` last declined. Read by the caller straight after the call, so
+#: a single slot is enough - the trading loop is one task and awaits nothing
+#: between the two.
+#:
+#: It exists because `partial` returned a bare `None` from five places, and
+#: `scale_out_at` has been set to 1.0 for the whole life of this desk without a
+#: single scale-out firing. That is the shape `research/inert.md` catalogues -
+#: a feature that is configured, correct and inert - and with five silent exits
+#: there was no way to ask which one was responsible.
+_WHY: dict[str, str] = {"why": ""}
+
+
+def _declined(why: str) -> None:
+    """Record the reason and decline, so call sites stay one line."""
+    _WHY["why"] = why
+
+
+def why_no_bank() -> str:
+    """The reason `partial` last declined, or "" if it did not."""
+    return _WHY["why"]
+
+
 def partial(
     position: Position,
     intent: Intent,
@@ -107,31 +129,35 @@ def partial(
     """
     at = settings.scale_out_at
     if at <= 0:
-        return None
+        return _declined("scale_out_at is off")
     fraction = settings.scale_out_fraction
     if not 0.0 < fraction < 1.0:
-        return None
+        return _declined(f"scale_out_fraction {fraction} is not between 0 and 1")
 
     risk = abs(intent.entry - intent.stop)
     if risk <= 0:
-        return None
+        return _declined("the intent has no risk to measure against")
     # The price a market order would actually get, falling back to the
     # high-water mark only when no current price was supplied.
     now = current or best
     gained = (now - position.price_open) * position.side.sign
     if gained < risk * at:
-        return None
+        return _declined(f"at {gained / risk:+.2f}R now, short of the {at:.2f}R trigger")
     # Never bank into a loss. The threshold above already implies this, but it
     # implied it before too - through a number that had stopped being true.
     if gained <= 0:
-        return None
+        return _declined("not in profit at the current price")
 
     step = spec.volume_step or 0.01
     slice_ = _down_to_step(position.volume * fraction, step)
     stays = _down_to_step(position.volume - slice_, step)
     if slice_ < spec.volume_min or stays < spec.volume_min:
         # Not divisible into two tradeable halves. Runs whole.
-        return None
+        return _declined(
+            f"{position.volume:g} lots will not split into two above the "
+            f"{spec.volume_min:g} minimum"
+        )
+    _WHY["why"] = ""
     return Take(position.ticket, slice_, f"banking {fraction:.0%} at {gained / risk:.1f}R")
 
 
