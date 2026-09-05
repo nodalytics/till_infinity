@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import calendar
+import tempfile
 import time
 from dataclasses import replace
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -104,7 +106,16 @@ def swing(**over):
 
 
 def settings(**over):
+    """Settings for a test, with a **state directory of its own**.
+
+    The default is `.data/trading`, a real directory in the repository, so a
+    Trader built in one test wrote the day's running total there and a Trader
+    built in the next read it back. That is how `realised` came out at 103.8
+    where the test had earned 59.4 - the other 44.4 belonged to another test.
+    One shared temporary directory has the same fault; it has to be per call.
+    """
     made = td.Settings(symbols=("gold",), account_equity=10_000.0, paper_equity=10_000.0)
+    made.state_dir = Path(tempfile.mkdtemp(prefix="till-trading-test-"))
     for key, value in over.items():
         setattr(made, key, value)
     return made
@@ -7036,3 +7047,97 @@ def test_an_unreadable_marks_file_does_not_stop_the_desk(tmp_path):
     trader._recall_marks()  # must not raise
 
     assert trader._best == {}
+
+
+def test_the_learned_ranking_survives_a_restart(tmp_path):
+    """The only genuinely *learned* state in this service. Pressure and trend
+    rebuild from the market in minutes; a ranking of the strategies against
+    each other does not."""
+    made = settings(state_dir=tmp_path)
+    trader = Trader(Bus(), settings=made)
+    trader.policy.ledger.observe("gold:1h", "thesis-only", 1.25)
+    trader.policy.ledger.observe("gold:1h", "runner", -0.5)
+    before = trader.policy.ledger.score("gold:1h", "thesis-only")
+    trader._remember_marks()
+
+    after = Trader(Bus(), settings=made)
+    after._recall_marks()
+
+    got = after.policy.ledger.score("gold:1h", "thesis-only")
+    assert got is not None
+    assert got.mean == pytest.approx(before.mean)
+
+
+def test_the_day_is_taken_back_only_if_it_is_still_that_day(tmp_path):
+    """`roll` rejects carrying a halt "until someone restarts the process". The
+    implementation had the opposite failure - a fresh Guard cleared `realised`,
+    cleared `halted` and reset `opening_equity` to whatever equity was showing,
+    so a deploy lifted the halt and allowed a further full daily loss from a
+    lower base. Ten deploys on 2026-09-04."""
+    made = settings(state_dir=tmp_path)
+    trader = Trader(Bus(), settings=made)
+    trader.guard.roll(10_000.0)
+    trader.guard.realised = -400.0
+    trader.guard.halted = "daily loss"
+    trader._remember_marks()
+
+    after = Trader(Bus(), settings=made)
+    after._recall_marks()
+
+    assert after.guard.realised == pytest.approx(-400.0)
+    assert after.guard.halted == "daily loss"
+    assert after.guard.opening_equity == pytest.approx(10_000.0)
+    # And the roll that follows must leave it alone, or the recall is undone.
+    assert after.guard.roll(9_600.0) is False
+    assert after.guard.realised == pytest.approx(-400.0)
+
+
+def test_a_halt_from_a_previous_day_is_not_resurrected(tmp_path):
+    """It is meant to end at the date change, and a file older than that must
+    not bring it back."""
+    made = settings(state_dir=tmp_path)
+    trader = Trader(Bus(), settings=made)
+    trader.guard.day = "1999-01-01"
+    trader.guard.halted = "ancient history"
+    trader.guard.realised = -900.0
+    trader._remember_marks()
+
+    after = Trader(Bus(), settings=made)
+    after._recall_marks()
+
+    assert after.guard.halted == ""
+    assert after.guard.realised == 0.0
+
+
+def test_queued_re_entries_and_counters_come_back(tmp_path):
+    """A stop that re-arms and is then lost to a deploy is a decision taken and
+    silently dropped."""
+    made = settings(state_dir=tmp_path)
+    trader = Trader(Bus(), settings=made)
+    trader._rearm.append({"feed": "gold", "level": 4400.0})
+    trader.taken, trader.refused = 7, 3
+    trader.passed_over["runner:interval"] = 12
+    trader._remember_marks()
+
+    after = Trader(Bus(), settings=made)
+    after._recall_marks()
+
+    assert after._rearm == [{"feed": "gold", "level": 4400.0}]
+    assert (after.taken, after.refused) == (7, 3)
+    assert after.passed_over["runner:interval"] == 12
+
+
+def test_a_file_from_an_older_build_is_missing_keys_not_wrong(tmp_path):
+    """A desk that refuses to start because a key is absent is worse than one
+    that starts without it."""
+    from till_infinity.structures.codec import pack
+    from till_infinity.structures.store import _encode
+
+    made = settings(state_dir=tmp_path)
+    (tmp_path / "day.json").write_bytes(_encode(pack({"best": {}, "worst": {}})))
+    trader = Trader(Bus(), settings=made)
+
+    trader._recall_marks()  # must not raise
+
+    assert trader._rearm == []
+    assert trader.taken == 0

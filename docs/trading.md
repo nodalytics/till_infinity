@@ -1650,6 +1650,62 @@ Nothing gates on it yet. It is published so that something can, and so the
 journal starts recording it against outcomes from today rather than from
 whenever a strategy is written.
 
+## What survives a restart, and why each part had to
+
+Until 2026-09-05 this service persisted **nothing**, and three separate
+failures traced back to that.
+
+`.data/trading/day.json` is written once a heartbeat - not once a quote, so a
+restart costs a minute of state rather than a whole trade - and read once, on
+the first sweep, after `_reconcile` has filled the book.
+
+### The high-water marks
+
+`_best` and `_worst` are what `break_even_at` and `trail_vol` read. In memory
+only, they reset on every restart: a trade that had run to 2R came back looking
+like a trade at its entry, break-even was never proposed on a move it had
+already earned, and it gave the lot back. **Nine trades reached 1R or better
+and lost anyway; six of them closed at a full stop.** There were ten deploys on
+2026-09-04.
+
+It also understated its own damage. `best_r` on the close is read from the same
+dict, so a give-back measured after a restart records only the peak reached
+*since* the restart - the nine are a lower bound.
+
+### The day's running total
+
+`Guard.roll` says plainly what it intends: *"A halt lasts the day and no longer.
+The alternative - carrying it until someone restarts the process - makes the
+size of the loss decide how long trading stops."* The implementation had the
+opposite failure. A fresh `Guard` has `day = ""`, so the first roll after any
+restart cleared `realised`, cleared `halted`, and set `opening_equity` to
+whatever equity was showing - **a lower base, from which a further full daily
+loss was permitted.** A deploy lifted the halt.
+
+`restore` takes it back only when the saved day *is* today, so a stale file
+cannot resurrect a halt the date change was meant to end.
+
+### What the strategies learned
+
+`policy` and the untaken record behind it are the only genuinely *learned*
+state here. Pressure, trend, holds and reaches all rebuild from the market or
+from the store within minutes of starting; a ranking of the strategies against
+each other cannot, and it is the input to which strategy owns a signal.
+
+Queued re-entries travel with them: a stop that re-arms and is then lost to a
+deploy is a decision taken and silently dropped.
+
+### What it refuses to do
+
+* A mark for a ticket the broker no longer reports is **dropped**. `_settle`
+  reads these for `best_r`, and a stale entry would attach one trade's
+  excursion to another's ticket if a number were reused.
+* A mark already tracked this run **wins** over the stored one, which is a
+  minute old at worst.
+* It **never raises**. A desk that cannot read or write a convenience file must
+  keep trading, which is the line `structures` already takes on its own state -
+  and a file from an older build is missing keys rather than wrong.
+
 ## What this does not claim
 
 No strategy here has been evaluated against its own outcomes. The signal they

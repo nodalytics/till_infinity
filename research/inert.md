@@ -131,6 +131,54 @@ attention that a tradable instrument needed, so `NOTIFY_FEEDS` now allows only
 the traded set. The signal keeps being recorded and learned from; it stops
 interrupting anybody.
 
+## The seventh, eighth and ninth: state that was never kept — 2026-09-05
+
+Three faults, one cause. **The trading service persisted nothing at all** -
+every dict on it was in memory only - and each of these looked like a separate
+bug until the third one made the pattern obvious.
+
+| what | why it did nothing | how long |
+| --- | --- | --- |
+| `break_even_at` on a restarted position | `_best` reset, so a trade at 2R looked like one at its entry | every restart |
+| the daily loss limit | a fresh `Guard` cleared `realised` and `halted` and re-based `opening_equity` | every restart |
+| the strategy ranking | `policy` and the untaken record started empty | every restart |
+
+The first cost money and can be counted: **nine trades reached 1R or better and
+lost anyway, six of them closing at a full stop** - break-even never proposed on
+a move already earned. It also hid its own size, because `best_r` on the close
+is read from the same dict, so any give-back measured after a restart records
+only the peak since the restart.
+
+The second is worse in kind, because it is a **risk control that silently
+resets**. `Guard.roll`'s docstring rejects carrying a halt "until someone
+restarts the process", and the code had the opposite failure: a deploy cleared
+the day's realised loss, lifted the halt, and set `opening_equity` to the
+already-reduced equity - a lower base, from which another full daily loss was
+allowed. There were ten deploys that day.
+
+### What made it invisible
+
+Everything downstream **kept working on a defensible default**. An empty
+`_best` is not an error; it is a position nobody has quoted yet, which is a
+real state on the first tick after adoption. A zero `realised` is a day that
+has not lost anything, which is true every morning. An empty ranking is a
+desk that has not learned yet, which is true on a first run. Each reset
+produced a legal value that the code was already written to handle.
+
+> Nothing here failed. Everything here started again, and starting again looks
+> exactly like starting.
+
+### And the same shape, one level down
+
+Fixing it introduced a fresh instance of the pattern within the hour. The new
+`state_dir` defaulted to `.data/trading`, a real directory in the repository,
+so every test that built a `Trader` wrote the day's total there and the next
+test read it back. `realised` came out at 103.8 where the test had earned 59.4;
+the other 44.4 belonged to a different test. One shared temporary directory
+had the same fault - it has to be per call.
+
+A test that reads state it did not write is not testing the thing it names.
+
 ## What they have in common
 
 **The output is a legal value.** Zero is a legal `best_r`. Keeping an alert is

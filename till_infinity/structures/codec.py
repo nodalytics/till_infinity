@@ -78,7 +78,7 @@ def key_for(cls: type) -> str:
     return f"{cls.__module__.rsplit('.', 1)[-1]}.{cls.__name__}"
 
 
-def registry() -> dict[str, type]:
+def registry(package: Any = None) -> dict[str, type]:
     """Every persisted class in the package, by its stable key.
 
     Walked rather than listed, for the reason `store._schema` gives about the
@@ -89,20 +89,26 @@ def registry() -> dict[str, type]:
     Recurses into subpackages, so this keeps working when `structures` is
     eventually organised into folders - which is the entire point of the
     exercise.
+
+    `package` walks somewhere else instead, which is what lets `trading` keep
+    its own state in the same format. **Each package gets its own registry
+    rather than one shared across both**: keys are `basename.ClassName`, and
+    `config.Settings` exists in each - a shared map would silently resolve one
+    package's state into the other's class.
     """
     import importlib
     import pkgutil
 
     from . import __path__ as package_path
 
+    where = package_path if package is None else package.__path__
+    prefix = f"{__package__}." if package is None else f"{package.__name__}."
     found: dict[str, type] = {}
-    for module_info in sorted(
-        m.name for m in pkgutil.walk_packages(package_path, prefix=f"{__package__}.")
-    ):
+    for module_info in sorted(m.name for m in pkgutil.walk_packages(where, prefix=prefix)):
         try:
             module = importlib.import_module(module_info)
         except Exception as exc:  # a module that will not import is not state
-            log.debug("structures: skipping %s while building the registry (%s)", module_info, exc)
+            log.debug("codec: skipping %s while building the registry (%s)", module_info, exc)
             continue
         for name in dir(module):
             cls = getattr(module, name)

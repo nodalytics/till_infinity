@@ -67,6 +67,59 @@ class Guard:
     refusals: dict[str, int] = field(default_factory=dict)
     halted: str = ""
 
+    def state(self) -> dict[str, object]:
+        """The day's running total, for keeping across a restart.
+
+        Only what the *day* accumulated. `settings` and `context` are rebuilt
+        from configuration and must not come from a file, or a change to either
+        would be silently ignored until somebody deleted one.
+        """
+        return {
+            "day": self.day,
+            "opening_equity": self.opening_equity,
+            "realised": self.realised,
+            "trades": self.trades,
+            "wins": self.wins,
+            "halted": self.halted,
+            "last_loss": dict(self.last_loss),
+        }
+
+    def restore(self, saved: object, now: float | None = None) -> bool:
+        """Take the day's total back, if it is still the same day.
+
+        **The halt is the reason this exists.** `roll`'s docstring rejects
+        carrying a halt "until someone restarts the process", because that lets
+        the size of the loss decide how long trading stops. The implementation
+        had the opposite failure and nobody had noticed: a fresh `Guard` has
+        `day = ""`, so the first roll after *any* restart cleared `realised`,
+        cleared `halted`, and reset `opening_equity` to whatever equity was
+        showing - a lower base, from which a further full daily loss was
+        allowed. There were ten deploys on 2026-09-04.
+
+        Returns whether anything was taken. A saved day that is not today is
+        ignored: the halt is meant to end at the date change and this must not
+        resurrect it.
+        """
+        if not isinstance(saved, dict):
+            return False
+        day = str(saved.get("day") or "")
+        if not day or day != _day(now if now is not None else time.time()):
+            return False
+        self.day = day
+        self.opening_equity = float(saved.get("opening_equity") or 0.0)
+        self.realised = float(saved.get("realised") or 0.0)
+        self.trades = int(saved.get("trades") or 0)
+        self.wins = int(saved.get("wins") or 0)
+        self.halted = str(saved.get("halted") or "")
+        got = saved.get("last_loss")
+        if isinstance(got, dict):
+            self.last_loss = {
+                str(k): float(v) for k, v in got.items() if isinstance(v, int | float)
+            }
+        if self.halted:
+            log.info("trading: the halt from earlier today is still in force - %s", self.halted)
+        return True
+
     def roll(self, equity: float, now: float | None = None) -> bool:
         """Start a new day if the clock has. True when it did.
 

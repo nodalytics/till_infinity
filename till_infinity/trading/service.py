@@ -29,16 +29,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import time
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
+from .. import trading
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
+from ..structures.codec import pack, registry, unpack
 from ..structures.context.cusum import Cusum, Ensemble, adaptive_threshold
 from ..structures.context.holds import Book as HoldBook
 from ..structures.context.reach import Reaches
@@ -409,7 +410,7 @@ class Trader:
         #: It also understated the damage: `best_r` on the close is read from
         #: this dict, so a give-back measured after a restart records the peak
         #: it reached *since* the restart, not the one that mattered.
-        self._marks = Path(self.settings.state_dir) / "extremes.json"
+        self._marks = Path(self.settings.state_dir) / "day.json"
         self._recalled = False
         self._best: dict[int, float] = {}
         #: feed -> how many quotes `_quote` has resolved a symbol for. Only
@@ -2164,8 +2165,37 @@ class Trader:
             payload = {
                 "best": {str(k): v for k, v in self._best.items() if k in live},
                 "worst": {str(k): v for k, v in self._worst.items() if k in live},
+                # The day's running total travels with them. One file, one
+                # write, and the things that must not be forgotten across a
+                # deploy are forgotten or kept together.
+                "guard": self.guard.state(),
+                # What the strategies have learned about each other, and the
+                # shadow record it is learned from. The only genuinely
+                # *learned* state here - pressure and trend rebuild from the
+                # market in minutes, a ranking does not.
+                "policy": self.policy,
+                "untaken": self._untaken,
+                "shadows": self._shadows,
+                # A stop that re-arms and is then lost to a deploy is a
+                # decision taken and silently dropped.
+                "rearm": self._rearm,
+                "push": self._push,
+                "ensemble": self._ensemble,
+                # Resting orders live at the broker and `_orphans` reconciles
+                # them; this is what *we* meant by each one.
+                "waiting": self._waiting,
+                "counters": {
+                    "taken": self.taken,
+                    "refused": self.refused,
+                    "passed_over": dict(self.passed_over),
+                },
             }
-            self._marks.write_text(json.dumps(payload))
+            import msgpack
+
+            # msgpack is only the container. `codec.pack` is what makes the
+            # file independent of where a class lives, which is the guarantee
+            # that matters after `structures` moved into folders.
+            self._marks.write_bytes(msgpack.packb(pack(payload), use_bin_type=True))
         except Exception as exc:  # pragma: no cover - a full disk, a bad path
             log.debug("trading: could not write %s: %s", self._marks, exc)
 
@@ -2178,9 +2208,21 @@ class Trader:
         broker ever reused a number.
         """
         try:
-            payload = json.loads(self._marks.read_text())
-        except Exception:
+            import msgpack
+
+            payload = unpack(
+                msgpack.unpackb(self._marks.read_bytes(), raw=False, strict_map_key=False),
+                registry(trading),
+            )
+        except Exception as exc:
+            log.debug("trading: could not read %s: %s", self._marks, exc)
             return
+        if not isinstance(payload, dict):
+            return
+        # **Before the extremes, because it can refuse itself.** `restore`
+        # takes the day back only if the saved day is today; a stale one is
+        # dropped so a halt cannot be resurrected after the date has changed.
+        self.guard.restore(payload.get("guard"))
         live = set(self.open)
         kept = 0
         for name, into in (("best", self._best), ("worst", self._worst)):
@@ -2192,8 +2234,44 @@ class Trader:
                 if ticket in live and isinstance(value, int | float):
                     into.setdefault(ticket, float(value))
                     kept += 1
+        # Each of these is taken only when it is the right shape. A file written
+        # by an older build is missing keys rather than wrong, and a desk that
+        # refuses to start because one is absent is worse than one that starts
+        # without it.
+        got = payload.get("policy")
+        if type(got).__name__ == "Policy":
+            self.policy = got
+        for name, into in (
+            ("untaken", self._untaken),
+            ("push", self._push),
+            ("ensemble", self._ensemble),
+            ("waiting", self._waiting),
+        ):
+            stored = payload.get(name)
+            if isinstance(stored, dict):
+                into.update(stored)
+        shadows = payload.get("shadows")
+        if isinstance(shadows, dict):
+            with contextlib.suppress(TypeError, ValueError):
+                self._shadows.update({int(k): v for k, v in shadows.items()})
+        queued = payload.get("rearm")
+        if isinstance(queued, list):
+            self._rearm.extend(queued)
+        counters = payload.get("counters")
+        if isinstance(counters, dict):
+            self.taken = int(counters.get("taken") or 0)
+            self.refused = int(counters.get("refused") or 0)
+            self.passed_over.update(counters.get("passed_over") or {})
         if kept:
             log.info("trading: recovered %d high-water mark(s) across the restart", kept)
+        log.info(
+            "trading: recovered the day - %d shadow(s), %d untaken feed(s), "
+            "%d queued re-entry(s), policy %s",
+            len(self._shadows),
+            len(self._untaken),
+            len(self._rearm),
+            "restored" if type(got).__name__ == "Policy" else "fresh",
+        )
 
     async def sweep(self) -> None:
         """The heartbeat: roll the day, reconcile, and time out stale scalps."""
@@ -2203,15 +2281,20 @@ class Trader:
 
         account = await self.broker.account()
         self.equity = account.equity or self.equity
-        self.guard.roll(self.equity)
-        await self._reconcile()
-        # After reconcile, so `self.open` is what the broker actually reports -
-        # and before `_manage`, so a position adopted this pass is judged on
-        # the excursion it really made rather than on the price it happens to
-        # be at now.
+        # **Recalled before the roll, or the roll undoes it.** A fresh `Guard`
+        # has `day = ""`, so `roll` sees a new day and clears the running
+        # total; taking the file back first means it sees today already in
+        # place and does nothing, which is the correct outcome.
+        #
+        # The reconcile that follows is what fills `self.open`, so the extremes
+        # are filtered against a book that is one pass stale on the very first
+        # sweep - and `_recall_marks` keeps whatever it cannot place, because a
+        # position adopted moments later still deserves its high-water mark.
         if not self._recalled:
             self._recalled = True
             self._recall_marks()
+        self.guard.roll(self.equity)
+        await self._reconcile()
         await self._orphans()
         await self._manage()
         self._remember_marks()

@@ -230,6 +230,7 @@ SQLite by default, under `.data/` and gitignored. JSONL alongside it with
 .data/news/news.db          articles + events + observations
 .data/journal/journal.db    decisions + observations + outcomes
 .data/structures/           online model state, restored on restart
+.data/trading/day.json      the day: high-water marks, the running loss, the ranking
 ```
 
 Nothing is regenerated on restart that does not have to be: the online models
