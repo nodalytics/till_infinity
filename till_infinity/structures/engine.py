@@ -414,7 +414,15 @@ class Call(Restorable):
     #: and merged into the published features below.
     origin: dict = field(default_factory=dict)
 
-    def to_signal(self, vol, clock=None, peers=None, busy: float = 1.0, market: str = "") -> Signal:
+    def to_signal(
+        self,
+        vol,
+        clock=None,
+        peers=None,
+        busy: float = 1.0,
+        market: str = "",
+        venue: str = "consensus",
+    ) -> Signal:
         # `probability`, not `probability_up`: quoting P(up) beside a *down*
         # call reads as the confidence in down when it is the confidence
         # against it. The base rate flips with it or the pair is not a
@@ -463,7 +471,13 @@ class Call(Restorable):
         return Signal(
             shape=Shape.LEVEL,
             feed=self.feed,
-            venue="consensus",
+            # **Not always "consensus", and the difference is a claim.** A
+            # synthetic has exactly one source: the broker is not one opinion
+            # among several, it is the instrument - which `single_source_feeds`
+            # already says in as many words while this labelled the signal as
+            # an agreement between venues that cannot exist. The caller knows
+            # which feeds those are and passes the honest name.
+            venue=venue,
             score=abs(self.inference.edge),
             detail=detail,
             # By identity, not by price - the price moves under the filter, so

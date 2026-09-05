@@ -101,6 +101,27 @@ def _passes(level: object) -> list[str]:
     return sorted({part.partition(":")[0] for part in drawn.split("+") if part})
 
 
+def sole_source(feed: str) -> str:
+    """The one venue carrying this feed, or "consensus" when several do.
+
+    A level on a synthetic is not an agreement between venues - there is only
+    one, and calling it a consensus claims corroboration that cannot exist.
+    `single_source_feeds` already puts it plainly: the broker "is not one
+    opinion among several, it is the instrument".
+    """
+    try:
+        from ..prices.config import FEEDS
+    except Exception:  # pragma: no cover - prices is always present in practice
+        return "consensus"
+    got = FEEDS.get(feed)
+    if got is None or len(got.symbols) != 1:
+        return "consensus"
+    symbols = next(iter(got.symbols.values()), ())
+    if len({s.venue for s in symbols}) != 1:
+        return "consensus"
+    return symbols[0].venue.lower()
+
+
 def single_source_feeds() -> frozenset[str]:
     """Feeds only one venue carries, so `MIN_VENUES` must not apply to them.
 
@@ -194,6 +215,28 @@ MEANS: dict[str, str] = {
 }
 
 
+def _price(value: float) -> str:
+    """A price a person can read, at any magnitude this desk carries.
+
+    `:.5g` was doing this and produced **8.468e+05** for a synthetic quoted at
+    846,800 - an exponent in a trading alert, on the one line a reader needs to
+    match against a chart. Five significant figures is the right idea and the
+    wrong presentation.
+
+    Decimals come from the magnitude, so gold keeps its 0.5 and EURUSD keeps
+    its fourth place, and thousands are grouped because six digits in a row are
+    not read, they are counted.
+    """
+    if not value:
+        return "0"
+    size = abs(value)
+    places = (
+        1 if size >= 10_000 else 2 if size >= 100 else 4 if size >= 1 else 5 if size >= 0.01 else 8
+    )
+    out = f"{value:,.{places}f}"
+    return out.rstrip("0").rstrip(".") if "." in out else out
+
+
 def _stamp(signal: Signal) -> str:
     """The signal's own time, not the moment the alert was built.
 
@@ -240,9 +283,7 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         mark = FAULTS.get(str(signal.shape), "⚠️")
         lines = [
             rule := "━" * 22,
-            f"{mark} {signal.feed.upper().replace('_', ' ')} · {str(signal.shape).upper()}",
-            rule,
-            f"📊 {signal.venue} · {signal.interval or 'live'} · {_stamp(signal)}",
+            f"{mark} {signal.venue} · {signal.interval or 'live'} · fired {_stamp(signal)}",
             "",
         ]
         if signal.detail:
@@ -275,15 +316,16 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     # previous version was five sentences of numbers and the reader had to
     # parse it to find the one they wanted. Nothing here is new evidence - it
     # is the same fields, laid out so the eye can skip.
+    # No header line here. `Notice.as_text` already prints the title above the
+    # body, so a name-and-direction line inside it arrived as the same thing
+    # said twice - and the clock is printed after the body for the same reason,
+    # which is why the time is not repeated either.
     rule = "━" * 22
-    lit = "🟢" if up else "🔴"
     head = [
         rule,
-        f"{lit} {signal.feed.upper().replace('_', ' ')} · LEVEL · {signal.direction.upper()}",
-        rule,
-        f"📊 {signal.venue} · {signal.interval} · {_stamp(signal)}",
+        f"📊 {signal.venue} · {signal.interval} · fired {_stamp(signal)}",
         "",
-        f"📍 {price:.5g} · {touches:.0f} touches here + {similar} similar · "
+        f"📍 {_price(price)} · {touches:.0f} touches here + {similar} similar · "
         f"strength {got.get('strength', 0.0):.2f}",
         f"{'📈' if up else '📉'} {signal.direction} {probability:.0%} "
         f"against a {base:.0%} base rate",
@@ -337,7 +379,8 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         where = got.get("range_position")
         body.append("")
         body.append(
-            f"📐 range {lower:.5g} .. {upper:.5g} · {got.get('range_width_vol', 0.0):.1f}v wide"
+            f"📐 range {_price(lower)} .. {_price(upper)} · "
+            f"{got.get('range_width_vol', 0.0):.1f}v wide"
             + (f" · price {where:.0%} up it" if where is not None else "")
         )
         # The far wall is the target and the near one is what is in the way, so
@@ -357,7 +400,10 @@ def alert_payload(signal: Signal) -> dict[str, object]:
             )
     body.append(rule)
     return {
-        "title": f"{signal.feed.upper()} {signal.interval} - {signal.direction}",
+        "title": (
+            f"{signal.feed.upper().replace('_', ' ')} · "
+            f"{signal.interval} · {signal.direction.upper()}"
+        ),
         "body": "\n".join(body),
         "level": "warning",
         "fields": fields,
@@ -1089,6 +1135,7 @@ class Watcher:
                 self.engine.levels(call.feed, call.interval),
                 busy,
                 market,
+                venue=sole_source(call.feed),
             )
             # How many formations agree on this price, as a number.
             #

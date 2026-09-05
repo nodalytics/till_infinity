@@ -120,7 +120,11 @@ INSTRUMENTS: dict[str, str] = {
 #: Keys the notification filter routes on. Rendered nowhere: every publisher
 #: that sets them already names them in the title, so printing `instrument:
 #: gold` under a headline containing "gold" is the machine talking to itself.
-ROUTING: frozenset[str] = frozenset({"shape", "instrument", "venue", "direction"})
+#: Fields the filter routes on, which are therefore **not** printed in the
+#: body. `interval` joined them when the alert layout started carrying the
+#: timeframe itself: it was arriving twice, once inside the message and once
+#: as a bare `interval: 15m` line underneath the closing rule.
+ROUTING: frozenset[str] = frozenset({"shape", "instrument", "venue", "direction", "interval"})
 
 
 @dataclass(frozen=True, slots=True)

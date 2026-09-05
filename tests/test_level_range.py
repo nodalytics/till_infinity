@@ -179,7 +179,7 @@ def test_the_alert_shows_the_range_and_the_room_on_each_side():
         room_down_vol=2.0,
     )
 
-    assert "range 4320 .. 4340" in got
+    assert "range 4,320 .. 4,340" in got
     assert "4.0v wide" in got
     assert "price 50% up it" in got
     # Named far/near rather than up/down: the far wall is the target and the
@@ -262,7 +262,7 @@ def test_a_cold_race_model_adds_no_line_rather_than_saying_fifty():
         room_down_vol=2.0,
     )
 
-    assert "range 4320 .. 4340" in got
+    assert "range 4,320 .. 4,340" in got
     assert "first" not in got.split("range ")[1]
 
 
