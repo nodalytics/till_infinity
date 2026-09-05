@@ -111,7 +111,7 @@ RATE = 0.02
 #: quietly find nothing - every input zero, no error, a model that had been
 #: trained and now predicts from a constant. Renaming an input is re-meaning
 #: it as far as this is concerned.
-RECIPE = "2026-09-05 channel renamed to range"
+RECIPE = "2026-09-05 range walls anchored at 4h, daily is context"
 
 #: A race left open longer than this is discarded rather than resolved. Twelve
 #: hours: long enough that an intraday range resolves inside it, short enough

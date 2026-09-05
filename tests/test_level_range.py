@@ -290,11 +290,13 @@ def test_the_bound_prices_are_not_model_inputs():
 
 
 class _Zoned:
-    """A zone with a span, which is what the filter reads."""
+    """A zone with the two ends the filter reads: how big it is, and how
+    precisely it is placed. A single-timeframe stub is both."""
 
-    def __init__(self, price, span):
+    def __init__(self, price, span, precision=None):
         self.price = price
         self.span = span
+        self.precision = precision or span
 
 
 def test_a_ceiling_from_1h_and_a_floor_from_5m_is_not_a_range():
@@ -315,27 +317,74 @@ def test_a_ceiling_from_1h_and_a_floor_from_5m_is_not_a_range():
 def test_a_coarser_zone_is_kept_because_higher_is_the_safe_direction():
     """A 4h zone is a real boundary for a 15m trade; a 15m zone is noise inside
     a 4h one."""
-    from till_infinity.structures.drawing.level_range import at_or_above
+    from till_infinity.structures.drawing.level_range import within
 
     zones = [_Zoned(1.0, "5m"), _Zoned(2.0, "15m"), _Zoned(3.0, "4h"), _Zoned(4.0, "1d")]
 
-    kept = {z.span for z in at_or_above(zones, "15m")}
+    kept = {z.span for z in within(zones, "15m")}
 
     assert kept == {"15m", "4h", "1d"}
 
 
 def test_no_timeframe_means_take_them_all():
     """What a caller without one wants, and what the older tests assume."""
-    from till_infinity.structures.drawing.level_range import at_or_above
+    from till_infinity.structures.drawing.level_range import within
 
     zones = [_Zoned(1.0, "5m"), _Zoned(2.0, "4h")]
 
-    assert len(at_or_above(zones, "")) == 2
+    assert len(within(zones, "")) == 2
 
 
 def test_a_zone_with_no_span_cannot_be_shown_to_belong():
-    from till_infinity.structures.drawing.level_range import at_or_above
+    from till_infinity.structures.drawing.level_range import within
 
     zones = [_Zoned(1.0, ""), _Zoned(2.0, "4h")]
 
-    assert [z.span for z in at_or_above(zones, "1h")] == ["4h"]
+    assert [z.span for z in within(zones, "1h")] == ["4h"]
+
+
+def test_a_daily_zone_nothing_finer_agrees_with_is_context_not_a_wall():
+    """A box the daily draws takes weeks to cross, so a trade held for a day is
+    aiming at a target it cannot reach. The daily says the level is real; it
+    does not get to say where the trade is going."""
+    from till_infinity.structures.drawing.level_range import within
+
+    zones = [_Zoned(1.0, "1w", "daily"), _Zoned(2.0, "daily", "daily")]
+
+    assert within(zones, "4h", placed_by="4h") == []
+
+
+def test_the_daily_earns_a_wall_by_agreeing_with_the_4h():
+    """And then the wall sits where the 4h places it - significance from the
+    higher timeframe, placement from the lower, which is what confluence is."""
+    from till_infinity.structures.drawing.level_range import within
+
+    zone = _Zoned(1.0, "daily", "4h")
+
+    assert within([zone], "4h", placed_by="4h") == [zone]
+
+
+def test_a_zone_too_small_to_be_a_wall_is_still_refused():
+    """The other end of the same pair: 4h is a floor as well as a ceiling."""
+    from till_infinity.structures.drawing.level_range import within
+
+    zones = [_Zoned(1.0, "1h", "15m"), _Zoned(2.0, "15m", "5m")]
+
+    assert within(zones, "4h", placed_by="4h") == []
+
+
+def test_the_anchored_range_uses_both_ends():
+    """What `swing-level` actually gets: the daily level above is dropped for
+    standing alone, and the one below is kept because the 4h agrees."""
+    from till_infinity.structures.drawing.level_range import anchored
+
+    zones = [
+        _Zoned(90.0, "daily", "4h"),  # kept - the 4h places it
+        _Zoned(120.0, "daily", "daily"),  # dropped - context only
+        _Zoned(140.0, "4h", "1h"),
+    ]
+
+    got = anchored(zones, price=100.0, unit=1.0, feed="f")
+
+    assert got.lower.price == 90.0
+    assert got.upper.price == 140.0

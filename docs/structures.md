@@ -132,6 +132,25 @@ and the room that way is `None` rather than a large number: open air and a
 distant ceiling are different claims, and substituting one for the other makes
 them indistinguishable in the record.
 
+**The walls are anchored at 4h, and that is two conditions rather than one.**
+A zone is a wall only if it is *significant* at 4h or above and *placed* at 4h
+or below - `span` reaching up to the anchor, `precision` coming back down to
+it. The first refuses a box whose sides are two prices a quarter of an hour of
+auction paused at. The second refuses the opposite mistake: a daily or weekly
+zone with nothing finer agreeing draws a box that takes **weeks** to cross, so
+a trade held for a day is aiming at a target it cannot reach and measuring its
+position inside a range it will never traverse.
+
+Above 4h a timeframe is therefore **context** - it says whether the level is
+real, not where the trade is going - and it earns a wall by agreeing with a 4h
+level, at which point the wall sits where the 4h one places it. That is the
+asymmetry confluence is already built on, read off the two ends of one zone.
+
+The call's own box is published beside this one rather than replaced by it. A
+scalp wants the box it is trading inside; a swing wants the box the day is
+trading inside, and at the same moment on the same instrument they are
+different boxes. The swing's carries the `swing_` prefix.
+
 What it publishes on a level signal:
 
 | feature | what it is |

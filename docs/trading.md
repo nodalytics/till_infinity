@@ -564,6 +564,55 @@ Everything else is a scalp: `snap` at two minutes, and `level-scalp`,
 environment variable must not be able to stop trading - a mis-set base-rate
 floor once refused 99 signals out of 99 and did exactly that.
 
+## `swing-level`, in six parts
+
+Redesigned on 2026-09-05 around the level range rather than around a single
+price. The strategy had never traded once, so nothing here is being replaced -
+there is no measured behaviour to preserve, and every number below is a
+reasoned choice rather than a fitted one.
+
+**1. Draw the box.** The range comes from 4h - significant at 4h or above,
+placed at 4h or below. The daily and the week are context: a box they draw
+takes weeks to cross, and a trade held for a day cannot reach the far side of
+it. See [structures.md](structures.md#level-ranges-and-which-wall-gets-reached-first).
+
+**2. Price has to be at a bound.** `at_bound` is 0.20 of the range's height:
+a buy belongs in the bottom fifth and a sell in the top fifth. A trade taken
+in the middle has no wall behind it, the stop leans on nothing, and the target
+is whichever bound happens to be further away - which is a directional trade
+wearing a range trade's clothes. A fifth rather than a tenth because the bound
+is a Kalman estimate with a zone around it, and demanding price sit exactly on
+the mean would refuse most real touches. **This is the number most likely to
+be wrong.**
+
+**3. Something has to turn.** Either the momentum ensemble crosses under an
+hour - it is fed from the quote stream, so it can turn inside the bar - or a
+rejection candle closes on 1h, 2h or 4h. Coarsest first, so the strongest
+available evidence is what gets reported. Insisting on 4h alone refuses every
+setup formed inside the last four hours; asking only 1h throws away the
+stronger claim when it exists.
+
+**4. Enter at the trigger close, or rest into the pullback.** Resting is
+conditional on the rejection wick being at least 0.35 of the bar. The wick is
+the argument for waiting: a long tail means price went well past the level and
+came back inside the bar, so the close is a poor picture of where this can be
+got and the retracement that fills a resting order is one the bar has already
+demonstrated. A level held without drama has no retracement to wait for, and
+resting there mostly means not trading.
+
+**5. Target the opposite bound.** Floored at `target_multiple` × the modelled
+push, so a box too tight to be worth crossing does not produce a target inside
+the noise.
+
+**6. Trail on levels from 15m to 1h.** `trail_vol` 4.0 is the floor for a move
+that has cleared nothing; once price is past a 15m-1h level the stop steps in
+behind it, because a rung is a price the market has already agreed on and a
+stop just beyond one is protected by the same thing the entry was.
+
+**What is not measured.** All six. The strategy has no closes on record, so
+none of these has been scored against an outcome, and the backtest that exists
+replays bars - which cannot reproduce the tick-fed half of part 3.
+
 ## The swing that runs between two origins
 
 An origin is where volatility turned - the last opposing bar before an impulse,

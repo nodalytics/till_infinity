@@ -46,7 +46,7 @@ from ..structures.context.reach import Reaches
 from ..structures.context.trend import Trend
 from ..structures.levels import SECONDS
 from . import manage, plans
-from .candles import confirms
+from .candles import confirms, rejection_wick
 from .config import Settings, magic_for, strategy_for
 from .context import Context
 from .manage import Move, Take
@@ -462,7 +462,12 @@ class Trader:
         #: last seen} - the rungs a level trail steps up behind. Paired on one
         #: line because `__init__` is at its statement ceiling and these two
         #: are both "state that survives, or is rebuilt from, a restart".
-        self._recalled, self._ladder = False, {}
+        #: Whether the day has been read back; feed -> the rungs a level trail
+        #: steps behind; and feed -> how much of the confirming bar was the
+        #: rejection wick, written by `_candle_at` and read by `_park`, which
+        #: runs after it. Grouped because `__init__` is at its statement
+        #: ceiling and all three are per-feed working state.
+        self._recalled, self._ladder, self._rejection = False, {}, {}
         self._best: dict[int, float] = {}
         #: feed -> how many quotes `_quote` has resolved a symbol for. Only
         #: read by the `_manage` skip diagnostic, which cannot otherwise
@@ -1562,17 +1567,39 @@ class Trader:
         inactive on every instrument whose bars fail, which is the failure mode
         that looks like working code.
         """
-        # A swing enters on 1h and wants the 4h rejection: the entry can be
-        # fast while the evidence is slow. A scalp names nothing and is judged
-        # on the bar it is entering on.
-        interval = (engine.candle_interval if engine else "") or intent.interval
-        bars = await self.execution.bars(intent.symbol, interval, count=3)
-        if len(bars) < 2:
-            return ""
+        # A swing enters on 1h and wants the rejection on something slower: the
+        # entry can be fast while the evidence is slow. A scalp names nothing
+        # and is judged on the bar it is entering on.
+        #
+        # **A window, coarsest first.** One timeframe was too narrow a
+        # question: a 4h bar closes six times a day, so insisting on that one
+        # refuses every setup formed inside the last four hours, while asking
+        # only 1h throws away the stronger claim when it exists. Asked coarsest
+        # first so the strongest available evidence is the one reported.
+        window = (engine.candle_intervals if engine else ()) or ()
+        if not window:
+            window = ((engine.candle_interval if engine else "") or intent.interval,)
         level = float(intent.features.get("level") or intent.entry)
         vol_bps = self._vol_bps.get(intent.feed, 0.0)
         tolerance = price_distance(level, vol_bps, self.settings.candle_tolerance_vol)
-        return confirms(bars, level, intent.side is Side.BUY, tolerance)
+        want_up = intent.side is Side.BUY
+        # Empties dropped only when something else is on offer: a caller with
+        # no timeframe at all still asks, which is what a scalp judged on its
+        # own entry bar does.
+        window = tuple(w for w in window if w) or window
+        for interval in window:
+            bars = await self.execution.bars(intent.symbol, interval, count=3)
+            if len(bars) < 2:
+                continue
+            found = confirms(bars, level, want_up, tolerance)
+            if found:
+                # The wick that did the rejecting, kept for the entry rule. A
+                # long tail is not what makes a hammer a hammer - it is what
+                # makes waiting for a pullback worth doing, and `_park` reads
+                # it rather than fetching the same bars again.
+                self._rejection[intent.feed] = rejection_wick(bars, want_up)
+                return f"{found} on {interval}"
+        return ""
 
     async def _park(
         self,
@@ -1597,6 +1624,18 @@ class Trader:
         strategy, not a cheaper version of this one. Which is why this is off
         unless asked for, and why the journal records what it refused.
         """
+        # **And only behind a long wick, when the strategy asks for that.**
+        #
+        # `pullback_fraction` alone rests every entry, which is a different
+        # strategy rather than a cheaper version of this one - it trades only
+        # what comes back. The wick is what says whether coming back is likely:
+        # a long tail means price went well past the level and returned inside
+        # the bar, so the close misrepresents where this can be got. A level
+        # held without drama has no retracement to wait for.
+        wants = engine.pullback_when_wick if engine else 0.0
+        if wants > 0 and self._rejection.get(intent.feed, 0.0) < wants:
+            return None
+
         # A strategy that insists on a resting entry says so itself. Depending
         # on the deployment's setting would make "does this wait for its price"
         # a property of how the box is tuned rather than of the strategy, and a
@@ -1613,11 +1652,9 @@ class Trader:
         if edge is not None:
             return edge
 
-        if fraction <= 0:
-            return None
         features = intent.features or {}
         edge = features.get("sweep_low" if intent.side is Side.BUY else "sweep_high") or 0.0
-        if not edge:
+        if fraction <= 0 or not edge:
             return None
 
         # How far to wait is the **level's** business, not a constant.

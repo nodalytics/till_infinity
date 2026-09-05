@@ -53,7 +53,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ...logging import get_logger
-from .confluence import rank
+from .confluence import ORDER, rank
 
 log = get_logger(__name__)
 
@@ -187,22 +187,44 @@ class LevelRange:
 #: the hour on purpose. `swing-level` triggers on 15m and 30m, so anchoring to
 #: the call gave it a 15m box - two prices a quarter of an hour of auction
 #: paused at - and asked a trade held for a day to aim at one of them.
+#:
+#: It is the floor **and**, through `PLACED_BY`, the ceiling: 4h is the one
+#: timeframe a day-long trade both respects and can cross.
 ANCHOR = "4h"
+
+#: And the coarsest timeframe allowed to **place** a wall.
+#:
+#: The first version of this let anything up to `daily` be a bound, on the
+#: argument that a daily zone is a real structure. It is - and it is still the
+#: wrong wall, because a box a daily level draws takes **weeks** to cross. A
+#: trade held for a day is then aiming at a target it cannot reach and
+#: measuring its position inside a range it will never traverse, which is the
+#: same mistake the 15m anchor made in the other direction.
+#:
+#: So the daily timeframe is **context**: it says whether the level is real,
+#: not where the trade is going. It earns a wall only by agreeing with a 4h
+#: level, and then the wall sits where the 4h one places it.
+#:
+#: This is exactly the asymmetry `confluence` is built on - the higher
+#: timeframe carries the significance, the lower carries the placement - read
+#: off the two ends of the same zone: `span` has to reach `ANCHOR`, `precision`
+#: has to come back down to it.
+PLACED_BY = ANCHOR
 
 
 def anchored(zones: Any, price: float, unit: float, *, feed: str = "") -> LevelRange:
-    """The range on `ANCHOR` or coarser, whatever timeframe asked for it.
+    """The range anchored at `ANCHOR`, whatever timeframe asked for it.
 
     Published beside the call's own range rather than instead of it. A scalp
     wants the box it is trading inside; a swing wants the box the day is
     trading inside, and they are different boxes on the same instrument at the
     same moment.
     """
-    return level_range_of(zones, price, unit, feed=feed, interval=ANCHOR)
+    return level_range_of(zones, price, unit, feed=feed, interval=ANCHOR, placed_by=PLACED_BY)
 
 
-def at_or_above(zones: Any, interval: str) -> list[Any]:
-    """Zones drawn on `interval` or something slower.
+def within(zones: Any, interval: str, placed_by: str = "") -> list[Any]:
+    """Zones significant at `interval` or above and placed at `placed_by` or below.
 
     **A range with a 1h ceiling and a 5m floor is not a range.** The two bounds
     have to be the same kind of object or the box measures nothing: a 5m zone
@@ -217,22 +239,40 @@ def at_or_above(zones: Any, interval: str) -> list[Any]:
 
     A zone with no members has no span and is dropped: it cannot be shown to
     belong.
+
+    `placed_by` is the other end, and it reads the **other** property. A zone
+    is not excluded for reaching into the daily or the week - that is what
+    makes it significant - it is excluded when *nothing finer agrees with it*,
+    because then the only price on offer is one a week of auction produced, and
+    a box built from two of those is not a box a day-long trade moves inside.
+    Empty means no such requirement, which is what a caller without an opinion
+    wants.
     """
     if not interval:
         return list(zones)
     # `ORDER` runs fine to coarse, so a coarser timeframe has the **higher**
-    # rank and "at or above" is `>=`.
+    # rank: significance is `>=` and placement is `<=`.
     floor = rank(interval)
+    roof = rank(placed_by) if placed_by else len(ORDER) + 1
     kept = []
     for zone in zones:
         span = getattr(zone, "span", "")
-        if span and rank(span) >= floor:
+        # A stub with a span and no precision is placed by its own span, which
+        # is what a single-timeframe wall means.
+        placed = getattr(zone, "precision", "") or span
+        if span and rank(span) >= floor and rank(placed) <= roof:
             kept.append(zone)
     return kept
 
 
 def level_range_of(
-    zones: Any, price: float, unit: float, *, feed: str = "", interval: str = ""
+    zones: Any,
+    price: float,
+    unit: float,
+    *,
+    feed: str = "",
+    interval: str = "",
+    placed_by: str = "",
 ) -> LevelRange:
     """The nearest zone below price and the nearest above it.
 
@@ -252,7 +292,7 @@ def level_range_of(
     range.
     """
     lower = upper = None
-    for zone in at_or_above(zones, interval):
+    for zone in within(zones, interval, placed_by):
         at = getattr(zone, "price", None)
         if not isinstance(at, int | float) or not at:
             continue

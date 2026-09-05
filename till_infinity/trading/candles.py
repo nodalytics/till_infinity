@@ -164,6 +164,25 @@ def touched(bar: Bar, level: float, tolerance: float = 0.0) -> bool:
     return bar.low - tolerance <= level <= bar.high + tolerance
 
 
+def rejection_wick(bars: list[Bar], want_up: bool) -> float:
+    """How much of the last bar was the wick that rejected the level, in [0, 1].
+
+    The side that matters is the one price was pushed back *from*: a long is
+    rejected at the low, so its evidence is the lower wick. Zero on a bar with
+    no range, which is a bar nothing happened in.
+
+    Read by the entry rule rather than by the pattern check - a long tail is
+    not what makes a hammer a hammer, it is what makes waiting for a pullback
+    worth doing.
+    """
+    if not bars:
+        return 0.0
+    bar = bars[-1]
+    if bar.range <= 0:
+        return 0.0
+    return (bar.lower if want_up else bar.upper) / bar.range
+
+
 def confirms(bars: list[Bar], level: float, want_up: bool, tolerance: float = 0.0) -> str:
     """The pattern confirming a trade at `level`, or "" if none does.
 

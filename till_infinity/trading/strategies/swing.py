@@ -433,10 +433,24 @@ class SwingLevel(LevelStrategy):
     entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
     needs_context: ClassVar[bool] = True
 
-    #: The rejection has to show on 4h. A pin bar there is a claim that several
-    #: hours of auction failed at this price; the same shape on the 1h entry
-    #: bar is one hour's worth.
-    candle_interval: ClassVar[str] = "4h"
+    #: **1h to 4h, coarsest first.** A 4h pin bar is the strongest version of
+    #: "the auction failed here" and a 1h one is the same claim with less
+    #: behind it - but a 4h bar closes six times a day, so insisting on that
+    #: one alone refuses every setup formed inside the last four hours. A pin
+    #: bar on any of the three is a claim that hours of auction failed at this
+    #: price; the same shape on the 15m trigger bar is fifteen minutes' worth,
+    #: which is why the window stops at 1h rather than following the entry
+    #: down.
+    candle_intervals: ClassVar[tuple[str, ...]] = ("4h", "2h", "1h")
+
+    #: **Rest the entry only behind a long wick.** The wick is the argument for
+    #: waiting: a tail over a third of the bar means price went well past the
+    #: level and came back inside it, so the close is a poor picture of where
+    #: this can be got, and the retracement that fills a resting order is the
+    #: one the wick has already demonstrated. A level held without drama is one
+    #: where waiting mostly means not trading, and this strategy has never
+    #: traded - unconditional resting is the likeliest reason it never will.
+    pullback_when_wick: ClassVar[float] = 0.35
     #: Twenty-four hours, raised from six on 2026-09-02 with the target below.
     #:
     #: The class docstring already named this as the setting most likely to be

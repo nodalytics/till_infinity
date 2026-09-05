@@ -370,10 +370,32 @@ class Strategy(ABC):
     #: and the evidence slow.
     candle_interval: ClassVar[str] = ""
 
+    #: A **window** of timeframes to look for the rejection on, coarsest first.
+    #: Takes precedence over `candle_interval` where set.
+    #:
+    #: One timeframe was too narrow a question. A 4h pin bar is the strongest
+    #: version of "the auction failed here", and a 1h one is the same claim
+    #: with less behind it - but a 4h bar closes six times a day, so insisting
+    #: on that one refuses every setup that formed inside the last four hours.
+    #: Asked coarsest first, so the strongest available evidence is the one
+    #: reported.
+    candle_intervals: ClassVar[tuple[str, ...]] = ()
+
     #: Whether the trail steps up behind 15m-1h levels rather than following
     #: price at a fixed volatility distance. Off for everything measured on the
     #: distance trail; `SwingLevel` turns it on.
     trail_levels: ClassVar[bool] = False
+
+    #: Rest the entry only when the rejection wick is at least this share of
+    #: its bar's range. Zero keeps `pullback_fraction` unconditional.
+    #:
+    #: The wick *is* the argument for waiting. A long tail means price went
+    #: well past the level and came back inside the bar, so the close is a poor
+    #: representation of where the trade can be got - and the retracement that
+    #: fills a resting order is the one the wick already demonstrated. A short
+    #: wick is a level held without drama, where waiting mostly means not
+    #: trading.
+    pullback_when_wick: ClassVar[float] = 0.0
 
     #: Whether every witness asked for must confirm, rather than any one of
     #: them.
