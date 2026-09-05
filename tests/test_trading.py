@@ -714,7 +714,7 @@ async def test_a_fill_is_announced_on_alerts():
     message = await alerts.next()
     assert message is not None
     assert message.payload["fields"]["shape"] == "trade"
-    assert "gold" in message.payload["title"]
+    assert "GOLD" in message.payload["title"].upper()
 
 
 async def test_announcements_can_be_switched_off():
@@ -6642,7 +6642,7 @@ async def test_a_resting_order_is_announced_when_placed_and_when_withdrawn():
     placed = await alerts.next()
     assert placed is not None
     assert placed.payload["fields"]["event"] == "resting"
-    assert "resting" in placed.payload["title"]
+    assert "RESTING" in placed.payload["title"].upper()
 
     held = trader._waiting["gold"]
     held.until = 0.0
@@ -6652,7 +6652,7 @@ async def test_a_resting_order_is_announced_when_placed_and_when_withdrawn():
     # Its own event, or a placement and its withdrawal collapse into one
     # finding under the repeat key.
     assert gone.payload["fields"]["event"] == "withdrawn"
-    assert "withdrew" in gone.payload["title"]
+    assert "WITHDRAWN" in gone.payload["title"].upper()
 
 
 async def test_rest_alerts_can_be_switched_off():
@@ -7186,3 +7186,20 @@ def test_an_unresolvable_entry_is_dropped_rather_than_inserted(tmp_path, caplog)
 
     assert "gold" not in trader._push
     assert "unreadable" in " ".join(caplog.messages)
+
+
+def test_the_venue_names_itself_from_the_terminal():
+    """`mt5-http` is the transport and says nothing about where the money is.
+    The terminal already knows - it reports `Deriv-Demo` and `Deriv.com
+    Limited` - so the name is derived rather than configured."""
+    from till_infinity.trading.models import Account
+
+    # The server splits on the hyphen that separates broker from account type,
+    # and the account type is not the broker.
+    assert Account(server="Deriv-Demo").venue == "Deriv"
+    # The company is the fallback and needs more trimming: a legal entity is
+    # not a name anybody uses.
+    assert Account(company="Deriv.com Limited").venue == "Deriv"
+    # Neither reported is a real answer, and the caller falls back to the
+    # transport rather than printing an empty string.
+    assert Account().venue == ""

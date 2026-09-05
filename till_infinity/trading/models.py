@@ -149,6 +149,27 @@ class Account:
     equity: float = 0.0
     margin_free: float = 0.0
     leverage: int = 0
+    #: What the terminal says it is connected to. `mt5-http` is the transport
+    #: and tells a reader nothing about where their money is; the terminal
+    #: already knows, and reports `Deriv-Demo` and `Deriv.com Limited`.
+    server: str = ""
+    company: str = ""
+
+    @property
+    def venue(self) -> str:
+        """The broker's name, derived rather than configured.
+
+        `server` first, because `Deriv-Demo` splits cleanly on the hyphen that
+        separates the broker from the account type - and the account type is
+        not the broker. `company` is the fallback and needs more trimming:
+        `Deriv.com Limited` is a legal entity, not a name anybody uses.
+        """
+        if self.server:
+            return self.server.split("-")[0].strip() or self.server
+        if self.company:
+            first = self.company.split()[0]
+            return first.split(".")[0] or first
+        return ""
 
     def __str__(self) -> str:
         return f"#{self.login} {self.equity:,.2f} {self.currency} (balance {self.balance:,.2f})"

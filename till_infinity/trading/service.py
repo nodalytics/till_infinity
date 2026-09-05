@@ -261,6 +261,40 @@ class Shadow:
     stopped_at: float = 0.0
 
 
+def _money_price(value: float) -> str:
+    """A price for a title, grouped and without an exponent."""
+    size = abs(value)
+    places = 1 if size >= 10_000 else 2 if size >= 100 else 4 if size >= 1 else 6
+    out = f"{value:,.{places}f}"
+    return out.rstrip("0").rstrip(".") if "." in out else out
+
+
+def _moved_body(live: Live, move: Move, locked: str, gained: float) -> str:
+    """A stop move, laid out like the fill and the close it sits between.
+
+    **"locked in" only when something is.** The old line printed
+    `locked in -$9.57` for a stop still below the entry, which is the opposite
+    of what those words mean - the trade could still lose that, and calling it
+    locked in reads as a floor under a profit. A stop that has not passed the
+    entry has *reduced* the loss, and that is what it now says.
+    """
+    rule = "━" * 22
+    lines = [
+        rule,
+        f"🛡️ {live.intent.feed.upper().replace('_', ' ')} · STOP MOVED",
+        rule,
+        f"📊 {live.by or 'trading'} · #{live.position.ticket}",
+        "",
+        f"📍 {live.position.side} {live.position.volume:g} @ "
+        f"{_money_price(live.position.price_open)} · stop now {_money_price(move.stop)}",
+        f"📝 {move.reason}",
+    ]
+    if locked:
+        lines.append(f"{'💚 locked in' if gained > 0 else '🛟 worst case now'} {locked}")
+    lines.append(rule)
+    return "\n".join(lines)
+
+
 def _closed_body(
     live: Live, price: float, profit: float, why: str, money: str, standing: str
 ) -> str:
@@ -276,8 +310,10 @@ def _closed_body(
     got = ((price - live.position.price_open) * live.position.side.sign / risk) if risk else 0.0
     lines = [
         rule,
-        f"{'✅' if won else '❌'} {live.intent.feed.upper().replace('_', ' ')} · "
-        f"CLOSED · {why.upper()}",
+        # `closed` and `gone` say how the position left, not why, so they add
+        # nothing to the word CLOSED. `target`, `stop` and `stale` do.
+        f"{'✅' if won else '❌'} {live.intent.feed.upper().replace('_', ' ')} · CLOSED"
+        + (f" · {why.upper()}" if why in ("target", "stop", "stale", "hold") else ""),
         rule,
         f"📊 {live.by or 'trading'} · #{live.position.ticket}",
         "",
@@ -340,6 +376,7 @@ class Trader:
         #: guessable from the instrument - a gold trade on a euro-denominated
         #: account pays euros.
         self.currency = ""
+        self.venue = ""
         self.taken = 0
         self.refused = 0
         self._symbol_of: dict[str, str] = {}
@@ -493,6 +530,10 @@ class Trader:
         self.equity = account.equity or account.balance
         self.peak_equity = max(self.peak_equity, self.equity)
         self.currency = account.currency or ""
+        # The venue by the name a person uses, taken from the terminal rather
+        # than configured. `broker.name` is the transport - `mt5-http` says
+        # how we reach it, not where the money is.
+        self.venue = account.venue or self.broker.name
         self.guard.currency = self.currency
         log.info(
             "trading: %s via %s - %s",
@@ -2575,18 +2616,14 @@ class Trader:
             ALERTS,
             {
                 "title": (
-                    f"{self.settings.mode}: {live.intent.feed} stop to {move.stop:.5g}"
-                    + (f" · {live.by}" if live.by else "")
+                    f"{live.intent.feed.upper().replace('_', ' ')} · STOP MOVED · "
+                    f"{_money_price(move.stop)}"
                 ),
-                "body": (
-                    f"{move.reason}\n\n"
-                    f"{live.position.side} {live.position.volume:g} @ "
-                    f"{live.position.price_open:.5g}\n"
-                    + (
-                        f"locked in {self.money(gained / risk * live.intent.risk_money)}"
-                        if risk
-                        else ""
-                    )
+                "body": _moved_body(
+                    live,
+                    move,
+                    self.money(gained / risk * live.intent.risk_money) if risk else "",
+                    gained,
                 ),
                 "level": "info",
                 "fields": {
@@ -3580,7 +3617,7 @@ class Trader:
             f"{'🟢' if up else '🔴'} {intent.feed.upper().replace('_', ' ')} · "
             f"FILLED · {str(intent.side).upper()}",
             rule,
-            f"📊 {self.broker.name} · {by or 'trading'} · #{ticket}",
+            f"📊 {self.venue or self.broker.name} · {by or 'trading'} · #{ticket}",
             "",
             f"📍 {intent.volume:g} lots @ {price:.5g}",
             # Stop and target with the ratio between them - and this one **is**
@@ -3598,9 +3635,11 @@ class Trader:
         await self.bus.publish(
             ALERTS,
             {
+                # The body opens with the instrument, side and ticket. This
+                # said all three again on the line above it.
                 "title": (
-                    f"{self.settings.mode}: {intent.side} {intent.feed} #{ticket}"
-                    + (f" · {by}" if by else "")
+                    f"{intent.feed.upper().replace('_', ' ')} · FILLED · "
+                    f"{str(intent.side).upper()} @ {_money_price(price)}"
                 ),
                 "body": "\n".join(line for line in body if line),
                 "level": "info",
@@ -3647,10 +3686,9 @@ class Trader:
             ALERTS,
             {
                 "title": (
-                    f"{self.settings.mode}: {'withdrew' if gone else 'resting'} "
-                    f"{intent.side} {intent.feed}"
-                    + (f" #{ticket}" if ticket else "")
-                    + (f" · {by}" if by else "")
+                    f"{intent.feed.upper().replace('_', ' ')} · "
+                    f"{'WITHDRAWN' if gone else 'RESTING'} · {str(intent.side).upper()}"
+                    + (f" · #{ticket}" if ticket else "")
                 ),
                 "body": "\n".join(line for line in body if line),
                 "level": "info",
@@ -3676,9 +3714,12 @@ class Trader:
         await self.bus.publish(
             ALERTS,
             {
+                # The body opens with the instrument and the strategy and
+                # prints the money on its own line. This repeated all three,
+                # with `(closed)` - an exit kind meaning "we closed it", which
+                # is not information.
                 "title": (
-                    f"{self.settings.mode}: {live.intent.feed} closed "
-                    f"{self.money(profit)} ({why})" + (f" · {live.by}" if live.by else "")
+                    f"{live.intent.feed.upper().replace('_', ' ')} · CLOSED · {self.money(profit)}"
                 ),
                 "body": _closed_body(
                     live, price, profit, why, self.money(profit), self.guard.summary()

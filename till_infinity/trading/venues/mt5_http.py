@@ -169,6 +169,8 @@ class HttpBroker(Broker):
             equity=float(raw.get("equity") or 0.0),
             margin_free=float(raw.get("margin_free") or 0.0),
             leverage=int(raw.get("leverage") or 0),
+            server=str(raw.get("server") or ""),
+            company=str(raw.get("company") or ""),
         )
 
     async def catalogue(self) -> list[str] | None:
