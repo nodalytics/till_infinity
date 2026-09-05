@@ -22,6 +22,24 @@ difference matters more than it looks:
   here" and predicts a break at AUC 0.4892; whether the ceiling is nearer in
   *time* is a question about two distances and the speed between them.
 
+## The control travels with the model
+
+Which wall price reaches first is **close to a geometric fact**: most of the
+time it is the nearer one. So a high accuracy here is the expected result of
+learning nothing at all beyond the shape of the channel, and is
+indistinguishable from a high accuracy for a real edge.
+
+`naive_right`/`naive_seen` score the rule "the nearer bound wins" on exactly
+the same races, updated in the same call before the model is, so the two are
+never compared on different samples. `edge` is the difference and it is the
+only number here worth reading. It can be negative.
+
+The first live reading was **84.1% accuracy over 252 races**, with weights that
+all point the sensible way - `channel_position` +1.00, `room_down_vol` +0.49,
+`room_up_vol` -0.43. That looked like a result and is exactly the shape
+`research/inert.md` warns about: a strong number is usually impossible rather
+than impressive, and this one had no control against it.
+
 ## What it is allowed to do, which is nothing yet
 
 `Races.reading` publishes `up_first` on a signal's features and refuses
@@ -123,6 +141,17 @@ class Races(Restorable):
     #: feed -> the race currently open on it.
     open: dict[str, Pending] = field(default_factory=dict)
     recipe: str = RECIPE
+    #: How the **nearest bound wins** rule would have scored on the same races,
+    #: and how many it has seen. This is the control, and it travels with the
+    #: model rather than living in a harness somebody has to remember to run.
+    #:
+    #: Without it the model's accuracy cannot be read. Which wall price reaches
+    #: first is close to a geometric fact - the nearer one, most of the time -
+    #: so a high score is the *expected* result of learning nothing but the
+    #: geometry, and is indistinguishable from a high score for a real edge.
+    #: The number that means something is the gap between the two.
+    naive_right: float = 0.0
+    naive_seen: float = 0.0
 
     @staticmethod
     def inputs(features: object) -> list[float]:
@@ -142,6 +171,8 @@ class Races(Restorable):
         )
         self.model = Logistic(rate=RATE)
         self.open.clear()
+        self.naive_right = 0.0
+        self.naive_seen = 0.0
         self.recipe = RECIPE
 
     def predict(self, features: object) -> float | None:
@@ -162,6 +193,25 @@ class Races(Restorable):
         if said is None:
             return {}
         return {"up_first": round(said, 5), "up_first_seen": round(self.model.seen, 1)}
+
+    @property
+    def naive(self) -> float | None:
+        """What "the nearer bound wins" scores on the same races, or None."""
+        if self.naive_seen <= 0:
+            return None
+        return self.naive_right / self.naive_seen
+
+    @property
+    def edge(self) -> float | None:
+        """Accuracy above the geometric rule. **This is the number that means
+        something**, and it can be negative - a model that has learned the
+        geometry and nothing else scores zero here however high its accuracy
+        reads."""
+        rule = self.naive
+        got = getattr(self.model, "accuracy", None)
+        if rule is None or not isinstance(got, int | float):
+            return None
+        return float(got) - rule
 
     def watch(self, feed: str, upper: float, lower: float, features: dict[str, float]) -> None:
         """Open a race on this feed, replacing whatever was open on it.
@@ -199,7 +249,13 @@ class Races(Restorable):
             return None
         del self.open[feed]
         self._fresh_start_if_the_recipe_changed()
-        self.model.observe(self.inputs(pending.features), which == "upper")
+        upward = which == "upper"
+        # Scored before the model is updated, on the same race, so the two are
+        # always compared on identical events.
+        nearer_up = float(pending.features.get("channel_position") or 0.5) > 0.5
+        self.naive_seen += 1.0
+        self.naive_right += 1.0 if nearer_up == upward else 0.0
+        self.model.observe(self.inputs(pending.features), upward)
         return which
 
     def forget(self, feed: str) -> None:
