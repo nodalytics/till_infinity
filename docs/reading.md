@@ -84,6 +84,45 @@ compute them honestly. The system records every call with the state it was made
 from and attaches what followed, so that question becomes answerable - it is
 not answerable yet.
 
+## The push-to-risk line, and what it is not
+
+```
+📏 push +1.47v ± 2.10v on average · risk 0.62v · push is 2.4x the risk
+```
+
+Read it as: **the average move in your favour is 2.4 times the distance to the
+stop.** 2.4 units of reward per 1 unit risked, not the other way round. The
+wording is deliberately a sentence with a subject, because two earlier versions
+of this line - "2.4 to 1" and "2.4x risk" - were both read backwards, which is
+the only evidence that matters about a label.
+
+Two things it does **not** say, and they are larger than the ratio.
+
+**It is not a reward-to-risk ratio.** A reward-to-risk compares a *target* to a
+stop: the good outcome against the bad one. `expected_push` is the **mean over
+every resolved touch**, the losing ones included, so it is already something
+closer to an expected value. That makes it a better number than a target ratio
+and a different one, and reading it as "my winners will be 2.4x my losers"
+overstates it substantially.
+
+**It is not a realisable P&L.** The push is what price did at the level. A trade
+with a stop 0.62v away can be stopped out *before* the push arrives, and
+nothing in this line accounts for that path. The ratio says the level is worth
+more than it costs to be wrong about; it does not say a particular entry
+captures it.
+
+### The ± is the part to read first
+
+`± 2.10v` on a mean of `+1.47v` means the spread is **larger than the average**.
+`Inference` puts it in one line: *a large mean with a larger sigma is not a
+call*. A ratio of 2.4 built on that dispersion is a claim about the average of a
+distribution that straddles zero, and the average is not what any single trade
+gets.
+
+When the two are close, or sigma is the larger, the honest reading of the whole
+line is "this level has done well on average and does not do it reliably".
+
+
 Deeper on the machinery behind these: **[structures.md](structures.md)**
 for the online models and cross-venue scoring, **[levels.md](levels.md)**
 for how a level is found, tracked and scored per approach side.

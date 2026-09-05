@@ -151,6 +151,22 @@ def _body(**features):
     return alert_payload(_signal(**features))["body"]
 
 
+def test_the_push_to_risk_line_says_which_is_which():
+    """Two earlier labels - "2.4 to 1" and "2.4x risk" - were both read
+    backwards, as carrying 2.4x the risk for 1 reward. The push is the subject
+    of the sentence now, and the dispersion sits beside the mean because a
+    large mean with a larger sigma is not a call."""
+    got = _body(
+        level=6063.9,
+        expected_push_vol=1.47,
+        push_sigma_vol=2.10,
+        risk_vol=0.62,
+    )
+
+    assert "push is 2.4x the risk" in got
+    assert "± 2.10v on average" in got
+
+
 def test_the_alert_shows_the_range_and_the_room_on_each_side():
     """The pair of numbers an entry and a target are actually made of - the far
     bound is a target the market drew rather than one the sizer did."""

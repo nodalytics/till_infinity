@@ -267,7 +267,7 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     if risk > 0:
         body.append(
             f"📏 push {push:+.2f}v{scale} on average · risk {risk:.2f}v "
-            f"· {abs(push) / risk:.1f}x risk"
+            f"· push is {abs(push) / risk:.1f}x the risk"
         )
     else:
         body.append(f"📏 push {push:+.2f}v{scale} on average")
