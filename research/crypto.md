@@ -14,7 +14,7 @@ against outcomes yet**, and the last section says what would settle each one.
 | open interest, all pairs in one call | — | — | ✅ | — | — |
 | open interest history | ✅ | ✅ | ✅ | — | ✅ |
 | long/short ratio history | ✅ | ✅ | ✅ | — | — |
-| **public** liquidations | — | — | — | — | ✅ |
+| **public** liquidations | — | — | — | — | advertised, returns nothing |
 | mark OHLCV | ✅ | ✅ | ✅ | ✅ | ✅ |
 | index OHLCV | ✅ | ✅ | ✅ | ✅ | ✅ |
 | premium index OHLCV | ✅ | ✅ | — | — | — |
@@ -80,6 +80,15 @@ means *your own* liquidations, which is an account endpoint and useless as
 market data - and easy to mistake for the public one, since `ex.has` lists
 `fetchMyLiquidations` right beside it.
 
+**And gate's returns nothing.** Asked for BTC and ETH, with and without a
+24-hour window, it answered **zero rows** on pairs that certainly had
+liquidations in that window. So the honest state of the table above is that
+public liquidations are advertised by one exchange and delivered by none.
+
+That is a `has` map describing a method that exists rather than data that
+arrives, and a collector built on it would ship, configure, log correctly and
+collect nothing - the pattern [inert.md](inert.md) catalogues. None was built.
+
 So a liquidation cascade has to be **inferred, not observed**: open interest
 collapsing against a price move in the same direction is forced closing, and
 that is the shape to look for. Inferred at whatever resolution OI history
@@ -104,7 +113,8 @@ its correlation with `approach_vol` was **+0.008** over 4,078 touches. The order
 is therefore:
 
 1. **Collect and store**, changing nothing. Funding is built
-   (`prices/funding.py`); OI and long/short are not.
+   (`prices/funding.py`), and so are open interest and the long/short split
+   (`prices/positioning.py`). Nothing consumes any of them yet.
 2. **Correlate against what is already in the break model** - `approach_vol`,
    `depth_vol` - before looking at AUC at all. A feature that correlates highly
    with `depth_vol` is not a new input however well it scores.
