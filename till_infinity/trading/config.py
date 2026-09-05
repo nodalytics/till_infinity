@@ -24,6 +24,7 @@ import hashlib
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..prices.models import slugify
 from ..structures.drawing import confluence
@@ -228,6 +229,7 @@ BACKENDS: tuple[str, ...] = (NATIVE, RPYC, HTTP, PAPER)
 #: symptom would be calls silently ignored.
 TIMEFRAMES: tuple[str, ...] = confluence.TIMEFRAMES
 
+DEFAULT_TRADING_DIR = ".data/trading"
 DEFAULT_API_PATH = "/api/v1"
 
 #: Stamped on every position this system opens, so `positions` and the panic
@@ -1398,6 +1400,9 @@ class Settings:
 
     # ------------------------------------------------------------- plumbing
     #: Refuse to keep trading if the terminal stops answering.
+    #: Where the open positions' high-water marks are kept between restarts.
+    #: The only thing this service needs to survive one - see `Trader._marks`.
+    state_dir: Path = field(default_factory=lambda: Path(DEFAULT_TRADING_DIR))
     heartbeat: float = 60.0
     # ------------------------------------------------------- announcements
     #: The master gate. Off means this service publishes nothing to `alerts`,
@@ -1577,6 +1582,7 @@ class Settings:
             approach_max_vol=_float("TRADING_APPROACH_MAX_VOL", 6.0),
             approach_buffer_vol=_float("TRADING_APPROACH_BUFFER_VOL", 0.25),
             approach_min_reach=_float("TRADING_APPROACH_MIN_REACH", 0.20),
+            state_dir=Path(os.environ.get("TRADING_DIR") or DEFAULT_TRADING_DIR),
             heartbeat=_float("TRADING_HEARTBEAT_S", 60.0),
             notify=_flag("TRADING_NOTIFY", "1"),
             notify_fills=_flag("TRADING_NOTIFY_FILLS", "1"),

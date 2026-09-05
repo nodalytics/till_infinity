@@ -29,9 +29,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import time
 from collections import Counter
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, ClassVar
 
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
@@ -394,6 +396,21 @@ class Trader:
         #: from the quote stream rather than read from the broker, because
         #: `price_current` is a snapshot and a trail anchored to snapshots
         #: follows whatever the last poll happened to catch.
+        #: Where the extremes are kept between restarts.
+        #:
+        #: **They were kept nowhere, and that is a measured leak.** `_best` and
+        #: `_worst` are the only things this service needs across a restart,
+        #: and it persisted nothing at all - so every deploy reset the
+        #: high-water mark of every open position. A trade that had run to 2R
+        #: came back looking like a trade at its entry, break-even never fired
+        #: on a move it had already earned, and it gave the lot back. There
+        #: were ten deploys on 2026-09-04 alone.
+        #:
+        #: It also understated the damage: `best_r` on the close is read from
+        #: this dict, so a give-back measured after a restart records the peak
+        #: it reached *since* the restart, not the one that mattered.
+        self._marks = Path(self.settings.state_dir) / "extremes.json"
+        self._recalled = False
         self._best: dict[int, float] = {}
         #: feed -> how many quotes `_quote` has resolved a symbol for. Only
         #: read by the `_manage` skip diagnostic, which cannot otherwise
@@ -2130,6 +2147,54 @@ class Trader:
             self.guard.summary(),
         )
 
+    def _remember_marks(self) -> None:
+        """Write the extremes for whatever is still open.
+
+        Once a heartbeat, not once a quote: the cost of a restart is then
+        bounded to a minute of high-water rather than the whole trade, and the
+        file stays a few hundred bytes.
+
+        Never raises. A desk that cannot write a convenience file must keep
+        trading - `structures` takes the same line on its own state, and for
+        the same reason.
+        """
+        try:
+            self._marks.parent.mkdir(parents=True, exist_ok=True)
+            live = set(self.open)
+            payload = {
+                "best": {str(k): v for k, v in self._best.items() if k in live},
+                "worst": {str(k): v for k, v in self._worst.items() if k in live},
+            }
+            self._marks.write_text(json.dumps(payload))
+        except Exception as exc:  # pragma: no cover - a full disk, a bad path
+            log.debug("trading: could not write %s: %s", self._marks, exc)
+
+    def _recall_marks(self) -> None:
+        """Read them back, keeping only tickets the broker still reports.
+
+        A ticket that has closed since the file was written is dropped rather
+        than carried: `_settle` reads these to record `best_r`, and a stale
+        entry would attach one trade's excursion to another's ticket if the
+        broker ever reused a number.
+        """
+        try:
+            payload = json.loads(self._marks.read_text())
+        except Exception:
+            return
+        live = set(self.open)
+        kept = 0
+        for name, into in (("best", self._best), ("worst", self._worst)):
+            for raw, value in (payload.get(name) or {}).items():
+                try:
+                    ticket = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if ticket in live and isinstance(value, int | float):
+                    into.setdefault(ticket, float(value))
+                    kept += 1
+        if kept:
+            log.info("trading: recovered %d high-water mark(s) across the restart", kept)
+
     async def sweep(self) -> None:
         """The heartbeat: roll the day, reconcile, and time out stale scalps."""
         if not await self.broker.healthy():
@@ -2140,8 +2205,16 @@ class Trader:
         self.equity = account.equity or self.equity
         self.guard.roll(self.equity)
         await self._reconcile()
+        # After reconcile, so `self.open` is what the broker actually reports -
+        # and before `_manage`, so a position adopted this pass is judged on
+        # the excursion it really made rather than on the price it happens to
+        # be at now.
+        if not self._recalled:
+            self._recalled = True
+            self._recall_marks()
         await self._orphans()
         await self._manage()
+        self._remember_marks()
         await self._expire()
         await self._rearm_stopped()
         self._say_what_it_is_doing()

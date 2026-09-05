@@ -6965,3 +6965,74 @@ def test_a_successful_bank_leaves_no_stale_reason_behind():
 
     assert got is not None
     assert manage.why_no_bank() == ""
+
+
+# ------------------------------------- the high-water mark across a restart
+
+
+def test_the_extremes_survive_a_restart(tmp_path):
+    """They were kept nowhere. Every deploy reset the high-water mark of every
+    open position, so a trade that had run to 2R came back looking like one at
+    its entry - break-even never fired on a move it had already earned, and it
+    gave the lot back. There were ten deploys on 2026-09-04 alone."""
+    made = settings(state_dir=tmp_path)
+    trader = Trader(Bus(), settings=made)
+    live = _live()
+    trader.open[live.position.ticket] = live
+    trader._best[live.position.ticket] = 4450.0
+    trader._worst[live.position.ticket] = 4390.0
+    trader._remember_marks()
+
+    after = Trader(Bus(), settings=made)
+    after.open[live.position.ticket] = live
+    after._recall_marks()
+
+    assert after._best[live.position.ticket] == 4450.0
+    assert after._worst[live.position.ticket] == 4390.0
+
+
+def test_a_mark_for_a_closed_ticket_is_not_carried(tmp_path):
+    """`_settle` reads these to record `best_r`, so a stale entry would attach
+    one trade's excursion to another's ticket if a number were reused."""
+    made = settings(state_dir=tmp_path)
+    trader = Trader(Bus(), settings=made)
+    live = _live()
+    trader.open[live.position.ticket] = live
+    trader._best[live.position.ticket] = 4450.0
+    trader._best[999999] = 1.0  # a ticket the broker no longer reports
+    trader._remember_marks()
+
+    after = Trader(Bus(), settings=made)
+    after.open[live.position.ticket] = live
+    after._recall_marks()
+
+    assert 999999 not in after._best
+
+
+def test_a_live_mark_is_never_overwritten_by_a_stored_one(tmp_path):
+    """The file is a minute old at worst; anything already tracked this run is
+    fresher and wins."""
+    made = settings(state_dir=tmp_path)
+    trader = Trader(Bus(), settings=made)
+    live = _live()
+    trader.open[live.position.ticket] = live
+    trader._best[live.position.ticket] = 4450.0
+    trader._remember_marks()
+
+    after = Trader(Bus(), settings=made)
+    after.open[live.position.ticket] = live
+    after._best[live.position.ticket] = 4460.0
+    after._recall_marks()
+
+    assert after._best[live.position.ticket] == 4460.0
+
+
+def test_an_unreadable_marks_file_does_not_stop_the_desk(tmp_path):
+    """A desk that cannot read a convenience file must keep trading."""
+    made = settings(state_dir=tmp_path)
+    (tmp_path / "extremes.json").write_text("not json at all")
+    trader = Trader(Bus(), settings=made)
+
+    trader._recall_marks()  # must not raise
+
+    assert trader._best == {}
