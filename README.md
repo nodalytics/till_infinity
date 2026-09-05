@@ -448,6 +448,7 @@ carries notice that something happened, not the data itself.
 ```
   tradingview ─┐
   yahoo ───────┤
+  ccxt ────────┤
   MT5 bridge ──┴──▶ prices ──▶ prices.bars, prices.quotes ──┐
                                                             │
   news ──────────▶ news.articles, news.events ──────────────┤
@@ -471,6 +472,20 @@ carries notice that something happened, not the data itself.
 
   structures, agents, trading ──▶ journal ──▶ journal.db
 ```
+
+`ccxt` is the crypto leg and it discovers its own instruments rather than being
+given a list: the board is ranked across exchanges by 24h volume, the top slice
+is registered as ordinary feeds, and a pair several of them carry becomes one
+feed with a symbol per exchange - the same shape a TradingView instrument has,
+so the consensus layer treats them alike. See
+[research/crypto.md](research/crypto.md).
+
+**Two crypto collectors are written and not in this diagram, deliberately.**
+`prices/funding.py` and `prices/positioning.py` read funding rates, open
+interest and the long/short split, and nothing calls them yet - they are
+library code with no caller. Drawing an arrow for them would say the desk is
+collecting something it is not, which is the failure this project keeps
+finding rather than one to add to the picture.
 
 The bridge appears twice on purpose. It is the **execution** path - orders out,
 fills and positions back - and since synthetics exist it is also a **price**

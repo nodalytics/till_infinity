@@ -115,12 +115,36 @@ index does not, and the gap between them at the open is itself information.
 
 ## Sources
 
-| | TradingView | Yahoo |
-|---|---|---|
-| candles | chart websocket, per broker | yfinance |
-| intervals | all seven | 1m/5m/15m/1h/1d native, 2h and 4h resampled from 1h |
-| depth | paginated via `request_more_data` | capped per interval (1m→7d, 5m/15m→60d, 1h→729d, 1d→unlimited) |
-| bid/ask | quote websocket, pushed | last trade only - no real book for FX or futures |
+| | TradingView | Yahoo | ccxt | broker (MT5) |
+|---|---|---|---|---|
+| candles | chart websocket, per broker | yfinance | `fetch_ohlcv`, per exchange | bridge, per symbol |
+| intervals | all seven | 1m/5m/15m/1h/1d native, 2h and 4h resampled from 1h | those the exchange names natively | all seven |
+| depth | paginated via `request_more_data` | capped per interval (1m→7d, 5m/15m→60d, 1h→729d, 1d→unlimited) | per-exchange `limit` | bridge default |
+| bid/ask | quote websocket, pushed | last trade only - no real book for FX or futures | not collected - candles only | bridge tick |
+| instruments | named in `SYMBOLS` | named in `SYMBOLS` | **discovered** | `PRICES_BROKER_SYMBOLS` |
+
+### ccxt is the only source that picks its own instruments
+
+Every other source is given a list. ccxt is given *filters* and finds the
+list: it reads each exchange's board, drops what is wide, dead, newly listed
+or not a perpetual **on that exchange**, ranks what survives by summed 24h
+quote volume **across** exchanges, and registers the top slice as ordinary
+feeds. A pair several of them carry becomes one feed with a symbol per
+exchange, which is the same shape a TradingView instrument has - so the
+consensus layer compares crypto venues exactly as it compares FX brokers.
+
+The cut is global and applied once. Applying `PRICES_CCXT_TOP` per exchange
+and merging would give the union of several top-250s, which is neither 250
+pairs nor the 250 largest.
+
+Off unless a filter says how much to carry, so a deployment that has not opted
+in pays no start-up call. See `.env.example` for the block and
+[research/crypto.md](../research/crypto.md) for what each exchange answers.
+
+**Funding rates, open interest and the long/short split are written and not
+wired.** `prices/funding.py` and `prices/positioning.py` are library code with
+no caller: the collection loop does not run them and nothing is stored. They
+are listed here so nobody goes looking for the data expecting to find it.
 
 ### Things that will otherwise surprise you
 
@@ -350,3 +374,12 @@ await stream(settings=Settings(), feeds=resolve_symbols(("gold",)), sink=on_quot
 `PRICES_CYCLE_S`, `PRICES_QUOTE_POLL`, `PRICES_QUOTE_CONCURRENCY`,
 `PRICES_TV_CONCURRENCY`, `PRICES_YAHOO_CONCURRENCY`, `PRICES_RETRIES`,
 `PRICES_USER_AGENT`.
+
+Crypto, all off by default: `PRICES_CCXT_EXCHANGES` (comma-separated; falls
+back to `PRICES_CCXT_EXCHANGE`), `PRICES_CCXT_MARKET_TYPE`,
+`PRICES_CCXT_SWAPS_ONLY`, `PRICES_CCXT_TOP`, `PRICES_CCXT_MIN_VOLUME`,
+`PRICES_CCXT_MAX_SPREAD`, `PRICES_CCXT_MIN_DAYS`, `PRICES_CCXT_MIN_PRICE`,
+`PRICES_CCXT_MIN_RANGE`, `PRICES_CCXT_QUOTES`.
+
+Discovery is skipped entirely unless one of `TOP`, `MIN_VOLUME` or `QUOTES` is
+set, so a deployment that has not opted in makes no exchange call at all.
