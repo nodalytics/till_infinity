@@ -138,7 +138,7 @@ class LevelRange:
             return None
         return min(1.0, max(0.0, (self.price - self.lower.price) / width))
 
-    def features(self) -> dict[str, float]:
+    def features(self, prefix: str = "") -> dict[str, float]:
         """The readings, for the signal and the journal.
 
         Absent bounds are **omitted rather than zeroed**. A missing key is a
@@ -148,14 +148,14 @@ class LevelRange:
         out: dict[str, float] = {}
         up, down = self.room_up_vol, self.room_down_vol
         if up is not None:
-            out["room_up_vol"] = up
+            out[f"{prefix}room_up_vol"] = up
         if down is not None:
-            out["room_down_vol"] = down
+            out[f"{prefix}room_down_vol"] = down
         if self.bounded:
-            out["range_width_vol"] = self.width_vol
+            out[f"{prefix}range_width_vol"] = self.width_vol
             here = self.position
             if here is not None:
-                out["range_position"] = here
+                out[f"{prefix}range_position"] = here
             # The bounds as prices, for the alert - a person placing an entry
             # wants the number to type, and "2.1v above" is not it.
             #
@@ -165,8 +165,8 @@ class LevelRange:
             # does this, so these two do not introduce the problem - but they
             # do enlarge it, and it is worth someone deciding on purpose rather
             # than inheriting. `racing` is unaffected: it reads `NAMES` only.
-            out["range_upper"] = self.upper.price
-            out["range_lower"] = self.lower.price
+            out[f"{prefix}range_upper"] = self.upper.price
+            out[f"{prefix}range_lower"] = self.lower.price
         return out
 
     def __str__(self) -> str:
@@ -178,6 +178,27 @@ class LevelRange:
             f"{self.feed} {floor} .. {roof} - {self.width_vol:.1f}v wide, "
             f"price {self.position:.0%} up it"
         )
+
+
+#: The timeframe a swing's range is drawn on, whatever timeframe triggered it.
+#:
+#: A range is only a range if both walls are the same kind of object, and the
+#: call's own interval is the wrong anchor for a strategy that *enters* below
+#: the hour on purpose. `swing-level` triggers on 15m and 30m, so anchoring to
+#: the call gave it a 15m box - two prices a quarter of an hour of auction
+#: paused at - and asked a trade held for a day to aim at one of them.
+ANCHOR = "4h"
+
+
+def anchored(zones: Any, price: float, unit: float, *, feed: str = "") -> LevelRange:
+    """The range on `ANCHOR` or coarser, whatever timeframe asked for it.
+
+    Published beside the call's own range rather than instead of it. A scalp
+    wants the box it is trading inside; a swing wants the box the day is
+    trading inside, and they are different boxes on the same instrument at the
+    same moment.
+    """
+    return level_range_of(zones, price, unit, feed=feed, interval=ANCHOR)
 
 
 def at_or_above(zones: Any, interval: str) -> list[Any]:

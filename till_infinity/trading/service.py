@@ -66,6 +66,16 @@ from .venues.paper import PaperBroker
 
 log = get_logger(__name__)
 
+#: The timeframes a level-based trail steps behind. Finer than 15m is noise to
+#: a trade held for a day - a stop dragged up behind a 1m level is a stop
+#: placed by the last minute of trading - and coarser than 1h moves too rarely
+#: to be a trail at all.
+TRAIL_RUNGS: frozenset[str] = frozenset({"15m", "30m", "1h"})
+
+#: How many rungs to keep per feed. A ladder is a handful of prices, not a
+#: history; the oldest go first.
+LADDER_MAX = 24
+
 #: The bar size session hours are learned at. Fifteen minutes resolves the
 #: daily break and the Friday close, which is what the gate needs, without
 #: fetching a minute of history for every instrument at start-up.
@@ -448,7 +458,11 @@ class Trader:
         #: this dict, so a give-back measured after a restart records the peak
         #: it reached *since* the restart, not the one that mattered.
         self._marks = Path(self.settings.state_dir) / "day.json"
-        self._recalled = False
+        #: Whether the day has been read back, and feed -> {level price: when
+        #: last seen} - the rungs a level trail steps up behind. Paired on one
+        #: line because `__init__` is at its statement ceiling and these two
+        #: are both "state that survives, or is rebuilt from, a restart".
+        self._recalled, self._ladder = False, {}
         self._best: dict[int, float] = {}
         #: feed -> how many quotes `_quote` has resolved a symbol for. Only
         #: read by the `_manage` skip diagnostic, which cannot otherwise
@@ -875,6 +889,7 @@ class Trader:
         # a stop is the signal put back through every gate - not the intent,
         # which has already been proved wrong once at this price.
         self._last_signal[feed] = payload
+        self._remember_rung(feed, payload)
         # Hand the strategies the accumulated run. Injected here rather than
         # computed in a strategy because it is an accumulation over the whole
         # quote stream and a strategy sees one signal at a time.
@@ -2208,6 +2223,38 @@ class Trader:
 
         return {**registry(structures), **registry(trading)}
 
+    def _remember_rung(self, feed: str, payload: dict[str, Any]) -> None:
+        """Keep the level this signal was about, if it is one a swing trails on.
+
+        **The ladder a level-based trail climbs.** `trail_vol` follows price at
+        a fixed distance, which is a distance nobody chose for this instrument
+        at this moment; a trail that steps up behind levels moves when the
+        market gives it somewhere to move to and sits still when it does not.
+
+        Only `TRAIL_RUNGS` - 15m to 1h. Finer than 15m is noise to a trade held
+        for a day, and a stop dragged up behind a 1m level is a stop placed by
+        the last minute of trading. Coarser than 1h moves too rarely to be a
+        trail at all.
+        """
+        interval = str(payload.get("interval") or "")
+        if interval not in TRAIL_RUNGS:
+            return
+        features = payload.get("features")
+        price = features.get("level") if isinstance(features, dict) else None
+        if not isinstance(price, int | float) or price <= 0:
+            return
+        rungs = self._ladder.setdefault(feed, {})
+        # Keyed by price so the same level seen repeatedly is one rung, and
+        # bounded so a busy feed cannot grow this without limit.
+        rungs[round(float(price), 8)] = time.time()
+        if len(rungs) > LADDER_MAX:
+            for stale in sorted(rungs, key=lambda k: rungs[k])[: len(rungs) - LADDER_MAX]:
+                del rungs[stale]
+
+    def _rungs_for(self, feed: str) -> list[float]:
+        """The ladder for this feed, oldest entries already dropped."""
+        return sorted(self._ladder.get(feed, {}))
+
     def _remember_marks(self) -> None:
         """Write the extremes for whatever is still open.
 
@@ -2510,6 +2557,10 @@ class Trader:
                 self.settings,
                 best=best,
                 vol_bps=self._vol_bps.get(live.intent.feed, 0.0),
+                # The 15m-1h ladder for this feed. Ignored unless the intent
+                # asked to trail behind levels, so every other strategy keeps
+                # the volatility trail it was measured on.
+                rungs=self._rungs_for(live.intent.feed),
             )
             if move is None:
                 continue

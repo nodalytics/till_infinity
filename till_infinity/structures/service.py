@@ -44,7 +44,7 @@ from .context.activity import Book as ActivityBook
 from .context.macro import Macro, since_default, stored
 from .context.sessions import Clock
 from .drawing import confluence as cf
-from .drawing.level_range import level_range_of
+from .drawing.level_range import anchored, level_range_of
 from .engine import Engine
 from .learning.anomaly import Detector
 from .learning.baseline import Bench
@@ -1204,6 +1204,20 @@ class Watcher:
                 interval=call.interval,
             )
             reading = band.features()
+            # **And the swing's range, anchored at 4h whatever triggered this.**
+            # A range is only a range if both walls are the same kind of
+            # object, and the call's interval is the wrong anchor for a
+            # strategy that enters below the hour on purpose: `swing-level`
+            # triggers on 15m, so the call-anchored box is two prices a quarter
+            # hour of auction paused at, and a trade held for a day was being
+            # asked to aim at one of them.
+            #
+            # Published beside it, not instead of it. A scalp wants the box it
+            # is trading inside; a swing wants the box the day is trading
+            # inside, and at the same moment on the same instrument those are
+            # different boxes.
+            wide = anchored(grouped[call.feed], call.price, unit, feed=call.feed)
+            reading.update(wide.features(prefix="swing_"))
             # Which wall price reaches first, from the model that learns it,
             # and the race it will be scored on. Opened here rather than on
             # every quote because this is where the bounds are actually known,

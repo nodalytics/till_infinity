@@ -34,6 +34,7 @@ journal can explain, so ours is the one that runs - set the bridge's off.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..logging import get_logger
@@ -175,6 +176,27 @@ def _down_to_step(volume: float, step: float) -> float:
     return int(volume / step + 1e-9) * step
 
 
+def _behind_the_last_rung(
+    rungs: Sequence[float], best: float, sign: int, clearance: float
+) -> float | None:
+    """A stop just beyond the nearest level price has already cleared.
+
+    "Cleared" is doing the work. For a long that is the **highest** rung below
+    the high-water mark: the last price the market agreed on that the trade has
+    got past, and therefore the last one it can fall back to and still be
+    right. A rung above `best` has not been reached and is a target.
+
+    `clearance` puts the stop beyond the level rather than on it, because a
+    level is where price turns and a stop sitting exactly there is taken by the
+    turn it is meant to survive.
+    """
+    if sign > 0:
+        cleared = [r for r in rungs if r < best]
+        return max(cleared) - clearance if cleared else None
+    cleared = [r for r in rungs if r > best]
+    return min(cleared) + clearance if cleared else None
+
+
 def advance(
     position: Position,
     intent: Intent,
@@ -183,6 +205,7 @@ def advance(
     *,
     best: float,
     vol_bps: float = 0.0,
+    rungs: Sequence[float] = (),
 ) -> Move | None:
     """Where this position's stop should be now, or None to leave it.
 
@@ -244,13 +267,30 @@ def advance(
             room = max(room, float(wick) + float(spread_vol) * settings.trail_sigmas)
         behind = price_distance(best, vol_bps, room)
         level = best - sign * behind
+        # **Behind a level, when the intent asked for that and one is cleared.**
+        #
+        # A fixed distance is a distance nobody chose for this instrument at
+        # this moment: 2v behind a price that has run four is giving back two,
+        # and 2v behind one that has run half is a stop inside the noise. A
+        # rung is a price the market has already agreed on, so a stop just
+        # beyond one is protected by the same thing the entry was.
+        #
+        # Only rungs price has actually **cleared** - a level ahead of the
+        # trade is a target, not a stop - and only when the result is tighter
+        # than the volatility trail, so this can shorten the leash and never
+        # lengthen it. A move that has cleared nothing keeps the trail it had.
+        if intent.trail_levels and rungs:
+            step = _behind_the_last_rung(rungs, best, sign, price_distance(best, vol_bps, 0.25))
+            if step is not None and better(step, level, position.side):
+                level = step
+                reason = f"behind the {step:.5g} level"
         # Only once the trail is actually in front of the original stop -
         # otherwise a trade that has barely moved gets a tighter stop than it
         # was sized for, which is a different trade from the one that was
         # judged.
         if _better(level, proposed, position.side) and _better(level, intent.stop, position.side):
             proposed = level
-            reason = f"trailing {room:.2f}v behind {best:.5g}"
+            reason = reason or f"trailing {room:.2f}v behind {best:.5g}"
 
     if not reason:
         return None

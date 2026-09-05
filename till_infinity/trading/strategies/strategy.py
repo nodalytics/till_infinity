@@ -370,6 +370,11 @@ class Strategy(ABC):
     #: and the evidence slow.
     candle_interval: ClassVar[str] = ""
 
+    #: Whether the trail steps up behind 15m-1h levels rather than following
+    #: price at a fixed volatility distance. Off for everything measured on the
+    #: distance trail; `SwingLevel` turns it on.
+    trail_levels: ClassVar[bool] = False
+
     #: Whether every witness asked for must confirm, rather than any one of
     #: them.
     #:

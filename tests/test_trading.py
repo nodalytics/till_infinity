@@ -7203,3 +7203,188 @@ def test_the_venue_names_itself_from_the_terminal():
     # Neither reported is a real answer, and the caller falls back to the
     # transport rather than printing an empty string.
     assert Account().venue == ""
+
+
+# ------------------------------------- the swing aims at the next level
+
+
+def _swing():
+    from till_infinity.trading.strategies.swing import SwingLevel
+
+    return SwingLevel(settings())
+
+
+def test_the_swing_targets_the_far_side_of_the_range():
+    """Every other strategy aims at a multiple of the modelled push, which is a
+    distance the sizer chose. This aims where the next agreed level actually
+    is."""
+    swing = _swing()
+    feats = {"swing_room_up_vol": 6.0, "swing_room_down_vol": 1.0}
+
+    _stop, target = swing.distances(
+        4400.0, 4400.0, 10.0, risk_vol=1.0, push_vol=1.0, features=feats, side=Side.BUY
+    )
+    # 6.0v to the ceiling beats the 2.5x1.0 the push multiple would have given.
+    assert target == pytest.approx(price_distance(4400.0, 10.0, 6.0))
+
+
+def test_a_short_aims_at_the_floor_not_the_ceiling():
+    swing = _swing()
+    feats = {"swing_room_up_vol": 6.0, "swing_room_down_vol": 5.0}
+
+    _stop, target = swing.distances(
+        4400.0, 4400.0, 10.0, risk_vol=1.0, push_vol=1.0, features=feats, side=Side.SELL
+    )
+
+    assert target == pytest.approx(price_distance(4400.0, 10.0, 5.0))
+
+
+def test_a_bound_nearer_than_the_push_does_not_cut_the_trade_short():
+    """The far side is a floor, not a replacement. A target inside what the
+    model already expects price to reach is leaving the move on the table."""
+    swing = _swing()
+    feats = {"swing_room_up_vol": 0.5, "swing_room_down_vol": 9.0}
+
+    _stop, target = swing.distances(
+        4400.0, 4400.0, 10.0, risk_vol=1.0, push_vol=2.0, features=feats, side=Side.BUY
+    )
+
+    # 2.0 push x 2.5 multiple = 5.0v, which beats the 0.5v bound.
+    assert target == pytest.approx(price_distance(4400.0, 10.0, 5.0))
+
+
+def test_an_open_side_falls_back_to_the_push():
+    """`room_up_vol` is absent when that side of the range is open air, and
+    open air is not a target."""
+    swing = _swing()
+
+    _stop, target = swing.distances(
+        4400.0,
+        4400.0,
+        10.0,
+        risk_vol=1.0,
+        push_vol=2.0,
+        features={"room_down_vol": 3.0},
+        side=Side.BUY,
+    )
+
+    assert target == pytest.approx(price_distance(4400.0, 10.0, 5.0))
+
+
+def test_no_features_at_all_is_the_old_behaviour():
+    """An older signal carries no range, and the strategy must still trade."""
+    swing = _swing()
+
+    _stop, target = swing.distances(4400.0, 4400.0, 10.0, risk_vol=1.0, push_vol=2.0)
+
+    assert target == pytest.approx(price_distance(4400.0, 10.0, 5.0))
+
+
+def test_the_swing_still_trails_past_the_bound():
+    """Aiming at the next level would be a worse strategy if it closed there.
+    The trail is what lets a move that keeps going keep going."""
+    swing = _swing()
+
+    assert swing.trail_vol >= 4.0
+    assert swing.pullback_fraction == 1.0
+
+
+def test_the_swing_will_not_buy_in_the_middle_of_its_range():
+    """A range trade is a bet that a wall holds, so there has to be a wall.
+    Anywhere in between is a directional trade wearing a range trade's stop."""
+    swing = _swing()
+
+    middle = swing.at_the_right_place("gold", Side.BUY, {"swing_range_position": 0.5})
+    floor = swing.at_the_right_place("gold", Side.BUY, {"swing_range_position": 0.05})
+
+    assert middle is not None
+    assert middle.gate == "range"
+    assert floor is None
+
+
+def test_the_swing_sells_at_the_ceiling_not_the_floor():
+    swing = _swing()
+
+    assert swing.at_the_right_place("gold", Side.SELL, {"swing_range_position": 0.95}) is None
+    assert swing.at_the_right_place("gold", Side.SELL, {"swing_range_position": 0.05}) is not None
+
+
+def test_no_range_is_not_evidence_against_the_trade():
+    """One side open air, or an older signal with no `swing_*` readings at all.
+    Refusing on a missing structure would make the strategy quietly dependent
+    on a feature that is often absent."""
+    swing = _swing()
+
+    assert swing.at_the_right_place("gold", Side.BUY, {}) is None
+    assert swing.at_the_right_place("gold", Side.BUY, {"range_position": 0.5}) is None
+
+
+# ------------------------------------------- trailing behind levels, not a distance
+
+
+def _rung_case(rungs, best, side=Side.BUY, stop=4395.0):
+    from till_infinity.trading import manage
+
+    made = settings(trail_vol=2.0, break_even_at=0.0)
+    spec = td.SymbolSpec(symbol="XAUUSD", volume_min=0.01, volume_step=0.01, tick_size=0.01)
+    pos = position(volume=1.0, price_open=4400.0, side=side, stop=stop)
+    want = intent(entry=4400.0, stop=stop, side=side, trail_vol=2.0, trail_levels=True)
+    return manage.advance(pos, want, spec, made, best=best, vol_bps=10.0, rungs=rungs)
+
+
+def test_the_trail_steps_in_behind_a_cleared_level():
+    """A fixed distance is a distance nobody chose for this instrument at this
+    moment. A rung is a price the market has already agreed on."""
+    got = _rung_case(rungs=[4405.0, 4412.0, 4460.0], best=4420.0)
+
+    assert got is not None
+    # 4412 is the highest rung price has cleared; the stop sits just under it.
+    assert 4410.0 < got.stop < 4412.0
+    assert "behind" in got.reason
+
+
+def test_a_level_ahead_of_the_trade_is_a_target_not_a_stop():
+    """Only rungs price has actually cleared. 4460 is where it is going."""
+    got = _rung_case(rungs=[4460.0, 4480.0], best=4420.0)
+
+    # Nothing cleared, so it keeps the volatility trail it had.
+    assert got is None or "behind the" not in got.reason
+
+
+def test_a_short_steps_in_above_the_rung_it_cleared():
+    """Mirrored: for a short the cleared rungs are the ones *above* the low,
+    and the nearest of those is where the stop goes.
+
+    4364 rather than 4380 because the rule only ever tightens - a rung further
+    away than the volatility trail already is would loosen the stop, and this
+    is the test that proves which of the two is being used."""
+    got = _rung_case(rungs=[4364.0, 4390.0, 4340.0], best=4360.0, side=Side.SELL, stop=4405.0)
+
+    assert got is not None
+    assert 4364.0 < got.stop < 4366.0
+    assert "behind" in got.reason
+
+
+def test_the_level_trail_can_only_tighten():
+    """It shortens the leash and never lengthens it - a rung further away than
+    the volatility trail is ignored."""
+    # A rung barely above the entry, while the 2v trail is far tighter.
+    got = _rung_case(rungs=[4400.5], best=4460.0)
+
+    assert got is not None
+    assert "behind the" not in got.reason
+
+
+def test_a_strategy_that_did_not_ask_keeps_the_distance_trail():
+    """Everything else was measured on the distance trail and must keep it."""
+    from till_infinity.trading import manage
+
+    made = settings(trail_vol=2.0, break_even_at=0.0)
+    spec = td.SymbolSpec(symbol="XAUUSD", volume_min=0.01, volume_step=0.01, tick_size=0.01)
+    pos = position(volume=1.0, price_open=4400.0, stop=4395.0)
+    want = intent(entry=4400.0, stop=4395.0, trail_vol=2.0)  # trail_levels defaults False
+
+    got = manage.advance(pos, want, spec, made, best=4420.0, vol_bps=10.0, rungs=[4405.0, 4412.0])
+
+    assert got is not None
+    assert "behind the" not in got.reason

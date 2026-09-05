@@ -474,6 +474,15 @@ class SwingLevel(LevelStrategy):
     #: a daily-anchored move makes on its way somewhere.
     trail_vol: ClassVar[float] = 4.0
 
+    #: **And it trails behind levels rather than at that distance.**
+    #:
+    #: 4.0v is kept as the floor for a move that has cleared nothing, but once
+    #: price is past a 15m-1h level the stop steps in behind it: a rung is a
+    #: price the market has already agreed on, so a stop just beyond one is
+    #: protected by the same thing the entry was. A fixed distance is a
+    #: distance nobody chose for this instrument at this moment.
+    trail_levels: ClassVar[bool] = True
+
     #: Two and a half times the modelled push, raised from the inherited 1.0.
     #:
     #: `expected_push_vol` is a **median** estimate. Measured over 54,529
@@ -500,6 +509,113 @@ class SwingLevel(LevelStrategy):
     #: and ordinary noise on a 4h one, so their number here would refuse most
     #: entries for movement this timeframe does not consider movement.
     max_against_vol: ClassVar[float] = 3.0
+
+    #: How near a bound counts as *at* it, as a share of the range's height.
+    #:
+    #: A trade taken in the middle of a range is not this strategy - it has no
+    #: wall behind it, the stop has nothing to lean on, and the target is
+    #: whichever bound happens to be further away. A fifth is deliberately
+    #: generous: the bound is a Kalman estimate with a zone around it, and
+    #: demanding price sit exactly on the mean would refuse most real touches.
+    at_bound: ClassVar[float] = 0.20
+
+    def at_the_right_place(
+        self, feed: str, side: Side, features: dict[str, float]
+    ) -> Refusal | None:
+        """Refuse unless price is at a bound, on the side that bound defends.
+
+        The design in one condition. A range trade is a bet that a wall holds,
+        so there has to *be* a wall: buying belongs at the floor and selling at
+        the ceiling, and anywhere in between is a directional trade wearing a
+        range trade's stop.
+
+        Silent when there is no 4h range - one side open air, or an older
+        signal that carries no `swing_*` readings at all. A missing structure
+        is not evidence against the trade, and refusing on it would make this
+        strategy quietly dependent on a feature that is often absent.
+        """
+        where = features.get("swing_range_position")
+        if not isinstance(where, int | float):
+            return None
+        if side.sign > 0 and where > self.at_bound:
+            return Refusal(
+                "range",
+                f"{where:.0%} of floor-to-ceiling, not at the floor to buy",
+                feed,
+            )
+        if side.sign < 0 and where < 1.0 - self.at_bound:
+            return Refusal(
+                "range",
+                f"{where:.0%} of floor-to-ceiling, not at the ceiling to sell",
+                feed,
+            )
+        return None
+
+    def distances(
+        self,
+        level: float,
+        entry: float,
+        vol_bps: float,
+        risk_vol: float,
+        push_vol: float,
+        interval: str = "",
+        features: dict[str, float] | None = None,
+        side: Side | None = None,
+    ) -> tuple[float, float]:
+        """The stop as usual; the target is **the other side of the range**.
+
+        Every other strategy here aims at a multiple of the modelled push,
+        which is a distance the position sizer chose. This aims at the far
+        bound of the level range - a price the market drew, where the next
+        agreed level actually sits - because a swing that is going anywhere is
+        going there, and a target short of it is leaving the move for someone
+        else while a target past it is asking price through a level on the
+        first attempt.
+
+        The range is built on this call's timeframe or coarser
+        (`structures/drawing/level_range.py`), so the bound is a 4h object for
+        a 4h thesis rather than whichever 5m zone happened to be nearest.
+
+        **It is a floor, not a replacement.** Three cases fall back to the push
+        multiple, and all three are real:
+
+        * no range - one side is open air, and there is no far bound to aim at.
+        * a far bound *nearer* than the modelled push, which would cut a trade
+          short at a level the model already expects it to pass.
+        * anything that would put the target inside the stop, which is not a
+          trade.
+
+        The trail does the rest. `trail_vol` is 4.0 here, so a move that runs
+        past the bound is not closed by this target - it is followed, and the
+        target only ends the trade when price stops making new ground. That is
+        the combination asked for: aim at the next level, and trail past it.
+        """
+        wide = max(risk_vol * self.stop_multiple, self.stop_floor_vol(interval))
+        modelled = push_vol * self.target_multiple
+        reach = self._to_the_far_side(features, side)
+        aim = max(modelled, reach) if reach else modelled
+        return (
+            price_distance(level, vol_bps, wide),
+            price_distance(entry, vol_bps, aim),
+        )
+
+    @staticmethod
+    def _to_the_far_side(features: dict[str, float] | None, side: Side | None) -> float:
+        """Distance to the bound this trade is heading for, in volatility units.
+
+        Zero when there is no range, no side, or the bound is on top of us -
+        `room_*_vol` is `None` on an open side and absent on an older signal,
+        and both mean the same thing here: nothing to aim at.
+        """
+        if not features or side is None:
+            return 0.0
+        # The **4h-anchored** range, not the call's own. This strategy triggers
+        # on 15m and 30m, so the call-anchored box is two prices a quarter hour
+        # of auction paused at, and a trade held for a day has no business
+        # aiming at one of them.
+        key = "swing_room_up_vol" if side.sign > 0 else "swing_room_down_vol"
+        got = features.get(key)
+        return float(got) if isinstance(got, int | float) and got > 0 else 0.0
 
 
 @register
@@ -1021,4 +1137,8 @@ class FadeToValue(LevelStrategy):
             hold=self.hold_for(interval),
             break_even_at=protect_at,
             trail_vol=protect_trail,
+            # Carried on the intent for the same reason the two above are: by
+            # the time a stop is being moved, the strategy is a name in a log
+            # line and nothing links it back to the class.
+            trail_levels=self.trail_levels,
         )

@@ -217,6 +217,15 @@ class Intent:
     #: the trade is a name in a log line.
     break_even_at: float = 0.0
     trail_vol: float = 0.0
+    #: Whether the trail steps up behind levels rather than following price at
+    #: a fixed distance. Carried here for the same reason as the two above: by
+    #: the time a stop is being moved, the strategy is a name in a log line.
+    #:
+    #: A fixed distance is a distance nobody chose for this instrument at this
+    #: moment. A trail that steps behind levels moves when the market gives it
+    #: somewhere to move to, and sits still when it does not - which is the
+    #: difference between following a move and being shaken out of one.
+    trail_levels: bool = False
     #: Seconds this trade may stay open, as its strategy asked. Zero defers to
     #: the configured default. Carried on the intent rather than looked up from
     #: the strategy later, because by the time a position is being timed out

@@ -337,8 +337,15 @@ class LevelStrategy(Strategy):
         risk_vol: float,
         push_vol: float,
         interval: str = "",
+        features: dict[str, float] | None = None,
+        side: Side | None = None,
     ) -> tuple[float, float]:
         """Stop distance from the level, target distance from the entry.
+
+        `features` and `side` are passed for the benefit of anything that aims
+        at a price the market drew rather than at a multiple of the push -
+        `SwingLevel` uses them to target the far side of the level range. Both
+        optional, so every other strategy is unchanged.
 
         The stop is floored at `min_stop_vol`. A stop inside one volatility
         unit is inside the width of the estimate it is protecting, and is taken
@@ -350,6 +357,17 @@ class LevelStrategy(Strategy):
             price_distance(level, vol_bps, wide),
             price_distance(entry, vol_bps, push_vol * self.target_multiple),
         )
+
+    def at_the_right_place(
+        self, feed: str, side: Side, features: dict[str, float]
+    ) -> Refusal | None:
+        """Whether the structure agrees this is the place. Nothing, by default.
+
+        Overridden by `SwingLevel`, which trades a range rather than a level
+        and therefore has somewhere it must be: at a bound, on the side that
+        bound is defending.
+        """
+        return None
 
     def _chasing(
         self, feed: str, side: Side, level: float, entry: float, vol_bps: float
@@ -631,8 +649,15 @@ class LevelStrategy(Strategy):
         if chased is not None:
             return chased
 
+        # A hook for a strategy whose thesis is about *where in a structure*
+        # price is, rather than about the level alone. Returns nothing for
+        # everything that does not implement it.
+        placed = self.at_the_right_place(feed, side, features)
+        if placed is not None:
+            return placed
+
         risk_distance, push_distance = self.distances(
-            level, entry, vol_bps, risk_vol, push_vol, interval
+            level, entry, vol_bps, risk_vol, push_vol, interval, features=features, side=side
         )
         # A stop that waited for its price can afford to be tighter, and only
         # that one can. See `Settings.parked_stop_vol` for why this is not a
@@ -731,6 +756,10 @@ class LevelStrategy(Strategy):
             hold=self.hold_for(interval),
             break_even_at=protect_at,
             trail_vol=protect_trail,
+            # Carried on the intent for the same reason the two above are: by
+            # the time a stop is being moved, the strategy is a name in a log
+            # line and nothing links it back to the class.
+            trail_levels=self.trail_levels,
         )
 
 
@@ -983,6 +1012,8 @@ class ThesisOnly(LevelStrategy):
         risk_vol: float,
         push_vol: float,
         interval: str = "",
+        features: dict[str, float] | None = None,
+        side: Side | None = None,
     ) -> tuple[float, float]:
         """A stop far enough away to be a circuit breaker, and the usual target.
 
