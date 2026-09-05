@@ -12,7 +12,7 @@ multiple of the stop is a target set without reference to the market: it lands
 wherever the arithmetic puts it, which is sometimes past a level that has
 turned price back nine times, and sometimes a third of the way to open air.
 
-A channel says the thing a person reads off a chart in one glance - *price is
+A range says the thing a person reads off a chart in one glance - *price is
 here, there is a ceiling there and a floor there* - and it makes two questions
 answerable that a single level cannot:
 
@@ -28,7 +28,7 @@ answerable that a single level cannot:
 
 The bounds are `confluence.Zone`s: prices that levels from more than one
 timeframe agree on. A single 5m level is not a ceiling, and treating it as one
-would put a bound almost anywhere, which is the failure that makes a channel
+would put a bound almost anywhere, which is the failure that makes a range
 useless - a box whose walls are noise measures nothing.
 
 Where a side has no zone the bound is simply **absent**, and `room_vol` is
@@ -40,9 +40,9 @@ would make them indistinguishable in the record, which is the mistake
 
 ## Not a gate
 
-Nothing here refuses anything. The channel lands on the signal as features and
+Nothing here refuses anything. The range lands on the signal as features and
 in the journal beside the outcome, so the outcome machinery gets to say whether
-position within a channel predicts anything before a strategy is allowed to
+position within a range predicts anything before a strategy is allowed to
 read it. This is the order [features.md](../../../research/features.md) argues
 for and the one `drawn_by_n` was added under.
 """
@@ -58,7 +58,7 @@ log = get_logger(__name__)
 
 
 class Bound(Protocol):
-    """What a channel needs from whatever is acting as a wall."""
+    """What a range needs from whatever is acting as a wall."""
 
     price: float
 
@@ -79,7 +79,7 @@ class Bound(Protocol):
 # little memory on a short-lived object; the fingerprint is protecting the
 # evidence every measurement in research/ is computed from.
 @dataclass(frozen=True)
-class Channel:
+class LevelRange:
     """Where price sits between the nearest structure above and below it."""
 
     feed: str
@@ -98,7 +98,7 @@ class Channel:
 
     @property
     def width(self) -> float:
-        """The channel's height in price, or 0.0 when it is open on a side."""
+        """The range's height in price, or 0.0 when it is open on a side."""
         if not self.bounded:
             return 0.0
         return abs(self.upper.price - self.lower.price)
@@ -124,7 +124,7 @@ class Channel:
 
     @property
     def position(self) -> float | None:
-        """Where price sits in the channel: 0.0 at the floor, 1.0 at the ceiling.
+        """Where price sits in the range: 0.0 at the floor, 1.0 at the ceiling.
 
         `None` when either side is open, because a position needs both walls to
         mean anything - and 0.5 for "we do not know" would be a reading in the
@@ -151,10 +151,10 @@ class Channel:
         if down is not None:
             out["room_down_vol"] = down
         if self.bounded:
-            out["channel_width_vol"] = self.width_vol
+            out["range_width_vol"] = self.width_vol
             here = self.position
             if here is not None:
-                out["channel_position"] = here
+                out["range_position"] = here
             # The bounds as prices, for the alert - a person placing an entry
             # wants the number to type, and "2.1v above" is not it.
             #
@@ -164,8 +164,8 @@ class Channel:
             # does this, so these two do not introduce the problem - but they
             # do enlarge it, and it is worth someone deciding on purpose rather
             # than inheriting. `racing` is unaffected: it reads `NAMES` only.
-            out["channel_upper"] = self.upper.price
-            out["channel_lower"] = self.lower.price
+            out["range_upper"] = self.upper.price
+            out["range_lower"] = self.lower.price
         return out
 
     def __str__(self) -> str:
@@ -179,18 +179,18 @@ class Channel:
         )
 
 
-def channel_of(zones: Any, price: float, unit: float, *, feed: str = "") -> Channel:
+def level_range_of(zones: Any, price: float, unit: float, *, feed: str = "") -> LevelRange:
     """The nearest zone below price and the nearest above it.
 
     `unit` is one volatility unit as a price distance - the same conversion
     every other reading here uses, passed in rather than recomputed so a
-    channel cannot disagree with the signal it is attached to.
+    range cannot disagree with the signal it is attached to.
 
     A zone sitting exactly at `price` is treated as **below**, matching
     `Level.side_of`, which resolves the same tie the same way. Consistency
     matters more than the choice: price is at the level either way, and the two
     modules disagreeing would put the same touch on different sides of its own
-    channel.
+    range.
     """
     lower = upper = None
     for zone in zones:
@@ -202,4 +202,4 @@ def channel_of(zones: Any, price: float, unit: float, *, feed: str = "") -> Chan
                 lower = zone
         elif upper is None or at < upper.price:
             upper = zone
-    return Channel(feed=feed, price=price, lower=lower, upper=upper, unit=float(unit))
+    return LevelRange(feed=feed, price=price, lower=lower, upper=upper, unit=float(unit))

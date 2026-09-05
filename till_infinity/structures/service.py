@@ -42,7 +42,7 @@ from .context.activity import Book as ActivityBook
 from .context.macro import Macro, since_default, stored
 from .context.sessions import Clock
 from .drawing import confluence as cf
-from .drawing.channel import channel_of
+from .drawing.level_range import level_range_of
 from .engine import Engine
 from .learning.anomaly import Detector
 from .learning.baseline import Bench
@@ -243,20 +243,20 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     breaking = got.get("break_probability")
     if breaking is not None:
         body.append(f"break risk {breaking:.0%} · from arrival speed and depth")
-    # The channel this level sits in, and which wall the model expects first.
+    # The range this level sits in, and which wall the model expects first.
     #
     # Read to a person and acted on by nothing, the same standing as the break
     # risk above. It is here because it is the pair of numbers an entry and a
     # target are actually made of - the far bound is a target the market drew
     # rather than one the position sizer did - and because a number nobody sees
     # is a number nobody can sanity-check against what the chart then did.
-    upper, lower = got.get("channel_upper"), got.get("channel_lower")
+    upper, lower = got.get("range_upper"), got.get("range_lower")
     if upper and lower:
         room_up, room_down = got.get("room_up_vol", 0.0), got.get("room_down_vol", 0.0)
-        where = got.get("channel_position")
+        where = got.get("range_position")
         body.append("")
         body.append(
-            f"channel {lower:.5g} .. {upper:.5g} · {got.get('channel_width_vol', 0.0):.1f}v wide"
+            f"range {lower:.5g} .. {upper:.5g} · {got.get('range_width_vol', 0.0):.1f}v wide"
             + (f", price {where:.0%} up it" if where is not None else "")
         )
         body.append(f"{room_up:.2f}v to the ceiling · {room_down:.2f}v to the floor")
@@ -864,7 +864,7 @@ class Watcher:
     # -------------------------------------------------------------- running
 
     def _step_races(self, payload: dict) -> None:
-        """Resolve any open channel race on this feed against the new price.
+        """Resolve any open range race on this feed against the new price.
 
         The label half of `learning/racing.py`, and the half that has to exist
         before the model means anything. Nothing here predicts - the race was
@@ -882,7 +882,7 @@ class Watcher:
             mid = (float(bid) + float(ask)) / 2
         which = self.races.step(feed, float(mid))
         if which:
-            log.debug("structures: %s channel resolved %s", feed, which)
+            log.debug("structures: %s range resolved %s", feed, which)
 
     async def handle(self, message: Message) -> list[Signal]:
         """One bus message in, zero or more findings out."""
@@ -1033,14 +1033,14 @@ class Watcher:
             # answers "what happens next"; it cannot answer "how far can this
             # go", because that is bounded by the next structure in the way and
             # a target set from a stop multiple never asks. Features only - see
-            # `channel.py` for why this is not allowed to refuse anything yet.
+            # `level_range.py` for why this is not allowed to refuse anything yet.
             unit = call.level.price * vol.bps / 10_000 if vol.bps > 0 else 0.0
-            band = channel_of(grouped[call.feed], call.price, unit, feed=call.feed)
+            band = level_range_of(grouped[call.feed], call.price, unit, feed=call.feed)
             reading = band.features()
             # Which wall price reaches first, from the model that learns it,
             # and the race it will be scored on. Opened here rather than on
             # every quote because this is where the bounds are actually known,
-            # and a newer channel replaces an older one on the same feed.
+            # and a newer range replaces an older one on the same feed.
             reading.update(self.races.reading(reading))
             if band.bounded:
                 self.races.watch(call.feed, band.upper.price, band.lower.price, band.features())

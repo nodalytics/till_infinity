@@ -2,7 +2,7 @@
 
 ## The question, and why it is a different one
 
-`drawing/channel.py` finds the two zones price sits between. That is a picture,
+`drawing/level_range.py` finds the two zones price sits between. That is a picture,
 not a decision. The decision it makes possible is **which bound gets touched
 first**, because an answer to that is directly an entry and a target: go toward
 the bound price is likely to reach, put the target at the far one, and trail.
@@ -11,7 +11,7 @@ Everything else in `learning/` answers a question about **one** level - will it
 hold, which way will price go from it. This is a race between two, and the
 difference matters more than it looks:
 
-* The label is **symmetric and complete**. A channel resolves upward or
+* The label is **symmetric and complete**. A range resolves upward or
   downward and there is no third outcome except running out of time, so there
   is no `chop` bucket to argue about and no definitional trap of the kind
   `research/horizon.md` found in fast resolutions.
@@ -26,7 +26,7 @@ difference matters more than it looks:
 
 Which wall price reaches first is **close to a geometric fact**: most of the
 time it is the nearer one. So a high accuracy here is the expected result of
-learning nothing at all beyond the shape of the channel, and is
+learning nothing at all beyond the shape of the range, and is
 indistinguishable from a high accuracy for a real edge.
 
 `naive_right`/`naive_seen` score the rule "the nearer bound wins" on exactly
@@ -35,7 +35,7 @@ never compared on different samples. `edge` is the difference and it is the
 only number here worth reading. It can be negative.
 
 The first live reading was **84.1% accuracy over 252 races**, with weights that
-all point the sensible way - `channel_position` +1.00, `room_down_vol` +0.49,
+all point the sensible way - `range_position` +1.00, `room_down_vol` +0.49,
 `room_up_vol` -0.43. That looked like a result and is exactly the shape
 `research/inert.md` warns about: a strong number is usually impossible rather
 than impressive, and this one had no control against it.
@@ -56,12 +56,12 @@ anything before it is worth money.
 ## The label has to exist before the model can
 
 Which is what `Races.watch` and `Races.step` are for, and they are the larger
-half of this module. A channel is opened when it is published, carries the
+half of this module. A range is opened when it is published, carries the
 features it was published with, and is resolved by the next price that reaches
-either bound. Nothing is learned from an unresolved channel, and a channel that
+either bound. Nothing is learned from an unresolved range, and a range that
 never resolves is dropped rather than counted - a timeout is not a draw.
 
-**One open race per feed.** A newer channel supersedes an older one rather than
+**One open race per feed.** A newer range supersedes an older one rather than
 queueing beside it: the bounds move as levels move, and two races on the same
 instrument would resolve on the same tick and enter the same observation twice.
 """
@@ -82,15 +82,15 @@ log = get_logger(__name__)
 #: same argument `breaking.Breaks` makes for borrowing evidence across
 #: instruments.
 NAMES: tuple[str, ...] = (
-    "channel_position",
+    "range_position",
     "room_up_vol",
     "room_down_vol",
-    "channel_width_vol",
+    "range_width_vol",
 )
 
 #: How many resolved races before it will say anything. Lower than
 #: `breaking.MIN_SEEN` of 200 because the label here is balanced by
-#: construction - roughly half of all channels resolve upward - where breaks
+#: construction - roughly half of all ranges resolve upward - where breaks
 #: are rare and need more of them to see.
 MIN_SEEN = 60.0
 
@@ -103,24 +103,31 @@ RATE = 0.02
 #: Bump when the **meaning** of an input changes, so saved statistics gathered
 #: under the old meaning are dropped rather than carried. Adding an input is
 #: handled by `Logistic` rebuilding on a length change; re-meaning one is not.
-RECIPE = "2026-09-04 first cut"
+RECIPE = "2026-09-05 range renamed to range"
+#: Bumped for a **rename**, which is worth saying because it looks like it
+#: should not need one. The keys the model reads are the keys the features
+#: arrive under: `range_position` became `range_position`, so state saved
+#: under the old names would restore into a model that reads the new ones and
+#: quietly find nothing - every input zero, no error, a model that had been
+#: trained and now predicts from a constant. Renaming an input is re-meaning
+#: it as far as this is concerned.
 
 #: A race left open longer than this is discarded rather than resolved. Twelve
-#: hours: long enough that an intraday channel resolves inside it, short enough
-#: that a stale channel drawn against levels that have since moved does not
+#: hours: long enough that an intraday range resolves inside it, short enough
+#: that a stale range drawn against levels that have since moved does not
 #: come back and claim an outcome it did not predict.
 STALE_SECONDS = 12 * 3600.0
 
 
 @dataclass(slots=True)
 class Pending(Restorable):
-    """A channel waiting to find out which way it resolves."""
+    """A range waiting to find out which way it resolves."""
 
     feed: str
     upper: float
     lower: float
     #: The readings as published, frozen here so the model is fitted on what was
-    #: known at the time rather than on what the channel looks like now.
+    #: known at the time rather than on what the range looks like now.
     features: dict[str, float] = field(default_factory=dict)
     opened: float = field(default_factory=time.time)
 
@@ -179,7 +186,7 @@ class Races(Restorable):
         """P(upper first), or None while there is not enough behind it."""
         if self.model.seen < MIN_SEEN:
             return None
-        # A channel open on one side is not a race. Reporting a probability for
+        # A range open on one side is not a race. Reporting a probability for
         # it would be answering a question that was not asked: with no ceiling
         # there is nothing for the floor to beat.
         values = self.inputs(features)
@@ -216,7 +223,7 @@ class Races(Restorable):
     def watch(self, feed: str, upper: float, lower: float, features: dict[str, float]) -> None:
         """Open a race on this feed, replacing whatever was open on it.
 
-        Both bounds are required. A one-sided channel has no race to run, and
+        Both bounds are required. A one-sided range has no race to run, and
         opening one would put a resolution in the record that the model could
         never have predicted.
         """
@@ -239,7 +246,7 @@ class Races(Restorable):
             return None
         when = now or time.time()
         if when - pending.opened > STALE_SECONDS:
-            # Dropped, not resolved. A channel this old was drawn against
+            # Dropped, not resolved. A range this old was drawn against
             # levels that have since moved, and letting it resolve would credit
             # the model for a prediction about a picture that no longer exists.
             del self.open[feed]
@@ -252,7 +259,7 @@ class Races(Restorable):
         upward = which == "upper"
         # Scored before the model is updated, on the same race, so the two are
         # always compared on identical events.
-        nearer_up = float(pending.features.get("channel_position") or 0.5) > 0.5
+        nearer_up = float(pending.features.get("range_position") or 0.5) > 0.5
         self.naive_seen += 1.0
         self.naive_right += 1.0 if nearer_up == upward else 0.0
         self.model.observe(self.inputs(pending.features), upward)

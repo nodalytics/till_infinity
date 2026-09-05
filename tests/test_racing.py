@@ -8,10 +8,10 @@ from till_infinity.structures.learning.racing import MIN_SEEN, Races
 
 def band(position=0.5, up=2.0, down=2.0, width=4.0):
     return {
-        "channel_position": position,
+        "range_position": position,
         "room_up_vol": up,
         "room_down_vol": down,
-        "channel_width_vol": width,
+        "range_width_vol": width,
     }
 
 
