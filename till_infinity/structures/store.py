@@ -263,14 +263,34 @@ def load(directory: Path | str) -> dict[str, Any] | None:
             )
             return None
 
+    # **Reported, not fatal**, and the third revision of this check in a day.
+    #
+    # It was one hash over the package, so adding a class discarded everything.
+    # It became a per-class map, so adding two fields to one small model -
+    # `racing.Races` gaining its control counters - discarded everything
+    # instead: 59MB of levels, the break model and weeks of touches, thrown
+    # away for a change no restore could have tripped over.
+    #
+    # Because `Restorable.__setstate__` restores **by field name**. It defaults
+    # what the save predates and ignores what the build has dropped, so both
+    # directions of a field-set change are handled by design - and that is the
+    # failure this fingerprint was written for, back when the state was pickled
+    # and a slots class got no defaulting at all.
+    #
+    # What it cannot see is a field keeping its name and changing *meaning*,
+    # which is what each model's `RECIPE` exists for and where that guard
+    # belongs: per model, dropping one model's statistics rather than the file.
+    #
+    # So the shape is still computed and still said out loud, because knowing
+    # which classes moved is worth having. It no longer costs the state.
     changed = _reshaped(payload.get("schema"), want["schema"])
     if changed:
-        log.warning(
-            "structures: the shape of %s changed since this state was written (%s) - starting cold",
+        log.info(
+            "structures: %s changed shape since %s was written - restoring anyway, "
+            "fields are matched by name and defaulted where the save predates them",
             ", ".join(sorted(changed)),
             path,
         )
-        return None
 
     state = payload.get("state")
     return state if isinstance(state, dict) else None

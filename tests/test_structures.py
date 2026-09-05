@@ -670,25 +670,29 @@ async def test_the_pending_map_is_bounded(tmp_path):
 # --------------------------------------- state that no longer fits the code
 
 
-def test_adding_a_field_invalidates_old_state(tmp_path, monkeypatch):
-    """A slotted dataclass unpickles without a new slot and fails much later.
+def test_a_field_added_since_the_save_is_defaulted_not_fatal(tmp_path, monkeypatch):
+    """A slotted dataclass unpickles without a new slot and fails much later -
+    a `regime` feature was added and a running service died on state written
+    before the change, naming neither the field nor the cause.
 
-    That is exactly what happened: a `regime` feature was added and a running
-    service died on state written before the change, with a message naming
-    neither the field nor the cause.
+    That is fixed by `Restorable.__setstate__`, which restores by name and
+    defaults what is missing, and **not** by refusing the file. Refusing it
+    cost 59MB three times in one day, the last of them for two counters added
+    to one small model.
     """
     store.save({"detector": Detector()}, tmp_path)
     assert store.load(tmp_path) is not None
 
-    # The shape of a class we persist changes. Expressed as a field change on
-    # a real class rather than a sentinel, because the check is per class now:
-    # a schema that merely *differs* is the case of a model being added, and
-    # that must not cost the file. See `_reshaped`.
+    # A class we persist changes shape. This used to discard the file and no
+    # longer does: `Restorable.__setstate__` restores by field name, defaulting
+    # what the save predates and ignoring what the build has dropped, so the
+    # AttributeError this once guarded against cannot happen. It is reported
+    # and the state is kept. See `_reshaped` and the note in `store.load`.
     bent = dict(store._schema())
     name = next(iter(bent))
     bent[name] = bent[name] + ",invented"
     monkeypatch.setattr(store, "_schema", lambda: bent)
-    assert store.load(tmp_path) is None
+    assert store.load(tmp_path) is not None
 
 
 def test_the_schema_follows_the_fields_of_every_persisted_class():
@@ -933,6 +937,25 @@ def test_the_relocator_leaves_other_packages_alone():
 
     blob = pickle.dumps(pickle.loads)
     assert codec._unpickle(blob) is pickle.loads
+
+
+def test_a_changed_shape_is_reported_rather_than_thrown_away(tmp_path, monkeypatch, caplog):
+    """Knowing which classes moved is worth having; it is not worth the file."""
+    import logging
+
+    store.save({"detector": Detector()}, tmp_path)
+    bent = dict(store._schema())
+    name = next(iter(bent))
+    bent[name] = bent[name] + ",invented"
+    monkeypatch.setattr(store, "_schema", lambda: bent)
+
+    with caplog.at_level(logging.INFO, logger="till_infinity.structures.store"):
+        got = store.load(tmp_path)
+
+    assert got is not None
+    said = " ".join(caplog.messages)
+    assert name in said
+    assert "restoring anyway" in said
 
 
 def test_the_schema_covers_the_subpackages_and_not_their_paths():
