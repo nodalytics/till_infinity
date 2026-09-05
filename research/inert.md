@@ -75,6 +75,62 @@ failing component inside a health check is reported as the health of the whole.
 * **Zero movement is not evidence of convergence.** It is evidence of *nothing
   having been read*, until the source is shown to have changed.
 
+## The sixth: a gate that has never rejected anything — 2026-09-05
+
+`Inference.actionable` is four gates, and the first is
+
+```python
+self.own_touches + self.neighbours >= 8
+```
+
+Its docstring explains the reasoning well: *"a big edge on four touches is
+noise"*. It cannot enforce that. `neighbours` is the kNN's `DEFAULT_K = 12`,
+returned in full whenever the model is warm - which it always is, because it
+pools across instruments - so the sum clears 8 on borrowed evidence alone
+before the level's own record is consulted at all.
+
+Measured over 20,000 level calls:
+
+| | |
+| --- | --- |
+| `neighbours == 12` | 19,992 of 20,000 |
+| passes `own + neighbours >= 8` | **20,000 of 20,000 (100%)** |
+| calls with **zero** own touches | 2,559 (13%) |
+
+It has never rejected a call. It surfaced because 250 ccxt feeds were
+registered on 2026-09-04 and immediately produced level alerts reading
+`0 touches here + 12 similar` - the gate reporting eight touches' worth of
+evidence for a level that had never been touched.
+
+### And the obvious fix is not supported by the record
+
+Requiring the touches be the level's own is the reading the docstring invites,
+so it was measured before being written. Over 141,857 resolved touches:
+
+```
+actionable only    n       median |push|    held
+own 0            1,252          2.272      90.2%
+own 8+           5,825          2.222      91.7%
+```
+
+**1.5 points of held rate across the entire range, and the median push is
+flat.** A level's own touch count barely separates how its next touch resolves,
+so tightening the gate on it would refuse a seventh of all calls to buy almost
+nothing.
+
+That is the same trap `actionable` already documents at the top of its own
+docstring - `MIN_REWARD_TO_RISK` was "the most principled of the set" and was
+measured to *invert* the expected return. An inert gate is worth recording; it
+is not on its own an argument for a stricter one.
+
+**What was fixed instead** is the thing that actually did harm: the alert
+budget. `NOTIFY_MAX_PER_HOUR` is 15, and eight of them went to DRAM, FARTCOIN,
+MUU and MSTR inside four minutes - instruments with no broker behind them,
+because nothing trades ccxt. A message no action can follow is spending
+attention that a tradable instrument needed, so `NOTIFY_FEEDS` now allows only
+the traded set. The signal keeps being recorded and learned from; it stops
+interrupting anybody.
+
 ## What they have in common
 
 **The output is a legal value.** Zero is a legal `best_r`. Keeping an alert is
