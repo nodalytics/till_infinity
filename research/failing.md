@@ -10,6 +10,61 @@ nobody else. And five closes worth +44.73 are still `unattributed` — closes th
 process never tied back to a decision — so every table below is missing a
 little.
 
+## Correction, later on 2026-09-05: it is the clock, not the thesis
+
+The section below concluded that `thesis-only` losing at the same rate as a
+normal-stop strategy meant **the theses were wrong**. That conclusion does not
+survive splitting the trades by how they ended, and the split is where all the
+money is.
+
+| | n | net | total R | |
+| --- | --- | --- | --- | --- |
+| reached target or stop | 74 | **-7.10** | -3.17R | the ratio bound here |
+| closed on hold or stale | 75 | **-389.98** | -17.23R | the clock closed these |
+
+**98% of the loss comes from the half the clock closed.** Of the trades allowed
+to finish, 66% hit target - against the 71% its median ratio of 0.40 needs to
+break even. Five points short, and worth -7.10 in total. That is nearly a
+working strategy.
+
+So the two explanations already written down are both wrong:
+
+* **Not the stop.** Established below and independently in
+  [excursion.md](excursion.md) - winners' adverse excursion has a p90 of
+  0.333R, so nine in ten never go a third of the way to the stop they have.
+* **Not the theses.** When the trades resolve, they resolve in favour two
+  times in three.
+* **Not really the ratio.** Real, measurable, and worth five points of win
+  rate - which is -7.10 out of -397.08.
+
+### What it actually is
+
+`thesis-only` widens the stop to a circuit breaker and leaves the target where
+a tight stop would have put it. That combination needs **time**: the target is
+near, the stop is far, and the trade has to sit still long enough to reach one
+of them. Half of them never do, because the hold and stale timeouts close the
+position first, at a median of **-0.141R** each.
+
+The clock was always part of the design - the strategy's own docstring says it
+ends "on its target or on the clock". What nobody measured is what the clock
+costs, and it costs everything this strategy has lost.
+
+A median of -0.141R rather than something near zero is worth noticing on its
+own. A timeout that fired at random on a directionless position would land
+around zero; landing consistently negative says the position is being closed
+after it has already drifted against the entry, or that the cost of crossing is
+never recovered by a trade that goes nowhere. Which of those it is has not been
+measured.
+
+### What would settle it
+
+Widen or remove the hold timeout for this strategy alone and let the same calls
+run to a barrier. If the 66% holds on the trades that currently get cut, it is
+a strategy; if the extra time turns them into stops, the timeout was doing
+something after all and the loss moves rather than disappearing. That is a
+change to one number, on the strategy carrying 149 of 184 closes, and it is
+measurable inside a day.
+
 ## The thesis-only experiment has an answer — 2026-09-05
 
 `thesis-only` was built to decide between two explanations for losing money,
