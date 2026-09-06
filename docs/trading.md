@@ -609,9 +609,13 @@ that has cleared nothing; once price is past a 15m-1h level the stop steps in
 behind it, because a rung is a price the market has already agreed on and a
 stop just beyond one is protected by the same thing the entry was.
 
-**What is not measured.** All six. The strategy has no closes on record, so
-none of these has been scored against an outcome, and the backtest that exists
-replays bars - which cannot reproduce the tick-fed half of part 3.
+**What the replay says.** [swinging.md](../research/swinging.md) walks all six
+over 17 instruments and 1.1M stored bars: **72 trades, -0.173R a trade net of
+the spread**, 34.7% win rate. Part 3 is the component that pays - requiring the
+candle refuses 76% of candidates and moves the mean by +0.135R - and the losing
+half is the exit geometry, because at that hit rate the winners need 1.88R and
+average 1.2R at the target. The strategy has still never opened a live trade,
+and the momentum half of part 3 is tick-fed and cannot be replayed from bars.
 
 ## The swing that runs between two origins
 
