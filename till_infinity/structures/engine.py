@@ -1029,21 +1029,42 @@ class Engine:
             # one origin to the other needs both ends: the near one is where it
             # enters and the far one is what it aims at, and "nearest" alone
             # cannot say which side of price it sits on.
-            above = [o for o in found if o.low > price]
-            below = [o for o in found if o.high < price]
+            # **An origin price is standing inside is structure, not absent
+            # structure.** Filtering on `low > price` and `high < price` alone
+            # drops every origin whose band straddles the current price, and it
+            # is not a rare case: measured on the live book, 14 of 46 kept 4h
+            # origins on eurusd contained price, 5 of 23 on gold, and on btc
+            # three did while *none* sat above - so the range reported open air
+            # upward while price stood inside a zone with its ceiling directly
+            # overhead.
+            #
+            # The bound wanted is "the next price at which structure begins or
+            # ends, going that way". For an origin above, that is where its
+            # band starts. For one price is already inside, it is where that
+            # band **finishes** - the far edge is the wall this move meets.
+            above = [o.low for o in found if o.low > price]
+            below = [o.high for o in found if o.high < price]
+            inside = [o for o in found if o.low <= price <= o.high]
+            above += [o.high for o in inside if o.high > price]
+            below += [o.low for o in inside if o.low < price]
+            holding = min(inside, key=lambda o: o.high - o.low, default=None)
             bracket: dict[str, float] = {}
             if above:
-                near = min(above, key=lambda o: o.low - price)
-                bracket["origin_above_low"] = near.low
-                bracket["origin_above_high"] = near.high
-                bracket["origin_above_vol"] = (near.low - price) / unit
-                bracket["origin_above_revisits"] = float(near.revisits)
+                edge = min(above)
+                bracket["origin_above_low"] = edge
+                bracket["origin_above_vol"] = (edge - price) / unit
             if below:
-                near = max(below, key=lambda o: o.high - price)
-                bracket["origin_below_low"] = near.low
-                bracket["origin_below_high"] = near.high
-                bracket["origin_below_vol"] = (price - near.high) / unit
-                bracket["origin_below_revisits"] = float(near.revisits)
+                edge = max(below)
+                bracket["origin_below_high"] = edge
+                bracket["origin_below_vol"] = (price - edge) / unit
+            if holding is not None:
+                # Which zone price is standing in, kept apart from the bounds.
+                # A level inside an origin is a different object from one in
+                # open space, and `in_origin` has said so for months without
+                # anything being able to say *which* origin.
+                bracket["origin_holding_low"] = holding.low
+                bracket["origin_holding_high"] = holding.high
+                bracket["origin_holding_revisits"] = float(holding.revisits)
             return {
                 **bracket,
                 "origin_distance_vol": abs(nearest.price - price) / unit,

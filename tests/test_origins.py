@@ -571,3 +571,72 @@ def test_the_forming_bar_cannot_be_captured_and_the_finished_one_can():
     assert series.fine_at(base)[1] == 105.0
     # The forming one does not, and is not filled in from the fraction seen.
     assert math.isnan(series.fine_at(base + 14_400)[1])
+
+
+# ------------------------------------------- the zone price is standing inside
+
+
+def _engine_with(origins_at, price_now):
+    """An engine whose kept 4h origins are exactly `origins_at`."""
+    from till_infinity.structures import engine as eng
+    from till_infinity.structures.drawing.origins import Origins
+
+    engine = eng.Engine()
+    base = 1_700_000_000 - (1_700_000_000 % 14_400)
+    for i in range(40):
+        for venue in ("a", "b", "c"):
+            engine.observe_bar(
+                {
+                    "feed": "t",
+                    "venue": venue,
+                    "interval": "4h",
+                    "ts": base + i * 14_400,
+                    "time": base + i * 14_400,
+                    "high": price_now + 1,
+                    "low": price_now - 1,
+                    "close": price_now,
+                }
+            )
+    kept = Origins()
+    kept.found = list(origins_at)
+    engine._origins[("t", "4h")] = kept
+    return engine
+
+
+def test_an_origin_price_stands_inside_still_bounds_the_range():
+    """Filtering on `low > price` and `high < price` drops every origin whose
+    band straddles price. On the live book that was 14 of 46 on eurusd, and on
+    btc three straddled while none sat above - so the range reported open air
+    upward with a ceiling directly overhead."""
+    holding = _origin(100.0, "down", when=1.0, band=0.0)
+    holding.low, holding.high = 99.0, 103.0
+    far = _origin(110.0, "down", when=2.0, band=0.0)
+    far.low, far.high = 108.0, 112.0
+
+    engine = _engine_with([holding, far], 100.0)
+    below, above = engine.origins_bracketing("t", "4h", 100.0, engine.vol.of("t", "4h"))
+
+    # The wall above is where the zone price is inside finishes, not the far
+    # one beyond it.
+    assert above == 103.0
+    assert below == 99.0
+
+
+def test_the_nearer_of_the_two_kinds_wins():
+    """A zone beginning above price can still be nearer than the far edge of
+    the one price is inside."""
+    holding = _origin(100.0, "down", when=1.0, band=0.0)
+    holding.low, holding.high = 90.0, 120.0
+    near = _origin(102.0, "down", when=2.0, band=0.0)
+    near.low, near.high = 101.0, 105.0
+
+    engine = _engine_with([holding, near], 100.0)
+    _below, above = engine.origins_bracketing("t", "4h", 100.0, engine.vol.of("t", "4h"))
+
+    assert above == 101.0
+
+
+def test_open_air_is_still_reported_when_there_is_nothing_either_way():
+    engine = _engine_with([], 100.0)
+
+    assert engine.origins_bracketing("t", "4h", 100.0, engine.vol.of("t", "4h")) == (None, None)
