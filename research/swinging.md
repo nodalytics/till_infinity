@@ -261,12 +261,35 @@ Two ways to close it, of very different sizes:
   container holding 500. Not affordable, and not close.
 * **Persist origins with their bands**, so a refinement computed once at
   formation - when the 1m evidence for that bar *is* in the window - survives
-  to be used weeks later. This is the real change: origins are currently
-  recomputed from the closes series on every call and nothing about them is
-  stored, so there is nowhere for a refined band to live.
+  to be used weeks later.
 
-The second is what the +0.576R is worth, and it should be costed against that
-number rather than against the elegance of the idea.
+**The second is built.** `Origins.remember` merges a fresh detection into a
+kept set, refining anything new at the moment it first appears, and
+`Engine._remember_origins` holds one of those per feed and timeframe. The
+engine is already persisted whole, so the dict rides along and a band refined
+today is still there in a month.
+
+Identity is `(when, launched)` - the bar the turn happened on and which way the
+impulse went - rather than price, because the refinement *moves* the price and
+keying on it would make every refined origin look like a new one. The set is
+bounded at 200 per feed and timeframe, oldest dropped first.
+
+Two things that had to be got right and were nearly not:
+
+* `Engine.series` **creates** the entry it is asked for, and `touch_source`
+  picks the finest interval that has one. Asking it for the 1m series to refine
+  against silently moved the touch check onto a series that had never received
+  a bar. Three tests caught it; production would have stopped touching levels.
+* The engine is persisted whole and is **not** a `Restorable` dataclass, so
+  nothing fills in a new attribute on a restore from an older save. The first
+  call after the deploy would have raised inside the `try` that swallows it,
+  and every origin feature would have gone quietly missing.
+
+What is not yet claimed: this makes the refinement *reachable*, and the
++0.576R still comes from a replay with the whole 1m history to hand. Production
+will refine an origin only when its bar is inside the live 1m window at the
+moment it is first detected, so the realised gain is somewhere between the
+window row and the fine row and only production can say where.
 
 ## The spread
 

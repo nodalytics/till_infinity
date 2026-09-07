@@ -324,3 +324,104 @@ def test_no_finer_series_leaves_the_origin_alone():
     assert refine(origin, [], [], span=900.0) is origin
     assert refine(origin, [0.0], [90.0], span=900.0) is origin
     assert refine(origin, [0.0, 60.0], [90.0, 91.0], span=0.0) is origin
+
+
+# ------------------------------------------------------- keeping what was found
+
+
+def test_a_second_sighting_does_not_replace_a_refined_band():
+    """The whole reason the set is kept. An origin is refined once, while its
+    fine evidence is still in the window; recomputing later would hand back a
+    coarse band and undo it silently."""
+    from till_infinity.structures.drawing.origins import Origins
+
+    kept = Origins()
+    times = [float(t * 60) for t in range(15)]
+    closes = [100, 101, 103, 105, 104, 102, 99, 97, 95, 94, 93, 92, 91, 90, 90]
+    coarse = _origin(90.0, "down", when=0.0)
+
+    first = kept.remember([coarse], fine_times=times, fine_closes=closes, span=900.0)
+    assert first[0].price == 105.0
+
+    # The same origin detected again, this time with no fine data to hand.
+    again = kept.remember([coarse], fine_times=(), fine_closes=(), span=900.0)
+
+    assert len(again) == 1
+    assert again[0].price == 105.0
+
+
+def test_an_origin_is_identified_by_its_turn_and_direction():
+    """Not by price: the refinement moves the price, so keying on it would make
+    every refined origin look like a new one and the set would double."""
+    from till_infinity.structures.drawing.origins import Origins
+
+    kept = Origins()
+    down = _origin(90.0, "down", when=100.0)
+    up = _origin(90.0, "up", when=100.0)
+    later = _origin(90.0, "down", when=200.0)
+
+    kept.remember([down, up, later])
+
+    assert len(kept.found) == 3
+    kept.remember([down, up, later])
+    assert len(kept.found) == 3
+
+
+def test_the_kept_set_is_bounded_oldest_first():
+    """A set that only grows is a leak with a long fuse."""
+    from till_infinity.structures.drawing.origins import Origins
+
+    kept = Origins()
+    kept.remember([_origin(100.0 + i, "down", when=float(i)) for i in range(20)], keep=5)
+
+    assert len(kept.found) == 5
+    assert [o.when for o in kept.found] == [15.0, 16.0, 17.0, 18.0, 19.0]
+
+
+def test_origins_survive_across_calls_on_the_engine():
+    """`_origin_at` used to rebuild them from the closes series every time, so
+    a refined band had nowhere to live. This is the place.
+
+    Three venues, because the consensus needs a quorum of MIN_VENUES before
+    anything reaches the series at all - a median of fewer is one venue's opinion.
+    """
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine()
+    prices = [100] * 7 + [102, 105, 108, 110] + [110] * 5
+    prices += [112, 116, 120] + [120] * 7 + [118, 115, 112, 110] + [110] * 7
+    for i, close in enumerate(prices):
+        for venue in ("a", "b", "c"):
+            engine.observe_bar(
+                {
+                    "feed": "t",
+                    "venue": venue,
+                    "interval": "4h",
+                    "ts": i * 14_400,
+                    "time": i * 14_400,
+                    "high": close + 1,
+                    "low": close - 1,
+                    "close": close,
+                }
+            )
+    assert engine.series("t", "4h").closes, "the consensus never agreed a price"
+
+    engine.origins_bracketing("t", "4h", 110.0, engine.vol.of("t", "4h"))
+
+    assert ("t", "4h") in engine._origins
+
+
+def test_an_engine_restored_without_the_field_still_works():
+    """The engine is persisted whole and is not a `Restorable` dataclass, so a
+    save made before `_origins` existed restores without it. Nothing fills it
+    in, and the failure would land inside the try that swallows it - every
+    origin feature quietly missing after a deploy."""
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine()
+    del engine._origins
+
+    got = engine._remember_origins("t", "4h", [_origin(100.0, "down", when=1.0)])
+
+    assert len(got) == 1
+    assert ("t", "4h") in engine._origins

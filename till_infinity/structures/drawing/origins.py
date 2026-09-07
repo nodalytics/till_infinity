@@ -67,6 +67,11 @@ from dataclasses import dataclass, field, replace
 
 from ..state import Restorable
 
+#: How many origins are kept per feed and timeframe. Origins are rare - the
+#: move has to clear `MOVE_VOL` and break structure - so this is generous, and
+#: it exists because a set that only ever grows is a leak with a long fuse.
+KEEP = 200
+
 #: How large a move must be, in volatility units, for its start to count as an
 #: origin. Three is deliberately well beyond an ordinary bar - the point is to
 #: catch displacement, not movement.
@@ -413,6 +418,53 @@ class Origins(Restorable):
         self.found = found
         self._count_revisits(prices)
         return found
+
+    def remember(
+        self,
+        found: Sequence[Origin],
+        *,
+        fine_times: Sequence[float] = (),
+        fine_closes: Sequence[float] = (),
+        span: float = 0.0,
+        keep: int = KEEP,
+    ) -> list[Origin]:
+        """Merge a fresh detection into the kept set, refining what is new.
+
+        **Why this exists, and it is a money number.** `refine` locates the
+        origin at 1m inside its own bar and `research/localising.md` measured
+        that the band re-derived there is 2.6x narrower for 94.8% of the same
+        returns. `research/swinging.md` then replayed the swing strategy with
+        those narrower walls: **+0.349R a trade becomes +0.576R**, winning in
+        all eight cells of the sweep.
+
+        And it was unreachable, because origins were recomputed from the
+        closes series on every call and nothing was stored. A 1m series holds
+        about eight hours, so by the time a wall is wanted its minutes are
+        long gone - a replay limited to that window reproduced the unrefined
+        baseline *identically, in every cell*. The refinement was not failing;
+        there was nowhere for its answer to live.
+
+        This is that place. An origin is refined **once, when it is first
+        seen**, which is the only moment its fine evidence is still in the
+        window, and the refined band is then kept for as long as the origin is.
+
+        Identity is `(when, launched)` - the bar the turn happened on and which
+        way the impulse went. The detector returns the same pair for the same
+        origin on every pass, so a second sighting finds the stored one and
+        keeps it rather than replacing a refined band with a coarse recompute.
+
+        Bounded at `keep`, oldest dropped first. Origins are rare enough that
+        this is generous, and the bound exists because a set that only grows
+        is a leak with a long fuse.
+        """
+        known = {(o.when, o.launched): o for o in self.found}
+        for origin in found:
+            key = (origin.when, origin.launched)
+            if key in known:
+                continue
+            known[key] = refine(origin, fine_times, fine_closes, span)
+        self.found = sorted(known.values(), key=lambda o: o.when)[-keep:]
+        return self.found
 
     def _count_revisits(self, prices: list[float]) -> None:
         """How often price has come back into each zone since it formed."""

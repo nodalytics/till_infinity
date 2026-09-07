@@ -155,6 +155,11 @@ SPREAD_WINDOW = 128
 #: is all the engine can hold; more would be read and immediately discarded.
 SEED_BARS = WINDOW
 
+#: The series `_remember_origins` refines against. The finest the engine
+#: carries, because the refinement's whole value is resolution - and it is
+#: named rather than inlined so the one place it is chosen is findable.
+FINE_INTERVAL = "1m"
+
 #: An untouched level this far from price, in volatility units, is not going to
 #: be tested soon and is only crowding the set. Touched levels are kept
 #: regardless of distance - a level price has reacted at is worth remembering
@@ -753,6 +758,10 @@ class Engine:
         #: again after a restart is correct.
         self._declined: set[tuple[str, str]] = set()
         self._levels: dict[tuple[str, str], list[lv.Level]] = {}
+        #: feed and interval -> the origins found there, kept rather than
+        #: recomputed. See `_remember_origins`: this dict is the place a
+        #: refined band can live, and it is worth +0.23R a trade to have one.
+        self._origins: dict[tuple[str, str], origins.Origins] = {}
         #: The timestamp of the bar being processed. Held so that "what was
         #: knowable" is answerable at any point, including from a test.
         self._now: float = 0.0
@@ -820,6 +829,57 @@ class Engine:
             float(above) if isinstance(above, int | float) else None,
         )
 
+    def _remember_origins(
+        self,
+        feed: str,
+        interval: str,
+        fresh: list,
+    ) -> list:
+        """Keep origins across calls, refining each one the first time it is seen.
+
+        **The refinement has one moment to happen and this is it.** `refine`
+        relocates an origin to the transition inside its own bar at 1m, and
+        `research/swinging.md` measured what the band that follows is worth to
+        the swing strategy: +0.349R a trade becomes **+0.576R**, winning in all
+        eight cells of the sweep. That gain was unreachable while origins were
+        recomputed from the closes series on every call, because a 1m series
+        holds about eight hours and by the time a wall is wanted its minutes
+        have scrolled away - a replay limited to that window reproduced the
+        unrefined baseline identically, in every cell.
+
+        So the origin is refined when it first appears, while its fine
+        evidence is still in the window, and the answer is kept. `Origins` is
+        `Restorable` and this dict rides on the engine, so a refinement
+        computed today survives a restart and is still there in a month.
+
+        Falls back to the fresh detection if anything here fails: an origin
+        with a coarse band is the previous behaviour, and no band at all is a
+        feature silently missing from a call.
+        """
+        # **A restore from a save that predates this field has no `_origins`.**
+        # The engine is persisted whole and is not a `Restorable` dataclass, so
+        # nothing fills in a new attribute for it - the first call after a
+        # deploy would raise, inside the try that swallows it, and every origin
+        # feature would go quietly missing. Asked for rather than assumed.
+        kept_all = getattr(self, "_origins", None)
+        if kept_all is None:
+            kept_all = self._origins = {}
+        key = (feed, interval)
+        kept = kept_all.get(key)
+        if kept is None:
+            kept = kept_all[key] = origins.Origins()
+        # `self.series` **creates** the entry, and `touch_source` picks the
+        # finest interval that has one - so asking for 1m here would silently
+        # move the touch check onto a series that has never received a bar.
+        # Three tests caught it; production would have stopped touching levels.
+        fine = self._series.get((feed, FINE_INTERVAL))
+        return kept.remember(
+            fresh,
+            fine_times=list(fine.times) if fine else (),
+            fine_closes=list(fine.closes) if fine else (),
+            span=lv.SECONDS.get(interval, 0.0),
+        ) or list(fresh)
+
     def _origin_at(self, feed: str, interval: str, price: float, vol: Volatility) -> dict:
         """What the origin model says about a level, as published features.
 
@@ -856,7 +916,8 @@ class Engine:
                         series.opens, series.highs, series.lows, closes, strict=False
                     )
                 ]
-            found = origins.Origins().observe(list(series.times), closes, unit, bars_at=bars)
+            fresh = origins.Origins().observe(list(series.times), closes, unit, bars_at=bars)
+            found = self._remember_origins(feed, interval, fresh)
             if not found:
                 return {}
             nearest = min(found, key=lambda o: abs(o.price - price))
