@@ -32,7 +32,54 @@ other, and this one is cheap.
 from __future__ import annotations
 
 import dataclasses
+import enum
+import functools
+import typing
 from typing import Any
+
+
+@functools.cache
+def _enum_fields(cls: type) -> dict[str, type]:
+    """Field name -> enum type, for the fields declared as one.
+
+    Cached because it resolves annotations, which is not free and never
+    changes for a class.
+    """
+    try:
+        hints = typing.get_type_hints(cls)
+    except Exception:  # a forward reference this build cannot resolve
+        return {}
+    found = {}
+    for field in dataclasses.fields(cls):
+        hint = hints.get(field.name)
+        if isinstance(hint, type) and issubclass(hint, enum.Enum):
+            found[field.name] = hint
+    return found
+
+
+def restore_enum(cls: type, name: str, value: Any) -> Any:
+    """Put an enum field back to its enum, or leave the value alone.
+
+    **`Side` is a `StrEnum`, so it serialises as a plain string and comes back
+    as one.** Nothing complains until something asks it for a member - and what
+    asked was `shade.side.sign` in the trading loop, which took the whole
+    service down with `'str' object has no attribute 'sign'` and left it
+    stopped rather than degraded.
+
+    Coercing on the way *in* rather than tagging on the way out is deliberate:
+    a tag would only help state written after the change, and the file that was
+    already on disk is the one that was crashing.
+    """
+    kind = _enum_fields(cls).get(name)
+    if kind is None or isinstance(value, kind):
+        return value
+    try:
+        return kind(value)
+    except (ValueError, KeyError):
+        # A member this build no longer has. The raw value is more useful than
+        # an exception here - the caller sees something wrong at the point of
+        # use rather than losing the whole file.
+        return value
 
 
 class Restorable:
@@ -114,4 +161,4 @@ class Restorable:
                 # loud and attributable, which for a required field is right.
                 continue
             # `object.__setattr__`, so this works on frozen dataclasses too.
-            object.__setattr__(self, field.name, value)
+            object.__setattr__(self, field.name, restore_enum(type(self), field.name, value))

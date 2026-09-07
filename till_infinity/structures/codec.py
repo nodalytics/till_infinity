@@ -58,6 +58,7 @@ from functools import cache
 from typing import Any
 
 from ..logging import get_logger
+from .state import restore_enum
 
 log = get_logger(__name__)
 
@@ -234,5 +235,8 @@ def unpack(value: Any, known: dict[str, type] | None = None) -> Any:
         return made
     for field in dataclasses.fields(cls):
         if field.name in fields:
-            object.__setattr__(made, field.name, fields[field.name])
+            # Enums come back as their raw value - `Side` is a `StrEnum` and
+            # serialises as a plain string - and nothing notices until
+            # something asks for a member. See `state.restore_enum`.
+            object.__setattr__(made, field.name, restore_enum(cls, field.name, fields[field.name]))
     return made
