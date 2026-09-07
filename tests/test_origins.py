@@ -243,3 +243,84 @@ def test_an_unwarmed_feed_brackets_nothing_rather_than_raising():
         None,
         None,
     )
+
+
+# ------------------------------------------------- estimator F, the refinement
+
+
+def _origin(price, launched="down", when=0.0, band=1.0):
+    from till_infinity.structures.drawing.origins import Origin
+
+    return Origin(
+        price=price,
+        low=price - band,
+        high=price + band,
+        launched=launched,
+        size_vol=5.0,
+        when=when,
+    )
+
+
+def test_the_refinement_finds_the_higher_close_inside_a_drop_bar():
+    """The origin is the last price before the impulse took over, so one
+    resolution down it is the highest close for a drop - the same definition,
+    asked of finer evidence."""
+    from till_infinity.structures.drawing.origins import refine
+
+    # A 15-minute bar whose 1m closes peak at 105 before the drop begins.
+    times = [float(t * 60) for t in range(15)]
+    closes = [100, 101, 103, 105, 104, 102, 99, 97, 95, 94, 93, 92, 91, 90, 90]
+
+    got = refine(_origin(90.0, "down", when=0.0), times, closes, span=900.0)
+
+    assert got.price == 105.0
+
+
+def test_a_rally_origin_refines_to_the_lowest_close():
+    from till_infinity.structures.drawing.origins import refine
+
+    times = [float(t * 60) for t in range(15)]
+    closes = [100, 99, 97, 95, 96, 98, 101, 103, 105, 106, 107, 108, 109, 110, 110]
+
+    got = refine(_origin(110.0, "up", when=0.0), times, closes, span=900.0)
+
+    assert got.price == 95.0
+
+
+def test_the_band_travels_with_the_price():
+    """Relocating the origin outside its own zone would leave a level whose
+    band no longer contains it. Re-deriving the width from the finer bars is a
+    separate experiment; this re-centres and keeps the width."""
+    from till_infinity.structures.drawing.origins import refine
+
+    times = [float(t * 60) for t in range(15)]
+    closes = [100, 101, 103, 105, 104, 102, 99, 97, 95, 94, 93, 92, 91, 90, 90]
+
+    got = refine(_origin(90.0, "down", when=0.0, band=2.0), times, closes, span=900.0)
+
+    assert got.low <= got.price <= got.high
+    assert (got.high - got.low) == 4.0
+
+
+def test_partial_cover_is_refused_rather_than_used():
+    """A refinement computed from two of the fifteen minutes is worse than
+    none: the extreme found is the extreme of whatever fraction survived in a
+    bounded rolling window."""
+    from till_infinity.structures.drawing.origins import refine
+
+    times = [0.0, 60.0, 120.0]
+    closes = [100.0, 105.0, 103.0]
+
+    got = refine(_origin(90.0, "down", when=0.0), times, closes, span=900.0)
+
+    assert got.price == 90.0
+
+
+def test_no_finer_series_leaves_the_origin_alone():
+    from till_infinity.structures.drawing.origins import refine
+
+    origin = _origin(90.0, "down")
+
+    assert refine(origin, [], [], span=900.0) is origin
+    assert refine(origin, [0.0], [90.0], span=900.0) is origin
+    assert refine(origin, [0.0, 60.0], [90.0, 91.0], span=0.0) is origin

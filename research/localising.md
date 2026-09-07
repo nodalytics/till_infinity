@@ -125,6 +125,78 @@ this one, which the first version of this document wrongly implied. That one
 could not resolve its own positive control; this one resolves cleanly and comes
 out in the level book's favour.
 
+## The estimators, measured
+
+Sections 5, 9 and 13: the candidates behind one interface, every estimate
+attached to the **same** events so no method can pick a friendlier population,
+compared paired. An event where any estimator cannot produce a price is dropped
+from all of them - a body-edge miss must not quietly shrink the population it
+is scored on.
+
+There is no observable "true origin" to compute an error against, so the
+property being ranked is the one this data can rank: **does the estimator say
+the same thing when the bars are made to start a minute later.**
+
+| estimator | median wander | its null | ratio | moves the estimate |
+| --- | --- | --- | --- | --- |
+| A - baseline (the turn bar's close) | 0.237v | 0.701v | 3.0x | - |
+| **F - fine-resolution transition** | **0.124v** | 0.701v | **5.7x** | 71.4% of events |
+| D - directional body edge | 0.237v | 0.712v | 3.0x | 21.9% of events |
+
+406 events over 8 instruments, 5,684 paired comparisons.
+
+### F wins, and the specification was right to rank it first
+
+Locating the transition inside the coarse bar at 1m **halves the grid wander**,
+0.237v to 0.124v, and takes the ratio against a matched random book from 3.0x
+to 5.7x. It moves the estimate on 71.4% of events, so this is not a rounding
+effect on a handful of them.
+
+Per feed it wins everywhere, and by most on the instruments the earlier section
+called loose: gbpusd 0.330v to 0.124v, gold 0.295v to 0.122v.
+
+### D adds nothing, and section 18 says what to do about that
+
+> Do not promote the user's body-edge hypothesis to the core definition simply
+> because it visually matches selected examples. Promote it only if it
+> consistently adds measurable value.
+
+It does not. The body edge differs from the close on 21.9% of events - so it is
+a real alternative, not an identity - and on the axis measured here it is
+**identical to three decimal places**: 0.237v against 0.237v, 3.0x against 3.0x.
+Where it disagrees with the current answer it is neither better nor worse.
+
+There is a reason it lands so close, and it is worth stating because it makes
+the result less surprising than it looks. On a clean turn the last bar of the
+incoming run closes near its own high and the first bar of the departure opens
+there, so the upper edge of the body intersection *is* approximately the turn
+bar's close - which is what the repository already uses. The hypothesis is
+largely an alternative derivation of the existing estimator rather than a
+different one.
+
+**Recommendation: reject D, adopt F.** Not because the body-edge idea is wrong
+about what an origin is, but because on this evidence it is a second route to
+the price already in use, and F is a first route to a better one.
+
+F is implemented as `origins.refine`, with the coverage guard the measurement
+implies: a finer series that does not reach both ends of the coarse bar
+returns the origin unchanged, because a refinement computed from two of the
+fifteen minutes is worse than none. Nothing calls it in the pipeline yet - the
+`Series` window is bounded at 500 bars, so a 1m series covers about eight hours
+and cannot reach a 4h origin, and wiring it in means deciding what to do on the
+intervals it cannot serve. That decision wants its own measurement.
+
+### What adopting F is worth, stated honestly
+
+The band is 1.58v and the wander is 0.237v, so halving the wander tightens the
+localization error inside a band seven times its size. **That is an improvement
+in a quantity that is not currently the binding constraint**, and it should not
+be expected to move a trading number on its own.
+
+What would make it worth more is re-deriving the *band* from the finer estimate
+rather than leaving it as the coarse bar's range - which is the next experiment
+rather than a conclusion of this one.
+
 ## Three discrepancies between the specification and the repository
 
 Section 20 asks for these to be reported before anything is changed.

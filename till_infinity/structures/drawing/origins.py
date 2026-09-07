@@ -61,7 +61,9 @@ drawn from the same evidence as the entry rather than from a fixed multiple.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import bisect
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 
 from ..state import Restorable
 
@@ -206,6 +208,66 @@ class Origin(Restorable):
             "settled": self.settled,
             "revisits": self.revisits,
         }
+
+
+def refine(
+    origin: Origin,
+    times: Sequence[float],
+    closes: Sequence[float],
+    span: float,
+) -> Origin:
+    """Relocate one origin to the finer transition inside its own bar.
+
+    **Estimator F of the localization specification, and the one that won.**
+    Measured over 406 events on 8 instruments (`research/localising.md`),
+    locating the transition at 1m inside the coarse bar halves the wander a
+    shifted sampling grid produces - 0.237v to 0.124v - and takes the ratio
+    against a matched random book from 3.0x to 5.7x. It moves the estimate on
+    71.4% of events, so it is not a rounding effect on a handful of them.
+
+    The rule is the origin's own definition applied one resolution down: the
+    origin is the last price before the impulse took over, so inside the turn
+    bar it is the **highest** fine close for a drop and the **lowest** for a
+    rally.
+
+    `span` is the coarse bar's length in seconds. `times` and `closes` are a
+    finer series covering it; when they do not cover it - which is the ordinary
+    case for a coarse interval against a bounded rolling window - the origin is
+    **returned unchanged** rather than relocated from partial evidence. A
+    refinement computed from two of the fifteen minutes is worse than none.
+
+    No lookahead: every fine bar used closes inside the coarse bar that the
+    origin was already located in, and the origin is not knowable until
+    `settled` in any case.
+    """
+    if span <= 0 or len(times) != len(closes) or len(times) < 2:
+        return origin
+    start = bisect.bisect_left(times, origin.when)
+    stop = bisect.bisect_left(times, origin.when + span)
+    window = list(zip(times[start:stop], closes[start:stop], strict=True))
+    if len(window) < 2:
+        return origin
+    # Partial cover is not cover. The finer series has to reach both ends of
+    # the coarse bar, or the extreme found is the extreme of whatever fraction
+    # happened to survive in the window.
+    if window[0][0] > origin.when or window[-1][0] < origin.when + span - _step(times):
+        return origin
+    down = origin.launched == "down"
+    price = max(c for _t, c in window) if down else min(c for _t, c in window)
+    if price == origin.price:
+        return origin
+    # The band moves with it, keeping the origin inside its own zone. Widening
+    # or re-deriving the band from the finer bars is the next experiment; this
+    # keeps the existing width and re-centres it, which is the smaller claim.
+    shift = price - origin.price
+    return replace(origin, price=price, low=origin.low + shift, high=origin.high + shift)
+
+
+def _step(times: Sequence[float]) -> float:
+    """The finer series' own spacing, so "covers the bar" has a tolerance."""
+    if len(times) < 2:
+        return 0.0
+    return max(0.0, float(times[1]) - float(times[0]))
 
 
 @dataclass(slots=True)
