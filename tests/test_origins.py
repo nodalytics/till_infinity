@@ -261,30 +261,47 @@ def _origin(price, launched="down", when=0.0, band=1.0):
     )
 
 
-def test_the_refinement_finds_the_higher_close_inside_a_drop_bar():
+#: A quarter-hour of one-minute closes peaking at 105 before the drop begins.
+_TIMES = [float(t * 60) for t in range(15)]
+_CLOSES = [100, 101, 103, 105, 104, 102, 99, 97, 95, 94, 93, 92, 91, 90, 90]
+
+
+def test_the_extremes_are_the_finest_closes_inside_the_bar():
+    """Closes rather than highs and lows: `Origins.observe` walks closes, so a
+    transition drawn from extremes would be measuring a different thing."""
+    from till_infinity.structures.drawing.origins import extremes_in
+
+    assert extremes_in(_TIMES, _CLOSES, 0.0, 900.0) == (90, 105)
+
+
+def test_partial_cover_is_refused_rather_than_used():
+    """The extreme of whatever fraction survived in a bounded window is not the
+    extreme of the bar, and a refinement from two of fifteen minutes is worse
+    than none."""
+    from till_infinity.structures.drawing.origins import extremes_in
+
+    assert extremes_in([0.0, 60.0, 120.0], [100.0, 105.0, 103.0], 0.0, 900.0) is None
+    assert extremes_in(_TIMES, _CLOSES, 600.0, 900.0) is None
+    assert extremes_in((), (), 0.0, 900.0) is None
+    assert extremes_in(_TIMES, _CLOSES, 0.0, 0.0) is None
+
+
+def test_a_drop_refines_to_the_highest_fine_close():
     """The origin is the last price before the impulse took over, so one
     resolution down it is the highest close for a drop - the same definition,
     asked of finer evidence."""
     from till_infinity.structures.drawing.origins import refine
 
-    # A 15-minute bar whose 1m closes peak at 105 before the drop begins.
-    times = [float(t * 60) for t in range(15)]
-    closes = [100, 101, 103, 105, 104, 102, 99, 97, 95, 94, 93, 92, 91, 90, 90]
-
-    got = refine(_origin(90.0, "down", when=0.0), times, closes, span=900.0)
+    got = refine(_origin(90.0, "down"), 90.0, 105.0)
 
     assert got.price == 105.0
+    assert got.refined is True
 
 
-def test_a_rally_origin_refines_to_the_lowest_close():
+def test_a_rally_refines_to_the_lowest_fine_close():
     from till_infinity.structures.drawing.origins import refine
 
-    times = [float(t * 60) for t in range(15)]
-    closes = [100, 99, 97, 95, 96, 98, 101, 103, 105, 106, 107, 108, 109, 110, 110]
-
-    got = refine(_origin(110.0, "up", when=0.0), times, closes, span=900.0)
-
-    assert got.price == 95.0
+    assert refine(_origin(110.0, "up"), 95.0, 110.0).price == 95.0
 
 
 def test_the_band_travels_with_the_price():
@@ -293,37 +310,24 @@ def test_the_band_travels_with_the_price():
     separate experiment; this re-centres and keeps the width."""
     from till_infinity.structures.drawing.origins import refine
 
-    times = [float(t * 60) for t in range(15)]
-    closes = [100, 101, 103, 105, 104, 102, 99, 97, 95, 94, 93, 92, 91, 90, 90]
-
-    got = refine(_origin(90.0, "down", when=0.0, band=2.0), times, closes, span=900.0)
+    got = refine(_origin(90.0, "down", band=2.0), 90.0, 105.0)
 
     assert got.low <= got.price <= got.high
     assert (got.high - got.low) == 4.0
 
 
-def test_partial_cover_is_refused_rather_than_used():
-    """A refinement computed from two of the fifteen minutes is worse than
-    none: the extreme found is the extreme of whatever fraction survived in a
-    bounded rolling window."""
-    from till_infinity.structures.drawing.origins import refine
+def test_a_bar_that_was_never_covered_leaves_the_origin_alone():
+    """`nan` is what an uncaptured bar carries, and it has to read as "no
+    evidence" rather than as a price."""
+    import math
 
-    times = [0.0, 60.0, 120.0]
-    closes = [100.0, 105.0, 103.0]
-
-    got = refine(_origin(90.0, "down", when=0.0), times, closes, span=900.0)
-
-    assert got.price == 90.0
-
-
-def test_no_finer_series_leaves_the_origin_alone():
     from till_infinity.structures.drawing.origins import refine
 
     origin = _origin(90.0, "down")
 
-    assert refine(origin, [], [], span=900.0) is origin
-    assert refine(origin, [0.0], [90.0], span=900.0) is origin
-    assert refine(origin, [0.0, 60.0], [90.0, 91.0], span=0.0) is origin
+    assert refine(origin, math.nan, math.nan) is origin
+    assert refine(origin, math.nan, 105.0) is origin
+    assert refine(origin, 90.0, 90.0).refined is False  # unchanged price
 
 
 # ------------------------------------------------------- keeping what was found
@@ -331,20 +335,20 @@ def test_no_finer_series_leaves_the_origin_alone():
 
 def test_a_second_sighting_does_not_replace_a_refined_band():
     """The whole reason the set is kept. An origin is refined once, while its
-    fine evidence is still in the window; recomputing later would hand back a
-    coarse band and undo it silently."""
+    bar's minutes are still to hand; recomputing later would hand back a coarse
+    band and undo it silently."""
+    import math
+
     from till_infinity.structures.drawing.origins import Origins
 
     kept = Origins()
-    times = [float(t * 60) for t in range(15)]
-    closes = [100, 101, 103, 105, 104, 102, 99, 97, 95, 94, 93, 92, 91, 90, 90]
     coarse = _origin(90.0, "down", when=0.0)
 
-    first = kept.remember([coarse], fine_times=times, fine_closes=closes, span=900.0)
+    first = kept.remember([coarse], lambda _o: (90.0, 105.0))
     assert first[0].price == 105.0
 
-    # The same origin detected again, this time with no fine data to hand.
-    again = kept.remember([coarse], fine_times=(), fine_closes=(), span=900.0)
+    # The same origin again, this time with nothing captured for its bar.
+    again = kept.remember([coarse], lambda _o: (math.nan, math.nan))
 
     assert len(again) == 1
     assert again[0].price == 105.0
@@ -361,8 +365,8 @@ def test_an_origin_is_identified_by_its_turn_and_direction():
     later = _origin(90.0, "down", when=200.0)
 
     kept.remember([down, up, later])
-
     assert len(kept.found) == 3
+
     kept.remember([down, up, later])
     assert len(kept.found) == 3
 
@@ -378,74 +382,110 @@ def test_the_kept_set_is_bounded_oldest_first():
     assert [o.when for o in kept.found] == [15.0, 16.0, 17.0, 18.0, 19.0]
 
 
-def test_origins_survive_across_calls_on_the_engine():
-    """`_origin_at` used to rebuild them from the closes series every time, so
-    a refined band had nowhere to live. This is the place.
+def test_a_refined_origin_says_so():
+    """Otherwise "are origins being refined in production" has no answer, and a
+    refinement that silently never fires is the shape inert.md catalogues."""
+    from till_infinity.structures.drawing.origins import Origins
 
-    Three venues, because the consensus needs a quorum of MIN_VENUES before
-    anything reaches the series at all - a median of fewer is one venue's opinion.
+    kept = Origins()
+    kept.remember([_origin(90.0, "down", when=0.0)], lambda _o: (90.0, 105.0))
+    kept.remember([_origin(50.0, "up", when=900.0)])
+
+    assert kept.refined == 1
+    assert len(kept.found) == 2
+
+
+# --------------------------------------------- capturing them at the right moment
+
+
+def test_a_series_records_its_bar_s_fine_extremes():
+    """The bar's minutes are certainly present exactly once - while that bar is
+    the one closing - so that is when they are stored."""
+    from till_infinity.structures.engine import Series
+
+    series = Series(feed="t", interval="4h")
+    series.add(0, 110.0, 90.0, 100.0, 100.0)
+    series.note_fine(90.0, 105.0)
+
+    assert series.fine_at(0) == (90.0, 105.0)
+
+
+def test_an_uncaptured_bar_reads_as_no_evidence():
+    import math
+
+    from till_infinity.structures.engine import Series
+
+    series = Series(feed="t", interval="4h")
+    series.add(0, 110.0, 90.0, 100.0, 100.0)
+
+    low, high = series.fine_at(0)
+    assert math.isnan(low)
+    assert math.isnan(high)
+    assert all(math.isnan(v) for v in series.fine_at(999))
+
+
+def test_a_series_from_before_the_field_does_not_misalign():
+    """`opens` had this exact bug waiting: a restored Series has empty deques
+    beside full ones, and appending blindly would pair every bar with another
+    bar's minutes from then on."""
+    import math
+
+    from till_infinity.structures.engine import Series
+
+    series = Series(feed="t", interval="4h")
+    series.add(0, 110.0, 90.0, 100.0, 100.0)
+    series.fine_low.clear()
+    series.fine_high.clear()
+
+    series.add(14_400, 112.0, 92.0, 101.0, 100.0)
+
+    assert all(math.isnan(v) for v in series.fine_at(14_400))
+    assert all(math.isnan(v) for v in series.fine_at(0))
+
+
+def test_the_engine_captures_fine_extremes_as_the_coarse_bar_closes():
+    """End to end, and the thing production got wrong. Feeding 1m bars and then
+    the 4h bar that spans them has to leave the 4h bar carrying its minutes -
+    otherwise the refinement is attempted hours later against a window that has
+    moved on, which refined one 4h origin in 924.
+
+    A real timestamp rather than 0, because `observe_bar` reads `time` for
+    truthiness and a zero falls back to the wall clock.
     """
     from till_infinity.structures import engine as eng
 
+    base = 1_700_000_000 - (1_700_000_000 % 14_400)
     engine = eng.Engine()
-    prices = [100] * 7 + [102, 105, 108, 110] + [110] * 5
-    prices += [112, 116, 120] + [120] * 7 + [118, 115, 112, 110] + [110] * 7
-    for i, close in enumerate(prices):
+    for minute in range(240):
+        close = 100.0 + (5.0 if minute == 120 else 0.0) - (2.0 if minute == 200 else 0.0)
         for venue in ("a", "b", "c"):
             engine.observe_bar(
                 {
                     "feed": "t",
                     "venue": venue,
-                    "interval": "4h",
-                    "ts": i * 14_400,
-                    "time": i * 14_400,
-                    "high": close + 1,
-                    "low": close - 1,
+                    "interval": "1m",
+                    "ts": base + minute * 60,
+                    "time": base + minute * 60,
+                    "high": close,
+                    "low": close,
                     "close": close,
                 }
             )
-    assert engine.series("t", "4h").closes, "the consensus never agreed a price"
+    for venue in ("a", "b", "c"):
+        engine.observe_bar(
+            {
+                "feed": "t",
+                "venue": venue,
+                "interval": "4h",
+                "ts": base,
+                "time": base,
+                "high": 106.0,
+                "low": 97.0,
+                "close": 100.0,
+            }
+        )
 
-    engine.origins_bracketing("t", "4h", 110.0, engine.vol.of("t", "4h"))
+    low, high = engine.series("t", "4h").fine_at(base)
 
-    assert ("t", "4h") in engine._origins
-
-
-def test_an_engine_restored_without_the_field_still_works():
-    """The engine is persisted whole and is not a `Restorable` dataclass, so a
-    save made before `_origins` existed restores without it. Nothing fills it
-    in, and the failure would land inside the try that swallows it - every
-    origin feature quietly missing after a deploy."""
-    from till_infinity.structures import engine as eng
-
-    engine = eng.Engine()
-    del engine._origins
-
-    got = engine._remember_origins("t", "4h", [_origin(100.0, "down", when=1.0)])
-
-    assert len(got) == 1
-    assert ("t", "4h") in engine._origins
-
-
-def test_a_refined_origin_says_so():
-    """Otherwise "are origins being refined in production" has no answer, and a
-    refinement that silently never fires is the shape inert.md catalogues."""
-    from till_infinity.structures.drawing.origins import Origins, refine
-
-    times = [float(t * 60) for t in range(15)]
-    closes = [100, 101, 103, 105, 104, 102, 99, 97, 95, 94, 93, 92, 91, 90, 90]
-
-    moved = refine(_origin(90.0, "down", when=0.0), times, closes, span=900.0)
-    stayed = refine(_origin(90.0, "down", when=0.0), (), (), span=900.0)
-
-    assert moved.refined is True
-    assert stayed.refined is False
-
-    kept = Origins()
-    kept.remember(
-        [_origin(90.0, "down", when=0.0)], fine_times=times, fine_closes=closes, span=900.0
-    )
-    kept.remember([_origin(50.0, "up", when=900.0)])
-
-    assert kept.refined == 1
-    assert len(kept.found) == 2
+    assert high == 105.0
+    assert low == 98.0

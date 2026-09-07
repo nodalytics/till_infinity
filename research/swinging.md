@@ -338,8 +338,23 @@ computed on append and carried in the same rolling window as `closes` and
 that has moved on. The cost is one float per bar per series; the change is to a
 persisted dataclass, so it needs the schema note the last one got.
 
-That is the experiment this sequence has been walking toward, and it is now the
-only thing between the measured +0.23R a trade and having it.
+**Built.** `Series.fine_low` and `Series.fine_high` carry the extreme fine
+closes of each bar, captured by `Engine._capture_fine` every time that bar
+arrives - not only when it is new, because a bar arrives repeatedly while it
+forms and only the last of those calls has the whole bar behind it.
+`origins.extremes_in` finds them and refuses partial cover; `origins.refine`
+now takes the two numbers rather than a series, so the refinement is a lookup
+against a bar that kept its own minutes instead of a scan of a window that has
+moved on.
+
+Both new deques carry the same guard `opens` already needed: a `Series`
+restored from before they existed has empty deques beside full ones, and
+appending blindly would pair every bar with another bar's minutes from then
+on.
+
+Whether it works is a production question again, and the tally that answered
+the last one will answer this one: the share refined **at 4h** is the number,
+and it was 1 in 924.
 
 ## The spread
 

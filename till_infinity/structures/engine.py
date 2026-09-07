@@ -21,6 +21,7 @@ evidence about an old level, not a new one.
 
 from __future__ import annotations
 
+import bisect
 import math
 import sqlite3
 import statistics
@@ -366,6 +367,17 @@ class Series(Restorable):
     #: Kept for `origins`, which needs a body to fall back on when a bar is
     #: mostly wick. Everything else here works from closes and extremes.
     opens: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
+    #: The lowest and highest **fine** close inside each bar, captured while
+    #: the bar was closing and `nan` where it never was.
+    #:
+    #: **This exists because of when, not what.** The refinement that uses them
+    #: was first attempted at origin *detection* time and refined one 4h origin
+    #: in 924: an origin does not exist until its impulse breaks structure,
+    #: hours to days after the turn on 4h, by which point the 1m window holding
+    #: eight hours has moved on. A bar's minutes are certainly present exactly
+    #: once - when the bar itself closes - so that is when they are recorded.
+    fine_low: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
+    fine_high: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
     since_reform: int = 0
 
     def add(
@@ -392,8 +404,35 @@ class Series(Restorable):
         # misalign every bar against its own open from then on.
         if len(self.opens) == len(self.closes) - 1:
             self.opens.append(opening)
+        # Same guard, same reason: a Series restored from before these existed
+        # has empty deques beside full ones, and appending blindly would
+        # misalign every bar against another bar's minutes.
+        if len(self.fine_low) == len(self.closes) - 1:
+            self.fine_low.append(math.nan)
+            self.fine_high.append(math.nan)
         self.since_reform += 1
         return True
+
+    def note_fine(self, low: float, high: float) -> None:
+        """Record the fine extremes of the bar currently at the end.
+
+        Called repeatedly while a bar forms, so the last call before it rolls
+        is the one with the whole bar behind it. A pair that could not be
+        computed never overwrites one that could: coverage is checked by the
+        caller, which passes nothing rather than a partial answer.
+        """
+        if len(self.fine_low) != len(self.closes) or not self.fine_low:
+            return
+        self.fine_low[-1], self.fine_high[-1] = low, high
+
+    def fine_at(self, when: float) -> tuple[float, float]:
+        """The stored fine extremes for the bar at `when`, or `(nan, nan)`."""
+        if len(self.fine_low) != len(self.times):
+            return (math.nan, math.nan)
+        index = bisect.bisect_left(self.times, when)
+        if index >= len(self.times) or self.times[index] != when:
+            return (math.nan, math.nan)
+        return (self.fine_low[index], self.fine_high[index])
 
     @property
     def ready(self) -> bool:
@@ -829,6 +868,31 @@ class Engine:
             float(above) if isinstance(above, int | float) else None,
         )
 
+    def _capture_fine(self, feed: str, interval: str, series: Series) -> None:
+        """Record the fine extremes of `series`' newest bar, if they are there.
+
+        **The whole point is the timing.** A bar's minutes are certainly
+        present exactly once - while that bar is the one closing - and this is
+        the only code that runs then. Attempting it later, when an origin is
+        finally detected, refined one 4h origin in 924 because the 1m window
+        holding eight hours had long since moved past.
+
+        Silent when the finer series does not cover the bar: `extremes_in`
+        returns None rather than the extreme of whatever fraction survived, and
+        a pair that could not be computed never overwrites one that could.
+        """
+        if interval == FINE_INTERVAL or not series.times:
+            return
+        span = lv.SECONDS.get(interval, 0.0)
+        fine = self._series.get((feed, FINE_INTERVAL))
+        if not span or fine is None or not fine.times:
+            return
+        got = origins.extremes_in(
+            list(fine.times), list(fine.closes), float(series.times[-1]), span
+        )
+        if got is not None:
+            series.note_fine(*got)
+
     def _remember_origins(
         self,
         feed: str,
@@ -872,12 +936,12 @@ class Engine:
         # finest interval that has one - so asking for 1m here would silently
         # move the touch check onto a series that has never received a bar.
         # Three tests caught it; production would have stopped touching levels.
-        fine = self._series.get((feed, FINE_INTERVAL))
+        # The extremes were captured when each bar closed, so this is a
+        # lookup rather than a scan of a 1m series that has moved on.
+        series = self._series.get((feed, interval))
         return kept.remember(
             fresh,
-            fine_times=list(fine.times) if fine else (),
-            fine_closes=list(fine.closes) if fine else (),
-            span=lv.SECONDS.get(interval, 0.0),
+            (lambda o: series.fine_at(o.when)) if series else None,
         ) or list(fresh)
 
     def _origin_at(self, feed: str, interval: str, price: float, vol: Volatility) -> dict:
@@ -1406,6 +1470,11 @@ class Engine:
         self._now = max(self._now, when)
         series = self.series(feed, interval)
         fresh = series.add(when, high, low, float(close), opened)
+        # **Every time, not only when the bar is new.** A bar arrives repeatedly
+        # while it forms, and only the last of those calls has the whole bar's
+        # minutes behind it - so capturing once on `fresh` would store the
+        # extremes of a bar's first few minutes and keep them.
+        self._capture_fine(feed, interval, series)
         # This timeframe's own volatility: a typical 4h move is not a typical
         # 5m move, and one estimate for both makes every threshold expressed in
         # volatility units wrong for all but whichever series updates most.

@@ -62,7 +62,8 @@ drawn from the same evidence as the entry rather than from a fixed multiple.
 from __future__ import annotations
 
 import bisect
-from collections.abc import Sequence
+import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 
 from ..state import Restorable
@@ -226,50 +227,63 @@ class Origin(Restorable):
         }
 
 
-def refine(
-    origin: Origin,
+def extremes_in(
     times: Sequence[float],
     closes: Sequence[float],
+    start: float,
     span: float,
-) -> Origin:
+) -> tuple[float, float] | None:
+    """The lowest and highest fine **close** inside one coarse bar, or None.
+
+    Closes rather than highs and lows, because that is what an origin is made
+    of: `Origins.observe` walks a series of closes, so the finer transition has
+    to be a close too or the two are measuring different things.
+
+    None unless the finer series reaches **both ends** of the bar. Partial
+    cover is not cover - the extreme of whatever fraction happened to be in the
+    window is not the extreme of the bar, and a refinement computed from two of
+    the fifteen minutes is worse than none.
+    """
+    if span <= 0 or len(times) != len(closes) or len(times) < 2:
+        return None
+    first = bisect.bisect_left(times, start)
+    last = bisect.bisect_left(times, start + span)
+    window = closes[first:last]
+    if len(window) < 2:
+        return None
+    if times[first] > start or times[last - 1] < start + span - _step(times):
+        return None
+    return min(window), max(window)
+
+
+def refine(origin: Origin, fine_low: float, fine_high: float) -> Origin:
     """Relocate one origin to the finer transition inside its own bar.
 
     **Estimator F of the localization specification, and the one that won.**
     Measured over 406 events on 8 instruments (`research/localising.md`),
-    locating the transition at 1m inside the coarse bar halves the wander a
-    shifted sampling grid produces - 0.237v to 0.124v - and takes the ratio
-    against a matched random book from 3.0x to 5.7x. It moves the estimate on
-    71.4% of events, so it is not a rounding effect on a handful of them.
+    locating the transition at 1m halves the wander a shifted sampling grid
+    produces - 0.237v to 0.124v - and the band that follows is worth +0.349R a
+    trade becoming **+0.576R** on the swing strategy (`research/swinging.md`).
 
     The rule is the origin's own definition applied one resolution down: the
     origin is the last price before the impulse took over, so inside the turn
     bar it is the **highest** fine close for a drop and the **lowest** for a
     rally.
 
-    `span` is the coarse bar's length in seconds. `times` and `closes` are a
-    finer series covering it; when they do not cover it - which is the ordinary
-    case for a coarse interval against a bounded rolling window - the origin is
-    **returned unchanged** rather than relocated from partial evidence. A
-    refinement computed from two of the fifteen minutes is worse than none.
+    Takes the two extremes rather than a series, because **when** they are
+    computed is the whole difficulty. Production first ran this at detection
+    time and refined one 4h origin in 924: an origin does not exist until its
+    impulse breaks structure, which on 4h is hours to days after the turn, by
+    which point the 1m window holding eight hours has moved on. The extremes
+    are now captured when the coarse bar closes - the one moment its minutes
+    are certainly still there - and stored on the bar. See `Series.note_fine`.
 
-    No lookahead: every fine bar used closes inside the coarse bar that the
-    origin was already located in, and the origin is not knowable until
-    `settled` in any case.
+    A `nan` extreme means the bar was never covered, and the origin comes back
+    unchanged.
     """
-    if span <= 0 or len(times) != len(closes) or len(times) < 2:
+    if math.isnan(fine_low) or math.isnan(fine_high):
         return origin
-    start = bisect.bisect_left(times, origin.when)
-    stop = bisect.bisect_left(times, origin.when + span)
-    window = list(zip(times[start:stop], closes[start:stop], strict=True))
-    if len(window) < 2:
-        return origin
-    # Partial cover is not cover. The finer series has to reach both ends of
-    # the coarse bar, or the extreme found is the extreme of whatever fraction
-    # happened to survive in the window.
-    if window[0][0] > origin.when or window[-1][0] < origin.when + span - _step(times):
-        return origin
-    down = origin.launched == "down"
-    price = max(c for _t, c in window) if down else min(c for _t, c in window)
+    price = fine_high if origin.launched == "down" else fine_low
     if price == origin.price:
         return origin
     # The band moves with it, keeping the origin inside its own zone. Widening
@@ -435,39 +449,31 @@ class Origins(Restorable):
     def remember(
         self,
         found: Sequence[Origin],
+        fine: Callable[[Origin], tuple[float, float]] | None = None,
         *,
-        fine_times: Sequence[float] = (),
-        fine_closes: Sequence[float] = (),
-        span: float = 0.0,
         keep: int = KEEP,
     ) -> list[Origin]:
         """Merge a fresh detection into the kept set, refining what is new.
 
-        **Why this exists, and it is a money number.** `refine` locates the
-        origin at 1m inside its own bar and `research/localising.md` measured
-        that the band re-derived there is 2.6x narrower for 94.8% of the same
-        returns. `research/swinging.md` then replayed the swing strategy with
-        those narrower walls: **+0.349R a trade becomes +0.576R**, winning in
-        all eight cells of the sweep.
+        **Why this exists, and it is a money number.** The band re-derived at
+        the finer resolution is 2.6x narrower for 94.8% of the same returns
+        (`research/localising.md`), and replaying the swing strategy with those
+        walls turns +0.349R a trade into **+0.576R**, winning in all eight
+        cells of the sweep (`research/swinging.md`).
 
-        And it was unreachable, because origins were recomputed from the
-        closes series on every call and nothing was stored. A 1m series holds
-        about eight hours, so by the time a wall is wanted its minutes are
-        long gone - a replay limited to that window reproduced the unrefined
-        baseline *identically, in every cell*. The refinement was not failing;
-        there was nowhere for its answer to live.
-
-        This is that place. An origin is refined **once, when it is first
-        seen**, which is the only moment its fine evidence is still in the
-        window, and the refined band is then kept for as long as the origin is.
+        Refinement happens **once, the first time an origin is seen**, and the
+        answer is kept - so a band computed today is still there in a month.
+        `fine` is asked for the extremes of the origin's own bar and returns
+        `(nan, nan)` when they were never captured.
 
         Identity is `(when, launched)` - the bar the turn happened on and which
         way the impulse went. The detector returns the same pair for the same
         origin on every pass, so a second sighting finds the stored one and
         keeps it rather than replacing a refined band with a coarse recompute.
+        Not price: the refinement *moves* the price, so keying on it would make
+        every refined origin look new and double the set.
 
-        Bounded at `keep`, oldest dropped first. Origins are rare enough that
-        this is generous, and the bound exists because a set that only grows
+        Bounded at `keep`, oldest dropped first, because a set that only grows
         is a leak with a long fuse.
         """
         known = {(o.when, o.launched): o for o in self.found}
@@ -475,7 +481,8 @@ class Origins(Restorable):
             key = (origin.when, origin.launched)
             if key in known:
                 continue
-            known[key] = refine(origin, fine_times, fine_closes, span)
+            low, high = fine(origin) if fine else (math.nan, math.nan)
+            known[key] = refine(origin, low, high)
         self.found = sorted(known.values(), key=lambda o: o.when)[-keep:]
         return self.found
 
