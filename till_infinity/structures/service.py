@@ -44,7 +44,7 @@ from .context.activity import Book as ActivityBook
 from .context.macro import Macro, since_default, stored
 from .context.sessions import Clock
 from .drawing import confluence as cf
-from .drawing.level_range import anchored, level_range_of
+from .drawing.level_range import ANCHOR, between_origins, level_range_of
 from .engine import Engine
 from .learning.anomaly import Detector
 from .learning.baseline import Bench
@@ -1204,19 +1204,32 @@ class Watcher:
                 interval=call.interval,
             )
             reading = band.features()
-            # **And the swing's range, anchored at 4h whatever triggered this.**
-            # A range is only a range if both walls are the same kind of
-            # object, and the call's interval is the wrong anchor for a
-            # strategy that enters below the hour on purpose: `swing-level`
-            # triggers on 15m, so the call-anchored box is two prices a quarter
-            # hour of auction paused at, and a trade held for a day was being
-            # asked to aim at one of them.
+            # **And the swing's range: origin to origin, on the anchor.**
             #
-            # Published beside it, not instead of it. A scalp wants the box it
-            # is trading inside; a swing wants the box the day is trading
-            # inside, and at the same moment on the same instrument those are
-            # different boxes.
-            wide = anchored(grouped[call.feed], call.price, unit, feed=call.feed)
+            # Two corrections to what this used to be, and the second is the
+            # larger. The first: the call's interval is the wrong anchor for a
+            # strategy that enters below the hour on purpose, since a 15m
+            # trigger gave a box made of two prices a quarter hour of auction
+            # paused at.
+            #
+            # The second: the walls were **confluence zones**, and a zone is a
+            # price several timeframes drew a level at rather than a price
+            # anyone defended. Measured over 4,117 published calls, at 4h the
+            # zone box runs 385bps against the origin box's 71bps and is wider
+            # on 2,711 of 2,724 - so the wall it named was open air with a
+            # price on it, and a 24-hour trade was being asked to aim at it.
+            #
+            # An origin is where a violent move began, so the interest that
+            # stopped the last advance is still resting there. That is a wall.
+            #
+            # Published beside the call's own box, not instead of it. A scalp
+            # wants the box it is trading inside; a swing wants the room before
+            # the next unfilled interest, and at the same moment on the same
+            # instrument those are different boxes.
+            below, above = self.engine.origins_bracketing(
+                call.feed, ANCHOR, call.price, vol
+            )
+            wide = between_origins(below, above, call.price, unit, feed=call.feed)
             reading.update(wide.features(prefix="swing_"))
             # Which wall price reaches first, from the model that learns it,
             # and the race it will be scored on. Opened here rather than on

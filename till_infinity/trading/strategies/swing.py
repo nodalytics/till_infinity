@@ -551,18 +551,20 @@ class SwingLevel(LevelStrategy):
     #: wall behind it, the stop has nothing to lean on, and the target is
     #: whichever bound happens to be further away.
     #:
-    #: **A fifth was the first guess and a tenth is the measured one.** It was
-    #: named here as the number most likely to be wrong, and the sweep in
-    #: `research/swinging.md` supports tightening it at both stop settings and
-    #: both trail settings - though by a tenth of what the stop change is
-    #: worth, and at the cost of seven trades in sixty-eight. Entering a fifth
-    #: of the way into the range spends a fifth of the target before the trade
-    #: starts, which is the arithmetic reason to prefer the tighter one.
+    #: **A fifth, and the tenth it briefly became is the cautionary tale.**
     #:
-    #: Not tighter than a tenth: the bound is a Kalman estimate with a zone
-    #: around it, and demanding price sit exactly on the mean would refuse
-    #: most real touches.
-    at_bound: ClassVar[float] = 0.10
+    #: The sweep on 2026-09-07 preferred 0.10 at every stop and trail setting,
+    #: so it was taken. The next day's change - drawing the range between
+    #: origins rather than between confluence zones - reversed it at every one
+    #: of those settings, because a tenth of a 71bps box and a tenth of a
+    #: 385bps box are not the same requirement. The first sweep was measuring
+    #: **the box**, not the bound, and a parameter fitted against a container
+    #: that later changes shape was never measuring what its name says.
+    #:
+    #: A fifth is deliberately generous on its own terms too: the bound is one
+    #: edge of an origin's band, and demanding price sit exactly on it would
+    #: refuse most real touches.
+    at_bound: ClassVar[float] = 0.20
 
     def at_the_right_place(
         self, feed: str, side: Side, features: dict[str, float]

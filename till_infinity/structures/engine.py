@@ -790,6 +790,36 @@ class Engine:
             found = self._series[key] = Series(feed, interval)
         return found
 
+    def origins_bracketing(
+        self, feed: str, interval: str, price: float, vol: Volatility
+    ) -> tuple[float | None, float | None]:
+        """The near edges of the origins above and below `price`, or None.
+
+        The **space price can travel before it meets unfilled interest**, which
+        is what a swing target is asking for and what a confluence zone cannot
+        answer. A zone is a price several timeframes drew a level at; an origin
+        is a price a violent move began from, so the interest that stopped the
+        last advance is still sitting there.
+
+        Measured on 2026-09-07 over 4,117 published calls, the two disagree by
+        an order of magnitude: at 4h the confluence box runs **385bps** against
+        the origin box's **71bps**, and the confluence one is wider on 2,711 of
+        2,724. A 3.85% box is not something a day-long trade traverses, so the
+        wall it named was not a target - it was open air with a price on it.
+
+        Near edges rather than centres. An origin is a band, and the tradeable
+        room ends where the band starts: `high` for the one below, `low` for
+        the one above. Using the centre would put the wall inside interest that
+        has already begun defending.
+        """
+        found = self._origin_at(feed, interval, price, vol)
+        below = found.get("origin_below_high")
+        above = found.get("origin_above_low")
+        return (
+            float(below) if isinstance(below, int | float) else None,
+            float(above) if isinstance(above, int | float) else None,
+        )
+
     def _origin_at(self, feed: str, interval: str, price: float, vol: Volatility) -> dict:
         """What the origin model says about a level, as published features.
 

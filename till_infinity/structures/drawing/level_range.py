@@ -188,39 +188,60 @@ class LevelRange:
 #: the call gave it a 15m box - two prices a quarter of an hour of auction
 #: paused at - and asked a trade held for a day to aim at one of them.
 #:
-#: It is the floor **and**, through `PLACED_BY`, the ceiling: 4h is the one
-#: timeframe a day-long trade both respects and can cross.
+#: 4h is the one timeframe a day-long trade both respects and can cross, and
+#: it is where `service` asks the origin model for the swing's walls.
 ANCHOR = "4h"
 
-#: And the coarsest timeframe allowed to **place** a wall.
-#:
-#: The first version of this let anything up to `daily` be a bound, on the
-#: argument that a daily zone is a real structure. It is - and it is still the
-#: wrong wall, because a box a daily level draws takes **weeks** to cross. A
-#: trade held for a day is then aiming at a target it cannot reach and
-#: measuring its position inside a range it will never traverse, which is the
-#: same mistake the 15m anchor made in the other direction.
-#:
-#: So the daily timeframe is **context**: it says whether the level is real,
-#: not where the trade is going. It earns a wall only by agreeing with a 4h
-#: level, and then the wall sits where the 4h one places it.
-#:
-#: This is exactly the asymmetry `confluence` is built on - the higher
-#: timeframe carries the significance, the lower carries the placement - read
-#: off the two ends of the same zone: `span` has to reach `ANCHOR`, `precision`
-#: has to come back down to it.
-PLACED_BY = ANCHOR
+@dataclass(frozen=True)
+class Edge:
+    """A wall that is a price and nothing else - what `Bound` actually needs.
 
-
-def anchored(zones: Any, price: float, unit: float, *, feed: str = "") -> LevelRange:
-    """The range anchored at `ANCHOR`, whatever timeframe asked for it.
-
-    Published beside the call's own range rather than instead of it. A scalp
-    wants the box it is trading inside; a swing wants the box the day is
-    trading inside, and they are different boxes on the same instrument at the
-    same moment.
+    Not slotted, for the reason the block above `LevelRange` gives at length:
+    `store._schema` fingerprints slotted dataclasses in this package, and a
+    value object built per call is not worth cold-starting 58MB of state over.
     """
-    return level_range_of(zones, price, unit, feed=feed, interval=ANCHOR, placed_by=PLACED_BY)
+
+    price: float
+
+
+def between_origins(
+    below: float | None,
+    above: float | None,
+    price: float,
+    unit: float,
+    *,
+    feed: str = "",
+) -> LevelRange:
+    """The range between the two nearest origins - **the swing's box.**
+
+    An origin is where a violent move began, so the interest that stopped the
+    last advance is still resting there. That is a different object from a
+    confluence zone, which is a price several timeframes happen to have drawn
+    a level at, and the difference is not academic: measured over 4,117
+    published calls on 2026-09-07, at 4h the confluence box is **385bps wide
+    against the origin box's 71bps**, and wider on 2,711 of 2,724.
+
+    A box of 3.85% is not a box a trade held for a day moves inside. Its far
+    wall is a target price cannot reach, and a position inside it is a reading
+    about a range that will never be traversed - the same failure the 15m
+    anchor had, arrived at from the other direction.
+
+    The confluence-anchored version of this (`anchored`, with a `PLACED_BY`
+    ceiling on which timeframes could place a wall) was removed rather than
+    left beside it. It was a careful answer to the wrong question, and leaving
+    it would have meant someone finding it and using it.
+
+    Bounds are the origins' **near edges** - `high` for the one below, `low`
+    for the one above - because the tradeable room ends where the band starts.
+    Either side may be absent, which is open air rather than a distant wall.
+    """
+    return LevelRange(
+        feed=feed,
+        price=price,
+        lower=Edge(below) if below is not None else None,
+        upper=Edge(above) if above is not None else None,
+        unit=float(unit),
+    )
 
 
 def within(zones: Any, interval: str, placed_by: str = "") -> list[Any]:

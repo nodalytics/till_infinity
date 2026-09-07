@@ -132,24 +132,36 @@ and the room that way is `None` rather than a large number: open air and a
 distant ceiling are different claims, and substituting one for the other makes
 them indistinguishable in the record.
 
-**The walls are anchored at 4h, and that is two conditions rather than one.**
-A zone is a wall only if it is *significant* at 4h or above and *placed* at 4h
-or below - `span` reaching up to the anchor, `precision` coming back down to
-it. The first refuses a box whose sides are two prices a quarter of an hour of
-auction paused at. The second refuses the opposite mistake: a daily or weekly
-zone with nothing finer agreeing draws a box that takes **weeks** to cross, so
-a trade held for a day is aiming at a target it cannot reach and measuring its
-position inside a range it will never traverse.
+**The swing's box is drawn between origins, not between zones.** That was the
+correction of 2026-09-07 and it is the largest single thing that has been wrong
+with `swing-level`.
 
-Above 4h a timeframe is therefore **context** - it says whether the level is
-real, not where the trade is going - and it earns a wall by agreeing with a 4h
-level, at which point the wall sits where the 4h one places it. That is the
-asymmetry confluence is already built on, read off the two ends of one zone.
+A zone is a price several timeframes have drawn a level at. An **origin** is
+the price a violent move began from, so the interest that stopped the last
+advance is still resting there - a wall somebody defended rather than a wall
+somebody drew. The two give boxes of completely different size, measured over
+4,117 published calls in bps of price:
 
-The call's own box is published beside this one rather than replaced by it. A
-scalp wants the box it is trading inside; a swing wants the box the day is
-trading inside, and at the same moment on the same instrument they are
-different boxes. The swing's carries the `swing_` prefix.
+| interval | confluence box | origin box |
+| --- | --- | --- |
+| 5m | 509bps | 33bps |
+| 15m | 353bps | 63bps |
+| **4h** | **385bps** | **71bps** |
+
+3.85% of price is not a box a trade held for a day moves inside. Its far wall
+is a target price cannot reach, and a position inside it is a reading about a
+range that will never be traversed. 71bps is about a day's range on a major,
+which is the size a twenty-four hour hold implies.
+
+The bounds are the origins' **near edges** - the lower origin's high, the upper
+origin's low - because the room ends where the band starts. Either side may be
+absent, which is open air rather than a distant wall.
+
+The call's own box, drawn from zones at the call's own timeframe, is published
+beside this one rather than replaced by it. A scalp wants the box it is trading
+inside; a swing wants the room before the next unfilled interest, and at the
+same moment on the same instrument those are different boxes. The swing's
+carries the `swing_` prefix.
 
 What it publishes on a level signal:
 

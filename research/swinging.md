@@ -64,6 +64,10 @@ daily-anchored move and has never been measured either.
 
 ## The sweep, and the one constant that decided everything
 
+> Read with the section after it. Everything here is measured against the
+> **confluence-zone** box, which the next section replaces - and one of the two
+> conclusions below does not survive that.
+
 Run 2026-09-07: the three convicted constants swept together inside a single
 replay, since rebuilding levels is the expensive half and `consider` is
 arithmetic. Eight cells, candle required, net of the spread.
@@ -96,6 +100,9 @@ of what the stop is worth and at the cost of seven trades in sixty-eight. Taken
 on the arithmetic - entering a fifth of the way in spends a fifth of the target
 before the trade starts - rather than on this table alone.
 
+**This is the conclusion that did not survive.** The next section replaces the
+box these fractions are fractions *of*, and 0.20 then wins at every setting.
+
 `trail_vol` 6.0 was worse than 4.0 in three of four pairs. A null, recorded so
 it is not rediscovered: the trail is not what was costing this strategy money.
 
@@ -110,6 +117,83 @@ What is distinguishable is the *difference* between the two stop settings,
 because it is a paired comparison over nearly the same calls on the same bars:
 +0.214R a trade, in the same direction in all four pairs. That is the finding.
 The profit is not.
+
+## Origin to origin, which turned out to be the whole strategy
+
+Run 2026-09-07, after the sweep above and prompted by looking at a published
+box: `usdcad 1.3493 .. 1.3518`. Twenty-five pips is not a swing range.
+
+The walls were **confluence zones** - prices several timeframes had drawn a
+level at. An origin is a different object: the price a violent move *began*
+from, so the interest that stopped the last advance is still resting there.
+Measured over 4,117 published calls, in bps of price so the two are comparable
+however each was scaled:
+
+| interval | n | confluence box | origin box | ratio |
+| --- | --- | --- | --- | --- |
+| 1m | 1,739 | 563.0bps | 22.7bps | 24.8x |
+| 5m | 1,087 | 509.1bps | 33.3bps | 15.3x |
+| 15m | 348 | 353.0bps | 63.4bps | 5.6x |
+| 1h | 59 | 290.6bps | 56.8bps | 5.1x |
+| **4h** | 20 | **385.1bps** | **70.9bps** | **5.4x** |
+
+At the anchor the confluence box is **385bps - 3.85% of price**. A trade held
+for twenty-four hours does not traverse that, so its far wall was not a target;
+it was open air with a price on it, and `range_position` inside it was a
+reading about a range that would never be crossed. The origin box at 71bps is
+about a day's range on a major, which is the size the hold implies.
+
+### What it did to the strategy
+
+The same eight-cell sweep, candle required, net of the spread:
+
+| at_bound | stop | trail | n | net R | mean | win |
+| --- | --- | --- | --- | --- | --- | --- |
+| **0.20** | **1.0** | **4** | **95** | **+28.36** | **+0.299** | **49.5%** |
+| 0.20 | 1.0 | 6 | 95 | +24.71 | +0.260 | 45.3% |
+| 0.10 | 1.0 | 6 | 83 | +20.21 | +0.244 | 45.8% |
+| 0.10 | 1.0 | 4 | 83 | +18.65 | +0.225 | 49.4% |
+| 0.20 | 1.5 | 4 | 93 | +18.11 | +0.195 | 51.6% |
+| 0.20 | 1.5 | 6 | 93 | +13.06 | +0.140 | 46.2% |
+| 0.10 | 1.5 | 4 | 81 | +9.94 | +0.123 | 51.9% |
+| 0.10 | 1.5 | 6 | 81 | +9.40 | +0.116 | 46.9% |
+
+**Every cell is profitable**, against four of eight before, and the best cell
+goes from +0.054R to **+0.299R a trade over 95 trades**. The win rate moves
+from 38.2% to 49.5%: the target is *nearer* now - +1.10R against +1.68R - and
+it is reached 35 times in 95 rather than 16 in 68. That is what a reachable
+target looks like.
+
+The 1.0 stop survives the change, winning in all four pairs again. The trail is
+mixed and stays at 4.0.
+
+### And `at_bound` reversed, which is the lesson
+
+The previous sweep preferred **0.10** at every stop and trail setting. This one
+prefers **0.20** at every one of them. Nothing about the bound changed - the
+box did, by a factor of five - and a tenth of a 71bps box is not the same
+requirement as a tenth of a 385bps one.
+
+So the first sweep was measuring **the container, not the parameter**. That is
+worth stating as a rule rather than an anecdote: a constant expressed as a
+fraction of something else is only meaningful while that something else holds
+still, and this one was fitted three commits before the thing it divides by was
+replaced. `stop_multiple`, which is a fraction of the level's own volatility
+rather than of the box, survived the change untouched.
+
+### What this is, and is not
+
++0.299R over 95 trades with an R spread near 1.0 is a standard error of about
+**0.10**, so this is the first number in the whole exercise that separates from
+zero. Two honest qualifications:
+
+* The eight cells are in-sample. The **structural** change is not - drawing the
+  box from origins was decided on the 385-vs-71bps measurement above, before
+  any of these trades were scored, and it lifted all eight cells rather than
+  one.
+* Everything in [what this run cannot see](#what-this-run-cannot-see) still
+  applies, in particular that the momentum half of the confirmation gate is
+  tick-fed and unreachable from bars.
 
 ## The spread
 

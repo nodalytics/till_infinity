@@ -373,18 +373,30 @@ def test_a_zone_too_small_to_be_a_wall_is_still_refused():
     assert within(zones, "4h", placed_by="4h") == []
 
 
-def test_the_anchored_range_uses_both_ends():
-    """What `swing-level` actually gets: the daily level above is dropped for
-    standing alone, and the one below is kept because the 4h agrees."""
-    from till_infinity.structures.drawing.level_range import anchored
+def test_the_swing_box_is_drawn_between_origins():
+    """The wall a swing aims at has to be a price somebody defended. A
+    confluence zone is a price several timeframes drew a level at, which is a
+    different claim - and measured at 4h it gives a box 385bps wide against
+    the origin box's 71bps, five times too wide for a day-long trade."""
+    from till_infinity.structures.drawing.level_range import between_origins
 
-    zones = [
-        _Zoned(90.0, "daily", "4h"),  # kept - the 4h places it
-        _Zoned(120.0, "daily", "daily"),  # dropped - context only
-        _Zoned(140.0, "4h", "1h"),
-    ]
+    got = between_origins(1.3400, 1.3600, 1.3450, 0.0010, feed="usdcad")
 
-    got = anchored(zones, price=100.0, unit=1.0, feed="f")
+    assert got.bounded
+    assert (got.lower.price, got.upper.price) == (1.3400, 1.3600)
+    assert got.room_up_vol == pytest.approx(15.0)
+    assert got.room_down_vol == pytest.approx(5.0)
+    assert got.position == pytest.approx(0.25)
 
-    assert got.lower.price == 90.0
-    assert got.upper.price == 140.0
+
+def test_an_origin_missing_on_one_side_is_open_air():
+    """Not a distant wall, and the difference has to survive into the features:
+    a zero would claim the ceiling is at the current price."""
+    from till_infinity.structures.drawing.level_range import between_origins
+
+    got = between_origins(None, 1.36, 1.345, 0.001, feed="x")
+
+    assert got.bounded is False
+    assert got.room_down_vol is None
+    assert got.room_up_vol == pytest.approx(15.0)
+    assert "swing_room_down_vol" not in got.features(prefix="swing_")

@@ -571,10 +571,17 @@ price. The strategy had never traded once, so nothing here is being replaced -
 there is no measured behaviour to preserve, and every number below is a
 reasoned choice rather than a fitted one.
 
-**1. Draw the box.** The range comes from 4h - significant at 4h or above,
-placed at 4h or below. The daily and the week are context: a box they draw
-takes weeks to cross, and a trade held for a day cannot reach the far side of
-it. See [structures.md](structures.md#level-ranges-and-which-wall-gets-reached-first).
+**1. Draw the box, origin to origin.** The walls are the two nearest
+**origins** on 4h - the prices violent moves began from, where the interest
+that stopped the last advance is still resting - taken at their near edges.
+
+They used to be confluence zones, and that was the single largest thing wrong
+with this strategy. A zone is a price several timeframes drew a level at, which
+is a weaker claim than a price somebody defended, and the boxes it gives are
+the wrong size: at 4h, **385bps against the origin box's 71bps** over 4,117
+published calls. A 3.85% box is not one a day-long trade moves inside, so its
+far wall was a target price could not reach. See
+[structures.md](structures.md#level-ranges-and-which-wall-gets-reached-first).
 
 **2. Price has to be at a bound.** `at_bound` is 0.20 of the range's height:
 a buy belongs in the bottom fifth and a sell in the top fifth. A trade taken
@@ -622,11 +629,21 @@ half unit made every win smaller and bought nothing - the target pays +1.68R at
 1.0 against +1.21R at 1.5, and the win rate rose rather than fell. The book now
 carries stop 1.0, `at_bound` 0.10, trail 4.0.
 
-That leaves it at +0.054R a trade over 68, which has a standard error near 0.12
-- **no longer losing rather than winning.** The finding is the paired
-difference between the two stops (+0.214R a trade, same direction in all four
-pairs), not the profit. The strategy has still never opened a live trade, and
-the momentum half of part 3 is tick-fed and cannot be replayed from bars.
+Then the box itself changed - origins instead of confluence zones - and
+**every cell of the sweep became profitable**, the best at **+0.299R a trade
+over 95 trades** at a 49.5% win rate. The target is nearer than before, +1.10R
+against +1.68R, and reached 35 times in 95 rather than 16 in 68: that is what a
+reachable target looks like. With a standard error near 0.10 it is the first
+number here that separates from zero.
+
+`at_bound` reversed with it - 0.10 won at every setting against the old box,
+0.20 wins at every setting against the new one - because a tenth of a 71bps box
+is not a tenth of a 385bps one. The first sweep was measuring the container
+rather than the parameter, which is the caution to carry into any constant
+expressed as a fraction of something else.
+
+The strategy has still never opened a live trade, and the momentum half of part
+3 is tick-fed and cannot be replayed from bars.
 
 ## The swing that runs between two origins
 

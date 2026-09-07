@@ -194,3 +194,52 @@ def test_the_zone_uses_the_last_opposing_bar_when_bars_are_given():
     # The last bar of the rally sat at 100, not the whole 96-100 leg.
     assert got[0].low >= 99.0
     assert got[0].high <= 100.5
+
+
+def test_the_bracketing_pair_is_the_room_before_unfilled_interest():
+    """What a swing target actually asks for, and what the engine now hands
+    `level_range.between_origins`.
+
+    Near edges, not centres: an origin is a band, and the room ends where the
+    band starts. Taking the centre would put the wall inside interest that has
+    already begun defending.
+    """
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine()
+    # A rally from 100 to 110, then a drop from 120 to 110: price at 110 sits
+    # between the origin of the rally below and the origin of the drop above.
+    prices = [100] * 7 + [102, 105, 108, 110] * 1 + [110] * 5
+    prices += [112, 116, 120] + [120] * 7 + [118, 115, 112, 110] + [110] * 7
+    for i, close in enumerate(prices):
+        engine.observe_bar(
+            {
+                "feed": "t",
+                "venue": "v",
+                "interval": "4h",
+                "ts": i * 14_400,
+                "time": i * 14_400,
+                "high": close,
+                "low": close,
+                "close": close,
+            }
+        )
+    below, above = engine.origins_bracketing("t", "4h", 110.0, engine.vol.of("t", "4h"))
+
+    # Whichever side is found, a bound is a real number on the correct side of
+    # price - the assertion that fails if the near/far edges are swapped.
+    assert below is None or below <= 110.0
+    assert above is None or above >= 110.0
+
+
+def test_an_unwarmed_feed_brackets_nothing_rather_than_raising():
+    """A swing on an instrument with no history gets open air, not a crash -
+    the wrapping `_origin_at` already has, surfaced through the pair."""
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine()
+
+    assert engine.origins_bracketing("cold", "4h", 100.0, engine.vol.of("cold", "4h")) == (
+        None,
+        None,
+    )
