@@ -285,11 +285,61 @@ Two things that had to be got right and were nearly not:
   call after the deploy would have raised inside the `try` that swallows it,
   and every origin feature would have gone quietly missing.
 
-What is not yet claimed: this makes the refinement *reachable*, and the
-+0.576R still comes from a replay with the whole 1m history to hand. Production
-will refine an origin only when its bar is inside the live 1m window at the
-moment it is first detected, so the realised gain is somewhere between the
-window row and the fine row and only production can say where.
+### And production said where, within the hour
+
+`Origin.refined` was added so the question had an answer, and the structures
+save logs the tally. Three cycles in:
+
+```
+20:08  20 origin(s) kept across 13 series, 0 refined (0%)
+20:13  4786 origin(s) kept across 390 series, 200 refined (4%)
+20:18  6835 origin(s) kept across 553 series, 287 refined (4%)
+```
+
+Persistence works and the refinement fires. Then the breakdown that matters,
+because the swing box takes its walls from **4h**:
+
+| interval | kept | refined | share |
+| --- | --- | --- | --- |
+| 1m | 1,681 | 83 | 5% |
+| 3m | 1,408 | 84 | 6% |
+| 5m | 1,851 | 97 | 5% |
+| 15m | 570 | 13 | 2% |
+| 30m | 195 | 7 | 4% |
+| 1h | 180 | 2 | 1% |
+| 2h | 26 | 0 | 0% |
+| **4h** | **924** | **1** | **0%** |
+
+**One 4h origin in 924.** The 4% is carried almost entirely by 1m, 3m and 5m -
+intervals whose bars are minutes long, so the live 1m window covers them
+trivially and none of which sets a swing wall.
+
+The reason is structural and was in `Origin.settled` all along: an origin does
+not exist until its impulse **breaks structure**, which is `MOVE_BARS` bars
+after the turn. On 4h that is hours to days later, and the 1m window holds
+eight hours - so by the time a 4h origin is first seen, the minutes inside its
+turn bar are long gone. Persisting origins moved the refinement from "computed
+and thrown away" to "computed once and kept", and on 4h there was never a
+moment when it could be computed at all.
+
+So the +0.576R is still out of reach, and the reason has moved rather than
+gone: it is no longer the storage, it is **when the refinement is attempted**.
+
+### What would actually reach it
+
+Capture the fine transition **when the coarse bar closes**, not when an origin
+is detected. Every 4h bar has its 1m minutes available at the moment it closes;
+that is the only moment they are guaranteed to be there, and it is hours or
+days before anything asks whether that bar was an origin.
+
+Concretely: one float per bar on `Series` - the extreme fine close inside it -
+computed on append and carried in the same rolling window as `closes` and
+`highs`. `refine` then reads a stored number instead of scanning a 1m series
+that has moved on. The cost is one float per bar per series; the change is to a
+persisted dataclass, so it needs the schema note the last one got.
+
+That is the experiment this sequence has been walking toward, and it is now the
+only thing between the measured +0.23R a trade and having it.
 
 ## The spread
 
