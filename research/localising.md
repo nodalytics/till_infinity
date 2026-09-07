@@ -228,10 +228,72 @@ interaction twice. Fine-resolution formation is therefore not a small change to
 a threshold; it is a change to the shape of the pipeline, and the double-count
 trap is the thing that will bite.
 
+## Re-deriving the band from the finer estimate
+
+The section above said adopting F should not be expected to move a trading
+number while the *band* is still the coarse bar's range. This is that step:
+`zone_of` applied to the **1m bar at the refined transition** rather than to
+the quarter hour containing it - the same definition one resolution down, the
+interest placed in the minute the move began rather than in the fifteen
+around it.
+
+Scored the way section 12 asks: when price returns, does it turn from inside
+the band. A return resolves when price leaves by one volatility unit either
+way, with the barrier that contradicts the origin checked first. The control
+is a band of the same width at a price drawn uniformly over the same range,
+which is what says whether a turn rate is about the origin or about the width.
+
+| band | width | returns | held |
+| --- | --- | --- | --- |
+| coarse (today) | 1.49v | 384 | **71.1%** |
+| fine-derived | **0.57v** | 364 | 63.5% |
+| null, fine width, random placement | 0.57v | 251 | 51.0% |
+
+**Both bands are real** - each beats a band of its own width placed at random,
+which is the thing that had to be true before anything else mattered.
+
+**And the difference between them is not there.** Paired per instrument, coarse
+leads by **+3.26pp against a standard error of 4.27**, winning on 5 of 8. The
+pooled 7.6-point gap is btc, eth and eurusd carrying the return count, not a
+property of the bands. usdjpy, spx500 and us100 go the other way.
+
+### Which is the argument for the narrow band, not against it
+
+The finding is not "the fine band holds better". It is that a band **2.6 times
+narrower catches 94.8% of the same returns and holds about as often**.
+
+That is the money argument the localization work had been missing. The stop on
+an origin trade sits beyond the band, so band width is stop width: the same
+evidence, at a third of the risk. A 63.5% hold at 0.57v is a better trade than
+a 71.1% hold at 1.49v unless the target scales with the band, and it does not -
+the target is the opposite origin.
+
+**Stated as a hypothesis, because that is what it is.** The turn rates above
+are not a backtest, and the arithmetic that turns them into an edge assumes a
+stop just beyond the band and a target that does not move. `swingtest.py` is
+the thing that would settle it, and the swing box is drawn from exactly these
+origins, so the experiment is available: re-run the eight-cell sweep with the
+fine-derived band and see whether +0.299R moves.
+
+That is the next thing to run, and it is the first time in this sequence that
+a localization result has had a path to a trading number.
+
 ## What would come next
 
 The harness is the deliverable as much as the number. `gridtest.py` gives the
-paired, density-matched comparison section 13 asks for, and any candidate
-estimator drops into `detect()` and gets the same table. The number to beat is
-**0.23v**, on btc, eth and gold where there is most room, and the honest prior
-after the correction above is that there is not much room at all.
+paired, density-matched comparison section 13 asks for, `estimators.py` ranks
+the candidates on the same events, and `bands.py` scores a band by what price
+does when it returns. Any new estimator or band rule drops into them.
+
+In order:
+
+1. **Re-run the swing sweep with the fine-derived band.** The only step here
+   with a direct line to money, and the harness for it already exists.
+2. **The intervals `refine` cannot serve.** The `Series` window is 500 bars, so
+   a 1m series covers about eight hours and cannot reach a 4h origin. Either
+   the window grows for one series or coarse origins keep the coarse band, and
+   that is a measurement rather than a preference.
+3. **Asymmetry.** Both bands here are symmetric about the transition. The
+   repository already keeps per-side statistics everywhere else, and the
+   specification's section 10 asks whether localization changes the wick-depth
+   distribution. It should, and nobody has looked.
