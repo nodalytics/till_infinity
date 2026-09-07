@@ -15,6 +15,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..shared.env import number as _float
+from ..shared.env import whole as _int
 from . import providers
 
 DEFAULT_MODEL = "claude-opus-5"
@@ -62,20 +64,6 @@ DEFAULT_TIMEOUT = 120.0
 #: naming one instrument now asks for 12 calls rather than 32 - and most
 #: windows name one.
 DEFAULT_TOOL_CALLS = 48
-
-
-def _float(name: str, fallback: float) -> float:
-    try:
-        return float(os.environ[name])
-    except (KeyError, ValueError):
-        return fallback
-
-
-def _int(name: str, fallback: int) -> int:
-    try:
-        return int(os.environ[name])
-    except (KeyError, ValueError):
-        return fallback
 
 
 @dataclass(slots=True)

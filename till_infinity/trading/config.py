@@ -27,6 +27,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..prices.models import slugify
+from ..shared.env import env as _env
+from ..shared.env import flag as _flag
+from ..shared.env import number as _float
+from ..shared.env import whole as _int
 from ..structures.drawing import confluence
 
 #: Broker names for each instrument the price side tracks, best first.
@@ -351,29 +355,6 @@ def ours(base: int, magic: int) -> bool:
     return base <= magic < base + MAGIC_BAND
 
 
-def _env(name: str) -> str:
-    return (os.environ.get(name) or "").strip()
-
-
-def _flag(name: str, default: str = "0") -> bool:
-    raw = (os.environ.get(name, default) or "").strip().lower()
-    return raw not in ("", "0", "false", "no", "off")
-
-
-def _float(name: str, fallback: float) -> float:
-    try:
-        return float(os.environ[name])
-    except (KeyError, ValueError):
-        return fallback
-
-
-def _int(name: str, fallback: int) -> int:
-    try:
-        return int(os.environ[name])
-    except (KeyError, ValueError):
-        return fallback
-
-
 def _overshoot(raw: str) -> tuple[tuple[str, float], ...]:
     """`feed=multiple` pairs, as in `boom_500_index=1.25,boom_1000_index=1.2`.
 
@@ -391,6 +372,13 @@ def _overshoot(raw: str) -> tuple[tuple[str, float], ...]:
 
 
 def _names(raw: str) -> tuple[str, ...]:
+    """A comma list from a raw **value**, lower-cased.
+
+    Deliberately not `shared.env.names`, which takes a variable *name* and
+    does not lower-case. Symbols and strategy names are matched case-blind
+    here and the shared reader is used where the caller has the variable
+    rather than its value.
+    """
     return tuple(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
@@ -1501,7 +1489,7 @@ class Settings:
             min_probability=_float("TRADING_MIN_PROBABILITY", 0.58),
             min_base_rate=_float("TRADING_MIN_BASE_RATE", 0.0),
             probability_percentile=_float("TRADING_PROBABILITY_PERCENTILE", 0.0),
-            evaluate_all=_flag("TRADING_EVALUATE_ALL", "0"),
+            evaluate_all=_flag("TRADING_EVALUATE_ALL", False),
             consensus_min=_int("TRADING_CONSENSUS_MIN", 2),
             thesis_stop_vol=_float("TRADING_THESIS_STOP_VOL", 4.0),
             min_edge=_float("TRADING_MIN_EDGE", 0.15),
@@ -1544,7 +1532,7 @@ class Settings:
             fade_buffer_vol=_float("TRADING_FADE_BUFFER_VOL", 0.25),
             council_quorum=_int("TRADING_COUNCIL_QUORUM", 2),
             council_min_conviction=_float("TRADING_COUNCIL_MIN_CONVICTION", 0.55),
-            council_discuss=_flag("TRADING_COUNCIL_DISCUSS", "1"),
+            council_discuss=_flag("TRADING_COUNCIL_DISCUSS", True),
             council_timeout=_float("TRADING_COUNCIL_TIMEOUT_S", 25.0),
             council_daily_calls=_int("TRADING_COUNCIL_DAILY_CALLS", 400),
             break_even_at=_float("TRADING_BREAK_EVEN_AT", 0.0),
@@ -1570,7 +1558,7 @@ class Settings:
             trend_sizing=_float("TRADING_TREND_SIZING", 0.0),
             max_against_vol=_float("TRADING_MAX_AGAINST_VOL", 0.0),
             require_turn_vol=_float("TRADING_REQUIRE_TURN_VOL", 0.0),
-            require_candle=_flag("TRADING_REQUIRE_CANDLE", "0"),
+            require_candle=_flag("TRADING_REQUIRE_CANDLE", False),
             candle_tolerance_vol=_float("TRADING_CANDLE_TOLERANCE_VOL", 0.25),
             stops_level_margin=_float("TRADING_STOPS_LEVEL_MARGIN", 1.25),
             scale_out_at=_float("TRADING_SCALE_OUT_AT", 0.0),
@@ -1584,11 +1572,11 @@ class Settings:
             approach_min_reach=_float("TRADING_APPROACH_MIN_REACH", 0.20),
             state_dir=Path(os.environ.get("TRADING_DIR") or DEFAULT_TRADING_DIR),
             heartbeat=_float("TRADING_HEARTBEAT_S", 60.0),
-            notify=_flag("TRADING_NOTIFY", "1"),
-            notify_fills=_flag("TRADING_NOTIFY_FILLS", "1"),
-            notify_closes=_flag("TRADING_NOTIFY_CLOSES", "1"),
-            notify_rests=_flag("TRADING_NOTIFY_RESTS", "1"),
-            notify_declines=_flag("TRADING_NOTIFY_DECLINES", "0"),
+            notify=_flag("TRADING_NOTIFY", True),
+            notify_fills=_flag("TRADING_NOTIFY_FILLS", True),
+            notify_closes=_flag("TRADING_NOTIFY_CLOSES", True),
+            notify_rests=_flag("TRADING_NOTIFY_RESTS", True),
+            notify_declines=_flag("TRADING_NOTIFY_DECLINES", False),
             paper_equity=_float("TRADING_PAPER_EQUITY", 10_000.0),
             paper_spread_bps=_float("TRADING_PAPER_SPREAD_BPS", 2.0),
         )

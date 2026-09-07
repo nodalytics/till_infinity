@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..logging import get_logger
+from ..shared import env as shared_env
 from .models import Symbol, slugify
 
 log = get_logger(__name__)
@@ -21,6 +22,29 @@ YAHOO = "yahoo"
 #: see `BrokerQuotes` and `broker_feeds`.
 BROKER = "broker"
 CCXT = "ccxt"
+
+
+# Argument order kept as it was - `(default, name)` here against `(name,
+# default)` in the shared readers - because the divergence being fixed is the
+# **failure semantics**, not the calling convention. Fifty-three call sites
+# would have to move to gain nothing but consistency, and each is a chance to
+# transpose a pair of arguments that type-checks either way.
+def _env(name: str) -> str | None:
+    """The raw value, or None when unset. `None` rather than `""` because
+    several callers here distinguish "not configured" from "configured empty"."""
+    return shared_env.env(name) or None
+
+
+def _env_int(default: int, name: str) -> int:
+    return shared_env.whole(name, default)
+
+
+def _env_float(default: float, name: str) -> float:
+    return shared_env.number(name, default)
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    return shared_env.flag(name, default)
 
 
 @dataclass(frozen=True, slots=True)
@@ -907,27 +931,6 @@ def _merge(left: Feed, right: Feed) -> Feed:
         combined.extend(s for s in syms if s not in combined)
         symbols[source] = tuple(combined)
     return Feed(name=left.name, symbols=symbols)
-
-
-def _env(name: str) -> str | None:
-    return os.environ.get(name) or None
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    raw = (os.environ.get(name) or "").strip().lower()
-    if not raw:
-        return default
-    return raw not in ("0", "false", "no", "off")
-
-
-def _env_int(default: int, name: str) -> int:
-    raw = _env(name)
-    return int(raw) if raw else default
-
-
-def _env_float(default: float, name: str) -> float:
-    raw = _env(name)
-    return float(raw) if raw else default
 
 
 DEFAULT_DATA_DIR = ".data/prices"

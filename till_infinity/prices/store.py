@@ -18,6 +18,7 @@ from typing import Self
 
 import orjson
 
+from ..shared import db as shared_db
 from .config import FEEDS
 from .models import (
     Bar,
@@ -164,10 +165,7 @@ class SqliteStore(Store):
 
     def _connect(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=10000")
+        conn = shared_db.connect(self.path)
         conn.executescript(SCHEMA)
         conn.commit()
         self._conn = conn

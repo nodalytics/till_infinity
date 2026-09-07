@@ -5,9 +5,10 @@ Env vars are read with a ``NEWS_`` prefix.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from ..shared import env as shared_env
 
 #: RSS feeds. Macro/FX first, then crypto - the mix the gold/BTC/FX book needs.
 RSS_FEEDS: dict[str, str] = {
@@ -64,18 +65,23 @@ IMF_MONTHS_BACK = 18
 DEFAULT_SOURCES: tuple[str, ...] = ("rss", "forexfactory", "tradingview", "headlines", "imf")
 
 
+# Argument order kept as it was - `(default, name)` here against `(name,
+# default)` in the shared readers - because the divergence being fixed is the
+# **failure semantics**, not the calling convention. Fifty-three call sites
+# would have to move to gain nothing but consistency, and each is a chance to
+# transpose a pair of arguments that type-checks either way.
 def _env(name: str) -> str | None:
-    return os.environ.get(name) or None
+    """The raw value, or None when unset. `None` rather than `""` because
+    several callers here distinguish "not configured" from "configured empty"."""
+    return shared_env.env(name) or None
 
 
 def _env_int(default: int, name: str) -> int:
-    raw = _env(name)
-    return int(raw) if raw else default
+    return shared_env.whole(name, default)
 
 
 def _env_float(default: float, name: str) -> float:
-    raw = _env(name)
-    return float(raw) if raw else default
+    return shared_env.number(name, default)
 
 
 @dataclass(slots=True)

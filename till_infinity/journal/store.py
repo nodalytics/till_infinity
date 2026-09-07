@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from ..logging import get_logger
+from ..shared import db as shared_db
 from .models import Entry, Kind
 
 log = get_logger(__name__)
@@ -80,11 +81,7 @@ class Journal:
 
     def _connect(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=10000")
+        conn = shared_db.connect(self.path)
         conn.executescript(SCHEMA)
         conn.commit()
         self._conn = conn

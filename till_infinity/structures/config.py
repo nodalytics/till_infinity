@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..shared.env import number as _float
+from ..shared.env import whole as _int
 from .state import Restorable
 
 DEFAULT_STATE_DIR = ".data/structures"
@@ -45,20 +47,6 @@ DEFAULT_DIRECT_DEV_BPS = 100.0
 #: One signal per (shape, feed, venue) per this many seconds. A venue that
 #: stays stale for an hour is one situation, not three thousand.
 DEFAULT_COOLDOWN = 900.0
-
-
-def _float(name: str, fallback: float) -> float:
-    try:
-        return float(os.environ[name])
-    except (KeyError, ValueError):
-        return fallback
-
-
-def _int(name: str, fallback: int) -> int:
-    try:
-        return int(os.environ[name])
-    except (KeyError, ValueError):
-        return fallback
 
 
 @dataclass(slots=True)
