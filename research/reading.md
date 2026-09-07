@@ -318,6 +318,59 @@ from the premium, which is computed from price, so a model handed funding may
 be handed a lagged transform of what it already sees. Predictable is not the
 same as *informative about something else*.
 
+## Game theory, and the question this desk never asks
+
+Noted 2026-09-07, unread rather than summarised - listed because the question
+it poses is one nothing here has an answer to.
+
+| | |
+|---|---|
+| **GTO, the poker origin** | Bowling, Burch, Johanson & Tammelin, *Heads-up limit hold'em poker is solved*, Science 347 (2015) |
+| **The economics** | Osborne & Rubinstein, *A Course in Game Theory* (MIT, 1994) - chapters 2 and 3 for minimax and mixed strategies |
+| **Adversarial market models** | the market-making literature on adverse selection, Glosten & Milgrom (1985) being the standard entry |
+
+**The idea, stated so it can be argued with.** A game-theory-optimal strategy
+cannot be exploited whatever the opponent does; an exploitative one beats a
+particular opponent and loses to a different one. **Everything on this desk is
+exploitative.** `swing-level` bets a wall holds, `runner` bets a move extends,
+`sweep-aware` bets a break traps - each a claim about what the other side will
+do, fitted to a period in which they did it. When the population changes, the
+only signal is the equity curve.
+
+**What transfers.** Two things, and one of them is cheap.
+
+*Mixed strategies.* Every gate here is deterministic - the same signal always
+produces the same decision - which is precisely the property an adversary
+needs. Randomising between two acceptable actions at a measured frequency is
+the standard defence, costs almost nothing to implement, and is directly
+testable: the replay harness can run a mixed policy against a pure one on the
+same signals.
+
+*Minimax as a research tool.* [null.md](null.md) already scores every feature
+against a generated process with no structure. An adversarial process built to
+defeat a *specific* gate is the stronger version of the same discipline, and it
+answers a question the null cannot: not "is this measuring noise" but "what
+would it take to make this wrong on purpose".
+
+**What does not transfer, and it is most of it.** Poker is a finite game with
+known rules, known payoffs and an opponent who is also playing it. A market has
+no defined action set, no payoff matrix, and the "opponent" is a population
+whose composition changes. Solving heads-up limit hold'em took an algorithm run
+to convergence on a game whose entire tree is enumerable; nothing about this
+problem is.
+
+The specific trap is that GTO language makes a strategy *sound* robust without
+making it so. Calling a fixed threshold "unexploitable" because nobody has
+exploited it yet is the same error as reading 84-88% accuracy as skill - it is
+[the reward hacking above](#the-thing-they-share-and-why-it-is-the-reason-to-read-them),
+in a new vocabulary.
+
+**Where it would start.** Traps are **64% of all attempts to break a level**
+here and 84% at 1h - a false breakout is mechanically the obvious trade losing,
+which is what an exploitative strategy looks like from the other side. That is
+the one place on this book where an adversarial reading has a number behind it
+already. See [docs/todo.md](../docs/todo.md).
+
 ## Where to read next
 
 Each of these has a literature behind it that is closer to this problem than the

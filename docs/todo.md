@@ -105,6 +105,47 @@ the ledger of what was done, refused and left.
 with a spread and no depth, so they are not "later" - they are unreachable
 without a different data source.
 
+## Game-theory-optimal play, applied to a desk - noted 2026-09-07
+
+Not started. The idea transfers from poker, where GTO means a strategy that
+cannot be exploited whatever the opponent does, as against an *exploitative*
+one that beats a particular opponent and loses to a different one.
+
+**Why it is more than an analogy here.** Everything this desk does is
+exploitative in that sense. `swing-level` bets that a wall holds, `runner`
+bets a move extends, `sweep-aware` bets a break traps - each is a claim about
+what the other side will do, fitted to a period in which they did it. When the
+population changes, the strategy does not know, and the only signal is the
+equity curve going down. GTO's contribution is a different question: **what is
+the worst an adversary could do to this, and what does the unexploitable
+version cost?**
+
+Three places it becomes concrete rather than philosophical:
+
+1. **The trap rate is the strongest case.** Traps are 64% of all attempts to
+   break a level here and 84% at 1h. A false breakout is, mechanically, the
+   obvious trade losing - which is what an exploitative strategy looks like
+   from the other side of the table. A GTO reading asks what mix of taking and
+   fading the break cannot be beaten, rather than which one is winning now.
+2. **Mixed strategies over a single answer.** Every gate here is deterministic:
+   the same signal always produces the same decision, which is exactly the
+   property an adversary needs. Randomising between two acceptable actions at a
+   measured frequency is the standard defence and is cheap to implement.
+3. **The minimax check as a research tool.** For any gate, what is the
+   worst-case market that could be constructed against it? `research/null.md`
+   already runs a generated process with no structure; an adversarial process
+   built *to defeat a specific gate* is the stronger version of the same
+   discipline.
+
+**What would have to be true first.** GTO needs a defined game - players,
+actions, payoffs - and this desk has no opponent model at all. Inventing one
+would be inventing the thing being solved for, which is how a plausible frame
+becomes an expensive detour. So the honest first step is small: pick **one**
+gate, define the adversary as "a market that knows this gate's threshold",
+and measure what it costs. If that is not answerable the rest is decoration.
+
+See [research/reading.md](../research/reading.md) for what to read.
+
 ## Options flow, as positioning that is observed rather than inferred - noted 2026-09-07
 
 Not started. Recorded now because it is the third entry on a list this desk
