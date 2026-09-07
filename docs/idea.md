@@ -7,7 +7,7 @@
 > README's opening is the short version; this document is the reasoning behind
 > each choice.
 
-## A valuation is not a system, and this is the second reason for everything here
+## First, what a valuation is not
 
 The clearest illustration is not one of ours. VWAP - the price at which the
 day's volume actually changed hands - is as good an estimate of fair value as
@@ -44,7 +44,10 @@ which is what [research/inert.md](../research/inert.md) is: a list of things
 computed correctly and read by nothing, kept because a fix that ships and
 changes no number is the failure mode this desk is most prone to.
 
-## Fair value, and why the turn is a consequence rather than a definition
+Which leaves the question that has to be answered before any of that machinery
+means anything: **what is the valuation?**
+
+## The valuation, and why the turn is a consequence of it rather than a definition
 
 Price does not stop at a level because the line is special. It stops because
 enough of the market agrees, for now, that the instrument is worth about that
@@ -111,7 +114,7 @@ disagreement that stopped price there has never been spent; each retest eats
 into it. A level's state is tracked for exactly that reason, and "fresh" is a
 claim about how much of the original imbalance is still sitting there.
 
-### Fair value is a sequence, not a number
+### Which makes it a sequence rather than a number
 
 The awkward consequence, and it is better faced than smoothed over: if every
 sustained move creates an origin, a trending instrument is manufacturing new
@@ -137,7 +140,7 @@ instrument.** It is the current state of a disagreement, which is why it moves,
 why it can be wrong, and why it has to be re-estimated from every touch rather
 than solved once.
 
-### Whether anything sits underneath it
+### And leaves open whether anything sits underneath it
 
 For a share there is something: the cash it will produce. For a currency pair
 there is less but not nothing - rate differentials, trade flows, a central bank
@@ -167,7 +170,7 @@ of what happened there before. A self-fulfilling belief is still a belief you
 can measure, and a measurable belief is tradeable whether or not it is *about*
 anything.
 
-### The two measurements that keep this from being a story
+### Two measurements keep this from being a story
 
 A claim this loose could absorb any evidence, so it is worth naming what the
 data has already said, both ways.
@@ -198,7 +201,7 @@ opinions have changed before, and are more likely to change again. Everything
 downstream - the per-side statistics, the base rates, the refusal to forecast -
 follows from taking that seriously rather than from preferring it.
 
-### What would overturn it
+### And one would overturn it
 
 If levels on synthetics behaved measurably worse than levels on instruments
 with an underlying, once cost and volatility were accounted for, the argument
@@ -207,7 +210,9 @@ all. That is checkable with what is already stored, and it has not been checked
 - `research/catalogue.md` compares what they cost to trade, not what their
 levels are worth. It is the most load-bearing untested claim in this document.
 
-## Not forecasting is a design constraint, not modesty
+## Once there is a valuation the side is arithmetic, which is why nothing here forecasts
+
+That is the estimate. Everything from here is what follows from having one.
 
 The system never answers "which way will price go". It answers "what is this
 worth, and where is it trading" - and the side follows arithmetically. That is
@@ -228,7 +233,10 @@ and in others. That is not a failure of the observations. It is a failure of
 the question being asked of them. The same observations, read as evidence about
 where fair value sits and how firmly it is held, have somewhere to go.
 
-## Volatility is half the valuation, not the unit it is quoted in
+## An estimate needs a width, and volatility is the width
+
+*How firmly* is the other half of the estimate, and it is the half that gets
+mistaken for a formatting choice.
 
 Everything here is measured in volatility units, and it is easy to read that as
 a normalisation convenience. It is not. Fair value is an estimate of a quantity
@@ -259,9 +267,10 @@ four times larger than it was, by a factor that differed per instrument. It
 changed which levels existed, which arrivals counted as touches, and which
 touches resolved as what - the labels, not just the covariates.
 
-## What is measured and what is assumed
+## What the record supports, and what it has already refused
 
-The thesis has two halves and they have not fared equally.
+So much for the argument. The thesis has two halves and they have not fared
+equally, and the half that failed is the one most systems are built on.
 
 **Supported.** A level's own record predicts its next turn. Bucketed by hold
 rate on the arriving side, resolutions separate 59.4% to 92.2% across four
@@ -282,7 +291,7 @@ place with statistics attached, not because price is pulled toward it. A design
 that assumed attraction would be betting on the one part that was tested and
 failed.
 
-## Which is also two ways to trade the same estimate
+## Which leaves two ways to trade one estimate
 
 - **React at fair value.** Price arrives, the level's record says what usually
   happens next, and the trade is taken there with the stop beyond it. This is
@@ -296,13 +305,15 @@ failed.
 
 See [trading.md](trading.md) for how each is implemented.
 
+## And two kinds of evidence, which is where the five parts come from
+
 A directional call is only worth making when the price structure and the
 fundamentals point the same way. Most setups see one or the other. This one is
 built to see both at once, and to write down why it thought so at the time.
 
 Five things follow from that, and they are the five parts of the project.
 
-## 1. Structure needs more than one view of the price
+### 1. Structure needs more than one view of the price
 
 The same instrument is quoted by six brokers at once, so the *differences* carry
 information a single feed cannot: which venue leads, where quotes diverge, when
@@ -316,7 +327,7 @@ disagreement. Every anomaly feature is therefore a comparison against the median
 of the *other* venues, never against a constant, and never against a group the
 venue is itself part of.
 
-## 2. Finding the structure is arithmetic, not judgement
+### 2. Finding the structure is arithmetic, not judgement
 
 `structures` measures every venue against the others and learns, online, what
 normal looks like for each - "unusual" only means anything relative to
@@ -355,13 +366,13 @@ for that instrument on that timeframe. It is what lets gold and EURUSD, 3m and
 1w, be compared without per-instrument tuning - and what makes a six-pip move in
 a dead session read as the large move it is.
 
-## 3. Fundamentals separate a structure from a coincidence
+### 3. Fundamentals separate a structure from a coincidence
 
 A move with a release behind it is a different animal from the same move on a
 quiet calendar. `news` keeps the economic calendar, the headlines and central
 bank reserves alongside the prices, on the same clock.
 
-## 4. Judgement has to happen where both are visible
+### 4. Judgement has to happen where both are visible
 
 `agents` puts a model over the stored data with read-only tools, and tells it
 plainly that "nothing is happening" is a correct answer. Most windows are.
@@ -371,7 +382,7 @@ collectors, the levels model and the notifications all run without a credential,
 because a system whose always-on half inherits the availability of its
 occasionally-absent half is not always-on.
 
-## 5. Every call gets written down with its reasoning
+### 5. Every call gets written down with its reasoning
 
 `journal` records what was decided, *why at that moment*, the state it was
 decided from, and what happened afterwards. Prices can be recomputed forever;
@@ -386,7 +397,7 @@ before the outcome was known.
 
 ## What is not claimed
 
-No performance figures. Enough outcomes have to resolve first, and the honest
+Which brings it back to where this started. No performance figures. Enough outcomes have to resolve first, and the honest
 number of them is small - the counter deliberately restarts whenever a
 measurement bug is fixed, because examples recorded under a broken ruler
 describe a model that no longer exists.
