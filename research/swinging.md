@@ -387,8 +387,45 @@ the **last two** bars by timestamp rather than the end of the deque: the one
 before the end, which has certainly closed, and the end itself, which will
 fail until it has.
 
-Whether it works is still a production question, and the same tally answers
-it: the share refined **at 4h**, which was 1 in 1,315.
+### Verified without waiting for a boundary
+
+A 4h bar completes every four hours, so watching the refined share for the
+answer costs most of a day. The question can be asked directly instead: take
+the bar the next one has already closed and ask `extremes_in` whether the live
+1m series covers it - exactly what the capture will do at the boundary, with
+no clock in the way.
+
+| | 1h | 2h | 4h |
+| --- | --- | --- | --- |
+| would capture now | 37 | 36 | **33** |
+| not covered | 264 | 256 | 266 |
+| no 1m series at all | 19 | 18 | 19 |
+
+**The chain works.** A tenth of 4h series would capture on the next boundary,
+which is the first time any of this has been true at 4h.
+
+And the binding constraint is now named rather than suspected. Every "not
+covered" carries its reason:
+
+```
+us100  4h  1m covers 5.2h, needs 4.0h   <- would capture
+spx500 4h  1m covers 3.5h, needs 4.0h
+eurusd 4h  1m covers 2.8h, needs 4.0h
+btc    4h  1m covers 2.8h, needs 4.0h
+```
+
+The 1m window is 500 bars - 8.3 hours when full - and it is not full, because
+the process restarted. As it fills, 4h coverage should rise from a tenth
+toward most feeds. That is a prediction with a date on it rather than a hope,
+and the same query answers it.
+
+What will never capture is 1d and 1w: a day needs 24 hours of minutes against
+a window holding eight. Nothing that sets a swing wall is drawn there, so it
+is a limit rather than a problem - but it should be stated before someone
+reads a zero as a fault.
+
+The refined share **at 4h** remains the number that closes this out, and it was
+1 in 1,315.
 
 ## The spread
 
