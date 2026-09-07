@@ -60,29 +60,39 @@ telling them apart.
 
 ## What is left of the origin-localization specification - 2026-09-07
 
-Most of it is answered. `research/localising.md` has the measurements; this is
-the ledger of what was done, refused and left.
+Only what is outstanding. What was done or refused is recorded in
+[research/localising.md](../research/localising.md) with the numbers, which is
+where a finished thing belongs - a todo that lists its own completed items
+stops being a list of what to do.
 
-**Done.**
+**The estimators the comparison never ran.** §5 names eight candidates and
+`research/localising.md` reported "the estimators, paired on the same events"
+having run **three** - A, D and F. That was an overstatement of what had been
+measured. Still unrun:
 
-* §22.12, the grid falsification - the origin survives it, 2.8x steadier than
-  a matched random book, wander 0.23v inside a band of 1.58v.
-* §5/§13, the estimators, paired on the same events. **F, the fine-resolution
-  transition, wins** - 0.237v to 0.124v - and is implemented as
-  `origins.refine`.
-* §9/§18, the directional body edge. Measured, adds nothing on the axis this
-  data can rank, **rejected** per the decision rule.
-* §15, small testable components: `extremes_in`, `refine`, `Origins.remember`
-  and `Series.note_fine` are separate stages behind one interface.
-* The persistence F needed, and the two bugs watching it found.
+* **B, candle boundary** - the legacy close-to-open representation. Cheap, and
+  the only value is as a second control beside A.
+* **C, body midpoint** - explicitly "include only as a benchmark". Same.
+* **E, run intersection** - locate where the incoming and outgoing runs meet
+  *without* assuming a single candle. This is the one with content: every
+  estimator run so far assumes the turn is inside one bar, and E does not.
+* **G, fine transition → Kalman** - F feeds the existing filter rather than
+  replacing the price outright. F is measured; using it as `z_t` is not.
 
-**Refused, with the number.**
+**H, change-point, is measured and loses.** Run 2026-09-07 on the repository's
+own `Cusum` at four thresholds. Best is 0.205v against F's 0.124v - better than
+the 0.237v baseline, decisively worse than F. The specification predicted this
+in §18 and the measurement agrees with it. Not carried forward.
 
-* §22.2, the origin as a posterior. The band already *is* one and is seven
-  times the localization error, so publishing a separate uncertainty adds a
-  reading nothing can act on. Reopen if the band is ever re-derived.
+**§22.1, Bayesian online change-point detection.** Not attempted. It is the
+principled version of what H did crudely: a posterior over "the regime has
+ended" rather than a threshold crossing, which would give the origin a
+distribution rather than a timestamp. Two things to know before starting - H
+losing to F is evidence about the *family*, not just the threshold, and §22.2
+(the origin as a posterior) was already refused here because the band is seven
+times the localization error. BOCPD would have to argue past both.
 
-**Left, in order.**
+**The rest, in order.**
 
 1. **The intervals `refine` cannot serve.** 1d needs 24 hours of minutes
    against a window holding eight, so it will never capture. Either the 1m
@@ -93,58 +103,24 @@ the ledger of what was done, refused and left.
    specification asks whether localization changes the wick-depth distribution.
    It must - changing the origin changes the measured distance - and nobody has
    looked.
-3. **§22.5, regime-conditional origins.** The grid test already shows the
-   answer varies enormously by instrument (spx500 0.01v, gold 1.21v on the old
-   scale). Splitting by volatility regime rather than by ticker is the version
-   of that question with a chance of transferring.
-4. **§22.3, microstructure-noise-aware detection.** Relevant only once
+3. **§22.5, regime-conditional origins.** The grid test shows the answer varies
+   enormously by instrument. Splitting by volatility regime rather than by
+   ticker is the version with a chance of transferring.
+4. **§22.6, liquidity-aware zone width.** Needs a spread series per instrument,
+   which `prices` has and nothing has joined to the band.
+5. **§22.7, §22.8, §22.9** - run persistence, event-based sampling, multi-scale
+   persistence. All three are variations on "does the answer survive a change
+   of sampling", which §22.12 already answered once in the affirmative. Lower
+   priority for that reason rather than higher.
+6. **§22.11, origin survival analysis.** How long an origin stays relevant.
+   `revisits` already counts the wearing-out and nothing reads it.
+7. **§22.3, microstructure-noise-aware detection.** Relevant only once
    something reads below 1m. Nothing does.
 
-**Not applicable here, and worth saying so.** §22.4 order-flow confirmation and
-§22.10 liquidity around levels both need a book. This desk has a broker feed
-with a spread and no depth, so they are not "later" - they are unreachable
-without a different data source.
-
-## Game-theory-optimal play, applied to a desk - noted 2026-09-07
-
-Not started. The idea transfers from poker, where GTO means a strategy that
-cannot be exploited whatever the opponent does, as against an *exploitative*
-one that beats a particular opponent and loses to a different one.
-
-**Why it is more than an analogy here.** Everything this desk does is
-exploitative in that sense. `swing-level` bets that a wall holds, `runner`
-bets a move extends, `sweep-aware` bets a break traps - each is a claim about
-what the other side will do, fitted to a period in which they did it. When the
-population changes, the strategy does not know, and the only signal is the
-equity curve going down. GTO's contribution is a different question: **what is
-the worst an adversary could do to this, and what does the unexploitable
-version cost?**
-
-Three places it becomes concrete rather than philosophical:
-
-1. **The trap rate is the strongest case.** Traps are 64% of all attempts to
-   break a level here and 84% at 1h. A false breakout is, mechanically, the
-   obvious trade losing - which is what an exploitative strategy looks like
-   from the other side of the table. A GTO reading asks what mix of taking and
-   fading the break cannot be beaten, rather than which one is winning now.
-2. **Mixed strategies over a single answer.** Every gate here is deterministic:
-   the same signal always produces the same decision, which is exactly the
-   property an adversary needs. Randomising between two acceptable actions at a
-   measured frequency is the standard defence and is cheap to implement.
-3. **The minimax check as a research tool.** For any gate, what is the
-   worst-case market that could be constructed against it? `research/null.md`
-   already runs a generated process with no structure; an adversarial process
-   built *to defeat a specific gate* is the stronger version of the same
-   discipline.
-
-**What would have to be true first.** GTO needs a defined game - players,
-actions, payoffs - and this desk has no opponent model at all. Inventing one
-would be inventing the thing being solved for, which is how a plausible frame
-becomes an expensive detour. So the honest first step is small: pick **one**
-gate, define the adversary as "a market that knows this gate's threshold",
-and measure what it costs. If that is not answerable the rest is decoration.
-
-See [research/reading.md](../research/reading.md) for what to read.
+**Not applicable here, and worth saying so rather than leaving as "later".**
+§22.4 order-flow confirmation and §22.10 liquidity around levels both need a
+book. This desk has a broker feed with a spread and no depth, so they are not
+outstanding work - they are unreachable without a different data source.
 
 ## Options flow, as positioning that is observed rather than inferred - noted 2026-09-07
 

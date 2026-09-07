@@ -139,11 +139,18 @@ the same thing when the bars are made to start a minute later.**
 
 | estimator | median wander | its null | ratio | moves the estimate |
 | --- | --- | --- | --- | --- |
-| A - baseline (the turn bar's close) | 0.237v | 0.701v | 3.0x | - |
-| **F - fine-resolution transition** | **0.124v** | 0.701v | **5.7x** | 71.4% of events |
-| D - directional body edge | 0.237v | 0.712v | 3.0x | 21.9% of events |
+| A - baseline (the turn bar's close) | 0.237v | 0.722v | 3.0x | - |
+| **F - fine-resolution transition** | **0.124v** | 0.723v | **5.8x** | 71.4% of events |
+| H - change point | 0.211v | 0.722v | 3.4x | 90.4% of events |
+| D - directional body edge | 0.237v | 0.713v | 3.0x | 21.9% of events |
 
 406 events over 8 instruments, 5,684 paired comparisons.
+
+**Three of the eight candidates §5 names**, and an earlier version of this
+document said "the estimators" as though that were all of them. B (candle
+boundary), C (body midpoint), E (run intersection) and G (F fed to the Kalman
+rather than replacing the price) were never run; they are in
+[docs/todo.md](../docs/todo.md) with what each is worth.
 
 ### F wins, and the specification was right to rank it first
 
@@ -154,6 +161,44 @@ effect on a handful of them.
 
 Per feed it wins everywhere, and by most on the instruments the earlier section
 called loose: gbpusd 0.330v to 0.124v, gold 0.295v to 0.122v.
+
+### H is real and still loses, which §18 predicted
+
+Section 6 asks for a change-point estimator as an independent experiment, and
+§23 makes it priority 2 of three. It was built on the repository's own `Cusum`
+rather than a new statistic - a symmetric change-point filter over a price
+series in volatility units is exactly what §6 describes, and `momentum_leads`
+already trusts it to say when a regime turned.
+
+The first pass rejected it for the wrong reason. `Cusum`'s default threshold is
+2.0 volatility units, set for a stream running for hours; asked to find a
+change **inside one bar** it crossed on 12.9% of events and fell back to the
+baseline everywhere else, so the comparison was measuring a mis-set constant.
+That is the error `at_bound` already made once here. Swept properly:
+
+| threshold | median wander | ratio to null | moves the estimate |
+| --- | --- | --- | --- |
+| 2.0 (default) | 0.237v | 3.1x | 12.9% |
+| 1.0 | 0.216v | 3.5x | 47.9% |
+| 0.5 | 0.208v | 3.7x | 82.1% |
+| **0.25** | **0.205v** | **3.8x** | 94.3% |
+| 0.1 | 0.211v | 3.6x | 99.3% |
+
+So H is **a real improvement on the baseline** - 0.237v to 0.205v - and
+**decisively worse than F**, which is at 0.124v. It moves the estimate on 90.4%
+of events, so this is a genuine alternative being beaten rather than one that
+never fired.
+
+The specification called it: §18 says the strongest expected candidate is the
+fine-resolution transition and that the change-point model "should be evaluated
+rather than assumed superior". It was, and it is not.
+
+**What that says about §22.1.** Bayesian online change-point detection is the
+principled version of what H did crudely - a posterior over "the regime has
+ended" rather than a threshold crossing. H losing to F at every threshold is
+evidence about the *family* rather than about the tuning, and §22.2 was already
+refused here because the band is seven times the localization error. BOCPD
+would have to argue past both, and it is listed in todo.md on those terms.
 
 ### D adds nothing, and section 18 says what to do about that
 
