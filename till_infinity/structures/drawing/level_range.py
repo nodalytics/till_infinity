@@ -192,6 +192,7 @@ class LevelRange:
 #: it is where `service` asks the origin model for the swing's walls.
 ANCHOR = "4h"
 
+
 @dataclass(frozen=True)
 class Edge:
     """A wall that is a price and nothing else - what `Bound` actually needs.

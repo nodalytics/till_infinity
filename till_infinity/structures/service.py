@@ -1226,9 +1226,7 @@ class Watcher:
             # wants the box it is trading inside; a swing wants the room before
             # the next unfilled interest, and at the same moment on the same
             # instrument those are different boxes.
-            below, above = self.engine.origins_bracketing(
-                call.feed, ANCHOR, call.price, vol
-            )
+            below, above = self.engine.origins_bracketing(call.feed, ANCHOR, call.price, vol)
             wide = between_origins(below, above, call.price, unit, feed=call.feed)
             reading.update(wide.features(prefix="swing_"))
             # Which wall price reaches first, from the model that learns it,
