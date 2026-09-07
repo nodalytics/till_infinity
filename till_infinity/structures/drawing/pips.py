@@ -176,6 +176,42 @@ def points(
     return found
 
 
+def extremes(
+    times: Sequence[int],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    count: int,
+    *,
+    confirm: int = DEFAULT_CONFIRM,
+) -> list[Point]:
+    """Swing highs from the highs and swing lows from the lows.
+
+    **Two passes, not one**, and `points` above says why: mixing highs and lows
+    in a single series compares points that never coexisted - a "swing" from a
+    bar's high to the next bar's low is a move nothing traded. So the highs are
+    run for peaks, the lows for troughs, and each keeps only the swing type it
+    is entitled to produce.
+
+    Why bother, when the close series has drawn every level here so far: a
+    swing high *is* a high. A close series cannot see the price a rejection
+    actually reached, so a level drawn from it sits wherever the bar happened
+    to settle after being turned away - which is a price nobody defended, some
+    distance inside the one they did. The engine has warned about this from the
+    other direction for months, on every feed that arrives without extremes:
+    "levels on this series are forming from closes alone".
+
+    Whether it draws *better* levels is a question for the outcome machinery
+    rather than for this docstring, which is why it is a separate pass rather
+    than a change to `pip`. Both can run, and the record can say which price
+    gets respected.
+    """
+    if len(times) != len(highs) or len(times) != len(lows):
+        raise ValueError("times, highs and lows must be the same length")
+    peaks = [p for p in points(times, highs, count, confirm=confirm) if p.swing is Swing.HIGH]
+    troughs = [p for p in points(times, lows, count, confirm=confirm) if p.swing is Swing.LOW]
+    return sorted(peaks + troughs, key=lambda point: point.index)
+
+
 def as_of(found: Sequence[Point], when: float) -> list[Point]:
     """Only the points that were knowable at `when`.
 

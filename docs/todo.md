@@ -58,6 +58,97 @@ quote stream, rather than through a second counter written for the audit. The
 has never been compared against a trivial baseline at a resolution capable of
 telling them apart.
 
+## What is left of the origin-localization specification - 2026-09-07
+
+Most of it is answered. `research/localising.md` has the measurements; this is
+the ledger of what was done, refused and left.
+
+**Done.**
+
+* §22.12, the grid falsification - the origin survives it, 2.8x steadier than
+  a matched random book, wander 0.23v inside a band of 1.58v.
+* §5/§13, the estimators, paired on the same events. **F, the fine-resolution
+  transition, wins** - 0.237v to 0.124v - and is implemented as
+  `origins.refine`.
+* §9/§18, the directional body edge. Measured, adds nothing on the axis this
+  data can rank, **rejected** per the decision rule.
+* §15, small testable components: `extremes_in`, `refine`, `Origins.remember`
+  and `Series.note_fine` are separate stages behind one interface.
+* The persistence F needed, and the two bugs watching it found.
+
+**Refused, with the number.**
+
+* §22.2, the origin as a posterior. The band already *is* one and is seven
+  times the localization error, so publishing a separate uncertainty adds a
+  reading nothing can act on. Reopen if the band is ever re-derived.
+
+**Left, in order.**
+
+1. **The intervals `refine` cannot serve.** 1d needs 24 hours of minutes
+   against a window holding eight, so it will never capture. Either the 1m
+   window grows for one series or coarse origins keep the coarse band. A
+   measurement, not a preference.
+2. **§10, asymmetry.** Every band here is symmetric about the transition while
+   the rest of the package keeps per-side statistics everywhere. The
+   specification asks whether localization changes the wick-depth distribution.
+   It must - changing the origin changes the measured distance - and nobody has
+   looked.
+3. **§22.5, regime-conditional origins.** The grid test already shows the
+   answer varies enormously by instrument (spx500 0.01v, gold 1.21v on the old
+   scale). Splitting by volatility regime rather than by ticker is the version
+   of that question with a chance of transferring.
+4. **§22.3, microstructure-noise-aware detection.** Relevant only once
+   something reads below 1m. Nothing does.
+
+**Not applicable here, and worth saying so.** §22.4 order-flow confirmation and
+§22.10 liquidity around levels both need a book. This desk has a broker feed
+with a spread and no depth, so they are not "later" - they are unreachable
+without a different data source.
+
+## Options flow, as positioning that is observed rather than inferred - noted 2026-09-07
+
+Not started. Recorded now because it is the third entry on a list this desk
+keeps rediscovering: `prices/positioning.py` collects open interest and the
+long/short split, `prices/funding.py` collects funding, and **nothing consumes
+any of them**. Options flow would be a fourth collector unless the order is
+fixed first.
+
+**Why it is worth wanting.** Everything this system draws is inferred from
+price. Open interest is the one exception already collected, and
+[research/crypto.md](../research/crypto.md) makes the argument for it: OI plus
+price direction separates fresh money from closing, and the price path is
+identical in both cases, so it is information a price-only model cannot
+recover. Options flow is the same kind of claim with more structure - strikes
+are prices somebody committed at, and expiries put a clock on the commitment.
+
+The specific thing that would connect to what is already here is **gamma
+positioning**: dealers hedging a short-gamma book amplify moves and a
+long-gamma book damps them. That is a statement about whether a level holds,
+which is exactly what `learning/breaking.py` already models from price alone at
+AUC 0.658. A feature uncorrelated with `approach_vol` and `depth_vol` is worth
+more than a better-correlated one, which is the test `slowing` had to pass.
+
+**What would have to be true first, in order:**
+
+1. **A source.** Deribit publishes an options book over the same ccxt path the
+   perpetuals already use, which makes crypto the cheap case. Equity options
+   flow is a paid feed and the broker here carries none, so `us100` and
+   `spx500` would stay dark - and half a book is how a feature becomes a
+   comparison between instruments rather than about them.
+2. **Consume something already collected.** Open interest has been sitting in
+   `positioning.py` unread since it was built. Wiring a fourth source before
+   the first three feed anything is how [inert.md](../research/inert.md) got to
+   nine cases.
+3. **Then the ordinary discipline**: correlate against `approach_vol` and
+   `depth_vol` before looking at AUC at all, and run it against the null in
+   [research/null.md](../research/null.md), because a positioning series
+   measured on a trending market will look predictive whether or not it is.
+
+**The honest prior.** Deribit is one venue on two instruments. Whatever gamma
+positioning says there is a statement about crypto options in one place, not
+about the book this desk trades - and the seven FX majors, gold, silver and
+the indices have no options data reachable from here at all.
+
 ## VWAP, as a second definition of fair value - noted 2026-09-07
 
 [Volume Weighted Average Price (VWAP): The Holy Grail for Day Trading

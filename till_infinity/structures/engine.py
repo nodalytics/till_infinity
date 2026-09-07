@@ -50,6 +50,7 @@ from .drawing import (
     rounds,
     runs,
     sweeps,
+    vwap,
 )
 from .learning import patterns, regimes
 from .models import Shape, Signal
@@ -378,10 +379,24 @@ class Series(Restorable):
     #: once - when the bar itself closes - so that is when they are recorded.
     fine_low: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
     fine_high: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
+    #: Whatever the venue called volume, per bar, and `nan` where it said
+    #: nothing. **Not comparable across venues or instruments** - on most feeds
+    #: here it is tick count rather than size, and spot FX has no consolidated
+    #: volume at all, which `context/activity.py` sets out at length. Kept
+    #: because a *weight* does not need to be comparable: within one series it
+    #: says which bars carried more business than their neighbours, which is
+    #: all `profile` and a VWAP ask of it.
+    volumes: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
     since_reform: int = 0
 
     def add(
-        self, when: int, high: float, low: float, close: float, open_: float | None = None
+        self,
+        when: int,
+        high: float,
+        low: float,
+        close: float,
+        open_: float | None = None,
+        volume: float | None = None,
     ) -> bool:
         """Fold a bar in. True if it is a new one rather than a correction.
 
@@ -394,6 +409,8 @@ class Series(Restorable):
             self.highs[-1], self.lows[-1], self.closes[-1] = high, low, close
             if self.opens:
                 self.opens[-1] = opening
+            if len(self.volumes) == len(self.closes):
+                self.volumes[-1] = math.nan if volume is None else float(volume)
             return False
         self.times.append(when)
         self.highs.append(high)
@@ -415,6 +432,10 @@ class Series(Restorable):
         while len(self.fine_low) < len(self.closes):
             self.fine_low.append(math.nan)
             self.fine_high.append(math.nan)
+        while len(self.volumes) < len(self.closes) - 1:
+            self.volumes.append(math.nan)
+        if len(self.volumes) == len(self.closes) - 1:
+            self.volumes.append(math.nan if volume is None else float(volume))
         self.since_reform += 1
         return True
 
@@ -1050,6 +1071,11 @@ class Engine:
 
     FORMATIONS: ClassVar[tuple[str, ...]] = (
         "pip",
+        # `pip` drawn from the extremes rather than the closes - two passes,
+        # highs for peaks and lows for troughs. See `pips.extremes`.
+        "wick",
+        # Volume-weighted average price, where there is volume to weight with.
+        "vwap",
         "run",
         "origin",
         "profile",
@@ -1152,30 +1178,40 @@ class Engine:
         return made
 
     def _points(self, name: str, series: Series, vol: Volatility) -> list[pips.Point]:
-        """One pass's turning points."""
+        """One pass's turning points.
+
+        A table rather than a chain of returns, because the chain had grown to
+        nine and every new formation made it one longer - and because the table
+        is the honest picture of what a formation *is* here: a name and a way
+        of turning one series into points, with nothing downstream able to tell
+        which of them found a level.
+        """
         times, closes = list(series.times), list(series.closes)
-        if name == "run":
-            return runs.points(times, closes, vol, threshold=self.run_threshold)
-        if name == "origin":
-            return origin_points.points([float(t) for t in times], closes, vol)
-        if name == "profile":
-            return profile.points([float(t) for t in times], closes, vol)
-        if name == "equal":
-            return equals.points([float(t) for t in times], closes, vol, count=self.pip_count)
-        if name == "gap":
-            # The only formation that needs the bar's shape rather than its
-            # close: an imbalance is a relationship between one bar's high and
-            # another's low, and closes cannot express it.
-            return gaps.points(
-                [float(t) for t in times],
-                list(series.highs),
-                list(series.lows),
-                closes,
-                vol,
-            )
-        if name == "round":
-            return rounds.points([float(t) for t in times], closes, vol)
-        return pips.points(times, closes, self.pip_count)
+        stamps = [float(t) for t in times]
+        highs, lows = list(series.highs), list(series.lows)
+        draw: dict[str, Callable[[], list[pips.Point]]] = {
+            "run": lambda: runs.points(times, closes, vol, threshold=self.run_threshold),
+            "origin": lambda: origin_points.points(stamps, closes, vol),
+            # **`weights` has been accepted by `profile` since it was written
+            # and never once passed.** A volume profile drawn without volume
+            # weights every bar the same, which is a fair fallback and was
+            # never meant to be the only mode. `Series.volumes` is what it was
+            # waiting for.
+            "profile": lambda: profile.points(stamps, closes, vol, weights=list(series.volumes)),
+            "equal": lambda: equals.points(stamps, closes, vol, count=self.pip_count),
+            # An imbalance is a relationship between one bar's high and
+            # another's low, which closes cannot express.
+            "gap": lambda: gaps.points(stamps, highs, lows, closes, vol),
+            "round": lambda: rounds.points(stamps, closes, vol),
+            # The only pass drawn from where price actually **reached** rather
+            # than where it settled. A swing high is a high; a close series
+            # puts the level wherever the bar happened to finish after being
+            # turned away, which is a price nobody defended.
+            "wick": lambda: pips.extremes(times, highs, lows, self.pip_count),
+            "vwap": lambda: vwap.points(stamps, highs, lows, closes, list(series.volumes), vol),
+        }
+        found = draw.get(name)
+        return found() if found else pips.points(times, closes, self.pip_count)
 
     def supports(self, feed: str, interval: str) -> bool:
         """Can this instrument carry a level at this resolution?
@@ -1487,7 +1523,15 @@ class Engine:
 
         self._now = max(self._now, when)
         series = self.series(feed, interval)
-        fresh = series.add(when, high, low, float(close), opened)
+        reported = payload.get("volume")
+        fresh = series.add(
+            when,
+            high,
+            low,
+            float(close),
+            opened,
+            float(reported) if isinstance(reported, int | float) and reported > 0 else None,
+        )
         # **Every time, not only when the bar is new.** A bar arrives repeatedly
         # while it forms, and only the last of those calls has the whole bar's
         # minutes behind it - so capturing once on `fresh` would store the

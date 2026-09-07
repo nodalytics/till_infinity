@@ -163,6 +163,36 @@ inside; a swing wants the room before the next unfilled interest, and at the
 same moment on the same instrument those are different boxes. The swing's
 carries the `swing_` prefix.
 
+### Which price a level is drawn at
+
+Every formation but two draws from **closes**, and the two exceptions say why
+that was worth changing:
+
+| pass | drawn from |
+| --- | --- |
+| `pip`, `run`, `origin`, `profile`, `equal`, `round` | closes |
+| `gap` | one bar's high against another's low - closes cannot express an imbalance |
+| **`wick`** | **highs for peaks, lows for troughs** |
+| **`vwap`** | typical price weighted by volume |
+
+`wick` is `pip` asked of the extremes. A swing high *is* a high; a close series
+puts the level wherever the bar happened to settle after being turned away,
+which is a price nobody defended some distance inside the one they did. Two
+passes rather than one, because mixing highs and lows in a single series
+compares points that never coexisted - a "swing" from one bar's high to the
+next bar's low is a move nothing traded.
+
+`vwap` is fair value by the other definition: the price the business was
+actually done at, anchored rather than rolling. It draws **nothing** where
+there is no real volume, which is most of this book - on most feeds `volume` is
+tick count, and spot FX has no consolidated volume at all. A simple mean would
+produce a "VWAP" everywhere that is not one and is indistinguishable
+downstream, which is a worse failure than drawing nothing.
+
+Both are passes rather than replacements, which is the point: `formation` runs
+whichever are named and the outcome machinery decides which price gets
+respected, rather than an argument here.
+
 What it publishes on a level signal:
 
 | feature | what it is |

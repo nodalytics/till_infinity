@@ -2634,3 +2634,60 @@ def test_a_rate_with_nothing_behind_it_is_not_a_low_rate():
     stats = SideStats()
     assert stats.hold_rate == 0.0
     assert stats.decisive == 0
+
+
+# ------------------------------------------------- levels drawn from the extremes
+
+
+def test_a_swing_high_is_a_high_not_a_close():
+    """The whole point of the `wick` pass. A close series puts the level
+    wherever the bar happened to settle after being turned away, which is a
+    price nobody defended some distance inside the one they did."""
+    from till_infinity.structures.drawing import pips
+
+    n = 60
+    times = list(range(n))
+    closes = [100.0] * n
+    highs = list(closes)
+    lows = list(closes)
+    # One bar rejected hard from 110 and closed back at 100.
+    highs[30] = 110.0
+    for i in range(n):
+        closes[i] = 100.0 + (i % 3) * 0.1
+        highs[i] = max(highs[i], closes[i] + 0.05)
+        lows[i] = closes[i] - 0.05
+    highs[30] = 110.0
+
+    from_closes = pips.extract(closes, 12)
+    peaks = [p for p in pips.extremes(times, highs, lows, 12) if p.swing is pips.Swing.HIGH]
+
+    assert 30 not in from_closes, "the close series cannot see the rejection"
+    assert any(p.price == 110.0 for p in peaks), "the wick pass must"
+
+
+def test_highs_and_lows_are_never_mixed_in_one_pass():
+    """`pips.points` warns that mixing them compares points that never
+    coexisted - a swing from one bar's high to the next bar's low is a move
+    nothing traded."""
+    from till_infinity.structures.drawing import pips
+
+    n = 80
+    times = list(range(n))
+    closes = [100.0 + (i % 7) for i in range(n)]
+    highs = [c + 3.0 for c in closes]
+    lows = [c - 3.0 for c in closes]
+
+    found = pips.extremes(times, highs, lows, 16)
+
+    for point in found:
+        if point.swing is pips.Swing.HIGH:
+            assert point.price == highs[point.index]
+        elif point.swing is pips.Swing.LOW:
+            assert point.price == lows[point.index]
+
+
+def test_the_extremes_pass_refuses_ragged_input():
+    from till_infinity.structures.drawing import pips
+
+    with pytest.raises(ValueError, match="same length"):
+        pips.extremes([1, 2, 3], [1.0, 2.0], [1.0, 2.0, 3.0], 4)
