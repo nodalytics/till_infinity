@@ -287,8 +287,12 @@ does when it returns. Any new estimator or band rule drops into them.
 
 In order:
 
-1. **Re-run the swing sweep with the fine-derived band.** The only step here
-   with a direct line to money, and the harness for it already exists.
+1. ~~**Re-run the swing sweep with the fine-derived band.**~~ Done, and it is
+   the largest single improvement measured on this strategy: +0.349R to
+   **+0.576R** a trade, winning in all eight cells. It is also entirely
+   inaccessible without persisting origins - a replay limited to the 1m window
+   a live `Series` actually holds reproduces the baseline identically. See
+   [swinging.md](swinging.md).
 2. **The intervals `refine` cannot serve.** The `Series` window is 500 bars, so
    a 1m series covers about eight hours and cannot reach a 4h origin. Either
    the window grows for one series or coarse origins keep the coarse band, and

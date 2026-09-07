@@ -195,6 +195,79 @@ zero. Two honest qualifications:
   applies, in particular that the momentum half of the confirmation gate is
   tick-fed and unreachable from bars.
 
+## The fine-derived band, replayed - and it is worth more than the localization was
+
+`research/localising.md` re-derived the origin's band from the 1m bar at the
+refined transition and found it **2.6x narrower** than the coarse bar's range
+while catching 94.8% of the same returns and holding about as often. The stop
+on an origin trade sits beyond the band, so that was an argument about money
+that only this harness could settle.
+
+Same eight cells, same instruments, same everything but the walls:
+
+| at_bound | stop | trail | coarse band | fine band |
+| --- | --- | --- | --- | --- |
+| **0.20** | **1.0** | **4** | +0.349R (100) | **+0.576R (71)** |
+| 0.20 | 1.0 | 6 | +0.322R (100) | +0.566R (71) |
+| 0.20 | 1.5 | 4 | +0.259R (97) | +0.454R (67) |
+| 0.20 | 1.5 | 6 | +0.218R (97) | +0.412R (67) |
+| 0.10 | 1.0 | 4 | +0.220R (90) | +0.365R (49) |
+| 0.10 | 1.0 | 6 | +0.252R (90) | +0.360R (49) |
+| 0.10 | 1.5 | 4 | +0.149R (86) | +0.189R (46) |
+| 0.10 | 1.5 | 6 | +0.150R (86) | +0.182R (46) |
+
+**The fine band wins in all eight.** The best cell goes from +0.349R to
+**+0.576R a trade**, a 65% improvement, on a win rate that rises from 49.0% to
+54.9%. Total R rises from +34.85 to +40.90 *on 29 fewer trades*, which is the
+shape the band argument predicted: a narrower band is a tighter stop, so the
+same evidence is bought at a third of the risk and fewer calls qualify.
+
+At 71 trades with an R spread near 1.1 the standard error is about 0.13, so
++0.576 is roughly four standard errors from zero - and the eight cells all
+moving the same way is the part that makes it more than one lucky corner.
+
+### The gap between this and what production can do
+
+This run assumes the **whole 1m history is on hand**. Production holds a
+rolling `Series` of 500 bars, so 1m covers about eight hours - enough to refine
+a 4h origin formed this morning and not one formed last week. Since
+`origins_bracketing` takes the two origins nearest price, and those can be of
+any age, most walls in production would keep their coarse band.
+
+So the table above is an **upper bound, not a forecast**. The deployable
+number is the mixed case - refine what is coverable, keep the coarse band
+otherwise - and it was measured rather than guessed:
+
+| band | best cell | trades |
+| --- | --- | --- |
+| coarse, what runs today | +0.349R | 100 |
+| **window, deployable as-is** | **+0.349R** | **100** |
+| fine, whole 1m history | +0.576R | 71 |
+
+**The window row is the coarse row, to the cent, in every cell.** Not
+approximately: identically. Every origin that set a wall in this replay was
+older than eight hours, so nothing was refined and the run reproduced the
+baseline exactly.
+
+That is the useful form of the answer. The improvement is real, large and
+**entirely inaccessible** to the current architecture - so the thing to build
+is not the refinement, which is already written and tested as
+`origins.refine`, but the means of keeping its result.
+
+Two ways to close it, of very different sizes:
+
+* **Grow the 1m window** until it covers the origin lookback. The 4h series
+  reaches back 500 bars, so this is 120,000 one-minute bars per feed against a
+  container holding 500. Not affordable, and not close.
+* **Persist origins with their bands**, so a refinement computed once at
+  formation - when the 1m evidence for that bar *is* in the window - survives
+  to be used weeks later. This is the real change: origins are currently
+  recomputed from the closes series on every call and nothing about them is
+  stored, so there is nowhere for a refined band to live.
+
+The second is what the +0.576R is worth, and it should be costed against that
+number rather than against the elegance of the idea.
+
 ## The spread
 
 **0.144R a trade**, 10.37R over the 72. Not the dominant term - the swing stop
