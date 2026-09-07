@@ -5,7 +5,7 @@ lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
 
-## The round-number control, which is one query - noted 2026-09-07
+## The round-number control - run 2026-09-07, and it could not answer
 
 Osler's *Support for Resistance* (FRBNY Economic Policy Review, 2000; see
 [research/reading.md](../research/reading.md)) tests the support and resistance
@@ -37,6 +37,26 @@ number.
 decoration. If they tie, confluence is worth exactly what agreement with a
 round number is worth, and the zone code has a cheaper substitute. If the drawn
 levels win, this is the first outside validation the level book has ever had.
+
+**Run on 2026-09-07 and it answered none of those.**
+[research/rounding.md](../research/rounding.md) has it in full. Drawn, round
+and random books all hold price within one standard error of each other over
+5,877 approaches - and the positive control fails with them: splitting the
+drawn book by its own touch count separates the well-tested half from the
+untested one by 2.34pp against a standard error of 2.03.
+
+A counter that cannot tell a level touched forty times from one touched twice
+is not entitled to an opinion about round numbers, so the null means nothing.
+The reason was already on file: [resolution.md](../research/resolution.md)
+measured that **two thirds of touch outcomes resolve within two seconds**, and
+this audit ran at 5m.
+
+**What is still outstanding is the same question, asked properly**: run the
+round-number and random books through the *engine's own touch machinery* on the
+quote stream, rather than through a second counter written for the audit. The
+`quotes` table exists and is indexed on feed. Until that is done the level book
+has never been compared against a trivial baseline at a resolution capable of
+telling them apart.
 
 ## VWAP, as a second definition of fair value - noted 2026-09-07
 
