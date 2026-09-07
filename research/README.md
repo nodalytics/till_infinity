@@ -21,7 +21,8 @@ rather than believed.
 | [turns.md](turns.md) | **measured** - can a major turn be seen coming; yes, weakly. AUC 0.595 purged over 310 turns, and `vol` alone carries it |
 | [cycles.md](cycles.md) | **measured** - does a level's place in the larger move matter; one cell separates by nothing at all, and the AUC gain's interval includes zero |
 | [news-models.md](news-models.md) | survey - model families that could turn stored headlines into features, and which of them fit in 640MB beside everything else |
-| [reading.md](reading.md) | notes - AlphaGo Zero, Llama 3, InstructGPT and DeepSeek-R1, what transfers and what does not; all four guard against the reward hacking this system did to itself |
+| [reading.md](reading.md) | notes - AlphaGo Zero, Llama 3, InstructGPT and DeepSeek-R1, what transfers and what does not; all four guard against the reward hacking this system did to itself. Plus the microstructure papers behind levels, VWAP, open interest and funding - including Osler's finding that **round numbers predict as well as published levels**, which is the control this desk has not run |
+| [swinging.md](swinging.md) | **measured** - `swing-level` replayed over 17 instruments and 1.1M bars; the candle gate pays, the 1.5 stop was what lost, and every cell with a 1.0 stop is profitable |
 | [bandits.md](bandits.md) | design note - where a bandit fits (attention budgets, not the alert gate) and why gymnasium is not the reason to reach for one |
 | [positioning.md](positioning.md) | what supply and demand this system has - six ideas inferred from price, the macro block that is all supply and no demand, and the CFTC positioning that is the one *observed* measure reachable from here |
 | [catalogue.md](catalogue.md) | **measured** - which of the broker's 798 symbols are worth carrying; in volatility units the synthetics cost 0.170v to cross against FX's 2.267v, which is the opposite of what the point spreads say |

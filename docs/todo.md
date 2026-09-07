@@ -5,6 +5,39 @@ lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
 
+## The round-number control, which is one query - noted 2026-09-07
+
+Osler's *Support for Resistance* (FRBNY Economic Policy Review, 2000; see
+[research/reading.md](../research/reading.md)) tests the support and resistance
+levels six FX firms published to their customers and finds they do predict
+intraday trend interruptions. It also finds that **round numbers predict about
+as well as most published levels**.
+
+That is a control this desk has never run, and it is the most dangerous one
+available. Levels here are Kalman states drawn from swing origins across eight
+timeframes, grouped into confluence zones, scored by decayed touch counts. If
+the whole apparatus does no better than *"round the price and use that"*, the
+apparatus is decoration - and the failure would be invisible, because every
+number it produces would still look reasonable.
+
+It is the same shape as [magnet.md](magnet.md), which compared a level against
+an arbitrary price the same distance away and found the level 44.9% against
+49.5%. That measurement is the reason this one is worth running: the arbitrary
+price already beat the level once.
+
+**What to run.** Bucket resolved touches by distance to the nearest round
+number for the instrument - the round grid is instrument-specific, so it has to
+be derived from the price scale rather than fixed - and compare hold rate and
+push against the level's own. Then the harder version: draw a level set from
+round numbers alone and score it through the ordinary outcome machinery, so
+the comparison is between two level *books* rather than between a level and a
+number.
+
+**What would make it conclusive.** If round numbers win, the drawing is
+decoration. If they tie, confluence is worth exactly what agreement with a
+round number is worth, and the zone code has a cheaper substitute. If the drawn
+levels win, this is the first outside validation the level book has ever had.
+
 ## VWAP, as a second definition of fair value - noted 2026-09-07
 
 [Volume Weighted Average Price (VWAP): The Holy Grail for Day Trading

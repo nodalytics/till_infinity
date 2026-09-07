@@ -1,9 +1,15 @@
-# Four papers, and the one thing they all guard against
+# Papers, and the one thing they all guard against
 
 References, what each actually does, the single idea that transfers here, and -
 more usefully - what does not. Written because the interesting question is
 never "what did the paper achieve" but "what of it survives contact with a
 non-stationary, low signal-to-noise problem with no simulator".
+
+Two halves. The first four are machine-learning papers read for their
+methodology; the [market microstructure section](#market-microstructure-what-the-literature-says-about-the-things-this-desk-draws)
+at the end is about the objects this system actually draws - levels, fair
+value, positioning - and each entry there names the part of the code it would
+change.
 
 | | |
 |---|---|
@@ -197,6 +203,120 @@ repository keeps hitting, and are the honest "read next":
 The caution that applies to all of it: the book's own backtests are widely
 argued to be optimistic, and its value here is the *methodology* rather than
 any result. The triple-barrier method is a labelling discipline, not an edge.
+
+## Market microstructure: what the literature says about the things this desk draws
+
+Added 2026-09-07. Every paper here maps onto something already built, and in
+three cases onto something built and read by nothing - the shape
+[inert.md](inert.md) catalogues.
+
+| | |
+|---|---|
+| **Support for Resistance** | Osler, *Technical Analysis and Intraday Exchange Rates*, FRBNY Economic Policy Review 6(2), July 2000. [SSRN 888805](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=888805) · [FRBNY](https://www.newyorkfed.org/research/epr/00v06n2/0007osle.html) |
+| **VWAP** | Zarattini & Aziz, *Volume Weighted Average Price (VWAP): The Holy Grail for Day Trading Systems* (2023). [SSRN 4631351](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4631351) |
+| **VWAP regimes** | Lee, *VWAP-Based Regime Classification Model for Intraday Price Dynamics*. [SSRN 6438039](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6438039) |
+| **Open interest** | Hong & Yogo, *What Does Futures Market Interest Tell Us about the Macroeconomy and Asset Prices?*. [SSRN 1364674](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1364674) |
+| **Funding rates** | Inan, *Predictability of Funding Rates*. [SSRN 5576424](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5576424) |
+
+### Osler - levels work, and round numbers work as well
+
+**What it does.** Takes the support and resistance levels **six FX firms
+actually published to their customers**, and tests whether price stalls at
+them. It finds strong evidence that they predict intraday trend interruptions,
+with the predictive power varying by currency and by firm.
+
+**What transfers.** This is the closest thing in the literature to an
+independent test of what `structures` is for, and it is the right shape: the
+levels were published *in advance* by someone with money on the line, so there
+is no hindsight in where they were placed. That is the same discipline as
+predict-then-update here.
+
+The *variation by firm* is the more useful half. Levels are not a property of
+the market alone - they are a property of the method that drew them - which is
+the argument for `formation` being an experiment (`pip` against `run`) settled
+by the outcome machinery rather than a setting to taste.
+
+**What does not transfer, and it is the finding to take seriously.** Osler
+also shows **round numbers predict about as well as most published levels**.
+That is a control this repository has not run, and it is devastating in the way
+[magnet.md](../docs/magnet.md)'s arbitrary-price baseline was devastating: if a
+level drawn from Kalman-filtered swing origins across eight timeframes does no
+better than "the nearest round number", the whole drawing apparatus is
+decoration. **It is one query against the existing touch record** - bucket
+resolutions by distance to the nearest round number and compare hold rates -
+and it belongs above most of [todo.md](../docs/todo.md).
+
+### Zarattini & Aziz - and why the numbers are the warning, not the promise
+
+**What it does.** Long above VWAP, short below, intraday, on QQQ from January
+2018 to September 2023: $25,000 to $192,656 net of commissions, 671%, maximum
+drawdown 9.4%, Sharpe 2.1, against buy-and-hold's 126% at a 37% drawdown. On
+TQQQ, the 3x leveraged version, 8,242%.
+
+**What transfers.** VWAP as a *second definition of fair value* -
+[idea.md](../docs/idea.md) defines it as where a supply or demand spree began;
+this defines it as where the volume actually traded. Two definitions that
+disagree is information, and a price both agree on is a stronger claim than
+either alone, which is the argument `confluence` already makes across
+timeframes. See [todo.md](../docs/todo.md) for what would have to be counted
+first: the `bars` table's `volume` column is nullable and unevenly populated,
+and whether there is volume to compute it from is a prior question to whether
+it predicts.
+
+**What does not transfer.** One instrument, one index, one regime, and the
+regime is the 2018-2023 QQQ tape. A Sharpe of 2.1 with a 9.4% drawdown from a
+rule with no parameters should raise the same suspicion this repository learned
+to have of its own 84-88% accuracy: **be suspicious of a metric that is going
+up.** Independent replications over longer windows report it working in a
+minority of the years.
+
+And the institutional reading, which is the honest one: institutions use VWAP
+to gauge fair value and to place a large order without moving the market
+against themselves. Both are uses of a *measurement*. Traded mechanically as a
+standalone rule - no volume confirmation, no risk management - it draws down
+heavily, which is the whole argument of
+[idea.md](../docs/idea.md)'s opening.
+
+### Lee - VWAP deviation as a regime label
+
+**What it does.** Normalises the deviation of price from VWAP by volatility and
+uses the result to classify intraday regimes as trend-dominated or
+mean-reverting.
+
+**What transfers.** The **normalisation**, which is the same move this system
+makes everywhere: a deviation in price units is not comparable across
+instruments, and one in volatility units is. Beyond that it is a direct
+competitor to `learning/regimes.py`, which classifies from price alone - so the
+question it poses is whether a volume-aware regime label beats a price-only
+one, on the same touches, which is answerable here rather than arguable.
+
+**What does not transfer.** A regime label that is not scored against outcomes
+is a second opinion nobody can check. This one would have to earn its place the
+way `slowing` did: uncorrelated with what is already in the model, then
+marginal AUC.
+
+### Hong & Yogo, and Inan - the two collectors that feed nothing
+
+**What they do.** Hong & Yogo find that movements in futures-market open
+interest predict commodity returns, bond returns and the short rate, *after*
+controlling for known predictors - the argument being that open interest is
+more informative than price when hedging demand and risk-absorption capacity
+matter. Inan finds perpetual-swap funding rates are predictable out of sample
+against a no-change benchmark.
+
+**What transfers.** These are the papers for `prices/positioning.py` and
+`prices/funding.py`, both of which collect and are read by nothing.
+[crypto.md](crypto.md) already argues open interest ranks above funding here
+and gives the reason - OI plus price direction separates fresh money from
+closing, and the price path is identical in both cases - so Hong & Yogo is
+support for the ordering already chosen rather than a new idea.
+
+**What does not transfer.** Horizon and asset class. Both are about weekly to
+monthly predictability in commodities and macro; this desk resolves touches in
+minutes. And funding carries the leakage risk `crypto.md` names: it is computed
+from the premium, which is computed from price, so a model handed funding may
+be handed a lagged transform of what it already sees. Predictable is not the
+same as *informative about something else*.
 
 ## Where to read next
 
