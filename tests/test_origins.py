@@ -405,7 +405,7 @@ def test_a_series_records_its_bar_s_fine_extremes():
 
     series = Series(feed="t", interval="4h")
     series.add(0, 110.0, 90.0, 100.0, 100.0)
-    series.note_fine(90.0, 105.0)
+    series.note_fine(0, 90.0, 105.0)
 
     assert series.fine_at(0) == (90.0, 105.0)
 
@@ -508,8 +508,66 @@ def test_a_restored_series_starts_pairing_rather_than_never_starting():
     series.fine_high.clear()
 
     series.add(14_400 * 6, 112.0, 92.0, 101.0, 100.0)
-    series.note_fine(92.0, 111.0)
+    series.note_fine(14_400 * 6, 92.0, 111.0)
 
     assert len(series.fine_low) == len(series.closes)
     assert series.fine_at(14_400 * 6) == (92.0, 111.0)
     assert all(math.isnan(v) for v in series.fine_at(14_400))
+
+
+def test_the_forming_bar_cannot_be_captured_and_the_finished_one_can():
+    """The failure that made 1h and coarser capture exactly zero. The newest
+    bar is the one still forming, so its span runs into the future and no finer
+    series can ever cover it - the capture has to target the bar the next one
+    has closed."""
+    import math
+
+    from till_infinity.structures import engine as eng
+
+    base = 1_700_000_000 - (1_700_000_000 % 14_400)
+    engine = eng.Engine()
+
+    def minutes(start, count, peak_at, peak):
+        for minute in range(count):
+            close = peak if minute == peak_at else 100.0
+            for venue in ("a", "b", "c"):
+                engine.observe_bar(
+                    {
+                        "feed": "t",
+                        "venue": venue,
+                        "interval": "1m",
+                        "ts": start + minute * 60,
+                        "time": start + minute * 60,
+                        "high": close,
+                        "low": close,
+                        "close": close,
+                    }
+                )
+
+    def four_hour(when):
+        for venue in ("a", "b", "c"):
+            engine.observe_bar(
+                {
+                    "feed": "t",
+                    "venue": venue,
+                    "interval": "4h",
+                    "ts": when,
+                    "time": when,
+                    "high": 106.0,
+                    "low": 97.0,
+                    "close": 100.0,
+                }
+            )
+
+    # The first 4h bar, complete, and only a few minutes of the second.
+    minutes(base, 240, 120, 105.0)
+    four_hour(base)
+    minutes(base + 14_400, 5, 2, 108.0)
+    four_hour(base + 14_400)
+
+    series = engine.series("t", "4h")
+
+    # The finished bar carries its minutes.
+    assert series.fine_at(base)[1] == 105.0
+    # The forming one does not, and is not filled in from the fraction seen.
+    assert math.isnan(series.fine_at(base + 14_400)[1])

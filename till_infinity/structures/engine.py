@@ -418,17 +418,23 @@ class Series(Restorable):
         self.since_reform += 1
         return True
 
-    def note_fine(self, low: float, high: float) -> None:
-        """Record the fine extremes of the bar currently at the end.
+    def note_fine(self, when: float, low: float, high: float) -> None:
+        """Record the fine extremes of the bar at `when`.
 
-        Called repeatedly while a bar forms, so the last call before it rolls
-        is the one with the whole bar behind it. A pair that could not be
-        computed never overwrites one that could: coverage is checked by the
-        caller, which passes nothing rather than a partial answer.
+        By timestamp rather than "the last one", because the last one is the
+        bar still **forming** - its span runs into the future, so the finer
+        series can never cover it and the capture would never once succeed on
+        a coarse interval. Measured in production: 3m through 30m captured a
+        few percent of bars and 1h, 2h, 4h, 1d and 1w captured **zero**. A bar
+        is complete exactly when the next one starts, and that is when this is
+        asked for it.
         """
-        if len(self.fine_low) != len(self.closes) or not self.fine_low:
+        if len(self.fine_low) != len(self.times) or not self.times:
             return
-        self.fine_low[-1], self.fine_high[-1] = low, high
+        index = bisect.bisect_left(self.times, when)
+        if index >= len(self.times) or self.times[index] != when:
+            return
+        self.fine_low[index], self.fine_high[index] = low, high
 
     def fine_at(self, when: float) -> tuple[float, float]:
         """The stored fine extremes for the bar at `when`, or `(nan, nan)`."""
@@ -874,17 +880,24 @@ class Engine:
         )
 
     def _capture_fine(self, feed: str, interval: str, series: Series) -> None:
-        """Record the fine extremes of `series`' newest bar, if they are there.
+        """Record the fine extremes of `series`' most recently *completed* bars.
 
-        **The whole point is the timing.** A bar's minutes are certainly
-        present exactly once - while that bar is the one closing - and this is
-        the only code that runs then. Attempting it later, when an origin is
-        finally detected, refined one 4h origin in 924 because the 1m window
-        holding eight hours had long since moved past.
+        **The whole point is the timing, twice over.** Attempting this when an
+        origin is finally detected refined one 4h origin in 924, because on 4h
+        that is hours to days after the turn and the 1m window holding eight
+        hours has moved on. Attempting it on the *newest* bar failed
+        differently and completely: the newest bar is the one still forming, so
+        its span runs into the future and the finer series can never cover it.
+        Production captured a few percent of 3m through 30m bars and **zero**
+        of 1h, 2h, 4h, 1d and 1w.
 
-        Silent when the finer series does not cover the bar: `extremes_in`
-        returns None rather than the extreme of whatever fraction survived, and
-        a pair that could not be computed never overwrites one that could.
+        A bar is complete exactly when the next one starts, so the last two are
+        offered: the one before the end, which has certainly closed, and the
+        end itself, which will fail until it has. Cheap, since `extremes_in`
+        refuses partial cover before doing any work worth counting.
+
+        Silent when the finer series does not cover the bar - a pair that could
+        not be computed never overwrites one that could.
         """
         if interval == FINE_INTERVAL or not series.times:
             return
@@ -892,11 +905,11 @@ class Engine:
         fine = self._series.get((feed, FINE_INTERVAL))
         if not span or fine is None or not fine.times:
             return
-        got = origins.extremes_in(
-            list(fine.times), list(fine.closes), float(series.times[-1]), span
-        )
-        if got is not None:
-            series.note_fine(*got)
+        times, closes = list(fine.times), list(fine.closes)
+        for when in list(series.times)[-2:]:
+            got = origins.extremes_in(times, closes, float(when), span)
+            if got is not None:
+                series.note_fine(float(when), *got)
 
     def _remember_origins(
         self,

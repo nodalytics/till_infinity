@@ -352,9 +352,43 @@ restored from before they existed has empty deques beside full ones, and
 appending blindly would pair every bar with another bar's minutes from then
 on.
 
-Whether it works is a production question again, and the tally that answered
-the last one will answer this one: the share refined **at 4h** is the number,
-and it was 1 in 924.
+### Two failures found by watching it rather than by reasoning about it
+
+Both were invisible in the tests and obvious in the production state.
+
+**The deques never started.** Every other late-added field on `Series` is
+guarded by "exactly one behind the closes", which a *restored* Series never
+is - it has 500 closes and none of the new field, so the test would not have
+been true once and the field would have stayed empty for the life of the
+process. Checked against the live state: 1 series aligned, 3,053 short. Now
+padded with `nan`, which says "unknown" about the bars that predate the field
+because that is what is true of them.
+
+**The capture targeted the bar still forming.** `note_fine` wrote to the end
+of the deque, and the end is the bar in progress - its span runs into the
+future, so no finer series can ever cover it and `extremes_in` correctly
+refused every time. The live state said so exactly:
+
+| interval | bars paired | captured |
+| --- | --- | --- |
+| 3m | 60 | 3.3% |
+| 5m | 46 | 8.7% |
+| 15m | 35 | 8.6% |
+| 30m | 31 | 3.2% |
+| **1h and coarser** | 2,119 | **0.0%** |
+
+The fine intervals scored a few percent only because a short bar is often
+already closed by the time the collector re-reports it. On 4h the newest bar
+is the forming one for four hours, and by the time it closes the next one has
+started - so it was never once offered while it was complete.
+
+A bar is complete exactly when the next one starts, so the capture now targets
+the **last two** bars by timestamp rather than the end of the deque: the one
+before the end, which has certainly closed, and the end itself, which will
+fail until it has.
+
+Whether it works is still a production question, and the same tally answers
+it: the share refined **at 4h**, which was 1 in 1,315.
 
 ## The spread
 
