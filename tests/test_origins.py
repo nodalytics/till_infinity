@@ -489,3 +489,27 @@ def test_the_engine_captures_fine_extremes_as_the_coarse_bar_closes():
 
     assert high == 105.0
     assert low == 98.0
+
+
+def test_a_restored_series_starts_pairing_rather_than_never_starting():
+    """The guard every other late-added field here uses is "exactly one
+    behind", and a restored Series is five hundred behind - so it would never
+    be true once, and the field would stay empty for the life of the process.
+    Computed correctly and read where nothing sees it."""
+    import math
+
+    from till_infinity.structures.engine import Series
+
+    series = Series(feed="t", interval="4h")
+    for i in range(5):
+        series.add(14_400 * (i + 1), 110.0, 90.0, 100.0, 100.0)
+    # As a restore from before the field existed leaves it.
+    series.fine_low.clear()
+    series.fine_high.clear()
+
+    series.add(14_400 * 6, 112.0, 92.0, 101.0, 100.0)
+    series.note_fine(92.0, 111.0)
+
+    assert len(series.fine_low) == len(series.closes)
+    assert series.fine_at(14_400 * 6) == (92.0, 111.0)
+    assert all(math.isnan(v) for v in series.fine_at(14_400))

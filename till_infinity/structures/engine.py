@@ -404,10 +404,15 @@ class Series(Restorable):
         # misalign every bar against its own open from then on.
         if len(self.opens) == len(self.closes) - 1:
             self.opens.append(opening)
-        # Same guard, same reason: a Series restored from before these existed
-        # has empty deques beside full ones, and appending blindly would
-        # misalign every bar against another bar's minutes.
-        if len(self.fine_low) == len(self.closes) - 1:
+        # **Padded, not skipped.** A Series restored from before these existed
+        # has 500 closes and no minutes, so the "one behind" test every other
+        # late-added field here uses would never once be true and the field
+        # would stay empty for the life of the process - computed correctly and
+        # read where nothing sees it, which is what research/inert.md is a list
+        # of. Padding with `nan` says "unknown" about the bars that predate the
+        # field, which is exactly what is true of them, and leaves the pairing
+        # right from here on.
+        while len(self.fine_low) < len(self.closes):
             self.fine_low.append(math.nan)
             self.fine_high.append(math.nan)
         self.since_reform += 1
