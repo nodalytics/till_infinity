@@ -7,6 +7,43 @@
 > README's opening is the short version; this document is the reasoning behind
 > each choice.
 
+## A valuation is not a system, and this is the second reason for everything here
+
+The clearest illustration is not one of ours. VWAP - the price at which the
+day's volume actually changed hands - is as good an estimate of fair value as
+this market produces, and it is the one large institutions are measured
+against. They use it for two things: to know what the day's price was, and to
+place a large order without moving the market against themselves. Both are
+uses of a **measurement**.
+
+Turn the same number into a rule - buy below it, sell above it, no volume
+confirmation, no risk management - and it draws down heavily. Nothing about the
+estimate got worse. What changed is that a statement about where value is was
+asked to answer a different question: whether to take this trade, at this size,
+right now, and where to be wrong. Those are not properties of the valuation,
+and no amount of improving the valuation supplies them.
+
+That gap is why this project is shaped the way it is, and why the shape looks
+slow from outside. A level is published before anything is allowed to trade it.
+Features are published and read by nothing until the record says whether they
+predict. Every model scores itself against the control that would beat it - the
+base rate, the constant, the coin - so the question "is this better than nothing"
+is answered in the same breath as "what does this say". A number that has not
+been through that is an opinion, however well it is computed.
+
+**So the valuation is the input and never the trade.** What makes it a trade is
+everything that comes after: whether the distance is worth the cost of crossing
+the spread, whether the stop has structure to lean on, how big the position is
+against a loss limit that resets on a clock rather than on a feeling, and what
+happens when the thesis is right and slow. Those are the parts that fail
+quietly, so those are the parts kept in the record.
+
+The corollary is the uncomfortable half. It means most of what is built here
+will earn nothing, and that has to be discoverable rather than argued about -
+which is what [research/inert.md](../research/inert.md) is: a list of things
+computed correctly and read by nothing, kept because a fix that ships and
+changes no number is the failure mode this desk is most prone to.
+
 ## Fair value, and why the turn is a consequence rather than a definition
 
 Price does not stop at a level because the line is special. It stops because

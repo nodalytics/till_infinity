@@ -610,12 +610,23 @@ behind it, because a rung is a price the market has already agreed on and a
 stop just beyond one is protected by the same thing the entry was.
 
 **What the replay says.** [swinging.md](../research/swinging.md) walks all six
-over 17 instruments and 1.1M stored bars: **72 trades, -0.173R a trade net of
-the spread**, 34.7% win rate. Part 3 is the component that pays - requiring the
-candle refuses 76% of candidates and moves the mean by +0.135R - and the losing
-half is the exit geometry, because at that hit rate the winners need 1.88R and
-average 1.2R at the target. The strategy has still never opened a live trade,
-and the momentum half of part 3 is tick-fed and cannot be replayed from bars.
+over 17 instruments and 1.1M stored bars. As first written it lost 0.173R a
+trade net of the spread over 72 trades. Part 3 is the component that pays -
+requiring the candle refuses 76% of candidates and moves the mean by +0.135R.
+
+What lost was the stop. Sweeping `stop_multiple`, `at_bound` and `trail_vol`
+together, **every cell with a 1.0 stop is profitable and every cell with a 1.5
+stop loses**, at both bound settings and both trail settings. The target is the
+opposite bound and the bound does not move when the stop does, so the extra
+half unit made every win smaller and bought nothing - the target pays +1.68R at
+1.0 against +1.21R at 1.5, and the win rate rose rather than fell. The book now
+carries stop 1.0, `at_bound` 0.10, trail 4.0.
+
+That leaves it at +0.054R a trade over 68, which has a standard error near 0.12
+- **no longer losing rather than winning.** The finding is the paired
+difference between the two stops (+0.214R a trade, same direction in all four
+pairs), not the profit. The strategy has still never opened a live trade, and
+the momentum half of part 3 is tick-fed and cannot be replayed from bars.
 
 ## The swing that runs between two origins
 

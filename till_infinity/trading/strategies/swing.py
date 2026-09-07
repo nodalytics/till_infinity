@@ -463,9 +463,25 @@ class SwingLevel(LevelStrategy):
     #: Still inside the 48h `max_hold_swing` ceiling, so the deployment can cut
     #: it without a release.
     hold_seconds: ClassVar[float] = 24 * 3_600.0
-    #: More room than a scalp, because the level is placed on slower data and
-    #: the noise around it is proportionally larger.
-    stop_multiple: ClassVar[float] = 1.5
+    #: **Cut from 1.5 on 2026-09-07, and it is the whole result.**
+    #:
+    #: `research/swinging.md` swept this against `at_bound` and `trail_vol`
+    #: inside one replay. Every cell with a 1.0 stop is profitable and every
+    #: cell with a 1.5 stop loses, at both bound settings and both trail
+    #: settings - a clean split rather than one lucky corner of a grid.
+    #:
+    #: The reason is geometry. The target is the opposite bound, and the bound
+    #: does not move when the stop does, so half a unit of extra stop makes
+    #: every win smaller without buying anything. Measured: the target pays
+    #: **+1.68R at 1.0 against +1.21R at 1.5**, and the win rate went *up*
+    #: rather than down - 37.3% against 34.7% - because break-even at 1.5R is
+    #: reached sooner on a tighter stop and scratches trades that would
+    #: otherwise have run to the loss.
+    #:
+    #: "More room than a scalp, because the level is placed on slower data"
+    #: was the old argument. It is not wrong about the noise; it was wrong
+    #: about who pays for it.
+    stop_multiple: ClassVar[float] = 1.0
     #: Inherited from `high-timeframe`, removed as a near-duplicate of this.
     #: The two shared entries, context and the requirement that a higher
     #: timeframe agree; what it had that this did not is below.
@@ -486,6 +502,11 @@ class SwingLevel(LevelStrategy):
     #: The trail is what ends most of these trades once the target stops being
     #: reachable in the ordinary case, so it has to tolerate a retracement that
     #: a daily-anchored move makes on its way somewhere.
+    #:
+    #: **Kept at 4.0, having been offered 6.0 and refused it.** Widening it
+    #: was worse in three of the four pairs it was swept over. That is a null
+    #: rather than a finding, and it is recorded because the alternative is
+    #: rediscovering it: the trail is not what is costing this strategy money.
     trail_vol: ClassVar[float] = 4.0
 
     #: **And it trails behind levels rather than at that distance.**
@@ -528,10 +549,20 @@ class SwingLevel(LevelStrategy):
     #:
     #: A trade taken in the middle of a range is not this strategy - it has no
     #: wall behind it, the stop has nothing to lean on, and the target is
-    #: whichever bound happens to be further away. A fifth is deliberately
-    #: generous: the bound is a Kalman estimate with a zone around it, and
-    #: demanding price sit exactly on the mean would refuse most real touches.
-    at_bound: ClassVar[float] = 0.20
+    #: whichever bound happens to be further away.
+    #:
+    #: **A fifth was the first guess and a tenth is the measured one.** It was
+    #: named here as the number most likely to be wrong, and the sweep in
+    #: `research/swinging.md` supports tightening it at both stop settings and
+    #: both trail settings - though by a tenth of what the stop change is
+    #: worth, and at the cost of seven trades in sixty-eight. Entering a fifth
+    #: of the way into the range spends a fifth of the target before the trade
+    #: starts, which is the arithmetic reason to prefer the tighter one.
+    #:
+    #: Not tighter than a tenth: the bound is a Kalman estimate with a zone
+    #: around it, and demanding price sit exactly on the mean would refuse
+    #: most real touches.
+    at_bound: ClassVar[float] = 0.10
 
     def at_the_right_place(
         self, feed: str, side: Side, features: dict[str, float]

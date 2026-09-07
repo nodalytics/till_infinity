@@ -190,7 +190,7 @@ PRESETS: dict[str, Shape] = {
         stop=1.0, target=1.0, trail=0.0, protect=0.0, hold=14400.0, pullback=0.0
     ),
     "runner": Shape(stop=1.0, target=3.0, trail=1.0, protect=1.0, hold=14400.0, pullback=0.0),
-    "swing-level": Shape(stop=1.5, target=2.5, trail=4.0, protect=1.5, hold=86400.0, pullback=1.0),
+    "swing-level": Shape(stop=1.0, target=2.5, trail=4.0, protect=1.5, hold=86400.0, pullback=1.0),
     # The measured best exit on 31,820 replayed touches: no reachable target,
     # trailed half a volatility unit behind the best price. See `Ride`.
     "ride": Shape(stop=1.0, target=6.0, trail=0.5, protect=1.0, hold=0.0, pullback=1.0),

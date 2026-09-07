@@ -5,6 +5,41 @@ lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
 
+## VWAP, as a second definition of fair value - noted 2026-09-07
+
+[Volume Weighted Average Price (VWAP): The Holy Grail for Day Trading
+Systems](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4631351), SSRN
+4631351. Read for what it would add to `structures`, not adopted.
+
+**Why it is interesting here.** [idea.md](idea.md) defines fair value as where
+a demand or supply spree began - a price the market itself committed at. VWAP
+is a different answer to the same question: the price at which the day's volume
+actually changed hands. Two definitions that disagree is information; a level
+that both agree on is a stronger claim than either alone, which is exactly the
+argument `confluence` already makes across timeframes.
+
+It is also the one anchor institutions are measured against, which is a
+mechanical reason for price to return to it that has nothing to do with the
+level being respected - a different *kind* of reason from anything currently
+drawn here.
+
+**The caveat, and it is the point.** Traded mechanically on its own - buy below
+it, sell above it, no volume confirmation, no risk rule - it produces heavy
+drawdowns. Institutions use it to gauge fair value and to minimise market
+impact on an order they were going to place anyway, which is not the same as
+using it to decide whether to place one. So the shape this would take here is
+a **feature and a second opinion on fair value**, published beside the outcome
+and read by nothing, in the order [features.md](../research/features.md)
+argues for.
+
+**What would block it.** VWAP needs volume, and volume is the field this book
+is least sure of: the broker feed has a spread and no book behind it, and the
+`bars` table's `volume` column is nullable and unevenly populated across
+venues. The first question is not whether VWAP predicts anything - it is
+whether there is volume to compute it from on the instruments that trade here.
+That is a counting exercise and it comes first.
+
+
 ## Strategies on break risk, added 2026-08-31
 
 `structures/learning/breaking.py` publishes `break_probability` on every level call and
