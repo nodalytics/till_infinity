@@ -187,6 +187,16 @@ class Origin(Restorable):
     #: How many times price has come back into the zone since. Each return
     #: trades away some of whatever was resting here.
     revisits: int = 0
+    #: Whether `refine` actually relocated this to the finer transition.
+    #:
+    #: **Recorded because otherwise the question cannot be asked.** A refined
+    #: origin and an unrefined one are the same shape - the band keeps its
+    #: width and moves with the price - so without this flag "are origins
+    #: being refined in production" has no answer, and a refinement that
+    #: silently never fires is exactly the shape `research/inert.md`
+    #: catalogues. False on anything restored from a save that predates it,
+    #: which reads correctly: it was not refined.
+    refined: bool = False
 
     def holds(self, price: float) -> bool:
         return self.low <= price <= self.high
@@ -212,6 +222,7 @@ class Origin(Restorable):
             "when": self.when,
             "settled": self.settled,
             "revisits": self.revisits,
+            "refined": self.refined,
         }
 
 
@@ -265,7 +276,9 @@ def refine(
     # or re-deriving the band from the finer bars is the next experiment; this
     # keeps the existing width and re-centres it, which is the smaller claim.
     shift = price - origin.price
-    return replace(origin, price=price, low=origin.low + shift, high=origin.high + shift)
+    return replace(
+        origin, price=price, low=origin.low + shift, high=origin.high + shift, refined=True
+    )
 
 
 def _step(times: Sequence[float]) -> float:
@@ -465,6 +478,11 @@ class Origins(Restorable):
             known[key] = refine(origin, fine_times, fine_closes, span)
         self.found = sorted(known.values(), key=lambda o: o.when)[-keep:]
         return self.found
+
+    @property
+    def refined(self) -> int:
+        """How many of the kept origins were relocated at the finer resolution."""
+        return sum(1 for o in self.found if o.refined)
 
     def _count_revisits(self, prices: list[float]) -> None:
         """How often price has come back into each zone since it formed."""

@@ -669,7 +669,28 @@ class Watcher:
         if dropped:
             log.info("structures: %d instrument/timeframe pair(s) declined", dropped)
 
+    def origin_tally(self) -> str:
+        """Kept origins and how many were refined, for the save log.
+
+        The refinement only fires when the 1m series still covers the coarse
+        bar an origin sits in, which is an eight-hour window against a
+        lookback measured in weeks - so "does this ever happen in production"
+        is a real question with a number attached, and this is the number.
+        A refinement that silently never fires is the shape
+        `research/inert.md` catalogues, and nine cases in.
+        """
+        kept = getattr(self.engine, "_origins", None) or {}
+        total = sum(len(o.found) for o in kept.values())
+        refined = sum(o.refined for o in kept.values())
+        if not total:
+            return "no origins kept yet"
+        return (
+            f"{total} origin(s) kept across {len(kept)} series, "
+            f"{refined} refined ({refined / total:.0%})"
+        )
+
     def save(self) -> None:
+        log.info("structures: %s", self.origin_tally())
         if self.bench.scores:
             # Logged rather than only stored, because a comparison nobody reads
             # settles nothing - and this one exists to settle whether the model

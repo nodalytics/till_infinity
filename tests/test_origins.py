@@ -425,3 +425,27 @@ def test_an_engine_restored_without_the_field_still_works():
 
     assert len(got) == 1
     assert ("t", "4h") in engine._origins
+
+
+def test_a_refined_origin_says_so():
+    """Otherwise "are origins being refined in production" has no answer, and a
+    refinement that silently never fires is the shape inert.md catalogues."""
+    from till_infinity.structures.drawing.origins import Origins, refine
+
+    times = [float(t * 60) for t in range(15)]
+    closes = [100, 101, 103, 105, 104, 102, 99, 97, 95, 94, 93, 92, 91, 90, 90]
+
+    moved = refine(_origin(90.0, "down", when=0.0), times, closes, span=900.0)
+    stayed = refine(_origin(90.0, "down", when=0.0), (), (), span=900.0)
+
+    assert moved.refined is True
+    assert stayed.refined is False
+
+    kept = Origins()
+    kept.remember(
+        [_origin(90.0, "down", when=0.0)], fine_times=times, fine_closes=closes, span=900.0
+    )
+    kept.remember([_origin(50.0, "up", when=900.0)])
+
+    assert kept.refined == 1
+    assert len(kept.found) == 2
