@@ -701,6 +701,53 @@ class Watcher:
             + (f" ({confirmed / refined:.0%} of refined)" if refined else "")
         )
 
+    def refinement_tally(self) -> str:
+        """Where the refinement reaches and where it does not, per timeframe.
+
+        **The number this exists to explain is 2.4%.** `refine` is the largest
+        single improvement ever measured on the swing strategy - +0.349R a
+        trade becoming +0.576R, winning in all eight cells - and it reaches one
+        origin in forty. `origin_confirmed` inherits the same ceiling, which is
+        why 414 of 415 published calls read zero.
+
+        Broken down by interval because the constraint is a per-interval one:
+        `_capture_fine` needs the 1m series to cover the whole coarse bar at the
+        moment it closes, `Series` holds 500 bars, and 500 one-minute bars is
+        **eight hours**. A 1d bar is 1,440 minutes and can never be covered; a
+        4h bar is 240 and always can. Which of those actually happens is a
+        measurement rather than an argument, and this is it.
+
+        `fine` is the count of captured bars per series - a series with origins
+        and no captures is one where the fine data never arrived, which is a
+        different fault from one where it arrived too late.
+        """
+        kept = getattr(self.engine, "_origins", None) or {}
+        if not kept:
+            return "no origins to refine yet"
+        rows: dict[str, list[int]] = {}
+        for (feed, interval), book in kept.items():
+            row = rows.setdefault(interval, [0, 0, 0, 0])
+            row[0] += len(book.found)
+            row[1] += book.refined
+            series = self.engine._series.get((feed, interval))
+            row[2] += len(getattr(series, "fine", ()) or ()) if series else 0
+            row[3] += 1
+        parts = []
+        for interval, (total, refined, captured, series) in sorted(
+            rows.items(), key=lambda kv: -kv[1][0]
+        ):
+            if not total:
+                continue
+            parts.append(
+                f"{interval} {refined}/{total} ({refined / total:.0%}), "
+                f"{captured} captured over {series} series"
+            )
+        fine_feeds = {f for (f, i) in self.engine._series if i == "1m"}
+        all_feeds = {f for (f, _i) in self.engine._series}
+        return f"refinement: 1m series on {len(fine_feeds)}/{len(all_feeds)} feeds; " + "; ".join(
+            parts
+        )
+
     def change_tally(self) -> str:
         """How many timeframes are calling a change right now, for the save log.
 
@@ -751,6 +798,7 @@ class Watcher:
     def save(self) -> None:
         log.info("structures: %s", self.origin_tally())
         log.info("structures: %s", self.drift_tally())
+        log.info("structures: %s", self.refinement_tally())
         log.info("structures: %s", self.change_tally())
         if self.dropped:
             log.warning(
