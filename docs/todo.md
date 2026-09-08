@@ -51,6 +51,62 @@ memoryless - the hazard flat - then residual time is a constant and step 2 is
 the whole answer. That is a cheap thing to check and it should be checked
 before any of step 3.
 
+## FOCuS, and a licence question that has to be settled first
+
+Noted 2026-09-08 from [changepoint-online](https://pypi.org/project/changepoint-online/).
+
+**It is the right shape for the gap.** `river.drift.ADWIN` tests a change in the
+**mean** via a Hoeffding bound, which is why the entry below calls a change in
+*scale* with no change in mean the gap on the signal side - the event this desk
+is built around and the one a mean test cannot see. FOCuS is offered with a
+**Gamma cost, which is change-in-scale**, and with the option to constrain
+detection to increases only. That is a volatility-regime detector, parametric,
+in the form the problem actually has.
+
+Two further things that matter here:
+
+* **It solves the CUSUM likelihood-ratio test exactly, in O(log n) per
+  observation, with no window.** Our `context/cusum.py` accumulates deviations
+  against a fixed threshold; FOCuS maximises the likelihood ratio over *every
+  possible changepoint location* without one being chosen. Given that our own
+  `Cusum` scored 0.205v against a fine-resolution transition's 0.124v in
+  `research/localising.md`, "our CUSUM is the weak part" is a live hypothesis
+  and this is the way to test it.
+* **NPFocus is non-parametric**, which covers the same ground as KSWIN without
+  a second window to size.
+
+### The licence has to be settled before any of it
+
+**`changepoint-online` is GPLv3. This repository is public and carries no
+licence file, and its Docker image is published to `ghcr.io`.** Publishing an
+image containing a GPLv3 dependency is distribution, and GPLv3's copyleft
+reaches the combined work - which sits badly with a repository that currently
+grants no rights at all.
+
+That is not a reason to avoid it, but it is a decision to make deliberately
+rather than acquire by running `uv add`:
+
+1. **Decide what licence this repository is under.** It has none today, which
+   means default copyright - all rights reserved - while being publicly
+   readable. That is worth settling on its own account, independently of this.
+2. If the answer is a GPL-compatible one, FOCuS is in.
+3. If it is not, the options are to reimplement the algorithm from the papers
+   (they are published, and the algorithm is short), or to keep it to offline
+   research where nothing is distributed.
+
+`river` is BSD-3 and `river.drift` is already a dependency, which is why ADWIN
+raised none of this.
+
+### Order
+
+1. **Settle the licence question.** It is a decision, not work, and everything
+   else here waits on it.
+2. Then FOCuS with a Gamma cost against `ADWIN` on the same consensus series,
+   counting where they disagree - the same shape as the KSWIN comparison below,
+   and if neither fires where ADWIN does not, both are cheap to reject.
+3. Then FOCuS against `Cusum` in the estimator harness in
+   `research/localising.md`, which already has the baseline to beat.
+
 ## River's other drift detectors - one of the four is already here
 
 Noted 2026-09-08. River is already a dependency and `river.drift.ADWIN` is
