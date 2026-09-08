@@ -3346,10 +3346,26 @@ worth running on the trap population as it stands.
 > | container cap | 640MB, pinned | 70% of host, derived |
 > | architecture | amd64 | **arm64** - the image is now built for both |
 >
-> **So do the deferred work.** `prices prune` has never actually run, `VACUUM`
-> was waiting on room for a second copy of the file, and the outcome-rate
-> re-measure and `structures gaps` were both put off because a second process
-> was enough to OOM the box. None of that is true now. What has *not* changed
+> **So do the deferred work** - but read the correction below first.
+> `prices prune` has never actually run, `VACUUM` was waiting on room for a
+> second copy of the file, and the outcome-rate re-measure and `structures
+> gaps` were both put off because a second process was enough to OOM the box.
+> None of *that* is true now.
+>
+> **Corrected 2026-09-08: the binding constraint is CPU, not RAM, and this
+> note caused an outage by saying otherwise.** The box has **2 cores**. A day
+> of research harnesses run inside the live container - several minutes of CPU
+> each, plus a 208-second full scan of `prices.db` writing an 841MB extract -
+> took the service from ~3,500 journal entries an hour to **zero**. It stayed
+> `healthy` at 68% CPU and produced nothing for hours, logging `bus:
+> prices.bars full` 132,807 times, which rotated every diagnostic out of
+> `docker logs`. A restart fixed it: CPU 68% to 9%, drops to zero.
+>
+> So: heavy work is fine on this box and **not inside that container**. Use a
+> second container, or run it `nice`d on the host against a copy of the
+> database. And when something looks stalled, `docker logs` may be useless -
+> group the journal's `entries` by `actor`, which separates a structures stall
+> from a trading one in one query. What has *not* changed
 > is that a cold start is still the expensive moment - see item 0c - though it
 > costs 36MB rather than 410MB since the warm was streamed.
 

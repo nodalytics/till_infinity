@@ -292,9 +292,13 @@ reachDn = (dF and below(secF)) ? secF : (dE and below(secE)) ? secE :
      (dD and below(secD)) ? secD : (dC and below(secC)) ? secC :
      (dB and below(secB)) ? secB : dA ? secA : 0
 
-rungName(int secs) => secs <= 0 ? "none" :
-     secs >= 3600 ? str.tostring(int(secs / 3600)) + "h" : str.tostring(int(secs / 60)) + "m"
-     secs >= 3600 ? str.tostring(secs / 3600) + "h" : str.tostring(secs / 60) + "m"
+// A body on its own line rather than a continuation. Pine's line-continuation
+// rules are indentation-sensitive and a wrapped ternary after `=>` is read as a
+// new statement, which is a syntax error at the first token of the second line.
+rungName(int secs) =>
+    hours = str.tostring(int(secs / 3600)) + "h"
+    mins  = str.tostring(int(secs / 60)) + "m"
+    secs <= 0 ? "none" : secs >= 3600 ? hours : mins
 
 // ------------------------------------------------------- the refinement
 //
