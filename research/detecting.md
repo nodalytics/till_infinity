@@ -52,6 +52,35 @@ apples-to-oranges this folder exists to avoid. What is comparable is each
 against its own null, and on that basis FOCuS is the only one of the three that
 can be read as an alarm rather than as a counter.
 
+## KSWIN, measured in production: silent
+
+`Drift` has run ADWIN and KSWIN side by side since the KSWIN work, with the
+counters read by nothing until `drift_tally` started logging them on
+2026-09-08. The first hours:
+
+    drift: adwin 27, kswin 0, both 0, kswin alone 0
+
+**`kswin_alone` is the number this was built to produce, and it is zero.** So
+is `kswin`. KSWIN has not fired once against ADWIN's 27.
+
+**That is not yet a verdict on KSWIN.** `KS_ALPHA` here is 0.0005 against
+River's default of 0.005 - ten times stricter, chosen to be conservative
+because a false alarm discounts real evidence. A detector that never fires at
+a tenth of the usual significance is telling you about the significance, not
+about the detector.
+
+So the honest reading is that **the experiment as configured cannot answer its
+own question**, and there are two ways forward:
+
+* Run it at River's 0.005 and see whether `kswin_alone` becomes non-zero. If it
+  does, the question becomes whether those extra alarms are worth their false
+  positives - which is a measurement, and this is the counter for it.
+* Or accept that a second detector which is silent at the significance this
+  desk is willing to act on is not earning its window, and take it out.
+
+Either is defensible. Leaving it as it is - running, counted, and unable to
+produce a non-zero reading - is not.
+
 ## So the readings mean different things
 
 * **FOCuS** can be believed when it fires, and it says **where** the change

@@ -3254,16 +3254,58 @@ What is still open on this item:
 * **Option 1 - six detectors into one HMM.** Unchanged and still last. The
   single-statistic version has now returned a large effect, which raises rather
   than lowers the bar: a six-detector model has to beat +7.92v, not zero.
-* **Publish the agreement count as a feature**, journal-only, the way
-  `origin_confirmed` was. Nothing should gate on this yet.
-* **Block bootstrap the day-horizon gap.** Forward windows of a day overlap
-  heavily on 5-minute events, so the effective sample is far below the nominal
-  481 and the shuffle null does not fix that.
+* ~~**Publish the agreement count as a feature**~~ - shipped, and journalling:
+  412 rows in six hours spread 238/44/42/57/31 across 0-4 agreeing, with
+  `change_watched_tf` mostly 3-4. It needs weeks before it can be scored.
+* ~~**Block bootstrap the day-horizon gap.**~~ Done. **Only the day survives**:
+  90% interval [0.644v, 14.876v] over 125 feed-days, 96.5% of resamples
+  positive. The hour ([-0.549v, 1.502v]) and the four-hour ([-0.470v, 3.968v])
+  straddle zero and were reported as results when they should not have been.
+  The day's interval is wide, so what is established is the **sign**, not the
+  nine volatility units.
 * **The 4h arm was not run.** 24 days of 1m is 144 four-hour bars. 30m stood in
   for it.
 * **spx500 and us100 produced zero three-way agreements in 24 days**, on
   hundreds of single-timeframe calls. That wants explaining before the feature
   is trusted on indices.
+
+## 7e. KSWIN is silent, and the alpha is why
+
+`drift: adwin 27, kswin 0, both 0, kswin alone 0` in the first hours of the
+tally logging. `kswin_alone` is the number the whole experiment exists to
+produce and it is zero.
+
+**That is a verdict on the configuration, not the detector.** `KS_ALPHA` is
+0.0005 against River's default 0.005 - ten times stricter. A detector that
+never fires at a tenth of the usual significance is telling you about the
+significance.
+
+Two ways to close it, and leaving it running-but-unanswerable is not one:
+
+1. Run at 0.005 and see whether `kswin_alone` becomes non-zero. If it does, the
+   question becomes whether those alarms are worth their false positives, which
+   is what the counter measures.
+2. Or accept that a second detector silent at the significance this desk will
+   act on is not earning its window, and remove it.
+
+## 7f. The stop was not the explanation, and 205 trades cannot tell
+
+The agreement filter passed its control by a factor of fourteen for *location*
+and did not show for *trade outcomes*. The named hypothesis was the stop.
+Tested across five stop widths with a 500-draw permutation test at each: the
+split is **positive at every geometry** (+0.318R to +0.134R) with p from 0.048
+to 0.248, and the five rows are the same 205 trades re-managed rather than five
+samples.
+
+So the stop is not the explanation, and the honest conclusion is that the
+sample cannot separate a 0.2R effect from noise. The same applies to the zone's
+edge over random placement: the null is one draw per row and moves over 0.38R,
+which is larger than the 0.18R edge.
+
+**What this needs is more trades, not more cleverness.** 25 days and eight
+instruments produced 205. The options are a longer history, more instruments,
+or a faster anchor - and the first is the only one that does not change the
+question being asked.
 
 ## 7c. Cross-instrument agreement - run, and it failed its control
 

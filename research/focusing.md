@@ -109,8 +109,40 @@ shuffled:
 | 4 | 58 | +0.268R | +0.222R |
 
 The real pattern looks right - negative at one and two, positive at three and
-four. **The shuffled control produces the same pattern**, and a larger effect
-at three. On this population the filter is not demonstrated.
+four. A single shuffled draw produced the same pattern and a larger effect at
+three, which read as a refutation.
+
+**That reading was wrong, and the mistake is worth naming: one shuffle is not
+a null, it is one sample from one.** Swept properly - across five stop widths,
+with a 500-draw permutation test at each - the split is positive at **every**
+geometry:
+
+| stop, in zone widths | edge over null | 1-2 tf | 3+ tf | split | p (permutation) |
+| --- | --- | --- | --- | --- | --- |
+| 0.25 | +0.195R | -0.079R | +0.239R | **+0.318R** | 0.048 |
+| 0.50 | +0.265R | +0.059R | +0.270R | +0.211R | 0.142 |
+| 1.00 | +0.107R | +0.016R | +0.150R | +0.134R | 0.248 |
+| 2.00 | +0.176R | +0.020R | +0.190R | +0.170R | 0.152 |
+| 4.00 | -0.191R | -0.094R | +0.127R | +0.221R | 0.050 |
+
+**Consistent in sign, and not significant.** Two of five reach p < 0.05 and
+three do not, and the five rows are the *same 205 trades* re-managed, so they
+are five looks at one sample rather than five samples. After any allowance for
+that, nothing here clears a bar.
+
+The honest statement is therefore neither "the filter works" nor "the filter
+does not transfer" - it is that **205 trades cannot tell**. The sign being
+positive at every geometry is worth something; it is not worth a gate.
+
+**And the same caution applies to the edge itself.** The null column is one
+random draw per row and moves over a 0.38R range across the sweep - comparable
+to the 0.18R edge it is being subtracted from. The zone's advantage over random
+placement is *also* unestablished on this sample, which the first version of
+this document stated more confidently than it should have.
+
+What the sweep does settle: **the stop was not the explanation.** Loosening it
+from a quarter of a zone width to two does not change the picture, and four
+destroys the edge outright.
 
 **This is the interesting result, because agreement passed its control
 convincingly for *location*.** In [agreeing.md](agreeing.md), three-or-more
@@ -123,9 +155,9 @@ of a zone-width beyond the far edge collects, and a stop that tight is hit by
 exactly the move-and-return that leaves the forward number intact. The edge may
 be real and the geometry may be spending it.
 
-The cheap next experiment is therefore the stop, not the signal: re-run the
-sweep with the stop at 1, 2 and 4 zone-widths and see whether the agreement
-split reappears as it loosens.
+That hypothesis has now been tested and is **not** the explanation - the split
+is much the same at every stop width. What the sample cannot do is separate a
+real 0.2R effect from noise, and the only fix for that is more of it.
 
 ### Swing: 4h anchor, 15m refinement - not measurable here
 

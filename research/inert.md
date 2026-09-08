@@ -249,3 +249,30 @@ Cheap, and it would have caught all four:
 standardiser stale. `RECIPE` handles an input **changing meaning**, and a
 length change is handled by rebuilding - but the silent-return remains, and
 some other model will find it.
+
+## Ten: the origin refinement fires on 2.4% of origins
+
+Measured on the live book, 2026-09-08: **33,211 origins kept across 1,751
+series, 810 refined.** The refinement is the largest single improvement ever
+measured on the swing strategy - +0.349R a trade becoming +0.576R - and it
+reaches one origin in forty.
+
+`refine` needs the 1m series to have covered the coarse bar the origin sits in
+at the moment that bar closed. `Series` holds 500 bars, so 1m covers about
+eight hours, and every origin on a timeframe whose lookback is longer than that
+mostly misses.
+
+**And the change-point confirmation inherits the problem.** `origin_confirmed`
+is a subset of refined by construction - the change point can only agree with a
+relocation that happened - so of 415 published calls carrying the field in six
+hours, **414 read zero and one read one**. The field is not broken; it is
+measuring a population that barely exists.
+
+Two things follow, and neither is "the feature is wrong":
+
+* The journal cannot score `origin_confirmed` at this rate. It needs either far
+  more time or a larger refined population.
+* `research/localising.md` already names the fix - the `Series` window is 500
+  bars and a 1m series therefore reaches eight hours. Growing it for that one
+  series, or keeping the coarse band on coarse origins, is a measurement nobody
+  has made.

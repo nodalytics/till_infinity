@@ -203,7 +203,7 @@ def measure(grid, rows, feed):
             forward = tuple(
                 sign * (grid[i + h].close - here) / scale for h in HORIZONS
             )
-            out.append((count, trigger, forward, feed))
+            out.append((count, trigger, forward, feed, grid[i].time))
     return out
 
 
@@ -268,7 +268,7 @@ def conditioned(events, index, rng):
     # gap survives this, the label is doing no work and the deciles are.
     shuffled = [e[0] for e in events]
     rng.shuffle(shuffled)
-    fake = [(k, e[1], e[2], e[3]) for k, e in zip(shuffled, events)]
+    fake = [(k, e[1], e[2], e[3], e[4]) for k, e in zip(shuffled, events)]
     one = [e[2][index] for e in fake if e[0] == 1]
     many = [e[2][index] for e in fake if e[0] >= 3]
     if len(one) > 30 and len(many) > 30:
@@ -308,6 +308,68 @@ def per_feed(events, index):
         print(f"  3+tf ahead on {wins} of {seen} instruments with enough of both")
 
 
+def bootstrap(events, index, rng, draws=400):
+    """A confidence interval for the gap, resampling **whole days**.
+
+    **The shuffle null was never an error bar.** It says the *label* matters;
+    it says nothing about how precise the estimate is, and precision is the
+    open question here: a day-forward window is 288 grid bars and events are
+    far more frequent than that, so consecutive observations share most of
+    their outcome and the effective sample is well below the nominal count.
+
+    Resampling individual events would assume the independence that is
+    obviously absent. Resampling whole **days within a feed** keeps the overlap
+    that lives inside a day and breaks the one across days, which is the right
+    trade for a horizon of a day - it is the moving-block bootstrap with the
+    block chosen to match the dependence it has to survive.
+
+    The interval reported is the 5th to 95th percentile of the resampled gap.
+    If it straddles zero, the effect is not established however large the point
+    estimate is.
+    """
+    edges = decile([e[1] for e in events])
+    if not edges:
+        return
+    floor = edges[5] if len(edges) > 5 else 0.0
+    # Group by (feed, day), which is the unit resampled.
+    blocks: dict[tuple[str, int], list] = {}
+    for e in events:
+        if e[1] < floor:
+            continue
+        blocks.setdefault((e[3], int(e[4] // 86400) if len(e) > 4 else 0), []).append(e)
+    keys = list(blocks)
+    if len(keys) < 20:
+        print(f"  bootstrap: only {len(keys)} feed-days, not run")
+        return
+
+    def gap_of(rows):
+        one = [r[2][index] for r in rows if r[0] == 1]
+        many = [r[2][index] for r in rows if r[0] >= 3]
+        if len(one) < 30 or len(many) < 30:
+            return None
+        return st.median(many) - st.median(one)
+
+    point = gap_of([e for k in keys for e in blocks[k]])
+    got = []
+    for _ in range(draws):
+        drawn = [e for _ in keys for e in blocks[rng.choice(keys)]]
+        value = gap_of(drawn)
+        if value is not None:
+            got.append(value)
+    if not got or point is None:
+        print("  bootstrap: not enough of both buckets in the resamples")
+        return
+    got.sort()
+    lo = got[int(0.05 * len(got))]
+    hi = got[min(len(got) - 1, int(0.95 * len(got)))]
+    above = sum(1 for g in got if g > 0) / len(got)
+    print(
+        f"  block bootstrap over {len(keys)} feed-days, {len(got)} resamples: "
+        f"gap {point:.3f}v, 90% interval [{lo:.3f}v, {hi:.3f}v], "
+        f"{above:.1%} of resamples positive"
+    )
+
+
 def run(feeds, seed=5):
     rng = random.Random(seed)
     conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=60.0)
@@ -336,6 +398,10 @@ def run(feeds, seed=5):
         conditioned(everything, index, rng)
     for index in range(len(HORIZONS)):
         per_feed(everything, index)
+    print("\n  --- how precise is the day-horizon gap? ---")
+    for index, horizon in enumerate(HORIZONS):
+        print(f"  horizon {horizon * GRID}m:")
+        bootstrap(everything, index, rng)
 
 
 if __name__ == "__main__":

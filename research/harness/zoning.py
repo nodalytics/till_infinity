@@ -326,5 +326,81 @@ def run(feeds, seed=13):
     del shuffled_filter
 
 
+def sweep(feeds, seed=13):
+    """Does the agreement split reappear as the stop loosens?
+
+    `focusing.md` measured the filter passing its control by a factor of
+    fourteen for **location** and vanishing for **trade outcomes**, and named
+    the stop as the likeliest reason: that measurement had no stop, and this
+    one puts it a quarter of a zone-width beyond the far edge, which is hit by
+    exactly the move-and-return that leaves a forward number intact.
+
+    So the stop is the variable, not the signal. If the split is real and the
+    geometry is spending it, a wider stop should bring it back; if it never
+    appears, the filter does not survive contact with a trade.
+
+    Reported against the shuffled-label control at every width, because a split
+    that grows in both is a wider stop flattering everything.
+    """
+    global BUFFER
+    rng = random.Random(seed)
+    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=120.0)
+    loaded = []
+    for feed in feeds:
+        fine = load(conn, feed)
+        if len(fine) >= 20_000:
+            loaded.append((feed, fine, [b.time for b in fine]))
+    print(f"anchor {ANCHOR}m, refinement {REFINE}m, reward {REWARD}R, hold {HOLD} bars")
+    print(f"{len(loaded)} instruments\n")
+    print(
+        f"{'stop':>6s} {'n':>5s} {'real':>8s} {'null':>8s} {'edge':>8s}  "
+        f"{'1-2 tf':>8s} {'3+ tf':>8s} {'split':>8s} {'p(perm)':>9s}"
+    )
+    for width in (0.25, 0.5, 1.0, 2.0, 4.0):
+        BUFFER = width
+        real, null = [], []
+        low_tf, high_tf = [], []
+        for _feed, fine, times in loaded:
+            zones = build_zones(fine)
+            if not zones:
+                continue
+            for zone in zones:
+                got = trade(fine, times, zone)
+                if got is None:
+                    continue
+                real.append(got)
+                (high_tf if zone["agreed"] >= 3 else low_tf).append(got)
+            for zone in randomised(fine, zones, rng):
+                got = trade(fine, times, zone)
+                if got is not None:
+                    null.append(got)
+        if len(real) < 40 or len(low_tf) < 20 or len(high_tf) < 20:
+            print(f"{width:6.2f} {len(real):5d}  too few")
+            continue
+        # **A permutation test, not one shuffle.** A single draw is itself a
+        # random variable: the first version of this table showed a shuffled
+        # split of +0.368R at one stop width and near zero at the others, which
+        # is one unlucky draw being read as evidence against the effect. What
+        # is wanted is how often chance alone produces a split this large.
+        split = st.fmean(high_tf) - st.fmean(low_tf)
+        values = low_tf + high_tf
+        cut = len(low_tf)
+        beaten = 0
+        draws = 500
+        for _ in range(draws):
+            rng.shuffle(values)
+            fake = st.fmean(values[cut:]) - st.fmean(values[:cut])
+            beaten += 1 if fake >= split else 0
+        print(
+            f"{width:6.2f} {len(real):5d} {st.fmean(real):7.3f}R {st.fmean(null):7.3f}R "
+            f"{st.fmean(real) - st.fmean(null):7.3f}R  "
+            f"{st.fmean(low_tf):7.3f}R {st.fmean(high_tf):7.3f}R "
+            f"{split:7.3f}R {beaten / draws:9.3f}"
+        )
+
+
 if __name__ == "__main__":
-    run(sys.argv[1].split(","))
+    if os.environ.get("SWEEP"):
+        sweep(sys.argv[1].split(","))
+    else:
+        run(sys.argv[1].split(","))

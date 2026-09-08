@@ -134,11 +134,27 @@ rather than as a counterexample.
 
 * **24 days.** That is the whole database at 1m. Everything here should be
   re-run when there is a quarter.
-* **Overlapping windows.** A day forward is 288 grid bars and events are far
-  more frequent than that, so consecutive observations share most of their
-  outcome. The shuffle null addresses whether the *label* matters and does
-  nothing about the variance of the estimate. A block bootstrap is the next
-  thing to run and it is not run.
+* **Overlapping windows - now bootstrapped, and only the day survives.** A day
+  forward is 288 grid bars and events are far more frequent, so consecutive
+  observations share most of their outcome. The shuffle null says the *label*
+  matters and says nothing about precision. Resampling whole **feed-days** with
+  replacement - the block chosen to match the dependence it has to survive -
+  gives:
+
+  | horizon | gap | 90% interval | resamples positive |
+  | --- | --- | --- | --- |
+  | 1 hour | 0.541v | **[-0.549v, 1.502v]** | 81.8% |
+  | 4 hours | 1.801v | **[-0.470v, 3.968v]** | 90.8% |
+  | **1 day** | **9.169v** | **[0.644v, 14.876v]** | **96.5%** |
+
+  125 feed-days, 400 resamples. **The hour and the four-hour straddle zero and
+  are not established** - this document reported them as results and should
+  not have. The day horizon excludes zero and survives.
+
+  Even there the interval is wide: what is established is that the gap is
+  **positive**, not that it is nine volatility units. A lower bound of 0.644v
+  is a different claim from a point estimate of 9.169v, and any sizing built on
+  this should use the former.
 * **Only large moves.** The conditioning has enough of both buckets in the top
   four deciles of trigger and nowhere else. Below about 6v of realised move
   this says nothing.
@@ -184,8 +200,9 @@ rather than as a counterexample.
    `change_tally` logs the spread on every save, for the same reason
    `origin_tally` does - a reading that silently never fires is the shape
    [inert.md](inert.md) catalogues, and this is the eleventh entry.
-2. **Block bootstrap the day-horizon gap.** The number is large enough that its
-   error bar is the only thing standing between it and a gate.
+2. ~~**Block bootstrap the day-horizon gap.**~~ Done. It survives at a day
+   (90% interval [0.644v, 14.876v]) and does **not** at an hour or four hours.
+   The interval is wide, so the established claim is the sign and not the size.
 3. **Re-run with 4h** when the database has the bars for it. The todo asked for
    it, and 144 bars is not an answer.
 4. **Ask why the indices never agree.** Zero three-way agreements on two
