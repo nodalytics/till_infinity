@@ -532,6 +532,61 @@ merged, because the engine's Kalman mean moves as touches fold in, and anything
 nobody has published a call for in six hours is forgotten rather than kept as a
 description of last week.
 
+## Which strategy gets a signal, and why the order is not a list
+
+**`TRADING_STRATEGIES` is a priority list. The first taker wins.**
+
+Every enabled strategy is offered each signal in the order it is named, and the
+first one that returns an intent takes it. The rest are asked what they *would*
+have done - that is what `_also_wanted` records and what `Untaken` follows to
+its own barriers - but they do not trade it.
+
+So the order is a **ranking of which strategy should own a signal both want**,
+and reordering the list changes the book without changing a single strategy.
+
+### The failure this shape has, twice over
+
+**A strict strategy listed after the permissive one it refines never trades.**
+`_check_refinements` warns about exactly this: a strategy that is another plus
+extra refusals only ever sees calls the permissive one declined, and it declined
+those for reasons the stricter one would decline too. It books nothing, forever,
+while every other signal says it is running - it loaded, it is enabled, it just
+never fires.
+
+**And the order can be changed by accident.** On 2026-09-08 the list was
+rewritten to enable everything except `inverse`, and the new list was written
+out **alphabetically**. That promoted `confluence-scalp` from tenth to second
+and demoted `thesis-only` - the strategy carrying 60 target closes and +1,309
+gross - from first to last. Nothing warned, because every name in the list was
+valid and every strategy was enabled. The symptom was a book that quietly
+started trading like a different desk.
+
+The order in production is deliberate and is recorded here so it is not
+re-derived from memory:
+
+```
+thesis-only, runner, sweep-aware, approach-scalp, swing-level, level-scalp,
+origin-swing, opportunity, ride, confluence-scalp, fade-to-value,
+momentum-scalp, snap
+```
+
+`momentum-scalp` and `snap` are last because they were added later and have no
+established position; last in a priority list means they see only what eleven
+others declined, which is close to off. That is the conservative default and it
+is a decision waiting to be made rather than a considered ranking.
+
+### What this is not
+
+It is **not** a scoring contest. Nothing compares the strategies' intents and
+picks the best one - the first taker wins on order alone. `Policy` learns what
+each *shape* has been worth and feeds that back into the strategies that read
+one, but it does not arbitrate between two strategies wanting the same signal.
+
+That is a real gap and the record already supports closing it: `Untaken`
+follows every refused intent to its own barriers, so what each strategy *would*
+have got is measured. Ranking by that rather than by a hand-written order is
+the obvious next step and nothing does it yet.
+
 ## Scalping, swinging, both, or neither
 
 `TRADING_STYLE` is a coarser switch than `TRADING_STRATEGIES`, and the two
