@@ -323,6 +323,180 @@ fine-derived band and see whether +0.299R moves.
 That is the next thing to run, and it is the first time in this sequence that
 a localization result has had a path to a trading number.
 
+## FOCuS loses as an estimator and pays as a second opinion
+
+`Cusum` reports where a run got long enough to trip. FOCuS maximises the same
+likelihood ratio over *every* possible start and reports the argmax, so it
+answers "where did this begin" rather than "when did I become sure" - which is
+the origin's own definition and not a proxy for it.
+
+Run as a fifth estimator on the population above, it beats the CUSUM version
+on six of eight instruments and improves on the baseline:
+
+| estimator | median wander | its null | ratio | moves the estimate |
+| --- | --- | --- | --- | --- |
+| A - baseline | 0.237v | 0.733v | 3.1x | - |
+| **F - fine-resolution transition** | **0.124v** | 0.735v | **5.9x** | 71.4% |
+| FOCuS change point | 0.192v | 0.734v | 3.8x | 98.8% |
+| H - CUSUM change point | 0.211v | 0.722v | 3.4x | 90.4% |
+| D - directional body edge | 0.237v | 0.759v | 3.2x | 21.9% |
+
+5,684 paired comparisons. **And it still loses to F**, for the reason the
+section below sets out at length: an origin is an extremum, and a change point
+is a near-miss for one.
+
+### Where it does pay
+
+Two estimators built from different statistics landing on the same price is
+worth more than either alone. Split F's own wander by whether FOCuS lands
+within 0.25v of it:
+
+| | n | F's median wander | within 0.25v |
+| --- | --- | --- | --- |
+| FOCuS agrees | 2,828 | **0.101v** | 66.4% |
+| FOCuS disagrees | 2,856 | 0.152v | 60.9% |
+
+The same origin is located half again as precisely when the two agree, on a
+population that splits almost evenly.
+
+### The control, which is the part that makes it a result
+
+The obvious alternative explanation is that agreement just marks *easy events* -
+bars with one clean impulse, which any estimator would locate well. If that
+were it, every estimator would improve on the agreeing half. Split them all by
+the same mask:
+
+| estimator | agreed | apart | gain |
+| --- | --- | --- | --- |
+| baseline | 0.232v | 0.240v | 1.03x |
+| **fine** | **0.101v** | 0.152v | **1.51x** |
+| body edge | 0.229v | 0.239v | 1.04x |
+| CUSUM change point | 0.205v | 0.212v | 1.03x |
+| FOCuS | 0.150v | 0.211v | 1.41x |
+
+The three estimators that do not resolve the transition do not move. Only the
+two that do. So the agreement is carrying information about *the estimate*,
+not about the event.
+
+This is what `Origin.confirmed` and the `origin_confirmed` feature record, and
+`origins.CONFIRM_VOL` is the 0.25v. **Nothing gates on it.** What is measured
+is that the price is better *located*; whether a confirmed origin is better
+*traded* is a different claim, and publishing the flag beside the outcome is
+what lets the journal answer it.
+
+## Six detectors, one population, and the extreme still wins
+
+The change-point literature has more to offer than `Cusum`, and the obvious
+question is whether any of it beats what is here. Six methods were written
+from their papers - nothing copied from `changepoint-online`, `densratio` or
+`ruptures`, because this repository is public with no licence file and a
+dependency is a decision nobody has made - and pointed at the same events, the
+same windows and the same metric.
+
+* **FOCuS** - the exact CUSUM likelihood ratio maximised over every candidate
+  start, which is what `structures/learning/focus.py` implements.
+* **MD-FOCuS** - the same statistic over a vector. High, low and close are
+  three views of one bar, so a change in the mean *vector* should be stronger
+  evidence than a change in the close alone ([arXiv 2104.00581]).
+* **BOCPD** - Adams & MacKay's run-length posterior. The only method here that
+  reports a distribution over where the change was rather than a point.
+* **KCP** - kernel change point, Gaussian kernel at the median width. Fully
+  non-parametric, which matters because intraday returns are not Gaussian.
+* **RuLSIF** - relative density-ratio estimation between a reference and a test
+  window, scored by Pearson divergence. Sees a change in *shape*, not only in
+  mean.
+* **NEWMA** - two EMAs at different rates. The cheapest thing that could work,
+  present so the expensive methods have to beat something.
+
+The last four run on engineered features rather than raw prices - the log
+return and the candle spread `log(high/low)` - because a kernel or a density
+ratio on a non-stationary price level measures the level.
+
+**The liquidity stream is missing and is not faked.** The argument for feature
+engineering asks for log volume as the third stream, and `bt1m.db` carries
+open, high, low and close and no volume at all. That half is untested here.
+
+### The result
+
+6,300 paired comparisons, 15-minute bars, so each window is 15 one-minute
+observations:
+
+| method | median wander | its null | ratio | within 0.25v |
+| --- | --- | --- | --- | --- |
+| baseline - the turn bar's close | 0.226v | 0.639v | 2.8x | 53.3% |
+| **fine - the extreme, at 1m** | **0.107v** | 0.661v | **6.2x** | 66.7% |
+| FOCuS | 0.161v | 0.650v | 4.0x | 58.7% |
+| MD-FOCuS | 0.194v | 0.661v | 3.4x | 56.3% |
+| NEWMA | 0.211v | 0.628v | 3.0x | 54.4% |
+| BOCPD | 0.237v | 0.673v | 2.8x | 51.9% |
+| KCP | 0.237v | 0.647v | 2.7x | 52.1% |
+| RuLSIF | 0.251v | 0.641v | 2.6x | 49.9% |
+
+**Does BOCPD beat FOCuS? No, and it does not beat doing nothing.** BOCPD, KCP
+and RuLSIF all land at or *worse than* the baseline, which is the bar's own
+close - the estimate you get by not running a detector at all. NEWMA, the
+ten-line one, beats all three of them. FOCuS is the only member of the family
+that improves on the baseline, and it still loses to taking the extreme.
+
+### It is not a window-size artefact
+
+The natural objection is that 15 observations is too thin for a method that
+compares two densities, so the whole thing was re-run at 60-minute bars, giving
+every method four times the sample:
+
+| method | 15m | 60m |
+| --- | --- | --- |
+| baseline | 0.226v | 0.264v |
+| **fine** | **0.107v** | **0.155v** |
+| FOCuS | 0.161v | 0.264v |
+| MD-FOCuS | 0.194v | 0.264v |
+| NEWMA | 0.211v | 0.284v |
+| BOCPD | 0.237v | 0.317v |
+| KCP | 0.237v | 0.341v |
+| RuLSIF | 0.251v | 0.367v |
+
+More data made every one of them **worse**, and the ordering did not change.
+The three density methods degrade fastest, and at 60m even FOCuS is level with
+the baseline while the extreme still wins by 1.7x. 7,611 paired comparisons.
+
+### Why, and it is the useful part
+
+**This is an extremum problem wearing change-point clothes.** Every method
+except `fine` is built to answer "has the distribution changed?" over a stream
+with plenty of observations either side of the change. The question actually
+being asked is different: given fifteen minutes that contain one turn, *which
+single minute is the price the move left from*. An origin is **defined** as an
+extremum, so the estimator that goes and finds the extremum is not competing
+with these on their terms - it is answering the question, and they are
+answering a nearby one.
+
+FOCuS does best of the six because its statistic is a one-sided cumulative sum,
+which is the closest thing in the family to "find the extreme". That is a
+reason to keep it and not a reason to expect it to win.
+
+### Multivariate made it worse, which is worth saying plainly
+
+MD-FOCuS was the most promising of the six on paper and it lost to the
+univariate version, 0.194v against 0.161v, on every instrument but two. The
+co-dependence of high, low and close is real and it is not free information:
+the high and the low are the bar's *extremes*, which widen with volatility
+whatever the direction, so adding them to a directional statistic adds two
+noisier views of the same move and dilutes the one that carried the signal.
+
+At 60m the two are level (0.264v each), which fits - with more minutes in the
+bar the extremes carry proportionally less of the noise. Neither beats taking
+the extreme directly at either size.
+
+The dual-stream framing this came from is still worth testing, but **not
+here**: separating a trend reversal from a liquidity spike is a question about
+*what kind* of event happened, and this harness only measures how precisely a
+price can be located. That experiment wants the trap population in
+[trapping.md](trapping.md), where "the range widened and the mean return did
+not shift" is exactly the absorption case, and it wants volume, which this
+database does not have.
+
+[arXiv 2104.00581]: https://arxiv.org/pdf/2104.00581
+
 ## What would come next
 
 The harness is the deliverable as much as the number. `gridtest.py` gives the

@@ -3198,10 +3198,81 @@ solved and this desk has not:
 **Not started, and deliberately behind the trading fixes.** The give-back bug
 (`research/inert.md`) is worth more than a new venue.
 
-## 7. BOCPD
+## ~~7. BOCPD~~ - measured on 2026-09-08, and it loses to doing nothing
 
-Documented in [structures.md](structures.md) as a way to *grade* a regime change
-rather than flag it. Deliberately deferred.
+Documented in [structures.md](structures.md) as a way to *grade* a regime
+change rather than flag it, and deferred for a year.
+
+**Run.** Written from Adams & MacKay rather than taken from a package, and
+scored as an origin locator against five other detectors on 6,300 paired
+comparisons: **0.237v against the baseline's 0.226v** - worse than the estimate
+you get by not running a detector at all, and beaten by a ten-line NEWMA. Four
+times the window made it worse, not better. So did KCP and RuLSIF; only FOCuS
+improved on the baseline, and it still lost to taking the extreme.
+
+Full table and the reason - the localisation problem is an *extremum* problem
+wearing change-point clothes - in [localising.md](../research/localising.md).
+
+The run-length posterior is still the only one of the six that reports a
+*distribution* over where the change was, so if a consumer ever wants a
+confidence rather than a point, this is where to come back to. Nothing wants
+one today.
+
+## 7a. Change points into an HMM, across timeframes
+
+Two shapes, and they are different experiments:
+
+1. **Every detector into one model.** The six detectors of
+   [localising.md](../research/localising.md) each produce a statistic per bar
+   per timeframe; feed the vector to an HMM and let the hidden state be the
+   regime. The attraction is that the detectors disagree in structured ways -
+   FOCuS and the extreme agreeing is already measured to mean something
+   (`Origin.confirmed`) - and an HMM is a principled way to read a
+   disagreement rather than a hand-written rule.
+2. **Only FOCuS, across timeframes.** The same statistic on 5m, 15m, 1h and 4h.
+   Much smaller, and it asks the sharper question: is a change that shows on
+   every timeframe a different object from one that shows on the fastest only?
+   `confluence` already assumes something like this about *levels* and has
+   never been asked about *changes*.
+
+**Do 2 first.** It has one free parameter family instead of six, the streams
+are already computed per timeframe, and if the cross-timeframe signal is not
+there in the cleanest possible form it will not be there in a six-detector
+soup either. This is the same order that made the `Cusum` ensemble readable.
+
+**The null it has to beat**, and it is not "does the HMM fit": an HMM will
+always find states. The question is whether the state it infers predicts
+anything the current priority ordering does not - which is the same bar
+[choosing.md](../research/choosing.md) sets for HMM strategy selection, and the
+two should share a harness rather than each grow one.
+
+**A warning from the run above.** Every method that pooled more inputs did
+*worse* than the one that pooled fewest - MD-FOCuS lost to univariate FOCuS by
+feeding it two extra co-dependent streams. "More signals into one model" is the
+shape that has already failed once here, so the cross-timeframe version needs
+the single-timeframe baseline measured first and beaten, not assumed.
+
+## 7b. The dual-stream trap test needs volume, which the research db has not got
+
+Separating a **trend reversal** from a **liquidity spike** is the framing that
+falls out of running two change detectors side by side: the range widening and
+the volume spiking while the mean return does *not* shift is absorption or a
+news print, not a turn. That is exactly the trap population
+[trapping.md](../research/trapping.md) already has - 64% of attempts, 94.6% at
+30m - so the hypothesis has somewhere to be tested.
+
+Two things block it:
+
+* **`bt1m.db` has no volume column.** Open, high, low, close and nothing else,
+  so the liquidity stream cannot be built in the harness that measures
+  everything else. The live `Series` *does* carry `volumes` now, so the data is
+  being collected going forward; the history is not there.
+* **On synthetics there is no volume to have.** Deriv's indices are generated,
+  and the traps that matter most on this book are on Boom and Crash. The
+  candle-spread stream works there and the volume one never will.
+
+So the testable half is `log(high/low)` against the log return, and that is
+worth running on the trap population as it stands.
 
 ## Watch rather than act
 
