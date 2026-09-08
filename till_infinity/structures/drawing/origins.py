@@ -284,7 +284,7 @@ def extremes_in(
     window = closes[first:last]
     if len(window) < 2:
         return None
-    if times[first] > start or times[last - 1] < start + span - _step(times):
+    if not _covers(times, first, last, start, span):
         return None
     return min(window), max(window)
 
@@ -329,7 +329,11 @@ def change_in(
     window = closes[first:last]
     if len(window) < 3:
         return None
-    if times[first] > start or times[last - 1] < start + span - _step(times):
+    # The same cover rule as `extremes_in`, and it has to be the same one: a
+    # change point captured on a different set of bars from the extreme it is
+    # compared against would make `Origin.confirmed` a comparison of two
+    # different windows.
+    if not _covers(times, first, last, start, span):
         return None
     out = []
     for up in (False, True):
@@ -412,6 +416,37 @@ def _step(times: Sequence[float]) -> float:
     if len(times) < 2:
         return 0.0
     return max(0.0, float(times[1]) - float(times[0]))
+
+
+def _covers(times: Sequence[float], first: int, last: int, start: float, span: float) -> bool:
+    """Whether the finer series reaches both ends of the coarse bar.
+
+    **The tolerance is the same at both ends, and it was not.** The right edge
+    always allowed being short by one fine step; the left edge allowed nothing
+    at all, so a single missing minute at a bar's open discarded the whole bar.
+
+    Measured in production on 2026-09-08, that is what the refinement was
+    losing: **57 captures across 258 4h series**, against 2,483 origins on that
+    timeframe and 4 of them refined. 4h is the swing strategy's anchor and the
+    refinement is worth +0.349R a trade becoming +0.576R there, so an
+    asymmetric inequality was holding off the largest improvement ever measured
+    on this book.
+
+    The tolerance is one fine step or **2% of the span**, whichever is larger.
+    One step alone is right for a 5m bar and absurdly strict for a 4h one,
+    where 240 minutes are being thrown away over a boundary minute the venue
+    never printed. Two percent of a 4h bar is under five minutes; of a 5m bar
+    it is six seconds, which is under one step, so nothing changes there.
+
+    This does **not** relax the argument the docstring above makes: partial
+    cover is still not cover, and a refinement computed from two of fifteen
+    minutes is still worse than none. A window reaching 98% of a bar is not
+    partial cover, it is cover with a hole in it.
+    """
+    if last <= first:
+        return False
+    slack = max(_step(times), 0.02 * span)
+    return times[first] <= start + slack and times[last - 1] >= start + span - slack
 
 
 @dataclass(slots=True)

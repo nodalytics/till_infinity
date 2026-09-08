@@ -38,7 +38,7 @@ from pathlib import Path
 from ..bus import ALERTS, BARS, MACRO, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
-from . import store
+from . import engine, store
 from .config import DRIFT_INTERVALS, Settings
 from .context.activity import Book as ActivityBook
 from .context.macro import Macro, since_default, stored
@@ -744,8 +744,19 @@ class Watcher:
             )
         fine_feeds = {f for (f, i) in self.engine._series if i == "1m"}
         all_feeds = {f for (f, _i) in self.engine._series}
-        return f"refinement: 1m series on {len(fine_feeds)}/{len(all_feeds)} feeds; " + "; ".join(
-            parts
+        # **1m origins can never be refined and must not be in the denominator.**
+        # There is nothing finer to refine them to - `_capture_fine` returns
+        # immediately on the fine interval itself - so counting them makes the
+        # coverage look worse than it is and hides movement in the intervals
+        # that can. They were 10,543 of 34,506 when this was written, which is
+        # 30% of the headline figure measuring nothing.
+        eligible = sum(v[0] for k, v in rows.items() if k != engine.FINE_INTERVAL)
+        done = sum(v[1] for k, v in rows.items() if k != engine.FINE_INTERVAL)
+        if not eligible:
+            return "refinement: nothing refinable yet"
+        return (
+            f"refinement: {done}/{eligible} of refinable origins ({done / eligible:.1%}); "
+            f"1m series on {len(fine_feeds)}/{len(all_feeds)} feeds; " + "; ".join(parts)
         )
 
     def change_tally(self) -> str:

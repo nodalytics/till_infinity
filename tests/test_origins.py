@@ -1066,3 +1066,61 @@ def test_the_change_detectors_ask_more_of_a_faster_timeframe():
     # 1h is the slowest of the tracked intervals here, so it keeps the shipped
     # threshold and 5m is lifted by k * ln(3600/300).
     assert slow == pytest.approx(eng.focus.THRESHOLD)
+
+
+def test_a_missing_minute_at_the_open_no_longer_discards_the_whole_bar():
+    """The asymmetry that cost the refinement its coverage.
+
+    The right edge always tolerated being one step short; the left edge
+    tolerated nothing, so a 4h bar whose first minute the venue never printed
+    threw away the other 239. Production: 57 captures across 258 4h series.
+    """
+    from till_infinity.structures.drawing.origins import extremes_in
+
+    span = 4 * 3600.0
+    # A 4h bar starting at 0, covered by 1m closes - except the very first
+    # minute, which never arrived.
+    times = [float(t) for t in range(60, int(span) + 60, 60)]
+    closes = [100.0 + (i % 7) * 0.1 for i in range(len(times))]
+
+    got = extremes_in(times, closes, 0.0, span)
+
+    assert got is not None, "one absent minute still discards the bar"
+    assert got == (min(closes), max(closes))
+
+
+def test_partial_cover_is_still_not_cover():
+    """The relaxation must not turn into accepting a fraction of the bar."""
+    from till_infinity.structures.drawing.origins import extremes_in
+
+    span = 4 * 3600.0
+    # Only the first half hour of a four hour bar.
+    times = [float(t) for t in range(0, 1800, 60)]
+    closes = [100.0 + i * 0.1 for i in range(len(times))]
+
+    assert extremes_in(times, closes, 0.0, span) is None
+
+
+def test_the_tolerance_scales_with_the_bar_rather_than_being_a_constant():
+    """Two percent of a 5m bar is under one step, so nothing is loosened there."""
+    from till_infinity.structures.drawing.origins import extremes_in
+
+    span = 300.0
+    # A 5m bar missing its first two minutes is 40% absent, not a boundary
+    # rounding - and must still be refused.
+    times = [120.0, 180.0, 240.0]
+    closes = [100.0, 101.0, 102.0]
+
+    assert extremes_in(times, closes, 0.0, span) is None
+
+
+def test_the_change_point_uses_the_same_window_as_the_extreme():
+    """Or `Origin.confirmed` compares two different sets of bars."""
+    from till_infinity.structures.drawing.origins import change_in, extremes_in
+
+    span = 4 * 3600.0
+    times = [float(t) for t in range(60, int(span) + 60, 60)]
+    closes = [100.0] * 120 + [100.0 - i * 0.2 for i in range(len(times) - 120)]
+
+    assert extremes_in(times, closes, 0.0, span) is not None
+    assert change_in(times, closes, 0.0, span) is not None
