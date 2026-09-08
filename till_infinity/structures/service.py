@@ -754,9 +754,18 @@ class Watcher:
         done = sum(v[1] for k, v in rows.items() if k != engine.FINE_INTERVAL)
         if not eligible:
             return "refinement: nothing refinable yet"
+        why = getattr(self.engine, "_capture_why", None) or {}
+        reasons = "; ".join(
+            f"{name} ok {v['ok']} left {v['left']} right {v['right']} "
+            f"short {v['short']} other {v['none']}"
+            for name, v in sorted(why.items(), key=lambda kv: -sum(kv[1].values()))
+            if sum(v.values())
+        )
         return (
             f"refinement: {done}/{eligible} of refinable origins ({done / eligible:.1%}); "
-            f"1m series on {len(fine_feeds)}/{len(all_feeds)} feeds; " + "; ".join(parts)
+            f"1m series on {len(fine_feeds)}/{len(all_feeds)} feeds; "
+            + "; ".join(parts)
+            + (f" || why: {reasons}" if reasons else "")
         )
 
     def change_tally(self) -> str:

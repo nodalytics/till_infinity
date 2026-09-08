@@ -1107,8 +1107,30 @@ class Engine:
         if not span or fine is None or not fine.times:
             return
         times, closes = list(fine.times), list(fine.closes)
+        # **Why a capture failed, counted per interval.** The first fix here was
+        # aimed at a boundary tolerance and moved nothing on 4h, which is the
+        # timeframe that matters - so the reason is worth measuring rather than
+        # inferred a second time. `left` is the fine series starting after the
+        # coarse bar did; `right` is it ending before the bar did; `short` is
+        # too few bars to work with at all.
+        book = getattr(self, "_capture_why", None)
+        if book is None:
+            book = self._capture_why = {}
+        tally = book.setdefault(interval, {"ok": 0, "left": 0, "right": 0, "short": 0, "none": 0})
         for when in list(series.times)[-2:]:
             got = origins.extremes_in(times, closes, float(when), span)
+            if got is None:
+                start = float(when)
+                if len(times) < 2:
+                    tally["short"] += 1
+                elif times[0] > start:
+                    tally["left"] += 1
+                elif times[-1] < start + span:
+                    tally["right"] += 1
+                else:
+                    tally["none"] += 1
+            else:
+                tally["ok"] += 1
             if got is not None:
                 # The change points are computed here for the same reason the
                 # extremes are: this is the one moment the bar's minutes are
