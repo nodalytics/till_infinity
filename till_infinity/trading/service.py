@@ -44,6 +44,7 @@ from ..structures.context.cusum import Cusum, Ensemble, adaptive_threshold
 from ..structures.context.holds import Book as HoldBook
 from ..structures.context.reach import Reaches
 from ..structures.context.trend import Trend
+from ..structures.learning.focus import Focus
 from ..structures.levels import SECONDS
 from . import manage, plans
 from .candles import confirms, rejection_wick
@@ -237,6 +238,17 @@ class Untaken:
     until: float = 0.0
     #: Last price seen since the fill, for a timeout's mark to market.
     last: float = 0.0
+    #: What the market was doing when the signal was found.
+    #:
+    #: **Carried so the counterfactual can be split by it.** `research/choosing.md`
+    #: measured 536 of these and found the three strategies with real samples
+    #: land at -0.172, -0.179 and -0.190R - indistinguishable - so a selector
+    #: has nothing to select on. The interesting version of that question is
+    #: conditional: strategies could be alike pooled and separate cleanly
+    #: within a state. It could not be asked, because `regime` is on every
+    #: level call and was dropped here.
+    regime: float = 0.0
+    market: str = ""
 
 
 @dataclass(slots=True)
@@ -269,6 +281,20 @@ class Shadow:
     #: Furthest price reached in the trade's favour since it was stopped.
     best: float = 0.0
     stopped_at: float = 0.0
+
+
+def _regime_of(payload: dict[str, Any]) -> float:
+    """The regime label off a signal, or 0.0 when the classifier is not warm.
+
+    Zero rather than absent because a missing key and an unwarmed classifier
+    are the same thing to a reader splitting a table by it, and a float column
+    with holes is worse than one with a documented "unknown".
+    """
+    found = payload.get("features")
+    if not isinstance(found, dict):
+        return 0.0
+    state = found.get("regime")
+    return float(state) if isinstance(state, int | float) else 0.0
 
 
 def _money_price(value: float) -> str:
@@ -408,14 +434,24 @@ class Trader:
         #: accumulation is the state and mixing instruments into it would
         #: measure nothing.
         self._push: dict[str, Cusum] = {}
-        #: The same momentum question asked at several sub-hour resolutions.
-        #: The single filter above answers "is there momentum" at whatever
-        #: speed quotes happen to arrive; this one can also say whether the
-        #: timeframes agree, which is what a swing entry at an origin turns on.
-        self._ensemble: dict[str, Ensemble] = {}
-        #: A slow read on how far each instrument pushes, which is what the
+        #: The same stream through the exact likelihood-ratio test, one instance
+        #: per direction. `Cusum` accumulates until it trips and says *that* a
+        #: run happened; `Focus` maximises over every possible start and says
+        #: **where** it began and how strong the evidence is. Published beside
+        #: the CUSUM reading and read by nothing - see `research/detecting.md`,
+        #: which measures that it is the only one of the three detectors added
+        #: on 2026-09-08 quiet enough on a stationary stream to be an alarm.
+        #: One instance per direction, and the last mid so they see steps
+        #: rather than levels. Grouped because `__init__` is at its statement
+        #: ceiling and all three are the same per-feed working state.
+        self._focus_up, self._focus_down, self._focus_last = {}, {}, {}
+        #: The same momentum question asked at several sub-hour resolutions -
+        #: the single filter above answers "is there momentum" at whatever
+        #: speed quotes arrive, this one can say whether the timeframes agree,
+        #: which is what a swing entry at an origin turns on - and beside it a
+        #: slow read on how far each instrument pushes, which is what the
         #: momentum threshold is sized against. See `_note_push`.
-        self._push_vol: dict[str, float] = {}
+        self._ensemble, self._push_vol = {}, {}
         #: Trend context per feed and interval. Keyed on both because the
         #: efficiency of 1m levels and of 15m levels on one instrument are
         #: different markets, and pooling them measures neither.
@@ -812,6 +848,16 @@ class Trader:
         unit = price_distance(tick.mid, self._vol_bps.get(feed, 0.0), 1.0)
         if unit > 0:
             self._push.setdefault(feed, Cusum()).push(tick.mid, unit, when=when)
+            # Augmenting rather than replacing: the CUSUM decides, this
+            # measures. Fed the *change* rather than the level, because a
+            # likelihood ratio on a random walk's position is a statement
+            # about where it started.
+            previous = self._focus_last.get(feed)
+            self._focus_last[feed] = tick.mid
+            if previous:
+                step = tick.mid - previous
+                self._focus_up.setdefault(feed, Focus()).update(step, scale=unit)
+                self._focus_down.setdefault(feed, Focus(up=False)).update(step, scale=unit)
             self._ensemble.setdefault(feed, Ensemble()).push(tick.mid, unit, when=when)
         # The paper book holds its own stops, so it has to see the market. When
         # the execution venue *is* the broker they are the same object and this
@@ -1087,6 +1133,9 @@ class Trader:
                 # strategy would have *got* and not only what it wanted. See
                 # `Untaken`: without this the ranking has to be recomputed by
                 # hand off stored bars, which is how it was done the first time.
+                found = payload.get("features")
+                readings = found if isinstance(found, dict) else {}
+                state = readings.get("regime")
                 self._remember_untaken(
                     str(payload.get("feed") or ""),
                     engine.name,
@@ -1094,6 +1143,8 @@ class Trader:
                     str(payload.get("interval") or ""),
                     engine.hold_for(str(payload.get("interval") or "")),
                     tick.time,
+                    float(state) if isinstance(state, int | float) else 0.0,
+                    str(payload.get("market") or ""),
                 )
             await observe(
                 self.journal,
@@ -1113,6 +1164,11 @@ class Trader:
                     "target": round(verdict.target, 8) if wanted else 0.0,
                     "feed": str(payload.get("feed") or ""),
                     "interval": str(payload.get("interval") or ""),
+                    # The state the market was in, so this table can be split
+                    # by it. Without it the ranking is pooled, and pooled it
+                    # says the strategies are indistinguishable.
+                    "regime": _regime_of(payload),
+                    "market": str(payload.get("market") or ""),
                 },
                 tags=(str(payload.get("feed") or ""), engine.name, "considered"),
             )
@@ -3102,9 +3158,21 @@ class Trader:
     MAX_UNTAKEN: ClassVar[int] = 400
 
     def _remember_untaken(
-        self, feed: str, by: str, intent: Intent, interval: str, hold: float, now: float
+        self,
+        feed: str,
+        by: str,
+        intent: Intent,
+        interval: str,
+        hold: float,
+        now: float,
+        regime: float = 0.0,
+        market: str = "",
     ) -> None:
-        """Keep an intent a strategy wanted but did not get, to score later."""
+        """Keep an intent a strategy wanted but did not get, to score later.
+
+        `regime` and `market` come along because the comparison this exists for
+        is only interesting conditionally - see `Untaken.regime`.
+        """
         if intent.entry <= 0 or intent.stop <= 0 or intent.target <= 0:
             return
         kept = self._untaken.setdefault(feed, [])
@@ -3120,6 +3188,8 @@ class Trader:
                 fill_by=now + self._fill_window(interval, hold),
                 hold=hold,
                 placed_at=now,
+                regime=regime,
+                market=market,
             )
         )
         if len(kept) > self.MAX_UNTAKEN:
@@ -3253,6 +3323,9 @@ class Trader:
                 "stop": round(shade.stop, 8),
                 "target": round(shade.target, 8),
                 "seconds": round(when - shade.placed_at, 1),
+                # Carried from the signal so `reward_r` can be split by it.
+                "regime": shade.regime,
+                "market": shade.market,
             },
             tags=(shade.feed, shade.by, "untaken"),
         )

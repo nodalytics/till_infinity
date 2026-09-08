@@ -7446,3 +7446,44 @@ def test_a_strategy_that_did_not_ask_keeps_the_distance_trail():
 
     assert got is not None
     assert "behind the" not in got.reason
+
+
+# ------------------------------------- the state a counterfactual was found in
+
+
+def test_an_untaken_intent_carries_the_regime_it_was_found_in():
+    """`research/choosing.md` measured 536 of these and found the strategies
+    indistinguishable pooled - -0.172, -0.179, -0.190R. The interesting
+    question is conditional, and it could not be asked because `regime` is on
+    every level call and was dropped here."""
+    trader = Trader(Bus(), settings=settings())
+    trader._remember_untaken(
+        "gold", "runner", intent(volume=1.0), "15m", 3600.0, 100.0, regime=2.0, market="trending"
+    )
+
+    kept = trader._untaken["gold"][-1]
+    assert kept.regime == 2.0
+    assert kept.market == "trending"
+
+
+def test_an_untaken_intent_without_a_regime_defaults_rather_than_raising():
+    """The classifier is not warm on a fresh feed, and a counterfactual is
+    still worth keeping."""
+    trader = Trader(Bus(), settings=settings())
+    trader._remember_untaken("gold", "runner", intent(volume=1.0), "15m", 3600.0, 100.0)
+
+    assert trader._untaken["gold"][-1].regime == 0.0
+
+
+def test_the_regime_is_read_off_a_signal_the_way_the_journal_writes_it():
+    """Zero rather than absent when the classifier is cold: a missing key and
+    an unwarmed classifier are the same thing to a reader splitting a table by
+    it, and a float column with holes is worse than one with a documented
+    unknown."""
+    from till_infinity.trading.service import _regime_of
+
+    assert _regime_of({"features": {"regime": 3.0}}) == 3.0
+    assert _regime_of({"features": {}}) == 0.0
+    assert _regime_of({"features": None}) == 0.0
+    assert _regime_of({}) == 0.0
+    assert _regime_of({"features": {"regime": "trending"}}) == 0.0
