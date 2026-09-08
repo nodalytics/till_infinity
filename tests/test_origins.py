@@ -918,3 +918,65 @@ def test_the_change_detectors_survive_a_save_and_restore():
 
     assert back.changing("t", when=when) == before
     assert isinstance(back._changes[("t", "5m")][0], eng.Focus)
+
+
+def test_drift_restored_without_its_counters_does_not_throw():
+    """The fault that stopped structures for eleven hours on 2026-09-08.
+
+    `Drift` is persisted and is **not** a `Restorable` dataclass, so nothing
+    fills in a field a save predates. Every instance restored from a save
+    written before `_agreement` existed came back without it, and the first
+    time ADWIN actually fired the attribute access threw - inside a consumer
+    that had no per-message guard, so the service stopped while the container
+    stayed healthy.
+    """
+    from till_infinity.structures.learning.drift import Drift
+
+    detector = Drift()
+    # Exactly what a restore from an older save leaves behind.
+    del detector.__dict__["_agreement"]
+
+    # Feeding it must not throw, and the counters must come back.
+    for i in range(400):
+        detector.observe("t", 100.0 + (i % 5) * 2.0, when=float(i), interval="5m")
+
+    counts = detector.watching()
+    assert set(counts) >= {"adwin", "kswin", "both", "kswin_alone"}
+
+
+def test_a_resting_intent_with_a_text_entry_does_not_kill_trading():
+    """The fault that stopped trading on the same day.
+
+    `abs(intent.entry - at)` on an entry that came back from state as a string
+    raised a TypeError out of `handle`, and the trading loop had no guard, so
+    the whole service ended.
+    """
+    import asyncio
+
+    from till_infinity.trading.models import Side
+    from till_infinity.trading.service import Trader
+
+    trader = Trader.__new__(Trader)
+
+    class _Settings:
+        notify = True
+        notify_rests = True
+
+    class _Bus:
+        def __init__(self):
+            self.sent = []
+
+        async def publish(self, *args, **kwargs):
+            self.sent.append((args, kwargs))
+            return 1
+
+    trader.settings = _Settings()
+    trader.bus = _Bus()
+    trader.broker = type("B", (), {"name": "test"})()
+    intent = type("I", (), {"entry": "1.2345", "feed": "eurusd", "side": Side.BUY, "volume": 0.1})()
+
+    # It must not raise. Nothing is asserted about the message text - the point
+    # is only that a bad shape is survivable and still gets announced.
+    asyncio.run(trader._announce_rest(intent, 1.2300, "test", 0, gone="x"))
+
+    assert trader.bus.sent, "the announcement was swallowed rather than sent"

@@ -3859,7 +3859,27 @@ class Trader:
         """
         if not (self.settings.notify and self.settings.notify_rests):
             return
-        away = abs(intent.entry - at)
+        # **Coerced, and it says so when it has to.** A resting `Intent`
+        # restored from saved state has been seen with `entry` as a *string*,
+        # and this subtraction is where it surfaced - as a `TypeError` that
+        # killed the whole trading service. Coercing here keeps the announcement
+        # working; the warning keeps the underlying restore fault visible rather
+        # than papering over it, because a price arriving as text is a real
+        # problem somewhere upstream and silence would lose it.
+        entry, price = intent.entry, at
+        if not isinstance(entry, int | float) or not isinstance(price, int | float):
+            log.warning(
+                "trading: resting intent on %s has entry=%r and trigger=%r - "
+                "expected numbers, coercing",
+                getattr(intent, "feed", "?"),
+                entry,
+                price,
+            )
+            try:
+                entry, price = float(entry), float(price)
+            except (TypeError, ValueError):
+                return
+        away = abs(entry - price)
         body = [
             f"{intent.side} {intent.volume:g} lots resting @ {at:.5g}"
             if not gone
@@ -4135,14 +4155,34 @@ async def listen(
     tasks = [asyncio.create_task(pump(topic), name=f"trading:{topic}") for topic in TOPICS]
     tasks.append(asyncio.create_task(_heartbeat(trader), name="trading:heartbeat"))
 
-    handled, closed = 0, 0
+    handled, closed, skipped = 0, 0, 0
     try:
         while closed < len(TOPICS):
             message = await queue.get()
             if message is None:
                 closed += 1
                 continue
-            await trader.handle(message)
+            # **One bad message must not end trading.** Without this a throw
+            # here leaves the loop and the trading service is gone, while the
+            # process stays up and the container stays `healthy` - which is how
+            # a single `TypeError` on a resting order's announcement took
+            # trading down on 2026-09-08 and nothing outside said so. The
+            # structures consumer needed the same guard for the same reason.
+            #
+            # `CancelledError` still propagates: that is shutdown.
+            try:
+                await trader.handle(message)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                skipped += 1
+                log.error(
+                    "trading: %s on %s - skipping this message (%d so far)",
+                    exc,
+                    message.topic,
+                    skipped,
+                    exc_info=skipped <= 3,
+                )
             handled += 1
             if limit is not None and handled >= limit:
                 break

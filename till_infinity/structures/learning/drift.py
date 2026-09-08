@@ -155,6 +155,31 @@ class Drift:
             )
         return found
 
+    def _counts(self) -> dict[str, int]:
+        """The agreement counters, created if this instance predates them.
+
+        **`Drift` is persisted and is not a `Restorable` dataclass**, so nothing
+        fills in a field a save was written before. `_agreement` was added with
+        the KSWIN work; every instance restored from an older save came back
+        without it, and the first time ADWIN actually fired the attribute
+        access threw.
+
+        That threw inside the structures consumer, which had no per-message
+        guard, so the service stopped and the container stayed `healthy` -
+        eleven hours of it on 2026-09-08, with 132,807 bus warnings burying the
+        one line that named the fault. Both of those are fixed too; this is the
+        fault itself.
+
+        Asked for rather than assumed, which is the same guard `_remember_origins`
+        needed for `_origins` and `_note_change` for `_changes`.
+        """
+        found = getattr(self, "_agreement", None)
+        if not isinstance(found, dict):
+            found = self._agreement = {}
+        for name in ("adwin", "kswin", "both", "kswin_alone"):
+            found.setdefault(name, 0)
+        return found
+
     def watching(self) -> dict[str, int]:
         """How the two detectors have compared so far.
 
@@ -162,7 +187,7 @@ class Drift:
         whether the second detector is worth having: if it is near zero, KSWIN
         never sees anything ADWIN missed and costs a window size for nothing.
         """
-        return dict(self._agreement)
+        return dict(self._counts())
 
     def observe(
         self, feed: str, mid: float, when: float | None = None, interval: str = "5m"
@@ -196,14 +221,15 @@ class Drift:
             shaped = bool(shape.drift_detected)
         except Exception as exc:  # a second opinion is not worth an outage
             log.debug("drift: KSWIN failed on %s %s: %s", feed, interval, exc)
+        counts = self._counts()
         if shaped:
-            self._agreement["kswin"] += 1
+            counts["kswin"] += 1
         if detector.drift_detected:
-            self._agreement["adwin"] += 1
+            counts["adwin"] += 1
         if shaped and detector.drift_detected:
-            self._agreement["both"] += 1
+            counts["both"] += 1
         elif shaped:
-            self._agreement["kswin_alone"] += 1
+            counts["kswin_alone"] += 1
 
         if not detector.drift_detected:
             self._before[key] = before
