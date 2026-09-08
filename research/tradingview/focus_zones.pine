@@ -44,7 +44,7 @@ indicator("FOCuS Origin Zones", overlay = true, max_boxes_count = 500,
 
 // ---------------------------------------------------------------- inputs
 
-anchorTf = input.timeframe("240", "Anchor - detects the change",
+anchorTf = input.timeframe("1D", "Anchor - detects the change",
      tooltip = "The timeframe the change point is found on. Slow: this is what " +
      "makes a zone rare enough to be worth drawing. 4h by default.")
 refineTf = input.timeframe("5", "Refinement - places the zone",
@@ -54,16 +54,16 @@ refineTf = input.timeframe("5", "Refinement - places the zone",
      "since the chart's bars are what it is built from - on a 15m chart a 5m " +
      "refinement quietly becomes 15m, and the zone is wider than it says.")
 
-thresholdNats = input.float(12.0, "Threshold (nats of evidence)", minval = 1.0, step = 1.0,
+thresholdNats = input.float(3.0, "Threshold (nats of evidence)", minval = 0.5, step = 0.5,
      tooltip = "A log likelihood ratio: how much evidence before this is worth " +
      "saying. 12 is what the source repository ships - on a stationary " +
      "Gaussian stream it produced at most 5 false alarms across five runs of " +
      "3,000 bars. Raise it for fewer, stronger zones.")
-scaleLength = input.int(100, "Volatility lookback (anchor bars)", minval = 20,
+scaleLength = input.int(250, "Volatility lookback (anchor bars)", minval = 20,
      tooltip = "Steps are divided by a running average step size, so the " +
      "threshold means the same thing on gold and on a JPY cross.")
 
-minAgree = input.int(3, "Minimum timeframes agreeing", minval = 1, maxval = 6,
+minAgree = input.int(2, "Minimum timeframes agreeing", minval = 1, maxval = 8,
      tooltip = "The measured filter, and the reason this is not just a " +
      "prettier support/resistance tool. A change point calling on three or " +
      "more timeframes is followed by +7.92v a day out; one calling on a " +
@@ -80,7 +80,7 @@ agreeWindow = input.int(6, "Agreement window (anchor bars)", minval = 1, maxval 
 maxZones  = input.int(12, "Zones kept per side", minval = 1, maxval = 100,
      tooltip = "Old zones are removed as new ones arrive. Twelve a side is " +
      "about as many as a chart can carry and still be read.")
-minGapAtr = input.float(1.0, "Minimum gap between zones (ATR)", minval = 0.0, step = 0.25,
+minGapAtr = input.float(3.0, "Minimum gap between zones (ATR)", minval = 0.0, step = 0.25,
      tooltip = "A new zone within this distance of the last one on the same " +
      "side is skipped. Two zones a few ticks apart are one level drawn twice.")
 extendRight = input.bool(true, "Extend zones to the right")
@@ -210,16 +210,38 @@ secC = 1800
 secD = 3600
 secE = 7200
 secF = 14400
+secG = 28800
+secH = 86400
 
-// A rung is live when it sits inside the span the two inputs describe. The
-// anchor itself is always live: a zone exists because the anchor fired.
-inSpan(int secs) => secs >= refineSecs and secs <= anchorSecs
+// **A rung must be inside the span *and* not below the chart.**
+//
+// Two separate bugs lived here and both showed as "no boxes above 1h".
+//
+// The first: `refineSecs` is raised to the chart's own resolution, because the
+// refinement is built out of chart bars. Using that as the ladder's floor
+// meant a 4h chart had exactly one live rung - so agreement could never reach
+// two, let alone three, and the script drew **nothing** while looking
+// configured. The ladder's floor is the *chart*, and the refinement input
+// governs the refinement only.
+//
+// The second: the ladder stopped at 4h. With a daily anchor there was no rung
+// at or above the chart on any high timeframe, so again nothing. 8h and 1d
+// rungs were missing rather than excluded.
+//
+// A rung below the chart is dropped rather than requested: `request.security`
+// will happily fetch a finer timeframe and what comes back cannot be relied
+// on, which is a silent wrong answer instead of a missing one.
+chartSecs = timeframe.in_seconds(timeframe.period)
+floorSecs = math.max(timeframe.in_seconds(refineTf), chartSecs)
+inSpan(int secs) => secs >= floorSecs and secs <= anchorSecs
 liveA = inSpan(secA)
 liveB = inSpan(secB)
 liveC = inSpan(secC)
 liveD = inSpan(secD)
 liveE = inSpan(secE)
 liveF = inSpan(secF)
+liveG = inSpan(secG)
+liveH = inSpan(secH)
 
 // Weight by height. The standard ladder is roughly geometric, so the log of
 // the rung's length is the natural measure of "how high" and needs no tuning.
@@ -229,8 +251,16 @@ wC = math.log(secC)
 wD = math.log(secD)
 wE = math.log(secE)
 wF = math.log(secF)
+wG = math.log(secG)
+wH = math.log(secH)
 total = (liveA ? wA : 0.0) + (liveB ? wB : 0.0) + (liveC ? wC : 0.0) +
-     (liveD ? wD : 0.0) + (liveE ? wE : 0.0) + (liveF ? wF : 0.0)
+     (liveD ? wD : 0.0) + (liveE ? wE : 0.0) + (liveF ? wF : 0.0) +
+     (liveG ? wG : 0.0) + (liveH ? wH : 0.0)
+// How many rungs are even available here. Reported, because "no zones because
+// nothing agreed" and "no zones because only one timeframe was eligible" look
+// identical on a chart and are completely different problems.
+liveCount = (liveA ? 1 : 0) + (liveB ? 1 : 0) + (liveC ? 1 : 0) + (liveD ? 1 : 0) +
+     (liveE ? 1 : 0) + (liveF ? 1 : 0) + (liveG ? 1 : 0) + (liveH ? 1 : 0)
 
 // Whether each rung has called a change recently, in each direction.
 // `request.security` cannot be called from a loop, so these are written out,
@@ -244,6 +274,10 @@ recent(string tf, bool wantUp) =>
         held := t
     not na(held) and (time - held) <= agreeWindow * anchorSecs * 1000
 
+rGu = recent("480", true)
+rHu = recent("1D", true)
+rGd = recent("480", false)
+rHd = recent("1D", false)
 rAu = recent("5", true)
 rBu = recent("15", true)
 rCu = recent("30", true)
@@ -263,32 +297,40 @@ uC = liveC and rCu
 uD = liveD and rDu
 uE = liveE and rEu
 uF = liveF and rFu
+uG = liveG and rGu
+uH = liveH and rHu
 dA = liveA and rAd
 dB = liveB and rBd
 dC = liveC and rCd
 dD = liveD and rDd
 dE = liveE and rEd
 dF = liveF and rFd
+dG = liveG and rGd
+dH = liveH and rHd
 
-agreeingUp = (uA ? 1 : 0) + (uB ? 1 : 0) + (uC ? 1 : 0) +
-     (uD ? 1 : 0) + (uE ? 1 : 0) + (uF ? 1 : 0)
-agreeingDn = (dA ? 1 : 0) + (dB ? 1 : 0) + (dC ? 1 : 0) +
-     (dD ? 1 : 0) + (dE ? 1 : 0) + (dF ? 1 : 0)
+agreeingUp = (uA ? 1 : 0) + (uB ? 1 : 0) + (uC ? 1 : 0) + (uD ? 1 : 0) +
+     (uE ? 1 : 0) + (uF ? 1 : 0) + (uG ? 1 : 0) + (uH ? 1 : 0)
+agreeingDn = (dA ? 1 : 0) + (dB ? 1 : 0) + (dC ? 1 : 0) + (dD ? 1 : 0) +
+     (dE ? 1 : 0) + (dF ? 1 : 0) + (dG ? 1 : 0) + (dH ? 1 : 0)
 
 strengthUp = total <= 0 ? 0.0 : ((uA ? wA : 0.0) + (uB ? wB : 0.0) + (uC ? wC : 0.0) +
-     (uD ? wD : 0.0) + (uE ? wE : 0.0) + (uF ? wF : 0.0)) / total
+     (uD ? wD : 0.0) + (uE ? wE : 0.0) + (uF ? wF : 0.0) + (uG ? wG : 0.0) +
+     (uH ? wH : 0.0)) / total
 strengthDn = total <= 0 ? 0.0 : ((dA ? wA : 0.0) + (dB ? wB : 0.0) + (dC ? wC : 0.0) +
-     (dD ? wD : 0.0) + (dE ? wE : 0.0) + (dF ? wF : 0.0)) / total
+     (dD ? wD : 0.0) + (dE ? wE : 0.0) + (dF ? wF : 0.0) + (dG ? wG : 0.0) +
+     (dH ? wH : 0.0)) / total
 
 // The highest rung **below the anchor** that confirms it. The anchor agrees by
 // construction, so what is informative is how far the confirmation reaches
 // beneath it - and a confirmation reaching 1h is worth more than one reaching
 // only 15m, which is what this reports.
 below(int secs) => secs < anchorSecs
-reachUp = (uF and below(secF)) ? secF : (uE and below(secE)) ? secE :
+reachUp = (uH and below(secH)) ? secH : (uG and below(secG)) ? secG :
+     (uF and below(secF)) ? secF : (uE and below(secE)) ? secE :
      (uD and below(secD)) ? secD : (uC and below(secC)) ? secC :
      (uB and below(secB)) ? secB : uA ? secA : 0
-reachDn = (dF and below(secF)) ? secF : (dE and below(secE)) ? secE :
+reachDn = (dH and below(secH)) ? secH : (dG and below(secG)) ? secG :
+     (dF and below(secF)) ? secF : (dE and below(secE)) ? secE :
      (dD and below(secD)) ? secD : (dC and below(secC)) ? secC :
      (dB and below(secB)) ? secB : dA ? secA : 0
 
@@ -418,6 +460,22 @@ if fadeUsed and barstate.isconfirmed
                 box.set_bgcolor(b, color.new(resistanceCol, 93))
                 box.set_border_color(b, color.new(resistanceCol, 93))
 
+// ------------------------------------------------------------- diagnostics
+//
+// **An empty chart has two completely different causes and they look the same.**
+// Either nothing agreed, or the ladder had too few eligible rungs for anything
+// ever to reach `minAgree` on this chart. The second one is a
+// misconfiguration and it is silent, which is how "no boxes above 1h" went
+// unnoticed - so it says so on the chart rather than leaving a blank one.
+var table diag = table.new(position.bottom_right, 1, 1, frame_width = 1)
+if barstate.islast and liveCount < minAgree
+    table.cell(diag, 0, 0,
+         "FOCuS: only " + str.tostring(liveCount) + " of 8 timeframes are eligible on a " +
+         timeframe.period + " chart, and Minimum agreeing is " + str.tostring(minAgree) +
+         ". No zone can ever be drawn. Lower Minimum agreeing, or drop to a finer chart.",
+         text_color = chart.fg_color, bgcolor = color.new(color.orange, 70),
+         text_size = size.small)
+
 alertcondition(not na(upStart) and agreeingUp >= minAgree, "FOCuS support zone",
      "A rally's origin was located and confirmed across timeframes")
 alertcondition(not na(dnStart) and agreeingDn >= minAgree, "FOCuS resistance zone",
@@ -427,3 +485,4 @@ plotchar(agreeingUp, "timeframes agreeing up",   "", location.top,    display = 
 plotchar(agreeingDn, "timeframes agreeing down", "", location.bottom, display = display.status_line)
 plotchar(strengthUp, "agreement strength up",   "", location.top,    display = display.status_line)
 plotchar(strengthDn, "agreement strength down", "", location.bottom, display = display.status_line)
+plotchar(liveCount,  "eligible timeframes",     "", location.top,    display = display.status_line)

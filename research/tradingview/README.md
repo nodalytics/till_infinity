@@ -177,12 +177,29 @@ This is the same split the source repository uses for confluence zones
 
 ## Loading it
 
-Pine v5. Paste into the Pine Editor, add to chart. Defaults are a 4h anchor and
-a 5m refinement with a 12-nat threshold - the value the repository ships, chosen to be
-conservative rather than fitted, and quiet enough on a stationary Gaussian
-stream to produce at most 5 false alarms across five runs of 3,000 bars
-([detecting.md](../detecting.md)).
+Pine v5. Paste into the Pine Editor, add to chart. Defaults are a **1d anchor**
+and a **5m refinement**, a 3-nat threshold, a 250-bar volatility lookback, 2
+timeframes minimum, a 6-anchor-bar agreement window, 12 zones a side and a
+3-ATR minimum gap.
 
-Lower the threshold to see more zones. It is a log-likelihood ratio, so it is
+**The chart's own timeframe is the floor of the ladder.** A rung finer than the
+chart is dropped rather than requested - `request.security` will happily fetch
+a finer timeframe and what comes back cannot be relied on, which is a silent
+wrong answer rather than a missing one. So on a 4h chart the eligible rungs are
+4h, 8h and 1d, and `minAgree` must be reachable within them. When it is not,
+the indicator **says so in the corner** instead of drawing an empty chart:
+that failure was silent in the first version and is why it drew nothing above
+1h.
+
+**The 3-nat default is deliberately looser than the repository's 12.** Twelve is
+the value `structures` ships, chosen to be conservative rather than fitted and
+quiet enough on a stationary Gaussian stream to produce at most 5 false alarms
+across five runs of 3,000 bars ([detecting.md](../detecting.md)). That is the
+right setting for a detector nobody is watching. A chart is watched, a daily
+anchor gives it few bars to work with, and 12 nats on a daily series produces
+almost nothing - so the indicator trades some of that quiet for zones on the
+screen, and `minAgree` does the filtering instead.
+
+It is a log-likelihood ratio, so it is
 "how many nats of evidence before this is worth saying" rather than a price
 distance, and it means the same thing on every instrument.
