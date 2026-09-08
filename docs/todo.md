@@ -3265,6 +3265,37 @@ What is still open on this item:
   hundreds of single-timeframe calls. That wants explaining before the feature
   is trusted on indices.
 
+## 7c. Cross-instrument agreement - run, and it failed its control
+
+The same idea across eight instruments instead of across timeframes. Effects of
+about a volatility unit with shuffled-label nulls of comparable size, mostly
+gone once the instrument's own timeframes are conditioned on - and **Deriv's
+synthetics, which share no macro factor, produced a larger effect than real
+assets that share the dollar**. See [peering.md](../research/peering.md).
+
+Nothing was published from it. What is left:
+
+* **A cross-sectional volatility control.** The likeliest mechanism is that the
+  peer count proxies for "everything is moving", which the realised-move
+  conditioning does not touch. Any second attempt needs it.
+* **The Volatility 1s series wants its own threshold.** Five indices produced
+  62 events between them at 12 nats - a detector calibrated on FX and crypto is
+  close to silent there.
+* **Keep the synthetic group in every future cross-asset claim.** It cost one
+  extra run and it is the only thing that settled anything.
+
+## 7d. A TradingView indicator for the origin zones
+
+Built: [research/tradingview/focus_zones.pine](../research/tradingview/focus_zones.pine).
+A 4h anchor detects the change, a 5m refinement places the zone inside the
+anchor bar, and the 3-of-4 timeframe agreement rule filters what gets drawn.
+
+**It has never been executed.** Pine cannot be run from here, so the script is
+reviewed rather than tested and the arithmetic in it - the hull pruning
+especially - carries the risk any untested code does. First run on a chart
+should compare its zones against the harness output on the same instrument and
+period before it is trusted.
+
 **The null it has to beat**, and it is not "does the HMM fit": an HMM will
 always find states. The question is whether the state it infers predicts
 anything the current priority ordering does not - which is the same bar
