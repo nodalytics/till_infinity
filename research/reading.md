@@ -318,6 +318,88 @@ from the premium, which is computed from price, so a model handed funding may
 be handed a lagged transform of what it already sees. Predictable is not the
 same as *informative about something else*.
 
+## Change points, and the one that answers the question we actually lose money on
+
+Added 2026-09-08.
+
+| | |
+|---|---|
+| **Residual time** | Agudelo-España, Gomez-Gonzalez, Bauer & Schölkopf, *Bayesian Online Prediction of Change Points*, UAI 2020, PMLR 124:320-329. [PDF](https://proceedings.mlr.press/v124/agudelo-espana20a/agudelo-espana20a.pdf) |
+| **BOCPD, the original** | Adams & MacKay, *Bayesian Online Changepoint Detection* (2007) |
+| **BOCPD in practice** | [MQL5: BOCPD, one regime-break signal, three ways to use it](https://www.mql5.com/en/articles/23482) |
+| **Regime by autocorrelation** | [MQL5: a custom market regime detection system](https://www.mql5.com/en/articles/17737) |
+| **HMM volatility states** | [MQL5: hidden Markov models for trend-following volatility prediction](https://www.mql5.com/en/articles/16830) |
+
+### The UAI paper is about *when the next one comes*, and that is the gap here
+
+Standard BOCPD maintains a distribution over **run length** - how long since the
+last regime change - and infers change points retrospectively. This paper
+extends it to infer the **residual time**: how many steps until the *next*
+change. The abstract's own framing is that this "enables handling observation
+models which depend on the total segment duration".
+
+**That is the single most expensive unknown on this desk.** `thesis-only`
+closed 74 trades at target or stop for a net **-7.10**, and 75 on the clock for
+**-389.98**. Ninety-eight per cent of the loss was the hold timeout - a
+constant nobody had measured, on a horizon nobody had modelled. `runner` has
+the same shape: it widens its target and then closes 16 of 26 trades on a
+four-hour clock, so the mechanism it exists for never operates.
+
+`context/timing.py` already answers the neighbouring question -
+`probability_within(distance_vol, bars)`, a first-passage model for how long
+price takes to travel a distance. What it cannot say is how long the *regime*
+has left, which is what decides whether a thesis is slow or dead. Residual time
+is that quantity, inferred online, from a family this repository already uses
+in `Cusum` and `regimes`.
+
+**And it is not refuted by the change-point work already done here.**
+[localising.md](localising.md) measured estimator H - a CUSUM change point - and
+it lost to the fine-resolution transition, 0.205v against 0.124v. That test
+asked **where in price** the transition sits. Residual time asks **how long
+until the next one**. My own summary said H's loss was "evidence about the
+family"; it is not evidence about this, and the distinction is the difference
+between a fair prior and a closed door.
+
+### The MQL5 BOCPD article is worth reading for its control, not its returns
+
+Normal-Gamma conjugate prior, Student-t posterior predictive, log-space
+arithmetic, constant hazard - the standard construction, written out. Its
+result on EURUSD M30: a risk overlay that de-risks for a cooldown after each
+detected break cut maximum drawdown from 856.50 to 755.60, **skipping 4 trades
+of 97**.
+
+The part worth copying is the next sentence: **a randomised control that
+de-risked at the same frequency made results worse.** That is the null this
+repository insists on - `research/null.md`'s argument, arrived at
+independently - and it is what separates "the timing mattered" from "less
+exposure helped". Any regime overlay built here should ship with that control
+in the same run, not afterwards.
+
+### The two regime articles, against what already exists
+
+**Autocorrelation for trend versus range** is a simpler classifier than
+`learning/regimes.py`, which is an online model over several inputs. The idea
+worth taking is not the method but the **label**: positive autocorrelation as
+trending, negative as ranging, is a definition that can be checked against
+outcomes, and `regimes.py`'s label has never been scored against whether a
+level held. That is a measurement this book can run today.
+
+**The HMM over volatility states** trades only when a moving-average signal
+coincides with a predicted high-volatility state, filtering about 70% of
+trades: profit factor 1.73 against 1.48 out of sample, and 1.10 over a
+2004-2024 rolling test at a 32.6% win rate. Two things to carry:
+
+* The **filter is the product**, not the entry. Seventy per cent refused is the
+  same shape as the confirmation gate on `swing-level`, which refuses 76% and
+  is the only component of that strategy measured to pay.
+* The rolling number - 1.10 over twenty years against 1.73 in one - is the
+  honest one, and the gap between them is what a single out-of-sample window
+  is worth.
+
+**What does not transfer.** Both articles evaluate on one instrument with a
+moving-average backbone this desk does not have and would not adopt. The value
+is in the regime label and its control, not in the strategy wrapped around it.
+
 ## Game theory, and the question this desk never asks
 
 Noted 2026-09-07, unread rather than summarised - listed because the question

@@ -5,6 +5,49 @@ lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
 
+## Residual time is the hold clock, and the hold clock is where the money went
+
+Noted 2026-09-08 from Agudelo-España et al., *Bayesian Online Prediction of
+Change Points* (UAI 2020) - see [research/reading.md](../research/reading.md).
+
+Standard BOCPD infers **run length**: how long since the last regime change.
+That paper extends it to **residual time**: how many steps until the *next*
+one. That is not a refinement of a detector, it is a different output, and it
+happens to be the quantity this desk loses most money not having.
+
+**The measured case, which is already on file.** `thesis-only` closed 74 trades
+at target or stop for a net **-7.10** and 75 on the clock for **-389.98**.
+Ninety-eight per cent of the loss was the hold timeout. `runner` has the same
+shape from the other side: it widens its target and then closes 16 of 26 trades
+on a four-hour clock, so the mechanism it exists for never operates. Every
+`hold_seconds` on this book is a constant somebody chose.
+
+**What exists to build on.** `context/timing.py` answers the neighbouring
+question - `probability_within(distance_vol, bars)`, first passage over a
+distance - and `Cusum` and `learning/regimes.py` are already online models over
+the same stream. What none of them says is how long the *current* regime has
+left.
+
+**Order, and the first step is not the model.**
+
+1. **Measure what the clock is actually costing now, per strategy.** The
+   -389.98 is one strategy on one period. If the clock is only expensive on
+   `thesis-only` then the fix is one constant, not a model.
+2. **Score a trivial residual-time baseline first**: the median observed
+   regime duration per feed and interval, which is a lookup. A Bayesian
+   posterior has to beat that before it has earned anything.
+3. **Then BOCPD with residual time**, and ship it with the control the MQL5
+   BOCPD article ran - a randomised intervention at matched frequency. Their
+   overlay cut drawdown 856.50 to 755.60 by skipping 4 trades of 97, and the
+   randomised version *made things worse*, which is the only reason the first
+   number means anything.
+4. Only then anything that changes a hold in production.
+
+**What would kill it.** If regime duration turns out to be close to
+memoryless - the hazard flat - then residual time is a constant and step 2 is
+the whole answer. That is a cheap thing to check and it should be checked
+before any of step 3.
+
 ## Spotting a trap while it is happening, not after - noted 2026-09-08
 
 [research/trapping.md](../research/trapping.md) counts traps **after they
@@ -196,13 +239,16 @@ own `Cusum` at four thresholds. Best is 0.205v against F's 0.124v - better than
 the 0.237v baseline, decisively worse than F. The specification predicted this
 in §18 and the measurement agrees with it. Not carried forward.
 
-**§22.1, Bayesian online change-point detection.** Not attempted. It is the
-principled version of what H did crudely: a posterior over "the regime has
-ended" rather than a threshold crossing, which would give the origin a
-distribution rather than a timestamp. Two things to know before starting - H
-losing to F is evidence about the *family*, not just the threshold, and §22.2
-(the origin as a posterior) was already refused here because the band is seven
-times the localization error. BOCPD would have to argue past both.
+**§22.1, Bayesian online change-point detection.** Not attempted, and the
+reason recorded here for not starting it was wrong. It said "H losing to F is
+evidence about the *family*". It is not: H asked **where in price** the
+transition sits, and BOCPD's value here is **how long the regime has left**,
+which is a different question that test did not touch. See
+[the residual-time entry below](#residual-time-is-the-hold-clock-and-the-hold-clock-is-where-the-money-went).
+
+What does still apply is §22.2 - the origin as a posterior was refused because
+the band is seven times the localization error - so BOCPD aimed at *locating*
+an origin has that to argue past. Aimed at duration it does not.
 
 **The rest, in order.**
 
