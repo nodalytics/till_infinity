@@ -407,7 +407,7 @@ def test_a_series_records_its_bar_s_fine_extremes():
     series.add(0, 110.0, 90.0, 100.0, 100.0)
     series.note_fine(0, 90.0, 105.0)
 
-    assert series.fine_at(0) == (90.0, 105.0)
+    assert series.fine_at(0)[:2] == (90.0, 105.0)
 
 
 def test_an_uncaptured_bar_reads_as_no_evidence():
@@ -418,7 +418,7 @@ def test_an_uncaptured_bar_reads_as_no_evidence():
     series = Series(feed="t", interval="4h")
     series.add(0, 110.0, 90.0, 100.0, 100.0)
 
-    low, high = series.fine_at(0)
+    low, high = series.fine_at(0)[:2]
     assert math.isnan(low)
     assert math.isnan(high)
     assert all(math.isnan(v) for v in series.fine_at(999))
@@ -439,7 +439,7 @@ def test_a_series_from_before_the_field_has_no_minutes_and_says_so():
     assert all(math.isnan(v) for v in series.fine_at(14_400))
 
     series.note_fine(28_800, 92.0, 111.0)
-    assert series.fine_at(28_800) == (92.0, 111.0)
+    assert series.fine_at(28_800)[:2] == (92.0, 111.0)
     assert all(math.isnan(v) for v in series.fine_at(14_400))
 
 
@@ -503,7 +503,7 @@ def test_the_engine_captures_fine_extremes_as_the_coarse_bar_closes():
             }
         )
 
-    low, high = engine.series("t", "4h").fine_at(base)
+    low, high = engine.series("t", "4h").fine_at(base)[:2]
 
     assert high == 105.0
     assert low == 98.0
@@ -634,3 +634,133 @@ def test_open_air_is_still_reported_when_there_is_nothing_either_way():
     engine = _engine_with([], 100.0)
 
     assert engine.origins_bracketing("t", "4h", 100.0, engine.vol.of("t", "4h")) == (None, None)
+
+
+def test_change_in_finds_where_a_fall_began_not_where_it_was_confirmed():
+    """The change point is the argmax over every start, not the first crossing."""
+    import math
+
+    from till_infinity.structures.drawing.origins import change_in
+
+    # Flat, then a clean fall. The change is at index 5 and nowhere else.
+    closes = [100.0] * 6 + [99.0, 98.0, 97.0, 96.0, 95.0, 94.0]
+    times = [float(i * 60) for i in range(len(closes))]
+
+    got = change_in(times, closes, 0.0, 60.0 * len(closes))
+
+    assert got is not None
+    down, up = got
+    assert down == 100.0
+    # The rally detector has nothing to find in a series that only falls.
+    assert math.isnan(up) or up <= 100.0
+
+
+def test_change_in_is_indifferent_to_the_volatility_unit():
+    """The argmax is scale-free, which is why no unit is taken."""
+    from till_infinity.structures.drawing.origins import change_in
+
+    closes = [50.0] * 5 + [49.0, 48.0, 47.0, 46.0]
+    times = [float(i * 60) for i in range(len(closes))]
+    scaled = [c * 1000 for c in closes]
+
+    a = change_in(times, closes, 0.0, 60.0 * len(closes))
+    b = change_in(times, scaled, 0.0, 60.0 * len(closes))
+
+    assert a is not None
+    assert b is not None
+    assert b[0] == a[0] * 1000
+
+
+def test_change_in_refuses_partial_cover_like_the_extremes_do():
+    from till_infinity.structures.drawing.origins import change_in
+
+    closes = [100.0, 99.0, 98.0]
+    times = [0.0, 60.0, 120.0]
+
+    # The bar runs for an hour and only three minutes of it are here.
+    assert change_in(times, closes, 0.0, 3600.0) is None
+
+
+def test_an_origin_is_confirmed_when_the_change_point_lands_on_the_extreme():
+    from till_infinity.structures.drawing.origins import refine
+
+    origin = Origin(price=100.0, low=99.0, high=101.0, launched="down", size_vol=5.0, when=0.0)
+
+    got = refine(origin, 99.0, 100.5, change=100.5, unit=1.0)
+
+    assert got.refined
+    assert got.confirmed
+    assert got.price == 100.5
+
+
+def test_an_origin_is_not_confirmed_when_the_change_point_is_elsewhere():
+    from till_infinity.structures.drawing.origins import refine
+
+    origin = Origin(price=100.0, low=99.0, high=101.0, launched="down", size_vol=5.0, when=0.0)
+
+    got = refine(origin, 99.0, 100.5, change=99.0, unit=1.0)
+
+    assert got.refined
+    assert not got.confirmed
+
+
+def test_confirmation_is_recorded_even_when_the_refinement_does_not_move_the_price():
+    """Agreeing at the coarse price is agreement, not an absent reading."""
+    from till_infinity.structures.drawing.origins import refine
+
+    origin = Origin(price=100.0, low=99.0, high=101.0, launched="down", size_vol=5.0, when=0.0)
+
+    got = refine(origin, 99.0, 100.0, change=100.0, unit=1.0)
+
+    assert got.confirmed
+    assert got.price == 100.0
+
+
+def test_an_uncomputed_change_point_leaves_an_origin_unconfirmed():
+    import math
+
+    from till_infinity.structures.drawing.origins import refine
+
+    origin = Origin(price=100.0, low=99.0, high=101.0, launched="down", size_vol=5.0, when=0.0)
+
+    got = refine(origin, 99.0, 100.5, change=math.nan, unit=1.0)
+
+    assert got.refined
+    assert not got.confirmed
+
+
+def test_remember_takes_the_change_point_matching_the_launch_direction():
+    origin = Origin(price=100.0, low=99.0, high=101.0, launched="up", size_vol=5.0, when=0.0)
+    kept = Origins()
+
+    # (low, high, down, up) - a rally reads the fourth, and the third is a
+    # decoy that would confirm nothing if the wrong one were picked.
+    got = kept.remember([origin], lambda o: (99.5, 101.0, 100.0, 99.5), unit=1.0)
+
+    assert got[0].price == 99.5
+    assert got[0].confirmed
+
+
+def test_remember_still_accepts_a_pair_from_before_change_points_existed():
+    origin = Origin(price=100.0, low=99.0, high=101.0, launched="down", size_vol=5.0, when=0.0)
+    kept = Origins()
+
+    got = kept.remember([origin], lambda o: (99.0, 100.5), unit=1.0)
+
+    assert got[0].refined
+    assert not got[0].confirmed
+
+
+def test_fine_at_pads_an_entry_written_before_change_points_existed():
+    import math
+
+    from till_infinity.structures import engine as eng
+
+    series = eng.Series("t", "4h")
+    series.fine[0] = (90.0, 105.0)
+
+    low, high, down, up = series.fine_at(0)
+
+    assert (low, high) == (90.0, 105.0)
+    assert math.isnan(down)
+    assert math.isnan(up)

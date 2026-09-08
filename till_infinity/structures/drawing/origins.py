@@ -66,6 +66,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 
+from ..learning.focus import Focus
 from ..state import Restorable
 
 #: How many origins are kept per feed and timeframe. Origins are rare - the
@@ -122,6 +123,23 @@ MIN_EXTREMUM_VOL = 0.5
 #: a real cut, and whether what survives scores better is unmeasured until the
 #: journal has enough of them.
 EXTREMUM_BARS = 20
+#: How close the change point must land to the refined price, in volatility
+#: units, for an origin to count as confirmed.
+#:
+#: **Measured, and with the control that matters.** Over 406 events on 8
+#: instruments (`research/localising.md`), the refined estimate's wander under
+#: a shifted sampling grid is **0.101v where the change point agrees with the
+#: extreme and 0.152v where it does not** - the same origin located half again
+#: as precisely, on a population that splits almost evenly (2,828 against
+#: 2,856).
+#:
+#: The reading is not "this event was easy". Agreement moves the baseline
+#: 1.03x, the body edge 1.04x and the CUSUM change point 1.03x - if it were
+#: selecting simple bars, every estimator would improve on the same events and
+#: none of those do. It moves the two estimators that resolve the transition,
+#: and only those.
+CONFIRM_VOL = 0.25
+
 #: How far either side of the origin price the zone reaches, in volatility
 #: units, when there is no bar to measure from at all.
 ZONE_VOL = 0.5
@@ -198,6 +216,20 @@ class Origin(Restorable):
     #: catalogues. False on anything restored from a save that predates it,
     #: which reads correctly: it was not refined.
     refined: bool = False
+    #: Whether an independent change-point estimate agrees with where the
+    #: refinement put this - see `CONFIRM_VOL` for the measurement.
+    #:
+    #: **A reading, not a gate.** Nothing here refuses an unconfirmed origin.
+    #: What is known is that the *price* is better located when the two agree;
+    #: whether a confirmed origin is also better *traded* is a different claim,
+    #: and this field is what lets the journal answer it. That is the order
+    #: this repository got wrong with `reward_to_risk` and right with
+    #: `strength`, and `drawn_by_n` is the most recent one done this way.
+    #:
+    #: False on a save that predates it and on any origin whose bar had no
+    #: minutes captured - in both cases the agreement was never computed,
+    #: which is not the same as disagreement. `refined` separates them.
+    confirmed: bool = False
 
     def holds(self, price: float) -> bool:
         return self.low <= price <= self.high
@@ -224,6 +256,7 @@ class Origin(Restorable):
             "settled": self.settled,
             "revisits": self.revisits,
             "refined": self.refined,
+            "confirmed": self.confirmed,
         }
 
 
@@ -256,7 +289,72 @@ def extremes_in(
     return min(window), max(window)
 
 
-def refine(origin: Origin, fine_low: float, fine_high: float) -> Origin:
+def change_in(
+    times: Sequence[float],
+    closes: Sequence[float],
+    start: float,
+    span: float,
+) -> tuple[float, float] | None:
+    """The change-point price inside one coarse bar, for a fall and for a rally.
+
+    `extremes_in` answers "where was the highest close"; this answers "where
+    did the character of the move change", and they are different questions
+    about the same minutes. An origin is defined as an extreme, so the extreme
+    is what places it - but two estimators built from different statistics
+    landing on the same price is worth more than either alone, and
+    `CONFIRM_VOL` carries what that agreement is measured to be worth.
+
+    Both directions, because **the impulse has not happened yet.** This runs
+    when the bar closes, which is the only moment its minutes are certainly
+    still in the window; whether the move that follows is a drop or a rally is
+    not knowable for hours. So the fall's change point and the rally's are
+    both computed and `refine` takes the one that turned out to matter.
+
+    Returned in `(down, up)` order, matching `extremes_in`'s `(low, high)`:
+    the fall's change point is the price a drop began from and sits with the
+    high, the rally's with the low.
+
+    **No volatility unit is needed and none is taken.** The statistic scales
+    as `1/unit**2` under a change of unit, uniformly across every candidate,
+    so the argmax - the only thing read here - is unchanged. The threshold is
+    what a unit is for, and this never tests one: it asks where the best
+    changepoint is, not whether it is good enough to announce.
+
+    None on the same terms as `extremes_in`: partial cover is not cover.
+    """
+    if span <= 0 or len(times) != len(closes) or len(times) < 2:
+        return None
+    first = bisect.bisect_left(times, start)
+    last = bisect.bisect_left(times, start + span)
+    window = closes[first:last]
+    if len(window) < 3:
+        return None
+    if times[first] > start or times[last - 1] < start + span - _step(times):
+        return None
+    out = []
+    for up in (False, True):
+        # Threshold out of reach on purpose. A detector that stops at its
+        # threshold reports where the evidence first became sufficient, which
+        # is what `Cusum` already does and what the comparison measured as the
+        # weaker estimator (0.211v against FOCuS's 0.192v). The argmax over the
+        # whole bar is the estimate wanted, so the run is never cut short.
+        detector = Focus(threshold=math.inf, up=up)
+        best, where = 0.0, 0
+        for i in range(1, len(window)):
+            detector.update(window[i] - window[i - 1], scale=1.0)
+            if detector.statistic > best:
+                best, where = detector.statistic, detector.at
+        out.append(window[where] if 0 <= where < len(window) else math.nan)
+    return out[0], out[1]
+
+
+def refine(
+    origin: Origin,
+    fine_low: float,
+    fine_high: float,
+    change: float = math.nan,
+    unit: float = 0.0,
+) -> Origin:
     """Relocate one origin to the finer transition inside its own bar.
 
     **Estimator F of the localization specification, and the one that won.**
@@ -284,14 +382,28 @@ def refine(origin: Origin, fine_low: float, fine_high: float) -> Origin:
     if math.isnan(fine_low) or math.isnan(fine_high):
         return origin
     price = fine_high if origin.launched == "down" else fine_low
+    # Whether the independent change-point estimate lands on the same place.
+    # Computed against the **refined** price rather than the coarse one, which
+    # is what `research/localising.md` measured - the question is whether this
+    # relocation can be trusted, not whether the bar's close could.
+    confirmed = unit > 0 and not math.isnan(change) and abs(change - price) <= CONFIRM_VOL * unit
     if price == origin.price:
-        return origin
+        # Still worth recording. The refinement not *moving* the price is not
+        # the same as the agreement not being computable, and returning the
+        # origin untouched here would have thrown the reading away on exactly
+        # the events where the two resolutions already agreed.
+        return replace(origin, confirmed=confirmed) if confirmed else origin
     # The band moves with it, keeping the origin inside its own zone. Widening
     # or re-deriving the band from the finer bars is the next experiment; this
     # keeps the existing width and re-centres it, which is the smaller claim.
     shift = price - origin.price
     return replace(
-        origin, price=price, low=origin.low + shift, high=origin.high + shift, refined=True
+        origin,
+        price=price,
+        low=origin.low + shift,
+        high=origin.high + shift,
+        refined=True,
+        confirmed=confirmed,
     )
 
 
@@ -449,9 +561,10 @@ class Origins(Restorable):
     def remember(
         self,
         found: Sequence[Origin],
-        fine: Callable[[Origin], tuple[float, float]] | None = None,
+        fine: Callable[[Origin], tuple[float, ...]] | None = None,
         *,
         keep: int = KEEP,
+        unit: float = 0.0,
     ) -> list[Origin]:
         """Merge a fresh detection into the kept set, refining what is new.
 
@@ -464,7 +577,12 @@ class Origins(Restorable):
         Refinement happens **once, the first time an origin is seen**, and the
         answer is kept - so a band computed today is still there in a month.
         `fine` is asked for the extremes of the origin's own bar and returns
-        `(nan, nan)` when they were never captured.
+        `(nan, nan)` when they were never captured. It may return two more
+        numbers - the change points from `change_in`, in `(down, up)` order -
+        and where it does, `unit` lets `refine` say whether they agree with
+        where it put the origin. A two-item answer is still accepted: that is
+        what every caller returned before the change points existed, and a
+        save written then holds pairs.
 
         Identity is `(when, launched)` - the bar the turn happened on and which
         way the impulse went. The detector returns the same pair for the same
@@ -481,8 +599,15 @@ class Origins(Restorable):
             key = (origin.when, origin.launched)
             if key in known:
                 continue
-            low, high = fine(origin) if fine else (math.nan, math.nan)
-            known[key] = refine(origin, low, high)
+            got = fine(origin) if fine else (math.nan, math.nan)
+            low, high = got[0], got[1]
+            # The fall's change point for an origin a drop launched, the
+            # rally's for one a rally launched - the same pairing `refine`
+            # makes between `fine_high` and a drop.
+            change = math.nan
+            if len(got) > 3:
+                change = got[2] if origin.launched == "down" else got[3]
+            known[key] = refine(origin, low, high, change, unit)
         self.found = sorted(known.values(), key=lambda o: o.when)[-keep:]
         return self.found
 
@@ -490,6 +615,11 @@ class Origins(Restorable):
     def refined(self) -> int:
         """How many of the kept origins were relocated at the finer resolution."""
         return sum(1 for o in self.found if o.refined)
+
+    @property
+    def confirmed(self) -> int:
+        """How many of them an independent change point agrees with."""
+        return sum(1 for o in self.found if o.confirmed)
 
     def _count_revisits(self, prices: list[float]) -> None:
         """How often price has come back into each zone since it formed."""

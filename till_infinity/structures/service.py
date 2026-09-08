@@ -682,15 +682,46 @@ class Watcher:
         kept = getattr(self.engine, "_origins", None) or {}
         total = sum(len(o.found) for o in kept.values())
         refined = sum(o.refined for o in kept.values())
+        # `confirmed` is a subset of `refined` - the change point can only
+        # agree with a relocation that happened - so it is reported against
+        # the refined count rather than the total, which is the denominator
+        # that makes it readable.
+        confirmed = sum(getattr(o, "confirmed", 0) for o in kept.values())
         if not total:
             return "no origins kept yet"
         return (
             f"{total} origin(s) kept across {len(kept)} series, "
-            f"{refined} refined ({refined / total:.0%})"
+            f"{refined} refined ({refined / total:.0%}), "
+            f"{confirmed} change-point confirmed"
+            + (f" ({confirmed / refined:.0%} of refined)" if refined else "")
+        )
+
+    def drift_tally(self) -> str:
+        """How ADWIN and KSWIN have compared, for the save log.
+
+        **The counters existed and nothing read them.** `Drift.watching` was
+        written to answer whether the second detector earns its window, and
+        it had no caller anywhere in the service - so `kswin_alone`, the one
+        number that settles it, was being computed every tick and thrown away
+        at every restart. That is the shape `research/inert.md` catalogues,
+        and it is the tenth case.
+        """
+        try:
+            counts = self.drift.watching()
+        except Exception:  # a tally must not be able to stop a save
+            return "no drift tally"
+        adwin, kswin = counts.get("adwin", 0), counts.get("kswin", 0)
+        if not adwin and not kswin:
+            return "no drift fired yet"
+        alone = counts.get("kswin_alone", 0)
+        return (
+            f"drift: adwin {adwin}, kswin {kswin}, both {counts.get('both', 0)}, "
+            f"kswin alone {alone}" + (f" ({alone / kswin:.0%} of kswin)" if kswin else "")
         )
 
     def save(self) -> None:
         log.info("structures: %s", self.origin_tally())
+        log.info("structures: %s", self.drift_tally())
         if self.bench.scores:
             # Logged rather than only stored, because a comparison nobody reads
             # settles nothing - and this one exists to settle whether the model

@@ -383,7 +383,7 @@ class Series(Restorable):
     #: the container was OOM-killed once. Sparse also removes the alignment
     #: this file got wrong twice: a deque parallel to `closes` has to be padded
     #: on restore and shifted on eviction, and both of those were bugs.
-    fine: dict[int, tuple[float, float]] = field(default_factory=dict)
+    fine: dict[int, tuple[float, ...]] = field(default_factory=dict)
     #: Whatever the venue called volume, per bar, and `nan` where it said
     #: nothing. **Not comparable across venues or instruments** - on most feeds
     #: here it is tick count rather than size, and spot FX has no consolidated
@@ -439,7 +439,14 @@ class Series(Restorable):
         self.since_reform += 1
         return True
 
-    def note_fine(self, when: float, low: float, high: float) -> None:
+    def note_fine(
+        self,
+        when: float,
+        low: float,
+        high: float,
+        down: float = math.nan,
+        up: float = math.nan,
+    ) -> None:
         """Record the fine extremes of the bar at `when`.
 
         By timestamp rather than "the last one", because the last one is the
@@ -450,11 +457,23 @@ class Series(Restorable):
         is complete exactly when the next one starts, and that is when this is
         asked for it.
         """
-        self.fine[int(when)] = (low, high)
+        self.fine[int(when)] = (low, high, down, up)
 
-    def fine_at(self, when: float) -> tuple[float, float]:
-        """The stored fine extremes for the bar at `when`, or `(nan, nan)`."""
-        return self.fine.get(int(when), (math.nan, math.nan))
+    def fine_at(self, when: float) -> tuple[float, float, float, float]:
+        """The bar's fine extremes and change points, or `nan` where unknown.
+
+        `(low, high, down, up)`. Entries written before the change points
+        existed hold two numbers, so the answer is **padded rather than
+        indexed**: a save from last week would otherwise raise on the third
+        element, inside the try that swallows it, and every origin feature
+        would go quietly missing after a deploy. That is the shape
+        `_remember_origins` was already bitten by once, on `_origins` itself.
+        """
+        got = self.fine.get(int(when))
+        if not got:
+            return (math.nan, math.nan, math.nan, math.nan)
+        padded = tuple(got) + (math.nan,) * (4 - len(got))
+        return padded[0], padded[1], padded[2], padded[3]
 
     @property
     def ready(self) -> bool:
@@ -920,13 +939,21 @@ class Engine:
         for when in list(series.times)[-2:]:
             got = origins.extremes_in(times, closes, float(when), span)
             if got is not None:
-                series.note_fine(float(when), *got)
+                # The change points are computed here for the same reason the
+                # extremes are: this is the one moment the bar's minutes are
+                # certainly still in the window. Both directions, because
+                # which one matters is not knowable until the impulse breaks
+                # structure, hours to days later. `None` where the bar is too
+                # short to have one, and the extremes are still recorded.
+                shift = origins.change_in(times, closes, float(when), span)
+                series.note_fine(float(when), *got, *(shift or (math.nan, math.nan)))
 
     def _remember_origins(
         self,
         feed: str,
         interval: str,
         fresh: list,
+        unit: float = 0.0,
     ) -> list:
         """Keep origins across calls, refining each one the first time it is seen.
 
@@ -971,6 +998,7 @@ class Engine:
         return kept.remember(
             fresh,
             (lambda o: series.fine_at(o.when)) if series else None,
+            unit=unit,
         ) or list(fresh)
 
     def _origin_at(self, feed: str, interval: str, price: float, vol: Volatility) -> dict:
@@ -1010,7 +1038,7 @@ class Engine:
                     )
                 ]
             fresh = origins.Origins().observe(list(series.times), closes, unit, bars_at=bars)
-            found = self._remember_origins(feed, interval, fresh)
+            found = self._remember_origins(feed, interval, fresh, unit)
             if not found:
                 return {}
             nearest = min(found, key=lambda o: abs(o.price - price))
@@ -1065,6 +1093,18 @@ class Engine:
                 # a consumer that wants to be stricter than the detector can.
                 "origin_extremum_vol": nearest.extremum_vol,
                 "origin_revisits": float(nearest.revisits),
+                # Whether an independent change-point estimate agrees with
+                # where the refinement put this origin. Measured: the refined
+                # price wanders 0.101v under a shifted sampling grid when the
+                # two agree and 0.152v when they do not, and the agreement is
+                # not just marking easy events - it barely moves the estimators
+                # that do not resolve the transition. See `origins.CONFIRM_VOL`
+                # and `research/localising.md`.
+                #
+                # **Published, not acted on.** What is measured is that the
+                # price is better *located*; whether it is better *traded* is
+                # the question this field exists to let the journal answer.
+                "origin_confirmed": 1.0 if nearest.confirmed else 0.0,
                 "in_origin": 1.0 if inside else 0.0,
                 # The zone itself, in prices. The four fields above describe an
                 # origin without saying where it is, which is enough to score a
