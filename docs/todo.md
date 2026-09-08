@@ -5,6 +5,51 @@ lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
 
+## Shorting a spike index has a stop-to-target ratio nothing refuses - found 2026-09-08
+
+Spotted from a chart: two live sells on Boom 500, the worse one with its stop
+**17.0 above entry and its target 9.6 below** - risking 1.78 to make 1. The
+record says it is not a one-off and not a mis-adjustment:
+
+| strategy | entry | stop | target | RR |
+| --- | --- | --- | --- | --- |
+| confluence-scalp | 4715.57 | +8.71 | -2.57 | **0.295** (declined) |
+| thesis-only | 4711.74 | +14.61 | -2.57 | ~0.18 |
+| sweep-aware | 4711.74 | +11.94 | -2.57 | ~0.22 |
+| level-scalp | 4711.74 | +11.94 | -2.57 | ~0.22 |
+
+**It is the instrument, and it is structural.** Boom spikes *up* every ~500
+ticks by construction - the chart says so in the instrument's own subtitle. So:
+
+* the **stop** comes from the level's zone, whose width is driven by wick
+  depth, and on a spike index the wicks are the spikes. A stop that means
+  anything has to sit beyond one.
+* the **target** comes from `expected_push_vol`, which is the *ordinary* move
+  and was **-0.72v** on these calls.
+
+Wide stop, narrow target, every time, for a sell on Boom. The mirror applies to
+a buy on Crash.
+
+**The gate saw it and only one strategy listened.** `reward_to_risk` was
+recorded at 0.295 and `confluence-scalp` declined at that number; three others
+produced the same shape and took it. That is deliberate - `research/failing.md`
+found the RR gate refuses 85% of calls to gain nothing, and RR 1.5+ is the
+*worst* bucket by realised return - so RR is not a hard floor. The finding here
+is that the one place RR is unambiguously informative is the one place it is
+not applied.
+
+**What to do, in order of how little it assumes:**
+
+1. **Refuse sells on Boom and buys on Crash.** The spike direction is a
+   property of the generated process, not a prediction - Deriv publishes it in
+   the instrument name. This is a one-line table and it is the only fix here
+   that needs no measurement.
+2. **Then measure whether it was already being paid for.** Pull the closed
+   trades on the spike indices by side; if the against-the-spike side is not
+   measurably worse, the argument above is wrong and worth knowing.
+3. Only then consider a per-instrument RR floor, which is the general version
+   and the one most likely to refuse 85% of calls to gain nothing again.
+
 ## The round-number control - run 2026-09-07, and it could not answer
 
 Osler's *Support for Resistance* (FRBNY Economic Policy Review, 2000; see
