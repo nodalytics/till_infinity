@@ -2455,3 +2455,57 @@ def test_an_expired_touch_also_cannot_run_backwards():
     for done in tracker.expire(when=10_000.0 + tracker.horizon_for(touch) * 2):
         assert done.resolved >= done.started
     assert all(t.resolved >= t.started for t in tracker.memory._touches)
+
+
+# --------------------------------------- the second detector, which decides nothing
+
+
+def test_kswin_is_counted_and_never_confirms_a_drift():
+    """`ADWIN` tests the mean; `KSWIN` tests the distribution, and can see a
+    change that leaves the mean where it was. It is wired to decide nothing,
+    because a spurious drift discounts every level's accumulated history - the
+    cost that made ADWIN conservative once its output was consumed."""
+    import random
+
+    from till_infinity.structures.learning.drift import Drift
+
+    rng = random.Random(5)
+    watcher = Drift()
+    price = 100.0
+    fired = []
+    # A calm stretch, then one that is wider with the *same* mean absolute move
+    # is the case ADWIN is blind to by construction.
+    for i in range(1200):
+        step = rng.gauss(0, 0.02) if i < 600 else rng.choice([-1, 1]) * rng.gauss(0.4, 0.02)
+        price = max(1.0, price + step)
+        got = watcher.observe("t", price, when=float(i), interval="5m")
+        if got is not None:
+            fired.append(got)
+
+    seen = watcher.watching()
+    assert set(seen) == {"adwin", "kswin", "both", "kswin_alone"}
+    # Whatever it saw, it cannot have produced a signal on its own: every
+    # emitted signal has to have come through the ADWIN path.
+    assert len(fired) <= seen["adwin"]
+
+
+def test_a_failing_second_opinion_cannot_stop_the_first():
+    """A detector that decides nothing must not be able to break one that
+    does."""
+    from till_infinity.structures.learning import drift as drift_mod
+
+    watcher = drift_mod.Drift()
+
+    class _Broken:
+        def update(self, _value):
+            raise RuntimeError("no")
+
+        drift_detected = False
+
+    watcher._shape[("t", "5m")] = _Broken()
+
+    # Feeding it must not raise, and the ADWIN side must still be counted.
+    for i in range(50):
+        watcher.observe("t", 100.0 + i * 0.1, when=float(i), interval="5m")
+
+    assert watcher.watching()["kswin"] == 0
