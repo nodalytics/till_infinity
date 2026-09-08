@@ -213,26 +213,32 @@ secF = 14400
 secG = 28800
 secH = 86400
 
-// **A rung must be inside the span *and* not below the chart.**
+// **The ladder's floor is the refinement input, not the chart.**
 //
-// Two separate bugs lived here and both showed as "no boxes above 1h".
+// Three bugs lived here in turn and all of them showed as an empty chart.
 //
-// The first: `refineSecs` is raised to the chart's own resolution, because the
-// refinement is built out of chart bars. Using that as the ladder's floor
-// meant a 4h chart had exactly one live rung - so agreement could never reach
-// two, let alone three, and the script drew **nothing** while looking
-// configured. The ladder's floor is the *chart*, and the refinement input
-// governs the refinement only.
+// The ladder stopped at 4h, so a daily anchor had no top rung. 8h and 1d were
+// missing rather than excluded, and that is fixed below.
 //
-// The second: the ladder stopped at 4h. With a daily anchor there was no rung
-// at or above the chart on any high timeframe, so again nothing. 8h and 1d
-// rungs were missing rather than excluded.
+// Then the floor was `refineSecs`, which is raised to the chart's own
+// resolution because the *zone* is built out of chart bars. That coupled two
+// things that are not the same question, and on a **daily chart with a daily
+// anchor it left exactly one eligible rung** - so agreement could never reach
+// two and the indicator refused to draw on the timeframe it was designed for.
 //
-// A rung below the chart is dropped rather than requested: `request.security`
-// will happily fetch a finer timeframe and what comes back cannot be relied
-// on, which is a silent wrong answer instead of a missing one.
+// They are separate: the ladder asks *how many timeframes agree a change
+// happened*, which does not care what chart you are looking at. The
+// refinement asks *where inside the anchor bar the zone goes*, which can only
+// be answered at the chart's own resolution or coarser.
+//
+// **What this costs, stated rather than hidden.** Rungs finer than the chart
+// are requested, and TradingView serves those from intrabar data, which it
+// supplies for a limited history and refreshes within the forming bar. So on a
+// daily chart the fast rungs may be absent on older bars and may move on the
+// live one. That is a real limitation and it is a better trade than an
+// indicator that draws nothing: the alternative was refusing to work above 1h.
 chartSecs = timeframe.in_seconds(timeframe.period)
-floorSecs = math.max(timeframe.in_seconds(refineTf), chartSecs)
+floorSecs = timeframe.in_seconds(refineTf)
 inSpan(int secs) => secs >= floorSecs and secs <= anchorSecs
 liveA = inSpan(secA)
 liveB = inSpan(secB)
@@ -468,13 +474,24 @@ if fadeUsed and barstate.isconfirmed
 // misconfiguration and it is silent, which is how "no boxes above 1h" went
 // unnoticed - so it says so on the chart rather than leaving a blank one.
 var table diag = table.new(position.bottom_right, 1, 1, frame_width = 1)
-if barstate.islast and liveCount < minAgree
-    table.cell(diag, 0, 0,
-         "FOCuS: only " + str.tostring(liveCount) + " of 8 timeframes are eligible on a " +
-         timeframe.period + " chart, and Minimum agreeing is " + str.tostring(minAgree) +
-         ". No zone can ever be drawn. Lower Minimum agreeing, or drop to a finer chart.",
-         text_color = chart.fg_color, bgcolor = color.new(color.orange, 70),
-         text_size = size.small)
+if barstate.islast
+    if liveCount < minAgree
+        table.cell(diag, 0, 0,
+             "FOCuS: only " + str.tostring(liveCount) + " of 8 timeframes fall between the " +
+             "refinement and the anchor, and Minimum agreeing is " + str.tostring(minAgree) +
+             ". No zone can ever be drawn. Widen the span or lower Minimum agreeing.",
+             text_color = chart.fg_color, bgcolor = color.new(color.orange, 70),
+             text_size = size.small)
+    else if refineSecs > floorSecs
+        // The ladder works here; the *zone* is the thing that degrades. Worth
+        // saying, because a band as wide as a daily candle is not an entry and
+        // someone reading one as if it were is the failure this warns about.
+        table.cell(diag, 0, 0,
+             "FOCuS: zones are as wide as this chart's bars (" + timeframe.period +
+             "), not the " + refineTf + " you asked for. Drop to a " + refineTf +
+             " chart for a tradeable band.",
+             text_color = chart.fg_color, bgcolor = color.new(color.blue, 80),
+             text_size = size.small)
 
 alertcondition(not na(upStart) and agreeingUp >= minAgree, "FOCuS support zone",
      "A rally's origin was located and confirmed across timeframes")

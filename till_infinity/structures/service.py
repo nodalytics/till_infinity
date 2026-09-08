@@ -511,6 +511,11 @@ class Watcher:
         self._seeded: set[str] = set()
         self.outcomes = 0
         self._saved = 0.0
+        #: Messages this watcher threw on and skipped rather than died on.
+        #: Reported in the save log, because a consumer quietly discarding a
+        #: tenth of its input is a different thing from one that is healthy and
+        #: the two are indistinguishable without a number.
+        self.dropped = 0
         self.published = 0
         self.alerted = 0
 
@@ -747,6 +752,11 @@ class Watcher:
         log.info("structures: %s", self.origin_tally())
         log.info("structures: %s", self.drift_tally())
         log.info("structures: %s", self.change_tally())
+        if self.dropped:
+            log.warning(
+                "structures: %d message(s) have thrown and been skipped since start",
+                self.dropped,
+            )
         if self.bench.scores:
             # Logged rather than only stored, because a comparison nobody reads
             # settles nothing - and this one exists to settle whether the model
@@ -1423,7 +1433,32 @@ class Watcher:
                 while messages is None or seen < messages:
                     message = await queue.get()
                     seen += 1
-                    signals = await self.handle(message)
+                    # **One bad message must not end the service.** Without
+                    # this, a throw here leaves the `while`, unwinds the
+                    # TaskGroup and the structures consumer is simply gone -
+                    # while the process stays up and the container stays
+                    # `healthy`, so nothing outside says so. That has now
+                    # happened three times: twice this month per
+                    # `_origin_at`'s note, and again on 2026-09-08, when the
+                    # only trace was 132,807 bus warnings that rotated the
+                    # supervisor's own error out of the logs.
+                    #
+                    # Re-raised for `CancelledError` alone, which is shutdown
+                    # and must not be swallowed.
+                    try:
+                        signals = await self.handle(message)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        self.dropped += 1
+                        log.error(
+                            "structures: %s on %s - skipping this message (%d so far)",
+                            exc,
+                            message.topic,
+                            self.dropped,
+                            exc_info=self.dropped <= 3,
+                        )
+                        continue
                     if signals:
                         await self.emit(signals)
                         for signal in signals:

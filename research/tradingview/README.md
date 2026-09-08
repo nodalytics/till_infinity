@@ -182,14 +182,30 @@ and a **5m refinement**, a 3-nat threshold, a 250-bar volatility lookback, 2
 timeframes minimum, a 6-anchor-bar agreement window, 12 zones a side and a
 3-ATR minimum gap.
 
-**The chart's own timeframe is the floor of the ladder.** A rung finer than the
-chart is dropped rather than requested - `request.security` will happily fetch
-a finer timeframe and what comes back cannot be relied on, which is a silent
-wrong answer rather than a missing one. So on a 4h chart the eligible rungs are
-4h, 8h and 1d, and `minAgree` must be reachable within them. When it is not,
-the indicator **says so in the corner** instead of drawing an empty chart:
-that failure was silent in the first version and is why it drew nothing above
-1h.
+**The ladder and the zone answer different questions, and only one of them
+depends on your chart.** The ladder asks *how many timeframes agree a change
+happened*, which does not care what you are looking at, so its rungs run from
+the refinement input to the anchor regardless of the chart. The zone asks
+*where inside the anchor bar the band goes*, and that can only be answered at
+the chart's own resolution or coarser.
+
+Coupling them was a bug: it made a **daily chart with a daily anchor** have
+exactly one eligible rung, so the indicator refused to draw on the timeframe it
+was designed for.
+
+What that costs, stated rather than hidden: rungs finer than the chart come
+from TradingView's intrabar data, which is served for a limited history and
+refreshes within the forming bar. On a daily chart the fast rungs may be absent
+on older bars and may move on the live one.
+
+Two things the indicator now **says in the corner** rather than leaving you with
+a blank chart:
+
+* too few rungs fall between the refinement and the anchor for `minAgree` ever
+  to be reachable - a misconfiguration, and it was completely silent before;
+* the zones are as wide as this chart's bars rather than the refinement you
+  asked for. A band as wide as a daily candle is not an entry, and reading one
+  as if it were is the failure that warning exists to prevent.
 
 **The 3-nat default is deliberately looser than the repository's 12.** Twelve is
 the value `structures` ships, chosen to be conservative rather than fitted and

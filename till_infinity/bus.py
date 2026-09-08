@@ -124,6 +124,10 @@ class Bus:
         self.namespace = namespace
         #: (topic, group) -> the channel that group reads
         self._channels: dict[tuple[str, str], tuple[Sender[Any], Receiver[Any]]] = {}
+        #: (topic, group) -> how many messages that consumer has missed. See
+        #: `_note_drop`: the count is the reading, and the per-message warning
+        #: it replaces was actively harmful.
+        self._drops: dict[tuple[str, str], int] = {}
         self._closed = False
 
     @property
@@ -164,10 +168,40 @@ class Bus:
                 sender.try_send(message.to_dict())
                 sent += 1
             except ChannelFull:
-                log.warning("bus: %s full, dropped a message for %s", topic, group)
+                self._note_drop(topic, group)
             except Exception as exc:  # a dead subscriber is not the publisher's problem
                 log.warning("bus: publish to %s/%s failed: %s", topic, group, exc)
         return sent
+
+    def _note_drop(self, topic: str, group: str) -> None:
+        """Count a dropped message and say so **occasionally**.
+
+        **A line per drop destroys the evidence for why it is dropping.** On
+        2026-09-08 a stalled structures consumer produced 132,807 identical
+        warnings, which rotated the supervisor's own error - the one naming the
+        fault - out of `docker logs` entirely, three times over. The drops were
+        a symptom shouting loudly enough to bury the cause.
+
+        So the count is kept and reported at widening intervals, with the total
+        attached. A consumer that stops draining is one event, not a hundred
+        thousand.
+        """
+        key = (topic, group)
+        seen = self._drops.get(key, 0) + 1
+        self._drops[key] = seen
+        # 1, 10, 100, 1000, ... then every 1000. Enough to notice it starting
+        # and to see it continuing, without a line per message.
+        if seen < 1000:
+            if seen not in (1, 10, 100):
+                return
+        elif seen % 1000:
+            return
+        log.warning(
+            "bus: %s full, dropped %d message(s) for %s - that consumer is not draining",
+            topic,
+            seen,
+            group,
+        )
 
     def subscribe(self, topic: str, group: str = DEFAULT_GROUP) -> Subscription:
         """Register a group's interest. Messages published from now on arrive."""
