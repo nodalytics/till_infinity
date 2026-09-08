@@ -151,17 +151,40 @@ found the RR gate refuses 85% of calls to gain nothing, and RR 1.5+ is the
 is that the one place RR is unambiguously informative is the one place it is
 not applied.
 
-**What to do, in order of how little it assumes:**
+**The realised record, which was step 2 and should have been step 1.**
 
-1. **Refuse sells on Boom and buys on Crash.** The spike direction is a
-   property of the generated process, not a prediction - Deriv publishes it in
-   the instrument name. This is a one-line table and it is the only fix here
-   that needs no measurement.
-2. **Then measure whether it was already being paid for.** Pull the closed
-   trades on the spike indices by side; if the against-the-spike side is not
-   measurably worse, the argument above is wrong and worth knowing.
-3. Only then consider a per-instrument RR floor, which is the general version
-   and the one most likely to refuse 85% of calls to gain nothing again.
+| feed | side | n | total | mean |
+| --- | --- | --- | --- | --- |
+| boom_500 | **sell** | 15 | **-130.58** | -8.71 |
+| boom_500 | buy | 9 | -32.40 | -3.60 |
+| boom_1000 | **buy** | 15 | **-116.62** | -7.77 |
+| boom_1000 | sell | 4 | -26.98 | -6.75 |
+| crash_1000 | **buy** | 10 | **+14.62** | **+1.46** |
+| crash_1000 | sell | 9 | -38.57 | -4.29 |
+
+**The against-the-spike hypothesis is not supported.** boom_500 fits it - sells
+are four times worse than buys - and the other two contradict it. On
+boom_1000 the *buy* side is worse, and on crash_1000 buying is the only
+positive cell of the six and one of a handful on the whole book.
+
+So "refuse sells on Boom and buys on Crash", written above as the one fix here
+that needs no measurement, is **wrong**, and it would have removed a profitable
+line. Proposing a live trading change as needing no measurement was the error,
+not the hypothesis - the hypothesis is a reasonable thing to have had and a
+cheap thing to have checked first.
+
+Cells are 4 to 15 trades, so none of this is conclusive either. What survives
+is narrower and still worth acting on: **the spike indices are 20% of the
+trades and 42% of the loss**, at -5.33 a trade against -1.83 for everything
+else. That is a size and selection question rather than a side one.
+
+**What to do now:**
+
+1. **Nothing by side.** The record does not support it.
+2. **Size them smaller, or refuse them, as a group.** -5.33 a trade over 62
+   trades is the second-largest identifiable hole in the book.
+3. A per-instrument RR floor remains the general version, and remains the one
+   most likely to refuse 85% of calls to gain nothing.
 
 ## The round-number control - run 2026-09-07, and it could not answer
 
