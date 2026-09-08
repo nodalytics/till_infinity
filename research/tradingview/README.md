@@ -143,6 +143,19 @@ whichever half you needed.
 This is the same split the source repository uses for confluence zones
 (`Zone.span` and `Zone.precision`) and it arrived there by the same route.
 
+## Is any of this tradeable?
+
+Measured, in [focusing.md](../focusing.md). Short version: the zones beat a
+matched random-zone null by about **0.19R a trade** over 205 trades on a 1h
+anchor - real, small, and before any cost. The **agreement filter did not
+transfer**: it passed its control convincingly for *location* and is inside the
+noise for *trade outcomes*, most likely because that measurement had no stop
+and this one has a tight one. The swing configuration could not be measured on
+25 days of data at all.
+
+So the count is worth drawing and is not yet worth trusting as a filter on
+entries.
+
 ## Honest limits
 
 * **It has never been executed.** Pine cannot be run from where this was
@@ -206,6 +219,17 @@ a blank chart:
 * the zones are as wide as this chart's bars rather than the refinement you
   asked for. A band as wide as a daily candle is not an entry, and reading one
   as if it were is the failure that warning exists to prevent.
+
+**The threshold now scales with the timeframe, and k = 3 is measured.** A
+threshold in nats is scale-free across instruments and not across timeframes: a
+5m series gets 288 chances a day where a daily gets one, and at a fixed
+threshold the fast rungs fire seventeen times a day and are permanently "on" -
+which makes the agreement count meaningless, because a rung that always fires
+is not casting a vote. `threshold(tf) = base + k * ln(anchor / tf)` fixes that,
+and the sweep in [focusing.md](../focusing.md) puts k at **3**, not the 1 the
+theory gives: a nat buys about a third of a log-unit of firing rate, so the
+correction has to be three times as strong. Set k = 0 for one threshold
+everywhere.
 
 **The 3-nat default is deliberately looser than the repository's 12.** Twelve is
 the value `structures` ships, chosen to be conservative rather than fitted and

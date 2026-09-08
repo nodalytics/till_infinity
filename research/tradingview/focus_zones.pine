@@ -59,6 +59,21 @@ thresholdNats = input.float(3.0, "Threshold (nats of evidence)", minval = 0.5, s
      "saying. 12 is what the source repository ships - on a stationary " +
      "Gaussian stream it produced at most 5 false alarms across five runs of " +
      "3,000 bars. Raise it for fewer, stronger zones.")
+adaptive = input.bool(true, "Scale the threshold by timeframe", inline = "ad",
+     tooltip = "A threshold in nats is scale-free across instruments and NOT " +
+     "across timeframes: a 5m series gets 288 chances a day where a daily gets " +
+     "one, and the running maximum of a likelihood ratio grows with the number " +
+     "of chances. At a fixed threshold the fast rungs fire constantly and are " +
+     "always 'on', which makes agreement meaningless - every rung has to be a " +
+     "comparable event or counting them measures nothing.")
+kFactor = input.float(3.0, "", inline = "ad", minval = 0.0, step = 0.5,
+     tooltip = "threshold(tf) = base + k * ln(anchor / tf). Theory says k = 1 " +
+     "if the statistic's tail falls like exp(-h); measured on 8 instruments a " +
+     "nat buys only about a third of that, and k = 3 is what actually flattens " +
+     "the fire rate - spread across timeframes 83.7x at k = 0, 25.2x at 1, " +
+     "7.0x at 3, and back up to 9.8x at 4. Set k = 0 for one threshold " +
+     "everywhere. See research/focusing.md.")
+
 scaleLength = input.int(250, "Volatility lookback (anchor bars)", minval = 20,
      tooltip = "Steps are divided by a running average step size, so the " +
      "threshold means the same thing on gold and on a JPY cross.")
@@ -272,30 +287,37 @@ liveCount = (liveA ? 1 : 0) + (liveB ? 1 : 0) + (liveC ? 1 : 0) + (liveD ? 1 : 0
 // `request.security` cannot be called from a loop, so these are written out,
 // and they are called **unconditionally** - `liveA and recent(...)` would
 // short-circuit, which makes the request conditional and Pine refuses that.
-recent(string tf, bool wantUp) =>
-    t = request.security(syminfo.tickerid, tf, focusScan(wantUp, thresholdNats, scaleLength),
+// The anchor is the reference, so it keeps the threshold the user set and every
+// finer rung is asked for more evidence. `math.max` because a rung *above* the
+// anchor should not be given a discount - the correction only tightens.
+natsFor(int secs) =>
+    adaptive ? thresholdNats + kFactor * math.max(0.0, math.log(anchorSecs / secs))
+         : thresholdNats
+
+recent(string tf, int secs, bool wantUp) =>
+    t = request.security(syminfo.tickerid, tf, focusScan(wantUp, natsFor(secs), scaleLength),
          lookahead = barmerge.lookahead_off)
     var int held = na
     if not na(t)
         held := t
     not na(held) and (time - held) <= agreeWindow * anchorSecs * 1000
 
-rGu = recent("480", true)
-rHu = recent("1D", true)
-rGd = recent("480", false)
-rHd = recent("1D", false)
-rAu = recent("5", true)
-rBu = recent("15", true)
-rCu = recent("30", true)
-rDu = recent("60", true)
-rEu = recent("120", true)
-rFu = recent("240", true)
-rAd = recent("5", false)
-rBd = recent("15", false)
-rCd = recent("30", false)
-rDd = recent("60", false)
-rEd = recent("120", false)
-rFd = recent("240", false)
+rGu = recent("480", secG, true)
+rHu = recent("1D", secH, true)
+rGd = recent("480", secG, false)
+rHd = recent("1D", secH, false)
+rAu = recent("5", secA, true)
+rBu = recent("15", secB, true)
+rCu = recent("30", secC, true)
+rDu = recent("60", secD, true)
+rEu = recent("120", secE, true)
+rFu = recent("240", secF, true)
+rAd = recent("5", secA, false)
+rBd = recent("15", secB, false)
+rCd = recent("30", secC, false)
+rDd = recent("60", secD, false)
+rEd = recent("120", secE, false)
+rFd = recent("240", secF, false)
 
 uA = liveA and rAu
 uB = liveB and rBu
