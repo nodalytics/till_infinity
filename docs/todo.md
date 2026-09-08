@@ -253,6 +253,78 @@ has it found?** Three candidates, all mechanical rather than market:
    would be about the implementation, not the market, and should be written up
    that way.
 
+## Self-play, which does not transfer - and the simulator, which now does
+
+Noted 2026-09-08. The proposal is poker's: have models play versions of
+themselves and let the improvement compound.
+
+**Self-play needs an opponent whose improvement forces yours, and there is not
+one.** [research/reading.md](../research/reading.md) already records this from
+the AlphaGo Zero side - *"self-play has no analogue at all"* - and the reason is
+structural rather than a matter of effort. In poker the opponent adapts, so a
+better strategy makes the game harder and the pressure is what produces
+improvement. The market does not respond to this desk: it trades fractions of a
+lot on a demo account, and a strategy that gets better does not make the market
+get better. Two of our models competing would be two models overfitting the
+same history in parallel, which is slower than one doing it alone.
+
+The 2026-09-08 adversarial test says the same thing from the evidence side:
+asked whether this desk is worst where it is most confident - the signature of
+being played against - the answer was no. There is no opponent in the record.
+
+**But the half that was missing is now here.** reading.md names the real
+obstacle: Go has a *perfect simulator* and markets do not, so rolling a strategy
+forward re-reads one realised path rather than exploring alternatives. It also
+names the exception:
+
+> The nearest honest thing to self-play here is the **Deriv synthetics** - a
+> generated process we can draw unlimited samples from, with no structure to
+> find.
+
+That was a hypothesis when it was written. [spiking.md](../research/spiking.md)
+now measures the generator: on Boom 500 the spike arrival is **memoryless with a
+coefficient of variation of 0.99** at one per 11.9 minutes, the grind sits
+inside a 0.24 band, and the spike size distribution is in hand. **That is enough
+to write a simulator that is faithful rather than assumed**, and a faithful
+simulator is the thing every RL result in reading.md depends on and this
+repository has never had.
+
+So the version worth doing is not self-play. It is **strategies against
+unlimited fresh paths from a generator we have verified**, which gives:
+
+* **Sample size without leakage.** Every path is new, so there is no train/test
+  split to get wrong and no purging to remember - the failure
+  `research/similarity.md` and `horizon.md` both found by hand.
+* **A known answer.** Expectancy on a synthetic is computable from the
+  generator's parameters, so a strategy's result can be checked against the
+  arithmetic rather than against a benchmark. A strategy that beats the
+  arithmetic has found an implementation detail, and that is a finding about
+  the venue.
+* **A null that costs nothing.** The same generator with the spike removed, or
+  with the drift zeroed, is the control - and `null.md` asks for exactly this
+  and has to improvise it every time.
+
+**What it does not give.** A strategy tuned against a simulated Boom is tuned
+for Boom, which is 20% of this book's trades and 42% of its loss. Nothing
+learned there transfers to gold or EURUSD, where the generator is unknown and
+the whole difficulty lives. This is a **testbed for the machinery** - does the
+sizing work, does the stop rule survive a fat tail, does a gate refuse what it
+should - not a source of edge on the instruments that matter.
+
+**Order:**
+
+1. **Write the generator** from spiking.md's measured parameters and check it
+   against the real series: same spike rate, same gap distribution, same grind
+   band, same size quantiles. If a simulated Boom is distinguishable from the
+   real one, stop - everything below rests on it not being.
+2. **Run the existing strategies against it** and compare with the arithmetic
+   expectancy. Any gap is either a bug in a strategy or a bug in the
+   arithmetic, and both are worth finding.
+3. **Then the controls**: spike removed, drift zeroed, spike direction flipped.
+   A strategy whose result does not move when the spike is removed was never
+   trading the spike.
+4. Self-play stays out until there is an opponent, which there is not.
+
 ## Traps on the synthetics, where one of them is published - noted 2026-09-08
 
 A sharper version of the entry below, because on these instruments the question
