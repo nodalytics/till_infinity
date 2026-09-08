@@ -95,11 +95,44 @@ once. That is the same failure as the daily loss limit resetting on restart and
 break-even never firing: a feature configured, deployed, reporting healthy, and
 inert - the list [inert.md](inert.md) keeps.
 
+## Why it never fires, answered
+
+Measured over 309 closed trades on 2026-09-08. The two mechanical suspects are
+eliminated and the real reason is neither:
+
+* **Not the volume.** Median trade size is 1.17 lots and **98%** would split
+  into two halves above the 0.01 minimum. Only 5 trades of 309 were too small.
+* **Not the configuration.** `TRADING_SCALE_OUT_AT=1.0` is set in production
+  and read into `Settings.scale_out_at`.
+* **The trades do not get there.** `best_r` - the best any trade reached -
+  has a **median of 0.00R**, and only **6.8%** ever touch 1.0R:
+
+| reached | share of trades |
+| --- | --- |
+| 0.5R or better | 11.0% |
+| **1.0R or better** | **6.8%** |
+| 1.5R or better | 3.1% |
+| 2.0R or better | 2.4% |
+
+The scale-out is armed above where the trades live. It is not broken, it is
+not misconfigured, and no amount of reading `why_no_bank()` was going to say
+anything except "short of the trigger" - which is why that diagnostic never
+produced a line worth having.
+
+Half of all trades never show a profit at any point. That is a fact about entry
+quality rather than about banking, and it is the thing to fix before any exit
+rule matters: an exit rule improves the trades that go your way, and 93% of
+these do not go far enough to have an exit rule applied to them.
+
+**So the honest next step is not to lower the trigger.** Banking at 0.3R
+because that is where the trades are is fitting a constant to a distribution
+this desk is trying to change. What the number argues for is looking at why
+`best_r` is zero for half the book.
+
 ## What to do, cheapest first
 
-1. **Find out why it never fires.** `why_no_bank()` already names the reason;
-   nothing has read it. This is one log line away and it decides everything
-   below.
+1. ~~**Find out why it never fires.**~~ Answered above: the trigger sits above
+   where 93% of trades ever reach.
 2. **Then set `bank_at` per strategy rather than globally**, since the preset
    default of 0.0 is what silently wins today.
 3. **Then measure it on the replay** - `swingtest.py` resolves against the same
@@ -107,6 +140,32 @@ inert - the list [inert.md](inert.md) keeps.
 4. **And re-run this table by strategy**, because a 34% keep rate is the whole
    book and the strategies that trade traps deliberately - `sweep-aware` - are
    the ones it least applies to.
+
+## And the clock is no longer where the money goes
+
+The residual-time entry in [docs/todo.md](../docs/todo.md) was motivated by
+`thesis-only` losing **-389.98** on its hold clock against -7.10 at target or
+stop. Step 1 of that entry was to measure what the clock costs *now*, per
+strategy, because one strategy over one period is not the book. Over 309 closed
+trades:
+
+| exit | n | total | mean |
+| --- | --- | --- | --- |
+| **stop** | 74 | **-1,801.56** | -24.35 |
+| hold (clock) | 119 | -319.50 | -2.68 |
+| closed | 14 | -146.14 | -10.44 |
+| stale | 28 | -144.00 | -5.14 |
+| target | 72 | **+1,579.00** | +21.93 |
+
+**The clock costs -319.50 and the stop costs -1,801.56.** The hold is the
+second-cheapest way this book loses money per trade, at -2.68 a close against
+the stop's -24.35. `thesis-only` alone is -255.35 on the clock against -690.45
+on stops.
+
+That is step 1 answering itself, and it redirects the work: a residual-time
+model would be aimed at the smaller of two problems. The stop is where the
+money goes, and 93% of trades never reaching 1.0R says the same thing from the
+other side.
 
 ## What this does not say
 

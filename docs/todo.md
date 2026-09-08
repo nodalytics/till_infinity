@@ -30,9 +30,12 @@ left.
 
 **Order, and the first step is not the model.**
 
-1. **Measure what the clock is actually costing now, per strategy.** The
-   -389.98 is one strategy on one period. If the clock is only expensive on
-   `thesis-only` then the fix is one constant, not a model.
+1. ~~**Measure what the clock is actually costing now, per strategy.**~~ Done
+   2026-09-08, and it **demotes this whole entry**. Over 309 closed trades the
+   clock costs **-319.50** and the stop costs **-1,801.56**; per trade that is
+   -2.68 against -24.35. `thesis-only` is -255.35 on the clock against -690.45
+   on stops. A residual-time model would be aimed at the smaller of two
+   problems. See [research/locking.md](../research/locking.md).
 2. **Score a trivial residual-time baseline first**: the median observed
    regime duration per feed and interval, which is a lookup. A Bayesian
    posterior has to beat that before it has earned anything.
