@@ -59,13 +59,17 @@ thresholdNats = input.float(3.0, "Threshold (nats of evidence)", minval = 0.5, s
      "saying. 12 is what the source repository ships - on a stationary " +
      "Gaussian stream it produced at most 5 false alarms across five runs of " +
      "3,000 bars. Raise it for fewer, stronger zones.")
-adaptive = input.bool(true, "Scale the threshold by timeframe", inline = "ad",
+adaptive = input.bool(false, "Scale the threshold by timeframe", inline = "ad",
      tooltip = "A threshold in nats is scale-free across instruments and NOT " +
      "across timeframes: a 5m series gets 288 chances a day where a daily gets " +
      "one, and the running maximum of a likelihood ratio grows with the number " +
      "of chances. At a fixed threshold the fast rungs fire constantly and are " +
      "always 'on', which makes agreement meaningless - every rung has to be a " +
-     "comparable event or counting them measures nothing.")
+     "comparable event or counting them measures nothing. OFF by default, " +
+     "which is a deliberate choice for a readable chart over a defensible " +
+     "count: with it off, the 5m rung fires about 17 times a day against 4h's " +
+     "0.2, so a high agreement number is mostly telling you the fast rungs " +
+     "exist. Turn it on before reading the count as evidence.")
 kFactor = input.float(3.0, "", inline = "ad", minval = 0.0, step = 0.5,
      tooltip = "threshold(tf) = base + k * ln(anchor / tf). Theory says k = 1 " +
      "if the statistic's tail falls like exp(-h); measured on 8 instruments a " +
@@ -100,7 +104,7 @@ minGapAtr = input.float(3.0, "Minimum gap between zones (ATR)", minval = 0.0, st
      "side is skipped. Two zones a few ticks apart are one level drawn twice.")
 extendRight = input.bool(true, "Extend zones to the right")
 showLabels  = input.bool(true, "Label each zone")
-hideUsed    = input.bool(false, "Hide used zones instead of fading them",
+hideUsed    = input.bool(true, "Hide used zones instead of fading them",
      tooltip = "A zone price has already worked through is weaker evidence, " +
      "not absent evidence - which is why the default is to fade it rather " +
      "than delete it, and why the repository keeps a `revisits` count per " +

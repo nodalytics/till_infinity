@@ -220,7 +220,12 @@ a blank chart:
   asked for. A band as wide as a daily candle is not an entry, and reading one
   as if it were is the failure that warning exists to prevent.
 
-**The threshold now scales with the timeframe, and k = 3 is measured.** A
+**The threshold scaling ships OFF, and that is a trade rather than a default.**
+With it off the 5m rung fires about 17 times a day against 4h's 0.2, so a high
+agreement count is mostly telling you the fast rungs exist - turn it on before
+reading the count as evidence rather than as decoration. The reasoning:
+
+**k = 3 is measured.** A
 threshold in nats is scale-free across instruments and not across timeframes: a
 5m series gets 288 chances a day where a daily gets one, and at a fixed
 threshold the fast rungs fire seventeen times a day and are permanently "on" -
