@@ -51,6 +51,74 @@ memoryless - the hazard flat - then residual time is a constant and step 2 is
 the whole answer. That is a cheap thing to check and it should be checked
 before any of step 3.
 
+## River's other drift detectors - one of the four is already here
+
+Noted 2026-09-08. River is already a dependency and `river.drift.ADWIN` is
+already in production, so the useful question is not "should we use River's
+drift module" but **which of the four we are missing and what each would catch
+that ADWIN does not**.
+
+**ADWIN: done, and thoroughly.** `learning/drift.py` runs one per feed and
+timeframe on the consensus mid, declares a change only when timeframes agree -
+a slow one alone, or two fast ones together, because a single fast detector
+fires on a busy hour - and grades the result by a scale-free severity,
+`|log(after/before)|`, turned into a percentile by a running quantile. A
+confirmed change then **discounts every level's accumulated history** in
+proportion. It is a consumer, not a published feature, which puts it in a small
+minority here.
+
+**PageHinkley: we already have one, hand-rolled.** `context/cusum.py` is a
+symmetric CUSUM over a price series in volatility units, and PageHinkley is the
+same family with a different stopping rule. So this is a **replacement, not an
+addition**, and the interesting form is a head-to-head. The harness for it
+exists: the estimator comparison in `research/localising.md` already ranks
+change-point estimators by stability under an arbitrary sampling grid, and
+`Cusum` scored 0.205v there against the fine-resolution transition's 0.124v.
+Dropping PageHinkley into the same table is an afternoon and would say whether
+our own version is the weak part or the family is.
+
+**KSWIN: the real gap on the signal side.** ADWIN tests for a change in the
+**mean** via a Hoeffding bound. KSWIN applies a Kolmogorov-Smirnov test to two
+windows and asks whether they came from the same **distribution** at all. The
+difference matters here specifically: a volatility regime change with no change
+in mean is exactly the event this desk is built around, and it is invisible to a
+mean test. `research/volatility.md` found the estimator's half-life well past
+its optimum and a flat 20-bar mean beating it at every interval - a
+distribution-shape detector is a different route at the same failure.
+
+**DDM and EDDM: the largest gap, and it is not about prices.** These watch a
+*model's error rate* rather than a signal, and flag when it degrades. This
+repository has models that decay and **nothing that raises an alarm about it**:
+
+* `breaking.py` is measurably badly calibrated - log loss 0.3624 against 0.2493
+  for a constant - and that was found by a person running a measurement.
+* `Platt` was added to correct it, and publishes `improvement` so the record can
+  say whether it helped. Also read by a person.
+* `baseline.Bench` scores every model against its controls continuously, which
+  is a **comparison, not an alarm**. It says which is better today; it does not
+  say "this stopped working on Tuesday".
+
+Every model-decay finding in `research/` was noticed by somebody looking. DDM on
+`Logistic`'s running error, or EDDM on the distance between its mistakes, is the
+first thing that would notice on its own - and EDDM specifically because model
+decay here is gradual rather than a step.
+
+**Order:**
+
+1. **DDM or EDDM on one model's error stream**, published beside `Bench` and
+   acting on nothing. The break model is the obvious first subject because its
+   miscalibration is already established, so there is a known event to detect.
+2. **KSWIN beside ADWIN on the same series**, counting where they disagree. If
+   KSWIN never fires when ADWIN does not, it adds nothing here and that is worth
+   knowing cheaply.
+3. **PageHinkley against `Cusum`** in the existing estimator harness.
+
+And the caution that applies to all three: `learning/drift.py`'s own docstring
+records that a spurious drift **throws away real evidence**, which is why ADWIN
+had to become more conservative once its output was consumed. Any second
+detector inherits that cost, so each one ships reporting only until the record
+says it agrees with something.
+
 ## The volatility indices: what else is in a process we know the rules of
 
 Noted 2026-09-08. Prompted by the per-feed record, which has one line in it
