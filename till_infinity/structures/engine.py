@@ -21,7 +21,6 @@ evidence about an old level, not a new one.
 
 from __future__ import annotations
 
-import bisect
 import math
 import sqlite3
 import statistics
@@ -368,8 +367,8 @@ class Series(Restorable):
     #: Kept for `origins`, which needs a body to fall back on when a bar is
     #: mostly wick. Everything else here works from closes and extremes.
     opens: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
-    #: The lowest and highest **fine** close inside each bar, captured while
-    #: the bar was closing and `nan` where it never was.
+    #: Bar time -> the lowest and highest **fine** close inside that bar, for
+    #: the bars where they could be captured.
     #:
     #: **This exists because of when, not what.** The refinement that uses them
     #: was first attempted at origin *detection* time and refined one 4h origin
@@ -377,8 +376,14 @@ class Series(Restorable):
     #: hours to days after the turn on 4h, by which point the 1m window holding
     #: eight hours has moved on. A bar's minutes are certainly present exactly
     #: once - when the bar itself closes - so that is when they are recorded.
-    fine_low: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
-    fine_high: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
+    #:
+    #: **A dict rather than two deques**, and the reason is measured: as dense
+    #: arrays these were **99.6% nan** and 35% of a Series' bytes - 27MB across
+    #: 3,058 series, storing nothing. The state file grew 114MB to 170MB and
+    #: the container was OOM-killed once. Sparse also removes the alignment
+    #: this file got wrong twice: a deque parallel to `closes` has to be padded
+    #: on restore and shifted on eviction, and both of those were bugs.
+    fine: dict[int, tuple[float, float]] = field(default_factory=dict)
     #: Whatever the venue called volume, per bar, and `nan` where it said
     #: nothing. **Not comparable across venues or instruments** - on most feeds
     #: here it is tick count rather than size, and spot FX has no consolidated
@@ -421,17 +426,12 @@ class Series(Restorable):
         # misalign every bar against its own open from then on.
         if len(self.opens) == len(self.closes) - 1:
             self.opens.append(opening)
-        # **Padded, not skipped.** A Series restored from before these existed
-        # has 500 closes and no minutes, so the "one behind" test every other
-        # late-added field here uses would never once be true and the field
-        # would stay empty for the life of the process - computed correctly and
-        # read where nothing sees it, which is what research/inert.md is a list
-        # of. Padding with `nan` says "unknown" about the bars that predate the
-        # field, which is exactly what is true of them, and leaves the pairing
-        # right from here on.
-        while len(self.fine_low) < len(self.closes):
-            self.fine_low.append(math.nan)
-            self.fine_high.append(math.nan)
+        # Sparse, so there is no pairing to keep and nothing to pad: a bar
+        # with no entry has no minutes, which is what the absence means.
+        # Evicted alongside the window it belongs to.
+        if len(self.fine) > WINDOW and self.times:
+            oldest = self.times[0]
+            self.fine = {k: v for k, v in self.fine.items() if k >= oldest}
         while len(self.volumes) < len(self.closes) - 1:
             self.volumes.append(math.nan)
         if len(self.volumes) == len(self.closes) - 1:
@@ -450,21 +450,11 @@ class Series(Restorable):
         is complete exactly when the next one starts, and that is when this is
         asked for it.
         """
-        if len(self.fine_low) != len(self.times) or not self.times:
-            return
-        index = bisect.bisect_left(self.times, when)
-        if index >= len(self.times) or self.times[index] != when:
-            return
-        self.fine_low[index], self.fine_high[index] = low, high
+        self.fine[int(when)] = (low, high)
 
     def fine_at(self, when: float) -> tuple[float, float]:
         """The stored fine extremes for the bar at `when`, or `(nan, nan)`."""
-        if len(self.fine_low) != len(self.times):
-            return (math.nan, math.nan)
-        index = bisect.bisect_left(self.times, when)
-        if index >= len(self.times) or self.times[index] != when:
-            return (math.nan, math.nan)
-        return (self.fine_low[index], self.fine_high[index])
+        return self.fine.get(int(when), (math.nan, math.nan))
 
     @property
     def ready(self) -> bool:

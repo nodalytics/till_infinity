@@ -424,23 +424,41 @@ def test_an_uncaptured_bar_reads_as_no_evidence():
     assert all(math.isnan(v) for v in series.fine_at(999))
 
 
-def test_a_series_from_before_the_field_does_not_misalign():
-    """`opens` had this exact bug waiting: a restored Series has empty deques
-    beside full ones, and appending blindly would pair every bar with another
-    bar's minutes from then on."""
+def test_a_series_from_before_the_field_has_no_minutes_and_says_so():
+    """Sparse, so there is nothing to pad and nothing to misalign. A restored
+    Series simply has no entries, and absence is the honest reading: those
+    bars' minutes were never captured."""
     import math
 
     from till_infinity.structures.engine import Series
 
     series = Series(feed="t", interval="4h")
-    series.add(0, 110.0, 90.0, 100.0, 100.0)
-    series.fine_low.clear()
-    series.fine_high.clear()
-
-    series.add(14_400, 112.0, 92.0, 101.0, 100.0)
+    series.add(14_400, 110.0, 90.0, 100.0, 100.0)
+    series.add(28_800, 112.0, 92.0, 101.0, 100.0)
 
     assert all(math.isnan(v) for v in series.fine_at(14_400))
-    assert all(math.isnan(v) for v in series.fine_at(0))
+
+    series.note_fine(28_800, 92.0, 111.0)
+    assert series.fine_at(28_800) == (92.0, 111.0)
+    assert all(math.isnan(v) for v in series.fine_at(14_400))
+
+
+def test_the_minutes_are_evicted_with_the_window_they_belong_to():
+    """As dense arrays these were 99.6% nan and 35% of a Series' bytes - 27MB
+    across 3,058 series, storing nothing, and the container was OOM-killed
+    once. Sparse keeps only what was captured, and drops it when its bar
+    falls out of the window."""
+    from till_infinity.structures.engine import WINDOW, Series
+
+    series = Series(feed="t", interval="1m")
+    for i in range(1, WINDOW + 60):
+        series.add(i * 60, 110.0, 90.0, 100.0, 100.0)
+        series.note_fine(i * 60, 95.0, 105.0)
+
+    # Bounded, with a bar or two of overhang because eviction is amortised
+    # into `add` rather than run on every write.
+    assert len(series.fine) <= WINDOW + 2
+    assert min(series.fine) >= series.times[0] - 120
 
 
 def test_the_engine_captures_fine_extremes_as_the_coarse_bar_closes():
@@ -489,30 +507,6 @@ def test_the_engine_captures_fine_extremes_as_the_coarse_bar_closes():
 
     assert high == 105.0
     assert low == 98.0
-
-
-def test_a_restored_series_starts_pairing_rather_than_never_starting():
-    """The guard every other late-added field here uses is "exactly one
-    behind", and a restored Series is five hundred behind - so it would never
-    be true once, and the field would stay empty for the life of the process.
-    Computed correctly and read where nothing sees it."""
-    import math
-
-    from till_infinity.structures.engine import Series
-
-    series = Series(feed="t", interval="4h")
-    for i in range(5):
-        series.add(14_400 * (i + 1), 110.0, 90.0, 100.0, 100.0)
-    # As a restore from before the field existed leaves it.
-    series.fine_low.clear()
-    series.fine_high.clear()
-
-    series.add(14_400 * 6, 112.0, 92.0, 101.0, 100.0)
-    series.note_fine(14_400 * 6, 92.0, 111.0)
-
-    assert len(series.fine_low) == len(series.closes)
-    assert series.fine_at(14_400 * 6) == (92.0, 111.0)
-    assert all(math.isnan(v) for v in series.fine_at(14_400))
 
 
 def test_the_forming_bar_cannot_be_captured_and_the_finished_one_can():
