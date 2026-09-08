@@ -99,6 +99,7 @@ def partial(
     *,
     best: float,
     current: float = 0.0,
+    armed: bool = False,
 ) -> Take | None:
     """How much of this position to bank now, or None to leave it whole.
 
@@ -142,12 +143,29 @@ def partial(
     # high-water mark only when no current price was supplied.
     now = current or best
     gained = (now - position.price_open) * position.side.sign
-    if gained < risk * at:
+    # **Armed on the quote, executed here.** The trigger used to require the
+    # position to be at `at` R *when the manage loop happened to look*, and the
+    # loop looks far less often than the market moves: 19.6% of closes reached
+    # 1.0R by their recorded high-water mark and not one scale-out ever fired,
+    # because the peak and the poll are different moments. `_mark_best` sees
+    # every quote, so it arms the ticket the instant the trigger is crossed and
+    # this decides what to do about it.
+    #
+    # What does **not** change is the price this banks at. The us30 position
+    # that logged "banking 50% at 1.5R" and booked -1.14 did so by reading a
+    # high-water mark and sending a market order at whatever existed later.
+    # Arming is a statement about the trigger; `gained > 0` below is still
+    # measured on the price a market order would get right now.
+    if not armed and gained < risk * at:
         return _declined(f"at {gained / risk:+.2f}R now, short of the {at:.2f}R trigger")
     # Never bank into a loss. The threshold above already implies this, but it
     # implied it before too - through a number that had stopped being true.
     if gained <= 0:
-        return _declined("not in profit at the current price")
+        return _declined(
+            f"reached the {at:.2f}R trigger but is {gained / risk:+.2f}R now"
+            if armed
+            else "not in profit at the current price"
+        )
 
     step = spec.volume_step or 0.01
     slice_ = _down_to_step(position.volume * fraction, step)

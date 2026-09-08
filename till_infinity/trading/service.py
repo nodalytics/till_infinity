@@ -468,7 +468,13 @@ class Trader:
         #: runs after it. Grouped because `__init__` is at its statement
         #: ceiling and all three are per-feed working state.
         self._recalled, self._ladder, self._rejection = False, {}, {}
-        self._best: dict[int, float] = {}
+        #: The best price each open trade has seen, and the tickets any quote
+        #: has seen at or beyond the scale-out trigger - so the bank fires on
+        #: the move rather than on whichever poll follows it. Grouped because
+        #: `__init__` is at its statement ceiling and both are per-ticket
+        #: working state written by `_mark_best`. 19.6% of closes reached 1.0R
+        #: and not one scale-out ever did.
+        self._best, self._bank_due = {}, set()
         #: feed -> how many quotes `_quote` has resolved a symbol for. Only
         #: read by the `_manage` skip diagnostic, which cannot otherwise
         #: distinguish "no quote ever arrived for this feed" from "quotes
@@ -2524,6 +2530,19 @@ class Trader:
                 self._best[ticket] = price
             else:
                 self._best[ticket] = max(seen, price) if buying else min(seen, price)
+            # **Armed here because here is where the market is seen.** The
+            # trigger is a moment, not a state: a trade touches 1.0R and is
+            # back at 0.4R before the manage loop next runs, so a check that
+            # only runs on the poll misses it every time. This runs on every
+            # quote, records that the level was reached, and leaves the
+            # decision - and the price it deals at - to `manage.partial`.
+            at = self.settings.scale_out_at
+            if at > 0 and ticket not in self._bank_due:
+                risk = abs(live.intent.entry - live.intent.stop)
+                if risk > 0 and (price - live.position.price_open) * live.intent.side.sign >= (
+                    risk * at
+                ):
+                    self._bank_due.add(ticket)
             hurt = self._worst.get(ticket)
             if hurt is None:
                 self._worst[ticket] = price
@@ -2637,7 +2656,13 @@ class Trader:
         tick = await self._tick(live.position.symbol)
         now = tick.exit(live.position.side) if tick is not None else 0.0
         take = manage.partial(
-            live.position, live.intent, spec, self.settings, best=best, current=now
+            live.position,
+            live.intent,
+            spec,
+            self.settings,
+            best=best,
+            current=now,
+            armed=live.position.ticket in self._bank_due,
         )
         if take is None:
             return False
@@ -3477,6 +3502,7 @@ class Trader:
             finally:
                 self._best.pop(ticket, None)
                 self._worst.pop(ticket, None)
+                self._bank_due.discard(ticket)
         return settled
 
     async def _settle(

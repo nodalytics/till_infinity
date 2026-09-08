@@ -4017,14 +4017,72 @@ def test_scale_out_banks_part_once_it_is_there():
     assert take.volume == pytest.approx(0.5)
 
 
-def test_scale_out_reads_the_best_price_not_the_current_one():
-    """A trade that reached the level and retraced has earned the partial.
+def test_scale_out_falls_back_to_best_when_no_current_price_is_given():
+    """`current` is what it deals at; `best` is only the fallback.
 
-    Reading the current price would mean the retracement that makes banking
-    worth doing is the same thing that cancels it.
+    The docstring this replaced claimed the opposite - that reading the current
+    price would let a retracement cancel a partial the trade had earned. That
+    argument lost to a us30 position which logged "banking 50% at 1.5R" and
+    booked -1.14, because a high-water mark is a gain that *was* there.
     """
     live = position(volume=1.0, price_current=4400.1)
     assert manage.partial(live, intent(volume=1.0), GOLD, _scaling(), best=4405.5) is not None
+
+
+def test_an_armed_trade_banks_at_what_it_is_worth_now():
+    """The fix for a scale-out that never fired. 19.6% of closes reached 1.0R
+    by their high-water mark and not one banked, because the peak and the poll
+    are different moments - so the quote stream arms the trigger and this
+    decides what to do about it."""
+    take = manage.partial(
+        position(volume=1.0),
+        intent(volume=1.0),
+        GOLD,
+        _scaling(),
+        best=4405.5,
+        current=4401.0,  # well short of 1R, but the level was reached
+        armed=True,
+    )
+
+    assert take is not None
+    assert take.volume == pytest.approx(0.5)
+    # Reported at what it actually got, not at what it touched.
+    assert "1.5R" not in take.reason
+
+
+def test_an_armed_trade_still_refuses_to_bank_into_a_loss():
+    """Arming is a statement about the trigger, not about the price. The us30
+    trade this guards against had reached its level and was through entry by
+    the time the order went."""
+    got = manage.partial(
+        position(volume=1.0),
+        intent(volume=1.0),
+        GOLD,
+        _scaling(),
+        best=4405.5,
+        current=4399.0,  # behind the 4400 entry
+        armed=True,
+    )
+
+    assert got is None
+    assert "reached" in manage.why_no_bank()
+
+
+def test_an_unarmed_trade_short_of_the_trigger_is_still_refused():
+    """Arming is the only thing that changed. Without it the rule is what it
+    was."""
+    got = manage.partial(
+        position(volume=1.0),
+        intent(volume=1.0),
+        GOLD,
+        _scaling(),
+        best=4405.5,
+        current=4401.0,
+        armed=False,
+    )
+
+    assert got is None
+    assert "short of" in manage.why_no_bank()
 
 
 def test_scale_out_never_closes_the_whole_position():
