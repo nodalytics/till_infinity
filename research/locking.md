@@ -95,39 +95,76 @@ once. That is the same failure as the daily loss limit resetting on restart and
 break-even never firing: a feature configured, deployed, reporting healthy, and
 inert - the list [inert.md](inert.md) keeps.
 
-## Why it never fires, answered
+## Why it never fires - answered twice, because the first answer used a broken field
 
-Measured over 309 closed trades on 2026-09-08. The two mechanical suspects are
-eliminated and the real reason is neither:
+**The first answer here was wrong and is left in outline because the mistake is
+the useful part.** It said `best_r` had a median of 0.00R and only 6.8% of
+trades ever reached 1.0R, and concluded the scale-out was armed above where the
+trades live. Both numbers came from a field that was not being written.
 
-* **Not the volume.** Median trade size is 1.17 lots and **98%** would split
-  into two halves above the 0.01 minimum. Only 5 trades of 309 were too small.
-* **Not the configuration.** `TRADING_SCALE_OUT_AT=1.0` is set in production
-  and read into `Settings.scale_out_at`.
-* **The trades do not get there.** `best_r` - the best any trade reached -
-  has a **median of 0.00R**, and only **6.8%** ever touch 1.0R:
+The check that catches it is one line of arithmetic: **a trade that closes at
+its target has, by definition, reached at least its target in R.** Of 72 target
+closes on the whole record, **41 carried `best_r` of exactly 0**. Impossible, so
+the field is broken rather than the trades being bad.
 
-| reached | share of trades |
+`service.py` already documents this bug being found and fixed once - the lines
+discarding `_best` and `_worst` used to sit *above* `_settle`, which is what
+reads them, so every close recorded exactly 0.000. The fix moved them into a
+`finally` below. Split by day, the fix is visible and it works:
+
+| day | closes | zeros | median best_r |
+| --- | --- | --- | --- |
+| 08-27 to 09-01 | 139 | **100%** | 0.00 |
+| 09-02 | 56 | 91% | 0.00 |
+| 09-03 | 39 | 23% | 0.26 |
+| 09-04 | 40 | 10% | 0.32 |
+| 09-05 onward | 18 | ~28% | 0.09-0.26 |
+
+So the pooled 71% is two thirds pre-fix data. **Everything below is the 97
+closes since 2026-09-03**, and `target` closes now carry a zero **0% of the
+time**, which is the check that says the field is trustworthy.
+
+### What the trades actually do
+
+| | |
 | --- | --- |
-| 0.5R or better | 11.0% |
-| **1.0R or better** | **6.8%** |
-| 1.5R or better | 3.1% |
-| 2.0R or better | 2.4% |
+| median `best_r` | **0.26R** |
+| p75 / p90 | 0.66R / 1.49R |
+| never in profit at all | **19%** |
+| reached 0.5R | 30.9% |
+| **reached 1.0R** | **19.6%** |
+| reached 2.0R | 7.2% |
 
-The scale-out is armed above where the trades live. It is not broken, it is
-not misconfigured, and no amount of reading `why_no_bank()` was going to say
-anything except "short of the trigger" - which is why that diagnostic never
-produced a line worth having.
+| exit | n | median | zero |
+| --- | --- | --- | --- |
+| hold | 46 | 0.25 | 11% |
+| target | 28 | 0.42 | **0%** |
+| stop | 17 | 0.00 | 53% |
+| stale | 6 | 0.00 | 67% |
 
-Half of all trades never show a profit at any point. That is a fact about entry
-quality rather than about banking, and it is the thing to fix before any exit
-rule matters: an exit rule improves the trades that go your way, and 93% of
-these do not go far enough to have an exit rule applied to them.
+### Which changes the answer
 
-**So the honest next step is not to lower the trigger.** Banking at 0.3R
-because that is where the trades are is fitting a constant to a distribution
-this desk is trying to change. What the number argues for is looking at why
-`best_r` is zero for half the book.
+**About one trade in five reaches the 1.0R trigger, and the scale-out has still
+never fired.** "The trades never get there" was the wrong conclusion; roughly 19
+of these 97 did.
+
+What is left is a **design tension rather than a bug**, and `manage.partial`
+documents both halves of it without noticing they collide. It measures from the
+**current** price, deliberately, after a version reading the high-water mark
+banked a us30 position at a price nobody was offering any more and booked
+**-1.14**. But `best_r` *is* the high-water mark. So a trade qualifies on the
+number the record keeps and is refused on the number the trigger reads, and the
+gap between them is exactly the give-back this document is about - which
+[trapping.md](trapping.md) measures at two thirds on a trap.
+
+The fix for banking at a stale price produced the opposite failure: never
+banking at all.
+
+**The resolution that gets both** is a resting order at the bank level rather
+than a market order at poll time. A limit that fills at 1.0R banks at a price
+that was actually offered - which is what the current-price rule is protecting -
+without needing the loop to be looking at the moment the high-water mark
+happens. `_park` already rests entries; nothing rests exits.
 
 ## What to do, cheapest first
 
