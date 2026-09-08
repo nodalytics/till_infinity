@@ -764,3 +764,157 @@ def test_fine_at_pads_an_entry_written_before_change_points_existed():
     assert (low, high) == (90.0, 105.0)
     assert math.isnan(down)
     assert math.isnan(up)
+
+
+def test_a_timeframe_with_no_detector_yet_reports_nothing_rather_than_zero():
+    """Absent and zero are different claims and the journal has to tell them apart."""
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine()
+
+    assert engine.changing("nothing") == {}
+
+
+def test_the_change_count_says_how_many_timeframes_were_watching():
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine()
+    engine._change_at = {("t", "5m"): (100.0, 0.0), ("t", "15m"): (0.0, 0.0)}
+    engine._now = 200.0
+
+    got = engine.changing("t")
+
+    assert got["change_up_tf"] == 1.0
+    assert got["change_down_tf"] == 0.0
+    # Two of the four timeframes have a detector, so one-of-two is not
+    # reported as though it were one-of-four.
+    assert got["change_watched_tf"] == 2.0
+
+
+def test_a_call_older_than_the_window_has_stopped_standing():
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine()
+    engine._change_at = {("t", "5m"): (10.0, 0.0)}
+    engine._now = 10.0 + eng.CHANGE_WINDOW + 1.0
+
+    assert engine.changing("t")["change_up_tf"] == 0.0
+
+
+def test_a_call_from_the_future_does_not_count():
+    """Guards the look-ahead the whole measurement was arranged to avoid."""
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine()
+    engine._change_at = {("t", "5m"): (5_000.0, 0.0)}
+
+    assert engine.changing("t", when=1_000.0)["change_up_tf"] == 0.0
+
+
+def test_only_the_measured_timeframes_carry_detectors():
+    """4h is deliberately absent - 144 bars is not a sample. See CHANGE_INTERVALS."""
+    from till_infinity.structures import engine as eng
+
+    assert "4h" not in eng.CHANGE_INTERVALS
+    assert eng.CHANGE_INTERVALS == ("5m", "15m", "30m", "1h")
+
+
+def test_the_change_detectors_actually_fire_on_the_real_bar_path():
+    """The `research/inert.md` question, asked of this feature before it ships.
+
+    A reading that never fires in production is worse than no reading: it looks
+    configured, it journals a zero, and nothing says so. So this drives real
+    bars through `observe_bar` and asserts a call comes out the other end.
+    """
+    from till_infinity.structures import engine as eng
+
+    # `single_source`, because a median across venues needs three of them and
+    # this test has one - the same reason the synthetics are declared that way.
+    engine = eng.Engine(intervals=("5m",), single_source=frozenset({"t"}))
+    start = 1_700_000_000
+    # Two hundred quiet bars to warm the volatility estimate, then a run that
+    # is unambiguously a change of mean.
+    prices = [100.0 + (i % 3) * 0.05 for i in range(200)]
+    prices += [100.0 + i * 0.6 for i in range(1, 40)]
+    for i, price in enumerate(prices):
+        engine.observe_bar(
+            {
+                "feed": "t",
+                "interval": "5m",
+                "time": start + i * 300,
+                "open": price,
+                "high": price + 0.05,
+                "low": price - 0.05,
+                "close": price,
+                "venue": "v",
+            }
+        )
+
+    got = engine.changing("t", when=start + len(prices) * 300)
+
+    assert got, "no change reading at all - the detectors never got a bar"
+    assert got["change_watched_tf"] == 1.0
+    assert got["change_up_tf"] == 1.0, "a 24-unit rally did not register as a change"
+
+
+def test_a_flat_series_calls_no_change():
+    """The other half of the same question: it has to be quiet when nothing happens."""
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine(intervals=("5m",), single_source=frozenset({"t"}))
+    start = 1_700_000_000
+    for i in range(240):
+        price = 100.0 + (i % 3) * 0.05
+        engine.observe_bar(
+            {
+                "feed": "t",
+                "interval": "5m",
+                "time": start + i * 300,
+                "open": price,
+                "high": price + 0.05,
+                "low": price - 0.05,
+                "close": price,
+                "venue": "v",
+            }
+        )
+
+    got = engine.changing("t", when=start + 240 * 300)
+
+    assert got["change_up_tf"] == 0.0
+    assert got["change_down_tf"] == 0.0
+
+
+def test_the_change_detectors_survive_a_save_and_restore():
+    """They ride on the engine, which is persisted whole and is not a dataclass.
+
+    A detector that cold-starts on every deploy never accumulates enough to
+    fire on a slow timeframe, so this is the difference between a working
+    reading and one that is quietly always zero on 1h.
+    """
+    from till_infinity.structures import codec as scodec
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine(intervals=("5m",), single_source=frozenset({"t"}))
+    start = 1_700_000_000
+    prices = [100.0 + (i % 3) * 0.05 for i in range(200)]
+    prices += [100.0 + i * 0.6 for i in range(1, 40)]
+    for i, price in enumerate(prices):
+        engine.observe_bar(
+            {
+                "feed": "t",
+                "interval": "5m",
+                "time": start + i * 300,
+                "open": price,
+                "high": price + 0.05,
+                "low": price - 0.05,
+                "close": price,
+                "venue": "v",
+            }
+        )
+    when = start + len(prices) * 300
+    before = engine.changing("t", when=when)
+
+    back = scodec.unpack(scodec.pack({"engine": engine}))["engine"]
+
+    assert back.changing("t", when=when) == before
+    assert isinstance(back._changes[("t", "5m")][0], eng.Focus)

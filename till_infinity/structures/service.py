@@ -696,6 +696,30 @@ class Watcher:
             + (f" ({confirmed / refined:.0%} of refined)" if refined else "")
         )
 
+    def change_tally(self) -> str:
+        """How many timeframes are calling a change right now, for the save log.
+
+        Same argument as `origin_tally` and `drift_tally`: a reading nobody can
+        read settles nothing, and a detector that silently never fires is the
+        shape `research/inert.md` catalogues. `research/agreeing.md` measured
+        that three-or-more agreement is followed by +7.92v a day out against
+        -1.24v for one alone, so the number worth watching is how often three
+        or more actually happens on this book.
+        """
+        stamps = getattr(self.engine, "_change_at", None)
+        if not stamps:
+            return "no change detectors yet"
+        feeds = {feed for feed, _ in stamps}
+        counts: dict[int, int] = {}
+        for feed in feeds:
+            reading = self.engine.changing(feed)
+            most = int(max(reading.get("change_up_tf", 0), reading.get("change_down_tf", 0)))
+            counts[most] = counts.get(most, 0) + 1
+        spread = ", ".join(f"{n} on {counts[n]}" for n in sorted(counts) if n)
+        return f"changes: {len(stamps)} detector(s) over {len(feeds)} feed(s)" + (
+            f" - agreeing timeframes {spread}" if spread else " - none calling"
+        )
+
     def drift_tally(self) -> str:
         """How ADWIN and KSWIN have compared, for the save log.
 
@@ -722,6 +746,7 @@ class Watcher:
     def save(self) -> None:
         log.info("structures: %s", self.origin_tally())
         log.info("structures: %s", self.drift_tally())
+        log.info("structures: %s", self.change_tally())
         if self.bench.scores:
             # Logged rather than only stored, because a comparison nobody reads
             # settles nothing - and this one exists to settle whether the model

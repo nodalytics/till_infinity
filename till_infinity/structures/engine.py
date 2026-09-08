@@ -52,6 +52,7 @@ from .drawing import (
     vwap,
 )
 from .learning import patterns, regimes
+from .learning.focus import Focus
 from .models import Shape, Signal
 from .state import Restorable
 from .vol.volatility import Book as VolBook
@@ -160,6 +161,30 @@ SEED_BARS = WINDOW
 #: carries, because the refinement's whole value is resolution - and it is
 #: named rather than inlined so the one place it is chosen is findable.
 FINE_INTERVAL = "1m"
+
+#: The timeframes the cross-timeframe change count reads.
+#:
+#: **Measured before it was published.** A change point calling on three or more
+#: of these is followed by **+7.92v** a day out; one calling on a single
+#: timeframe by **-1.24v**, at a matched realised move
+#: (`research/agreeing.md`, 8 instruments). Those are not the same event at two
+#: strengths - they point opposite ways, which is why the *count* is the
+#: reading rather than "did anything fire".
+#:
+#: 4h is absent and the research asked for it: 24 days of one-minute bars is
+#: 144 four-hour bars, fewer than a warmup. 30m stands in until there is data,
+#: and adding 4h here without re-running that measurement would be publishing a
+#: number nobody has checked.
+CHANGE_INTERVALS = ("5m", "15m", "30m", "1h")
+
+#: How long a change call stands, in seconds.
+#:
+#: **One window for every timeframe, not each timeframe's own bar length.** The
+#: first version of the measurement gave a 5m call five minutes to be agreed
+#: with and the 60m call an hour, which made agreement an artefact of the
+#: fastest clock rather than a fact about the market. An hour for all four is
+#: what a person means by "these timeframes are saying the same thing".
+CHANGE_WINDOW = 3600.0
 
 #: An untouched level this far from price, in volatility units, is not going to
 #: be tested soon and is only crowding the set. Touched levels are kept
@@ -498,6 +523,12 @@ class Call(Restorable):
     #: at construction because the engine has the series and the Call does not,
     #: and merged into the published features below.
     origin: dict = field(default_factory=dict)
+    #: Readings about the instrument rather than about this level - currently
+    #: how many timeframes are calling a change. Kept apart from `origin`
+    #: because they answer different questions and a consumer reading one
+    #: should not have to know the other is in the same dictionary. Merged into
+    #: the features the same way.
+    context: dict = field(default_factory=dict)
 
     def to_signal(
         self,
@@ -586,6 +617,13 @@ class Call(Restorable):
                 # sizes on it, and the journal is what will say whether it
                 # separates.
                 **self.origin,
+                # How many timeframes are calling a change right now, and which
+                # way. Recorded on the same terms as the origin fields above:
+                # nothing gates on it. The measurement behind it is large -
+                # +7.92v against -1.24v a day out - and it was taken on 24 days
+                # with overlapping forward windows, so what it has earned is a
+                # place in the journal and not a place in a gate.
+                **self.context,
                 # The volatility unit itself, in basis points. Everything else
                 # here is measured in multiples of it, so a consumer that only
                 # sees the published signal - `trading` reads them off the bus
@@ -908,6 +946,112 @@ class Engine:
             float(below) if isinstance(below, int | float) else None,
             float(above) if isinstance(above, int | float) else None,
         )
+
+    def _note_change(self, feed: str, interval: str, series: Series, vol) -> None:
+        """Feed this timeframe's newest step to its own change detectors.
+
+        One `Focus` per direction per (feed, timeframe), reset when it fires, so
+        what is recorded is a **discrete call** rather than a level sitting
+        above a line. `research/agreeing.md` is the measurement.
+
+        **The scale has to be this timeframe's own.** A typical 1h step dwarfs a
+        typical 5m one, so a single unit across the four would leave the slow
+        detector firing on every bar and the fast one on none - and the count
+        those produce would be a fact about the scale rather than about the
+        market. `self.vol.of(feed, interval)` already keeps one estimate per
+        pair for exactly this reason.
+
+        Called once per *bar*, not once per venue row, for the reason the
+        volatility update beside it gives at length: `Consensus.observe` answers
+        again on every venue past quorum, and folding the same close in
+        repeatedly feeds a run of zero steps.
+
+        Silent on anything it cannot compute. A change reading nobody has yet
+        is a missing feature; a wrong one is a number in the journal that looks
+        like evidence.
+        """
+        if interval not in CHANGE_INTERVALS or not vol.warm:
+            return
+        closes = series.closes
+        if len(closes) < 2:
+            return
+        unit = float(closes[-1]) * vol.bps / 10_000.0 if vol.bps else 0.0
+        if unit <= 0:
+            return
+        # **A restore from a save that predates these has neither dict.** The
+        # engine is persisted whole and is not a `Restorable` dataclass, so
+        # nothing fills in a new attribute for it - this is the same guard
+        # `_remember_origins` needed for `_origins`, and it is needed for the
+        # same reason.
+        held = getattr(self, "_changes", None)
+        if held is None:
+            held = self._changes = {}
+        stamps = getattr(self, "_change_at", None)
+        if stamps is None:
+            stamps = self._change_at = {}
+        key = (feed, interval)
+        pair = held.get(key)
+        if pair is None:
+            pair = held[key] = (Focus(), Focus(up=False))
+        step = float(closes[-1]) - float(closes[-2])
+        was_up, was_down = stamps.get(key, (0.0, 0.0))
+        up, down = pair
+        if up.update(step, scale=unit):
+            up.reset()
+            was_up = self._now
+        if down.update(step, scale=unit):
+            down.reset()
+            was_down = self._now
+        stamps[key] = (was_up, was_down)
+
+    def changing(self, feed: str, when: float = 0.0) -> dict[str, float]:
+        """How many timeframes are calling a change on this instrument.
+
+        The published reading, and it is a **count** rather than a flag because
+        that is what was measured: one timeframe alone is followed by price
+        giving back 1.24v a day out and three or more by it continuing 7.92v,
+        at a matched realised move. A flag would collapse the two events the
+        measurement exists to separate.
+
+        Absent rather than zero when no timeframe has a detector yet - a
+        missing key is a missing reading downstream, and a zero is the claim
+        that four timeframes looked and none of them saw anything. Those are
+        different and the journal has to be able to tell them apart. This is
+        the rule `LevelRange.features` already follows.
+        """
+        stamps = getattr(self, "_change_at", None)
+        if not stamps:
+            return {}
+        now = float(when) or self._now
+        floor = now - CHANGE_WINDOW
+        up = down = 0
+        watched = 0
+        for interval in CHANGE_INTERVALS:
+            got = stamps.get((feed, interval))
+            if got is None:
+                continue
+            watched += 1
+            was_up, was_down = got
+            # `> 0` as well as inside the window. A detector that has never
+            # fired stores 0.0, and on a live clock that is nineteen thousand
+            # days in the past so it never matters - but a replay starting at
+            # the epoch puts 0.0 *inside* the window and every silent timeframe
+            # reports a change. A test caught it; production would have
+            # produced a journal full of confident nonsense on the next
+            # backtest and nothing on the live path to say so.
+            up += 1 if was_up > 0 and floor < was_up <= now else 0
+            down += 1 if was_down > 0 and floor < was_down <= now else 0
+        if not watched:
+            return {}
+        return {
+            "change_up_tf": float(up),
+            "change_down_tf": float(down),
+            # How many were in a position to say anything, so a count of one
+            # out of four can be told from one out of one. A restart warms the
+            # timeframes at different speeds and the two look identical
+            # without this.
+            "change_watched_tf": float(watched),
+        }
 
     def _capture_fine(self, feed: str, interval: str, series: Series) -> None:
         """Record the fine extremes of `series`' most recently *completed* bars.
@@ -1612,6 +1756,15 @@ class Engine:
             # Whole-bar estimates, once per bar rather than once per venue -
             # same reasoning as the line above.
             vol.observe_bar(opened, high, low, float(close))
+            # And this timeframe's change detectors, after the volatility so
+            # they are scaled by an estimate that has seen this bar. Wrapped
+            # because a reading nobody gates on must not be able to stop the
+            # engine - two outages this month were a fault in here taking the
+            # whole structures service down.
+            try:
+                self._note_change(feed, interval, series, vol)
+            except Exception as exc:
+                log.debug("structures: no change reading for %s %s: %s", feed, interval, exc)
         # Pivots are session structures priced at today's scale, so they use the
         # reference estimate rather than the bar interval that happened to
         # deliver them - a 4h bar completing a day does not make it a 4h level.
@@ -1978,6 +2131,7 @@ class Engine:
                     price=price,
                     time=when,
                     origin=self._origin_at(feed, interval, level.price, vol),
+                    context=self.changing(feed, when),
                 )
             )
             self.calls += 1

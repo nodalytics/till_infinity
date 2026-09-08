@@ -153,11 +153,37 @@ rather than as a counterexample.
 
 ## What to do with it
 
-1. **Publish the agreement count as a feature.** Four detectors already run per
-   feed in `structures`; the cross-timeframe count is a cheap derived reading
-   and it costs nothing to journal. That is the same order
-   [localising.md](localising.md) used for `origin_confirmed` and the one this
-   repository got wrong with `reward_to_risk`.
+1. ~~**Publish the agreement count as a feature.**~~ Built on 2026-09-08.
+   `Engine._note_change` runs one `Focus` per direction per (feed, timeframe)
+   over `CHANGE_INTERVALS`, scaled by that timeframe's own volatility, and
+   `Engine.changing` reports `change_up_tf`, `change_down_tf` and
+   `change_watched_tf` onto every call. **Nothing gates on them.**
+
+   Three decisions worth recording:
+
+   * **A count, not a flag.** One timeframe and three timeframes are followed
+     by moves of opposite sign, so collapsing them to "something fired" would
+     throw away the entire result.
+   * **`change_watched_tf` as well**, because one-of-one and one-of-four are
+     different readings and a restart warms the timeframes at different
+     speeds. Without it they are indistinguishable in the journal.
+   * **Absent rather than zero** when no timeframe has a detector yet, the rule
+     `LevelRange.features` already follows: a missing key is a missing reading,
+     and a zero is the claim that four timeframes looked and saw nothing.
+
+   Two things the tests caught that would have shipped quietly. A detector
+   that has never fired stores a timestamp of `0.0`, which on a live clock is
+   nineteen thousand days in the past and never matters - but a **replay from
+   the epoch** puts it inside the one-hour window, so every silent timeframe
+   would have reported a change and every backtest journal would have filled
+   with confident nonsense. And the detectors ride on the engine, which is
+   persisted whole rather than as a `Restorable` dataclass, so a round trip
+   through the codec is asserted: without it they cold-start on every deploy
+   and 1h never accumulates enough to fire at all.
+
+   `change_tally` logs the spread on every save, for the same reason
+   `origin_tally` does - a reading that silently never fires is the shape
+   [inert.md](inert.md) catalogues, and this is the eleventh entry.
 2. **Block bootstrap the day-horizon gap.** The number is large enough that its
    error bar is the only thing standing between it and a gate.
 3. **Re-run with 4h** when the database has the bars for it. The todo asked for
