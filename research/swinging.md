@@ -427,6 +427,47 @@ reads a zero as a fault.
 The refined share **at 4h** remains the number that closes this out, and it was
 1 in 1,315.
 
+### Re-checked five hours later: the capture works, the refinement lags
+
+| | before the fix | five hours after |
+| --- | --- | --- |
+| 4h bars with their minutes captured | **0** | **95** |
+| 2h | 0 | 244 |
+| 1h | 0 | 606 |
+
+**The chain is closed.** 1h and coarser had captured exactly zero of 2,119
+bars while the capture targeted the bar still forming; targeting the bar the
+next one has closed, they capture.
+
+And the refined share at 4h is **still 1**, of 2,230 kept origins. That is not
+a second failure - it is the first one's arithmetic. An origin is refined when
+it is first seen, and only if its **turn bar** was captured; capture began five
+hours ago, so 95 of the 26,832 4h bars held are captured, **0.4%**. A new 4h
+origin therefore has about a 0.4% chance its turn bar carries minutes. One is
+what that predicts.
+
+It climbs with time and nothing else. The 4h series holds 500 bars - 83 days -
+and captures accrue at roughly six a day per feed, so the captured share goes
+to about 8% in a week and a third in a month. The refined share follows it.
+
+### And the 1m window was not the constraint after all
+
+The earlier note said 4h coverage was limited by 1m series holding 2.8-5.2
+hours. Measured properly across 302 of them: **98% are at their 500-bar limit
+and the median covers 5.9 hours**, with 72% covering four or more. The
+two-hour readings were particular feeds, not the population, and generalising
+from four printed examples was the mistake.
+
+What the snapshot in `would.py` actually measures is narrower than it looks. It
+asks whether the *last completed* bar is covered, at an arbitrary moment in the
+cycle - and a 4h bar that finished three hours ago needs seven hours of minutes
+to cover, which almost nothing has. At the **boundary**, which is the only
+moment the capture needs, the same bar needs four. That is why 34 of 318
+"would capture" while 95 actually did.
+
+So the ceiling is not the window. It is elapsed time, and the answer to
+whether this was worth building arrives in weeks rather than hours.
+
 ## The spread
 
 **0.144R a trade**, 10.37R over the 72. Not the dominant term - the swing stop
