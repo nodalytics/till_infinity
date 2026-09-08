@@ -51,7 +51,7 @@ from .drawing import (
     sweeps,
     vwap,
 )
-from .learning import patterns, regimes
+from .learning import focus, patterns, regimes
 from .learning.focus import Focus
 from .models import Shape, Signal
 from .state import Restorable
@@ -176,6 +176,26 @@ FINE_INTERVAL = "1m"
 #: and adding 4h here without re-running that measurement would be publishing a
 #: number nobody has checked.
 CHANGE_INTERVALS = ("5m", "15m", "30m", "1h")
+
+#: How much more evidence a *faster* timeframe must show, per e-fold of bar
+#: count, before its change counts.
+#:
+#: **A threshold in nats is scale-free across instruments and not across
+#: timeframes.** A 5m series gets 288 chances a day where a daily gets one, and
+#: the running maximum of a likelihood ratio grows with the number of chances
+#: it has had. Measured on 8 instruments at a fixed 3 nats, the fire rate runs
+#: **16.96 a day on 5m against 0.20 on 4h** - an 83.7x spread - so the fast
+#: rungs are permanently calling and the count built from them is not a count
+#: of anything. Every rung has to be a comparable event or agreement measures
+#: noise.
+#:
+#: `threshold(tf) = base + k * ln(slowest / tf)` fixes it. The theory gives
+#: `k = 1` if the statistic's tail falls like `exp(-h)`; measured, a nat buys
+#: about a third of a log-unit of firing rate, and **k = 3** is what flattens
+#: the spread to 7.0x. k = 4 over-corrects, back to 9.8x. The same sweep on
+#: step-shuffled series behaves identically, which says this is arithmetic
+#: about bar counts rather than market structure. See `research/focusing.md`.
+CHANGE_K = 3.0
 
 #: How long a change call stands, in seconds.
 #:
@@ -992,7 +1012,14 @@ class Engine:
         key = (feed, interval)
         pair = held.get(key)
         if pair is None:
-            pair = held[key] = (Focus(), Focus(up=False))
+            # The slowest timeframe in the ladder keeps the shipped threshold
+            # and every faster one is asked for more, so a 5m call and a 1h
+            # call are comparably rare and the count means something.
+            slowest = max(lv.SECONDS.get(name, 0.0) for name in CHANGE_INTERVALS)
+            mine = lv.SECONDS.get(interval, 0.0)
+            lift = CHANGE_K * math.log(slowest / mine) if 0 < mine <= slowest else 0.0
+            nats = focus.THRESHOLD + lift
+            pair = held[key] = (Focus(threshold=nats), Focus(threshold=nats, up=False))
         step = float(closes[-1]) - float(closes[-2])
         was_up, was_down = stamps.get(key, (0.0, 0.0))
         up, down = pair

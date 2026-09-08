@@ -57,6 +57,61 @@ def _enum_fields(cls: type) -> dict[str, type]:
     return found
 
 
+@functools.cache
+def _number_fields(cls: type) -> dict[str, type]:
+    """Field name -> `float` or `int`, for the fields declared as one.
+
+    Cached for the reason `_enum_fields` is: resolving annotations is not free
+    and never changes for a class.
+
+    `bool` is excluded although it is a subclass of `int`. A flag restored from
+    a string is a different problem with a different right answer, and
+    `float("true")` is not it.
+    """
+    try:
+        hints = typing.get_type_hints(cls)
+    except Exception:  # a forward reference this build cannot resolve
+        return {}
+    found = {}
+    for field in dataclasses.fields(cls):
+        hint = hints.get(field.name)
+        if hint in (float, int) and hint is not bool:
+            found[field.name] = hint
+    return found
+
+
+def restore_number(cls: type, name: str, value: Any) -> Any:
+    """Put a numeric field back to a number, or leave the value alone.
+
+    **The same failure as `restore_enum`, one type along.** A resting `Intent`
+    came back from saved state with `target` as the *string* `"1.2345"`, and
+    `Intent.reward` is `abs(self.target - self.entry)` - so the first tick that
+    asked whether the order had turned against itself raised `unsupported
+    operand type(s) for -: 'str' and 'float'` and took the whole trading
+    service down with it. On 2026-09-08 that cost hours, and the same shape had
+    already done it once with `Side`.
+
+    Coerced on the way *in* for the reason that one gives: a fix on the way out
+    only helps state written after the change, and the file already on disk is
+    the one crashing. A value that will not convert is left exactly as it was,
+    so the fault stays visible at the point of use rather than being turned
+    into a plausible zero.
+    """
+    kind = _number_fields(cls).get(name)
+    if kind is None or type(value) is kind:
+        return value
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, int | float):
+        return kind(value)
+    if isinstance(value, str):
+        try:
+            return kind(float(value))
+        except ValueError:
+            return value
+    return value
+
+
 def restore_enum(cls: type, name: str, value: Any) -> Any:
     """Put an enum field back to its enum, or leave the value alone.
 
@@ -160,5 +215,7 @@ class Restorable:
                 # it would invent data; leaving it missing keeps the failure
                 # loud and attributable, which for a required field is right.
                 continue
+            value = restore_enum(type(self), field.name, value)
+            value = restore_number(type(self), field.name, value)
             # `object.__setattr__`, so this works on frozen dataclasses too.
-            object.__setattr__(self, field.name, restore_enum(type(self), field.name, value))
+            object.__setattr__(self, field.name, value)

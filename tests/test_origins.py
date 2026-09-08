@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from till_infinity.structures.drawing.origins import Origin, Origins
 
 
@@ -980,3 +982,87 @@ def test_a_resting_intent_with_a_text_entry_does_not_kill_trading():
     asyncio.run(trader._announce_rest(intent, 1.2300, "test", 0, gone="x"))
 
     assert trader.bus.sent, "the announcement was swallowed rather than sent"
+
+
+def test_a_price_restored_as_text_comes_back_as_a_number():
+    """The fault that took trading down, fixed where every restore goes through.
+
+    `Intent.reward` is `abs(target - entry)`, so a `target` restored as the
+    string "1.2345" raised on the first tick that asked. The same shape had
+    already done it once with `Side`, which is why `restore_enum` exists - this
+    is that fix one type along.
+    """
+    from dataclasses import dataclass
+
+    from till_infinity.shared.state import Restorable, restore_number
+
+    @dataclass(slots=True)
+    class _Priced(Restorable):
+        entry: float = 0.0
+        count: int = 0
+        name: str = ""
+        flag: bool = False
+
+    assert restore_number(_Priced, "entry", "1.2345") == 1.2345
+    assert isinstance(restore_number(_Priced, "entry", 1), float)
+    assert restore_number(_Priced, "count", "7") == 7
+    # A string field is left alone, and so is a flag - `float("true")` is not
+    # the right answer for a bool and bool is a subclass of int.
+    assert restore_number(_Priced, "name", "1.5") == "1.5"
+    assert restore_number(_Priced, "flag", True) is True
+    # Something that will not convert stays as it was, so the fault is visible
+    # at the point of use rather than becoming a plausible zero.
+    assert restore_number(_Priced, "entry", "wat") == "wat"
+
+
+def test_setstate_coerces_a_numeric_field_restored_as_text():
+    from dataclasses import dataclass
+
+    from till_infinity.shared.state import Restorable
+
+    @dataclass(slots=True)
+    class _Order(Restorable):
+        entry: float = 0.0
+        target: float = 0.0
+
+    order = _Order.__new__(_Order)
+    order.__setstate__({"entry": "1.2000", "target": "1.2345"})
+
+    # The subtraction that used to raise.
+    assert abs(order.target - order.entry) == pytest.approx(0.0345)
+
+
+def test_the_change_detectors_ask_more_of_a_faster_timeframe():
+    """5m must clear a higher bar than 1h or the count is not a count.
+
+    At a fixed threshold the fire rate runs 16.96 a day on 5m against 0.20 on
+    4h, so the fast rungs are permanently calling. See `CHANGE_K`.
+    """
+    from till_infinity.structures import engine as eng
+
+    engine = eng.Engine(intervals=("5m", "1h"), single_source=frozenset({"t"}))
+    start = 1_700_000_000
+    for interval, step in (("5m", 300), ("1h", 3600)):
+        prices = [100.0 + (i % 3) * 0.05 for i in range(200)]
+        prices += [100.0 + i * 0.6 for i in range(1, 40)]
+        for i, price in enumerate(prices):
+            engine.observe_bar(
+                {
+                    "feed": "t",
+                    "interval": interval,
+                    "time": start + i * step,
+                    "open": price,
+                    "high": price + 0.05,
+                    "low": price - 0.05,
+                    "close": price,
+                    "venue": "v",
+                }
+            )
+
+    fast = engine._changes[("t", "5m")][0].threshold
+    slow = engine._changes[("t", "1h")][0].threshold
+
+    assert fast > slow, "the faster timeframe was not asked for more evidence"
+    # 1h is the slowest of the tracked intervals here, so it keeps the shipped
+    # threshold and 5m is lifted by k * ln(3600/300).
+    assert slow == pytest.approx(eng.focus.THRESHOLD)

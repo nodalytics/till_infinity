@@ -100,6 +100,12 @@ minGapAtr = input.float(3.0, "Minimum gap between zones (ATR)", minval = 0.0, st
      "side is skipped. Two zones a few ticks apart are one level drawn twice.")
 extendRight = input.bool(true, "Extend zones to the right")
 showLabels  = input.bool(true, "Label each zone")
+hideUsed    = input.bool(false, "Hide used zones instead of fading them",
+     tooltip = "A zone price has already worked through is weaker evidence, " +
+     "not absent evidence - which is why the default is to fade it rather " +
+     "than delete it, and why the repository keeps a `revisits` count per " +
+     "origin instead of expiring them. Turn this on when the chart is too " +
+     "busy to read; you are choosing a cleaner picture over a complete one.")
 fadeUsed    = input.bool(true, "Fade a zone once price trades back through it",
      tooltip = "The claim a zone makes is unfilled interest. Each return " +
      "trades some of it away, so a zone price has already worked through is " +
@@ -474,19 +480,31 @@ if not na(dnStart)
 // on an empty array is `for i = 0 to -1`, which Pine runs *downwards* - so it
 // executes once at i = 0 and calls `array.get` on nothing. That is a runtime
 // error on the first bar of every chart, before a single zone exists.
-if fadeUsed and barstate.isconfirmed
+if (fadeUsed or hideUsed) and barstate.isconfirmed
     if array.size(upBoxes) > 0
         for i = 0 to array.size(upBoxes) - 1
             b = array.get(upBoxes, i)
             if low <= box.get_top(b) and low >= box.get_bottom(b)
-                box.set_bgcolor(b, color.new(supportCol, 93))
-                box.set_border_color(b, color.new(supportCol, 93))
+                // Fully transparent rather than deleted, so the box stays in
+                // the array and the bookkeeping that trims the oldest keeps
+                // working. Deleting here would leave a dangling id in
+                // `upBoxes` and the next trim would call `box.delete` on it.
+                shade = hideUsed ? 100 : 93
+                box.set_bgcolor(b, color.new(supportCol, shade))
+                box.set_border_color(b, color.new(supportCol, shade))
+                if hideUsed and array.size(upTags) > i
+                    label.set_textcolor(array.get(upTags, i), color.new(color.gray, 100))
+                    label.set_color(array.get(upTags, i), color.new(color.gray, 100))
     if array.size(dnBoxes) > 0
         for i = 0 to array.size(dnBoxes) - 1
             b = array.get(dnBoxes, i)
             if high >= box.get_bottom(b) and high <= box.get_top(b)
-                box.set_bgcolor(b, color.new(resistanceCol, 93))
-                box.set_border_color(b, color.new(resistanceCol, 93))
+                shade = hideUsed ? 100 : 93
+                box.set_bgcolor(b, color.new(resistanceCol, shade))
+                box.set_border_color(b, color.new(resistanceCol, shade))
+                if hideUsed and array.size(dnTags) > i
+                    label.set_textcolor(array.get(dnTags, i), color.new(color.gray, 100))
+                    label.set_color(array.get(dnTags, i), color.new(color.gray, 100))
 
 // ------------------------------------------------------------- diagnostics
 //

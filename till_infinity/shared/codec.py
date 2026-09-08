@@ -58,7 +58,7 @@ from functools import cache
 from typing import Any
 
 from ..logging import get_logger
-from .state import restore_enum
+from .state import restore_enum, restore_number
 
 log = get_logger(__name__)
 
@@ -279,13 +279,14 @@ def unpack(value: Any, known: dict[str, type]) -> Any:
         if field.name in fields:
             # Enums come back as their raw value - `Side` is a `StrEnum` and
             # serialises as a plain string - and nothing notices until
-            # something asks for a member. See `state.restore_enum`.
-            object.__setattr__(made, field.name, restore_enum(cls, field.name, fields[field.name]))
-    return made
-    for field in dataclasses.fields(cls):
-        if field.name in fields:
-            # Enums come back as their raw value - `Side` is a `StrEnum` and
-            # serialises as a plain string - and nothing notices until
-            # something asks for a member. See `state.restore_enum`.
-            object.__setattr__(made, field.name, restore_enum(cls, field.name, fields[field.name]))
+            # something asks for a member. See `state.restore_enum`. Numbers
+            # have the same problem one type along: a price restored as the
+            # string "1.2345" took trading down on 2026-09-08, because
+            # `Intent.reward` subtracts it. See `state.restore_number`.
+            #
+            # An exact duplicate of this loop used to follow the `return`
+            # below, unreachable, so a fix applied to one copy would have
+            # looked applied and done nothing.
+            value = restore_enum(cls, field.name, fields[field.name])
+            object.__setattr__(made, field.name, restore_number(cls, field.name, value))
     return made
