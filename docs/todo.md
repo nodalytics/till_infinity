@@ -51,6 +51,84 @@ memoryless - the hazard flat - then residual time is a constant and step 2 is
 the whole answer. That is a cheap thing to check and it should be checked
 before any of step 3.
 
+## The volatility indices: what else is in a process we know the rules of
+
+Noted 2026-09-08. Prompted by the per-feed record, which has one line in it
+that does not look like the others:
+
+| feed | n | total | mean | win |
+| --- | --- | --- | --- | --- |
+| **volatility_75_index** | 11 | **+618.44** | **+56.22** | 64% |
+| uk100 | 12 | +85.11 | +7.09 | 67% |
+| volatility_100_index | 10 | -1.21 | -0.12 | 80% |
+| volatility_25_index | 20 | -31.48 | -1.57 | 50% |
+| volatility_50_index | 11 | -50.41 | -4.58 | 27% |
+| whole book | 309 | **-781.44** | -2.53 | |
+
+**The first question is whether v75 is real at all.** Eleven trades at +56 a
+trade, on a book losing 781. One outsized winner would produce that line, and
+nothing about eleven trades distinguishes a strategy from a coincidence. Before
+any of the research below, pull those eleven and look at the distribution: if
+the total is one trade, there is nothing here.
+
+**What makes these instruments different, and it is a real difference.** A
+Volatility N Index is a generated process with a **stated** annualised
+volatility and a fixed tick interval. That means no news, no sessions, no
+weekend gaps, no venue disagreement - and, uniquely on this book, **the
+volatility is known rather than estimated**. Everything in `structures/vol/` is
+machinery for inferring a number these instruments publish in their own name.
+
+Properties worth extracting because they exist here and nowhere else:
+
+* **The tick grid.** A generated series moves in discrete steps; the smallest
+  non-zero change is the venue's tick, and `Volatility._tick` already measures
+  it and counts distinct multiples. On a synthetic that grid is exact, which
+  makes it a testbed for every distance threshold in the book -
+  `MIN_TICKS_PER_ZONE` is already gated on it.
+* **Known volatility against estimated.** v25, v50, v75 and v100 differ only in
+  a published constant. Scoring `Volatility.bps` against the number in the
+  instrument's name is a **direct calibration test** of the estimator, on four
+  instruments where the truth is not in dispute. `research/volatility.md` found
+  a flat 20-bar mean beat the estimator at every interval; this would say by how
+  much and whether the error is a scale factor or a shape.
+* **Stationarity.** These are the only instruments here where a regime label
+  should be *constant*. `learning/regimes.py` producing regime changes on a
+  process with none is a false positive with a known answer, which is a
+  cleaner test than anything the real instruments can offer.
+
+**On whether ML can predict them, the honest prior is no**, and the reason is
+worth stating before anybody spends a week: if the generator is a
+constant-volatility random walk then direction is unpredictable *by
+construction*, and a model that appears to predict it is finding the
+implementation rather than the process. `research/shelves.md` already treats
+the synthetics as a **null** for exactly this reason - a model that cannot beat
+them is refuted rather than under-trained.
+
+Which makes this the sharper question: **if something does predict them, what
+has it found?** Three candidates, all mechanical rather than market:
+
+1. **Tick quantisation** - a discrete grid makes some prices unreachable, and a
+   level sitting between two ticks behaves differently from one on the grid.
+2. **The spread.** `research/catalogue.md` measured the synthetics at 0.170v to
+   cross against FX's 2.267v. A cost that low changes which edges survive, and
+   may be the whole of any apparent advantage.
+3. **The generator's seed structure** - the Boom and Crash indices announce
+   "one spike every N ticks" in their own subtitle, which is a *counting*
+   property. Whether the volatility indices carry anything similar is
+   checkable and nobody has looked.
+
+**Order:**
+
+1. The eleven v75 trades. One query, and it decides whether any of this is
+   worth doing.
+2. `Volatility.bps` against the published constant, on all four. A calibration
+   test with a known answer.
+3. Regime stability on a process with no regimes - a false-positive rate for
+   `regimes.py` that no real instrument can give.
+4. Only then anything predictive, and with `null.md`'s framing: the finding
+   would be about the implementation, not the market, and should be written up
+   that way.
+
 ## Spotting a trap while it is happening, not after - noted 2026-09-08
 
 [research/trapping.md](../research/trapping.md) counts traps **after they
