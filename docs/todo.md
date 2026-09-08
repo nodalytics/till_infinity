@@ -3240,6 +3240,31 @@ are already computed per timeframe, and if the cross-timeframe signal is not
 there in the cleanest possible form it will not be there in a six-detector
 soup either. This is the same order that made the `Cusum` ensemble readable.
 
+**~~Done, 2026-09-08~~, and it is the largest result on this line.** A change
+point on three or more timeframes is followed by **+7.92v** a day out; one on a
+single timeframe by **-1.24v**, at a matched realised move. The shuffled-label
+null returns -0.66v, and 3+tf is ahead on 6 of 6 instruments that produce
+enough of both. They are not the same object at different strengths - they
+point opposite ways. Full tables, the confound that had to be beaten and the
+five things it does *not* establish are in
+[agreeing.md](../research/agreeing.md).
+
+What is still open on this item:
+
+* **Option 1 - six detectors into one HMM.** Unchanged and still last. The
+  single-statistic version has now returned a large effect, which raises rather
+  than lowers the bar: a six-detector model has to beat +7.92v, not zero.
+* **Publish the agreement count as a feature**, journal-only, the way
+  `origin_confirmed` was. Nothing should gate on this yet.
+* **Block bootstrap the day-horizon gap.** Forward windows of a day overlap
+  heavily on 5-minute events, so the effective sample is far below the nominal
+  481 and the shuffle null does not fix that.
+* **The 4h arm was not run.** 24 days of 1m is 144 four-hour bars. 30m stood in
+  for it.
+* **spx500 and us100 produced zero three-way agreements in 24 days**, on
+  hundreds of single-timeframe calls. That wants explaining before the feature
+  is trusted on indices.
+
 **The null it has to beat**, and it is not "does the HMM fit": an HMM will
 always find states. The question is whether the state it infers predicts
 anything the current priority ordering does not - which is the same bar

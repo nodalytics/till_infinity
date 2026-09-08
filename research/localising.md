@@ -497,6 +497,31 @@ database does not have.
 
 [arXiv 2104.00581]: https://arxiv.org/pdf/2104.00581
 
+### Blending the two does not work, and the reason is the definition
+
+FOCuS pays as a *label* - `Origin.confirmed` above - so the natural next
+question is whether it pays as a *number*. Three combinations of the two
+estimators that beat the baseline, on the same 6,300 comparisons:
+
+| estimator | median wander | ratio |
+| --- | --- | --- |
+| **fine alone** | **0.107v** | **6.0x** |
+| lean - 0.75 fine + 0.25 FOCuS | 0.153v | 4.2x |
+| mid - the midpoint | 0.167v | 3.9x |
+| gated - fine when they agree, midpoint when not | 0.168v | 3.8x |
+| FOCuS alone | 0.161v | 3.9x |
+
+**Every blend is worse than `fine` alone**, and they get worse the more FOCuS
+is mixed in - `lean` at a quarter beats `mid` at a half. Even the gated
+version, which only mixes on the events where the two disagree, loses.
+
+That is not a surprise once stated: an origin **is** the extreme, so any
+weight on a different price moves the estimate off the thing being estimated.
+The change point's value was never a better price - it is 0.161v against
+0.107v and always was worse - it is knowing *when to believe the extreme*.
+A label and a number are different things and this is the measurement that
+says so.
+
 ## What would come next
 
 The harness is the deliverable as much as the number. `gridtest.py` gives the
@@ -516,7 +541,12 @@ In order:
    a 1m series covers about eight hours and cannot reach a 4h origin. Either
    the window grows for one series or coarse origins keep the coarse band, and
    that is a measurement rather than a preference.
-3. **Asymmetry.** Both bands here are symmetric about the transition. The
+3. **Cross-timeframe agreement.** Measured, and it is the largest thing to come
+   out of this line: a change point confirmed on three or more timeframes is
+   followed by continuation, one on a single timeframe by reversal, and at a
+   matched realised move they differ by 9.17v a day out. See
+   [agreeing.md](agreeing.md).
+4. **Asymmetry.** Both bands here are symmetric about the transition. The
    repository already keeps per-side statistics everywhere else, and the
    specification's section 10 asks whether localization changes the wick-depth
    distribution. It should, and nobody has looked.

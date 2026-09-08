@@ -328,7 +328,11 @@ METHODS = {
     "rulsif": at_rulsif,
     "newma": at_newma,
 }
-NAMES = ("baseline", "fine", *METHODS)
+#: Blends of the two estimators that actually work. `fine` finds the extreme
+#: and `focus` finds the change point, and they agree on half the events; the
+#: question is whether anything is gained by mixing them rather than choosing.
+BLENDS = ("mid", "lean", "gated")
+NAMES = ("baseline", "fine", *METHODS, *BLENDS)
 
 
 def estimate(found, coarse, fine, fine_times, size):
@@ -359,6 +363,16 @@ def estimate(found, coarse, fine, fine_times, size):
                 window[where].close if where is not None and 0 <= where < len(window)
                 else origin.price
             )
+        # The two that beat the baseline, mixed three ways.
+        extreme, change = out["fine"][-1], out["focus"][-1]
+        span = max(b.high for b in window) - min(b.low for b in window)
+        near = abs(extreme - change) <= 0.25 * span if span > 0 else True
+        out["mid"].append((extreme + change) / 2)
+        out["lean"].append(0.75 * extreme + 0.25 * change)
+        # Take the extreme where the change point confirms it, and split the
+        # difference where it does not - the one place the second opinion has
+        # anything to add, since it is the worse estimator everywhere else.
+        out["gated"].append(extreme if near else (extreme + change) / 2)
     return out
 
 
