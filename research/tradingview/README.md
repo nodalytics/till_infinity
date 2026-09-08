@@ -90,17 +90,29 @@ market.
 `minAgree` defaults to **3**, which is that cut. Set it to 1 to draw every
 anchor change and see what the filter is removing.
 
-The ladder between the two timeframes is derived rather than asked for -
-geometric spacing snapped to timeframes a chart actually aggregates to. With
-the defaults it comes out as 5m, 15m, 1h, 4h, which is exactly the set
-[agreeing.md](../agreeing.md) measured.
+**Every standard rung inside the span counts, not a fixed four.** With the
+defaults - 5m to 4h - the ladder is 5m, 15m, 30m, 1h, 2h and 4h: six chances to
+agree. Narrowing the span narrows the ladder; the two inputs choose which part
+of the standard set is live rather than stretching a fixed number of rungs
+across it.
 
-**How high the confirmation reaches is a prior, not a measurement.** The anchor
-rung agrees by construction, so what is informative is which rungs *below* it
-also called, and the label reports the highest of those. A 4h change confirmed
-down to 5m is plausibly a different object from one confirmed only at 15m -
-but `agreeing.md` scored the *count* and never scored which rungs, so the reach
-shades the drawing and gates nothing.
+The rungs are **literals** in the script and that is not laziness.
+`request.security` demands a *simple* string for its timeframe, and a rung
+computed at runtime comes back as a series string and will not compile.
+Deriving the ladder from the inputs looks tidier and does not work.
+
+**Height is weighted, and that part is a prior rather than a measurement.** 1h
+confirming counts for more than 15m confirming, weighted by the log of the
+rung's length, and the label reports both the raw count and the weighted
+`strength` as a percentage. The anchor rung agrees by construction - a zone
+exists because the anchor fired - so the label also reports how far *below* the
+anchor the confirmation reaches.
+
+The distinction matters and the script keeps it visible:
+[agreeing.md](../agreeing.md) scored the **count** and never scored which rungs.
+It did measure that a slower timeframe firing is a larger event - as a
+**confound it had to condition away**, not as an effect. So the count filters
+and the weighting only shades.
 
 ## What was tried and did not work
 
@@ -133,6 +145,15 @@ This is the same split the source repository uses for confluence zones
 
 ## Honest limits
 
+* **It has never been executed.** Pine cannot be run from where this was
+  written, so the script is reviewed rather than tested. Several compile-level
+  faults were found and fixed by reading alone - a global assigned inside a
+  function, a computed timeframe string where a simple one is required,
+  comma-separated assignments, an int/float ternary, and `for i = 0 to
+  size - 1` on an empty array, which Pine runs *downwards* and throws on. There
+  may be more. Compare its zones against the harness output on the same
+  instrument and period before trusting it.
+
 * **`lookahead_off` is load-bearing.** Without it a higher-timeframe bar is
   visible before it has closed, every historical zone is drawn using its own
   future, and the indicator looks superb on history and does nothing live.
@@ -156,8 +177,8 @@ This is the same split the source repository uses for confluence zones
 
 ## Loading it
 
-Pine v5. Paste into the Pine Editor, add to chart. Defaults are 5m/15m/1h/4h
-with a 12-nat threshold - the value the repository ships, chosen to be
+Pine v5. Paste into the Pine Editor, add to chart. Defaults are a 4h anchor and
+a 5m refinement with a 12-nat threshold - the value the repository ships, chosen to be
 conservative rather than fitted, and quiet enough on a stationary Gaussian
 stream to produce at most 5 false alarms across five runs of 3,000 bars
 ([detecting.md](../detecting.md)).

@@ -63,7 +63,7 @@ scaleLength = input.int(100, "Volatility lookback (anchor bars)", minval = 20,
      tooltip = "Steps are divided by a running average step size, so the " +
      "threshold means the same thing on gold and on a JPY cross.")
 
-minAgree = input.int(3, "Minimum timeframes agreeing", minval = 1, maxval = 4,
+minAgree = input.int(3, "Minimum timeframes agreeing", minval = 1, maxval = 6,
      tooltip = "The measured filter, and the reason this is not just a " +
      "prettier support/resistance tool. A change point calling on three or " +
      "more timeframes is followed by +7.92v a day out; one calling on a " +
@@ -124,7 +124,9 @@ focusScan(bool wantUp, float nats, int lookback) =>
 
         float best  = 0.0
         int   where = 0
-        for i = 0 to array.size(hullSum) - 1
+        // Guarded for the same reason the fade loop below is: an empty array
+        // makes this `for i = 0 to -1`, which Pine runs once at i = 0.
+        for i = 0 to math.max(array.size(hullSum) - 1, 0)
             tau = array.get(hullSeen, i)
             gap = seen - tau
             if gap > 0
@@ -178,35 +180,62 @@ atr = ta.atr(14)
 
 // ------------------------------------------------------- the agreement ladder
 //
-// The two timeframes the user sets are the ends. The rungs between them are
-// derived rather than asked for, because the measurement is about *how many*
-// timeframes agree and not about which ones - and three more inputs to express
-// that would be three more things to get wrong.
+// **Every standard timeframe inside the span.** With the defaults - 5m to 4h -
+// that is 5m, 15m, 30m, 1h, 2h and 4h: six chances to agree rather than four.
+// Rungs outside the span are masked off, so narrowing the span narrows the
+// ladder rather than stretching it.
 //
-// Geometric spacing, snapped to timeframes a chart actually aggregates to. With
-// the defaults - 5m to 4h - the ladder is 5m, 15m, 1h, 4h, which is exactly the
-// set `research/agreeing.md` measured.
+// **The rungs are literals and that is deliberate.** `request.security` demands
+// a *simple* string for its timeframe, and a rung computed at runtime - from a
+// snap function over an array, say - comes back as a series string and the
+// script will not compile. Deriving the ladder from the two inputs looks
+// tidier and does not work. So the ladder is the standard set and the inputs
+// choose which part of it is live.
+//
+// **Two readings, and only one of them is measured.**
+//
+//   * `agreed` - how many rungs called. `research/agreeing.md` scored exactly
+//     this: three or more is followed by +7.92v a day out, one alone by
+//     -1.24v, at a matched realised move. It is what `minAgree` filters on.
+//   * `strength` - the same agreement weighted by how *high* each rung sits,
+//     so 1h confirming counts for more than 15m confirming. This is a prior
+//     and not a result. It is plausible - a slower timeframe firing is a
+//     larger event - but the same document measured that largeness as a
+//     **confound** it had to condition away, not as an effect. So strength
+//     shades the drawing and gates nothing.
 
-snap(float seconds) =>
-    ladder = array.from(60, 180, 300, 900, 1800, 3600, 7200, 14400, 28800, 86400)
-    best = 60
-    float gap = na
-    for i = 0 to array.size(ladder) - 1
-        v = array.get(ladder, i)
-        d = math.abs(math.log(v) - math.log(math.max(seconds, 1)))
-        if na(gap) or d < gap
-            gap := d
-            best := v
-    str.tostring(best / 60)
+secA = 300
+secB = 900
+secC = 1800
+secD = 3600
+secE = 7200
+secF = 14400
 
-ratio  = math.pow(math.max(anchorSecs, 1) / math.max(refineSecs, 1), 1.0 / 3.0)
-rung1  = snap(refineSecs)
-rung2  = snap(refineSecs * ratio)
-rung3  = snap(refineSecs * ratio * ratio)
-rung4  = snap(anchorSecs)
+// A rung is live when it sits inside the span the two inputs describe. The
+// anchor itself is always live: a zone exists because the anchor fired.
+inSpan(int secs) => secs >= refineSecs and secs <= anchorSecs
+liveA = inSpan(secA)
+liveB = inSpan(secB)
+liveC = inSpan(secC)
+liveD = inSpan(secD)
+liveE = inSpan(secE)
+liveF = inSpan(secF)
 
-// Whether each rung has called a change recently, in each direction. Only the
-// count is used - which rung fired is not the reading.
+// Weight by height. The standard ladder is roughly geometric, so the log of
+// the rung's length is the natural measure of "how high" and needs no tuning.
+wA = math.log(secA)
+wB = math.log(secB)
+wC = math.log(secC)
+wD = math.log(secD)
+wE = math.log(secE)
+wF = math.log(secF)
+total = (liveA ? wA : 0.0) + (liveB ? wB : 0.0) + (liveC ? wC : 0.0) +
+     (liveD ? wD : 0.0) + (liveE ? wE : 0.0) + (liveF ? wF : 0.0)
+
+// Whether each rung has called a change recently, in each direction.
+// `request.security` cannot be called from a loop, so these are written out,
+// and they are called **unconditionally** - `liveA and recent(...)` would
+// short-circuit, which makes the request conditional and Pine refuses that.
 recent(string tf, bool wantUp) =>
     t = request.security(syminfo.tickerid, tf, focusScan(wantUp, thresholdNats, scaleLength),
          lookahead = barmerge.lookahead_off)
@@ -215,31 +244,57 @@ recent(string tf, bool wantUp) =>
         held := t
     not na(held) and (time - held) <= agreeWindow * anchorSecs * 1000
 
-// The count, and **how high the confirmation reaches**.
-//
-// The anchor rung agrees by construction - a zone only exists because the
-// anchor fired - so the informative quantity is which of the rungs *below* it
-// also called, and the highest of those is worth more than the lowest. A 4h
-// change confirmed down to 5m is a different object from one confirmed only at
-// 15m, even where both have three rungs agreeing.
-//
-// **The count is measured and the height is a prior.** `agreeing.md` scored the
-// count - 3+ continues, 1 alone reverses - and did not score which rungs. The
-// height is here because a slower timeframe firing is a larger event by
-// construction, which the same document measured as a confound rather than as
-// an effect. It shades the drawing and gates nothing.
+rAu = recent("5", true)
+rBu = recent("15", true)
+rCu = recent("30", true)
+rDu = recent("60", true)
+rEu = recent("120", true)
+rFu = recent("240", true)
+rAd = recent("5", false)
+rBd = recent("15", false)
+rCd = recent("30", false)
+rDd = recent("60", false)
+rEd = recent("120", false)
+rFd = recent("240", false)
 
-u1 = recent(rung1, true),  u2 = recent(rung2, true)
-u3 = recent(rung3, true),  u4 = recent(rung4, true)
-d1 = recent(rung1, false), d2 = recent(rung2, false)
-d3 = recent(rung3, false), d4 = recent(rung4, false)
+uA = liveA and rAu
+uB = liveB and rBu
+uC = liveC and rCu
+uD = liveD and rDu
+uE = liveE and rEu
+uF = liveF and rFu
+dA = liveA and rAd
+dB = liveB and rBd
+dC = liveC and rCd
+dD = liveD and rDd
+dE = liveE and rEd
+dF = liveF and rFd
 
-agreeingUp = (u1 ? 1 : 0) + (u2 ? 1 : 0) + (u3 ? 1 : 0) + (u4 ? 1 : 0)
-agreeingDn = (d1 ? 1 : 0) + (d2 ? 1 : 0) + (d3 ? 1 : 0) + (d4 ? 1 : 0)
-// The highest rung *below the anchor* that confirms it, 0 for none.
-reachUp = u3 ? 3 : u2 ? 2 : u1 ? 1 : 0
-reachDn = d3 ? 3 : d2 ? 2 : d1 ? 1 : 0
-rungName(int r) => r == 3 ? rung3 : r == 2 ? rung2 : r == 1 ? rung1 : "none"
+agreeingUp = (uA ? 1 : 0) + (uB ? 1 : 0) + (uC ? 1 : 0) +
+     (uD ? 1 : 0) + (uE ? 1 : 0) + (uF ? 1 : 0)
+agreeingDn = (dA ? 1 : 0) + (dB ? 1 : 0) + (dC ? 1 : 0) +
+     (dD ? 1 : 0) + (dE ? 1 : 0) + (dF ? 1 : 0)
+
+strengthUp = total <= 0 ? 0.0 : ((uA ? wA : 0.0) + (uB ? wB : 0.0) + (uC ? wC : 0.0) +
+     (uD ? wD : 0.0) + (uE ? wE : 0.0) + (uF ? wF : 0.0)) / total
+strengthDn = total <= 0 ? 0.0 : ((dA ? wA : 0.0) + (dB ? wB : 0.0) + (dC ? wC : 0.0) +
+     (dD ? wD : 0.0) + (dE ? wE : 0.0) + (dF ? wF : 0.0)) / total
+
+// The highest rung **below the anchor** that confirms it. The anchor agrees by
+// construction, so what is informative is how far the confirmation reaches
+// beneath it - and a confirmation reaching 1h is worth more than one reaching
+// only 15m, which is what this reports.
+below(int secs) => secs < anchorSecs
+reachUp = (uF and below(secF)) ? secF : (uE and below(secE)) ? secE :
+     (uD and below(secD)) ? secD : (uC and below(secC)) ? secC :
+     (uB and below(secB)) ? secB : uA ? secA : 0
+reachDn = (dF and below(secF)) ? secF : (dE and below(secE)) ? secE :
+     (dD and below(secD)) ? secD : (dC and below(secC)) ? secC :
+     (dB and below(secB)) ? secB : dA ? secA : 0
+
+rungName(int secs) => secs <= 0 ? "none" :
+     secs >= 3600 ? str.tostring(int(secs / 3600)) + "h" : str.tostring(int(secs / 60)) + "m"
+     secs >= 3600 ? str.tostring(secs / 3600) + "h" : str.tostring(secs / 60) + "m"
 
 // ------------------------------------------------------- the refinement
 //
@@ -290,26 +345,29 @@ var array<box>   upBoxes = array.new_box()
 var array<box>   dnBoxes = array.new_box()
 var array<label> upTags  = array.new_label()
 var array<label> dnTags  = array.new_label()
-var float lastUpPrice = na
-var float lastDnPrice = na
+// **A one-element-per-side array rather than two floats.** Pine refuses to let
+// a function assign to a global variable - `lastUpPrice := x` inside `place`
+// is a compile error - but mutating an object it holds is allowed, because the
+// binding does not change. This is the standard way round it.
+var array<float> lastDrawn = array.new_float(2, na)
 
-place(int startTime, bool wantUp, int agreed, int reach) =>
+place(int startTime, bool wantUp, int agreed, int reach, float strength) =>
     [zHigh, zLow, at] = refineZone(startTime, wantUp)
     if not na(zHigh) and not na(zLow) and not na(at) and agreed >= minAgree
         anchorPrice = wantUp ? zLow : zHigh
-        last = wantUp ? lastUpPrice : lastDnPrice
+        slot = wantUp ? 0 : 1
+        last = array.get(lastDrawn, slot)
         // Two zones a few ticks apart are one level drawn twice.
         far = na(last) or na(atr) or math.abs(anchorPrice - last) >= minGapAtr * atr
         if far
-            if wantUp
-                lastUpPrice := anchorPrice
-            else
-                lastDnPrice := anchorPrice
+            array.set(lastDrawn, slot, anchorPrice)
             // Opacity carries the agreement count. A zone at the minimum is
             // drawn faint and one every timeframe confirms is drawn solid,
             // because that difference is the measured part.
             plain = wantUp ? supportCol : resistanceCol
-            base  = color.new(plain, math.max(25, 88 - agreed * 10 - reach * 5))
+            // `int()` and not just `math.round`: Pine's round returns a float
+            // and `color.new` wants an int transparency.
+            base  = color.new(plain, int(math.round(math.max(25.0, 90.0 - strength * 65.0))))
             boxes = wantUp ? upBoxes : dnBoxes
             tags  = wantUp ? upTags  : dnTags
             b = box.new(left = at, top = zHigh, right = time, bottom = zLow,
@@ -320,7 +378,7 @@ place(int startTime, bool wantUp, int agreed, int reach) =>
                 array.push(tags, label.new(x = at, y = wantUp ? zLow : zHigh,
                      xloc = xloc.bar_time,
                      text = (wantUp ? "▲ " : "▼ ") + str.tostring(agreed) + " tf, to " +
-                          rungName(reach) + "m",
+                          rungName(reach) + ", " + str.tostring(int(strength * 100 + 0.5)) + "%",
                      style = wantUp ? label.style_label_up : label.style_label_down,
                      color = base, textcolor = chart.fg_color, size = size.tiny))
             // Bounded, because a set that only grows is a leak with a long fuse.
@@ -330,25 +388,31 @@ place(int startTime, bool wantUp, int agreed, int reach) =>
                 label.delete(array.shift(tags))
 
 if not na(upStart)
-    place(upStart, true, agreeingUp, reachUp)
+    place(upStart, true, agreeingUp, reachUp, strengthUp)
 if not na(dnStart)
-    place(dnStart, false, agreeingDn, reachDn)
+    place(dnStart, false, agreeingDn, reachDn, strengthDn)
 
 // A zone's claim is unfilled interest, and each return trades some of it away.
 // Faded rather than deleted: a level price has worked through is still a level,
 // it is just weaker evidence - which is the same thing `revisits` records in
 // the source repository.
+// **The emptiness guards are not decoration.** `for i = 0 to array.size(x) - 1`
+// on an empty array is `for i = 0 to -1`, which Pine runs *downwards* - so it
+// executes once at i = 0 and calls `array.get` on nothing. That is a runtime
+// error on the first bar of every chart, before a single zone exists.
 if fadeUsed and barstate.isconfirmed
-    for i = 0 to array.size(upBoxes) - 1
-        b = array.get(upBoxes, i)
-        if low <= box.get_top(b) and low >= box.get_bottom(b)
-            box.set_bgcolor(b, color.new(supportCol, 93))
-            box.set_border_color(b, color.new(supportCol, 93))
-    for i = 0 to array.size(dnBoxes) - 1
-        b = array.get(dnBoxes, i)
-        if high >= box.get_bottom(b) and high <= box.get_top(b)
-            box.set_bgcolor(b, color.new(resistanceCol, 93))
-            box.set_border_color(b, color.new(resistanceCol, 93))
+    if array.size(upBoxes) > 0
+        for i = 0 to array.size(upBoxes) - 1
+            b = array.get(upBoxes, i)
+            if low <= box.get_top(b) and low >= box.get_bottom(b)
+                box.set_bgcolor(b, color.new(supportCol, 93))
+                box.set_border_color(b, color.new(supportCol, 93))
+    if array.size(dnBoxes) > 0
+        for i = 0 to array.size(dnBoxes) - 1
+            b = array.get(dnBoxes, i)
+            if high >= box.get_bottom(b) and high <= box.get_top(b)
+                box.set_bgcolor(b, color.new(resistanceCol, 93))
+                box.set_border_color(b, color.new(resistanceCol, 93))
 
 alertcondition(not na(upStart) and agreeingUp >= minAgree, "FOCuS support zone",
      "A rally's origin was located and confirmed across timeframes")
@@ -357,5 +421,5 @@ alertcondition(not na(dnStart) and agreeingDn >= minAgree, "FOCuS resistance zon
 
 plotchar(agreeingUp, "timeframes agreeing up",   "", location.top,    display = display.status_line)
 plotchar(agreeingDn, "timeframes agreeing down", "", location.bottom, display = display.status_line)
-plotchar(reachUp,    "confirmation reaches up",   "", location.top,    display = display.status_line)
-plotchar(reachDn,    "confirmation reaches down", "", location.bottom, display = display.status_line)
+plotchar(strengthUp, "agreement strength up",   "", location.top,    display = display.status_line)
+plotchar(strengthDn, "agreement strength down", "", location.bottom, display = display.status_line)
