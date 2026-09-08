@@ -5,6 +5,73 @@ lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
 
 
+## Spotting a trap while it is happening, not after - noted 2026-09-08
+
+[research/trapping.md](../research/trapping.md) counts traps **after they
+resolve**: price went through a level and came back, and the counter increments
+once the return is in. That is the right way to measure them and it is useless
+at the moment a trade has to be placed.
+
+**The crux, stated before any design.** A trap is *defined* by what happens
+next. At the instant of penetration a trap and a break are the same event -
+price beyond the level - and they stay the same event until the return does or
+does not arrive. So "real-time trap detection" is not detection at all; it is
+**P(return | penetration, right now)**, which is the model trapping.md
+measured, asked at a different moment. Calling it detection would be the
+category error that makes the whole thing sound easier than it is.
+
+**What that model already has.** Within a timeframe the level's own record
+separates trap from break at **AUC 0.567**, with `depth_vol` adding at 0.5255
+and a correlation of only +0.096. Both features exist at penetration time -
+`strength` is on the level, `depth_vol` is how far past it price has gone - so
+nothing new has to be collected to ask the question early. That is the cheap
+first version and it should be built before anything more ambitious.
+
+**What is genuinely real-time here already**, and is the reason this is worth
+attempting at all: `context/cusum.py` is fed from the **quote stream**, not
+from closed bars. That is why momentum is intrabar. A penetration that is going
+to be a trap should, if the idea has anything in it, show a CUSUM turn against
+the break within seconds - and `Cusum` is already stateful per feed and
+threshold-adaptive.
+
+**The obstacle that has to be respected.**
+[research/resolution.md](../research/resolution.md) measured that **two thirds
+of touch outcomes resolve within two seconds**. For a model that is either a
+gift or a wall depending on which side of the two seconds the decision sits: a
+trap that completes in a second is not something an order reacts to, it is
+something a fill is on the wrong side of. So the first measurement is not the
+model - it is **the distribution of time-to-return for traps specifically**,
+because if the median is under a second there is nothing to trade and the
+honest answer is a refusal gate rather than an entry.
+
+**On "manipulation" more broadly, and what this desk cannot see.** Spoofing,
+layering and wash trading are order-book phenomena. This book has a broker feed
+with a spread and **no depth and no trade tape**, so they are not hard here -
+they are unobservable, and any claim to detect them from OHLC would be
+invented. Two things are in reach:
+
+* **Cross-venue dislocation**, which already exists as a signal and is the one
+  place a price can be shown to be wrong rather than merely unusual.
+* **The spike indices**, where the "manipulation" is the generated process and
+  is published in the instrument's own name - see the Boom/Crash entry above.
+  Nothing has to be inferred; it has to be respected.
+
+**And a prior worth carrying in.** The adversarial test on 2026-09-08 - is this
+desk worst where it is most confident - came back **no**: `strength` predicts
+traps monotonically, but that is `strength.md`'s finding seen from the other
+side rather than evidence of anything selecting against us. So the expectation
+going in should be that the record contains less manipulation than it feels
+like it does.
+
+**Order:**
+
+1. Time-to-return for traps. One query, and it decides whether the rest is a
+   trade or a refusal.
+2. Ask the existing trap features at penetration time rather than resolution
+   time, and score against the 57.6% base rate on log loss, not accuracy.
+3. Only then the quote-stream version, and only on the instruments where step 1
+   said there is time to act.
+
 ## Shorting a spike index has a stop-to-target ratio nothing refuses - found 2026-09-08
 
 Spotted from a chart: two live sells on Boom 500, the worse one with its stop
