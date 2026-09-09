@@ -3358,6 +3358,22 @@ is the binding constraint and it is not a data problem.
 [spiking.md](../research/spiking.md) had already shown to be memoryless and
 unpredictable. See [catalysing.md](../research/catalysing.md).
 
+## 7h. Levels that tally across instruments
+
+`research/tallying.md`. If EURUSD has a level and GBPUSD has the corresponding
+one, is the pair worth more than either alone? Designed, not run.
+
+The trap is named in the design and it already killed the change-point version
+in [peering.md](../research/peering.md): **two dollar pairs are not two
+witnesses, they are one witness seen twice.** The controls are a no-shared-
+currency pair, the synthetics, and a permutation test rather than one shuffle.
+
+Measured on the way in: the level book holds **1 to 15 levels per (feed,
+interval)** across 3,451 sets - a near-price working set, not a historical map,
+because `prune` drops untouched levels beyond 8 volatility units. Agreement is
+therefore conditioned on both instruments being near their level at once, which
+thins the population sharply. Count the pairs before promising a measurement.
+
 ## 7c. Cross-instrument agreement - run, and it failed its control
 
 The same idea across eight instruments instead of across timeframes. Effects of
