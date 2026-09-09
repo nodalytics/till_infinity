@@ -311,6 +311,37 @@ A directional call is only worth making when the price structure and the
 fundamentals point the same way. Most setups see one or the other. This one is
 built to see both at once, and to write down why it thought so at the time.
 
+They are not two votes on the same question. They answer **different**
+questions, and the division of labour is the whole reason for carrying both:
+
+> **Technicals give the direction, and let you stand in front of it. News gives
+> the instrument the move.**
+
+A level says *where* and *which way*: here is a price that has turned this
+market before, here is the side to be on, here is a stop that says when the
+reading was wrong. What it cannot say is whether anything is going to happen at
+all. A level is a place to be positioned; it is not a reason for the market to
+go anywhere.
+
+The catalyst is what supplies that. It decides which instrument moves today and
+how far, and it does so without reference to where the lines are drawn. Two
+instruments can carry the same structure and only one of them has a reason to
+travel.
+
+**Neither half is worth much alone.** Structure without a catalyst is a correct
+position in a market that does not move - which is not a small loss, it is the
+most expensive kind, because the trade holds risk for nothing and the stop is
+still live. A catalyst without structure is a move you have no defined place to
+meet, so the entry is arbitrary and the stop is a guess.
+
+That is a claim with a measurable fingerprint, and this repository has one.
+**Half of a strategy's trades expiring is what a missing catalyst looks like**:
+of 159 closed `thesis-only` trades, 58 timed out and 20 went stale - 49% never
+reached either the stop or the target. They were not wrong about direction so
+much as positioned in front of nothing. `research/catalysing.md` sets out how
+to test that against the news the system already collects, and whether the
+timeout rate falls when a catalyst was present.
+
 Five things follow from that, and they are the five parts of the project.
 
 ### 1. Structure needs more than one view of the price

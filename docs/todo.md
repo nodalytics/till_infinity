@@ -3317,6 +3317,27 @@ instruments produced 205. The options are a longer history, more instruments,
 or a faster anchor - and the first is the only one that does not change the
 question being asked.
 
+## 7g. Does a catalyst change the rate of going nowhere?
+
+`research/catalysing.md`. Technicals say where and which way; news decides
+which instrument has a reason to travel. The testable half is that **structure
+without a catalyst is a trade that expires rather than one that loses**.
+
+The number that makes it worth running first: **49% of `thesis-only`'s 159
+trades reached neither stop nor target**, and those 78 cost 392 units. Every
+other open question in the research folder is worth tenths of an R.
+
+Three things the run has to get right, each of which has already cost a wrong
+answer somewhere in this folder:
+
+* The catalyst window must **end at the entry**, not span it. Counting one that
+  lands afterwards is look-ahead.
+* The control must be **matched on busyness**, not on the absence of a
+  headline - trades and news both cluster when markets are active, so an
+  unmatched comparison measures the session.
+* **The synthetics are the built-in control.** They have no underlying and no
+  news, so the effect cannot exist there. If it appears anyway, it is not news.
+
 ## 7c. Cross-instrument agreement - run, and it failed its control
 
 The same idea across eight instruments instead of across timeframes. Effects of
