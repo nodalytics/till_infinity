@@ -98,16 +98,49 @@ cluster in volatile periods. Conditioning on the instrument's *own* realised
 move does not control the cross-sectional volatility level, and nothing here
 does.
 
-## The Volatility 1s series could not be measured
+## The Volatility 1s series could not be measured, and the reason is not the threshold
 
 The five 1s indices produced **62 events between them** - 24 to 38 per index
-over nine days - which is below every reporting threshold in the harness. They
-generate one-minute bars whose step size is stable enough that a 12-nat
-threshold almost never trips.
+over nine days - which is below every reporting threshold in the harness.
 
-That is itself worth knowing: a detector calibrated on FX and crypto is close
-to silent on the 1s synthetics, so anything that wants to use FOCuS there needs
-its own threshold rather than the shipped one.
+**An earlier version of this section drew the wrong conclusion from that**: that
+a detector calibrated on FX and crypto is too strict for the 1s synthetics and
+needs its own threshold there. Checked on 2026-09-09 across all twenty
+synthetics on 1m bars, fires per day at 12 nats:
+
+| feed | fires/day |
+| --- | --- |
+| volatility_10_index | 0.20 |
+| **volatility_10_1s_index** | **0.34** |
+| volatility_25_index | 1.02 |
+| **volatility_25_1s_index** | **0.11** |
+| volatility_75_index | 0.20 |
+| **volatility_75_1s_index** | **0.57** |
+| jump_10_index | 16.49 |
+| range_break_100_index | 20.79 |
+| crash_300_index | 42.37 |
+| crash_1000_index | 57.70 |
+| boom_500_index | 60.36 |
+
+**The 1s series behave exactly like their standard counterparts.** The split is
+not one-second against one-minute - it is **spiking generators against
+diffusion generators**, and it is 300-fold.
+
+Deriv's volatility indices are constant-volatility diffusions. There is no
+regime change in them to find, so a change-point detector staying silent is the
+detector being *right*, not being mis-set. Boom, Crash, Jump and Range Break
+have spikes, jumps and breaks written into how they are generated, and FOCuS
+finds them constantly.
+
+Lowering the threshold on the volatility indices would not reveal anything. It
+would manufacture alarms on a process with no changes - which is the failure
+`CHANGE_THRESHOLD` already made once in `localising.md`, arrived at from the
+opposite direction.
+
+There is a real result buried in this: **the firing rate is a fair reading of
+whether the generating process has regime changes at all.** That is a stronger
+validation of the detector than anything measured on real prices, because here
+the answer is known in advance.
 
 ## What this changes
 

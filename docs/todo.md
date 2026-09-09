@@ -3476,9 +3476,13 @@ Nothing was published from it. What is left:
 * **A cross-sectional volatility control.** The likeliest mechanism is that the
   peer count proxies for "everything is moving", which the realised-move
   conditioning does not touch. Any second attempt needs it.
-* **The Volatility 1s series wants its own threshold.** Five indices produced
-  62 events between them at 12 nats - a detector calibrated on FX and crypto is
-  close to silent there.
+* ~~The Volatility 1s series wants its own threshold.~~ **Wrong, checked
+  2026-09-09.** They behave exactly like the standard volatility indices - 0.34
+  fires a day against 0.20 for volatility_10 - and both are quiet because a
+  constant-volatility diffusion has no regime change to find. The split is
+  spiking generators against diffusion ones, and it is 300-fold: boom_500 at
+  60.36 a day, crash_1000 at 57.70, jump_10 at 16.49. Lowering the threshold
+  would manufacture alarms on a process with no changes.
 * **Keep the synthetic group in every future cross-asset claim.** It cost one
   extra run and it is the only thing that settled anything.
 
