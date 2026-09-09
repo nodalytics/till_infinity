@@ -619,12 +619,22 @@ def test_the_presets_recover_the_named_strategies():
         assert engine.stop_floor_vol("5m") == shape.floor, name
 
 
-def test_two_named_strategies_are_the_same_point():
-    """`level-scalp` and `sweep-aware` have identical exits and differ only in
-    an extra entry gate, which is the argument for this module in one line."""
+def test_two_named_strategies_share_an_entry_and_differ_only_in_the_exit():
+    """They *were* the same point, which was the argument for this module in
+    one line. `sweep-aware` took `ride`'s exit on 2026-09-09 - measured at
+    +0.556R a trade over 30,875 paired replays with spread charged - so the
+    pair now differs in exactly the dimensions that measurement moved, and in
+    no others."""
     import till_infinity.trading as td
 
-    assert td.PRESETS["level-scalp"] == td.PRESETS["sweep-aware"]
+    plain, swept = td.PRESETS["level-scalp"], td.PRESETS["sweep-aware"]
+    ride = td.PRESETS["ride"]
+
+    # The exit is ride's.
+    assert (swept.target, swept.trail, swept.protect) == (ride.target, ride.trail, ride.protect)
+    # The entry is still level-scalp's - stop, resting behaviour, size.
+    assert (swept.stop, swept.floor, swept.pullback) == (plain.stop, plain.floor, plain.pullback)
+    assert swept != plain
 
 
 def test_the_shape_matches_the_class_it_configures():
@@ -826,15 +836,24 @@ def test_a_malformed_reward_cannot_own_the_policy():
     assert score.mean <= CLIP[1]
 
 
-def test_the_same_point_under_two_names_is_one_arm():
-    """`level-scalp` and `sweep-aware` are identical vectors. Crediting them
-    separately would split one arm's evidence in half."""
+def test_each_distinct_point_is_its_own_arm():
+    """`level-scalp` and `sweep-aware` were one vector under two names, and the
+    ledger credited them as a single arm - which is what stopped one arm's
+    evidence being split in half.
+
+    Giving `sweep-aware` `ride`'s exit separates them, and that separation has
+    a price: it is now a distinct arm and starts cold, so the learner knows
+    nothing about it until it has its own thirty observations. That is a real
+    cost of the change and it is asserted here rather than discovered later."""
     import till_infinity.trading as td
     from till_infinity.trading.strategies.policy import Policy
 
     policy = Policy()
-    assert td.PRESETS["level-scalp"].named() == td.PRESETS["sweep-aware"].named()
-    assert td.PRESETS["level-scalp"].named() in policy.arms
+    plain, swept = td.PRESETS["level-scalp"].named(), td.PRESETS["sweep-aware"].named()
+
+    assert plain != swept
+    assert plain in policy.arms
+    assert swept in policy.arms
 
 
 def test_opportunity_wears_the_shape_it_was_given():

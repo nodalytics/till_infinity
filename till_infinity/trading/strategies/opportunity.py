@@ -205,7 +205,9 @@ PRESETS: dict[str, Shape] = {
     # differ from them by a hold and nothing else. That is the argument for
     # this module in one table.
     "level-scalp": Shape(stop=1.0, target=1.0, trail=0.0, protect=0.0, hold=0.0, pullback=0.0),
-    "sweep-aware": Shape(stop=1.0, target=1.0, trail=0.0, protect=0.0, hold=0.0, pullback=0.0),
+    # No longer the same point as `level-scalp`: it keeps that entry and takes
+    # `ride`'s exit. See `SweepAware` for the measurement.
+    "sweep-aware": Shape(stop=1.0, target=6.0, trail=0.5, protect=1.0, hold=0.0, pullback=0.0),
     # **The one shape whose stop floor was eating its geometry.** A 4v stop
     # against a target the push model put at about 1.5v is 0.37 reward to risk,
     # which needs a 73% win rate; it won 45.9% and lost 441 units over 159

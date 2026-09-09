@@ -7701,3 +7701,21 @@ def test_the_interval_map_survives_msgpack_string_keys():
     trader._restore_intervals({"12": "1h", "34": "5m", "bad": "x", "56": ""})
 
     assert trader._intervals == {12: "1h", 34: "5m"}
+
+
+def test_sweep_aware_carries_rides_exit_and_its_own_entry():
+    """Measured: +0.556R a trade on 30,875 paired replays with spread charged.
+
+    Only the exit moves. The stop and the entry behaviour are what the replay
+    held constant, and changing them would make it a different trade rather
+    than the same trade with a better exit.
+    """
+    from till_infinity.trading.strategies.opportunity import PRESETS
+
+    sweep, ride = PRESETS["sweep-aware"], PRESETS["ride"]
+
+    assert (sweep.target, sweep.trail, sweep.protect) == (ride.target, ride.trail, ride.protect)
+    # ...and the entry side is still sweep-aware's own, not ride's.
+    assert sweep.pullback == 0.0
+    assert ride.pullback == 1.0
+    assert sweep.stop == 1.0

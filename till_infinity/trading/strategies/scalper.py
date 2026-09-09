@@ -1163,6 +1163,40 @@ class SweepAware(LevelStrategy):
     #: were stopped, more than any other strategy here.
     max_against_vol: ClassVar[float] = 1.5
 
+    # **`ride`'s exit, kept on this entry.** The filter above is what works -
+    # the calls it declines are worth +0.189R each - and the exit it had was
+    # the third-worst of the six policies `Ride` was measured over: a fixed
+    # target at one push, no trail, -0.041R against ride's +0.404R.
+    #
+    # Replayed on this strategy's own rule across 52,395 published calls,
+    # 30,875 with the 1m history to walk forward, **with the spread charged**:
+    #
+    #     its own exit   +0.099R   median +0.467   win 61.6%
+    #     ride's exit    +0.655R   median +0.353   win 64.4%
+    #     paired         +0.556R, better on 70.8% of the same trades
+    #
+    # The spread is real and does not reverse it - it costs the old policy
+    # 0.073R a trade, 42% of everything that policy made.
+    #
+    # **Only the exit moves.** The stop, the entry price and the resting
+    # behaviour are what the replay held constant; changing them would make
+    # this a different trade rather than the same trade with a better exit,
+    # which is the mistake `thesis-only` made in reverse - it moved the stop
+    # and left the target, and went on at 0.37 reward-to-risk.
+    #
+    # **The median falls while the mean rises.** A trail wins by the right
+    # tail, so the typical trade is worse and the average one much better. That
+    # is a different risk profile, not only a bigger number, and it will show
+    # as more round trips through profit. See `research/exiting.md`.
+
+    #: Six times the modelled push is far past the p99 of what touches reach,
+    #: so it bounds the trade without being what normally ends it.
+    target_multiple: ClassVar[float] = 6.0
+    #: The exit. Half a volatility unit was the best of the six measured.
+    trail_vol: ClassVar[float] = 0.5
+    #: Protect the trade once it has paid for its own risk.
+    break_even_at: ClassVar[float] = 1.0
+
     def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
         feed = str(payload.get("feed") or "")
         settings = self.settings
