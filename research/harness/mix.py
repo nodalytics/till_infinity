@@ -30,8 +30,15 @@ import statistics as st
 import time
 
 DB = "/app/.data/journal/journal.db"
-#: The afternoon the settings moved, UTC.
-CHANGED = 1789050000.0
+#: The afternoon the settings moved: 2026-09-09 18:20 UTC, the last of the five
+#: deploys that carried them.
+#:
+#: Written out rather than computed, and checked on use - the first version of
+#: this constant was twenty hours in the *future*, and `max(1.0, ...)` below
+#: turned that into a confident "1.0 hours since the changes" instead of an
+#: error. A clamp that makes a wrong number look plausible is worse than no
+#: clamp.
+CHANGED = 1788978000.0
 SYNTHETIC = ("volatility", "boom", "crash", "step", "jump", "range_break")
 
 
@@ -83,8 +90,16 @@ def run():
     conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=180.0)
     after = load(conn, CHANGED)
     before = load(conn, CHANGED - 7 * 86400, CHANGED)
-    hours_after = max(1.0, (now - CHANGED) / 3600)
-    print(f"{hours_after:.1f} hours since the changes\n")
+    elapsed = (now - CHANGED) / 3600
+    if elapsed <= 0:
+        print(f"CHANGED is {-elapsed:.1f} hours in the future - fix the constant")
+        return
+    hours_after = max(elapsed, 1e-6)
+    print(f"{elapsed:.1f} hours since the changes")
+    if elapsed < 24:
+        print("**Too early to read the mix.** Reported anyway, and not to be argued from.\n")
+    else:
+        print()
     describe("before (7d)", before, 7 * 24)
     describe("after", after, hours_after)
 
