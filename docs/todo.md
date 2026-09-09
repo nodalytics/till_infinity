@@ -3317,7 +3317,7 @@ instruments produced 205. The options are a longer history, more instruments,
 or a faster anchor - and the first is the only one that does not change the
 question being asked.
 
-## 7g. Does a catalyst change the rate of going nowhere?
+## ~~7g. Does a catalyst change the rate of going nowhere?~~ - not runnable yet
 
 `research/catalysing.md`. Technicals say where and which way; news decides
 which instrument has a reason to travel. The testable half is that **structure
@@ -3337,6 +3337,26 @@ answer somewhere in this folder:
   unmatched comparison measures the session.
 * **The synthetics are the built-in control.** They have no underlying and no
   news, so the effect cannot exist there. If it appears anyway, it is not news.
+
+**Run 2026-09-09 and it cannot be answered on this book.** Of 203 closed trades
+over 45 days, 146 are synthetics with no calendar; of the 57 real ones only 20
+map to a calendar tag, splitting 6 with a catalyst against 14 without, and not
+one instrument-hour cell carried both. `articles.symbols` turned out to be `[]`
+on all 24,214 rows, so RSS cannot be linked to an instrument at all.
+
+**And the placebo fired.** Synthetics given the US calendar flag - for events
+that cannot reach a generated index - expired 58.5% against 49.4%. Nine points
+on instruments the news cannot touch, because the flag is a proxy for the
+session. An effect that size on the real arm would have been indistinguishable
+from the clock, and would have been published as a result.
+
+To run it properly the book has to trade instruments that have a calendar. That
+is the binding constraint and it is not a data problem.
+
+**What the run did settle is where the money goes.** Boom is 53% of all losses
+- 44 trades, -410, losing in *both* directions - on an instrument
+[spiking.md](../research/spiking.md) had already shown to be memoryless and
+unpredictable. See [catalysing.md](../research/catalysing.md).
 
 ## 7c. Cross-instrument agreement - run, and it failed its control
 

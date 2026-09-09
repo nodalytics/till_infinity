@@ -87,6 +87,85 @@ a gate that declines to position in front of an instrument with no reason to
 move, and a `hold` that is set from when the catalyst is expected rather than
 from a constant.
 
+## Run on 2026-09-09, and it cannot be run on this book
+
+Three things stopped it, and the third is the useful one.
+
+### The catalyst source is thinner than it looked
+
+`news.db` has 24,214 articles, and the `symbols` column is **`[]` on every one
+of them**. The field exists, is populated on every row, and has never contained
+anything - so RSS cannot be attached to an instrument at all. `observations` is
+weekly COT, which is not a catalyst.
+
+That leaves the economic calendar: 1,591 `events` tagged by country or
+currency, which is enough to say "the dollar had a print in the last two
+hours". It is not enough to say a headline was about gold.
+
+### The book barely trades anything with a calendar
+
+Of 203 closed trades over 45 days, **146 are Deriv synthetics** - generated
+instruments with no underlying and no news that could reach them. Of the 57
+real-instrument trades, only 20 fall on a symbol this harness can map to a
+calendar tag, and they split **6 with a catalyst against 14 without**.
+
+Six trades is not a measurement. Matched on instrument and hour of day, **not a
+single cell carried both** a catalyst trade and a non-catalyst trade.
+
+### And the placebo fired, which is the part worth keeping
+
+The synthetics were given the **US calendar flag anyway** - a flag for events
+that cannot possibly reach a generated index:
+
+| synthetics, US flag | trades | expired |
+| --- | --- | --- |
+| set | 65 | **58.5%** |
+| clear | 81 | **49.4%** |
+
+**A 9.1 point difference on instruments the events cannot touch.** The flag is
+a proxy for the active session, and the session is when both trades and events
+cluster. Had the real-instrument population been large enough to report, an
+effect of that size would have been indistinguishable from the clock - and this
+document would have claimed news moved the expiry rate.
+
+That is the control doing its job before the result existed, which is the right
+order.
+
+## What it would take to run properly
+
+* **Trade instruments that have a calendar.** This is the binding constraint
+  and it is not a data problem. A book that is 72% synthetics cannot test a
+  hypothesis about news.
+* **Populate `articles.symbols`**, or drop the column. An always-empty field
+  that looks like a working join is worse than no field.
+* **Keep the placebo.** Any future version needs the synthetic arm reported
+  beside the real one, because the session confound is real and is worth 9
+  points on its own.
+
+## What the run did settle
+
+**Where the money actually goes**, which is a better question than the one
+asked. Over 45 days:
+
+| family | trades | mean | net |
+| --- | --- | --- | --- |
+| boom | 44 | -0.52R | **-410** |
+| volatility indices | 73 | -0.06R | -208 |
+| step | 9 | -0.40R | -49 |
+| crash | 20 | +0.03R | -17 |
+| everything else | 57 | -0.09R | -84 |
+
+**Boom alone is 53% of the losses**, and both directions lose - buy -0.42R over
+23 trades, sell -0.63R over 21. [spiking.md](spiking.md) already established
+that Boom's spikes are memoryless, gap cv 0.99, and therefore unpredictable.
+The book was trading, in size, an instrument this folder had already refuted.
+
+`thesis-only` placed 36 of those 44 Boom trades for -374, and `fade-to-value`
+and `confluence-scalp` account for most of the rest of the synthetic damage.
+All three were removed on the same day for unrelated reasons, which takes out
+the bulk of it - but the reason they cost so much is *what they were trading*,
+not only how they sized it.
+
 ## What this does not say
 
 * **Not that news predicts direction.** The claim is the opposite - direction

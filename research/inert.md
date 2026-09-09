@@ -276,3 +276,18 @@ Two things follow, and neither is "the feature is wrong":
   bars and a 1m series therefore reaches eight hours. Growing it for that one
   series, or keeping the coarse band on coarse origins, is a measurement nobody
   has made.
+
+## Eleven: `articles.symbols` has been empty on every row ever written
+
+24,214 articles in `news.db`, every one carrying a `symbols` column, and the
+value is `[]` on all of them. The field is populated - it is not null, it is an
+empty list - so nothing reads as missing and every join against it succeeds and
+returns nothing.
+
+Found on 2026-09-09 while trying to test whether a catalyst changes how often a
+trade expires ([catalysing.md](catalysing.md)). The experiment fell back to the
+economic calendar, which can say the dollar had a print and cannot say a
+headline was about gold.
+
+An always-empty field that looks like a working join is worse than an absent
+one: the absent one asks a question at the point of use.
