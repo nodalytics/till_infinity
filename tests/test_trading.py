@@ -7656,8 +7656,9 @@ def test_an_adopted_position_gets_its_timeframe_back():
     trader._intervals = {77: "4h"}
     trader.journal = None
 
-    blank = Intent(feed="gold", symbol="XAUUSD", side=Side.BUY, volume=0.1,
-                   entry=1.0, stop=0.9, target=1.2)
+    blank = Intent(
+        feed="gold", symbol="XAUUSD", side=Side.BUY, volume=0.1, entry=1.0, stop=0.9, target=1.2
+    )
     position = type("P", (), {"ticket": 77, "symbol": "XAUUSD", "side": Side.BUY})()
 
     got, _ref = trader._recover(77, position, blank, "someref")
@@ -7674,8 +7675,16 @@ def test_an_intent_that_already_knows_its_timeframe_is_left_alone():
     trader._intervals = {77: "4h"}
     trader.journal = None
 
-    known = Intent(feed="gold", symbol="XAUUSD", side=Side.BUY, volume=0.1,
-                   entry=1.0, stop=0.9, target=1.2, interval="15m")
+    known = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.1,
+        entry=1.0,
+        stop=0.9,
+        target=1.2,
+        interval="15m",
+    )
     position = type("P", (), {"ticket": 77, "symbol": "XAUUSD", "side": Side.BUY})()
 
     got, _ref = trader._recover(77, position, known, "someref")
