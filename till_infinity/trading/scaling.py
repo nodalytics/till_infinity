@@ -111,6 +111,45 @@ def by_volatility(vol_bps: float, target_bps: float) -> float:
     return min(1.0, target_bps / vol_bps)
 
 
+def by_regime(ratio: float | None, width: float, floor: float = 0.5) -> float:
+    """Reduce when volatility is far from its own long-run level.
+
+    `ratio` is `forecast_ratio` off the call: how far the current scale sits
+    above where this instrument usually is. One is normal.
+
+    **The shape is an inverted U and that is the whole point.** Measured over
+    24,611 decisive touches, a level held **85.7%** of the time with the ratio
+    between 1.0 and 1.2, and **78.9%** below 0.73 and **78.8%** above 2.06 -
+    worse at *both* ends, by about seven points. A compressed regime is what
+    price is coiled against, so the move that ends the compression goes through
+    the level; a violent one runs levels over; the middle is where a level is a
+    level.
+
+    Nothing linear can express that, which is why this is a distance from one
+    rather than a multiple of it - `by_volatility` above is the multiple, and
+    it is a different statement about a different quantity.
+
+    `width` is how far from one the ratio may drift before size starts falling,
+    in log space so that half and double are equally far away. Zero is off.
+    `floor` bounds the reduction: the reading is worth seven points of held
+    rate, not a veto, and a scaler that can go to zero is a gate wearing a
+    multiplier's clothes.
+
+    **Only ever reduces**, like everything else here. The middle of the band
+    gets full size; it never gets more than full.
+    """
+    if width <= 0 or ratio is None or ratio <= 0:
+        return 1.0
+    # Log distance, so 0.5 and 2.0 are the same distance from 1.0. A ratio is a
+    # multiplicative quantity and treating it additively would make the quiet
+    # tail - which is bounded below by zero - look far closer than the loud one.
+    drift = abs(math.log(float(ratio)))
+    if drift <= width:
+        return 1.0
+    over = (drift - width) / width
+    return max(floor, min(1.0, 1.0 - over * (1.0 - floor)))
+
+
 def by_edge(edge_vol: float | None, full_at: float) -> float:
     """Scale by measured net edge, fractionally.
 

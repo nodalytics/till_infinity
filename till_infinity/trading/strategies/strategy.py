@@ -267,6 +267,12 @@ class Strategy(ABC):
             scaling.by_volatility(
                 float(features.get("vol_bps") or 0.0), settings.volatility_target_bps
             ),
+            # How far this instrument's volatility sits from its own normal.
+            # Both tails are worse for a level holding, so this is a distance
+            # from one rather than a multiple of it - see `scaling.by_regime`.
+            scaling.by_regime(
+                features.get("forecast_ratio"), settings.regime_band, settings.regime_floor
+            ),
             scaling.by_edge(features.get("net_edge_vol"), settings.edge_full_at),
             scaling.by_drawdown(peak, equity, settings.drawdown_halt_at),
             scaling.by_slippage(dict(settings.stop_overshoot).get(feed.strip().lower(), 1.0)),

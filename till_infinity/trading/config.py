@@ -642,6 +642,24 @@ class Settings:
     #: fraction. Linear in the edge and capped, which is the conservative end
     #: of the Kelly family: full Kelly on an edge estimated from fifty touches
     #: is a way to be wiped out by an estimation error rather than by a market.
+    #: How far `forecast_ratio` may drift from one, in log space, before size
+    #: starts falling. Zero is off.
+    #:
+    #: Levels hold 85.7% of the time with the ratio between 1.0 and 1.2, and
+    #: about 78.8% at either extreme - measured over 24,611 touches, an
+    #: inverted U rather than a slope. `scaling.by_regime` is the multiplier;
+    #: this is how wide the band of full size is. 0.35 is roughly "between
+    #: three-quarters and one and a half times normal volatility".
+    #:
+    #: **Off until the sample is longer.** Seven days is exactly the window in
+    #: which a volatility conditional is most likely to be a period effect, and
+    #: held rate is not profit. See `research/clustering.md`.
+    regime_band: float = 0.0
+    #: The most `by_regime` may reduce by. A scaler that can reach zero is a
+    #: gate wearing a multiplier's clothes, and seven points of held rate does
+    #: not justify a veto.
+    regime_floor: float = 0.5
+
     edge_full_at: float = 0.0
 
     #: What a stop actually costs on an instrument, in R, as `feed=multiple`
@@ -1499,6 +1517,8 @@ class Settings:
             max_hold_swing=_float("TRADING_MAX_HOLD_SWING_S", 21_600.0),
             crowding_share=_float("TRADING_CROWDING_SHARE", 0.0),
             volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),
+            regime_band=_float("TRADING_REGIME_BAND", 0.0),
+            regime_floor=_float("TRADING_REGIME_FLOOR", 0.5),
             edge_full_at=_float("TRADING_EDGE_FULL_AT", 0.0),
             drawdown_halt_at=_float("TRADING_DRAWDOWN_HALT_AT", 0.0),
             stop_overshoot=_overshoot(_env("TRADING_STOP_OVERSHOOT")),

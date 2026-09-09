@@ -7593,3 +7593,48 @@ def test_a_map_that_is_not_a_map_is_ignored():
     trader._restore_refs(["nonsense"])
 
     assert trader._refs == {}
+
+
+def test_the_regime_scaler_is_off_until_a_band_is_set():
+    """Every scaler here is off unless configured, and this one is not measured
+    well enough to be on: seven days is the window in which a volatility
+    conditional is most likely to be a period effect."""
+    from till_infinity.trading import scaling
+
+    assert scaling.by_regime(1.0, 0.0) == 1.0
+    assert scaling.by_regime(5.0, 0.0) == 1.0
+    assert scaling.by_regime(None, 0.35) == 1.0
+
+
+def test_the_regime_scaler_cuts_both_tails_and_not_the_middle():
+    """An inverted U, not a slope. Levels hold 85.7% near the long-run level
+    and about 78.8% at *either* extreme, so a linear reading of the ratio would
+    have the sign wrong on one whole side."""
+    from till_infinity.trading import scaling
+
+    # Normal volatility keeps full size.
+    assert scaling.by_regime(1.0, 0.35) == 1.0
+    assert scaling.by_regime(1.2, 0.35) == 1.0
+
+    quiet = scaling.by_regime(0.35, 0.35)
+    loud = scaling.by_regime(3.0, 0.35)
+
+    assert quiet < 1.0, "a compressed regime was not reduced"
+    assert loud < 1.0, "a violent regime was not reduced"
+
+
+def test_the_regime_scaler_treats_half_and_double_alike():
+    """Log distance, because a ratio is multiplicative. Read additively, the
+    quiet tail is bounded below by zero and would look far closer than the
+    loud one."""
+    from till_infinity.trading import scaling
+
+    assert scaling.by_regime(0.5, 0.2) == pytest.approx(scaling.by_regime(2.0, 0.2))
+
+
+def test_the_regime_scaler_never_enlarges_and_never_reaches_zero():
+    from till_infinity.trading import scaling
+
+    for ratio in (0.01, 0.5, 1.0, 2.0, 50.0):
+        got = scaling.by_regime(ratio, 0.35, floor=0.5)
+        assert 0.5 <= got <= 1.0, f"{ratio} gave {got}"
