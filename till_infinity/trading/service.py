@@ -1282,6 +1282,44 @@ class Trader:
             log.debug("trading: could not recover an interval for %s: %s", ref, exc)
         return ""
 
+    #: Attributes a strategy may accumulate across calls, which have to survive
+    #: a restart or the strategy never warms. Named rather than discovered, so
+    #: adding one is a deliberate act and a reader can see the whole list.
+    LEARNED: ClassVar[tuple[str, ...]] = ("speeds", "book")
+
+    def _learned_of(self, engine: Any) -> Any:
+        """Whatever this strategy has accumulated, or None if it accumulates nothing."""
+        for name in self.LEARNED:
+            got = getattr(engine, name, None)
+            if got is not None:
+                return got
+        return None
+
+    def _restore_learned(self, stored: Any) -> None:
+        """Give each strategy back what it had learned before the restart.
+
+        Type-checked against what the strategy currently holds, for the reason
+        the `push`/`ensemble` restore gives: a key the registry could not
+        resolve comes back as a plain mapping, and a dict landing where a
+        `Speeds` is expected is an `AttributeError` on the next call, on every
+        feed, for the life of the process.
+        """
+        if not isinstance(stored, dict):
+            return
+        back = 0
+        for engine in self.strategies:
+            saved = stored.get(engine.name)
+            if saved is None:
+                continue
+            for name in self.LEARNED:
+                held = getattr(engine, name, None)
+                if held is not None and type(saved) is type(held):
+                    setattr(engine, name, saved)
+                    back += 1
+                    break
+        if back:
+            log.info("trading: restored what %d strategy(s) had accumulated", back)
+
     def _restore_intervals(self, stored: Any) -> None:
         """Put the ticket-to-timeframe map back, with the same key coercion.
 
@@ -2516,6 +2554,31 @@ class Trader:
                 # severs every open trade from its own reasoning - see `_refs`.
                 "refs": {str(k): v for k, v in self._refs.items()},
                 "intervals": {str(k): v for k, v in self._intervals.items()},
+                # **What each strategy has accumulated across calls.**
+                #
+                # `Speeds` needs 48 calls per instrument before its slow line
+                # means anything, and `Book` is where `swing-level` keeps every
+                # level it has seen and builds its valuation from. Both were
+                # created in `__init__` and saved nowhere, so a deploy reset
+                # them - and on a day with ten deploys a counter that needs 48
+                # calls on one feed never arrives.
+                #
+                # `momentum-scalp` has taken **no trade in 45 days**: 109 of
+                # its 110 refusals are `warmup: the speeds have not seen enough
+                # calls yet`. It is not a strategy that declines, it is one
+                # that cannot start.
+                #
+                # This is the fourth thing found this session that accumulated
+                # in memory and was wiped by the deploy cadence, after
+                # `Drift._agreement`, `Live.ref` and the intent's interval. The
+                # symptom is never an error - it is a component that looks
+                # configured and does nothing.
+                "learned": {
+                    engine.name: state
+                    for engine in self.strategies
+                    for state in (self._learned_of(engine),)
+                    if state is not None
+                },
                 "counters": {
                     "taken": self.taken,
                     "refused": self.refused,
@@ -2574,6 +2637,7 @@ class Trader:
         if type(got).__name__ == "Policy":
             self.policy = got
         self._restore_refs(payload.get("refs"))
+        self._restore_learned(payload.get("learned"))
         self._restore_intervals(payload.get("intervals"))
         # **Only values that came back as the right class.** A key the registry
         # could not resolve unpacks to a plain mapping of its fields, and
