@@ -3393,17 +3393,49 @@ session the way the pairwise test was, so it could still be volatility wearing
 a costume. Condition on the hour and on realised volatility, run longer than 14
 days, and block bootstrap it.
 
-## 7i. Is the regime forecast actually combined with direction?
+## 7i. Is the regime forecast actually combined with direction? - run, and no
 
 `research/clustering.md`. Volatility clusters and direction does not, so the
 sharpest statement of what this system does is: take the predictable part and
 let structure supply the sign.
 
-**That has never been tested directly.** `forecast_ratio` - how far the current
-scale sits above its own long-run level - is published on every call and
-nothing conditions on it. Whether a level held more often when the regime
-forecast was rising, falling or flat is answerable from the journal today, and
-would say whether the two halves are combined or merely both present.
+**Run 2026-09-09 on 24,611 decisive touches.** Levels hold **85.7%** of the
+time when volatility sits near its long-run level, and **78.9% / 78.8%** at
+either extreme - an inverted U with 6.9 points between the peak and the tails,
+about five thousand touches per bucket. A compressed regime is one a level is
+coiled against; a violent one runs levels over; the middle is where a level is
+a level.
+
+The touch's own `regime` field carries **none** of it - 81.6% to 82.4% across
+its buckets, flat. Two fields that sound like the same quantity and only one
+knows anything.
+
+So the halves are not combined: `forecast_ratio` is computed, published, and
+read by nothing. This is the first measurement saying it should be.
+
+Before it gates anything: held rate is not profit, and 7 days is exactly the
+sample in which a volatility conditional is most likely to be a period effect.
+More days and a block bootstrap first.
+
+## 7j. The volatility sizing scaler is built and switched off
+
+`scaling.by_volatility` reduces a position when an instrument runs hotter than
+the book is sized for, and `TRADING_VOLATILITY_TARGET_BPS` is unset, so it
+returns 1.0 on every trade.
+
+Measured over 7 days of published calls, median `vol_bps`: eurusd 0.72, gbpusd
+0.95, spx500 1.62, usdjpy 2.20, gold 3.78, silver 7.60, boom_500 8.65,
+**volatility_75 17.75**. A **25x spread, all carrying the same risk fraction.**
+
+The stop widens with volatility so the money at risk on a stop is equal - but
+the portfolio's exposure to a violent instrument having a violent day is not,
+which is what the scaler is for. It bears on where the money has gone: the
+synthetics are the loss centre in every breakdown of this book.
+
+A target near **3.0bps** leaves the majors and indices at full size and cuts
+silver, boom and the volatility indices by two-thirds or more. It only ever
+reduces, so the risk of setting it is under-sizing rather than over. Needs a
+decision rather than a measurement.
 
 Measured on the way in: the level book holds **1 to 15 levels per (feed,
 interval)** across 3,451 sets - a near-price working set, not a historical map,

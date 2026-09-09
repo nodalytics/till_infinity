@@ -73,14 +73,88 @@ without dividing by a volatility estimate.
   move is large says nothing about which way, which is exactly why the
   structure half of this system exists.
 
-## The open question it points at
+## Run: the regime does predict whether a level holds
 
-If volatility is the predictable part and direction is not, the sharpest
-version of what this repository does is: **take the part that is predictable,
-and let structure supply the sign.**
+24,611 decisive touches over 7 days, each joined to the decision that carried
+`forecast_ratio` - how far the current volatility scale sits above its own
+long-run level.
 
-That is testable and has not been tested directly. The forecast is already
-published on every call as `forecast_ratio`; nothing conditions on it. Whether
-a level held more often when the regime forecast was rising, falling or flat is
-a question the journal can answer today, and would say whether the two halves
-are actually being combined or merely both present.
+| forecast_ratio | touches | level held |
+| --- | --- | --- |
+| below 0.73 | 4,922 | **78.9%** |
+| 0.73 - 1.00 | 4,689 | 83.1% |
+| **1.00 - 1.20** | 5,156 | **85.7%** |
+| 1.20 - 2.06 | 4,922 | 83.5% |
+| above 2.06 | 4,922 | **78.8%** |
+
+**Levels hold best when volatility is near its own long-run level, and worst at
+both extremes** - 6.9 points between the peak and either tail, on about five
+thousand touches per bucket. It is an inverted U, not a slope, which is why
+nobody would have found it by fitting a coefficient.
+
+Both ends make sense on inspection. In a compressed regime a level is what
+price is coiled against, and the move that ends the compression goes through
+it. In a violent one, levels are simply run over. The middle is where a level
+is a level.
+
+**And the touch's own `regime` field carries none of this:** 82.4%, 81.6%,
+82.0%, 82.4%, 81.8% across its five buckets - flat to within a point. Two
+fields that sound like the same quantity, and only one of them knows anything.
+Anything reaching for "the regime" should reach for `forecast_ratio`.
+
+So the two halves are **not** currently combined. The forecast is computed,
+published on every call, and read by nothing. This is the first measurement
+saying it should be read.
+
+**What it is not yet.** Held rate is not profit: `research/reachable.md` is the
+standing reminder that a level holding and a trade paying are different events.
+And 7 days of one regime is exactly the sample in which a volatility conditional
+is most likely to be a period effect. The next step is the same one
+`agreeing.md` needed - more days, and a block bootstrap over autocorrelated
+touches.
+
+## Sizing: half of it is automatic and the other half is switched off
+
+An earlier version of this document said sizing was volatility-aware, full
+stop. That is too strong and the distinction matters.
+
+**What is automatic.** A stop is expressed in volatility units and converted
+through `vol_bps`, so a wider regime gives a wider stop and the lot count falls
+to keep the *money at risk* constant. Nothing has to be configured for that and
+nothing can turn it off.
+
+**What is not.** Constant money at risk is **not** constant risk when an
+instrument's own volatility is many times another's. `scaling.by_volatility`
+exists for exactly that - it scales a position down by `target / vol_bps` when
+an instrument runs hotter than the book is sized for - and it is **off**:
+`TRADING_VOLATILITY_TARGET_BPS` is unset, so it returns 1.0 on every trade.
+
+The spread it would be correcting, measured over 7 days of published calls:
+
+| feed | median vol_bps | p90 |
+| --- | --- | --- |
+| eurusd | 0.72 | 2.33 |
+| gbpusd | 0.95 | 2.47 |
+| spx500 | 1.62 | 5.90 |
+| us100 | 2.12 | 8.25 |
+| usdjpy | 2.20 | 4.66 |
+| btc | 3.77 | 10.32 |
+| gold | 3.78 | 9.91 |
+| silver | 7.60 | 32.38 |
+| boom_500_index | 8.65 | 24.26 |
+| **volatility_75_index** | **17.75** | **45.38** |
+
+**A 25x spread, all carrying the same risk fraction.** A volatility index gets
+the same fraction of equity at risk as EURUSD, on an instrument that moves
+twenty-five times as far in the same minute. The stop widens and the lots fall,
+so the *arithmetic* loss on a stop is equal - but the portfolio's exposure to a
+violent instrument having a violent day is not, and that is what the scaler is
+for.
+
+This is not a small dial. It bears directly on where the money has actually
+gone: the synthetics are the loss centre in every breakdown of this book.
+
+**A target near 3.0bps** would leave the majors and the indices at full size and
+cut silver, boom and the volatility indices by two-thirds or more. It only ever
+reduces - a sizing model that can size *up* turns an estimation error into a
+margin call - so the risk of setting it is under-sizing, not over.

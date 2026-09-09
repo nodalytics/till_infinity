@@ -1,102 +1,137 @@
-"""Can momentum say which of the two directional bets to take?
+"""Todo 7i, and the volatility-target number.
 
-Every scalping strategy here is one of two wagers. `level-scalp` and its
-refinements bet the level **holds** - price turned up to it and will turn away.
-`inverse` bets it **fails**. They are the same call read two ways, and nothing
-so far chooses between them; `inverse` runs as a control precisely because the
-choice was never made on evidence.
+**7i.** Volatility clusters and direction does not, so the sharpest statement of
+what this system does is: model the predictable part, let structure supply the
+sign. That has never been tested. `forecast_ratio` - how far the current scale
+sits above its own long-run level - is published on every call and nothing
+conditions on it.
 
-The proposal under test: momentum makes that choice. Price drifting into a
-level is a level being tested and likely to hold; price *running* into one is a
-move in progress and more likely to go through. If that is true, momentum is
-not only a timing filter - it is a regime classifier, and the strategy to use
-is a function of it.
+The touch record carries `regime` directly; `forecast_ratio` lives on the
+decision, and every structures outcome has a parent, so the two join.
 
-`approach_vol` is the recorded proxy: how far price ran on its way into the
-level, in volatility units. This asks whether it separates the outcome classes,
-and whether it separates the R a trade would have taken on each side of the
-bet.
-
-**What would make the proposal true**: breaks rising with approach, and the
-against-the-level trade beating the with-the-level trade in the top deciles.
-Anything less and momentum is a filter, not a classifier.
-
-Usage: python -m research.harness.regime [journal.db]
+**The sizing number.** `scaling.by_volatility` reduces a position when an
+instrument is more volatile than the book is sized for, and it is off:
+`TRADING_VOLATILITY_TARGET_BPS` is unset. Choosing it needs the distribution of
+`vol_bps` across what is actually traded, which is printed below.
 """
 
+from __future__ import annotations
+
 import json
+import os
 import sqlite3
-import sys
-from collections import Counter
+import statistics as st
+import time
 
-#: Outcomes where the level did not hold. `trap` is deliberately excluded from
-#: both sides: price went through and came back, which is the level holding
-#: *after* failing, and is the one class where "which bet won" depends entirely
-#: on where the stop was.
-BROKE = ("break",)
-HELD = ("reject",)
+DB = "/app/.data/journal/journal.db"
+DAYS = float(os.environ.get("DAYS", "7"))
 
 
-def load(db):
-    con = sqlite3.connect(db)
-    q = "select context from entries where actor='structures' and kind='outcome'"
-    out = []
-    for (ctx,) in con.execute(q):
-        d = json.loads(ctx or "{}")
-        if d.get("approach_vol") is None or d.get("push_vol") is None:
+def bucket(value, edges):
+    for i, edge in enumerate(edges):
+        if value < edge:
+            return i
+    return len(edges)
+
+
+def run():
+    now = time.time()
+    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=180.0)
+    since = now - DAYS * 86400
+
+    # Decisions carry forecast_ratio and vol_bps; outcomes carry the result.
+    decisions: dict[str, dict] = {}
+    for entry_id, ctx in conn.execute(
+        "SELECT id, context FROM entries WHERE actor='structures' AND kind='decision' AND time>=?",
+        (since,),
+    ):
+        try:
+            d = json.loads(ctx or "{}")
+        except Exception:
             continue
-        if d.get("excursion_vol") is None:
+        if isinstance(d, dict) and isinstance(d.get("forecast_ratio"), (int, float)):
+            decisions[str(entry_id)] = d
+
+    rows = []
+    for parent, ctx in conn.execute(
+        "SELECT parent, context FROM entries WHERE actor='structures' AND kind='outcome' "
+        "AND time>=? AND parent IS NOT NULL",
+        (since,),
+    ):
+        try:
+            d = json.loads(ctx or "{}")
+        except Exception:
             continue
-        out.append(
-            {
-                "approach": abs(float(d["approach_vol"])),
-                "push": float(d["push_vol"]),
-                "excursion": abs(float(d["excursion_vol"])),
-                "outcome": d.get("outcome") or "",
-            }
+        if not isinstance(d, dict) or str(d.get("outcome")) not in ("reject", "break"):
+            continue
+        parent_ctx = decisions.get(str(parent))
+        if parent_ctx is None:
+            continue
+        rows.append(
+            (
+                float(parent_ctx["forecast_ratio"]),
+                d.get("regime"),
+                float(parent_ctx.get("vol_bps") or 0.0),
+                str(d.get("outcome")) == "reject",
+                str(d.get("feed") or ""),
+            )
         )
-    return out
+    print(f"{len(rows)} decisive touches joined to a decision carrying forecast_ratio\n")
+    if len(rows) < 200:
+        print("not enough to report")
+    else:
+        fr = [r[0] for r in rows]
+        edges = [st.quantiles(fr, n=5)[i] for i in range(4)]
+        print("held rate by forecast_ratio (how far scale sits above its long-run level):")
+        print(f"  edges: {[round(e, 3) for e in edges]}")
+        book: dict[int, list] = {}
+        for ratio, _, _, held, _ in rows:
+            book.setdefault(bucket(ratio, edges), []).append(1 if held else 0)
+        for k in sorted(book):
+            v = book[k]
+            lo = "-inf" if k == 0 else f"{edges[k - 1]:.3f}"
+            hi = "+inf" if k == len(edges) else f"{edges[k]:.3f}"
+            print(f"    {lo:>7s} .. {hi:<7s} {len(v):6d} touches  held {st.fmean(v):6.1%}")
 
+        regimes = [r[1] for r in rows if isinstance(r[1], (int, float))]
+        if len(regimes) > 200:
+            redges = [st.quantiles(regimes, n=5)[i] for i in range(4)]
+            print("\nheld rate by `regime` (carried on the touch itself):")
+            book = {}
+            for _, reg, _, held, _ in rows:
+                if isinstance(reg, (int, float)):
+                    book.setdefault(bucket(float(reg), redges), []).append(1 if held else 0)
+            for k in sorted(book):
+                v = book[k]
+                lo = "-inf" if k == 0 else f"{redges[k - 1]:.3f}"
+                hi = "+inf" if k == len(redges) else f"{redges[k]:.3f}"
+                print(f"    {lo:>7s} .. {hi:<7s} {len(v):6d} touches  held {st.fmean(v):6.1%}")
 
-def r_of(touch, stop, target):
-    """R for the with-the-level trade. Stop wins ties."""
-    if touch["excursion"] >= stop:
-        return -1.0
-    return (target / stop) if abs(touch["push"]) >= target else 0.0
-
-
-def main():
-    db = sys.argv[1] if len(sys.argv) > 1 else ".data/journal/journal.db"
-    rows = load(db)
-    print(f"{len(rows):,} resolutions carrying an approach\n")
-    if len(rows) < 500:
-        print("not enough to say anything")
-        return
-
-    rows.sort(key=lambda r: r["approach"])
-    bands, size = 10, len(rows) // 10
-    print("momentum into the level, against what happened there")
-    print(f"{'approach v':>14s} {'n':>7s} {'held':>7s} {'broke':>7s} {'R with':>8s}")
-    print("-" * 50)
-    for i in range(bands):
-        chunk = rows[i * size : (i + 1) * size] if i < bands - 1 else rows[(bands - 1) * size :]
-        if not chunk:
+    print("\n=== vol_bps across what is published, for the sizing target ===")
+    vols: dict[str, list] = {}
+    for ctx in (c for (c,) in conn.execute(
+        "SELECT context FROM entries WHERE actor='structures' AND kind='decision' AND time>=?",
+        (since,))):
+        try:
+            d = json.loads(ctx or "{}")
+        except Exception:
             continue
-        kinds = Counter(t["outcome"] for t in chunk)
-        held = sum(kinds[k] for k in HELD)
-        broke = sum(kinds[k] for k in BROKE)
-        decided = held + broke
-        share = broke / decided if decided else 0.0
-        with_level = sum(r_of(t, 0.5, 0.75) for t in chunk) / len(chunk)
-        lo, hi = chunk[0]["approach"], chunk[-1]["approach"]
-        print(
-            f"{lo:>6.2f}-{hi:<7.2f} {len(chunk):>7,} {held:>7,} {broke:>7,} "
-            f"{with_level:>8.3f}   break {share:>5.1%}"
-        )
-
-    print("\nIf momentum classified the regime, break share would climb with")
-    print("approach and the with-the-level R would fall as it did.")
+        if isinstance(d, dict) and isinstance(d.get("vol_bps"), (int, float)) and d["vol_bps"] > 0:
+            vols.setdefault(str(d.get("feed") or "?"), []).append(float(d["vol_bps"]))
+    every = [v for xs in vols.values() for v in xs]
+    if every:
+        qs = st.quantiles(every, n=10)
+        print(f"  all feeds: n={len(every)}  median {st.median(every):.2f}bps  "
+              f"p10 {qs[0]:.2f}  p90 {qs[8]:.2f}")
+    TRADED = ("eurusd","gbpusd","usdjpy","gold","silver","btc","us100","spx500",
+              "volatility_75_index","boom_500_index")
+    print(f"  {'feed':22s} {'n':>6s} {'median':>9s} {'p90':>9s}")
+    for feed in TRADED:
+        xs = vols.get(feed)
+        if not xs or len(xs) < 20:
+            continue
+        print(f"  {feed:22s} {len(xs):6d} {st.median(xs):8.2f}b {st.quantiles(xs, n=10)[8]:8.2f}b")
 
 
 if __name__ == "__main__":
-    main()
+    run()
