@@ -7548,3 +7548,48 @@ def test_the_shape_name_only_changes_for_shapes_that_use_the_floor():
 
     assert plain.startswith("stop1f1/target1/")
     assert "target1r1/" in floored
+
+
+def test_the_position_to_decision_map_survives_a_restart():
+    """41% of closes were unattributed because this link lived only in memory.
+
+    `self.open` is rebuilt from the broker on every start, so every trade that
+    outlived a deploy closed with no decision behind it - no strategy, no R
+    multiple, no geometry - and was invisible to every query reading
+    `kind='outcome'`. Measured 2026-09-09: 227 of 548 closes.
+    """
+    from till_infinity.trading.service import Trader
+
+    trader = Trader.__new__(Trader)
+    trader._refs = {}
+
+    # msgpack brings the keys back as strings. Left that way the map restores,
+    # logs a healthy count and never matches a ticket again.
+    trader._restore_refs({"123": "abc", "456": "def"})
+
+    assert trader._refs == {123: "abc", 456: "def"}
+    assert all(isinstance(k, int) for k in trader._refs)
+
+
+def test_an_unreadable_ref_entry_is_skipped_rather_than_fatal():
+    from till_infinity.trading.service import Trader
+
+    trader = Trader.__new__(Trader)
+    trader._refs = {}
+
+    trader._restore_refs({"7": "ok", "not-a-ticket": "x", None: "y"})
+
+    assert trader._refs == {7: "ok"}
+
+
+def test_a_map_that_is_not_a_map_is_ignored():
+    """A file written by an older build has no `refs` key at all."""
+    from till_infinity.trading.service import Trader
+
+    trader = Trader.__new__(Trader)
+    trader._refs = {}
+
+    trader._restore_refs(None)
+    trader._restore_refs(["nonsense"])
+
+    assert trader._refs == {}

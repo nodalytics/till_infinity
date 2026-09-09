@@ -366,6 +366,12 @@ def _closed_body(
 class Trader:
     """Watches the bus, trades what it likes, records everything."""
 
+    #: Open positions by ticket, and the journal decision each came from. The
+    #: two are declared here rather than in `__init__` because that method is
+    #: at its statement limit, and assigned together there for the same reason.
+    open: dict[int, Live]
+    _refs: dict[int, str]
+
     def __init__(
         self,
         bus: Bus,
@@ -397,7 +403,27 @@ class Trader:
         )
         self.guard = Guard(self.settings, context=self.context)
         self.specs: dict[str, SymbolSpec] = {}
-        self.open: dict[int, Live] = {}
+        # Grouped because `__init__` is at its statement limit, which is the
+        # same reason `_focus_up` and its neighbours are grouped below.
+        self.open, self._refs = {}, {}
+        #: `_refs` is ticket -> the journal decision that opened it.
+        #:
+        #: **`Live` lives in memory and `self.open` is rebuilt from the broker
+        #: on every start**, so the link between a position and the decision
+        #: that asked for it did not survive a restart. Every trade that
+        #: outlived a deploy closed as "unattributed": measured on 2026-09-09,
+        #: **227 of 548 closes**, 41% of the book, with no strategy, no R
+        #: multiple and no geometry - and invisible to every performance query
+        #: that reads `kind='outcome'`.
+        #:
+        #: The bias is the worst part and `_ref_for` already names it: what went
+        #: missing was exactly the trades that lived long enough to span a
+        #: deploy, so every figure taken from the journal was computed on a set
+        #: that over-represented short ones.
+        #:
+        #: This is small, exact and survives a restart, which `_ref_for`'s
+        #: search cannot be - it reads 400 decisions back and this book writes
+        #: about that many every two days.
         self.equity = 0.0
         #: The highest equity this process has seen. Drawdown is measured from
         #: it, so a book that has given back a third of its month trades
@@ -1175,6 +1201,24 @@ class Trader:
         return wanted_by
 
     # --------------------------------------------------------------- trading
+
+    def _restore_refs(self, stored: Any) -> None:
+        """Put the ticket-to-decision map back after a restart.
+
+        **Keys come back as strings through msgpack.** Left as strings they
+        would never match a ticket again, so the map would restore, log a
+        healthy count, and do nothing - which is the shape `research/inert.md`
+        catalogues and exactly what this fix exists to stop.
+        """
+        if not isinstance(stored, dict):
+            return
+        for ticket, ref in stored.items():
+            try:
+                self._refs[int(ticket)] = str(ref)
+            except (TypeError, ValueError):
+                continue
+        if self._refs:
+            log.info("trading: recovered %d position-to-decision link(s)", len(self._refs))
 
     def _ref_for(self, position: Position) -> str:
         """The journal entry for the decision that opened this position.
@@ -2390,6 +2434,9 @@ class Trader:
                 # Resting orders live at the broker and `_orphans` reconciles
                 # them; this is what *we* meant by each one.
                 "waiting": self._waiting,
+                # Which decision opened which position. Without this a deploy
+                # severs every open trade from its own reasoning - see `_refs`.
+                "refs": {str(k): v for k, v in self._refs.items()},
                 "counters": {
                     "taken": self.taken,
                     "refused": self.refused,
@@ -2447,6 +2494,7 @@ class Trader:
         got = payload.get("policy")
         if type(got).__name__ == "Policy":
             self.policy = got
+        self._restore_refs(payload.get("refs"))
         # **Only values that came back as the right class.** A key the registry
         # could not resolve unpacks to a plain mapping of its fields, and
         # `_quote` does `self._push.setdefault(feed, Cusum()).push(...)` - so a
@@ -3525,7 +3573,10 @@ class Trader:
             # would be logged, announced, and never written down. Recover it
             # from the decision that opened it.
             if not ref:
-                ref = self._ref_for(position)
+                # The map first: it is exact and cheap. `_ref_for` searches the
+                # journal by symbol and side and is the fallback for positions
+                # opened before the map existed.
+                ref = self._refs.get(ticket) or self._ref_for(position)
             self.open[ticket] = Live(
                 position=position,
                 intent=intent,
@@ -3535,11 +3586,19 @@ class Trader:
                 attempt=int(signal.get(ATTEMPT, 0) or 0),
                 seen=float(opened) if opened > 0 else time.time(),
             )
+            if ref:
+                self._refs[ticket] = ref
             pending = None
         self._pending = None
 
         exact = {p.ticket: (price, why) for p, price, why in self.execution.drain_closed()}
         settled: list[tuple[Live, float, str]] = []
+        # A ticket the broker no longer has is finished, so its link is spent.
+        # Kept bounded here rather than left to grow: a map that only ever gains
+        # entries is a leak with a long fuse, and this one is persisted.
+        for ticket in list(self._refs):
+            if ticket not in current and ticket not in self.open:
+                self._refs.pop(ticket, None)
         for ticket, live in list(self.open.items()):
             if ticket in current:
                 continue
