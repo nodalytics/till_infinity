@@ -84,6 +84,86 @@ And because the strongest form is cheap: if agreement across instruments means
 anything, it should show in the **base rate of a touch holding**, which needs
 no trading, no costs and no execution assumptions.
 
+## Run on 2026-09-09
+
+14 days of decisive touches - `reject` against `break`, the two outcomes that
+say whether the level held. A tally is the paired instrument resolving a touch
+of **its own** level within two minutes, which needs no price mapping and no
+fitted beta.
+
+**Two minutes, not fifteen.** The first pass used a quarter of an hour and 94%
+of EURUSD touches tallied with GBPUSD, so the variable barely varied and the
+"untallied" group was whatever happens in the quiet hours. A tally has to be
+rare enough to mean something; at two minutes it runs 39-59% on the real pairs.
+
+### Within the hour of day, which is the number that counts
+
+Pooled figures are confounded by the session - touches cluster where everything
+else does - so the comparison is made inside each hour and the medians are
+reported across hours.
+
+| pair | median gap | hours positive | |
+| --- | --- | --- | --- |
+| **eurusd / gbpusd** | **+5.6%** | **21 of 24** | both dollar |
+| eurusd / usdchf | +3.1% | 16 of 24 | both dollar |
+| gold / audjpy | +2.6% | 16 of 22 | *see below* |
+| usdcad / usdchf | +2.4% | 17 of 24 | both dollar |
+| silver / gold | +2.4% | 15 of 23 | metals |
+| silver / eurusd | +2.0% | 15 of 23 | dollar only |
+| gbpusd / usdjpy | +1.7% | 18 of 24 | both dollar |
+| audusd / nzdusd | +1.7% | 16 of 24 | both dollar |
+| gold / silver | +0.9% | 11 of 22 | metals |
+| eurusd / eurgbp | +0.3% | 12 of 24 | shared EUR |
+| gold / eurusd | +0.0% | 10 of 21 | dollar only |
+| gold / usdjpy | -1.1% | 8 of 19 | dollar only |
+| **eurusd / audjpy** | **-1.5%** | **6 of 24** | **control** |
+| **volatility 25 / 75** | **-0.2%** | **10 of 21** | **control** |
+
+Pooled, `eurusd/gbpusd` runs 95.2% held when tallied against 89.9% when not,
+p < 0.002 on 500 permutations.
+
+### Both proper controls are clean, and one "control" was not a control
+
+The synthetic pair is flat (-0.2%, 10 of 21 hours) and EURUSD against AUDJPY is
+mildly *negative* (-1.5%, 6 of 24). Those are the two that had to come back
+empty and they did.
+
+**`gold/audjpy` fired at +2.6%, and it is not a counter-example - it was
+mis-specified.** AUD is a commodity currency and Australia is a major gold
+producer; AUD and gold co-move. Listing it as "no shared currency" confused
+*currency* with *factor*, and the pair shares a factor even though it shares no
+currency. That is a fault in the design, found by the design.
+
+### What it does and does not support
+
+**It supports:** a level is more likely to hold when a paired dollar instrument
+is simultaneously at one of its own. The lift is 1.7 to 5.6 points on a base
+rate already near 90%, consistent across hours, and it survives both honest
+controls.
+
+**It does not support the general claim.** The effect lives in the **dollar
+bloc**, which is the most confounded case there is - `peering.md`'s lesson was
+that two dollar pairs are one witness seen twice. The test that would separate
+"a shared factor at a level" from "the dollar at a level" is the metals, and
+**gold/silver returns +0.9% on 11 of 22 hours**, which is a coin flip. If the
+mechanism were shared-factor confirmation the metals should show it and they do
+not.
+
+So the reading is: **something real, probably about the dollar, and not the
+general principle it was proposed as.**
+
+### What would settle it
+
+* **A dollar index.** If this is the dollar being at a level, a DXY-like
+  composite should carry the whole effect and the pairwise version should add
+  nothing beyond it.
+* **Longer than 14 days**, and a block bootstrap rather than a permutation over
+  exchangeable touches - touches of the same level are heavily autocorrelated,
+  so the p-values here overstate what is known. `agreeing.md` had to learn the
+  same thing.
+* **The metals with more data.** 1,182 gold touches is thin, and it is the pair
+  that carries the interpretation.
+
 ## Where it goes if it works
 
 The same place `change_up_tf` went: onto the call as a feature, journalled,

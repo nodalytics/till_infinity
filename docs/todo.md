@@ -3358,7 +3358,7 @@ is the binding constraint and it is not a data problem.
 [spiking.md](../research/spiking.md) had already shown to be memoryless and
 unpredictable. See [catalysing.md](../research/catalysing.md).
 
-## 7h. Levels that tally across instruments
+## 7h. Levels that tally across instruments - run, and it is about the dollar
 
 `research/tallying.md`. If EURUSD has a level and GBPUSD has the corresponding
 one, is the pair worth more than either alone? Designed, not run.
@@ -3367,6 +3367,22 @@ The trap is named in the design and it already killed the change-point version
 in [peering.md](../research/peering.md): **two dollar pairs are not two
 witnesses, they are one witness seen twice.** The controls are a no-shared-
 currency pair, the synthetics, and a permutation test rather than one shuffle.
+
+**Run 2026-09-09.** Within the hour of day, a level held **+5.6% more often**
+on eurusd when gbpusd was simultaneously at one of its own (21 of 24 hours),
+and +1.7% to +3.1% across the rest of the dollar bloc. Both honest controls are
+clean: the synthetic pair -0.2%, eurusd/audjpy -1.5%.
+
+**But it is probably the dollar, not the principle.** gold/silver - the one
+pair that would separate "a shared factor at a level" from "the dollar at a
+level" - returns +0.9% on 11 of 22 hours, a coin flip. A `gold/audjpy` control
+fired at +2.6% and turned out not to be a control at all: AUD and gold co-move,
+so the pair shares a factor while sharing no currency.
+
+Next: a dollar composite, which should carry the whole effect if that reading
+is right; longer than 14 days; and a block bootstrap, because touches of one
+level are heavily autocorrelated and the permutation p-values overstate what is
+known.
 
 Measured on the way in: the level book holds **1 to 15 levels per (feed,
 interval)** across 3,451 sets - a near-price working set, not a historical map,
