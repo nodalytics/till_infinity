@@ -7638,3 +7638,57 @@ def test_the_regime_scaler_never_enlarges_and_never_reaches_zero():
     for ratio in (0.01, 0.5, 1.0, 2.0, 50.0):
         got = scaling.by_regime(ratio, 0.35, floor=0.5)
         assert 0.5 <= got <= 1.0, f"{ratio} gave {got}"
+
+
+def test_an_adopted_position_gets_its_timeframe_back():
+    """The ref map fixed the parent and not the intent.
+
+    `_intent_from` rebuilds a position from the broker, which knows a symbol
+    and a side and no timeframe - so 343 of 551 closes over 45 days carried no
+    interval, 62% of the record, and every per-interval conclusion was drawn
+    from the other 38%.
+    """
+    from till_infinity.trading.models import Intent, Side
+    from till_infinity.trading.service import Trader
+
+    trader = Trader.__new__(Trader)
+    trader._refs = {}
+    trader._intervals = {77: "4h"}
+    trader.journal = None
+
+    blank = Intent(feed="gold", symbol="XAUUSD", side=Side.BUY, volume=0.1,
+                   entry=1.0, stop=0.9, target=1.2)
+    position = type("P", (), {"ticket": 77, "symbol": "XAUUSD", "side": Side.BUY})()
+
+    got, _ref = trader._recover(77, position, blank, "someref")
+
+    assert got.interval == "4h"
+
+
+def test_an_intent_that_already_knows_its_timeframe_is_left_alone():
+    from till_infinity.trading.models import Intent, Side
+    from till_infinity.trading.service import Trader
+
+    trader = Trader.__new__(Trader)
+    trader._refs = {}
+    trader._intervals = {77: "4h"}
+    trader.journal = None
+
+    known = Intent(feed="gold", symbol="XAUUSD", side=Side.BUY, volume=0.1,
+                   entry=1.0, stop=0.9, target=1.2, interval="15m")
+    position = type("P", (), {"ticket": 77, "symbol": "XAUUSD", "side": Side.BUY})()
+
+    got, _ref = trader._recover(77, position, known, "someref")
+
+    assert got.interval == "15m", "a live intent was overwritten from the map"
+
+
+def test_the_interval_map_survives_msgpack_string_keys():
+    from till_infinity.trading.service import Trader
+
+    trader = Trader.__new__(Trader)
+    trader._intervals = {}
+
+    trader._restore_intervals({"12": "1h", "34": "5m", "bad": "x", "56": ""})
+
+    assert trader._intervals == {12: "1h", 34: "5m"}

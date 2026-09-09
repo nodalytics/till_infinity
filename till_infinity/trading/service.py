@@ -371,6 +371,19 @@ class Trader:
     #: at its statement limit, and assigned together there for the same reason.
     open: dict[int, Live]
     _refs: dict[int, str]
+    #: Ticket -> the timeframe its intent was triggered on.
+    #:
+    #: **The ref map fixed the parent and not the intent.** A position adopted
+    #: after a restart is rebuilt by `_intent_from`, which knows a symbol and a
+    #: side and no timeframe - so 343 of 551 closes over 45 days carried no
+    #: interval at all, 62% of the record and -1,044 of the -1,365. Every
+    #: interval conclusion was drawn from the other 38%, which is also the half
+    #: that over-represents short trades.
+    #:
+    #: That is not a small gap: it is why the sub-15m finding in
+    #: `scaling.by_interval` could not be re-checked, and why neither
+    #: `TRADING_INTERVALS` nor `TRADING_INTERVAL_WEIGHT` can be set responsibly.
+    _intervals: dict[int, str]
 
     def __init__(
         self,
@@ -405,7 +418,7 @@ class Trader:
         self.specs: dict[str, SymbolSpec] = {}
         # Grouped because `__init__` is at its statement limit, which is the
         # same reason `_focus_up` and its neighbours are grouped below.
-        self.open, self._refs = {}, {}
+        self.open, self._refs, self._intervals = {}, {}, {}
         #: `_refs` is ticket -> the journal decision that opened it.
         #:
         #: **`Live` lives in memory and `self.open` is rebuilt from the broker
@@ -1219,6 +1232,71 @@ class Trader:
                 continue
         if self._refs:
             log.info("trading: recovered %d position-to-decision link(s)", len(self._refs))
+
+    def _recover(
+        self, ticket: int, position: Position, intent: Intent, ref: str
+    ) -> tuple[Intent, str]:
+        """Put back what a restart took off an adopted position.
+
+        Two things go missing, and the second was found only after the first
+        was fixed. **The ref** is the journal decision the trade was opened
+        from, without which `_settle` cannot write an outcome at all. **The
+        interval** is the timeframe it was triggered on, which `_intent_from`
+        cannot know because a broker position carries a symbol and a side and
+        nothing else - so an adopted trade closed with its timeframe blank and
+        fell out of every per-interval table. 343 of 551 closes over 45 days.
+
+        Both maps are exact and are tried first. The journal lookups behind
+        them are fallbacks for positions opened before the maps existed, and
+        `_interval_for` is exact too - it reads the very decision the trade
+        came from rather than matching on symbol and side.
+        """
+        if not ref:
+            ref = self._refs.get(ticket) or self._ref_for(position)
+        if not getattr(intent, "interval", ""):
+            found = self._intervals.get(ticket) or self._interval_for(ref)
+            if found:
+                intent = replace(intent, interval=found)
+        return intent, ref
+
+    def _interval_for(self, ref: str) -> str:
+        """The timeframe named by the decision this position was opened from.
+
+        The fallback for a position that predates the map. It is exact rather
+        than a guess: `ref` is the journal entry the trade was opened from, so
+        its context is that trade's own reasoning, and `interval` is written
+        there by `Intent.to_context`.
+        """
+        if not ref:
+            return ""
+        path = getattr(self.journal, "path", None)
+        if path is None:
+            return ""
+        try:
+            from ..journal import read as read_journal
+
+            for entry in read_journal(path, kind="decision", actor="trading", limit=400):
+                if str(entry.id) == str(ref):
+                    return str((entry.context or {}).get("interval") or "")
+        except Exception as exc:
+            log.debug("trading: could not recover an interval for %s: %s", ref, exc)
+        return ""
+
+    def _restore_intervals(self, stored: Any) -> None:
+        """Put the ticket-to-timeframe map back, with the same key coercion.
+
+        msgpack returns the keys as strings; left that way the map restores,
+        looks healthy and never matches a ticket - which is what
+        `_restore_refs` exists to say, one map along.
+        """
+        if not isinstance(stored, dict):
+            return
+        for ticket, interval in stored.items():
+            try:
+                if interval:
+                    self._intervals[int(ticket)] = str(interval)
+            except (TypeError, ValueError):
+                continue
 
     def _ref_for(self, position: Position) -> str:
         """The journal entry for the decision that opened this position.
@@ -2437,6 +2515,7 @@ class Trader:
                 # Which decision opened which position. Without this a deploy
                 # severs every open trade from its own reasoning - see `_refs`.
                 "refs": {str(k): v for k, v in self._refs.items()},
+                "intervals": {str(k): v for k, v in self._intervals.items()},
                 "counters": {
                     "taken": self.taken,
                     "refused": self.refused,
@@ -2495,6 +2574,7 @@ class Trader:
         if type(got).__name__ == "Policy":
             self.policy = got
         self._restore_refs(payload.get("refs"))
+        self._restore_intervals(payload.get("intervals"))
         # **Only values that came back as the right class.** A key the registry
         # could not resolve unpacks to a plain mapping of its fields, and
         # `_quote` does `self._push.setdefault(feed, Cusum()).push(...)` - so a
@@ -3572,11 +3652,7 @@ class Trader:
             # `_settle` will not journal a close without one - so the trade
             # would be logged, announced, and never written down. Recover it
             # from the decision that opened it.
-            if not ref:
-                # The map first: it is exact and cheap. `_ref_for` searches the
-                # journal by symbol and side and is the fallback for positions
-                # opened before the map existed.
-                ref = self._refs.get(ticket) or self._ref_for(position)
+            intent, ref = self._recover(ticket, position, intent, ref)
             self.open[ticket] = Live(
                 position=position,
                 intent=intent,
@@ -3588,6 +3664,8 @@ class Trader:
             )
             if ref:
                 self._refs[ticket] = ref
+            if getattr(intent, "interval", ""):
+                self._intervals[ticket] = str(intent.interval)
             pending = None
         self._pending = None
 
@@ -3596,9 +3674,10 @@ class Trader:
         # A ticket the broker no longer has is finished, so its link is spent.
         # Kept bounded here rather than left to grow: a map that only ever gains
         # entries is a leak with a long fuse, and this one is persisted.
-        for ticket in list(self._refs):
-            if ticket not in current and ticket not in self.open:
-                self._refs.pop(ticket, None)
+        for book in (self._refs, self._intervals):
+            for ticket in list(book):
+                if ticket not in current and ticket not in self.open:
+                    book.pop(ticket, None)
         for ticket, live in list(self.open.items()):
             if ticket in current:
                 continue
