@@ -7487,3 +7487,64 @@ def test_the_regime_is_read_off_a_signal_the_way_the_journal_writes_it():
     assert _regime_of({"features": None}) == 0.0
     assert _regime_of({}) == 0.0
     assert _regime_of({"features": {"regime": "trending"}}) == 0.0
+
+
+def test_a_stop_floor_no_longer_leaves_the_target_behind():
+    """The defect that cost 441 units over 159 trades.
+
+    The stop comes from the call's risk estimate and a floor; the target came
+    from the modelled push, and nothing related them. So a floor that widened
+    the stop to 4 volatility units against a 1.5v push placed the trade at 0.37
+    reward to risk - a geometry needing a 73% win rate, taken by a strategy
+    winning 46%.
+    """
+    from till_infinity.trading.strategies.opportunity import PRESETS
+
+    shape = PRESETS["thesis-only"]
+
+    assert shape.floor == 4.0
+    assert shape.reward_floor >= 1.0, "a floored stop with no matching target"
+
+
+def test_shapes_without_a_reward_floor_are_unchanged():
+    """Every other preset must place exactly what it placed before."""
+    from till_infinity.trading.strategies.opportunity import PRESETS
+
+    for name, shape in PRESETS.items():
+        if name == "thesis-only":
+            continue
+        assert shape.reward_floor == 0.0, f"{name} silently gained a reward floor"
+
+
+def test_the_reward_floor_only_ever_pushes_a_target_further_out():
+    """It raises a target the push model put too close and never pulls one in."""
+    from till_infinity.trading.strategies.scalper import LevelStrategy
+
+    aim = LevelStrategy._aim  # unbound, so a stub can stand in for `self`
+
+    class _Near:
+        target_multiple = 1.0
+        reward_floor = 1.0
+
+    class _Off:
+        target_multiple = 1.0
+        reward_floor = 0.0
+
+    # A 1.5v push against a 4v stop is the measured case: raised to the stop.
+    assert aim(_Near(), 1.5, 4.0) == 4.0
+    # A push already beyond the floor is left exactly where it was.
+    assert aim(_Near(), 6.0, 4.0) == 6.0
+    # And with no floor set, nothing moves.
+    assert aim(_Off(), 1.5, 4.0) == 1.5
+
+
+def test_the_shape_name_only_changes_for_shapes_that_use_the_floor():
+    """These names land in the journal; one that changes for everyone breaks
+    every comparison against what came before."""
+    from till_infinity.trading.strategies.opportunity import PRESETS
+
+    plain = PRESETS["level-scalp"].named()
+    floored = PRESETS["thesis-only"].named()
+
+    assert plain.startswith("stop1f1/target1/")
+    assert "target1r1/" in floored

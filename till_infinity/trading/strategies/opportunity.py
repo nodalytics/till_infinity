@@ -109,6 +109,29 @@ class Shape:
     #: from `Settings.thesis_stop_vol` reaching it through `stop_floor_vol`.
     #: Discovering that cost a failing test, which is the right way to find it.
     floor: float = 1.0
+    #: The least reward-to-risk this shape will place, as a multiple of the
+    #: stop it actually ends up with. Zero leaves the target where the push
+    #: model puts it, which is what every shape did before this existed.
+    #:
+    #: **A stop floor with no matching target floor silently destroys the
+    #: geometry.** `stop` and `target` are computed from different quantities -
+    #: the stop from the call's risk estimate, the target from the modelled
+    #: push - and nothing related them. So when `floor` widened `thesis-only`'s
+    #: stop to 4 volatility units and the modelled push was about 1.5, the
+    #: trade went on at **0.37 reward to risk**. Measured over 159 closed
+    #: trades: median 0.37, and 78.6% of the whole book under 1.0.
+    #:
+    #: At 0.37 a book needs a **73% win rate** to break even. `thesis-only`
+    #: won 45.9%, which is a perfectly ordinary win rate and nowhere near
+    #: enough. It lost 441 units while its targets *earned* 639 - the losses
+    #: were 27 stops at -1.17R and 78 trades that timed out.
+    #:
+    #: **This does not make the strategy profitable and is not claimed to.**
+    #: Filtered to the trades that happened to have decent geometry, its mean
+    #: goes from -0.136R to about -0.02R - better, and still negative. What the
+    #: field fixes is a defect: any shape with a stop floor has the same hole,
+    #: and a target that ignores the stop is not a decision anyone made.
+    reward_floor: float = 0.0
 
     # ---------------------------------------------------------------------
     # The rest of the decision surface. Everything above shapes the trade once
@@ -148,8 +171,13 @@ class Shape:
         """A stable identity for this point, so a learner can key on it."""
         if not self.take:
             return "leave"
+        # The reward floor only appears when it is set, so every shape that
+        # does not use one keeps the name it already had - these strings end up
+        # in the journal and a name that changes for everyone is a name that
+        # breaks every comparison against what came before.
+        reward = f"r{self.reward_floor:g}" if self.reward_floor else ""
         return (
-            f"stop{self.stop:g}f{self.floor:g}/target{self.target:g}"
+            f"stop{self.stop:g}f{self.floor:g}/target{self.target:g}{reward}"
             f"/trail{self.trail:g}/protect{self.protect:g}/hold{self.hold:g}"
             f"/pull{self.pullback:g}{'L' if self.resting else 'M'}"
             f"/size{self.size:g}/bank{self.bank_at:g}x{self.bank_share:g}"
@@ -178,8 +206,26 @@ PRESETS: dict[str, Shape] = {
     # this module in one table.
     "level-scalp": Shape(stop=1.0, target=1.0, trail=0.0, protect=0.0, hold=0.0, pullback=0.0),
     "sweep-aware": Shape(stop=1.0, target=1.0, trail=0.0, protect=0.0, hold=0.0, pullback=0.0),
+    # **The one shape whose stop floor was eating its geometry.** A 4v stop
+    # against a target the push model put at about 1.5v is 0.37 reward to risk,
+    # which needs a 73% win rate; it won 45.9% and lost 441 units over 159
+    # trades while its targets earned 639. `reward_floor` ties the target to
+    # the stop it actually got.
+    #
+    # 1.0 rather than something braver: the trades that happened to have decent
+    # geometry ran at about -0.02R against the book's -0.136R - better, still
+    # negative - so this is a repair and not a claim that the strategy works.
+    # It is out of `TRADING_STRATEGIES` as of 2026-09-09 and this is what it
+    # would need before anyone puts it back.
     "thesis-only": Shape(
-        stop=1.0, target=1.0, trail=0.0, protect=0.0, hold=0.0, pullback=0.0, floor=4.0
+        stop=1.0,
+        target=1.0,
+        trail=0.0,
+        protect=0.0,
+        hold=0.0,
+        pullback=0.0,
+        floor=4.0,
+        reward_floor=1.0,
     ),
     "confluence-scalp": Shape(stop=1.5, target=1.0, trail=0.0, protect=0.0, hold=0.0, pullback=0.0),
     "snap": Shape(stop=1.0, target=1.0, trail=0.75, protect=0.5, hold=120.0, pullback=0.0),
@@ -320,6 +366,7 @@ class Opportunity(LevelStrategy):
         """
         self.stop_multiple = shape.stop
         self.target_multiple = shape.target
+        self.reward_floor = shape.reward_floor
         self.trail_vol = shape.trail
         self.break_even_at = shape.protect
         self.hold_seconds = shape.hold

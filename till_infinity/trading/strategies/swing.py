@@ -641,6 +641,13 @@ class SwingLevel(LevelStrategy):
         modelled = push_vol * self.target_multiple
         reach = self._to_the_far_side(features, side)
         aim = max(modelled, reach) if reach else modelled
+        # The same reward floor the scalper honours. Applied after the far-side
+        # target, because a level the market drew is a better reason to aim
+        # somewhere than a multiple of the stop - it only raises a target that
+        # neither the push nor the range has already put far enough out.
+        floor = getattr(self, "reward_floor", 0.0) or 0.0
+        if floor > 0:
+            aim = max(aim, wide * floor)
         return (
             price_distance(level, vol_bps, wide),
             price_distance(entry, vol_bps, aim),

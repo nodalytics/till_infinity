@@ -355,8 +355,30 @@ class LevelStrategy(Strategy):
         wide = max(risk_vol * self.stop_multiple, self.stop_floor_vol(interval))
         return (
             price_distance(level, vol_bps, wide),
-            price_distance(entry, vol_bps, push_vol * self.target_multiple),
+            price_distance(entry, vol_bps, self._aim(push_vol, wide)),
         )
+
+    def _aim(self, push_vol: float, stop_vol: float) -> float:
+        """The target distance, never less than `reward_floor` of the stop.
+
+        **The stop and the target were computed from unrelated quantities.**
+        The stop comes from the call's risk estimate and a floor; the target
+        from the modelled push. Nothing tied them, so a floor that widened the
+        stop left the target where it was and the trade went on at whatever
+        reward-to-risk fell out - 0.37 for `thesis-only`, measured over 159
+        closed trades, against the 73% win rate that geometry needs.
+
+        `reward_floor` is zero everywhere by default, so this returns exactly
+        what it always did unless a shape asks otherwise.
+
+        The two distances are anchored differently - the stop from the level,
+        the target from the entry - and this compares them in volatility units
+        as though they were not. That is a small error next to the one it
+        fixes, and it is the same approximation `reward_to_risk` already makes.
+        """
+        aim = push_vol * self.target_multiple
+        floor = getattr(self, "reward_floor", 0.0) or 0.0
+        return max(aim, stop_vol * floor) if floor > 0 else aim
 
     def at_the_right_place(
         self, feed: str, side: Side, features: dict[str, float]
