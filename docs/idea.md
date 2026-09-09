@@ -233,6 +233,43 @@ and in others. That is not a failure of the observations. It is a failure of
 the question being asked of them. The same observations, read as evidence about
 where fair value sits and how firmly it is held, have somewhere to go.
 
+## Why the width is the part worth modelling at all
+
+There is a reason this section exists before the ones about direction, and it
+is the single most useful fact anyone has established about markets.
+
+**Direction is close to unforecastable.** The sign of the next move is
+dominated by noise in every liquid market, and whatever edge exists there is
+small, unstable and mostly gone once costs are paid.
+
+**Volatility is not.** It clusters - large moves follow large moves, quiet
+follows quiet - reliably enough to model, everywhere anyone has looked. That is
+a structural property rather than a pattern someone found, which is why the
+econometrics for it is textbook material and about sixty lines of code.
+
+So the question a desk asks is not "will it go up" but **"will the next move be
+large or small"**, because sizing correctly inside a regime is worth more than
+being right about direction. A trader right 48% of the time who sizes with the
+regime beats one right 62% of the time who sizes blindly, over any sample long
+enough to matter - which is arithmetic about position size, not a claim about
+skill.
+
+This system takes that seriously in both directions. The predictable half is
+the width, so the width is modelled - GARCH, HAR, range estimators and an
+ensemble over them, in `structures/vol/`. The unpredictable half is the sign,
+so **nothing here forecasts it**; the sign falls out of where price sits against
+structure, which is the argument the rest of this document makes.
+
+And the sizing is not a separate rule bolted on. A stop is expressed in
+volatility units, converted to a price distance through `vol_bps`, and the lot
+count is that distance inverted against the risk budget - so a wider regime
+gives a wider stop and fewer lots automatically. There is no path through this
+code that sizes a trade without dividing by a volatility estimate.
+
+`research/clustering.md` sets out what that framing does and does not license,
+including the thing it is most often used to excuse: knowing the regime tells
+you how big to be, never whether there is anything worth being big about.
+
 ## An estimate needs a width, and volatility is the width
 
 *How firmly* is the other half of the estimate, and it is the half that gets

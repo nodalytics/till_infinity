@@ -3379,10 +3379,31 @@ level" - returns +0.9% on 11 of 22 hours, a coin flip. A `gold/audjpy` control
 fired at +2.6% and turned out not to be a control at all: AUD and gold co-move,
 so the pair shares a factor while sharing no currency.
 
-Next: a dollar composite, which should carry the whole effect if that reading
-is right; longer than 14 days; and a block bootstrap, because touches of one
-level are heavily autocorrelated and the permutation p-values overstate what is
-known.
+**The composite carries it, tested the same day.** Counting how many dollar
+pairs are at a level at once gives a monotone rise - eurusd holds 78% with none
+of the others at a level and 96% with four - and **conditioned on that count
+the pairwise identity adds nothing**: eurusd/gbpusd runs +6.9%, +2.3%, +1.3%,
+-0.0%, -1.1% across counts of one to five, none significant. The +5.6% was
+GBPUSD standing in for "the dollar bloc is at a level".
+
+What survives is broader than the question asked, and is **not yet a result**:
+the more instruments are simultaneously at a level, the more likely any one
+holds - and the metals show it too. The count was never conditioned on the
+session the way the pairwise test was, so it could still be volatility wearing
+a costume. Condition on the hour and on realised volatility, run longer than 14
+days, and block bootstrap it.
+
+## 7i. Is the regime forecast actually combined with direction?
+
+`research/clustering.md`. Volatility clusters and direction does not, so the
+sharpest statement of what this system does is: take the predictable part and
+let structure supply the sign.
+
+**That has never been tested directly.** `forecast_ratio` - how far the current
+scale sits above its own long-run level - is published on every call and
+nothing conditions on it. Whether a level held more often when the regime
+forecast was rising, falling or flat is answerable from the journal today, and
+would say whether the two halves are combined or merely both present.
 
 Measured on the way in: the level book holds **1 to 15 levels per (feed,
 interval)** across 3,451 sets - a near-price working set, not a historical map,

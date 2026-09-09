@@ -152,15 +152,68 @@ not.
 So the reading is: **something real, probably about the dollar, and not the
 general principle it was proposed as.**
 
-### What would settle it
+### The dollar composite carries it, and the pair adds nothing
 
-* **A dollar index.** If this is the dollar being at a level, a DXY-like
-  composite should carry the whole effect and the pairwise version should add
-  nothing beyond it.
-* **Longer than 14 days**, and a block bootstrap rather than a permutation over
-  exchangeable touches - touches of the same level are heavily autocorrelated,
-  so the p-values here overstate what is known. `agreeing.md` had to learn the
-  same thing.
+That was the test named as decisive, and it was run the same day.
+
+No dollar index is collected, and building one would mean detecting levels on a
+synthetic series with a detector never calibrated for it - introducing a new
+object to test a claim about an existing one. The same question is answerable
+directly: **count how many dollar pairs are at a level at once.**
+
+The count effect is strong and monotone on every pair in the bloc:
+
+| others at a level | 0 | 1 | 2 | 3 | 4 |
+| --- | --- | --- | --- | --- | --- |
+| eurusd held | 78% | 86% | 91% | 95% | **96%** |
+| gbpusd held | 86% | 89% | 91% | 94% | 95% |
+| usdjpy held | 84% | 85% | 92% | 94% | 96% |
+| usdchf held | 86% | 91% | 91% | 92% | 97% |
+| nzdusd held | 83% | 89% | 91% | 92% | 95% |
+
+And **conditioned on that count, which pair it is stops mattering**:
+
+| eurusd / gbpusd, others at a level | n | tallied | not | gap | p |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 261 | 91.5% | 84.7% | +6.9% | 0.140 |
+| 2 | 470 | 92.5% | 90.1% | +2.3% | 0.285 |
+| 3 | 559 | 95.2% | 93.9% | +1.3% | 0.325 |
+| 4 | 537 | 95.9% | 95.9% | **-0.0%** | 0.590 |
+| 5 | 453 | 95.2% | 96.2% | **-1.1%** | 0.725 |
+
+Median +1.3% across counts, 3 of 5 positive, and no cell reaches significance.
+`eurusd/usdchf` and `usdcad/usdchf` are worse - median **-2.5%** and **-0.7%**,
+positive in 1 of 5 each.
+
+**So the pairwise result was the count all along.** The +5.6% for
+`eurusd/gbpusd` was GBPUSD standing in for "the dollar bloc is at a level", and
+once that is known, GBPUSD specifically adds nothing.
+
+### What is actually left, and it is broader than the question asked
+
+The count effect is not confined to the dollar. The metals show the same shape
+with the two instruments available - gold 84% held with silver quiet against
+89% with silver also at a level; silver 89% against 92%.
+
+So the surviving claim is not about pairs and not about the dollar:
+
+> **The more instruments are simultaneously at a level, the more likely any one
+> of them holds.**
+
+That is worth having and it is **not yet a result**, because the obvious
+confound has not been removed: more instruments at levels is also a busier
+market, and the count was not conditioned on the hour the way the pairwise
+comparison was. It could still be volatility wearing a costume.
+
+### What would settle *that*
+
+* **Condition the count on the session**, the way the pairwise test was. If a
+  count of four beats a count of one *within the same hour*, it is not the
+  clock.
+* **Condition on realised volatility**, which is the more likely confound and
+  the one the hour only partly proxies.
+* **Longer than 14 days**, and a block bootstrap - touches of one level are
+  heavily autocorrelated, so every p-value here overstates what is known.
 * **The metals with more data.** 1,182 gold touches is thin, and it is the pair
   that carries the interpretation.
 
