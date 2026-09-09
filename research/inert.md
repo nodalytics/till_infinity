@@ -291,3 +291,14 @@ headline was about gold.
 
 An always-empty field that looks like a working join is worse than an absent
 one: the absent one asks a question at the point of use.
+
+## Twelve: `run_vol` is exactly zero on every touch
+
+Present on every structures touch outcome, and its maximum over 2,000 sampled
+resolutions is **0.000** - not small, exactly zero, every time. Whatever fills
+it either never runs or always computes nothing.
+
+Found on 2026-09-09 while reaching for a way to measure how far price travelled
+against a call ([overhead.md](overhead.md)) - which is the same way
+`articles.symbols` turned up: a field looks available, is used, and returns
+nothing without ever raising.
