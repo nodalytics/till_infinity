@@ -45,25 +45,36 @@ A 99th-percentile change nearly resets a level's history; a 55th-percentile one
 barely touches it. Nobody picks a constant, and the scale adapts as the market
 does.
 
-## A second detector, watching and deciding nothing
+## A second detector was tried and removed
 
 `ADWIN` tests for a change in the **mean**, via a Hoeffding bound on two halves
 of its window. That is the right test for "moves got bigger" and it is blind to
 a change that leaves the mean where it was - a distribution that widens
 symmetrically, which on this desk is not an exotic case but the ordinary one.
 
-`KSWIN` applies a Kolmogorov-Smirnov test to a recent window against an older
-one and asks whether they came from the same distribution **at all**, assuming
-nothing about its shape. Where ADWIN cannot see a change with no mean shift,
-this can.
+`KSWIN` was added to cover that blind spot: a Kolmogorov-Smirnov test of a
+recent window against an older one, asking whether they came from the same
+distribution at all. It was wired to **decide nothing** and only to count, so
+the record could say whether it was worth listening to before anything
+listened.
 
-It is deliberately wired to **decide nothing**. The paragraph above says why: a
-spurious drift discounts every level's accumulated history, so the cost of a
-false positive here is real evidence thrown away, and that is what made ADWIN
-conservative once its output was consumed. A second detector inherits that cost
-in full. So KSWIN counts - how often it fires, how often ADWIN fires, and how
-often they agree - and the record decides whether it is worth listening to
-before anything listens.
+**The record said no, and it is out as of 2026-09-09.** Once the counters were
+finally logged, KSWIN had fired **zero times against ADWIN's 136**. It cost a
+hundred-sample window per instrument and timeframe, a KS test on every quote,
+and a pickled detector per pair in the state file, and it never once produced
+the number the whole experiment existed to produce.
+
+**What that measured is the significance, not the detector.** `KS_ALPHA` was
+0.0005 against River's default 0.005 - ten times stricter - chosen because a
+false alarm here discards every level's accumulated history. A detector silent
+at a tenth of the usual significance is telling you about the threshold. The
+honest options were to loosen it and pay for the false positives, or to stop
+running it; keeping it as it was meant carrying the cost of an experiment that
+could not answer its own question.
+
+Nothing is lost that was being used. If the blind spot matters later, the way
+back is a detector that decides something, measured against what refusing a
+level's history actually costs - not a second opinion nobody reads.
 
 What is watched is the **consensus** price, not one venue's. A single venue's
 series mixes market moves with that venue's own quirks, which is what having
@@ -104,17 +115,6 @@ SEVERITY_WINDOW = 200
 #: is treated as middling rather than assigned a percentile from three samples.
 SEVERITY_WARMUP = 8
 
-#: KSWIN's significance. River's default is 0.005; this is stricter because the
-#: stream is one reading per quote and a test run that often at 0.005 fires on
-#: its own error rate several times an hour.
-KS_ALPHA = 0.0005
-
-#: The recent sample KSWIN tests against its window. Both are River's defaults,
-#: named here because a window is the one thing ADWIN does not need chosen and
-#: this detector does - which is itself a cost worth seeing.
-KS_WINDOW = 100
-KS_STAT = 30
-
 
 class Drift:
     """Regime detection per (instrument, timeframe), reported on agreement."""
@@ -123,16 +123,10 @@ class Drift:
         self.delta = delta
         self.quorum = quorum
         self._detectors: dict[tuple[str, str], river_drift.ADWIN] = {}
-        #: The second opinion, which decides nothing. See the module docstring.
-        self._shape: dict[tuple[str, str], river_drift.KSWIN] = {}
-        #: How the two compare, so the record can say whether the second one
-        #: is worth listening to before anything listens.
-        self._agreement: dict[str, int] = {
-            "adwin": 0,
-            "kswin": 0,
-            "both": 0,
-            "kswin_alone": 0,
-        }
+        #: How often ADWIN has actually fired. Kept because a detector whose
+        #: rate nobody knows is one nobody can argue about - which is how the
+        #: KSWIN experiment ran for weeks unreadable.
+        self._agreement: dict[str, int] = {"adwin": 0}
         self._last: dict[tuple[str, str], float] = {}
         self._fired: dict[tuple[str, str], float] = {}
         self._announced: dict[str, float] = {}
@@ -145,14 +139,6 @@ class Drift:
         found = self._detectors.get(key)
         if found is None:
             found = self._detectors[key] = river_drift.ADWIN(delta=self.delta)
-        return found
-
-    def _shaped(self, key: tuple[str, str]) -> river_drift.KSWIN:
-        found = self._shape.get(key)
-        if found is None:
-            found = self._shape[key] = river_drift.KSWIN(
-                alpha=KS_ALPHA, window_size=KS_WINDOW, stat_size=KS_STAT
-            )
         return found
 
     def _counts(self) -> dict[str, int]:
@@ -176,18 +162,38 @@ class Drift:
         found = getattr(self, "_agreement", None)
         if not isinstance(found, dict):
             found = self._agreement = {}
-        for name in ("adwin", "kswin", "both", "kswin_alone"):
-            found.setdefault(name, 0)
+        found.setdefault("adwin", 0)
+        # The KSWIN counters are retired. A restored save still carries them
+        # and they would go on being logged as three permanent zeros, which
+        # reads as a detector that is running and silent rather than one that
+        # is gone.
+        for retired in ("kswin", "both", "kswin_alone"):
+            found.pop(retired, None)
         return found
 
     def watching(self) -> dict[str, int]:
-        """How the two detectors have compared so far.
+        """How often the detector has fired, for the save log.
 
-        Read rather than acted on. `kswin_alone` is the number that decides
-        whether the second detector is worth having: if it is near zero, KSWIN
-        never sees anything ADWIN missed and costs a window size for nothing.
+        This began as a comparison between ADWIN and KSWIN and is now one
+        number, because the comparison finished: KSWIN fired zero times against
+        ADWIN's 136 and was removed. The counter stays because the rate is
+        worth knowing on its own - a detector nobody can see the rate of is one
+        nobody can argue with.
         """
         return dict(self._counts())
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore, and drop what KSWIN left behind.
+
+        A save written while KSWIN ran carries `_shape` - one pickled detector
+        per instrument and timeframe, each holding a hundred-sample window. The
+        objects still unpickle because river is still a dependency, so nothing
+        breaks; they would simply sit in memory for ever, restored on every
+        start, referenced by nothing.
+        """
+        self.__dict__.update(state)
+        self.__dict__.pop("_shape", None)
+        self._counts()
 
     def observe(
         self, feed: str, mid: float, when: float | None = None, interval: str = "5m"
@@ -212,24 +218,8 @@ class Drift:
         detector.update(change)
         self._seen[key] = self._seen.get(key, 0) + 1
 
-        # The second opinion, scored and otherwise ignored. Wrapped because a
-        # detector that decides nothing must not be able to stop one that does.
-        shaped = False
-        try:
-            shape = self._shaped(key)
-            shape.update(change)
-            shaped = bool(shape.drift_detected)
-        except Exception as exc:  # a second opinion is not worth an outage
-            log.debug("drift: KSWIN failed on %s %s: %s", feed, interval, exc)
-        counts = self._counts()
-        if shaped:
-            counts["kswin"] += 1
         if detector.drift_detected:
-            counts["adwin"] += 1
-        if shaped and detector.drift_detected:
-            counts["both"] += 1
-        elif shaped:
-            counts["kswin_alone"] += 1
+            self._counts()["adwin"] += 1
 
         if not detector.drift_detected:
             self._before[key] = before

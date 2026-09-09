@@ -793,27 +793,27 @@ class Watcher:
         )
 
     def drift_tally(self) -> str:
-        """How ADWIN and KSWIN have compared, for the save log.
+        """How often the drift detector has fired, for the save log.
 
         **The counters existed and nothing read them.** `Drift.watching` was
-        written to answer whether the second detector earns its window, and
-        it had no caller anywhere in the service - so `kswin_alone`, the one
-        number that settles it, was being computed every tick and thrown away
-        at every restart. That is the shape `research/inert.md` catalogues,
-        and it is the tenth case.
+        written to answer whether a second detector earned its window, and it
+        had no caller anywhere in the service - so the one number that settles
+        it was computed every tick and thrown away at every restart. That is
+        the shape `research/inert.md` catalogues.
+
+        Once it was finally logged it settled the question in a day: KSWIN
+        fired zero times against ADWIN's 136, and is gone. What is left is
+        ADWIN's own rate, which is worth seeing for its own sake - the whole
+        episode happened because nobody could see either number.
         """
         try:
             counts = self.drift.watching()
         except Exception:  # a tally must not be able to stop a save
             return "no drift tally"
-        adwin, kswin = counts.get("adwin", 0), counts.get("kswin", 0)
-        if not adwin and not kswin:
+        adwin = counts.get("adwin", 0)
+        if not adwin:
             return "no drift fired yet"
-        alone = counts.get("kswin_alone", 0)
-        return (
-            f"drift: adwin {adwin}, kswin {kswin}, both {counts.get('both', 0)}, "
-            f"kswin alone {alone}" + (f" ({alone / kswin:.0%} of kswin)" if kswin else "")
-        )
+        return f"drift: adwin fired {adwin} time(s)"
 
     def save(self) -> None:
         log.info("structures: %s", self.origin_tally())

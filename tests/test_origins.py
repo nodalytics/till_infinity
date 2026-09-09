@@ -943,7 +943,7 @@ def test_drift_restored_without_its_counters_does_not_throw():
         detector.observe("t", 100.0 + (i % 5) * 2.0, when=float(i), interval="5m")
 
     counts = detector.watching()
-    assert set(counts) >= {"adwin", "kswin", "both", "kswin_alone"}
+    assert set(counts) == {"adwin"}
 
 
 def test_a_resting_intent_with_a_text_entry_does_not_kill_trading():

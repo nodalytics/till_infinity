@@ -3269,7 +3269,7 @@ What is still open on this item:
   hundreds of single-timeframe calls. That wants explaining before the feature
   is trusted on indices.
 
-## 7e. KSWIN is silent, and the alpha is why
+## ~~7e. KSWIN is silent, and the alpha is why~~ - removed 2026-09-09
 
 `drift: adwin 27, kswin 0, both 0, kswin alone 0` in the first hours of the
 tally logging. `kswin_alone` is the number the whole experiment exists to
@@ -3280,13 +3280,23 @@ produce and it is zero.
 never fires at a tenth of the usual significance is telling you about the
 significance.
 
-Two ways to close it, and leaving it running-but-unanswerable is not one:
+Two ways to close it, and leaving it running-but-unanswerable was not one:
 
-1. Run at 0.005 and see whether `kswin_alone` becomes non-zero. If it does, the
-   question becomes whether those alarms are worth their false positives, which
-   is what the counter measures.
+1. Run at 0.005 and see whether `kswin_alone` becomes non-zero. If it did, the
+   question becomes whether those alarms are worth their false positives.
 2. Or accept that a second detector silent at the significance this desk will
    act on is not earning its window, and remove it.
+
+**Option 2, on 2026-09-09.** By then it was 0 against ADWIN's 136. The cost was
+a hundred-sample window per instrument and timeframe, a KS test on every quote,
+and a pickled detector per pair restored on every start - paid for a reading
+that could not come back non-zero. `Drift.__setstate__` drops what old saves
+carry so the memory goes with it.
+
+What stays open is the blind spot itself: ADWIN cannot see a distribution that
+widens with its mean unmoved, and that case is ordinary here. The way back is a
+detector that *decides* something, measured against what discarding a level's
+history costs - not a second opinion nobody reads.
 
 ## 7f. The stop was not the explanation, and 205 trades cannot tell
 

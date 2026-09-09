@@ -52,7 +52,7 @@ apples-to-oranges this folder exists to avoid. What is comparable is each
 against its own null, and on that basis FOCuS is the only one of the three that
 can be read as an alarm rather than as a counter.
 
-## KSWIN, measured in production: silent
+## KSWIN, measured in production and removed
 
 `Drift` has run ADWIN and KSWIN side by side since the KSWIN work, with the
 counters read by nothing until `drift_tally` started logging them on
@@ -69,17 +69,22 @@ because a false alarm discounts real evidence. A detector that never fires at
 a tenth of the usual significance is telling you about the significance, not
 about the detector.
 
-So the honest reading is that **the experiment as configured cannot answer its
-own question**, and there are two ways forward:
+So the honest reading is that **the experiment as configured could not answer
+its own question**. Two ways forward were open: loosen the alpha to River's
+0.005 and pay for the false positives, or stop running it.
 
-* Run it at River's 0.005 and see whether `kswin_alone` becomes non-zero. If it
-  does, the question becomes whether those extra alarms are worth their false
-  positives - which is a measurement, and this is the counter for it.
-* Or accept that a second detector which is silent at the significance this
-  desk is willing to act on is not earning its window, and take it out.
+**Taken out on 2026-09-09.** By then it was 0 against ADWIN's 136 and the cost
+was concrete: a hundred-sample window per instrument and timeframe, a KS test
+on every quote, and a pickled detector per pair carried in the state file and
+restored on every start. Paying that for a reading that could not come back
+non-zero is the worse of the two options.
 
-Either is defensible. Leaving it as it is - running, counted, and unable to
-produce a non-zero reading - is not.
+**What was removed is a configuration, not a hypothesis.** ADWIN really is
+blind to a distribution that widens with its mean unmoved, and that case really
+is ordinary here. If it matters later, the way back is a detector that *decides*
+something, measured against what discarding a level's history actually costs -
+not a second opinion nobody reads. `research/inert.md` has the general version
+of that lesson.
 
 ## So the readings mean different things
 

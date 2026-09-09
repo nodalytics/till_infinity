@@ -2457,14 +2457,44 @@ def test_an_expired_touch_also_cannot_run_backwards():
     assert all(t.resolved >= t.started for t in tracker.memory._touches)
 
 
-# --------------------------------------- the second detector, which decides nothing
+# --------------------------------------- the second detector, tried and removed
 
 
-def test_kswin_is_counted_and_never_confirms_a_drift():
-    """`ADWIN` tests the mean; `KSWIN` tests the distribution, and can see a
-    change that leaves the mean where it was. It is wired to decide nothing,
-    because a spurious drift discounts every level's accumulated history - the
-    cost that made ADWIN conservative once its output was consumed."""
+def test_the_retired_second_detector_leaves_nothing_behind():
+    """KSWIN was counted for weeks, fired zero times against ADWIN's 136, and
+    was removed on 2026-09-09.
+
+    A save written while it ran carries `_shape`, one pickled detector per
+    instrument and timeframe each holding a hundred-sample window. Those still
+    unpickle - river is still a dependency - so nothing breaks; they would
+    simply be restored on every start and referenced by nothing. And the three
+    retired counters would go on being logged as permanent zeros, which reads
+    as a detector running and silent rather than one that is gone."""
+    from till_infinity.structures.learning.drift import Drift
+
+    restored = Drift.__new__(Drift)
+    restored.__setstate__(
+        {
+            "delta": 0.002,
+            "quorum": 2,
+            "_detectors": {},
+            "_shape": {("t", "5m"): object()},
+            "_agreement": {"adwin": 136, "kswin": 0, "both": 0, "kswin_alone": 0},
+            "_last": {},
+            "_fired": {},
+            "_announced": {},
+            "_seen": {},
+            "_before": {},
+            "_severities": [],
+        }
+    )
+
+    assert not hasattr(restored, "_shape"), "a retired detector was restored anyway"
+    assert restored.watching() == {"adwin": 136}
+
+
+def test_drift_still_fires_and_counts_after_the_removal():
+    """The half that was actually being used has to be untouched."""
     import random
 
     from till_infinity.structures.learning.drift import Drift
@@ -2473,8 +2503,6 @@ def test_kswin_is_counted_and_never_confirms_a_drift():
     watcher = Drift()
     price = 100.0
     fired = []
-    # A calm stretch, then one that is wider with the *same* mean absolute move
-    # is the case ADWIN is blind to by construction.
     for i in range(1200):
         step = rng.gauss(0, 0.02) if i < 600 else rng.choice([-1, 1]) * rng.gauss(0.4, 0.02)
         price = max(1.0, price + step)
@@ -2483,29 +2511,7 @@ def test_kswin_is_counted_and_never_confirms_a_drift():
             fired.append(got)
 
     seen = watcher.watching()
-    assert set(seen) == {"adwin", "kswin", "both", "kswin_alone"}
-    # Whatever it saw, it cannot have produced a signal on its own: every
-    # emitted signal has to have come through the ADWIN path.
+
+    assert set(seen) == {"adwin"}
+    # Every emitted signal has to have come through the ADWIN path.
     assert len(fired) <= seen["adwin"]
-
-
-def test_a_failing_second_opinion_cannot_stop_the_first():
-    """A detector that decides nothing must not be able to break one that
-    does."""
-    from till_infinity.structures.learning import drift as drift_mod
-
-    watcher = drift_mod.Drift()
-
-    class _Broken:
-        def update(self, _value):
-            raise RuntimeError("no")
-
-        drift_detected = False
-
-    watcher._shape[("t", "5m")] = _Broken()
-
-    # Feeding it must not raise, and the ADWIN side must still be counted.
-    for i in range(50):
-        watcher.observe("t", 100.0 + i * 0.1, when=float(i), interval="5m")
-
-    assert watcher.watching()["kswin"] == 0
