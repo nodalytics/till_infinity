@@ -284,7 +284,7 @@ def extremes_in(
     window = closes[first:last]
     if len(window) < 2:
         return None
-    if not _covers(times, first, last, start, span):
+    if not _covers(times, first, last, span):
         return None
     return min(window), max(window)
 
@@ -333,7 +333,7 @@ def change_in(
     # change point captured on a different set of bars from the extreme it is
     # compared against would make `Origin.confirmed` a comparison of two
     # different windows.
-    if not _covers(times, first, last, start, span):
+    if not _covers(times, first, last, span):
         return None
     out = []
     for up in (False, True):
@@ -411,15 +411,53 @@ def refine(
     )
 
 
-def _step(times: Sequence[float]) -> float:
-    """The finer series' own spacing, so "covers the bar" has a tolerance."""
-    if len(times) < 2:
-        return 0.0
-    return max(0.0, float(times[1]) - float(times[0]))
+#: How much of a coarse bar the finer series must actually reach.
+#:
+#: **Measured, replacing two edge tests that were failing on holes.** Requiring
+#: a fine bar within a step of each *edge* meant one minute the venue never
+#: printed at a bar's boundary discarded the whole bar - and in production that
+#: was 33% to 44% of every capture attempt on 5m through 1h, the largest single
+#: cause of the refinement reaching 6.7% of origins.
+#:
+#: A fraction of the span is the thing actually wanted. An extreme taken from
+#: most of a bar's minutes is a good estimate of that bar's extreme; one taken
+#: from two of fifteen is the failure the docstring above warns about, and this
+#: refuses it just as firmly.
+#:
+#: **Density, not extent.** The first version of this measured the window's
+#: first timestamp to its last, which a bar with data only at its two ends
+#: passes with nothing in between - exactly the case being guarded against,
+#: wearing a full-width disguise. What is counted is how many fine bars are
+#: present against how many the span has room for.
+#:
+#: Seven tenths is a judgement rather than a measurement, and it is a constant
+#: so it can be argued with - the same way `WIDE_BAR` is. It is set where it is
+#: because holes are the normal condition of this data rather than the
+#: exception: 33% to 44% of capture attempts on 5m through 1h were being lost
+#: to them, and a threshold strict enough to be principled about a clean feed
+#: would keep losing them.
+COVER = 0.7
 
 
-def _covers(times: Sequence[float], first: int, last: int, start: float, span: float) -> bool:
-    """Whether the finer series reaches both ends of the coarse bar.
+def _spacing(times: Sequence[float], first: int, last: int) -> float:
+    """The finer series' own bar length, from the window rather than the series.
+
+    The **smallest positive** gap, because that is what a bar length is: any
+    larger gap in the window is a hole, and a hole must not be allowed to
+    inflate the estimate of how much ground each bar covers. Taking
+    `times[1] - times[0]` - which is what this replaced - reads whichever gap
+    happens to sit at the start of the whole series, hole or not.
+    """
+    best = 0.0
+    for i in range(first + 1, min(last, len(times))):
+        gap = float(times[i]) - float(times[i - 1])
+        if gap > 0 and (best == 0.0 or gap < best):
+            best = gap
+    return best
+
+
+def _covers(times: Sequence[float], first: int, last: int, span: float) -> bool:
+    """Whether enough of the coarse bar actually printed at the finer resolution.
 
     **The tolerance is the same at both ends, and it was not.** The right edge
     always allowed being short by one fine step; the left edge allowed nothing
@@ -443,10 +481,18 @@ def _covers(times: Sequence[float], first: int, last: int, start: float, span: f
     minutes is still worse than none. A window reaching 98% of a bar is not
     partial cover, it is cover with a hole in it.
     """
-    if last <= first:
+    if last - first < 2 or span <= 0:
         return False
-    slack = max(_step(times), 0.02 * span)
-    return times[first] <= start + slack and times[last - 1] >= start + span - slack
+    step = _spacing(times, first, last)
+    if step <= 0:
+        return False
+    # How much of the bar actually printed: one spacing per fine bar present.
+    # Counting bars rather than measuring first-to-last is what makes a hole
+    # cost something - and a complete 5m bar is five 1m closes, which is
+    # 5 * 60 = 300 seconds and exactly its own span, so nothing complete is
+    # refused for the final bar's own length.
+    covered = (last - first) * step
+    return covered >= COVER * span
 
 
 @dataclass(slots=True)

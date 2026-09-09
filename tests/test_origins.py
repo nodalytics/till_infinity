@@ -1124,3 +1124,69 @@ def test_the_change_point_uses_the_same_window_as_the_extreme():
 
     assert extremes_in(times, closes, 0.0, span) is not None
     assert change_in(times, closes, 0.0, span) is not None
+
+
+def test_a_hole_in_the_middle_no_longer_discards_the_bar():
+    """The largest single cause of the refinement's 6.7%.
+
+    Measured in production: 33% to 44% of every capture attempt on 5m through
+    1h failed with the series spanning the bar but no fine bar within a step of
+    an edge. A hole is not the same as absent data.
+    """
+    from till_infinity.structures.drawing.origins import extremes_in
+
+    span = 3600.0
+    # An hour of 1m closes with ten minutes missing from the middle - fifty of
+    # sixty present, which is comfortably inside `COVER`.
+    times = [float(t) for t in range(0, 1800, 60)] + [float(t) for t in range(2400, 3600, 60)]
+    closes = [100.0 + (i % 5) * 0.2 for i in range(len(times))]
+
+    got = extremes_in(times, closes, 0.0, span)
+
+    assert got is not None
+    assert got == (min(closes), max(closes))
+
+
+def test_a_complete_bar_is_not_refused_for_its_own_last_minute():
+    """Five 1m closes span 240s of timestamps and cover 300s of bar."""
+    from till_infinity.structures.drawing.origins import extremes_in
+
+    times = [0.0, 60.0, 120.0, 180.0, 240.0]
+    closes = [100.0, 101.0, 99.0, 100.5, 100.2]
+
+    assert extremes_in(times, closes, 0.0, 300.0) == (99.0, 101.0)
+
+
+def test_a_bar_covered_only_at_its_edges_is_still_refused():
+    """Two minutes of a four hour bar is the failure COVER exists to refuse."""
+    from till_infinity.structures.drawing.origins import extremes_in
+
+    times = [0.0, 60.0, 120.0]
+    closes = [100.0, 101.0, 102.0]
+
+    assert extremes_in(times, closes, 0.0, 4 * 3600.0) is None
+
+
+def test_a_bar_present_only_at_its_two_ends_is_refused():
+    """Extent is not coverage, and measuring extent let this through.
+
+    Twenty minutes at the start and one at the end spans the whole hour, so a
+    first-to-last measure calls it complete. It is the two-of-fifteen case in a
+    full-width disguise, which is why `_covers` counts bars instead.
+    """
+    from till_infinity.structures.drawing.origins import extremes_in
+
+    span = 3600.0
+    times = [float(t) for t in range(0, 1200, 60)] + [3540.0]
+    closes = [100.0 + i for i in range(len(times))]
+
+    assert extremes_in(times, closes, 0.0, span) is None
+
+
+def test_spacing_reads_the_bar_length_not_a_hole_at_the_start():
+    from till_infinity.structures.drawing.origins import _spacing
+
+    # A ten minute hole first, then dense one-minute bars.
+    times = [0.0, 600.0, 660.0, 720.0, 780.0]
+
+    assert _spacing(times, 0, len(times)) == 60.0
