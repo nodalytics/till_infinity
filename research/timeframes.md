@@ -181,3 +181,64 @@ but because the number that would decide it has never once been observed.
 polled by nothing and `STRUCTURES_FORMATION` inert for its whole life:
 computed correctly, applied to the wrong quantity, and never contradicted
 because what it broke produced silence rather than an error.
+
+## Re-checked on the full record, 2026-09-09, and it no longer reproduces
+
+The finding this document rests on - sub-15m **-821.75 over 129 closes** against
+**+35.03 over 21** at 15m and above, monotone across every band - was measured
+on 2026-09-03 against journal `outcome` rows.
+
+Those are **not the whole book.** 41% of closes are written as unattributed
+observations, because `Live.ref` lived only in memory and every position that
+outlived a deploy lost the link to the decision that opened it. The attributed
+half over-represents short trades by construction: median hold 8.9 minutes
+against 20.0 for the rest.
+
+Re-run over 45 days including both:
+
+| interval | closes | net | per close |
+| --- | ---: | ---: | ---: |
+| **1m** | 61 | **+258.28** | **+4.23** |
+| 3m | 34 | -163.28 | -4.80 |
+| 5m | 75 | -366.25 | -4.88 |
+| 15m | 23 | -85.08 | -3.70 |
+| 30m | 11 | -15.84 | -1.44 |
+| 1h | 3 | +56.01 | +18.67 |
+| **none recorded** | **343** | **-1044.03** | -3.04 |
+
+**1m is now the best band on the book**, and 15m is negative. Sub-15m totals
+-271.25 over 170 closes against -36.51 over 38 at 15m and above - still
+negative, and nothing like the ordering the original table showed.
+
+**But 343 of 551 closes carry no interval at all** - 62% of the record. An
+adopted position is rebuilt from the broker with a synthetic intent that has no
+timeframe, so the recovered decision link does not bring one back. Whatever
+those 343 closes were traded on, they are -1,044 of the -1,365 total and they
+are invisible to every row above.
+
+### So neither setting should move yet
+
+`TRADING_INTERVALS` is unset, so every timeframe trades. `TRADING_INTERVAL_WEIGHT`
+is unset, so `by_interval` returns 1.0 and the sizing half is off too. Neither
+half of the documented fix is running.
+
+That looked like an oversight and it is the correct state. The evidence for
+restricting fast timeframes is now **contradictory** - it points one way on 38%
+of the book and the other way on the newest data - and the majority of closes
+cannot be assigned to a timeframe at all.
+
+**What has to happen first** is not another measurement of the same 38%:
+
+1. **Carry the interval onto adopted positions.** The ticket-to-decision map
+   fixed the *parent*; the intent is still rebuilt from the broker without a
+   timeframe. Until that is fixed, 62% of the book is unclassifiable and no
+   interval conclusion is safe.
+2. **Then re-measure**, on a record that is whole.
+
+The capacity argument in `scaling.by_interval` is untouched by any of this and
+remains the stronger reason to act: 1m and 3m signals produced 547 of 1,270
+capacity refusals, and a gold 4h level appeared once in 48 hours against
+ninety-six 1m calls and was refused for want of room. Making a fast trade
+smaller does not give that slot back. But that argument is about *slots*, not
+about which band makes money, and it deserves its own measurement rather than
+borrowing one that has stopped holding.

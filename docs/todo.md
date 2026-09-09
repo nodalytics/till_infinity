@@ -3417,6 +3417,26 @@ Before it gates anything: held rate is not profit, and 7 days is exactly the
 sample in which a volatility conditional is most likely to be a period effect.
 More days and a block bootstrap first.
 
+## 7k. Adopted positions lose their timeframe, and 62% of closes have none
+
+The ticket-to-decision map restored the *parent* of a close that outlived a
+deploy. It does not restore the **intent**: `_intent_from` rebuilds one from the
+broker position, which knows a symbol and a side and no timeframe.
+
+So 343 of 551 closes over 45 days carry no interval, and they are -1,044 of the
+-1,365. Every interval conclusion is drawn from the other 38% - which is also
+the half that over-represents short trades, median hold 8.9 minutes against
+20.0.
+
+It shows: the sub-15m finding that `scaling.by_interval` documents no longer
+reproduces on the full record. 1m is now **+258.28 over 61 closes**, the best
+band on the book, where the original table had it worst.
+
+Fix the interval on adopted positions, then re-measure. Neither
+`TRADING_INTERVALS` nor `TRADING_INTERVAL_WEIGHT` should move before that -
+they are both unset today, and that is the right state given contradictory
+evidence over a record that is 62% unclassifiable.
+
 ## 7j. The volatility sizing scaler is built and switched off
 
 `scaling.by_volatility` reduces a position when an instrument runs hotter than
