@@ -144,6 +144,7 @@ def window_for(interval: str) -> int:
     """How many bars to keep for this timeframe."""
     return FINE_WINDOW if interval == FINE_INTERVAL else WINDOW
 
+
 #: Ceiling on `Engine._slowing`, which is an unbounded ratio. See `_slowing`.
 SLOWING_CAP = 10.0
 
