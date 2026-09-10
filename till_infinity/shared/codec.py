@@ -58,7 +58,7 @@ from functools import cache
 from typing import Any
 
 from ..logging import get_logger
-from .state import restore_enum, restore_number
+from .state import Restorable, restore_enum, restore_number
 
 log = get_logger(__name__)
 
@@ -274,6 +274,27 @@ def unpack(value: Any, known: dict[str, type]) -> Any:
         # reason: state written before a field existed must not leave it
         # missing.
         setter(fields)
+        # **And then coerce anyway, because not every `__setstate__` here is
+        # `Restorable`'s.** A `@dataclass(slots=True)` gets one *generated* by
+        # Python for pickling, which assigns raw values and coerces nothing -
+        # and `Intent` is exactly that: frozen, slotted, and not `Restorable`,
+        # so `getattr(made, "__setstate__")` found the generated one and
+        # returned before the loop below could run.
+        #
+        # That is why the fix on 2026-09-08 did not hold. `restore_number` was
+        # added to both paths and this early return shadows one of them, so a
+        # resting `Intent` kept coming back with `entry` and `stop` as strings
+        # and `abs(entry - stop)` kept raising `unsupported operand type(s)
+        # for -: 'str' and 'float'` - 89 signals dropped in one session before
+        # anyone traced it past the guard that was catching it.
+        #
+        # Idempotent where it is not needed: `Restorable.__setstate__` has
+        # already coerced, and coercing a number twice returns the number.
+        if not isinstance(made, Restorable):
+            for field in dataclasses.fields(cls):
+                if field.name in fields:
+                    value = restore_enum(cls, field.name, fields[field.name])
+                    object.__setattr__(made, field.name, restore_number(cls, field.name, value))
         return made
     for field in dataclasses.fields(cls):
         if field.name in fields:

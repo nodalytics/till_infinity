@@ -7751,3 +7751,39 @@ def test_a_feed_nobody_has_published_is_never_ready():
         speeds.observe("eurusd", 0.5)
     assert speeds.ready("eurusd")
     assert not speeds.ready("gold")
+
+
+def test_a_slotted_dataclass_is_coerced_despite_its_generated_setstate():
+    """`Intent` is frozen and slotted and **not** `Restorable`, so Python
+    generates a `__setstate__` for it that assigns raw values and coerces
+    nothing.
+
+    `codec.unpack` took `hasattr(made, "__setstate__")` as proof it was
+    `Restorable`'s coercing version, called it, and returned before the
+    coercion loop. So a resting `Intent` came back with `entry` and `stop` as
+    strings, `abs(entry - stop)` raised `unsupported operand type(s) for -:
+    'str' and 'float'`, and trading skipped the message - 89 signals dropped in
+    one session, and the same shape had already taken the service down on
+    2026-09-08.
+
+    That is why the fix then did not hold: `restore_number` was added to both
+    paths and the early return shadowed one of them.
+    """
+    from till_infinity.shared.codec import registry, unpack
+    from till_infinity.shared.state import Restorable
+    from till_infinity.trading.models import Intent
+
+    assert not isinstance(Intent.__new__(Intent), Restorable), "the premise"
+    assert hasattr(Intent, "__setstate__"), "slots=True generates one"
+
+    known = registry(td)
+    key = next(k for k, v in known.items() if v is Intent)
+    # A payload written with prices as strings, which is what the store held.
+    packed = {"~": key, "f": {"entry": "1.2345", "stop": "1.2000", "target": "1.3000"}}
+    back = unpack(packed, known)
+
+    assert isinstance(back, Intent)
+    assert isinstance(back.entry, float), f"entry came back {type(back.entry).__name__}"
+    assert isinstance(back.stop, float)
+    # The operation that actually broke.
+    assert abs(back.entry - back.stop) == pytest.approx(0.0345)

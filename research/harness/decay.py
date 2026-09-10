@@ -69,11 +69,17 @@ import sqlite3
 import statistics as st
 import sys
 import time
+from bisect import bisect_left
 from collections import defaultdict
 
 DATA = os.environ.get("DATA", os.path.expanduser("~/till_infinity/data"))
 JOURNAL = os.path.join(DATA, "journal.db")
-PRICES = os.path.join(DATA, "prices.db")
+#: **Ticks, not quotes.** This first read the production quote table, which is a
+#: sampled stream - and for a measurement whose entire subject is the first few
+#: seconds after a call, a sample of those seconds is the wrong instrument. The
+#: broker bridge serves `copy_ticks_range`, so the record itself is available:
+#: `research/harness/mt5fill.py ticks` fills it.
+PRICES = os.environ.get("DB", os.path.join(DATA, "research.db"))
 
 DAYS = float(os.environ.get("DAYS", "10"))
 #: Seconds after the call at which the excursion is read.
@@ -110,10 +116,15 @@ def calls(conn: sqlite3.Connection, since: float) -> dict[str, list[tuple]]:
 
 
 def quotes_for(conn: sqlite3.Connection, feed: str, lo: float, hi: float):
-    """(t, mid, spread) for one feed over a window, in time order."""
+    """(t, mid, spread) for one feed over a window, in time order.
+
+    From the `ticks` table, which is every print the terminal recorded, at
+    millisecond resolution. The spread is carried per tick rather than assumed,
+    because it is the number that decides whether any of this is tradeable.
+    """
     rows = []
     for ts, bid, ask in conn.execute(
-        "SELECT ts, bid, ask FROM quotes WHERE feed=? AND ts BETWEEN ? AND ? ORDER BY ts ASC",
+        "SELECT ts, bid, ask FROM ticks WHERE feed=? AND ts BETWEEN ? AND ? ORDER BY ts ASC",
         (feed, int(lo * 1000), int(hi * 1000)),
     ):
         if not isinstance(bid, int | float) or not isinstance(ask, int | float):
@@ -124,33 +135,44 @@ def quotes_for(conn: sqlite3.Connection, feed: str, lo: float, hi: float):
     return rows
 
 
-def _at(path, t0: float, want: float):
-    """The first quote at or after `t0 + want`, or None."""
-    target = t0 + want
-    for t, mid, spread in path:
-        if t >= target:
-            return t, mid, spread
-    return None
+def measure(path, times, t0: float, sign: int, unit: float, delay: float) -> dict | None:
+    """Excursion in volatility units at each horizon, from a delayed entry.
 
+    **Bisected, and the first version was not.** It walked the whole tick list
+    once per horizon per call - O(calls x horizons x ticks) - which on a feed
+    with a few hundred thousand ticks and tens of thousands of calls does not
+    finish in any useful time. It ran for fifteen minutes on two days of data
+    without printing a line, and the natural reading of that was a stalled
+    query against an unindexed journal. The journal has four indexes and
+    780,439 rows; the harness was the slow thing.
 
-def measure(path, t0: float, sign: int, unit: float, delay: float) -> dict | None:
-    """Excursion in volatility units at each horizon, from a delayed entry."""
-    entry = _at(path, t0, delay)
-    if entry is None or unit <= 0:
+    `times` is the tick timestamps in order, passed in so the bisect is over a
+    plain list rather than rebuilt per call.
+    """
+    if unit <= 0:
         return None
-    _, start, spread_at_entry = entry
+    start_i = bisect_left(times, t0 + delay)
+    if start_i >= len(path):
+        return None
+    _, start, spread_at_entry = path[start_i]
     out = {"spread_vol": spread_at_entry / unit}
-    best = 0.0
+    # One pass forward through the window, tracking the running best as each
+    # horizon boundary is crossed. The horizons are sorted, so this is a single
+    # walk rather than one per horizon.
+    best = float("-inf")
+    last = None
+    i = start_i
     for k in HORIZONS:
-        seen = [
-            sign * (mid - start) / unit
-            for t, mid, _s in path
-            if t0 + delay <= t <= t0 + delay + k
-        ]
-        if not seen:
+        edge = t0 + delay + k
+        while i < len(path) and path[i][0] <= edge:
+            move = sign * (path[i][1] - start) / unit
+            if move > best:
+                best = move
+            last = move
+            i += 1
+        if last is None:
             continue
-        best = max(seen)
-        out[f"at{k}"] = seen[-1]
+        out[f"at{k}"] = last
         out[f"best{k}"] = best
     return out if len(out) > 1 else None
 
@@ -194,10 +216,11 @@ def run() -> None:
             path = quotes_for(pc, feed, lo, hi)
             if len(path) < 500:
                 continue
+            times = [t for t, _m, _s in path]
             span = (path[0][0], path[-1][0])
             for t0, sign, vol, _iv in made:
                 unit = vol / 10_000.0 * (path[0][1] or 1.0)
-                got = measure(path, t0, sign, unit, delay)
+                got = measure(path, times, t0, sign, unit, delay)
                 if got:
                     got["interval"] = _iv
                     live.append(got)
@@ -206,7 +229,7 @@ def run() -> None:
                 # against an undirected control would be half noise.
                 for _ in range(CONTROLS):
                     rt = random.uniform(span[0], max(span[0], span[1] - max(HORIZONS)))
-                    got = measure(path, rt, sign, unit, delay)
+                    got = measure(path, times, rt, sign, unit, delay)
                     if got:
                         got["interval"] = _iv
                         control.append(got)
