@@ -304,6 +304,39 @@ four times larger than it was, by a factor that differed per instrument. It
 changed which levels existed, which arrivals counted as touches, and which
 touches resolved as what - the labels, not just the covariates.
 
+### And because the width is the modellable part, it is the part with models on it
+
+Direction is close to unforecastable and volatility is not - a large move is
+followed by large moves, a quiet session by quiet ones - which is why the
+argument above puts the whole weight of the system on the width rather than on
+the sign. That is also the one quantity here where *forecasting* is the honest
+word for what is being attempted, so it has accumulated several attempts at it:
+
+* an exponentially weighted mean absolute return, which is what everything
+  divides by;
+* a **GARCH** estimate, which adds a long-run level to revert toward;
+* **range** estimators - Parkinson, Garman-Klass, Yang-Zhang - which read the
+  whole bar rather than its last price;
+* a **HAR** regression, which forecasts the next bar from three horizons of its
+  own history and is the source of `forecast_ratio`;
+* a **learned** model - one online tree over twenty dimensionless features
+  shared across the whole book, including the two leading inputs this system
+  has (the hour's own volatility share, and quote arrival rate);
+* and an **ensemble** scoring all of them against what each bar actually did.
+
+Only the first is used. The rest are published beside it and read by nothing,
+which is deliberate: every threshold in the system divides by that one number,
+and `research/forecasting.md` records what happened each of the three times a
+replacement looked justified. Two of those three were defects that made the
+data look clean.
+
+**The standing result is that none of them beats reusing the last realised
+value**, and that persistence's advantage shrinks monotonically as the horizon
+lengthens - so the case for a forecast is strongest exactly where this system
+holds trades longest, and weakest at the scalp horizon where most of them are.
+That is a finding about the *width*, not about the sign, and it changes how
+much to size rather than which way to face.
+
 ## What the record supports, and what it has already refused
 
 So much for the argument. The thesis has two halves and they have not fared

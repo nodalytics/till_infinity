@@ -7607,9 +7607,13 @@ def test_the_regime_scaler_is_off_until_a_band_is_set():
 
 
 def test_the_regime_scaler_cuts_both_tails_and_not_the_middle():
-    """An inverted U, not a slope. Levels hold 85.7% near the long-run level
-    and about 78.8% at *either* extreme, so a linear reading of the ratio would
-    have the sign wrong on one whole side."""
+    """An inverted U, not a slope. Levels hold 86.4% when the next bar is
+    expected to be the size of the last, and about 81.3% at *either* extreme,
+    so a linear reading of the ratio would have the sign wrong on one whole
+    side.
+
+    The ratio is expected *change* of scale, not the regime level - the level
+    is `vol_stretch` and it is flat across its quintiles."""
     from till_infinity.trading import scaling
 
     # Normal volatility keeps full size.

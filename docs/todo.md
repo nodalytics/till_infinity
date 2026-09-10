@@ -3399,23 +3399,41 @@ days, and block bootstrap it.
 sharpest statement of what this system does is: take the predictable part and
 let structure supply the sign.
 
-**Run 2026-09-09 on 24,611 decisive touches.** Levels hold **85.7%** of the
-time when volatility sits near its long-run level, and **78.9% / 78.8%** at
-either extreme - an inverted U with 6.9 points between the peak and the tails,
-about five thousand touches per bucket. A compressed regime is one a level is
-coiled against; a violent one runs levels over; the middle is where a level is
-a level.
+**Re-run 2026-09-09 on 32,362 decisive touches over 14 days, and the first
+version of this entry named the wrong field.** `forecast_ratio` is
+`har.ratio` - the next-bar forecast over the last realised value, *expected
+change* of scale. It is not the regime level. The regime level is
+`vol_stretch` (`garch.stretch`), published on the same call, and the two
+correlate at **+0.033**.
 
-The touch's own `regime` field carries **none** of it - 81.6% to 82.4% across
-its buckets, flat. Two fields that sound like the same quantity and only one
-knows anything.
+Only one of them predicts anything:
 
-So the halves are not combined: `forecast_ratio` is computed, published, and
-read by nothing. This is the first measurement saying it should be.
+| quintile | forecast_ratio | vol_stretch |
+| --- | --- | --- |
+| lowest | 81.3% | 84.6% |
+| 2nd | 84.8% | 83.4% |
+| middle | **86.4%** | 83.6% |
+| 4th | 85.1% | 83.4% |
+| highest | 81.4% | 84.0% |
 
-Before it gates anything: held rate is not profit, and 7 days is exactly the
-sample in which a volatility conditional is most likely to be a period effect.
-More days and a block bootstrap first.
+**Levels hold when the scale is about to stay put and break when it is about to
+change, in either direction** - 5.1 points peak-to-tail, about 6,500 touches
+per bucket. The regime *level* is flat to within 1.2 points and has no shape,
+and so is the touch's own `regime` field (84.4 to 83.4). Three fields that
+sound like the same quantity; one knows something.
+
+That correction matters more than a relabelling. Acting on the earlier wording
+would have meant gating on `vol_stretch`, which is the field with nothing in
+it. The live code escaped this because `scaling.by_regime` reads
+`forecast_ratio` - right for the wrong reason.
+
+The 7-day read gave 85.7% against 78.9 / 78.8. Same shape, tails 2.5 points
+narrower on twice the data, which is the direction a period effect usually
+moves when the period lengthens.
+
+Before it gates anything: held rate is not profit - `research/reachable.md` is
+the standing reminder - and a block bootstrap over autocorrelated touches is
+still owed. `regime_band` remains 0.0.
 
 ## 7k. Adopted positions lose their timeframe, and 62% of closes have none
 

@@ -1031,6 +1031,109 @@ class Engine:
             was_down = self._now
         stamps[key] = (was_up, was_down)
 
+    def _learn_vol(
+        self,
+        feed: str,
+        interval: str,
+        when: float,
+        open_: float,
+        high: float,
+        low: float,
+        close: float,
+        reported: object,
+        realised_bps: float,
+    ) -> None:
+        """Hand one closed bar to the shared volatility learner.
+
+        Everything gathered here is a **leading** input or a bar shape the
+        existing estimators cannot express, which is the only reason this is a
+        separate call rather than part of `Volatility.observe_bar` - a
+        per-series estimate has no route to the clock or the change detectors.
+        See `vol.Book.learn`.
+
+        `hour_share` is the one worth pointing at. `sessions.Clock` has been
+        computing each instrument's volatility by hour of day, as a share of
+        its own daily mean, and publishing it on every call. **No volatility
+        model has ever read it**, which is odd given it is the one input here
+        genuinely known in advance: the London open is violent tomorrow for the
+        reason it was violent today.
+
+        Silent on anything it cannot get. Every argument to `learn` has a
+        default meaning "no reading", so a missing collaborator degrades this
+        to the price-only feature set rather than dropping the bar.
+        """
+        if realised_bps <= 0:
+            return
+        hour = float(sessions.hour_of(when))
+        weekday = float(time.gmtime(when).tm_wday) if when > 0 else -1.0
+
+        # The clock lives on the service, which owns the learned session
+        # record; the engine is handed a reference at startup. `getattr`
+        # because a restore from a save predating it has no such attribute and
+        # this runs on the first bar after a deploy.
+        share = 1.0
+        clock = getattr(self, "clock", None)
+        if clock is not None:
+            try:
+                _, share = clock.volatility(feed, when)
+            except Exception:  # a clock with nothing on this feed yet
+                share = 1.0
+
+        # Changepoint evidence from the detectors `_note_change` just fed. The
+        # larger of the two directions: the learner is being told how much
+        # reason there is to stop trusting the past, which is a magnitude
+        # question rather than a directional one.
+        nats = 0.0
+        fired = False
+        held = getattr(self, "_changes", None)
+        if held is not None:
+            pair = held.get((feed, interval))
+            if pair is not None:
+                nats = max(float(pair[0].statistic), float(pair[1].statistic))
+        stamps = getattr(self, "_change_at", None)
+        if stamps is not None:
+            got = stamps.get((feed, interval))
+            if got is not None:
+                fired = self._now > 0 and self._now in got
+
+        self.vol.learn(
+            feed,
+            interval,
+            realised_bps,
+            open_=open_,
+            high=high,
+            low=low,
+            close=close,
+            hour=hour,
+            weekday=weekday,
+            hour_share=share,
+            volume=float(reported) if isinstance(reported, int | float) and reported > 0 else 0.0,
+            focus_nats=nats,
+            changed=fired,
+            interval_seconds=lv.SECONDS.get(interval, 0.0),
+        )
+
+    def _learned_at(self, feed: str, interval: str) -> dict[str, float]:
+        """The learned forecast for this series, for the journal.
+
+        **Absent rather than 1.0 while the model is cold**, which is the rule
+        `LevelRange.features` and `changing` both follow: a missing key is a
+        missing reading downstream, and a ratio of one is the claim that the
+        model looked and expected no change. Those are different, and the
+        journal is the only thing that can eventually tell them apart.
+        """
+        try:
+            learned = self.vol.learned
+            if not learned.warm:
+                return {}
+            key = f"{feed}|{interval}"
+            got = learned.predict(key)
+            if got <= 0:
+                return {}
+            return {"learned_bps": round(got, 4), "learned_ratio": round(learned.ratio(key), 4)}
+        except Exception:  # never let a published extra stop a call
+            return {}
+
     def changing(self, feed: str, when: float = 0.0) -> dict[str, float]:
         """How many timeframes are calling a change on this instrument.
 
@@ -1804,7 +1907,7 @@ class Engine:
             vol.update(float(close))
             # Whole-bar estimates, once per bar rather than once per venue -
             # same reasoning as the line above.
-            vol.observe_bar(opened, high, low, float(close))
+            realised = vol.observe_bar(opened, high, low, float(close))
             # And this timeframe's change detectors, after the volatility so
             # they are scaled by an estimate that has seen this bar. Wrapped
             # because a reading nobody gates on must not be able to stop the
@@ -1814,6 +1917,18 @@ class Engine:
                 self._note_change(feed, interval, series, vol)
             except Exception as exc:
                 log.debug("structures: no change reading for %s %s: %s", feed, interval, exc)
+            # The learned forecaster, last, because it reads the changepoint
+            # evidence the line above just produced. Wrapped for the same
+            # reason, and it matters more here: this is the newest thing in the
+            # bar path and the one most likely to raise on a shape nobody
+            # anticipated. Off unless asked for - see `config.vol_learner`.
+            if getattr(self, "learn_vol", False):
+                try:
+                    self._learn_vol(
+                        feed, interval, when, opened, high, low, float(close), reported, realised
+                    )
+                except Exception as exc:
+                    log.debug("structures: no learned reading for %s %s: %s", feed, interval, exc)
         # Pivots are session structures priced at today's scale, so they use the
         # reference estimate rather than the bar interval that happened to
         # deliver them - a 4h bar completing a day does not make it a 4h level.
@@ -2180,7 +2295,7 @@ class Engine:
                     price=price,
                     time=when,
                     origin=self._origin_at(feed, interval, level.price, vol),
-                    context=self.changing(feed, when),
+                    context={**self.changing(feed, when), **self._learned_at(feed, interval)},
                 )
             )
             self.calls += 1

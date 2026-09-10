@@ -27,6 +27,7 @@ from ..state import Restorable
 from .consensus_vol import MAD_TO_SIGMA, Ensemble
 from .garch import Garch
 from .har import Har
+from .learned import Learned
 from .ranges import Ranges
 
 #: Bars of history before the estimate is trusted. Below this the variance of
@@ -267,8 +268,15 @@ class Volatility(Restorable):
     def bps(self) -> float:
         return max(self._mean_abs, self.floor_bps)
 
-    def observe_bar(self, open_: float, high: float, low: float, close: float) -> None:
-        """Fold one whole bar into the range estimates. Closes go to `update`."""
+    def observe_bar(self, open_: float, high: float, low: float, close: float) -> float:
+        """Fold one whole bar into the range estimates. Closes go to `update`.
+
+        Returns **this bar's own realised volatility** in bps - the number the
+        ensemble scores every member against. Returned rather than recomputed
+        by the caller so a second consumer cannot end up scoring against a
+        subtly different target: `learned.py` is judged on the same bar, by the
+        same measure, as `garch`, `range` and `har` are.
+        """
         self._ranges.observe(open_, high, low, close)
         # One bar's own realised reading, not the windowed one: the forecaster
         # builds its own horizons and feeding it a smoothed series would give
@@ -293,6 +301,7 @@ class Volatility(Restorable):
             # on the mean-absolute convention already.
             sigma_scaled=frozenset({"range", "har"}),
         )
+        return realised
 
     @property
     def ensemble_bps(self) -> float:
@@ -310,7 +319,17 @@ class Volatility(Restorable):
 
     @property
     def forecast_ratio(self) -> float:
-        """Forecast over the last realised value. 1.0 when there is no view."""
+        """Forecast over the last realised value. 1.0 when there is no view.
+
+        **Where volatility is going, not where it is.** Above one the next bar
+        is expected to be livelier than the last, whatever level either sits
+        at. `stretch` below is the other question - the current scale against
+        its own long-run level - and the two are near independent: log
+        correlation **+0.033** over 32,362 published touches. An instrument can
+        be at twice its usual volatility and expected to stay exactly there.
+
+        Of the two, this is the one that predicts anything. See `stretch`.
+        """
         return self._har.ratio
 
     @property
@@ -334,6 +353,17 @@ class Volatility(Restorable):
         1.0 when there is no view yet. Above 1 the instrument is livelier than
         it usually is and the model expects that to fade. The exponentially
         weighted estimate cannot express this at all, because it has no usual.
+
+        **Published as `vol_stretch` and measured to predict nothing.** Across
+        32,362 decisive touches on 14 days a level held 84.6 / 83.4 / 83.6 /
+        83.4 / 84.0 percent across its quintiles - flat to within 1.2 points,
+        no shape. `forecast_ratio` on the same touches spans 5.1 points in an
+        inverted U. Being in a violent regime says little about whether a level
+        holds; being about to *leave* the current one says a good deal.
+
+        Kept and still published: a null that has been measured is worth more
+        than an absence, and this is the field a reader reaches for first when
+        they want "the regime". `research/clustering.md` records the run.
         """
         return self._garch.stretch
 
@@ -417,6 +447,13 @@ class Book(Restorable):
 
     half_life: float = HALF_LIFE
     _by_key: dict[tuple[str, str], Volatility] = field(default_factory=dict)
+    #: **One** learned forecaster for the whole book, not one per series.
+    #: Everything about that choice - why it is legitimate, and why the box
+    #: refuses the alternative - is in `learned.py`. It lives here rather than
+    #: on `Volatility` because it is shared: a copy inside each of the ~424
+    #: estimates would be persisted 424 times and would learn from a few
+    #: hundred bars each instead of from all of them.
+    _learned: Learned = field(default_factory=Learned)
 
     # `__setstate__` from `Restorable` too, and it matters more here: this
     # holds one estimate per instrument *and* timeframe, so one missing
@@ -437,6 +474,89 @@ class Book(Restorable):
 
     def update(self, feed: str, price: float, interval: str = "") -> float:
         return self.of(feed, interval).update(price)
+
+    @property
+    def learned(self) -> Learned:
+        """The shared forecaster. Lazily created for a state that predates it.
+
+        `Restorable.__setstate__` defaults a field a save predates, but this is
+        reached from `learn` on the first bar after a deploy and a `None` there
+        would be an `AttributeError` inside the structures consumer - which is
+        precisely the failure that stopped this service for four hours and then
+        again for eleven. Cheap guard, expensive absence.
+        """
+        found = getattr(self, "_learned", None)
+        if found is None:
+            found = self._learned = Learned()
+        return found
+
+    def learn(
+        self,
+        feed: str,
+        interval: str,
+        realised_bps: float,
+        *,
+        open_: float,
+        high: float,
+        low: float,
+        close: float,
+        hour: float = -1.0,
+        weekday: float = -1.0,
+        hour_share: float = 1.0,
+        volume: float = 0.0,
+        focus_nats: float = 0.0,
+        changed: bool = False,
+        interval_seconds: float = 0.0,
+    ) -> None:
+        """Fold one closed bar into the shared forecaster.
+
+        Split from `Volatility.observe_bar` rather than called inside it,
+        because the leading features live outside this package: the hour's
+        volatility share comes from `context/sessions`, the changepoint
+        evidence from `learning/focus`, and the volume from the bar payload.
+        A per-series estimate has no route to any of them, and passing three
+        collaborators into `Volatility` to get them there would put the whole
+        engine inside an object that measures one number.
+
+        Order is the part worth getting right, and it is the reverse of what
+        reads naturally: the row is built from the state **before** this bar,
+        handed to `observe` along with what the bar did, and only then does the
+        state advance. Building the row first from updated state would give the
+        model a feature set containing its own answer.
+        """
+        vol = self.of(feed, interval)
+        if realised_bps <= 0 or not vol.warm:
+            return
+        key = f"{feed}|{interval}"
+        learned = self.learned
+        row = learned.features(
+            key,
+            ew_bps=vol.bps,
+            garch_bps=vol.garch_bps,
+            range_bps=vol.range_bps,
+            har_bps=vol.forecast_bps,
+            stretch=vol.stretch,
+            open_=open_,
+            high=high,
+            low=low,
+            close=close,
+            hour=hour,
+            weekday=weekday,
+            hour_share=hour_share,
+            volume=volume,
+            focus_nats=focus_nats,
+            interval_seconds=interval_seconds,
+        )
+        learned.observe(
+            key,
+            realised_bps,
+            row,
+            ew_bps=vol.bps,
+            har_bps=vol.forecast_bps,
+            close=close,
+            volume=volume,
+            changed=changed,
+        )
 
     def feeds(self) -> list[str]:
         return sorted({feed for feed, _ in self._by_key})

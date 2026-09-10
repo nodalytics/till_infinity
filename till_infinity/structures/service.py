@@ -469,6 +469,12 @@ class Watcher:
         #: from resolutions and from the volatility it sees; asserts
         #: nothing until an hour has earned it.
         self.clock = Clock()
+        # Handed to the engine so the volatility learner can read the hour's
+        # volatility share. Re-bound after a restore as well - see `load`.
+        self.engine.clock = self.clock
+        #: Off by default - the forecaster loses to `har.py` on 250,000
+        #: replayed bars. See `config.vol_learner`.
+        self.engine.learn_vol = self.settings.vol_learner
         #: Monetary policy per currency, folded onto every level call and
         #: emitted as its own shape when a stance turns. Empty until the news
         #: service has collected something, and silent while empty - a level
@@ -658,6 +664,14 @@ class Watcher:
         self.engine.draw_with(self.settings.formation)
         self.engine.charge_spread = self.settings.charge_spread
         self.engine.consensus.single_source = single_source_feeds()
+        self.engine.learn_vol = self.settings.vol_learner
+        # The clock is restored separately above and the engine needs a
+        # reference to it, because the volatility learner reads the hour's
+        # share of the day - the one genuinely forward-looking input this
+        # package has. Re-bound after the restore rather than at construction:
+        # both objects come out of the state file, and binding at construction
+        # would leave the engine pointing at the empty clock it was built with.
+        self.engine.clock = self.clock
         log.info(
             "structures: restored models (%s), drawing with %s",
             self.detector.seen(),
@@ -768,6 +782,36 @@ class Watcher:
             + (f" || why: {reasons}" if reasons else "")
         )
 
+    def vol_model_tally(self) -> str:
+        """The learned forecaster against the two baselines it has to beat.
+
+        This is the deliverable, not a diagnostic. `learned.py` is allowed to
+        be worse than the line it replaces and the only thing that can say so
+        is a head-to-head on identical bars - so if this never reaches a log,
+        the model is exactly the thing `research/inert.md` catalogues: computed
+        forever, read by nobody, settling nothing.
+
+        `naive` is the last realised value. A forecaster that cannot beat it
+        has not earned the CPU, whatever it beats among the others.
+        """
+        try:
+            learned = self.engine.vol.learned
+        except Exception:
+            return "vol model: none"
+        standings = learned.standings()
+        if not standings:
+            return f"vol model: cold, {learned._seen} pair(s) seen of {learned.warmup}"
+        best = ", ".join(f"{name} {value:.3f}" for name, value in standings)
+        table = dict(standings)
+        verdict = ""
+        if "learned" in table and "naive" in table:
+            verdict = (
+                " - beating naive"
+                if table["learned"] > table["naive"]
+                else " - **losing to naive**"
+            )
+        return f"vol model: {learned._seen} pair(s), accuracy {best}{verdict}"
+
     def change_tally(self) -> str:
         """How many timeframes are calling a change right now, for the save log.
 
@@ -820,6 +864,7 @@ class Watcher:
         log.info("structures: %s", self.drift_tally())
         log.info("structures: %s", self.refinement_tally())
         log.info("structures: %s", self.change_tally())
+        log.info("structures: %s", self.vol_model_tally())
         if self.dropped:
             log.warning(
                 "structures: %d message(s) have thrown and been skipped since start",

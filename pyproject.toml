@@ -69,12 +69,16 @@ target-version = "py311"
 # gates should not block CI on them - and a lint failure there would stop a
 # deploy over a scratch script.
 #
+# The whole `research` folder rather than `research/harness` alone: a harness
+# and the page reporting it are the same artefact, and splitting the exclusion
+# meant a scratch script one directory up could still block a deploy.
+#
 # `assets` is the same category: a generator run by hand to produce the logo
 # SVGs, judged by looking at what comes out. It is not imported by anything.
 # The exclusion was added after it did exactly what the paragraph above warns
 # about - an unsorted import block in a logo script failed CI and blocked a
 # deploy of the trading service.
-extend-exclude = ["research/harness", "assets"]
+extend-exclude = ["research", "assets"]
 
 [tool.ruff.lint]
 # Ruff covers pylint (the PL rules) alongside everything else, so there is one

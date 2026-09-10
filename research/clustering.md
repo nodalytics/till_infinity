@@ -45,10 +45,24 @@ The two halves of the idea are both in production, which is worth recording
 because "we should do this" is cheaper than checking whether it is done:
 
 * **The volatility model.** `structures/vol/` carries a GARCH estimate, a HAR
-  estimate, range-based estimators, and an ensemble over them. Every published
-  call carries `vol_bps` as the unit, plus `garch_bps`, `ensemble_bps`,
-  `forecast_bps` and `forecast_ratio` - the last being how far the current
-  scale sits above its own long-run level, which is the regime reading.
+  estimate, range-based estimators, a learned model, and an ensemble over them.
+  [forecasting.md](forecasting.md) is the head-to-head between them, and its
+  standing result is that **none of them beats reusing the last realised
+  value** - which bears on where `forecast_ratio` comes from, though not on the
+  measured relationship between `forecast_ratio` and level-holding below. Every published
+  call carries `vol_bps` as the unit, plus `garch_bps`, `range_bps`,
+  `ensemble_bps`, `forecast_bps`, and **two ratios that are easy to confuse and
+  are not the same question**:
+
+  | field | is | says |
+  | --- | --- | --- |
+  | `vol_stretch` | `garch.stretch` | **where we are** - current scale over its own long-run level |
+  | `forecast_ratio` | `har.ratio` | **where we are going** - next bar over the last one |
+
+  An instrument can sit at twice its usual volatility (`vol_stretch` 2.0) and
+  be expected to stay exactly there (`forecast_ratio` 1.0). Measured over
+  32,362 touches the two correlate at **+0.033** - they are close to
+  independent, and the run below finds that only one of them predicts anything.
 * **Volatility-derived sizing.** `trading/sizing.py` converts a stop expressed
   in volatility units to a price distance as `price * vol_bps * multiple /
   10_000`, then inverts the broker's tick value against the risk budget to get
@@ -73,45 +87,71 @@ without dividing by a volatility estimate.
   move is large says nothing about which way, which is exactly why the
   structure half of this system exists.
 
-## Run: the regime does predict whether a level holds
+## Run: the *change* in the regime predicts whether a level holds. The regime does not.
 
-24,611 decisive touches over 7 days, each joined to the decision that carried
-`forecast_ratio` - how far the current volatility scale sits above its own
-long-run level.
+32,362 decisive touches over 14 days, each joined to the decision that carried
+both ratios. Quintiles of each, held rate in each bucket, ~6,500 touches per
+cell.
 
-| forecast_ratio | touches | level held |
+| quintile | `forecast_ratio` — where we are going | `vol_stretch` — where we are |
 | --- | --- | --- |
-| below 0.73 | 4,922 | **78.9%** |
-| 0.73 - 1.00 | 4,689 | 83.1% |
-| **1.00 - 1.20** | 5,156 | **85.7%** |
-| 1.20 - 2.06 | 4,922 | 83.5% |
-| above 2.06 | 4,922 | **78.8%** |
+| lowest | 81.3% | 84.6% |
+| 2nd | 84.8% | 83.4% |
+| **middle** | **86.4%** | 83.6% |
+| 4th | 85.1% | 83.4% |
+| highest | 81.4% | 84.0% |
+| **peak − tail** | **5.1 points** | **1.2 points, no shape** |
 
-**Levels hold best when volatility is near its own long-run level, and worst at
-both extremes** - 6.9 points between the peak and either tail, on about five
-thousand touches per bucket. It is an inverted U, not a slope, which is why
-nobody would have found it by fitting a coefficient.
+**Levels hold when the volatility scale is about to stay put, and break when it
+is about to change - in either direction.** That is an inverted U, not a slope,
+which is why nobody would have found it by fitting a coefficient.
 
-Both ends make sense on inspection. In a compressed regime a level is what
-price is coiled against, and the move that ends the compression goes through
-it. In a violent one, levels are simply run over. The middle is where a level
-is a level.
+Both ends make sense on inspection, and neither is about being calm or violent.
+A forecast far *above* one says the next bar is several times the last: an
+expansion of that size runs a level over regardless of what the level is. A
+forecast far *below* one says the scale is collapsing, and a level holding
+price against a move is exactly what stops mattering when the move stops. The
+middle - next bar the size of the last - is where a level is a level.
 
-**And the touch's own `regime` field carries none of this:** 82.4%, 81.6%,
-82.0%, 82.4%, 81.8% across its five buckets - flat to within a point. Two
-fields that sound like the same quantity, and only one of them knows anything.
-Anything reaching for "the regime" should reach for `forecast_ratio`.
+**The regime level itself carries none of this.** `vol_stretch` is flat to
+within 1.2 points with no monotone or U shape, and the touch's own `regime`
+field is flat too (84.4 / 83.4 / 83.8 / 84.0 / 83.5). Three fields that sound
+like the same quantity, and one of them knows something.
 
-So the two halves are **not** currently combined. The forecast is computed,
-published on every call, and read by nothing. This is the first measurement
-saying it should be read.
+### The correction, and why it is not cosmetic
 
-**What it is not yet.** Held rate is not profit: `research/reachable.md` is the
-standing reminder that a level holding and a trade paying are different events.
-And 7 days of one regime is exactly the sample in which a volatility conditional
-is most likely to be a period effect. The next step is the same one
-`agreeing.md` needed - more days, and a block bootstrap over autocorrelated
-touches.
+An earlier version of this section reported the `forecast_ratio` numbers under
+`vol_stretch`'s definition - "how far the current scale sits above its own
+long-run level". The same wrong gloss had reached `scaling.by_regime`,
+`config.regime_band`, `docs/todo.md` and the harness itself.
+
+It reads like a naming slip and it isn't, because the two fields correlate at
+**+0.033**. A reader acting on the prose would have reached for the field named
+in it, gated on `vol_stretch`, and gated on the one with nothing in it. The
+live code escaped only because `scaling.by_regime` was wired to
+`forecast_ratio` - right for the wrong reason.
+
+The general lesson is the one this repository keeps re-learning in different
+clothes: **a field's name and a field's definition are different objects**, and
+a measurement is a statement about the definition. `run_vol` returning exactly
+0.000 on every touch and `articles.symbols` being `[]` on all 24,214 rows are
+the same failure with the volume turned up - a number that arrives, looks like
+a reading, and means nothing.
+
+### Against the earlier read
+
+7 days and 24,611 touches gave 85.7% at the peak against 78.9 / 78.8 at the
+tails. 14 days and 32,362 gives 86.4% against 81.3 / 81.4. **The peak is stable
+and the tails have come in by about 2.5 points** on twice the data, which is
+the direction a period effect usually moves when the period lengthens. The
+shape survived; the size of the claim shrank by a quarter.
+
+### What it is not yet
+
+Held rate is not profit. `research/reachable.md` is the standing reminder that
+a level holding and a trade paying are different events, and nothing here has
+been joined to money. A block bootstrap over autocorrelated touches is still
+owed - the same one `agreeing.md` needs. `regime_band` stays at 0.0 until then.
 
 ## Sizing: half of it is automatic and the other half is switched off
 

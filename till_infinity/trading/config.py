@@ -645,15 +645,23 @@ class Settings:
     #: How far `forecast_ratio` may drift from one, in log space, before size
     #: starts falling. Zero is off.
     #:
-    #: Levels hold 85.7% of the time with the ratio between 1.0 and 1.2, and
-    #: about 78.8% at either extreme - measured over 24,611 touches, an
-    #: inverted U rather than a slope. `scaling.by_regime` is the multiplier;
-    #: this is how wide the band of full size is. 0.35 is roughly "between
-    #: three-quarters and one and a half times normal volatility".
+    #: `forecast_ratio` is the **expected change** of the volatility scale -
+    #: next bar over last - and not the regime level. The regime level is
+    #: `vol_stretch`, it is published on the same call, and it is flat to
+    #: within 1.2 points across its quintiles. Do not substitute one for the
+    #: other; they correlate at +0.033.
     #:
-    #: **Off until the sample is longer.** Seven days is exactly the window in
-    #: which a volatility conditional is most likely to be a period effect, and
-    #: held rate is not profit. See `research/clustering.md`.
+    #: Levels hold 86.4% of the time with the ratio between 1.0 and 1.21, and
+    #: about 81.3% at either extreme - measured over 32,362 touches on 14 days,
+    #: an inverted U rather than a slope. `scaling.by_regime` is the multiplier;
+    #: this is how wide the band of full size is. 0.35 is roughly "the next bar
+    #: within three-quarters to one and a half times the size of the last".
+    #:
+    #: **Off until this is joined to money.** The 14-day read holds the shape
+    #: the 7-day read found and narrows the tails, so it is less likely to be a
+    #: period effect than it was - but held rate is still not profit, and
+    #: `research/reachable.md` is the standing reminder that a level holding and
+    #: a trade paying are different events. See `research/clustering.md`.
     regime_band: float = 0.0
     #: The most `by_regime` may reduce by. A scaler that can reach zero is a
     #: gate wearing a multiplier's clothes, and seven points of held rate does

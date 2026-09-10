@@ -112,18 +112,32 @@ def by_volatility(vol_bps: float, target_bps: float) -> float:
 
 
 def by_regime(ratio: float | None, width: float, floor: float = 0.5) -> float:
-    """Reduce when volatility is far from its own long-run level.
+    """Reduce when the volatility scale is expected to change sharply.
 
-    `ratio` is `forecast_ratio` off the call: how far the current scale sits
-    above where this instrument usually is. One is normal.
+    `ratio` is `forecast_ratio` off the call, and it is **not** a reading of
+    the regime level. It is `har.ratio`: the next-bar forecast over the last
+    realised value - *where volatility is going*, not where it is. One means
+    the next bar is expected to look like the last one, whatever size that was.
+
+    The distinction is load-bearing and was got wrong here for a while. The
+    reading of *where we are* is `vol_stretch` (`garch.stretch`, current scale
+    over its own long-run level), it is published on the same call, and it
+    predicts **nothing**: 84.6 / 83.4 / 83.6 / 83.4 / 84.0 across its quintiles
+    over 32,362 touches, flat to within 1.2 points. The two are near
+    independent - log correlation **+0.033** - so they are separate questions
+    and only one has an answer.
 
     **The shape is an inverted U and that is the whole point.** Measured over
-    24,611 decisive touches, a level held **85.7%** of the time with the ratio
-    between 1.0 and 1.2, and **78.9%** below 0.73 and **78.8%** above 2.06 -
-    worse at *both* ends, by about seven points. A compressed regime is what
-    price is coiled against, so the move that ends the compression goes through
-    the level; a violent one runs levels over; the middle is where a level is a
-    level.
+    32,362 decisive touches on 14 days, a level held **86.4%** of the time with
+    the ratio between 1.0 and 1.21, and **81.3%** below 0.75 and **81.4%**
+    above 2.06 - worse at *both* ends, by about five points. Levels hold when
+    the scale is about to stay put and break when it is about to change, in
+    either direction: a fivefold expansion runs a level over, and a collapse in
+    scale is what a level was holding price against being released.
+
+    An earlier 7-day read of this gave 85.7% against 78.9 / 78.8 - the same
+    shape, a wider spread. The peak is stable and the tails have come in, which
+    is the direction a period effect usually moves when the period lengthens.
 
     Nothing linear can express that, which is why this is a distance from one
     rather than a multiple of it - `by_volatility` above is the multiple, and

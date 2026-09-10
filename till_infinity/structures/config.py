@@ -86,6 +86,23 @@ class Settings(Restorable):
     #: loosen one gate evenly. See levels.md, "What the cost actually comes to".
     charge_spread: bool = True
 
+    #: Whether to run the learned volatility forecaster (`vol/learned.py`) -
+    #: one pooled online tree forecasting realised volatility over the next
+    #: five bars, from twenty dimensionless features shared across the book.
+    #:
+    #: **It beats `har.py` in every cell of a split-sample test** - ten fixed
+    #: feeds, 400,000 bars cut in half by time, four horizons, both halves,
+    #: margins from +0.032 to +0.098. That is stable where HAR's own rank is
+    #: not: HAR is best of three on a 42-feed sample and worst of three here.
+    #:
+    #: Neither beats the naive last-realised-value baseline, which wins eleven
+    #: of the twelve remaining cells, so this **gates nothing** whatever it is
+    #: set to. On, it costs about 0.2% of one core and 1.2MB, publishes
+    #: `learned_bps` and `learned_ratio` on every call, and logs a head-to-head
+    #: against `har` and `naive` on each save. See `research/forecasting.md`,
+    #: including two wrong versions of that conclusion and what caused them.
+    vol_learner: bool = False
+
     #: How swings are found: `pip` takes bar extremes by prominence, `run` the
     #: boundaries between volatility runs, `origin` the turns whose impulse set
     #: a new running extremum, `profile` the price bands where the most
@@ -152,4 +169,5 @@ class Settings(Restorable):
             not in ("0", "false", "no"),
             formation=os.environ.get("STRUCTURES_FORMATION") or DEFAULT_FORMATION,
             macro=os.environ.get("STRUCTURES_MACRO", "1") not in ("0", "false", "no"),
+            vol_learner=os.environ.get("STRUCTURES_VOL_LEARNER", "0") not in ("0", "false", "no"),
         )

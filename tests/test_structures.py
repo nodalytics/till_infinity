@@ -2515,3 +2515,197 @@ def test_drift_still_fires_and_counts_after_the_removal():
     assert set(seen) == {"adwin"}
     # Every emitted signal has to have come through the ADWIN path.
     assert len(fired) <= seen["adwin"]
+
+
+# ---------------------------------------------------------------------------
+# The learned volatility forecaster. See `vol/learned.py`.
+# ---------------------------------------------------------------------------
+
+
+def test_the_learner_is_pooled_not_per_series():
+    """One model across the book is the design, not a concession.
+
+    A per-series model is 525MB at ~424 series on the cheapest tree available,
+    on a box with about 1.1GB free. If this ever becomes one model per key, the
+    memory is what fails, and it fails in production rather than here.
+    """
+    from till_infinity.structures.vol.learned import Learned
+
+    model = Learned(warmup=10)
+    for i in range(60):
+        for key in ("eurusd|5m", "volatility_75_index|4h"):
+            row = model.features(key, ew_bps=2.0, open_=100, high=101, low=99, close=100.5)
+            model.observe(key, 2.0 + (i % 3), row, ew_bps=2.0)
+
+    assert len(model._by_key) == 2  # two series
+    assert model._seen > 50  # one model, learning from both
+
+
+def test_the_target_is_scale_free_so_one_model_can_span_the_book():
+    """A 2bps bar against a 2bps estimate and a 40bps bar against a 40bps one
+    are the same observation. If they are not, pooling is illegitimate."""
+    from till_infinity.structures.vol.learned import Learned
+
+    model = Learned()
+    assert model._target(2.0, 2.0) == pytest.approx(model._target(40.0, 40.0))
+    assert model._target(4.0, 2.0) == pytest.approx(model._target(80.0, 40.0))
+    # Centred on the incumbent: no correction means no change.
+    assert model._target(5.0, 5.0) == pytest.approx(0.0)
+
+
+def test_a_cold_learner_returns_the_estimate_it_was_given():
+    """Predicting zero correction means 'the standing estimate is right', so a
+    model that has learned nothing must not make anything worse."""
+    from till_infinity.structures.vol.learned import Learned
+
+    model = Learned(warmup=1_000_000)  # never warm
+    row = model.features("x|5m", ew_bps=3.0, open_=100, high=101, low=99, close=100.5)
+    assert model._predict(row, ew_bps=3.0, fallback=7.0) == 7.0
+    assert model.ratio("x|5m") == 1.0
+
+
+def test_the_correction_is_bounded_in_both_directions():
+    """`har.ratio` reached 1.3e11 and was published 19,511 times. The log cap is
+    that lesson applied before the fact rather than after it."""
+    from till_infinity.structures.vol.learned import LOG_CAP, Learned
+
+    model = Learned()
+    assert model._target(1_000_000.0, 0.001) == pytest.approx(LOG_CAP)
+    assert model._target(0.001, 1_000_000.0) == pytest.approx(-LOG_CAP)
+
+
+def test_features_are_all_dimensionless():
+    """A single feature in price units turns the pooled model back into 424
+    per-series models sharing one set of splits."""
+    from till_infinity.structures.vol.learned import Learned
+
+    cheap_model, dear_model = Learned(), Learned()
+    for _ in range(5):
+        cheap_model.observe("gold|1h", 30.0, None, ew_bps=30.0)
+        dear_model.observe("eurusd|1h", 30.0, None, ew_bps=30.0)
+    cheap = cheap_model.features(
+        "gold|1h", ew_bps=30.0, garch_bps=33.0, open_=2_000, high=2_010, low=1_990, close=2_005
+    )
+    # The same series shape at a thousandth of the price, same volatility.
+    dear = dear_model.features(
+        "eurusd|1h", ew_bps=30.0, garch_bps=33.0, open_=2.0, high=2.010, low=1.990, close=2.005
+    )
+    assert cheap is not None
+    assert dear is not None
+    for name in ("garch_rel", "r1", "r5", "body", "upper_wick", "lower_wick", "span_rel"):
+        assert cheap[name] == pytest.approx(dear[name], rel=1e-6), name
+
+
+def test_the_model_learns_a_shape_a_line_cannot():
+    """It separates two bars of identical magnitude and opposite future.
+
+    This asserts the **mechanism**, not a win. An earlier version asserted that
+    the model beat `naive`, and that was wrong: on a split-sample replay it does
+    not - `research/forecasting.md` has the table. A synthetic test that kept
+    claiming otherwise would exist to flatter the model.
+
+    What is worth pinning down is the interaction HAR structurally cannot hold:
+    a large bar that is a trend and a large bar that is a rejection wick have
+    the same magnitude and different futures, and a straight line over three
+    lagged magnitudes has nowhere to put that.
+
+    The alignment is the part that is easy to get wrong. `observe` learns the
+    row from call *i* against the value arriving at call *i+1*, so the generator
+    has to make bar `i`'s shape decide bar `i+1`'s size. Writing it the natural
+    way produces a model that correctly learns nothing, and the failure reads as
+    a bad model rather than a bad test.
+    """
+    import random
+
+    from till_infinity.structures.vol.learned import Learned
+
+    random.seed(7)
+    model = Learned(warmup=200)
+    key, ew = "synthetic|5m", 2.0
+
+    def bar(big: bool, wick: bool):
+        span = (6.0 if big else 1.0) / 10_000 * 100.0
+        open_, high, low = 100.0, 100.0 + span, 100.0
+        # A trend bar closes at its high; a rejection bar gives it all back.
+        return open_, high, low, (high if not wick else open_ + span * 0.02)
+
+    big = wick = False
+    for _ in range(3_000):
+        realised = 6.0 if (big and not wick) else 1.0
+        big, wick = random.random() < 0.5, random.random() < 0.5
+        open_, high, low, close = bar(big, wick)
+        row = model.features(key, ew_bps=ew, open_=open_, high=high, low=low, close=close)
+        model.observe(key, realised, row, ew_bps=ew, close=close)
+
+    assert model.warm
+    trend = model.features(key, ew_bps=ew, open_=100.0, high=100.06, low=100.0, close=100.06)
+    reject = model.features(key, ew_bps=ew, open_=100.0, high=100.06, low=100.0, close=100.0012)
+    after_trend = model._predict(trend, ew_bps=ew, fallback=ew)
+    after_reject = model._predict(reject, ew_bps=ew, fallback=ew)
+    assert after_trend > after_reject, (after_trend, after_reject)
+
+    # And it carries its own head-to-head. It is required to keep the
+    # scoreboard, not to win it.
+    assert {"naive", "learned"} <= set(dict(model.standings()))
+
+
+def test_a_broken_row_cannot_stop_the_engine():
+    """Two outages this month were a reading nobody gates on taking the whole
+    structures service down. This one is guarded at the source."""
+    from till_infinity.structures.vol.learned import Learned
+
+    model = Learned(warmup=0)
+
+    class Exploding:
+        def predict_one(self, row):
+            raise RuntimeError("no")
+
+        def learn_one(self, row, y):
+            raise RuntimeError("no")
+
+    model._model = Exploding()
+    assert model._predict({"a": 1.0}, ew_bps=3.0, fallback=9.0) == 9.0
+
+
+def test_the_learner_survives_a_restore():
+    """A learner that resets on every deploy has learned nothing. This is the
+    fourth instance of that bug class here - see `trading.Speeds`,
+    `Drift._agreement`, `Live.ref` and the intent interval."""
+    from till_infinity.shared import codec
+    from till_infinity.structures.vol.learned import Learned
+
+    model = Learned(warmup=5)
+    for i in range(40):
+        row = model.features("eurusd|5m", ew_bps=2.0, open_=100, high=101, low=99, close=100.5)
+        model.observe("eurusd|5m", 2.0 + (i % 4), row, ew_bps=2.0)
+    seen = model._seen
+    assert seen > 20
+
+    back = codec.unpack(codec.pack(model), codec.registry(sx))
+    assert isinstance(back, Learned)
+    assert back._seen == seen
+    assert set(back._by_key) == set(model._by_key)
+    # And the river model came back able to answer.
+    row = back.features("eurusd|5m", ew_bps=2.0, open_=100, high=101, low=99, close=100.5)
+    assert back._predict(row, ew_bps=2.0, fallback=1.0) > 0
+
+
+def test_the_book_holds_one_learner_for_every_series():
+    from till_infinity.structures.vol.volatility import Book
+
+    book = Book()
+    assert book.of("eurusd", "5m") is not book.of("gold", "4h")
+    assert book.learned is book.learned  # shared, not per series
+
+
+def test_observe_bar_returns_the_realised_value_everything_is_scored_on():
+    """Returned rather than recomputed by the caller, so the learner and the
+    ensemble cannot score against subtly different targets."""
+    from till_infinity.structures.vol.volatility import Volatility
+
+    vol = Volatility()
+    for i in range(80):
+        vol.update(100.0 + (i % 5) * 0.1)
+    got = vol.observe_bar(100.0, 100.5, 99.5, 100.2)
+    assert isinstance(got, float)
+    assert got > 0
