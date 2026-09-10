@@ -1,7 +1,9 @@
 # Predicting VIX and VVIX: what it would be for, and the one thing it changes
 
-**Nothing here has been run.** This is the case for and against, with the harness
-each test needs, written so it can be attacked before it is built.
+**Tests one, two and three are run. Test four is answered by them.** The case
+below was written before any of them, and is left as it stood - the prior it
+records ("it probably does not work here") turned out to be right about the
+scope and wrong about the strength.
 
 ## Why this is a different question from everything in forecasting.md
 
@@ -103,12 +105,125 @@ reduces size when the expected change in scale is large, and `regime_band` is
 switch on. An input that genuinely leads would be the thing that justifies
 turning it on.
 
+## Results
+
+### Test one: VIX does not merely add to our estimate - it replaces it
+
+15 years, 3,771 aligned days, walk-forward with the fit redone at every step
+(`research/harness/impliedone.py`). `hist` is a trailing realised estimate,
+which is what `vol_bps` amounts to.
+
+| horizon | n | R2 hist | R2 vix | R2 both | both − hist | vs naive |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 day | 3,248 | 0.1770 | 0.2991 | 0.2973 | **+0.1203** | +0.2561 |
+| 5 days | 3,244 | 0.2927 | 0.4918 | 0.4915 | **+0.1988** | +0.4296 |
+| 21 days | 3,228 | 0.2100 | 0.3479 | 0.3473 | **+0.1373** | +0.3915 |
+
+Three things, and the second is the one that matters:
+
+**VIX beats the trailing estimate at every horizon**, by 12 to 20 points of
+R-squared.
+
+**`both` is not better than `vix` alone** - fractionally worse at 1 day. The
+historical estimate adds *nothing* once VIX is present. That is stronger than
+"VIX helps": the implied number already contains whatever the trailing one
+knows.
+
+**It beats the naive baseline by +0.26 to +0.43.** That baseline - forward
+realised equals trailing realised - has beaten every model in
+[forecasting.md](forecasting.md): GARCH, HAR, the pooled tree, the
+factorisation machine. This is the first thing measured on this project that
+walks past it, and it does so by being the one input that is not a function of
+the past.
+
+### Test two: the level does the work, the curve adds a little
+
+`research/harness/impliedtwo.py`. `slope` is VIX3M over VIX; `change` is VIX
+against its own ten-day mean.
+
+| horizon | level | +slope | +change | +both | best over level |
+| --- | --- | --- | --- | --- | --- |
+| 1 day | 0.2998 | 0.3116 | 0.3049 | 0.3114 | +0.0118 |
+| 5 days | 0.4903 | 0.5054 | 0.5050 | 0.5102 | +0.0199 |
+| 21 days | 0.3480 | 0.3586 | 0.3532 | 0.3586 | +0.0106 |
+
+The term structure earns **1 to 2 points** on top of the level - small, but the
+same sign and size at all three horizons, which is what separates a weak signal
+from noise across six comparisons.
+
+`+change` adds almost nothing and `+both` matches `+slope`, so once the curve
+shape is in, VIX's recent drift is redundant. The shape matters; the momentum
+does not.
+
+### Test three: VVIX adds nothing and does not lead
+
+`research/harness/impliedthree.py`.
+
+| horizon | level+slope | +vvix | gain |
+| --- | --- | --- | --- |
+| 1 day | 0.3123 | 0.3116 | -0.0008 |
+| 5 days | 0.5081 | 0.5090 | +0.0009 |
+| 21 days | 0.3581 | 0.3613 | +0.0032 |
+
+And the lead-lag, which was the more interesting claim:
+
+| lag | VVIX → VIX | control (GVZ → VIX) |
+| --- | --- | --- |
+| -1 | -0.0849 | 0.0005 |
+| **0** | **0.8479** | **0.4026** |
+| +1 | -0.0321 | -0.0433 |
+| +2 | -0.0246 | -0.0120 |
+| +3 | -0.0088 | -0.0065 |
+
+**Contemporaneous correlation is 0.848 and every lag is nothing.** VVIX moves
+*with* VIX, not before it - the same market reacting to the same news at the
+same moment.
+
+The control did real work here. Gold's volatility index against VIX scores
+0.4026 on the same day, which confirms 0.848 is genuinely high rather than an
+artefact of two volatility series both being noisy; and both collapse to ~0 at
+lag. A VVIX→VIX correlation of -0.03 at +1 could have been written up as a
+faint negative lead by anyone who had not asked what an unrelated pair scores.
+
+### Test four: the horizon problem is real and this is where it bites
+
+The incremental gain from VIX is **largest at 5 days (+0.20) and smallest at 1
+day (+0.12)**, and 1 day is already longer than most of this desk's holds -
+[reacting.md](reacting.md) measured no extractable edge in the first five
+minutes at all.
+
+That is the same pattern [forecasting.md](forecasting.md) found from the other
+direction: the case for forecasting volatility strengthens as the horizon
+lengthens, and this desk trades at the end where it is weakest.
+
+## What this is worth, in one line
+
+**A size input for the equity indices, at horizons of a day and up.** Not an
+entry signal, and not applicable to 72% of the book.
+
+## What has not been checked
+
+* **It is measured on ^GSPC, not on what we trade.** `spx500` should transfer
+  since the CFD tracks the index, but VIX is SPX-specific: `us100` wants VXN,
+  `us30` VXD, `us2000` RVX. None tested.
+* **Daily bars only.** Intraday VIX would be needed for anything below a day,
+  and the 1-day result is the weakest of the three.
+* **Held rate is not profit**, and R-squared against realised volatility is not
+  even held rate. Nothing here has been joined to money.
+
 ## The prior
 
-It probably does not work here, for the reason at the top: 72% of what this desk
-trades is generated, and VIX cannot describe a random number generator. The
-version of this worth building is narrow - **a size input for four equity
-indices** - and test one decides whether even that is real.
+*Written before the tests, kept as it stood:*
+
+> It probably does not work here, for the reason at the top: 72% of what this
+> desk trades is generated, and VIX cannot describe a random number generator.
+> The version of this worth building is narrow - **a size input for four equity
+> indices** - and test one decides whether even that is real.
+
+Right about the scope and wrong about the strength. The narrow version is
+exactly what survived, and within it the effect is larger than anything else
+measured on this project - VIX does not merely beat our own volatility estimate,
+it makes it redundant.
 
 Writing that down before running it, because
 [forecasting.md](forecasting.md) records three occasions in one day where a clean
