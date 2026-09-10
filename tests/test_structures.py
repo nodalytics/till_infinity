@@ -2709,3 +2709,113 @@ def test_observe_bar_returns_the_realised_value_everything_is_scored_on():
     got = vol.observe_bar(100.0, 100.5, 99.5, 100.2)
     assert isinstance(got, float)
     assert got > 0
+
+
+def test_the_anomaly_feature_is_a_percentile_not_a_raw_score():
+    """`HalfSpaceTrees` is uncalibrated - measured here, its tenth and ninetieth
+    percentiles on random rows were 0.70 and 0.83. A feature living in a tenth
+    of its range is one a tree can barely split on, and where that band sits
+    drifts with the market."""
+    import random
+
+    from till_infinity.structures.vol.learned import Learned
+
+    random.seed(3)
+    model = Learned(warmup=50)
+    key = "eurusd|5m"
+    got = []
+    for i in range(1_200):
+        span = 1.0 + (8.0 if i % 97 == 0 else 0.0)  # an occasional violent bar
+        close = 100.0 + span / 100
+        row = model.features(key, ew_bps=2.0, open_=100.0, high=close, low=100.0, close=close)
+        if row is not None:
+            got.append(row["anomaly"])
+        model.observe(key, 2.0, row, ew_bps=2.0, close=close)
+
+    assert got, "no rows were produced"
+    for value in got:
+        assert 0.0 <= value <= 1.0
+    # Cold rows sit in the middle rather than at an extreme: a missing reading
+    # must not read as "the most anomalous thing ever seen".
+    assert got[0] == pytest.approx(0.5)
+    # And once warm it actually uses its range, which the raw score would not.
+    warm = got[400:]
+    assert max(warm) - min(warm) > 0.3, (min(warm), max(warm))
+
+
+def test_the_detector_scores_before_it_learns():
+    """`learning/anomaly.py` states the rule: learning first teaches the model
+    that the anomaly is normal, and it then scores it as normal."""
+    from till_infinity.structures.vol.learned import Learned
+
+    model = Learned()
+    seen = []
+
+    class Watching:
+        def score_one(self, row):
+            seen.append("score")
+            return 0.8
+
+        def learn_one(self, row):
+            seen.append("learn")
+
+    # Seed the history first: `features` returns None until the series has two
+    # realised readings, so a detector swapped in before that is never reached
+    # and the test would pass or fail for the wrong reason.
+    for _ in range(3):
+        model.observe("x|5m", 2.0, None, ew_bps=2.0)
+
+    model._anomaly = Watching()
+    for _ in range(2):
+        row = model.features("x|5m", ew_bps=2.0, open_=100, high=101, low=99, close=100.5)
+        assert row is not None
+        assert "anomaly" in row
+        model.observe("x|5m", 2.0, row, ew_bps=2.0)
+    assert seen, "the detector was never consulted"
+    assert seen[0] == "score", seen[:4]
+
+
+def test_the_analogue_answers_with_what_followed_similar_rows():
+    """The attention idea without the transformer: weight the past by relevance
+    rather than by recency. Two distinct regimes, and it must not average
+    across them."""
+    from till_infinity.structures.vol.analogue import Analogue
+
+    model = Analogue(warmup=100, k=8)
+    for i in range(600):
+        quiet = i % 2 == 0
+        row = {"span_rel": 0.5 if quiet else 4.0, "r1": 0.5 if quiet else 4.0}
+        model.observe(row, -0.7 if quiet else 0.7)
+
+    assert model.warm
+    calm = model.predict({"span_rel": 0.5, "r1": 0.5})
+    loud = model.predict({"span_rel": 4.0, "r1": 4.0})
+    assert calm is not None
+    assert loud is not None
+    assert calm < 0, calm
+    assert loud > 0, loud
+
+
+def test_the_analogue_says_nothing_rather_than_guessing():
+    """`None`, not zero. Zero is the confident claim that the standing estimate
+    is exactly right, which is the opposite of having no view."""
+    from till_infinity.structures.vol.analogue import Analogue
+
+    model = Analogue(warmup=100)
+    assert model.predict({"span_rel": 1.0}) is None  # cold
+    assert model.predict(None) is None
+    for _ in range(200):
+        model.observe({"span_rel": 1.0, "r1": 1.0}, 0.1)
+    assert model.warm
+    assert model.predict({"span_rel": 1.0, "r1": 1.0}) is not None
+
+
+def test_the_analogue_memory_is_bounded():
+    """A reservoir that grows with the run is the shape that has already cost
+    this repository four outages."""
+    from till_infinity.structures.vol.analogue import Analogue
+
+    model = Analogue(memory=50, warmup=1)
+    for i in range(500):
+        model.observe({"span_rel": float(i), "r1": 1.0}, 0.01 * i)
+    assert len(model._rows) == 50

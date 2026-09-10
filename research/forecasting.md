@@ -183,6 +183,83 @@ depends on which instruments are in the book is not one to hang a threshold on
 - an argument about `forecast_ratio`'s provenance, not about its measured
 relationship with level-holding, which stands separately on 32,362 touches.
 
+## R-squared, and why the scoreboard was hiding how bad HAR is
+
+Everything above is scored with `consensus_vol.Score` - one minus a symmetric
+relative error - because that is the scoreboard already inside the package. It
+is bounded and robust and **not comparable to anything outside this
+repository**, which makes "is 0.83 good?" unanswerable.
+
+`research/harness/volmetrics.py` reports the standard set instead, on the same
+fixed ten-feed universe split by time. Two R-squareds, because the baseline is
+the whole difficulty: `R2_mean` is the textbook one against predicting the
+sample mean, and `R2_naive` is against reusing the last realised value, which
+goes **negative** for anything worse than persistence.
+
+**first half** (99,976 scored)
+
+| model | R2_mean | R2_naive | MAE | RMSE | corr |
+| --- | --- | --- | --- | --- | --- |
+| naive | 0.7339 | 0.0000 | 0.3014 | 0.7287 | 0.8669 |
+| learned | 0.4769 | **-0.9659** | 0.6029 | 1.0217 | 0.7251 |
+| har | 0.1924 | **-2.0355** | 0.4968 | 1.2695 | 0.6611 |
+| facto | -23.12 | -89.67 | 2.4869 | 6.9384 | **0.0037** |
+
+**second half** (99,975 scored)
+
+| model | R2_mean | R2_naive | MAE | RMSE | corr |
+| --- | --- | --- | --- | --- | --- |
+| naive | 0.6876 | 0.0000 | 0.4763 | 0.9561 | 0.8439 |
+| learned | 0.5409 | **-0.4696** | 0.6569 | 1.1590 | 0.7710 |
+| har | -0.5343 | **-3.9109** | 0.6923 | 2.1187 | 0.5911 |
+| facto | -29.03 | -95.11 | 4.2913 | 9.3728 | 0.0065 |
+
+Three things the relative-error score was not showing.
+
+**HAR is far worse than it looked.** At one bar the two metrics disagree
+completely: 0.776 against naive's 0.798 reads as nearly a tie, while
+`R2_naive = -2.04` says *three times* the squared error, and -3.91 in the
+second half. R-squared punishes large errors quadratically, so this is HAR's
+**tail** - the same tail that produced a published `ratio` of 1.3e11 and forced
+`RATIO_CAP` into existence. In the second half its `R2_mean` is negative:
+worse than predicting a constant.
+
+**The learner's margin over HAR is the stable result, again.** Half the squared
+error in the first window, a quarter of it in the second. That is the same
+ordering the relative-error scoreboard found, arrived at independently and
+much more starkly.
+
+**No AUC.** AUC ranks a classifier; this is a regression onto a positive
+continuous quantity with no threshold to sweep. It becomes the right tool only
+if these models are asked a direction question - "will the next bar be livelier
+than this one" - which is a different model, not a different metric.
+
+## Factorisation machines: three attempts, no signal
+
+`learning/facto.py` models pairwise feature interactions through latent
+factors, which is a better-motivated test of the interaction claim than a tree:
+the tree was hoped to *discover* the magnitude-shape interaction by splitting,
+and an FM represents it directly.
+
+It never worked:
+
+| attempt | correlation | R2_naive |
+| --- | --- | --- |
+| bare `FMRegressor`, as `facto.Model` ships it | diverged, non-finite | - |
+| scaled, SGD, L2 on the latents, gradient clip 10 | 0.0037 | -89.7 |
+| and the scaler pre-warmed 2,000 rows before the FM learns | 0.0152 | -166.5 |
+
+A correlation of 0.015 is **no model**, not a weak one - a bad forecaster still
+correlates with its target. Each attempt had a real mechanism behind it: an FM
+multiplies its latent factors, so unscaled inputs compound where a tree simply
+re-splits, and the second fix addressed learning through a cold scaler.
+
+Stopped at three. Searching configurations until one wins is the failure this
+page already documents twice, and it applies to the person writing it.
+
+What this does **not** say is that interactions are absent - the tree's margin
+over HAR is evidence they are not. It says an FM does not find them here.
+
 ## The bug that looked exactly like a result
 
 Worth writing down, because it is the reason to distrust a null before
@@ -233,6 +310,41 @@ it from scratch. On, it costs about 0.2% of one core and 1.2MB.
 * **`forecast_ratio` was documented as the wrong quantity** in four places.
   See [clustering.md](clustering.md); it is the correction that made Result 2
   legible.
+
+## Two additions, both unmeasured as of this writing
+
+Built and deployed to collect, gating nothing, so the head-to-head decides.
+
+**A joint anomaly score, as a feature.** Every existing reading is univariate:
+`vol_stretch` asks whether the scale is unusual, `focus_nats` whether the mean
+moved, the rolling quantiles whether this reading is high for this instrument.
+None can say a *combination* is unusual while each part of it is ordinary.
+`HalfSpaceTrees` over the whole feature row can, which is the case
+`learning/anomaly.py` already makes for cross-venue quotes and which had never
+been pointed at volatility.
+
+Emitted as the score's **percentile** rather than the score. HST is
+uncalibrated - measured here, p10 and p90 landed at 0.70 and 0.83 on random
+rows - and a feature confined to a tenth of its range is one a tree can barely
+split on, with the band drifting as the market changes. Ranking against its own
+recent output fixes both, the way `QuantileFilter` does for the venue detector.
+
+**A similarity-weighted estimator** (`analogue.py`). Everything else here
+weights the past by *recency* - a half-life is literally how fast to forget -
+and none of it can say "that bar three weeks ago looked like this one, and here
+is what followed". Weighting by relevance instead is the one part of an
+attention layer worth having, and the only part that fits: a transformer is
+batch-trained and this box rejected a 46MB-per-model forest.
+
+Its real risk is stated where it lives: with twenty features and a few thousand
+rows, "nearest" in twenty dimensions degenerates into "arbitrary". The distance
+therefore runs over **six** features carrying scale and shape, and deliberately
+excludes the ones identifying *which* series and *when* - those help a tree
+that can split on them, and in a distance they would put a 5m bar and a 4h bar
+far apart by construction, defeating the pooling the design rests on.
+
+The honest prior for both is that they lose to persistence, like everything
+else on this page.
 
 ## What would actually change the answer
 

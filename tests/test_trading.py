@@ -7723,3 +7723,31 @@ def test_sweep_aware_carries_rides_exit_and_its_own_entry():
     assert sweep.pullback == 0.0
     assert ride.pullback == 1.0
     assert sweep.stop == 1.0
+
+
+def test_the_speeds_warm_at_a_threshold_the_book_can_actually_reach():
+    """48 observations was unreachable and the strategy never traded.
+
+    Read off the live state on 2026-09-10: `momentum-scalp` tracked 253 feeds
+    and the busiest had **seven** observations, so `ready` was false everywhere
+    and 99.2% of its refusals were `warmup`, every day it had run. These count
+    published level calls rather than bars, and the book produces single digits
+    per feed per week.
+    """
+    speeds = Speeds()
+    assert speeds.warmup < speeds.half_lives[-1], "the slowest half-life is not reachable here"
+
+    for i in range(int(speeds.warmup) - 1):
+        speeds.observe("eurusd", 0.1 * (i + 1))
+    assert not speeds.ready("eurusd")
+    speeds.observe("eurusd", 0.1)
+    assert speeds.ready("eurusd")
+
+
+def test_a_feed_nobody_has_published_is_never_ready():
+    """The threshold is per feed, which is what made 253 of them the problem."""
+    speeds = Speeds()
+    for _ in range(100):
+        speeds.observe("eurusd", 0.5)
+    assert speeds.ready("eurusd")
+    assert not speeds.ready("gold")

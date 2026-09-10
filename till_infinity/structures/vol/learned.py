@@ -124,13 +124,16 @@ this repository keeps writing down.
 
 from __future__ import annotations
 
+import contextlib
 import math
 from collections import deque
 from dataclasses import dataclass, field
 
+from river import anomaly as river_anomaly
 from river import preprocessing, tree
 
 from ..state import Restorable
+from .analogue import Analogue
 from .consensus_vol import MAD_TO_SIGMA, Score
 
 #: Bars of realised history kept per series, for the three horizon features.
@@ -152,6 +155,9 @@ WARMUP = 2_000
 #: hard way - see the record in its docstring, where an unbounded ratio reached
 #: 1.3e11 and went on to be published 19,511 times.
 LOG_CAP = 1.6
+
+#: Scores remembered for the anomaly percentile. See `_anomaly_pct`.
+ANOMALY_WINDOW = 2_000
 
 #: Grace period, in bars, after a series' last changepoint alarm - how long
 #: `focus_nats` keeps decaying rather than being read as current evidence.
@@ -200,6 +206,33 @@ CHANGE_MEMORY = 30.0
 #: shadowing bug recorded in `observe`, and `research/forecasting.md` keeps the
 #: episode because the wrong answer was the more believable one.
 HORIZON = 5
+
+
+def _anomaly_model():
+    """Joint anomaly score over the whole feature row.
+
+    Every other reading in this package is **univariate**: `vol_stretch` asks
+    whether the scale is unusual, `focus_nats` whether the mean just moved,
+    the rolling quantiles whether this reading is high for this instrument.
+    None of them can say that a combination is unusual while every part of it
+    is ordinary - and `learning/anomaly.py` makes exactly that case for the
+    cross-venue model: "a small deviation is fine, a slightly wide spread is
+    fine, both at once on a venue that has gone quiet is not".
+
+    Here that becomes: an elevated `span_rel` is ordinary, some `focus_nats` is
+    ordinary, both together in an hour this instrument is normally quiet in is
+    not. That is a statement no single feature in the row can make.
+
+    `MinMaxScaler` in front because `HalfSpaceTrees` partitions the unit cube
+    and expects bounded inputs; the ratios here are not bounded. Five trees of
+    height six rather than the default ten and eight: measured in this
+    container at 290us and 123KB against 685us and 1.16MB, on a two-core box
+    with about a gigabyte spare, and the dynamic range that costs is recovered
+    by the percentile transform rather than by the model.
+    """
+    return preprocessing.MinMaxScaler() | river_anomaly.HalfSpaceTrees(
+        n_trees=5, height=6, window_size=250, seed=7
+    )
 
 
 def _model():
@@ -258,6 +291,15 @@ class Learned(Restorable):
     _model: object = field(default_factory=_model)
     _seen: int = 0
     _by_key: dict[str, Recent] = field(default_factory=dict)
+    #: Joint anomaly detector over the feature row, and the recent scores it
+    #: has produced. Pooled like the model, for the same reason.
+    _anomaly: object = field(default_factory=_anomaly_model)
+    _anomaly_seen: deque[float] = field(default_factory=lambda: deque(maxlen=ANOMALY_WINDOW))
+    #: Relevance-weighted rather than recency-weighted - the one part of an
+    #: attention layer that fits on this box. Scored beside the tree, on the
+    #: same rows, so "does similarity beat splitting" is a measurement. See
+    #: `analogue.py`.
+    _analogue: Analogue = field(default_factory=Analogue)
     #: Head-to-head, all three asked about the same bar at the same moment.
     _scores: dict[str, Score] = field(default_factory=dict)
 
@@ -276,6 +318,39 @@ class Learned(Restorable):
     @property
     def warm(self) -> bool:
         return self._seen >= self.warmup
+
+    def _anomaly_pct(self, row: dict[str, float]) -> float:
+        """Where this row's anomaly score sits among the recent ones, in [0, 1].
+
+        **The percentile, not the score.** `HalfSpaceTrees` is uncalibrated -
+        `learning/anomaly.py` records its median landing around 0.77 on normal
+        data, and measured here on random rows the tenth and ninetieth
+        percentiles were 0.70 and 0.83. A feature living in a tenth of its range
+        is one a tree can barely split on, and the position of that band drifts
+        as the market changes, so a constant read off it today would mean
+        something else next month.
+
+        Ranking against the model's own recent output fixes both: it fills
+        [0, 1], and it re-centres itself the way `QuantileFilter` does for the
+        cross-venue detector rather than the way a fixed cutoff does not.
+
+        0.5 while cold - deliberately the middle. This is one feature among
+        twenty and a missing reading should sit where it says nothing, not at
+        an extreme that says "most anomalous thing I have ever seen".
+        """
+        try:
+            score = float(self._anomaly.score_one(row))
+        except Exception:
+            return 0.5
+        if not math.isfinite(score):
+            return 0.5
+        seen = self._anomaly_seen
+        if len(seen) < 200:
+            seen.append(score)
+            return 0.5
+        below = sum(1 for past in seen if past < score)
+        seen.append(score)
+        return below / len(seen)
 
     def features(
         self,
@@ -325,7 +400,7 @@ class Learned(Restorable):
         medium = sum(history[-5:]) / min(len(history), 5)
         long = sum(history) / len(history)
 
-        return {
+        row = {
             # The other estimators, as corrections to the incumbent rather than
             # as levels. A tree splitting on "garch is 1.3x the EW estimate"
             # transfers across the book; one splitting on "garch is 17bps"
@@ -388,6 +463,13 @@ class Learned(Restorable):
             # identifies its *sampling rate* rather than its name.
             "log_bar": math.log(interval_seconds) if interval_seconds > 0 else 0.0,
         }
+        # **Scored before it is learned from, always.** `learning/anomaly.py`
+        # states the rule and the reason: learning first teaches the model that
+        # the anomaly is normal, and it then scores it as normal - the detector
+        # quietly trains itself to miss the thing it exists to find. Learning
+        # happens in `observe`, one call later.
+        row["anomaly"] = self._anomaly_pct(row)
+        return row
 
     def observe(
         self,
@@ -441,11 +523,22 @@ class Learned(Restorable):
                 summed = so_far + realised_bps
                 filled = bars + 1
                 if filled >= self.horizon:
-                    self._model.learn_one(waited, self._target(summed / filled, unit))
+                    target = self._target(summed / filled, unit)
+                    self._model.learn_one(waited, target)
+                    self._analogue.observe(waited, target)
                     self._seen += 1
                 else:
                     grown.append((waited, unit, summed, filled))
             seen.waiting = grown
+
+        # The detector learns the row it scored - without the score it produced,
+        # which would otherwise be an input to its own next answer.
+        if row:
+            # Suppressed rather than caught: a detector nobody gates on must not
+            # be able to stop the engine, which is the rule two outages this
+            # month were caused by not following.
+            with contextlib.suppress(Exception):
+                self._anomaly.learn_one({k: v for k, v in row.items() if k != "anomaly"})
 
         seen.realised.append(realised_bps)
         seen.close = close if close > 0 else seen.close
@@ -467,10 +560,20 @@ class Learned(Restorable):
             # repository four outages.
             if len(seen.waiting) > self.horizon * 4:
                 del seen.waiting[: len(seen.waiting) - self.horizon * 4]
+        analogue = self._analogue.predict(row)
         seen.said = {
             "naive": realised_bps,
             "har": har_bps / MAD_TO_SIGMA if har_bps > 0 else 0.0,
             "learned": self._predict(row, ew_bps, fallback=realised_bps),
+            # `None` means it has no view, and that is not the same as agreeing
+            # with the incumbent - so it is omitted from the scoreboard rather
+            # than entered at the fallback, which would credit it for an answer
+            # the estimator already had.
+            "analogue": (
+                ew_bps * math.exp(max(-LOG_CAP, min(LOG_CAP, analogue)))
+                if analogue is not None and math.isfinite(analogue)
+                else 0.0
+            ),
         }
 
     def _target(self, realised_bps: float, unit_bps: float) -> float:

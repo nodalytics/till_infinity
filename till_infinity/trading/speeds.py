@@ -43,6 +43,27 @@ class Speeds:
     """Three speeds over one series per key, and their agreement."""
 
     half_lives: tuple[float, float, float] = (3.0, 12.0, 48.0)
+    #: Observations of one feed before `ready` says yes.
+    #:
+    #: **12, not the slowest half-life, and the reason is a measurement.** This
+    #: used to be `half_lives[-1]` - 48 - on the argument that the slow average
+    #: is meaningless until it has seen about its own half-life. The argument is
+    #: right and the number was unreachable: read off the live state on
+    #: 2026-09-10, `momentum-scalp` was tracking **253 feeds and the busiest had
+    #: seven observations**, none at 48. Its refusals were 99.2% `warmup` across
+    #: every day it has run, so the strategy had never formed a view at all.
+    #:
+    #: The arithmetic is the problem. These are observations of *published level
+    #: calls*, not bars, and the book produces single digits per feed per week -
+    #: so 48 is somewhere near two months per instrument, on a scalper.
+    #:
+    #: 12 is the middle half-life: it says the *fast* and *middle* lines are
+    #: meaningful and the slow one is still partly its seed value. That is a
+    #: real cost and it points one way - a slow line still near its first
+    #: observation makes `agree` easier to satisfy, so the gate is looser than
+    #: it reads for a while after a feed appears. Being loose on a gate that has
+    #: never once fired is the better failure.
+    warmup: float = 12.0
     _values: dict[str, list[float]] = field(default_factory=dict)
     _seen: dict[str, int] = field(default_factory=dict)
 
@@ -58,9 +79,12 @@ class Speeds:
         return tuple(held)  # type: ignore[return-value]
 
     def ready(self, key: str) -> bool:
-        # The slowest average is meaningless until it has seen about its own
-        # half-life; before that it is still mostly its first observation.
-        return self._seen.get(key, 0) >= self.half_lives[-1]
+        """Whether this feed has been seen enough for the lines to mean anything.
+
+        See `warmup` for why this is not the slowest half-life any more, and
+        what is given up by lowering it.
+        """
+        return self._seen.get(key, 0) >= self.warmup
 
     def agree(self, key: str, sign: int) -> bool:
         """True when all three lines point the way `sign` does."""
