@@ -1315,13 +1315,17 @@ class Trader:
                 held = getattr(engine, name, None)
                 if held is not None and type(saved) is type(held):
                     setattr(engine, name, saved)
-                    # Legacy state carries `Seen` objects whose numbers were
-                    # written as strings, and they come back through pickle
-                    # rather than the codec, so nothing has coerced them. One is
-                    # enough: `Book.observe` subtracts prices on every published
-                    # level, and the guard around `handle` turns the `TypeError`
-                    # into a skipped signal - 124 of them in one session before
-                    # the traceback was read.
+                    # Saved state carries `Seen` objects whose numbers are
+                    # strings, and one is enough: `Book.observe` subtracts
+                    # prices on every published level, and the guard around
+                    # `handle` turns the `TypeError` into a skipped signal - 124
+                    # of them in one session before the traceback was read.
+                    #
+                    # The log line is not decoration. 392 were found at the
+                    # first restore after this was added, in state written by a
+                    # build whose codec already coerces them, so how they are
+                    # made is still open - and this count at each restart is
+                    # what will answer it.
                     fix = getattr(saved, "repair", None)
                     if callable(fix):
                         mended = fix()

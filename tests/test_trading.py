@@ -7794,9 +7794,10 @@ def test_a_level_stored_as_text_cannot_break_the_subtraction():
     level, so one string price raises `TypeError`, the guard around `handle`
     skips the signal, and trading quietly stops acting on that feed.
 
-    It ran at 124 dropped signals in a session. The values are legacy: a `Book`
-    is restored through pickle, which reproduces exactly what an older build
-    wrote, so nothing the codec does reaches them.
+    It ran at 124 dropped signals in a session, and `Book.repair` found 392 of
+    them in live state at the next restore. Where they are made is not settled -
+    see `test_the_codec_already_coerces_a_level_it_restores`, which pins the
+    fact that ruled out the first explanation.
     """
     from till_infinity.trading.book import Book, Seen
 
@@ -7827,6 +7828,48 @@ def test_a_level_stored_as_text_cannot_break_the_subtraction():
     # And the operation that was raising now works.
     book.observe("eurusd", Seen(price=1.3, interval="5m", when=200.0), vol_bps=5.0)
     assert len(book._levels["eurusd"]) == 2
+
+
+def test_the_codec_already_coerces_a_level_it_restores():
+    """The explanation first written for the 392 was that a restored `Book`
+    bypasses the codec through pickle. It does not, and this is the measurement
+    that says so: `Seen` is a slotted non-`Restorable` dataclass, so
+    `codec.unpack` takes its coercion branch and a string price comes back as a
+    float.
+
+    Kept as a test rather than a note because it is what makes the next restore
+    informative. `Book.repair` reporting a number again cannot be blamed on this
+    path, so it would mean the levels are being made after restore - and this
+    test failing would mean the door reopened.
+    """
+    import msgpack
+
+    from till_infinity import structures, trading
+    from till_infinity.shared.codec import pack, registry, unpack
+    from till_infinity.trading.book import Book, Seen
+
+    stale = Seen.__new__(Seen)
+    for name, value in (
+        ("price", "1.2345"),
+        ("interval", "5m"),
+        ("probability", "0.5"),
+        ("strength", "0.5"),
+        ("touches", "2.0"),
+        ("when", "100.0"),
+    ):
+        object.__setattr__(stale, name, value)
+    held = Book()
+    held._levels["eurusd"] = [stale]
+
+    known = {**registry(structures), **registry(trading)}
+    blob = msgpack.packb(pack(held), use_bin_type=True)
+    back = unpack(msgpack.unpackb(blob, raw=False, strict_map_key=False), known)
+
+    assert isinstance(back, Book)
+    got = back._levels["eurusd"][0]
+    assert isinstance(got.price, float)
+    assert got.price == pytest.approx(1.2345)
+    assert back.repair() == 0, "nothing left for repair to do on this path"
 
 
 def test_repair_drops_a_level_whose_price_is_not_a_number_at_all():
