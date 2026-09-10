@@ -196,6 +196,38 @@ That is the same pattern [forecasting.md](forecasting.md) found from the other
 direction: the case for forecasting volatility strengthens as the horizon
 lengthens, and this desk trades at the end where it is weakest.
 
+### Does it transfer to the other indices, and is the matched series needed?
+
+`research/harness/impliedindex.py`. Each index against its own implied series,
+and against ^VIX.
+
+| feed | index | implied | h | hist | own | vix | own − hist | own − vix |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| spx500 | ^GSPC | ^VIX | 1d | 0.1770 | 0.2991 | 0.2991 | +0.1221 | 0.0000 |
+| spx500 | ^GSPC | ^VIX | 5d | 0.2927 | 0.4918 | 0.4918 | +0.1991 | 0.0000 |
+| us100 | ^NDX | ^VXN | 1d | 0.1414 | 0.2306 | 0.2292 | +0.0892 | +0.0014 |
+| us100 | ^NDX | ^VXN | 5d | 0.2743 | 0.4548 | 0.4352 | +0.1804 | +0.0196 |
+| us100 | ^NDX | ^VXN | 21d | 0.2307 | 0.3889 | 0.3237 | +0.1582 | **+0.0652** |
+| us30 | ^DJI | ^VXD | 1d | 0.1826 | 0.2773 | 0.2854 | +0.0947 | **-0.0080** |
+| us30 | ^DJI | ^VXD | 5d | 0.2996 | 0.4635 | 0.4712 | +0.1639 | **-0.0077** |
+| us30 | ^DJI | ^VXD | 21d | 0.2021 | 0.3360 | 0.3238 | +0.1339 | +0.0122 |
+
+**It transfers.** `own − hist` is +0.089 to +0.199 on every index at every
+horizon, so test one was not an S&P quirk.
+
+**And the matched series is barely needed at the horizons this desk trades.**
+`own − vix` is +0.0014 for us100 at one day and **-0.0080** for us30, where VIX
+is *better* than VXD. Only at 21 days does VXN earn its place (+0.065), and 21
+days is far longer than anything held here.
+
+So: **take ^VIX for all the equity indices.** One free Yahoo series through a
+dependency that already exists, rather than four feeds to keep alive - and on
+us30 the matched series would have been slightly worse.
+
+**^RVX returned no data** - delisted or renamed at Yahoo - so `us2000` is
+untested. VIX serving the other three without their matched series suggests it
+would serve there too, and suggesting is not showing.
+
 ## What this is worth, in one line
 
 **A size input for the equity indices, at horizons of a day and up.** Not an
