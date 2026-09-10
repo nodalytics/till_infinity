@@ -549,7 +549,15 @@ class Series(Restorable):
         # Sparse, so there is no pairing to keep and nothing to pad: a bar
         # with no entry has no minutes, which is what the absence means.
         # Evicted alongside the window it belongs to.
-        if len(self.fine) > WINDOW and self.times:
+        #
+        # **`window_for(self.interval)`, not the module constant.** These two
+        # halves have to agree: the trigger counts entries and the filter keeps
+        # everything back to `times[0]`. With one window they did. With a window
+        # per interval the fine series holds 1,500 bars of `times` while the
+        # constant says 1,000, so the filter put back what the trigger had just
+        # decided was too many - and `fine` settled above its bound instead of
+        # at it. A test caught it at 1,059.
+        if len(self.fine) > window_for(self.interval) and self.times:
             oldest = self.times[0]
             self.fine = {k: v for k, v in self.fine.items() if k >= oldest}
         while len(self.volumes) < len(self.closes) - 1:

@@ -450,16 +450,21 @@ def test_the_minutes_are_evicted_with_the_window_they_belong_to():
     across 3,058 series, storing nothing, and the container was OOM-killed
     once. Sparse keeps only what was captured, and drops it when its bar
     falls out of the window."""
-    from till_infinity.structures.engine import WINDOW, Series
+    from till_infinity.structures.engine import Series, window_for
 
+    # The window is per interval now, and this series is the *fine* one - which
+    # is the deepest of them, precisely so a 1m series can still cover a daily
+    # bar when it closes. Asserting against the module constant would test a
+    # bound this series does not have.
     series = Series(feed="t", interval="1m")
-    for i in range(1, WINDOW + 60):
+    bound = window_for("1m")
+    for i in range(1, bound + 60):
         series.add(i * 60, 110.0, 90.0, 100.0, 100.0)
         series.note_fine(i * 60, 95.0, 105.0)
 
     # Bounded, with a bar or two of overhang because eviction is amortised
     # into `add` rather than run on every write.
-    assert len(series.fine) <= WINDOW + 2
+    assert len(series.fine) <= bound + 2
     assert min(series.fine) >= series.times[0] - 120
 
 
