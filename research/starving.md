@@ -20,16 +20,24 @@ Six separate confusions in one session, all the same event:
   the broker seventeen minutes after a container start nobody triggered.
 * The volatility learner's save cycle never producing a tally, twice, because
   the process kept being replaced before `save_seconds` came round.
-* Three research harnesses dying mid-run with empty output files, which was
-  read as "my query used too much memory" - the cgroup was already at its
-  limit and the kernel picked the newest process.
+* Three research harnesses dying mid-run with empty output files, read first
+  as "my query used too much memory" and then as the cgroup killing the newest
+  process. **Both readings were wrong** - `dmesg` shows no kill at the times
+  they died, and their stderr was empty, meaning no Python exception either.
+  They were run over `ssh` inside a foreground command that timed out, and the
+  dropped session sent `SIGHUP` to the remote process. Running them with
+  `docker exec -d` fixed it. The lesson survives being about something else:
+  an empty output file and a missing process is not evidence of *what* killed
+  it, and the kill log is one command away.
 * CPU reading 7.6% at one check and 153% at the next. The low reading was a
   process that had just restarted.
 * An "out-of-sample" replay window that appeared to be a different market
   regime - 42 feeds in the first half against 364 in the second. That was not
   a regime. It was the feed universe growing.
 
-Every one of those was diagnosed as something else first.
+Five of those were this event. The sixth was not, and it is worth keeping in
+the list: once a real platform failure is established, it becomes the
+explanation for everything nearby, which is its own way of being wrong.
 
 ## The cause
 

@@ -22,6 +22,7 @@ evidence about an old level, not a new one.
 from __future__ import annotations
 
 import math
+import os
 import sqlite3
 import statistics
 import time
@@ -88,9 +89,60 @@ log = get_logger(__name__)
 SWEEP_SIGMAS = 1.0
 
 
-#: Bars kept per instrument. Enough to hold the swings that matter on a 5m
-#: chart without the window itself becoming the thing being modelled.
-WINDOW = 500
+#: Bars kept per instrument, per timeframe.
+#:
+#: **Raised from 500 on 2026-09-10, and the reason is that 500 bars is a
+#: different amount of history at every timeframe.** As a count it looks
+#: uniform; as a duration it is not:
+#:
+#: | interval | 500 bars | 1,000 bars |
+#: | --- | --- | --- |
+#: | 1m | 8.3 hours | 16.7 hours |
+#: | 5m | 41 hours | 3.5 days |
+#: | 1h | 20.8 days | 41.7 days |
+#: | 4h | 83 days | 166 days |
+#: | 1d | 500 days | 2.7 years |
+#:
+#: At the coarse end that is the binding constraint on what a swing strategy
+#: can see: a 4h level from four months ago was outside the window, so the
+#: levels drawn there came from a short memory whatever their timeframe
+#: implied. At the fine end the constraint is different and sharper - see
+#: `FINE_WINDOW`.
+#:
+#: **This costs memory and that has a history here.** Six deques per `Series`
+#: at roughly 32 bytes an entry is about 94KB per series at 500, and the
+#: container was OOM-killed nineteen times in nine days for reasons of exactly
+#: this kind (`research/starving.md`). It is therefore settable from the
+#: environment, so it can be tuned or reverted without a deploy - which is the
+#: property the previous incident most wanted and did not have.
+#:
+#: **1,000 is a floor set by the box, not by what is useful.** TradingView
+#: serves 5,000 bars per timeframe on an ordinary plan, which is a fair
+#: statement of how much history a chart is expected to carry. 5,000 here is
+#: about 960KB a series and roughly 790MB across the book - more than the
+#: container has spare beside a 195MB state file. If the instance grows, this
+#: is the number to raise first, and the environment variable is why that does
+#: not need a code change.
+WINDOW = int(os.environ.get("STRUCTURES_WINDOW") or 1_000)
+
+#: Bars kept for the **fine** series, which is the one everything else is
+#: refined against.
+#:
+#: `_capture_fine` needs the 1m series to still cover a coarse bar at the
+#: moment that bar closes, so this is not a preference, it is arithmetic: a 4h
+#: bar is 240 minutes and a 1d bar is 1,440. At 500 the daily could never be
+#: refined and said so - `refinement_tally` reported 18.6% of refinable origins
+#: with the whole daily contribution missing.
+#:
+#: 1,500 covers the day with room for the gaps a real feed leaves. A week is
+#: 10,080 minutes and is not reachable this way; refining weekly origins needs
+#: a different mechanism, not a bigger deque.
+FINE_WINDOW = int(os.environ.get("STRUCTURES_FINE_WINDOW") or 1_500)
+
+
+def window_for(interval: str) -> int:
+    """How many bars to keep for this timeframe."""
+    return FINE_WINDOW if interval == FINE_INTERVAL else WINDOW
 
 #: Ceiling on `Engine._slowing`, which is an unbounded ratio. See `_slowing`.
 SLOWING_CAP = 10.0
@@ -438,6 +490,28 @@ class Series(Restorable):
     #: all `profile` and a VWAP ask of it.
     volumes: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
     since_reform: int = 0
+
+    #: The deques above are built by a `default_factory`, which runs before the
+    #: instance exists and so cannot see `interval` - it can only close over the
+    #: module constant. `retune` is what applies the per-interval window, and it
+    #: is called on construction **and on every lookup**, because a `Series`
+    #: restored from a save carries the `maxlen` it was written with. Widening
+    #: only on construction would leave every existing series at the old size
+    #: and the change would appear to do nothing, which is precisely the shape
+    #: `Analogue.memory` failed in earlier the same day.
+
+    def __post_init__(self) -> None:
+        self.retune()
+
+    def retune(self) -> None:
+        """Resize the windows to this interval's, keeping what is in them."""
+        want = window_for(self.interval)
+        if self.times.maxlen == want:
+            return
+        for name in ("times", "closes", "highs", "lows", "opens", "volumes"):
+            held = getattr(self, name, None)
+            if held is not None:
+                setattr(self, name, deque(held, maxlen=want))
 
     def add(
         self,
@@ -935,6 +1009,11 @@ class Engine:
         found = self._series.get(key)
         if found is None:
             found = self._series[key] = Series(feed, interval)
+        else:
+            # Restored series carry the `maxlen` they were saved with, and a
+            # deploy that changes the window would otherwise only reach series
+            # created after it. Cheap: one integer comparison per lookup.
+            found.retune()
         return found
 
     def origins_bracketing(

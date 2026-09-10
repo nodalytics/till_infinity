@@ -1,5 +1,13 @@
 # Forecasting volatility: what beats what, and the trap in the middle
 
+> **Under revision, 2026-09-10.** Everything below the header that compares
+> forecasters was measured while two volatility conventions were being mixed,
+> and the mixing was not symmetric - so the comparisons are not trustworthy and
+> two of the headline claims are probably artefacts. What the bug was, what it
+> does to each claim, and what replaces them is in
+> **[The scale bug, and which findings it takes with it](#the-scale-bug-and-which-findings-it-takes-with-it)**
+> at the foot of this page. Read that first.
+
 An online nonlinear model was added to `structures/vol/` to forecast the next
 bar's realised volatility, on the argument that `har.py` is a straight line over
 three lagged magnitudes and cannot express an interaction between magnitude and
@@ -379,3 +387,72 @@ forty minutes"; a learner does.
 And the standing caveat: lead time on volatility is not lead time on direction.
 Knowing a large move is coming says to size down, widen, or stay out of a level
 trade. It never says which way.
+
+
+## The scale bug, and which findings it takes with it
+
+`observe_bar` returns a **Rogers-Satchell** reading, which is a standard
+deviation. `vol_bps` is a **mean absolute deviation**. They differ by
+sqrt(pi/2) ~ 1.2533, and `consensus_vol` is careful about it - `observe_bar`
+settles the ensemble with `realised / MAD_TO_SIGMA` for exactly this reason.
+
+`Book.learn` was not careful about it, and the resulting mixture was not
+symmetric across the competitors:
+
+| member | its forecast was on | the truth it was scored against |
+| --- | --- | --- |
+| `naive` | sigma (raw realised) | sigma - correct |
+| `har` | **MAD** (`har_bps / MAD_TO_SIGMA`) | sigma - **shrunk ~25%** |
+| `learned` | **MAD** (`ew_bps * exp(pred)`) | sigma - shrunk ~25% |
+
+And the learner had a second error pointing the other way: its *target* was
+`log(sigma-realised / MAD-ew)`, centred on log(1.25) rather than zero, so it
+learned to forecast about 25% high. Against a sigma-scale truth, forecasting
+25% high was **right**. Two errors cancelling.
+
+So `har` was penalised with nothing cancelling it, and `learned` was penalised
+and compensated at once. That is precisely the shape that manufactures the
+result this page led with.
+
+### What each claim is now worth
+
+* **"Nothing beats persistence."** *At risk, and early evidence says it is
+  wrong.* It is the one comparison the asymmetry distorts most - `naive` was
+  the only member scored on its own scale. On a small aligned re-run (3 feeds,
+  9,880 scored) `har` beats `naive` at **all four horizons**, +0.007 to +0.021.
+* **"The learner beats HAR in eight cells out of eight."** *Probably an
+  artefact.* It was the one result this page said had survived a test designed
+  to kill it. On the aligned re-run the learner is **last at every horizon**,
+  which is what the cancelling-errors account predicts.
+* **"HAR's rank moves with the instrument mix."** *Unaffected in kind* - it
+  compares HAR against itself across samples, not against a differently-scaled
+  competitor - but the specific numbers came from the same runs and need
+  restating.
+* **Result 1, the single-bar scoring trap.** *Unaffected.* It is a statement
+  about the *target's* noise at short horizons and about persistence's margin
+  shrinking monotonically as the horizon lengthens, which held in both windows
+  and does not depend on the scale of any forecast.
+* **The bug-that-looked-like-a-result section.** *Unaffected, and now with
+  company.* That was a shadowing bug; this is a units bug; both produced clean,
+  plausible, believable tables.
+
+### Why the small re-run is not yet the answer
+
+Three feeds, ten thousand bars, five weeks - against the 200,000-bar
+fixed-universe split the original claims came from. It is enough to say the
+earlier numbers cannot stand. It is not enough to replace them, and writing the
+reversal up as settled would be the third time on this page that a clean table
+was mistaken for a finding.
+
+The full re-run is what settles it, and it is blocked behind something else:
+the box it runs on was being OOM-killed every two and a half hours
+([starving.md](starving.md)), and a heavy replay during the window that is
+measuring whether that is fixed would contaminate both.
+
+### The correction that stands regardless
+
+`MAD_TO_SIGMA` is now applied once, at the boundary in `Book.learn`, so
+everything inside `Learned` - the target, `naive`, `har`, the learner's own
+output and the score they are all judged by - is on the mean-absolute
+convention. `test_every_member_is_scored_on_one_scale` and
+`test_the_target_is_centred_on_no_change` hold it there.

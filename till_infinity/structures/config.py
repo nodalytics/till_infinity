@@ -90,17 +90,23 @@ class Settings(Restorable):
     #: one pooled online tree forecasting realised volatility over the next
     #: five bars, from twenty dimensionless features shared across the book.
     #:
-    #: **It beats `har.py` in every cell of a split-sample test** - ten fixed
-    #: feeds, 400,000 bars cut in half by time, four horizons, both halves,
-    #: margins from +0.032 to +0.098. That is stable where HAR's own rank is
-    #: not: HAR is best of three on a 42-feed sample and worst of three here.
+    #: **Its standing is under re-measurement and gates nothing either way.**
     #:
-    #: Neither beats the naive last-realised-value baseline, which wins eleven
-    #: of the twelve remaining cells, so this **gates nothing** whatever it is
-    #: set to. On, it costs about 0.2% of one core and 1.2MB, publishes
-    #: `learned_bps` and `learned_ratio` on every call, and logs a head-to-head
-    #: against `har` and `naive` on each save. See `research/forecasting.md`,
-    #: including two wrong versions of that conclusion and what caused them.
+    #: It was reported as beating `har.py` in every cell of a split-sample test
+    #: and as losing, with `har`, to the naive last-realised-value baseline.
+    #: Both claims were measured while `Book.learn` mixed the mean-absolute and
+    #: standard-deviation conventions, and the mixing was asymmetric: `har` was
+    #: shrunk by sqrt(pi/2) against an unconverted truth, while the learner was
+    #: shrunk *and* trained on a target centred on log(1.25), two errors that
+    #: cancelled. On a small aligned re-run `har` beats `naive` at all four
+    #: horizons and the learner is last at every one - the reverse of both.
+    #:
+    #: The conversion now happens once, at the boundary in `Book.learn`. The
+    #: full re-run is owed. `research/forecasting.md` carries the account,
+    #: including the two earlier wrong conclusions and what caused each.
+    #:
+    #: On, it costs about 0.2% of one core and 1.2MB, publishes `learned_bps`
+    #: and `learned_ratio` on every call, and logs a head-to-head each save.
     vol_learner: bool = False
 
     #: How swings are found: `pip` takes bar extremes by prominence, `run` the

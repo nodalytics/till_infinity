@@ -54,7 +54,7 @@ refineTf = input.timeframe("5", "Refinement - places the zone",
      "since the chart's bars are what it is built from - on a 15m chart a 5m " +
      "refinement quietly becomes 15m, and the zone is wider than it says.")
 
-thresholdNats = input.float(3.0, "Threshold (nats of evidence)", minval = 0.5, step = 0.5,
+thresholdNats = input.float(1.0, "Threshold (nats of evidence)", minval = 0.5, step = 0.5,
      tooltip = "A log likelihood ratio: how much evidence before this is worth " +
      "saying. 12 is what the source repository ships - on a stationary " +
      "Gaussian stream it produced at most 5 false alarms across five runs of " +

@@ -330,12 +330,17 @@ and `research/forecasting.md` records what happened each of the three times a
 replacement looked justified. Two of those three were defects that made the
 data look clean.
 
-**The standing result is that none of them beats reusing the last realised
-value**, and that persistence's advantage shrinks monotonically as the horizon
-lengthens - so the case for a forecast is strongest exactly where this system
-holds trades longest, and weakest at the scalp horizon where most of them are.
-That is a finding about the *width*, not about the sign, and it changes how
-much to size rather than which way to face.
+The part of that comparison which has held under every re-run is **the
+horizon**: persistence's advantage shrinks monotonically as the horizon
+lengthens, so the case for a forecast is strongest exactly where this system
+holds trades longest and weakest at the scalp horizon where most of them are.
+
+Whether any model *beats* persistence outright is currently being
+re-measured - the comparison was made while two volatility conventions were
+mixed asymmetrically, which flattered one competitor and penalised another.
+`research/forecasting.md` has it. Either way it is a finding about the *width*
+rather than the sign, and it changes how much to size rather than which way to
+face.
 
 ## What the record supports, and what it has already refused
 

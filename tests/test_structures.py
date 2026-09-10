@@ -2864,3 +2864,56 @@ def test_the_target_is_centred_on_no_change():
 
     model = Learned()
     assert model._target(7.0, 7.0) == pytest.approx(0.0)
+
+
+def test_the_fine_series_can_cover_a_daily_bar():
+    """`_capture_fine` needs the 1m series to still cover a coarse bar when that
+    bar closes. A 1d bar is 1,440 minutes; at 500 it could never be refined."""
+    from till_infinity.structures.engine import FINE_WINDOW, Series, window_for
+
+    assert FINE_WINDOW >= 1_440, "the daily is 1,440 minutes"
+    fine = Series("eurusd", "1m")
+    assert fine.times.maxlen == FINE_WINDOW
+    assert window_for("1m") > window_for("4h")
+
+
+def test_a_restored_series_is_widened_rather_than_left_at_its_old_size():
+    """A deque restored from a save carries the `maxlen` it was written with, so
+    a window change would otherwise only reach series created after the deploy -
+    the shape `Analogue.memory` failed in on the same day this was written."""
+    from collections import deque
+
+    from till_infinity.structures.engine import Series, window_for
+
+    old = Series("gold", "4h")
+    # Simulate a restore from a build whose window was 500.
+    for name in ("times", "closes", "highs", "lows", "opens", "volumes"):
+        setattr(old, name, deque(getattr(old, name), maxlen=500))
+    assert old.times.maxlen == 500
+
+    old.closes.extend([1.0, 2.0, 3.0])
+    old.retune()
+    assert old.times.maxlen == window_for("4h")
+    assert list(old.closes) == [1.0, 2.0, 3.0], "retune must not drop what it holds"
+
+
+def test_the_window_is_settable_from_the_environment():
+    """The container was OOM-killed nineteen times in nine days for reasons of
+    exactly this kind, so the size has to be revertible without a deploy."""
+    import importlib
+    import os
+
+    from till_infinity.structures import engine as eng
+
+    was = os.environ.get("STRUCTURES_WINDOW")
+    try:
+        os.environ["STRUCTURES_WINDOW"] = "321"
+        importlib.reload(eng)
+        assert eng.WINDOW == 321
+        assert eng.window_for("4h") == 321
+    finally:
+        if was is None:
+            os.environ.pop("STRUCTURES_WINDOW", None)
+        else:
+            os.environ["STRUCTURES_WINDOW"] = was
+        importlib.reload(eng)

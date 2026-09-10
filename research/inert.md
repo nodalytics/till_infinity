@@ -326,3 +326,27 @@ Cause and fix in [starving.md](starving.md): the price collector was discovering
 up to 1,250 crypto swaps against a 53-symbol book. The lesson for this page is
 narrower - **when several unrelated things are behaving oddly at once, the
 common cause is usually the platform rather than any of them.**
+
+
+## Fourteen: the changepoint detector fires and lands on origins at below chance
+
+`_note_change` runs two `Focus` detectors per (feed, timeframe) and stamps every
+firing, and `changing()` publishes the count on every call. At the shipped
+threshold of 12 nats it matches **1.9%** of the origins the engine records at
+1h - which reads as "the threshold is too high" and was believed to be that for
+some time.
+
+It is not. Measured against what a detector firing at the same rate but knowing
+nothing would score, the **lift is 0.85 to 0.94 at every threshold from 1 to 20**
+- consistently *below* one. Lowering it to 1 nat raises the hit rate to 68.6%
+by firing on 37% of all bars, 25.84 times per origin, where blind firing at that
+rate gives 75%.
+
+So this is not an inert *reading* - the numbers move, and they move a lot when
+the threshold moves. It is an inert *relationship*: the count is a function of
+the firing rate and carries nothing about where origins are. A reading that
+responds to its own parameter and to nothing else is the hardest kind to notice,
+because every experiment on it appears to work.
+
+Recorded on 2026-09-10 in [generated.md](generated.md), on generated series at
+1h only - 2h and 4h had no bars to test.
