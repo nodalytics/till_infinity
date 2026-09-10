@@ -7787,3 +7787,65 @@ def test_a_slotted_dataclass_is_coerced_despite_its_generated_setstate():
     assert isinstance(back.stop, float)
     # The operation that actually broke.
     assert abs(back.entry - back.stop) == pytest.approx(0.0345)
+
+
+def test_a_level_stored_as_text_cannot_break_the_subtraction():
+    """`Book.observe` does `abs(existing.price - level.price)` on every published
+    level, so one string price raises `TypeError`, the guard around `handle`
+    skips the signal, and trading quietly stops acting on that feed.
+
+    It ran at 124 dropped signals in a session. The values are legacy: a `Book`
+    is restored through pickle, which reproduces exactly what an older build
+    wrote, so nothing the codec does reaches them.
+    """
+    from till_infinity.trading.book import Book, Seen
+
+    # Constructed with text - coerced on the way in.
+    fresh = Seen(price="1.2345", interval="5m", when="100")
+    assert isinstance(fresh.price, float)
+    assert fresh.price == pytest.approx(1.2345)
+    assert isinstance(fresh.when, float)
+
+    # Restored with text - `__post_init__` never ran, which is the real case.
+    stale = Seen.__new__(Seen)
+    for name, value in (
+        ("price", "1.2000"),
+        ("interval", "5m"),
+        ("probability", 0.5),
+        ("strength", 0.5),
+        ("touches", 1.0),
+        ("when", 100.0),
+    ):
+        object.__setattr__(stale, name, value)
+    assert isinstance(stale.price, str), "the premise"
+
+    book = Book()
+    book._levels["eurusd"] = [stale]
+    assert book.repair() == 1
+    assert isinstance(book._levels["eurusd"][0].price, float)
+
+    # And the operation that was raising now works.
+    book.observe("eurusd", Seen(price=1.3, interval="5m", when=200.0), vol_bps=5.0)
+    assert len(book._levels["eurusd"]) == 2
+
+
+def test_repair_drops_a_level_whose_price_is_not_a_number_at_all():
+    """`float("")` raises rather than returning zero, and a level at price zero
+    is not a level - it would sort to the front and match nothing."""
+    from till_infinity.trading.book import Book, Seen
+
+    junk = Seen.__new__(Seen)
+    for name, value in (
+        ("price", "not a price"),
+        ("interval", "5m"),
+        ("probability", 0.0),
+        ("strength", 0.0),
+        ("touches", 0.0),
+        ("when", 0.0),
+    ):
+        object.__setattr__(junk, name, value)
+
+    book = Book()
+    book._levels["gold"] = [junk]
+    book.repair()
+    assert book._levels["gold"] == []

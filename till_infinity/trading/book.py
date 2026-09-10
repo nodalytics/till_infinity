@@ -44,6 +44,32 @@ class Seen:
     touches: float = 0.0
     when: float = 0.0
 
+    def __post_init__(self) -> None:
+        """Coerce the numbers, because one of these is subtracted every tick.
+
+        `Book.observe` does `abs(existing.price - level.price)` on every
+        published level, so a single string price raises `TypeError` and the
+        per-message guard skips that signal. It ran at **124 dropped signals a
+        session** before anyone read past the guard to the traceback.
+
+        Both construction sites already pass floats. This is for the state:
+        `Book` is persisted and restored, the `Seen` objects inside it come back
+        through pickle rather than through the codec's coercion, and a value
+        written as a string by an older build is read back as a string, written
+        out again at the next save, and circulates indefinitely. Coercing here
+        catches them the moment anything constructs one, and `Book.repair`
+        catches the ones already in the file.
+
+        Frozen, so `object.__setattr__`.
+        """
+        for name in ("price", "probability", "strength", "touches", "when"):
+            value = getattr(self, name)
+            if not isinstance(value, int | float):
+                try:
+                    object.__setattr__(self, name, float(value))
+                except (TypeError, ValueError):
+                    object.__setattr__(self, name, 0.0)
+
     def age(self, now: float) -> float:
         return max(0.0, now - self.when)
 
@@ -55,6 +81,39 @@ class Book:
     merge_vol: float = MERGE_VOL
     forget: float = FORGET_SECONDS
     _levels: dict[str, list[Seen]] = field(default_factory=dict)
+
+    def repair(self) -> int:
+        """Rebuild any `Seen` whose numbers came back as strings.
+
+        A restored `Book` arrives through pickle, which reproduces exactly what
+        was written - including values an older build stored as strings. Those
+        never pass through `Seen.__post_init__` again, so they survive every
+        restart and every coercion added since, and the first level published
+        near one raises on the subtraction in `observe`.
+
+        Returns how many it fixed, so a caller can say whether the state it
+        just loaded was carrying any.
+        """
+        fixed = 0
+        for feed, held in self._levels.items():
+            out = []
+            for seen in held:
+                if isinstance(getattr(seen, "price", None), int | float):
+                    out.append(seen)
+                    continue
+                out.append(
+                    Seen(
+                        price=seen.price,
+                        interval=getattr(seen, "interval", ""),
+                        probability=getattr(seen, "probability", 0.0),
+                        strength=getattr(seen, "strength", 0.0),
+                        touches=getattr(seen, "touches", 0.0),
+                        when=getattr(seen, "when", 0.0),
+                    )
+                )
+                fixed += 1
+            self._levels[feed] = [s for s in out if s.price > 0]
+        return fixed
 
     def observe(self, feed: str, level: Seen, vol_bps: float) -> None:
         """Record a level. Merges into a neighbour if there is one."""

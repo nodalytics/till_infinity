@@ -1315,6 +1315,23 @@ class Trader:
                 held = getattr(engine, name, None)
                 if held is not None and type(saved) is type(held):
                     setattr(engine, name, saved)
+                    # Legacy state carries `Seen` objects whose numbers were
+                    # written as strings, and they come back through pickle
+                    # rather than the codec, so nothing has coerced them. One is
+                    # enough: `Book.observe` subtracts prices on every published
+                    # level, and the guard around `handle` turns the `TypeError`
+                    # into a skipped signal - 124 of them in one session before
+                    # the traceback was read.
+                    fix = getattr(saved, "repair", None)
+                    if callable(fix):
+                        mended = fix()
+                        if mended:
+                            log.warning(
+                                "trading: repaired %d level(s) on %s whose numbers "
+                                "were stored as text",
+                                mended,
+                                engine.name,
+                            )
                     back += 1
                     break
         if back:
