@@ -2819,3 +2819,48 @@ def test_the_analogue_memory_is_bounded():
     for i in range(500):
         model.observe({"span_rel": float(i), "r1": 1.0}, 0.01 * i)
     assert len(model._rows) == 50
+
+
+def test_every_member_is_scored_on_one_scale():
+    """A Rogers-Satchell reading is a standard deviation and `vol_bps` is a mean
+    absolute deviation; they differ by sqrt(pi/2).
+
+    `observe_bar` settles the ensemble with `realised / MAD_TO_SIGMA` for that
+    reason, and `Book.learn` did not - so the learner's target was centred on
+    log(1.25) instead of zero, and in the scoreboard `har` and `learned` were
+    converted to the mean-absolute scale while `naive` was compared against the
+    raw one. Two competitors shrank by a quarter before a comparison whose
+    headline result is that persistence beats them.
+    """
+    from till_infinity.structures.vol.consensus_vol import MAD_TO_SIGMA
+    from till_infinity.structures.vol.volatility import Book
+
+    book = Book()
+    vol = book.of("eurusd", "5m")
+    for i in range(120):
+        vol.update(100.0 + (i % 7) * 0.05)
+    assert vol.warm
+
+    book.learn(
+        "eurusd",
+        "5m",
+        10.0,
+        open_=100.0,
+        high=100.1,
+        low=99.9,
+        close=100.05,
+        interval_seconds=300.0,
+    )
+    seen = book.learned._by_key["eurusd|5m"]
+    # What it remembered is the converted value, not the raw one.
+    assert seen.realised[-1] == pytest.approx(10.0 / MAD_TO_SIGMA)
+    assert seen.said["naive"] == pytest.approx(10.0 / MAD_TO_SIGMA)
+
+
+def test_the_target_is_centred_on_no_change():
+    """Predicting zero must mean 'the standing estimate is right'. With the two
+    scales mixed it meant 'the standing estimate is a quarter low'."""
+    from till_infinity.structures.vol.learned import Learned
+
+    model = Learned()
+    assert model._target(7.0, 7.0) == pytest.approx(0.0)

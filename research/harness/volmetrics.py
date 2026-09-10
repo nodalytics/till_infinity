@@ -244,6 +244,28 @@ def run() -> None:
             _fm_predict(fm, row, fm_seen),
         )
 
+    # **Is the incumbent biased, or is the model shading?** `learned_ratio` runs
+    # a median of 0.788 live - the learner forecasting a fifth below the
+    # standing estimate - and there are two readings. Either `vol_bps` is
+    # biased high (it is a mean absolute deviation over a half-life that
+    # includes spikes the next bar does not repeat), in which case the learner
+    # is right; or the learner has found that under-predicting is cheaper under
+    # its loss, in which case it is fitting the metric.
+    #
+    # The target settles it without reference to any model. It is
+    # log(realised / ew), so the median of its exponential is the median ratio
+    # of what actually happened to what the incumbent expected. Near 0.79 the
+    # bias is real and the learner is tracking it; near 1.0 the incumbent is
+    # unbiased and the shading is the model's own.
+    if actual:
+        ordered = sorted(actual)
+        mid = math.exp(ordered[len(ordered) // 2])
+        lo = math.exp(ordered[len(ordered) // 10])
+        hi = math.exp(ordered[len(ordered) * 9 // 10])
+        share = sum(1 for value in actual if value < 0) / len(actual)
+        print(f"\nrealised / vol_bps   median {mid:.4f}   p10 {lo:.4f}   p90 {hi:.4f}")
+        print(f"bars coming in under the standing estimate: {share:.1%}\n")
+
     print(f"{'model':10s} {'n':>9s} {'R2_mean':>9s} {'R2_naive':>9s} {'MAE':>8s} "
           f"{'RMSE':>8s} {'corr':>7s}")
     for name in ("naive", "har", "learned", "facto"):

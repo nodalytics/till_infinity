@@ -302,3 +302,27 @@ Found on 2026-09-09 while reaching for a way to measure how far price travelled
 against a call ([overhead.md](overhead.md)) - which is the same way
 `articles.symbols` turned up: a field looks available, is used, and returns
 nothing without ever raising.
+
+## Thirteen: the service was restarting every 2.5 hours and every surface said healthy
+
+Not an inert reading - an inert *observer*. The container was OOM-killed
+nineteen times between 1 and 10 September, roughly every two and a half hours,
+and nothing in the ordinary places said so: `docker ps` showed `Up`, the health
+check passed between kills, and the restart was clean enough that `docker
+inspect` reported `exit=0`. Only `dmesg` had it.
+
+It belongs in this catalogue because the cost is the same shape as the others -
+a thing that appears to be running and is not doing its job - and because of how
+it presented. Six separate puzzles in one session were all this single event:
+`restarts=3` on a container nobody deployed, trading silent for two hours, a
+save cycle that never completed, three harnesses dying with empty output, CPU
+reading 7.6% then 153%, and a replay window that looked like a regime change and
+was actually the feed count growing from 42 to 364.
+
+Every one was diagnosed as something else first, and two of them were written up
+as findings before being retracted.
+
+Cause and fix in [starving.md](starving.md): the price collector was discovering
+up to 1,250 crypto swaps against a 53-symbol book. The lesson for this page is
+narrower - **when several unrelated things are behaving oddly at once, the
+common cause is usually the platform rather than any of them.**

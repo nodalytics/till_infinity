@@ -36,10 +36,34 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
 
+#: Width to fall back to when nothing is attached to the output.
+#:
+#: **rich uses 80 when it cannot detect a terminal**, which is every
+#: containerised run, and it *truncates* rather than wrapping - so a long log
+#: line loses its tail silently and looks complete. That is not cosmetic. The
+#: volatility scoreboard exists to compare four forecasters and printed as
+#: `vol model: 24196 pair(s), accuracy learned 0.705,` - the comparison, which
+#: is the entire content, was the part cut off. `restored models (...)` and
+#: `changes: ... over 274 feed(s) -` were losing their tails the same way, and
+#: nobody had noticed because a truncated line still reads as a sentence.
+#:
+#: Only applied when there is no terminal to ask. An interactive session keeps
+#: rich's own detection, so this never overrides a real width.
+FALLBACK_WIDTH = 200
+
+
+def _console(*, stderr: bool = False) -> Console:
+    """A console that does not silently truncate when nothing is attached."""
+    console = Console(stderr=stderr)
+    if not console.is_terminal:
+        return Console(stderr=stderr, width=FALLBACK_WIDTH)
+    return console
+
+
 #: Human-facing command output (tables, summaries). Not for log records.
-console = Console()
+console = _console()
 #: Log records and progress chatter, kept off stdout.
-err_console = Console(stderr=True)
+err_console = _console(stderr=True)
 
 DEFAULT_LEVEL = "INFO"
 

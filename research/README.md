@@ -12,6 +12,7 @@ rather than believed.
 |---|---|
 | [models.md](models.md) | **measured** - would trees, forests, cosine similarity or an MLP help; a 1KB logistic regression beats all of them, and five times the data did not change that |
 | [features.md](features.md) | **measured** - `side` alone matches all nine features together, generated features make it worse, and the trivial "level holds" rule still beats our directional call everywhere but the top decile |
+| [starving.md](starving.md) | **found and provisionally fixed** - the service was OOM-killed 19 times in nine days, every ~2.5h, because the price collector was discovering up to 1,250 crypto swaps against a 53-symbol book; six separate puzzles this session were all that one event |
 | [forecasting.md](forecasting.md) | **measured** - the learned model beats HAR in every cell of a split-sample test and neither beats reusing the last realised value; persistence's edge shrinks monotonically with horizon; two of the three conclusions this page reached were defects |
 | [volatility.md](volatility.md) | **measured** - the estimate is well calibrated and its half-life is well past the optimum; a flat 20-bar mean beats it at every interval |
 | [resolution.md](resolution.md) | **measured on production** - two thirds of outcomes resolved within two seconds; a bar's wick was resolving touches born inside it, and no bars-only replay could see it |

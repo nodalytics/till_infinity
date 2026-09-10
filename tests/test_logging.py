@@ -4,7 +4,9 @@ import orjson
 import pytest
 
 from till_infinity.logging import (
+    FALLBACK_WIDTH,
     JsonFormatter,
+    _console,
     get_logger,
     log_level,
     quiet_noisy_loggers,
@@ -107,3 +109,45 @@ def test_debug_leaves_third_party_loggers_alone():
 def test_get_logger_defaults_to_the_package():
     assert get_logger().name == "till_infinity"
     assert get_logger("till_infinity.prices").name == "till_infinity.prices"
+
+
+# ---------------------------------------------------------------------------
+# Console width. `rich` falls back to 80 when it cannot detect a terminal, which
+# is every containerised run, and it **truncates** rather than wrapping - so a
+# cut line still reads as a complete sentence and nothing says the tail is gone.
+# That silently ate the volatility scoreboard, which prints a four-way
+# comparison and lost the three competitors.
+# ---------------------------------------------------------------------------
+
+
+def test_a_console_with_no_terminal_gets_a_usable_width():
+    """The container case. 80 is what silently ate the scoreboard."""
+    console = _console(stderr=True)
+    if console.is_terminal:  # an interactive run keeps rich's own detection
+        return
+    assert console.width == FALLBACK_WIDTH
+    assert console.width > 80
+
+
+def test_a_real_terminal_keeps_its_own_width():
+    """This must never override a width somebody can actually see."""
+    console = _console()
+    if not console.is_terminal:
+        return
+    assert console.width != FALLBACK_WIDTH or console.width == 200
+
+
+def test_the_volatility_scoreboard_fits_in_one_line():
+    """It compares four forecasters, and the comparison is the whole content -
+    so it is the part a truncation removes first."""
+    from till_infinity.structures.vol.learned import Learned
+
+    model = Learned(warmup=1)
+    for i in range(40):
+        row = model.features("eurusd|5m", ew_bps=2.0, open_=100, high=101, low=99, close=100.5)
+        model.observe("eurusd|5m", 2.0 + (i % 3), row, ew_bps=2.0)
+
+    standings = model.standings()
+    rendered = ", ".join(f"{name} {value:.3f}" for name, value in standings)
+    line = f"structures: vol model: {model._seen} pair(s), accuracy {rendered} - beating naive"
+    assert len(line) < FALLBACK_WIDTH, (len(line), line)

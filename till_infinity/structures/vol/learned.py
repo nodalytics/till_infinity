@@ -563,6 +563,12 @@ class Learned(Restorable):
         analogue = self._analogue.predict(row)
         seen.said = {
             "naive": realised_bps,
+            # `har` is fed the sigma-scale realised value, so it forecasts on
+            # that scale and is converted to match the rest. `naive` needs no
+            # conversion: `Book.learn` has already put `realised_bps` on the
+            # mean-absolute scale before this sees it, so every member and the
+            # truth they are scored against are now one convention. Mixing them
+            # shrank two competitors by a quarter and flattered the third.
             "har": har_bps / MAD_TO_SIGMA if har_bps > 0 else 0.0,
             "learned": self._predict(row, ew_bps, fallback=realised_bps),
             # `None` means it has no view, and that is not the same as agreeing

@@ -527,6 +527,25 @@ class Book(Restorable):
         vol = self.of(feed, interval)
         if realised_bps <= 0 or not vol.warm:
             return
+        # **Converted once, here, and everything inside `Learned` is then on one
+        # scale.** `observe_bar` returns a Rogers-Satchell reading, which is a
+        # standard deviation; `vol.bps` is a mean absolute deviation. They
+        # differ by sqrt(pi/2), and `consensus_vol` is careful about it -
+        # `observe_bar` itself settles the ensemble with `realised /
+        # MAD_TO_SIGMA` for exactly this reason.
+        #
+        # This did not, and the cost was not subtle. The target was
+        # log(sigma-scale realised / MAD-scale estimate), so it was centred on
+        # log(1.25) rather than on zero; and in the scoreboard `har` and
+        # `learned` were both converted to MAD while `naive` was compared
+        # against the raw sigma-scale truth. Two of the three competitors were
+        # shrunk by a quarter before the comparison, and the headline finding of
+        # research/forecasting.md is that persistence beats both of them.
+        #
+        # Measured on 59,622 warm bars across ten feeds: realised / vol_bps has
+        # a median of **1.43**, so the target was never near zero and the
+        # published `learned_ratio` ran at 0.79.
+        realised_bps = realised_bps / MAD_TO_SIGMA
         key = f"{feed}|{interval}"
         learned = self.learned
         row = learned.features(
