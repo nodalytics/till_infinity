@@ -71,6 +71,7 @@ rather than believed.
 | [geometry.md](geometry.md) | **measured** - where reward-to-risk actually comes from, and why a floor on it keeps losers and refuses winners |
 | [lateness.md](lateness.md) | **measured** - what entering late costs |
 | [macro.md](macro.md) | design note - monetary policy as features on a signal and as a model of its own, and why a rate differential needs both legs from one series family |
+| [rebuilding.md](rebuilding.md) | **rebuilt, and one family will not** - the other half of [deriving.md](deriving.md): a simulator per family from the published parameters alone, ticks simulated and aggregated to bars the way the feed is, then an adversarial classifier asked which is which. The apparatus is calibrated on ground truth - discriminator floors 0.48, Student-t and volatility clustering caught, `RANDU` failing the 3-tuple lattice test at **2,616x** where numpy reads 2.11 - and the **0.5826** correction and the **0.870 / 0.909** Parkinson ratios fall out of a rebuild that was given a volatility and a tick rate and nothing else. Range Break is the one that resists: the centred re-range rule is refuted 3x over, the edge-anchored one reproduces the published ex-break curve to **0.043** across three orders of magnitude, and the residual sits at twenty minutes and points the two indices in opposite directions. The two-sample tests against the live feed wait on the lab, which went unreachable mid-run |
 
 Designs nobody has built and measurements nobody has taken live in
 [planned/](planned/) - the one thing that must not sit beside documentation of
@@ -112,6 +113,18 @@ which is 60 days of bars and 24 hours of ticks across 53 feeds:
 ./.secrets/lab.sh run research/harness/genspike.py  # Boom/Crash: spike rate, grind, the arithmetic
 ./.secrets/lab.sh run research/harness/genrange.py  # Range Break: break rate, fade, follow-through
 ./.secrets/lab.sh run research/harness/genstop.py   # what a stop is worth when the adverse tick jumps
+```
+
+The rebuild in [rebuilding.md](rebuilding.md) runs on the same machine and reads
+the same database. `rebuildgen.py` is the generators and the battery and is
+imported rather than run:
+
+```bash
+./.secrets/lab.sh run research/harness/rebuildvol.py MULT=10 JMULT=4  # GBM and Jump, rebuilt
+./.secrets/lab.sh run research/harness/rebuildstep.py MULT=10 RBMULT=5 # Step and Range Break
+./.secrets/lab.sh run research/harness/rebuildspike.py BMULT=2        # Boom and Crash
+./.secrets/lab.sh run research/harness/rebuildjudge.py                # can anything tell them apart
+./.secrets/lab.sh run research/harness/rebuildpower.py                # at what n does a test separate
 ```
 
 `touches.py` writes `touches.pkl` beside itself and the others read it, so the
