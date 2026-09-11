@@ -18,21 +18,24 @@ control doing the same job, and where the control matches, the page says the
 framing is notation**. Two of the five sections below reach exactly that verdict
 and say so, one of them by proving an identity rather than measuring one.
 
-Three harnesses: [`quantimage.py`](harness/quantimage.py),
+Four harnesses: [`quantimage.py`](harness/quantimage.py),
 [`quantspec.py`](harness/quantspec.py),
-[`quantbridge.py`](harness/quantbridge.py). Each states its kill conditions in its
+[`quantbridge.py`](harness/quantbridge.py),
+[`quantwigner.py`](harness/quantwigner.py). Each states its kill conditions in its
 docstring before any number, and each section below ends with the ledger of which
 fired.
 
-**Scope, stated first and not buried.** The research lab holding `research.db`
-was unreachable throughout this work - no route to host - and
-`.data/prices/prices.db` carries 1.67M bars of *real* instruments and **zero
-generated feeds**. So nothing here is measured on a Deriv synthetic. What is here
-is of three kinds, marked throughout: **exact numerical evaluations of known
-laws**, which need no data and are complete; **measurements on real instruments**,
-which the local store does support and which section three uses; and
-**pre-registered predictions with their power analysis**, which need one command
-on the lab and are not results yet.
+**Scope, stated first and not buried.** This page was first written while the
+research lab holding `research.db` was unreachable, so its predictions were
+pre-registered against data nobody had seen. **The lab has since come back and
+every one of them has been run**, which is why several sections below now carry a
+measurement after a prediction and two of them carry a correction to a number
+this page itself published. What is here is of three kinds, marked throughout:
+**exact numerical evaluations of known laws**, which need no data and are
+complete; **measurements on the Deriv synthetics**, 24 hours of ticks and 60 days
+of one-minute bars from `research.db`; and **measurements on real instruments**
+from the local store, which section three keeps because a real feed has fat tails
+and volatility clustering and is the harder test.
 
 ## One: the 0.5826 is an extrapolation length, so it is a boundary condition rather than a correction
 
@@ -320,96 +323,175 @@ resolve and **this measurement belongs on ticks**, where there are sixty samples
 a bar. That is a statement about the instrument worth making before running
 anything, and it is what a power analysis is for.
 
-### And then it was measured, and the sample cannot carry it
+### And then it was measured twice, because the first run starved its own estimator
 
-The lab came back and both legs ran. The ladder measurement belongs on **ticks**,
-because `tau_2` is 96 ticks and a one-minute bar cannot resolve it - and the tick
-measurement is defeated by something simpler than resolution.
+The lab came back and the tick leg ran. It reported the ladder unreadable on two
+usable episodes of RB100 and three of RB200, and blamed the tick history. **That
+was wrong, and the fault was in this harness rather than in the feed.**
 
-**Twenty-four hours of ticks holds 20 breaks on RB100 and 7 on RB200.** After
-requiring an episode long enough to carry the longest window, that leaves **2 and
-3 usable episodes**. The power analysis was run at 999 episodes and returned a
-0.0% separation error; re-run at each feed's own tick count, episode length and
-*measured* width, it returns this:
+The episode filter kept only episodes of `2 * TICK_WINDOWS[-1]` = 8,192 ticks or
+more, on the reasoning that an episode must be long enough to hold a lagged pair
+at the longest window. That is not what the pipeline needs. `windowed` already
+drops the remainder inside each episode, so a short episode contributes no
+windows at the long lengths and costs nothing; and the ladder - the statistic
+that answers box against spring - runs at a lag of **60 ticks** and needs an
+episode two orders of magnitude shorter. **The filter was sized by the least
+important statistic and applied to all of them.** RB100 breaks about every 5,190
+ticks, so a threshold of 8,192 kept the tail of a geometric draw and nothing
+else.
 
-| RB100, W = 45.6 | `l2/l1` | `l3/l1` | knee | kurtosis |
-| --- | --- | --- | --- | --- |
-| simulated box | 3.542 +- 0.551 | 7.473 | -0.33 | -0.783 |
-| simulated spring | 2.367 +- 0.286 | 4.536 | -0.27 | -0.110 |
-| simulated free walk | 2.957 +- 0.862 | 6.185 | -0.73 | +0.140 |
-| **measured** | **3.438** | 5.258 | **-0.32** | **-0.736** |
+Relaxing it to four lags keeps **20 episodes and 86,376 ticks on RB100** against
+2 and 32,688, and **6 and 86,225 on RB200** against 3 and 81,171. The same
+threshold now also cuts the *simulated* truths, which matters more than the
+threshold: the de-meaning bias is a function of the episode-length distribution,
+so filtering the feed and not the simulation compares a truncated geometric
+against an untruncated one and calls the difference a spectrum. The old code did
+exactly that.
 
-| RB200, W = 67.1 | `l2/l1` | `l3/l1` | knee | kurtosis |
-| --- | --- | --- | --- | --- |
-| simulated box | 3.667 +- 0.593 | 7.669 | -0.53 | -0.423 |
-| simulated spring | 2.416 +- 0.244 | 4.688 | -0.49 | +0.018 |
-| simulated free walk | 2.931 +- 0.655 | 6.363 | -0.82 | +0.374 |
-| **measured** | **2.051** | 5.039 | **-0.70** | **-0.210** |
+So the honest correction to the previous paragraph is that **the ladder needed
+twelve times the tick history only because the harness was throwing nine tenths
+of it away.** The stored day is enough.
 
-**The bands overlap and the ladder is not readable.** RB100's 3.438 sits inside
-the box's interval *and* inside the free walk's. RB200's 2.051 sits below all
-three. And the row that settles it is the control: **`step_index`, which
-`deriving.md` proves is a fair coin to `p = 0.499734 +- 0.000220`, returns
-`l2/l1 = 3.751`** on the same code path - a provable free walk, indistinguishable
-from a box, exactly as section one warned. At two or three episodes the estimator
-has no power and nothing about the ladder is reported as a result.
+### The width, and the scan that is itself the box test
 
-The bar cross-check says the same thing from the other side: at one-minute bars
-the ratios come out **1.347 and 1.795**, below even the spring's calibrated 2.154,
-which is what "a bar cannot resolve a 1.6-bar mode" looks like when you try
-anyway.
+The width had been read off whatever sample the filter happened to leave, and it
+moved from 45.6 to 34.0 when the filter was relaxed. **Neither number is the
+width.** A short episode has not explored its range and understates it, so
+averaging per-episode variances over a sample containing short episodes biases
+the estimate down; keeping only very long episodes fixes that bias and leaves two
+episodes of noise, which is what the published 45.6 was.
 
-**What it would take is arithmetic.** The estimator had 0.0% separation error at
-999 episodes and none at 2. Breaks arrive every 86.5 and 178.8 minutes, so 200
-episodes is **12 days of RB100 ticks and 25 days of RB200 ticks**, against the 24
-hours stored. That is the specific collection this measurement needs, and it is
-the useful form of the answer: the ladder is not unmeasurable, it is unmeasured,
-and the shortfall is a factor of twelve in tick history rather than anything
-about the method.
+The fix is to stop picking a sample and scan the width against the minimum
+episode length, because **the shape of that scan is the test**. A box
+equilibrates in a few `tau_1 = 2W^2/pi^2`, so past a cut of a few relaxation
+times the estimate must stop moving. A width that keeps climbing is a process
+that never equilibrates inside its range, which is not a box however
+sub-diffusive it looks between breaks.
 
-### What the same run does settle: the width, twice over
+| min episode (ticks) | RB100 eps | RB100 W | RB200 eps | RB200 W | vol_75 eps | vol_75 W |
+| --- | --- | --- | --- | --- | --- | --- |
+| 240 | 20 | 34.0 | 6 | 53.6 | 31 | 74.5 |
+| 512 | 19 | 34.7 | 6 | 53.6 | 24 | 82.6 |
+| 1024 | 15 | **38.0** | 5 | 58.5 | 12 | 106.2 |
+| 2048 | 11 | **38.5** | 4 | 60.4 | 6 | 123.7 |
+| 4096 | 8 | **37.8** | 3 | 67.1 | 1 | 129.9 |
+| 8192 | 2 | 45.6 | 3 | 67.1 | - | - |
+| 16384 | 1 | 39.0 | 1 | 94.3 | - | - |
 
-The tick data measures the range directly, two independent ways - `sqrt(12 Var)`,
-which is the width a uniform stationary law implies, and the mean within-episode
-range:
+**RB100 saturates at about 38 units** - flat to 2% across the last three usable
+cuts, on 15, 11 and 8 episodes - and `tau_1` at that width is 293 ticks, so the
+plateau begins exactly where a box says it must. The mean within-episode range
+tracks it the whole way (37.5, 38.4, 37.6), so the two estimators agree at every
+cut and not just at one.
 
-| | `sqrt(12 Var)` | mean within-episode range | agreement |
-| --- | --- | --- | --- |
-| RB100 | **45.6** | **47.0** | 3.0% |
-| RB200 | **67.1** | **67.0** | 0.1% |
+**The `volatility_75_index` row is the control and it is the reason the plateau
+can be read at all.** That feed is Brownian motion with no range, its "breaks"
+are the detector firing on nothing, and its width climbs 74.5, 82.6, 106.2,
+123.7, 129.9 over the same cuts - **+74% and still rising**, because a free
+path's range grows without limit. RB100 moves 11% and stops. Without that row a
+plateau would just be an assertion about a table.
 
-Two estimators of the same quantity agreeing to 3% and 0.1%, and **the gap
-between the feeds is 21 units against a gap of at most 1.4 between the estimators
-on one feed**. So the widths are different and the difference is fifteen times
-the disagreement between the ways of measuring it.
+**RB200 does not saturate**: 53.6, 58.5, 60.4, 67.1, still climbing, on seven
+breaks in the stored day. It is reported as not converged rather than given a
+number, and the honest statement is that it is somewhere above 60.
 
-That resolves a three-way disagreement in this folder. This page's eigenvalue
-inversion of `deriving.md`'s published curve said **49 and 56**;
-[rebuilding.md](rebuilding.md)'s fit said **one shared 60 for both**; the feed
-says **46 and 67**. The inversion is right on RB100 to 6% and 16% low on RB200,
-and **the shared width is refuted** - it is not that the two indices share a range
-and differ only in break rate and break size, they have ranges differing by a
-factor of 1.46. That is a correction to a published number obtained from the data
-rather than from a fit, and it is the most solid thing in this section.
+That settles the three-way disagreement, though not the way the previous draft of
+this page said. This page's eigenvalue inversion said **49 and 56**;
+[rebuilding.md](rebuilding.md)'s fit said **one shared 60 for both**; the earlier
+tick read said 45.6 and 67.1 and was two and three episodes. The feed says
+**RB100 is about 38 and RB200 is above 60**. The inversion is 29% high on RB100;
+**the shared width is refuted** by a factor of at least 1.6 between the two
+indices, which was the previous conclusion and survives at a different pair of
+numbers; and the number this page itself published a few hours ago was undersampled
+and is corrected here.
 
-The two secondary discriminators also point one way on RB100 and are mute on
-RB200. RB100's stationary kurtosis is **-0.736** against a simulated box's -0.783
-and a simulated spring's -0.110, and its knee is **-0.32** against a box's -0.33
-and a free walk's -0.73. On the density and the scaling, RB100 is a box. RB200's
--0.210 and -0.70 sit between everything, which is what three episodes buys.
+### The ladder, measured: it is not a box
 
-**Ledger: two of nine fired, both on the first design and both instructive.**
+With the sample restored, the pre-registered gate is checked before the measured
+value is read against anything - the simulated box and the simulated spring must
+separate by two replicate standard deviations at the sample actually achieved, or
+nothing is reported. Both feeds pass, narrowly: two-sd gaps of **+0.021 and
++0.010**. Simulated truths are run at the feed's own tick count, episode length
+and *saturated* width, through the identical pipeline.
+
+| RB100, W = 37.8 | `l2/l1` | vs measured | `l3/l1` | knee | kurtosis |
+| --- | --- | --- | --- | --- | --- |
+| simulated box | 3.197 +- 0.334 | **-3.4 sd** | 5.826 | -0.25 | -0.894 |
+| simulated spring | 2.212 +- 0.147 | -0.9 sd | 4.049 | -0.23 | -0.015 |
+| simulated free walk | 2.183 +- 0.330 | -0.3 sd | 4.707 | -0.77 | +0.364 |
+| **measured** | **2.076** | | 3.910 | **-0.24** | **-0.322** |
+
+| RB200, W = 58.5 | `l2/l1` | vs measured | `l3/l1` | knee | kurtosis |
+| --- | --- | --- | --- | --- | --- |
+| simulated box | 3.559 +- 0.375 | **-4.2 sd** | 7.404 | -0.46 | -0.582 |
+| simulated spring | 2.377 +- 0.211 | -1.9 sd | 4.601 | -0.42 | +0.013 |
+| simulated free walk | 2.565 +- 0.556 | -1.1 sd | 5.782 | -0.83 | +0.352 |
+| **measured** | **1.976** | | 4.942 | **-0.67** | **-0.210** |
+
+**The hard box is excluded on both feeds, at 3.4 and 4.2 standard deviations.**
+That is the result, and it is the first statement on this page about what Range
+Break *is* rather than about what an estimator does. `1:4:9` is not the ladder of
+this instrument.
+
+**The spring is not excluded** - the measured values sit 0.9 and 1.9 standard
+deviations below it - and **the ladder on its own cannot establish confinement at
+all**, because the free-walk control covers the measurement on both feeds. That
+is section two's own warning applied to section two's own result, and it would be
+dishonest to skip it.
+
+What establishes the confinement is the other two readings, which the ladder does
+not need:
+
+* **the knee.** RB100 is at **-0.24** against a simulated box's -0.25, a spring's
+  -0.23 and a free walk's **-0.77**. On the scaling of `lambda_1` with window
+  length RB100 is confined and is nowhere near a free walk.
+* **the classical control, which is one number.** The AR(1) half-life is **164
+  ticks** on RB100 against **11,176** on `step_index` - a feed
+  [deriving.md](deriving.md) proves is a fair coin to `p = 0.499734 +- 0.000220`,
+  run through the identical code path. Two orders of magnitude.
+* **the stationary density.** RB100's within-window excess kurtosis is **-0.322**
+  against a box's -0.894, a spring's -0.015 and a free walk's +0.364: confined,
+  and between the two confined shapes.
+
+So the reading that survives all of it: **Range Break 100 is confined, and its
+confinement is at or below the harmonic limit rather than at the box limit.** In
+WKB terms `lambda_k ~ k^alpha` with `alpha <= 1`, so the well is `V ~ |x|^p` with
+`p <= 2` - softer than a spring, not merely softer than a wall. RB200 says the
+same thing about the ladder at 4.2 standard deviations from the box, but its knee
+(-0.67) sits toward the free walk and its width has not converged, so on RB200
+only the negative half is reportable.
+
+**And `step_index` is still the control that makes all of this legible.** It
+returns `l2/l1 = 3.751` on one 86,393-tick episode - a provable fair coin
+returning very nearly the box's ladder, because with one long episode the window
+*is* the box. The same estimator on the same feed cut into 20 episodes returns
+2.183 for a simulated free walk. **The free walk's apparent ladder is a function
+of the episode length, which is exactly why the calibration has to be run at the
+feed's own episode length and why a ratio quoted without one is worthless.**
+**Ledger: three of ten fired, and the third is the section's result.**
+
 Condition 1 fired - the estimator does not recover 4 and 2 at the real sample
 size, because pooling episodes forces de-meaning - and the response was to
 calibrate against simulated truths rather than to move the threshold. Condition 3
 fired - the free-walk control is not distinguishable from the box on the raw
-ladder - and that is the section's headline. The seven that held were the power
-(0.0% separation error), the knee (box -0.336 +- 0.040 against the walk's
--0.921 +- 0.058), the ladder against the free-walk control (box 2.5% at 2.790
-against the walk's 97.5% at 1.931), the density test, and the void check. Two of
-the seven - the real-data curvature test and condition 9 below - could not be
-evaluated at all, because there is no real data, and they are counted as held
-only in the sense that nothing killed them.
+ladder - and that reframed the whole section. **Condition 9 fired**: the measured
+ladder was pre-registered to land *strictly between* the simulated spring and the
+simulated box if [rebuilding.md](rebuilding.md)'s soft edge was right, and it
+landed **below the spring on both feeds**. That is a refutation in a direction
+neither page allowed for, which is the useful kind.
+
+Condition 10 was added when the first tick run could not read its own ladder, and
+it is a gate rather than a hypothesis: the ladder may not be read at all unless
+box and spring separate by two replicate standard deviations at the sample
+achieved. It is checked and printed before the measured value is compared to
+anything. It **held, narrowly** - gaps of +0.021 and +0.010 - and it is fair to
+say the RB200 leg is at the edge of what six episodes can support.
+
+The six that held were the power (0.0% single-cut separation error over 120
+replicates), the knee (box -0.335 +- 0.040 against the walk's -0.919 +- 0.057),
+the ladder against the free-walk control at bar resolution, the density test, the
+void check, and the retired curvature test - retired before the data was seen,
+because the cosine and Hermite projections do not survive the de-meaning at all.
 
 ## Two and a half: rebuilding.md's soft edge is a shallow ladder, and that is one prediction from two directions
 
@@ -421,10 +503,10 @@ residual that is **too confined at one minute and too free at twenty**, and read
 that as the edge of the range being *softer than a wall*. That is a qualitative
 conclusion from a variance-ratio fit. The spectrum turns it into a number.
 
-**The shared width has since been refuted by the feed itself** - 45.6 and 67.1
-units, two independent estimators agreeing to 3% and 0.1%, in the section above -
-so the arithmetic below is re-run at the measured widths rather than at 60. It
-changes the relaxation times and not the argument.
+**The shared width has since been refuted by the feed itself** - RB100 saturates
+at about 38 units and RB200 is above 60 and has not converged, in the section
+above - so the arithmetic below is re-run at the measured widths rather than at
+60. It changes the relaxation times and not the argument.
 
 **First, the twenty minutes is not an arbitrary scale.** A reflecting box relaxes
 on its slowest mode in `tau_1 = 2W^2/pi^2` ticks at unit step variance, which at
@@ -436,15 +518,15 @@ residual is a **shape error in the relaxation** and not a missing timescale.
 
 | | fitted band | **measured band** | `tau_1` at the measured band | 20m in `tau_1` | residual at 20m |
 | --- | --- | --- | --- | --- | --- |
-| RB100 | 60 steps | **45.6** | 7.0 min | **2.85** | +0.047 |
-| RB200 | 60 steps | **67.1** | 15.2 min | **1.32** | +0.024 |
+| RB100 | 60 steps | **37.8** | 4.9 min | **4.10** | +0.047 |
+| RB200 | 60 steps | **> 60** | > 12.2 min | **< 1.64** | +0.024 |
 
 At the *fitted* 60 the relaxation time is 12.2 minutes and twenty minutes is
 1.64 relaxation times on both feeds, which is how both pages arrived at the same
-1.6 from different evidence. At the *measured* widths it is 2.85 and 1.32 - still
-of order one on both, so the residual still sits on the box's own clock, but the
-two feeds are no longer at the same point on it. That is the same disagreement as
-the width, seen in the time domain.
+1.6 from different evidence. At the measured widths RB100 is at 4.1 relaxation
+times and RB200 is at most 1.64 - still of order one on both, so the residual
+still sits on the box's own clock, but the two feeds are not at the same point on
+it. That is the same disagreement as the width, seen in the time domain.
 
 **Second, `1:4:9` is a ceiling and not one option among several.** WKB gives
 `lambda_k ~ k^alpha` with `alpha = 2p/(p+2)` for a well `V ~ |x|^p`, which rises
@@ -474,6 +556,23 @@ wall is, which is a property of the instrument that neither page can currently
 name. It is pre-registered here as kill condition 9, and section two shows this
 sample separates 2 from 4 with a single-cut error of 0.0%.
 
+**It has now been measured, and it came in under the floor rather than inside the
+interval.** Against simulated truths through the identical pipeline the measured
+`lambda_2/lambda_1` is **2.076 on RB100 and 1.976 on RB200**, against simulated
+springs at 2.212 and 2.377 and simulated boxes at 3.197 and 3.559. So the
+prediction is refuted in the one direction the table above does not have a row
+for: not a hard box, not a soft wall, and **not even a spring** - the ladder sits
+at or below the harmonic value, which in this family means `alpha <= 1` and a
+well `V ~ |x|^p` with `p <= 2`. The soft-edge scan
+[rebuilding.md](rebuilding.md) ran covers `p = q+1` for `q >= 1`, so it was
+searching from the harmonic value upward, and the answer is at the other end of
+its range.
+
+That is the useful form of a refutation: the impasse - no single confinement
+matching the ex-break shape and the all-bars flatness at once - is not going to be
+resolved by making the wall harder, because the within-episode spectrum says the
+wall is softer than the softest thing that page tried.
+
 **And that measurement now has a second job, because the soft edge has since been
 built and it does not settle things.** [rebuilding.md](rebuilding.md) has scanned
 a lattice walk with up-probability `0.5 - k(|x|/half)^q sign(x)` - which is this
@@ -491,8 +590,14 @@ ladder is measured strictly within episodes and never uses a break bar, so it
 reports the shape of the confinement without having to satisfy the all-bars
 constraint at the same time. If the ex-break curve wants a soft edge and the
 all-bars flatness wants a hard one, the within-episode ladder says which of the
-two is describing the confinement and which is describing the break. That is a
-question neither page can currently answer and one query on the lab would.
+two is describing the confinement and which is describing the break.
+
+**The answer it gives is that the confinement is the soft half.** The ladder never
+touches a break, and it says `p <= 2`. So a rebuild that wants to match the
+all-bars flatness with a harder wall is fitting the *break* with the wall, and the
+two headline facts are in tension because one of them is not about the
+confinement. That is what the eigenvalue buys over the variance ratio, and it is
+the one thing on this page that a classical range model could not have said.
 
 ## Three: reconstructing the path inside a bar, which is the part with money in it
 
@@ -553,14 +658,67 @@ nominal 90%, which is under-coverage and is the expected direction: the per-bar
 sigma is estimated from the bar's own range, and a noisy volatility estimate
 fattens the standardised residual.
 
-**What is left on the table, quantified.** The bridge conditions on *containment*
-- the path stayed inside `[L, H]` - and not on *attainment*, that it actually
-reached both. Blending the zigzag in at a weight fitted on the first half and
-scored on the second improves the bridge by a further **9.88%**, so attainment is
-worth about as much again as the whole construction so far. That is the next
-thing to build, and in imaginary-time language it is an ancilla: two extra bits
-of state, "has the running maximum reached `H` yet" and the same for `L`, which
-turns the boundary condition into a larger Hilbert space.
+**And then it ran on the synthetics, which is the clean test, because the
+generating process is known exactly.** `research.db` carries one-minute bars
+*and* ticks for the Deriv feeds, so the fifteen-minute bar is built from fifteen
+one-minute bars - its high and low are still tick extremes, because its
+constituents' are - and the same test runs a second way with **the true tick path
+as the target rather than a coarser sample of it**. The `tick` rows are therefore
+the only place in this folder where "how close is the reconstruction to the real
+series" is a measurement rather than an inference.
+
+**The attainment ancilla is also now built rather than costed.** The bridge above
+conditions on *containment* - the path stayed inside `[L, H]` - and not on
+*attainment*, that it actually touched both. Attainment is two extra bits of
+state, "has the running maximum reached `H` yet" and the same for `L`, which in
+imaginary-time language enlarges the state space and in practice is a
+forward-backward pass over four copies of the grid instead of one.
+
+| target | feed | n | linear | zigzag | containment | **attainment** | gain | 90% coverage |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| agg | volatility_75 | 5757 | 0.4444 | 0.4423 | 0.3802 | **0.3372** | +24.12% | 88.7% |
+| agg | volatility_100 | 5757 | 0.4489 | 0.4400 | 0.3826 | **0.3359** | +25.18% | 89.0% |
+| agg | volatility_75_1s | 5757 | 0.4414 | 0.4400 | 0.3778 | **0.3341** | +24.32% | 89.1% |
+| agg | step_index | 5757 | 0.4370 | 0.4367 | 0.3751 | **0.3336** | +23.67% | 89.0% |
+| agg | range_break_100 | 5757 | 0.5206 | 0.5393 | 0.4682 | **0.4559** | +12.43% | 78.8% |
+| agg | range_break_200 | 5757 | 0.4998 | 0.5202 | 0.4438 | **0.4265** | +14.67% | 81.1% |
+| agg | boom_500 | 5757 | 0.4765 | 0.4066 | 0.4089 | **0.3415** | +28.33% | 89.7% |
+| agg | jump_75 | 5757 | 0.4541 | 0.4472 | 0.3932 | **0.3506** | +22.78% | 88.1% |
+| **tick** | volatility_75 | 719 | 0.4952 | 0.4616 | 0.4172 | **0.3577** | **+27.76%** | 87.8% |
+| **tick** | volatility_100 | 698 | 0.4782 | 0.4479 | 0.4077 | **0.3528** | **+26.22%** | 88.0% |
+| **tick** | step_index | 1439 | 0.4630 | 0.4455 | 0.3956 | **0.3535** | **+23.64%** | 88.0% |
+| **tick** | range_break_100 | 1440 | 0.4883 | 0.4738 | 0.4203 | **0.3814** | **+21.89%** | 85.4% |
+| **tick** | boom_500 | 1411 | 0.2250 | 0.1975 | 0.2310 | **0.2146** | +4.62% | 96.9% |
+
+**Attainment beats containment by +10.36% on average across the thirteen cells,
+range [+2.63%, +16.49%]** - against the **+9.88%** this page costed it at by
+blending in the zigzag out of sample. The estimate was good to half a point, and
+this is the construction itself rather than a proxy for it. On simulation the
+ancilla takes the bridge from 0.36241 to 0.30306, **+16.38%**.
+
+Against the true tick path, attainment removes **48%, 46%, 42% and 39%** of the
+interior variance that linear interpolation leaves on volatility_75,
+volatility_100, step_index and range_break_100 - against containment's 29%, 27%,
+27% and 26%. **So a little under half of what a bar hides is recoverable from
+`(O, H, L, C)`, and slightly more than half is not.** That is the number the real
+feeds could not produce, because on real data the target is the one-minute close
+and not the path.
+
+**The one cell where the bridge loses is `boom_500` on ticks, and kill condition 5
+fired on it.** Containment is 0.2310 against linear's 0.2250 - the bridge is
+**2.7% worse**. That is the right feed to fail on: Boom is drift plus a compound
+Poisson spike, the bar's high is set by a single jump, and a Brownian bridge told
+to stay under that high spends the whole bar being pulled toward a level the
+process reached in one tick and left. Attainment repairs it to +4.62%, because
+"the maximum was *attained*" is a much better description of a jump than "the
+maximum was not exceeded". The 96.9% coverage on that row says the same thing
+from the other side: the uncertainty is badly overstated because the bar's range
+is not a volatility.
+
+Note also that the two Range Break rows are the weakest of the eight `agg` cells
+(+12.43% and +14.67%, coverage 78.8% and 81.1%) and the only ones where the
+*zigzag* is worse than linear. A confined process inside a bar is not a Brownian
+bridge, and section two has just measured how it is not.
 
 **Where the money is, stated precisely.** [deriving.md](deriving.md) proves
 `E[net] = -(c/2) * turnover` for any predictable position on a martingale, so
