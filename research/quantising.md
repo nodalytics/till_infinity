@@ -960,8 +960,19 @@ the borrowing has to be accounted for.
   harmonic value, `p <= 2`, at 3.4 and 4.2 standard deviations from a simulated
   box run through the identical pipeline. No classical range model makes a
   statement of this shape, because a mean-reversion fit only ever estimates
-  `lambda_1`. This is the one place where the quantum framing earns its keep on a
-  question the classical control cannot answer: *which* confinement.
+  `lambda_1`. This is the one place where the framing earns its keep on a question
+  the classical control cannot answer: *which* confinement.
+
+  **But be precise about which half of it is quantum.** The estimator is Ulam's
+  method - bin the state, take the eigenvalues of the lagged transition matrix -
+  which is classical ergodic theory and would be there with no Wick rotation in
+  sight. What the quantum reading supplies is the *dictionary*: that a reflecting
+  band is the particle in a box and gives `1:4:9`, that an Ornstein-Uhlenbeck
+  generator is the harmonic oscillator Hamiltonian up to a similarity transform
+  and gives `1:2:3`, and that WKB makes `1:4:9` a **ceiling** no confining
+  potential passes. Without the dictionary the measured 2.076 is a number; with
+  it, it is a statement about the shape of the wall. The notation supplied the
+  hypotheses, not the measurement.
 * **RB100's range is about 38 units and RB200's is above 60**, so the two indices
   do not share a width, and the width saturates with episode length exactly as a
   box requires while the Brownian control's does not.
@@ -969,10 +980,16 @@ the borrowing has to be accounted for.
   attainment carries nearly half.** Measured against a true tick path, not
   inferred. That is a property of OHLC data rather than of any instrument, and it
   is the part with a price attached.
-* **Where the negativity of the Wigner function comes from.** See the section
-  above: it is the quote lattice, at the Brillouin zone edge, with the parity the
-  tight-binding picture predicts and no fitted parameter. The bound on how far the
-  analogy goes is now stated rather than assumed.
+* **Where the negativity of the Wigner function comes from**, and that
+  `volatility_100_index` is a lattice feed. The *mechanism* is textbook - that the
+  characteristic function of a lattice law does not decay, and that `cos(dk)^n`
+  alternates with the parity of `n`, is solid-state physics from the 1930s, and
+  this page relabels none of it. What is new is that it has been looked for on
+  these instruments and found in exactly the two places the textbook says and
+  nowhere else, and that one feed sold as continuous turns out to carry 54
+  distinct tick moves on a one-cent grid. **The bound on how far the analogy goes
+  is now a measurement rather than an assumption**, and that bound is the section's
+  whole output: nothing here needs a quantum state.
 
 ## What follows
 
