@@ -28,7 +28,7 @@ import os
 import sqlite3
 import statistics
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import replace
@@ -38,6 +38,7 @@ from pathlib import Path
 from ..bus import ALERTS, BARS, MACRO, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
+from ..shared import liveness
 from . import engine, store
 from .config import DRIFT_INTERVALS, Settings
 from .context.activity import Book as ActivityBook
@@ -53,6 +54,11 @@ from .learning.breaking import Breaks
 from .learning.drift import Drift
 from .learning.racing import Races
 from .models import Shape, Signal
+
+#: How many published feature sets `liveness_tally` reads. Enough that a
+#: genuinely rare value still appears, small enough that a field which dies
+#: today is not hidden by a month of history where it worked.
+LIVENESS_WINDOW = 2_000
 
 log = get_logger(__name__)
 
@@ -449,6 +455,11 @@ class Watcher:
         self.settings = settings or Settings.from_env()
         self.group = group
         self.journal = journal
+        #: The last few published feature sets, for `liveness_tally`. Bounded
+        #: and never persisted: this answers "is this build publishing dead
+        #: fields", which is a question about now, and a field that dies is
+        #: visible within one window rather than diluted by months of history.
+        self._published: deque[dict[str, float]] = deque(maxlen=LIVENESS_WINDOW)
         self.memory = memory
         self.detector = Detector(
             warmup=self.settings.warmup,
@@ -812,6 +823,27 @@ class Watcher:
             )
         return f"vol model: {learned._seen} pair(s), accuracy {best}{verdict}"
 
+    def liveness_tally(self) -> str:
+        """Which published features have stopped carrying information.
+
+        Same argument as `origin_tally`, `drift_tally` and `change_tally`, and a
+        sharper case for it: **`run_vol` and `pivot` are identically zero across
+        20,000 outcomes** and have been for as long as the journal reaches. They
+        are published on every level call, journalled on every outcome, and fed
+        to models that weight them. Nothing noticed until somebody cut by them
+        by hand.
+
+        Read off the decisions this process has published rather than off the
+        journal, so it costs no query and describes what *this* build is
+        producing - a field that died in a deploy shows up at the next save
+        rather than whenever someone next goes looking.
+        """
+        published = getattr(self, "_published", None)
+        if not published:
+            return "no published features yet"
+        got = liveness.report(published)
+        return f"features: {got}" if got else f"features: all {len(published)} rows vary"
+
     def change_tally(self) -> str:
         """How many timeframes are calling a change right now, for the save log.
 
@@ -864,6 +896,7 @@ class Watcher:
         log.info("structures: %s", self.drift_tally())
         log.info("structures: %s", self.refinement_tally())
         log.info("structures: %s", self.change_tally())
+        log.info("structures: %s", self.liveness_tally())
         log.info("structures: %s", self.vol_model_tally())
         if self.dropped:
             log.warning(
@@ -971,6 +1004,7 @@ class Watcher:
             # the inputs a later model would need and they cannot be recovered
             # from the stores - the consensus at that instant is not written
             # down anywhere else.
+            self._published.append(dict(signal.features or {}))
             ref = await decide(
                 self.journal,
                 signal.title,
