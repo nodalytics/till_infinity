@@ -1617,8 +1617,7 @@ class Settings:
             # `or` the default, like `formation` above: an unset variable means
             # "whatever was measured", not "no correction". `none` is how a
             # deployment says no correction and get an empty table.
-            stop_overshoot=_overshoot(_env("TRADING_STOP_OVERSHOOT"))
-            or DEFAULT_STOP_OVERSHOOT,
+            stop_overshoot=_overshoot(_env("TRADING_STOP_OVERSHOOT")) or DEFAULT_STOP_OVERSHOOT,
             interval_weight=_overshoot(_env("TRADING_INTERVAL_WEIGHT")),
             hold_extends_at=_float("TRADING_HOLD_EXTENDS_AT", 0.0),
             max_hold_multiple=_float("TRADING_MAX_HOLD_MULTIPLE", 4.0),

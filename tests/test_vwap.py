@@ -163,8 +163,12 @@ def test_an_anchor_still_filling_does_not_publish():
     times = [float(start + i * step) for i in range(n)]
     closes = [100.0 + 2.0 * math.sin(i * math.pi / 23) for i in range(n)]
     found = vwap.points(
-        times, [c + 0.2 for c in closes], [c - 0.2 for c in closes], closes,
-        [100.0] * n, _vol(closes),
+        times,
+        [c + 0.2 for c in closes],
+        [c - 0.2 for c in closes],
+        closes,
+        [100.0] * n,
+        _vol(closes),
     )
     assert len(found) == 1
     assert found[0].time == times[span - 1]
