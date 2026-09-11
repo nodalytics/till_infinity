@@ -115,7 +115,7 @@ FEEDS: dict[str, list[tuple[str, str]]] = {
 #: collector wrote 15-87k rows a venue a day through 2026-09-06 and then
 #: thinned to a few hundred, so the window stops at the end of the 6th rather
 #: than pretending the tail is data. Nothing here reaches the last three days.
-END = int(os.environ.get("END", "1788825600000"))       # 2026-09-07 00:00 UTC
+END = int(os.environ.get("END", "1788825600000"))       # 2026-09-08 00:00 UTC
 DAYS = float(os.environ.get("DAYS", "21"))
 START = int(os.environ.get("START", str(END - int(DAYS * 86_400_000))))
 
@@ -856,7 +856,7 @@ def run():
                       within=("feed", "hour", "size", "threshold"), min_n=200)
         print(got.render())
         print()
-    except Exception as exc:      # noqa: BLE001 - a research harness, not a service
+    except Exception as exc:      # a research harness, not a service
         print(f"  strata unavailable ({exc!r}); pooled only")
         for kind in ("event", "placebo"):
             xs = [r["trip"] for r in rows if r["kind"] == kind]
