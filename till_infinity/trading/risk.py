@@ -140,7 +140,10 @@ class Guard:
     def daily_loss_limit(self) -> float:
         return self.opening_equity * self.settings.daily_loss_fraction
 
-    def allows(
+    def allows(  # noqa: PLR0912 - one gate per branch, in the order they are
+        # applied. Splitting them across helpers would hide that order, and the
+        # order is the design: cheap refusals about the signal come before the
+        # arithmetic, and the arithmetic before anything touching the book.
         self,
         intent: Intent,
         *,
@@ -244,6 +247,21 @@ class Guard:
                     intent.feed,
                     f"spread is {share:.0%} of the target, limit is "
                     f"{self.settings.max_spread_fraction:.0%}",
+                )
+        # **And against the risk**, which is the denominator the damage was
+        # measured in. Scaling the permitted spread with the target lets a
+        # distant target buy the right to pay more; a spread that is half the
+        # stop distance is half the stop distance wherever the target sits. 49
+        # trades passed the reward test while expensive against risk, at -0.471R
+        # and 53% stopped, for -502.70. See `Settings.max_spread_risk_fraction`.
+        limit = self.settings.max_spread_risk_fraction
+        if tick is not None and limit > 0 and intent.risk > 0:
+            share = tick.spread / intent.risk
+            if share > limit:
+                return self._no(
+                    "spread_risk",
+                    intent.feed,
+                    f"spread is {share:.0%} of the risk, limit is {limit:.0%}",
                 )
 
         if intent.volume <= 0:

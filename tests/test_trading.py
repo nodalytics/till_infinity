@@ -8124,3 +8124,47 @@ async def test_an_unattributed_close_still_records_what_it_knows():
     assert got["unattributed"] == 1.0, "still flagged, so the two are separable"
     assert got["strategy"] == "sweep-aware"
     assert got["ticket"] == 5772381834
+
+
+def test_a_spread_expensive_against_the_risk_is_refused():
+    """The shipping gate scaled the permitted spread with the **target**, so a
+    distant target bought the right to pay more - and a spread that is half the
+    stop distance is half the stop distance wherever the target sits.
+
+    Measured over 397 closes: 49 trades passed the reward test while expensive
+    against risk, at **-0.471R and 53% stopped, for -502.70**. It is the only
+    finding in `research/winning.md` that cleared a 300-permutation control, and
+    it was pre-registered by `exiting.md` rather than found by scanning."""
+    made = settings(max_spread_fraction=0.25, max_spread_risk_fraction=0.16)
+    guard = Guard(made)
+    intent = _intent()
+
+    # A trade whose target is far away: cheap against reward, dear against risk.
+    risk, reward = intent.risk, intent.reward
+    assert reward > risk, "the fixture needs a target beyond the stop for this to bite"
+
+    # Sized to isolate the new gate: 20% of the risk, which clears the reward
+    # test whenever the target sits beyond 0.8x the stop, and fails the risk one.
+    dear = Tick(intent.feed, bid=intent.entry - risk * 0.10, ask=intent.entry + risk * 0.10)
+    assert (dear.spread / reward) <= made.max_spread_fraction, "the reward gate must not fire"
+    got = guard.allows(intent, tick=dear, positions=[])
+    assert isinstance(got, Refusal)
+    assert got.gate == "spread_risk"
+    assert "of the risk" in got.detail
+
+    # And one that is cheap by both measures still passes.
+    cheap = Tick(intent.feed, bid=intent.entry - risk * 0.02, ask=intent.entry + risk * 0.02)
+    assert guard.allows(intent, tick=cheap, positions=[]) is None
+
+
+def test_the_risk_spread_gate_can_be_switched_off():
+    """Zero is off, like every other gate here - and the population it guards
+    against fell from 79% of closes in late August to 5% of the last seven days,
+    so it is mostly insurance against a condition returning."""
+    made = settings(max_spread_risk_fraction=0.0)
+    guard = Guard(made)
+    intent = _intent()
+    dear = Tick(intent.feed, bid=intent.entry - intent.risk, ask=intent.entry + intent.risk)
+
+    got = guard.allows(intent, tick=dear, positions=[])
+    assert got is None or got.gate != "spread_risk"

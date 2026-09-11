@@ -169,15 +169,21 @@ QUERY = (
 
 
 def read_quotes(conn, feed, venue, ticker, start, end):
+    """Mid, spread and both sides. The sides are the point: a round trip is
+    bought at the ask and sold at the bid, and a claim about a mid is a claim
+    about a price nobody trades."""
     rows = conn.execute(QUERY, (feed, venue, ticker, start, end)).fetchall()
-    rows = [r for r in rows if r[3] and r[3] > 0]
+    rows = [r for r in rows if r[3] and r[3] > 0 and r[1] and r[2] and r[2] >= r[1] > 0]
     if not rows:
-        return np.empty(0, np.int64), np.empty(0), np.empty(0)
+        z = np.empty(0)
+        return np.empty(0, np.int64), z, z, z, z
     ts = np.fromiter((r[0] for r in rows), np.int64, len(rows))
+    bid = np.fromiter((r[1] for r in rows), np.float64, len(rows))
+    ask = np.fromiter((r[2] for r in rows), np.float64, len(rows))
     mid = np.fromiter((r[3] for r in rows), np.float64, len(rows))
     spread = np.fromiter((r[4] if r[4] is not None else np.nan for r in rows),
                          np.float64, len(rows))
-    return ts, mid, spread
+    return ts, mid, spread, bid, ask
 
 
 def gridify(ts, val, start, n, step):
@@ -264,56 +270,117 @@ def cooled(idx, cooldown_steps):
 
 
 def build(feed, start, end, step_ms):
-    """Every venue for one feed on one grid, plus the usable mask."""
+    """Every venue for one feed on one grid, trimmed to where all of them are live.
+
+    The trim is not tidiness. `gridify` has nothing to carry forward before a
+    venue's first row, and a log price that begins at zero and steps to 11.3 is
+    a **113,000 basis point return** sitting at the head of the window. It does
+    not need to be common to matter: the first version of this harness left it
+    in, and the mean forward move after a dislocation came back at +49bps
+    against a consensus whose 250ms return had a standard deviation of 18.6bps
+    - forty times the truth. The masks hid it from the event selection and not
+    from the trailing means, which is the worst of both.
+
+    So the window starts where the last venue starts, and the first `BASE_S` of
+    it is marked unusable as well, because a trailing hour that is not yet an
+    hour old is not a baseline.
+    """
     n = int((end - start) // step_ms)
     conn = _connect(PRICES)
-    grids, ages, spreads, counts = {}, {}, {}, {}
+    grids, ages, spreads, counts, sides = {}, {}, {}, {}, {}
     for venue, ticker in FEEDS[feed]:
-        ts, mid, spread = read_quotes(conn, feed, venue, ticker, start, end)
+        ts, mid, spread, bid, ask = read_quotes(conn, feed, venue, ticker, start, end)
         counts[venue] = len(ts)
         g, age = gridify(ts, mid, start, n, step_ms)
         grids[venue] = g
         ages[venue] = age
+        # Both sides for every venue, not only the broker: the control that
+        # decides this page puts each exchange in the broker's chair, and it
+        # has to pay that exchange's own spread when it does.
+        sides[venue] = {
+            "bid": gridify(ts, bid, start, n, step_ms)[0],
+            "ask": gridify(ts, ask, start, n, step_ms)[0],
+        }
         good = spread[~np.isnan(spread)]
         spreads[venue] = float(np.median(good)) if len(good) else float("nan")
     conn.close()
+
+    live = [int(np.argmax(~np.isnan(grids[v]))) if np.isnan(grids[v]).any() else 0
+            for v in grids]
+    begin = max(live) + 1
+    for store in (grids, ages):
+        for key in store:
+            store[key] = store[key][begin:]
+    for key in sides:
+        sides[key] = {k: v[begin:] for k, v in sides[key].items()}
+    n -= begin
     usable = np.ones(n, bool)
     for venue in grids:
         usable &= ages[venue] <= MAX_AGE_MS
         usable &= ~np.isnan(grids[venue])
-    return n, grids, ages, spreads, counts, usable
+    warm = min(n, int(BASE_S * 1000 / GRID_MS))
+    usable[:warm] = False
+    return n, grids, sides, spreads, counts, usable, start + begin * step_ms
 
 
-def consensus(grids, usable):
+def consensus(grids, exclude=BROKER):
     """A consensus log-price index, with each venue's basis taken out.
+
+    `exclude` is not optional in spirit, and the reason is
+    `structures.features.Book.consensus`, which takes the same argument for the
+    same reason: a venue must never be part of the number it is measured
+    against. Deriv is never in it. When an exchange is put in Deriv's chair for
+    the control, that exchange comes out of it too.
 
     Two of the five exchanges quote USDT and three quote USD, so the raw levels
     are not comparable and their median is not a price. Each venue is expressed
     against the cross-venue mean over its own trailing hour before the median
-    is taken; a constant or slowly-drifting basis therefore contributes nothing.
+    is taken; a constant or slowly-drifting basis therefore contributes nothing
+    and only the fresh part of a gap survives.
     """
-    venues = [v for v in grids if v != BROKER]
-    logs = np.vstack([np.log(np.where(np.isnan(grids[v]), 1.0, grids[v])) for v in venues])
+    venues = [v for v in grids if v != BROKER and v != exclude]
+    logs = np.vstack([np.log(grids[v]) for v in venues])
     middle = logs.mean(axis=0)
     w = int(BASE_S * 1000 / GRID_MS)
     aligned = np.vstack([row - trailing_mean(row - middle, w) for row in logs])
-    return np.median(aligned, axis=0), venues
+    return np.median(aligned, axis=0)
 
 
 def dislocation(index, broker_log):
-    """Consensus minus broker, in bps, against its own trailing hour."""
+    """Consensus minus broker, in bps, against its own trailing hour.
+
+    Trailing, never centred. A centred baseline would be reading the future,
+    and the whole claim here is about what is knowable at the moment of the
+    trade.
+    """
     gap = index - broker_log
     w = int(BASE_S * 1000 / GRID_MS)
     return 1e4 * (gap - trailing_mean(gap, w))
 
 
-def study(label, e, broker_log, index, usable, threshold, horizons_steps, rng, start):
-    """Signed forward move after a dislocation, for the broker and the market.
+#: How far back an event looks to decide who opened the gap.
+CAUSE_S = float(os.environ.get("CAUSE_S", "5"))
+
+
+def study(label, e, sides, broker_log, index, usable, threshold, horizons_steps,
+          rng, start):
+    """What a round trip after a dislocation is worth, and who opened the gap.
 
     Every horizon keeps its own surviving index, because a point near the end
     of the window survives one second ahead and not five, and quietly reusing
     one mask across horizons is how a forward return gets attached to the wrong
     event.
+
+    `trip` is the whole answer to "is the lag bigger than the spread", and it
+    answers it without an assumption: when Deriv looks cheap it buys at Deriv's
+    **ask** and sells at Deriv's **bid** later, and when Deriv looks rich it
+    does the reverse. The spread is not subtracted afterwards, it is paid.
+
+    `cause` splits the events by who opened the gap in the previous `CAUSE_S`:
+    the market moving away from Deriv, or Deriv moving away from the market.
+    Only the first is the hypothesis. The second is Deriv's own quote wobbling
+    and then coming back, which would produce exactly the same convergence and
+    mean nothing about lateness.
     """
     cand = np.flatnonzero(usable & (np.abs(e) >= threshold))
     if len(cand) == 0:
@@ -327,6 +394,14 @@ def study(label, e, broker_log, index, usable, threshold, horizons_steps, rng, s
         return None
     sign = np.sign(e[idx])
     n = len(usable)
+    bid, ask = np.log(sides["bid"]), np.log(sides["ask"])
+
+    back = int(CAUSE_S * 1000 / GRID_MS)
+    prior = np.maximum(idx - back, 0)
+    by_market = (index[idx] - index[prior]) * sign
+    by_broker = -(broker_log[idx] - broker_log[prior]) * sign
+    cause = np.where(by_market >= by_broker, "market", "broker")
+
     out = {"label": label, "n": len(idx), "at": {}}
     for name, k in horizons_steps:
         ahead = idx + k
@@ -334,12 +409,16 @@ def study(label, e, broker_log, index, usable, threshold, horizons_steps, rng, s
         ok[ok] &= usable[ahead[ok]]
         if int(ok.sum()) < 30:
             continue
-        a, b, s = idx[ok], ahead[ok], sign[ok]
+        a, b, g = idx[ok], ahead[ok], sign[ok]
+        long = g > 0
+        trip = np.where(long, bid[b] - ask[a], bid[a] - ask[b]) * 1e4
         out["at"][name] = {
             "idx": a,
-            "broker": 1e4 * (broker_log[b] - broker_log[a]) * s,
-            "market": 1e4 * (index[b] - index[a]) * s,
+            "broker": 1e4 * (broker_log[b] - broker_log[a]) * g,
+            "market": 1e4 * (index[b] - index[a]) * g,
+            "trip": trip,
             "size": np.abs(e[a]),
+            "cause": cause[ok],
             "hour": ((start + a.astype(np.int64) * GRID_MS) // 3_600_000) % 24,
         }
     return out if out["at"] else None
@@ -359,7 +438,7 @@ def section_clocks():
           f"{'p75':>7s}   deciles of ts % 1000")
     for feed in FEEDS:
         for venue, ticker in FEEDS[feed]:
-            ts, _, _ = read_quotes(conn, feed, venue, ticker, START, END)
+            ts = read_quotes(conn, feed, venue, ticker, START, END)[0]
             if len(ts) < 100:
                 print(f"  {feed:>5s} {venue:>9s} {len(ts):9d}   too few rows")
                 continue
@@ -429,7 +508,7 @@ def section_two_pipes():
         lo, hi = int(mts[0]), int(mts[-1])
         found[feed] = float(np.median(mspread))
         ticker = dict(FEEDS[feed])[BROKER]
-        ts, mid, spread = read_quotes(conn, feed, BROKER, ticker, lo, hi)
+        ts, mid, spread, _, _ = read_quotes(conn, feed, BROKER, ticker, lo, hi)
         print(f"  {feed}: MT5 {len(mts):,} ticks over {(hi - lo) / 3.6e6:.1f}h, "
               f"median gap {np.median(np.diff(mts)):.0f}ms")
         print(f"        MT5 spread   {np.percentile(mspread, [25, 50, 75]).round(3)} bps "
@@ -441,7 +520,7 @@ def section_two_pipes():
         for venue, vt in FEEDS[feed]:
             if venue == BROKER:
                 continue
-            ets, _, _ = read_quotes(conn, feed, venue, vt, lo, hi)
+            ets = read_quotes(conn, feed, venue, vt, lo, hi)[0]
             print(f"        {venue} rows inside the MT5 window: {len(ets):,}")
             break
         if len(ts) >= 50:
@@ -505,9 +584,10 @@ def section_leadlag(feed, grids, usable, label=""):
     return rets
 
 
-def section_events(feed, grids, usable, spreads, rng, start, floor=None, label=""):
-    index, _ = consensus(grids, usable)
-    broker_log = np.log(np.where(np.isnan(grids[BROKER]), 1.0, grids[BROKER]))
+def section_events(feed, grids, sides, usable, spreads, rng, start, floor=None,
+                   label=""):
+    index = consensus(grids, exclude=BROKER)
+    broker_log = np.log(grids[BROKER])
     e = dislocation(index, broker_log)
     shift = int(PLACEBO_H * 3600 * 1000 / GRID_MS)
     placebo_index = np.roll(index, shift)
@@ -516,55 +596,198 @@ def section_events(feed, grids, usable, spreads, rng, start, floor=None, label="
     spread = spreads[BROKER]
     #: The optimistic cost: Deriv's spread on the MT5 account the desk actually
     #: trades, which is far tighter than the quote TradingView publishes for the
-    #: same venue. If an edge fails against this it fails against anything.
+    #: same venue. If an edge fails against this, it fails against anything.
     cheap = floor if floor else spread
     others = [v for k, v in spreads.items() if k != BROKER]
-    horizons = [(s, int(s * 1000 / GRID_MS)) for s in HORIZONS_S]
+    horizons = [(x, int(x * 1000 / GRID_MS)) for x in HORIZONS_S]
     print(f"  {label}{feed}: Deriv spread {spread:.3f}bps on TradingView, "
           f"{cheap:.3f}bps on MT5; exchanges {min(others):.3f}-{max(others):.3f}bps")
     share = float(np.mean(np.abs(e[usable]) >= spread)) if usable.any() else 0.0
     print(f"  {label}{feed}: |dislocation| >= one Deriv spread "
-          f"{share:.1%} of usable time")
+          f"{share:.2%} of usable time")
     rows = []
     for mult in SPREADS:
         theta = mult * spread
-        real = study("event", e, broker_log, index, usable, theta, horizons, rng, start)
-        fake = study("placebo", ep, broker_log, placebo_index, usable, theta,
+        real = study("event", e, sides[BROKER], broker_log, index, usable, theta,
                      horizons, rng, start)
+        fake = study("placebo", ep, sides[BROKER], broker_log, placebo_index,
+                     usable, theta, horizons, rng, start)
         if real is None or fake is None:
             print(f"      {mult:.0f}x spread ({theta:.2f}bps): too few to report")
             continue
         print(f"      threshold {mult:.0f}x spread = {theta:6.2f}bps   "
-              f"events {real['n']:6d}   placebo {fake['n']:6d}")
-        print(f"        {'ahead':>7s} {'n':>7s} {'deriv':>9s} {'placebo':>9s} "
-              f"{'edge':>9s} {'market':>9s} {'net (TV)':>10s} {'net (MT5)':>10s}")
+              f"events {real['n']:6d}   placebo {fake['n']:6d}   "
+              f"market-made {float(np.mean(real['at'][min(real['at'])]['cause'] == 'market')):.0%}")
+        print(f"        {'ahead':>7s} {'n':>7s} {'deriv':>8s} {'median':>8s} "
+              f"{'placebo':>8s} {'market':>9s} {'net MT5':>8s} {'ROUND TRIP':>11s} "
+              f"{'median':>8s} {'win%':>6s}")
         for name, _ in horizons:
             if name not in real["at"] or name not in fake["at"]:
                 continue
             r, f = real["at"][name], fake["at"][name]
-            d, p = float(np.mean(r["broker"])), float(np.mean(f["broker"]))
+            d = float(np.mean(r["broker"]))
+            dm = float(np.median(r["broker"]))
+            p = float(np.mean(f["broker"]))
             m = float(np.mean(r["market"]))
-            print(f"        {name:7.2f} {len(r['broker']):7d} {d:+9.3f} {p:+9.3f} "
-                  f"{d - p:+9.3f} {m:+9.3f} {d - p - spread:+10.3f} "
-                  f"{d - p - cheap:+10.3f}")
+            t = float(np.mean(r["trip"]))
+            tm = float(np.median(r["trip"]))
+            win = float(np.mean(r["trip"] > 0))
+            print(f"        {name:7.2f} {len(r['broker']):7d} {d:+8.3f} {dm:+8.3f} "
+                  f"{p:+8.3f} {m:+9.3f} {d - p - cheap:+8.3f} {t:+11.3f} "
+                  f"{tm:+8.3f} {win:6.1%}")
         # Rows for the conditioned cut, at two seconds - the soonest horizon a
         # real round trip through the bus and the broker could plausibly reach.
         for kind, got in (("event", real), ("placebo", fake)):
             block = got["at"].get(2.0)
             if block is None:
                 continue
-            for j in range(len(block["broker"])):
+            for j in range(len(block["trip"])):
                 rows.append({
                     "kind": kind,
                     "feed": feed,
+                    "cause": str(block["cause"][j]),
                     "hour": f"{int(block['hour'][j]) // 6 * 6:02d}h",
                     "size": ("1-2x" if block["size"][j] < 2 * spread else
                              "2-4x" if block["size"][j] < 4 * spread else "4x+"),
                     "threshold": f"{mult:.0f}x",
+                    "trip": float(block["trip"][j]),
                     "net": float(block["broker"][j]) - cheap,
                 })
+    # Who opened the gap decides whether any of this is about lateness at all.
+    block = None
+    for mult in SPREADS[:1]:
+        real = study("event", e, sides[BROKER], broker_log, index, usable,
+                     mult * spread, horizons, rng, start)
+        block = real["at"].get(2.0) if real else None
+    if block is not None:
+        print(f"      by who opened the gap, at 2s, threshold 1x spread:")
+        for which in ("market", "broker"):
+            sel = block["cause"] == which
+            if sel.sum() < 30:
+                print(f"        {which:>7s}: {int(sel.sum())} - too few")
+                continue
+            print(f"        {which:>7s}: n={int(sel.sum()):6d}  "
+                  f"deriv {float(np.mean(block['broker'][sel])):+7.3f}  "
+                  f"round trip {float(np.mean(block['trip'][sel])):+7.3f}  "
+                  f"win {float(np.mean(block['trip'][sel] > 0)):.1%}")
     print()
     return rows
+
+
+def section_chairs(feed, grids, sides, usable, spreads, rng, start, label=""):
+    """Put every exchange in Deriv's chair and ask the same question of it.
+
+    This is the control the page turns on, and it is the one the rotated
+    placebo cannot supply. Any venue measured against a median of the others
+    will appear to revert to it, because top of book wanders and a median does
+    not. That is a fact about quotes, not about brokers. If Bitstamp catches up
+    the way Deriv does, then "Deriv is late" is a description of every venue on
+    the board and there is nothing here about Deriv at all.
+
+    Each venue is measured against a consensus that excludes it, at the **same
+    absolute threshold** - Deriv's own spread on this feed - so the comparison
+    is between equal dislocations rather than between equal quantiles. And each
+    pays its own spread on the round trip, which is the part that decides
+    whether a catch-up is worth anything: the exchanges catch up across a
+    hundredth of a basis point and Deriv across two and a half.
+    """
+    theta = spreads[BROKER]
+    horizons = [(2.0, int(2000 / GRID_MS))]
+    print(f"  {label}{feed}: every venue in the broker's chair, dislocation "
+          f">= {theta:.3f}bps, measured 2s later")
+    print(f"      {'venue':>9s} {'spread':>8s} {'events':>8s} {'of time':>7s} "
+          f"{'catch-up':>9s} {'round trip':>11s} {'win%':>6s} | "
+          f"{'market-made':>11s} {'trip':>8s} {'win%':>6s} | "
+          f"{'broker-made':>11s} {'trip':>8s}")
+    for venue in grids:
+        index = consensus(grids, exclude=venue)
+        own = np.log(grids[venue])
+        e = dislocation(index, own)
+        got = study(venue, e, sides[venue], own, index, usable, theta,
+                    horizons, rng, start)
+        if got is None or 2.0 not in got["at"]:
+            print(f"      {venue:>9s} {spreads[venue]:8.3f}   too few")
+            continue
+        at = got["at"][2.0]
+        share = float(np.mean(np.abs(e[usable]) >= theta))
+        made = at["cause"] == "market"
+        cells = []
+        for sel in (made, ~made):
+            count = int(sel.sum())
+            if count < 30:
+                # Printed as a count and a dash rather than a number. A mean of
+                # eleven observations rendered to three decimals is the shape a
+                # table takes just before somebody quotes it.
+                cells.append((f"{count:11d}", f"{'-':>8s}", f"{'-':>6s}"))
+            else:
+                cells.append((f"{count:11d}",
+                              f"{float(np.mean(at['trip'][sel])):+8.3f}",
+                              f"{float(np.mean(at['trip'][sel] > 0)):6.1%}"))
+        print(f"      {venue:>9s} {spreads[venue]:8.3f} {len(at['broker']):8d} "
+              f"{share:7.2%} {float(np.mean(at['broker'])):+9.3f} "
+              f"{float(np.mean(at['trip'])):+11.3f} "
+              f"{float(np.mean(at['trip'] > 0)):6.1%} | "
+              f"{cells[0][0]} {cells[0][1]} {cells[0][2]} | "
+              f"{cells[1][0]} {cells[1][1]}")
+    print()
+
+
+#: Entry delays to price the round trip at, in seconds. `research/reacting.md`
+#: measured the same thing on the broker's own book and found the question never
+#: got asked because the edge was zero before latency touched it. Here it is not
+#: zero, so it has to be asked.
+DELAYS_S = (0.0, 0.25, 0.5, 1.0, 2.0, 3.0)
+HOLD_S = float(os.environ.get("HOLD_S", "5"))
+
+
+def section_latency(feed, grids, sides, usable, spreads, rng, start, label=""):
+    """The only subset that pays, priced at the delay a real round trip takes.
+
+    Entry is not at the instant the dislocation is visible. It is visible to
+    `structures` after a quote is written, then travels the bus, then `trading`
+    decides, then the broker fills. Every one of those is measured in the
+    hundreds of milliseconds on this desk, so an edge that exists at zero delay
+    and not at one second is not an edge this desk has.
+    """
+    theta = spreads[BROKER]
+    hold = int(HOLD_S * 1000 / GRID_MS)
+    index = consensus(grids, exclude=BROKER)
+    own = np.log(grids[BROKER])
+    e = dislocation(index, own)
+    bid, ask = np.log(sides[BROKER]["bid"]), np.log(sides[BROKER]["ask"])
+    n = len(usable)
+
+    cand = np.flatnonzero(usable & (np.abs(e) >= theta))
+    idx = cooled(cand, int(COOLDOWN_S * 1000 / GRID_MS))
+    if len(idx) < 50:
+        print(f"  {label}{feed}: too few dislocations to price")
+        return
+    sign = np.sign(e[idx])
+    back = int(CAUSE_S * 1000 / GRID_MS)
+    prior = np.maximum(idx - back, 0)
+    made = ((index[idx] - index[prior]) * sign) >= (-(own[idx] - own[prior]) * sign)
+
+    print(f"  {label}{feed}: market-made dislocations >= {theta:.3f}bps, "
+          f"held {HOLD_S:.0f}s, entered after a delay")
+    print(f"      {'delay':>6s} {'n':>7s} {'round trip':>11s} {'median':>9s} "
+          f"{'win%':>6s} {'still open':>11s}")
+    for delay in DELAYS_S:
+        k = int(delay * 1000 / GRID_MS)
+        enter, exit_ = idx + k, idx + k + hold
+        ok = made & (exit_ < n)
+        ok[ok] &= usable[enter[ok]] & usable[exit_[ok]]
+        if int(ok.sum()) < 30:
+            print(f"      {delay:6.2f} {int(ok.sum()):7d}   too few")
+            continue
+        a, b, g = enter[ok], exit_[ok], sign[ok]
+        trip = 1e4 * np.where(g > 0, bid[b] - ask[a], bid[a] - ask[b])
+        # How much of the gap is still open at the moment of entry - if it has
+        # already closed there is nothing left to take.
+        left = e[a] * g
+        print(f"      {delay:6.2f} {len(trip):7d} {float(np.mean(trip)):+11.3f} "
+              f"{float(np.median(trip)):+9.3f} {float(np.mean(trip > 0)):6.1%} "
+              f"{float(np.mean(left)):11.3f}")
+    print()
 
 
 def run():
@@ -582,35 +805,61 @@ def run():
     print()
     built = {}
     for feed in FEEDS:
-        n, grids, ages, spreads, counts, usable = build(feed, START, END, GRID_MS)
-        built[feed] = (grids, spreads, usable)
-        print(f"  {feed}: {n:,} grid points, {usable.mean():.1%} usable "
+        n, grids, sides, spreads, counts, usable, begin = build(feed, START, END, GRID_MS)
+        built[feed] = (grids, sides, spreads, usable, begin)
+        print(f"  {feed}: {n:,} grid points from {begin}, {usable.mean():.1%} usable "
               f"({', '.join(f'{v}={c:,}' for v, c in counts.items())})")
         section_leadlag(feed, grids, usable)
 
     print("=== 4. dislocation events: does Deriv catch up, and is it worth crossing ===")
-    print("  deriv   = mean signed move of Deriv's own mid, bps")
-    print("  placebo = the same after a dislocation against a 12h-rotated consensus")
-    print("  edge    = deriv - placebo, which is what the lateness is worth")
-    print("  market  = the consensus's own signed move, so convergence that is the")
-    print("            market coming back rather than Deriv catching up is visible")
+    print("  deriv      mean signed move of Deriv's mid after the dislocation, bps")
+    print("  median     the same, median - a mean carried by three prints is visible")
+    print("  placebo    the same after a dislocation against a 12h-rotated consensus")
+    print("  market     the consensus's own signed move, so convergence that is the")
+    print("             market coming back rather than Deriv catching up is visible")
+    print("  net MT5    deriv - placebo - the spread on the account the desk trades")
+    print("  ROUND TRIP buy Deriv's ask and sell its bid (or the reverse), in bps.")
+    print("             Nothing is subtracted from this: the spread is paid in it.")
     print()
     rows = []
     for feed in FEEDS:
-        grids, spreads, usable = built[feed]
-        rows += section_events(feed, grids, usable, spreads, rng, START,
+        grids, sides, spreads, usable, begin = built[feed]
+        rows += section_events(feed, grids, sides, usable, spreads, rng, begin,
                                floor=mt5_spread.get(feed))
+
+    print("=== 4b. the control that decides it: every venue in the broker's chair ===")
+    for feed in FEEDS:
+        grids, sides, spreads, usable, begin = built[feed]
+        section_chairs(feed, grids, sides, usable, spreads, rng, begin)
+
+    print("=== 4c. what a delay does to the only subset that pays ===")
+    for feed in FEEDS:
+        grids, sides, spreads, usable, begin = built[feed]
+        section_latency(feed, grids, sides, usable, spreads, rng, begin)
 
     print("=== 5. conditioned, so the pooled number is not a composition ===")
     try:
         from till_infinity.shared.strata import compare
-        got = compare(rows, value="net", bucket="kind",
+        for value in ("trip", "net"):
+            what = ("a real round trip through Deriv's own bid and ask"
+                    if value == "trip" else
+                    "the mid move, net of the MT5 spread")
+            print(f"  --- {value}: {what} ---")
+            got = compare(rows, value=value, bucket="kind",
+                          within=("feed", "cause", "hour", "size", "threshold"),
+                          min_n=200)
+            print(got.render())
+            print()
+        print("  --- and the cut that carries the hypothesis: who opened the gap ---")
+        only = [r for r in rows if r["kind"] == "event"]
+        got = compare(only, value="trip", bucket="cause",
                       within=("feed", "hour", "size", "threshold"), min_n=200)
         print(got.render())
+        print()
     except Exception as exc:      # noqa: BLE001 - a research harness, not a service
         print(f"  strata unavailable ({exc!r}); pooled only")
         for kind in ("event", "placebo"):
-            xs = [r["net"] for r in rows if r["kind"] == kind]
+            xs = [r["trip"] for r in rows if r["kind"] == kind]
             if xs:
                 print(f"  {kind:>8s} n={len(xs):7d} mean {st.fmean(xs):+.4f}")
     print()
@@ -619,13 +868,15 @@ def run():
     mid = START + (END - START) // 2
     for name, (lo, hi) in (("first half", (START, mid)), ("second half", (mid, END))):
         for feed in FEEDS:
-            n, grids, ages, spreads, counts, usable = build(feed, lo, hi, GRID_MS)
+            n, grids, sides, spreads, counts, usable, begin = build(feed, lo, hi, GRID_MS)
             if usable.mean() < 0.2:
                 print(f"  {name} {feed}: {usable.mean():.1%} usable, skipped")
                 continue
             section_leadlag(feed, grids, usable, label=f"{name} ")
-            section_events(feed, grids, usable, spreads, rng, lo,
+            section_events(feed, grids, sides, usable, spreads, rng, begin,
                            floor=mt5_spread.get(feed), label=f"{name} ")
+            section_chairs(feed, grids, sides, usable, spreads, rng, begin,
+                           label=f"{name} ")
 
     print(f"done in {time.time() - began:.0f}s")
 

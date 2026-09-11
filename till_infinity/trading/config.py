@@ -488,6 +488,29 @@ class Settings:
     min_reward_to_risk: float = 0.0
     #: A scalp whose spread eats this much of its own target is not a trade.
     max_spread_fraction: float = 0.25
+    #: And the same question against the **risk**, which is the denominator the
+    #: damage was measured in.
+    #:
+    #: The gate above scales the permitted spread with the *target*, so a
+    #: distant target buys the right to pay more - and a spread that is half the
+    #: stop distance is half the stop distance regardless of where the target
+    #: is. Measured over 397 closes in `research/winning.md`:
+    #:
+    #:     passes the gate, cheap against risk      292   -0.065R  17% stopped
+    #:     passes the gate, EXPENSIVE against risk   49   -0.471R  53% stopped
+    #:
+    #: **49 trades passed the live gate while sitting in the damaging group, for
+    #: -502.70.** This is the only finding in that study with a pre-registered
+    #: hypothesis - `exiting.md` named the quantity first - a within-feed null
+    #: at p<0.001, and 9 of 9 strata agreeing. Every entry *feature* tested
+    #: against the same 300-permutation control failed to clear it.
+    #:
+    #: 0.16 rather than a rounder number because the discovery half's p80 was
+    #: 0.2026 and this sits inside it. It refuses about 12% of what reaches it,
+    #: and far less than that lately: the expensive population fell from 79% of
+    #: closes in late August to 5% of the last seven days, so this is mostly a
+    #: guard against the condition returning rather than a fix for today.
+    max_spread_risk_fraction: float = 0.16
     #: The signal's own confidence, and its separation from the base rate.
     #: `structures` already gates on `actionable`, but that threshold exists to
     #: decide whether to *tell someone*. Deciding whether to put money on it is
@@ -1512,6 +1535,7 @@ class Settings:
             daily_loss_fraction=_float("TRADING_DAILY_LOSS_FRACTION", 0.03),
             min_reward_to_risk=_float("TRADING_MIN_RR", 0.0),
             max_spread_fraction=_float("TRADING_MAX_SPREAD_FRACTION", 0.25),
+            max_spread_risk_fraction=_float("TRADING_MAX_SPREAD_RISK_FRACTION", 0.16),
             min_probability=_float("TRADING_MIN_PROBABILITY", 0.58),
             min_base_rate=_float("TRADING_MIN_BASE_RATE", 0.0),
             probability_percentile=_float("TRADING_PROBABILITY_PERCENTILE", 0.0),

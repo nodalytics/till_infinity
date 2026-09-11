@@ -98,6 +98,14 @@ def klass(feed: str) -> str:
     return "other"
 
 
+def median_of(values) -> float:
+    """Median, or nan. At 1d there are 56 bars a feed and the Hill estimator -
+    which needs the top five percent - has nothing to stand on; that is a fact
+    about the sample worth printing rather than an exception worth raising."""
+    got = [v for v in values if isinstance(v, float) and math.isfinite(v)]
+    return st.median(got) if got else float("nan")
+
+
 def moments(r: np.ndarray) -> dict | None:
     """Everything one series of returns has to say, with the tail measured three ways."""
     r = r[np.isfinite(r)]
@@ -211,23 +219,25 @@ def run() -> None:
         ctl = control.get(interval, {})
         print(
             f"  {interval:>9s} {len(part):6d} {int(st.median(p['n'] for p in part)):9,d} "
-            f"{st.median(p['kurtosis'] for p in part):10.3f} "
-            f"{st.median(p['excess'] for p in part):9.3f} "
-            f"{st.median(p['hill'] for p in part if math.isfinite(p['hill'])):8.4f} "
-            f"{st.median(p['p99_over_median'] for p in part):9.3f} "
-            f"{st.median(p['ratio'] for p in part):10.5f} | "
+            f"{median_of(p['kurtosis'] for p in part):10.3f} "
+            f"{median_of(p['excess'] for p in part):9.3f} "
+            f"{median_of(p['hill'] for p in part):8.4f} "
+            f"{median_of(p['p99_over_median'] for p in part):9.3f} "
+            f"{median_of(p['ratio'] for p in part):10.5f} | "
             f"{ctl.get('kurtosis', (float('nan'),))[0]:11.3f} "
             f"{ctl.get('kurtosis', (0, float('nan')))[1]:9.3f} "
             f"{ctl.get('ratio', (float('nan'),))[0]:12.5f}"
         )
     print(f"\n  medians across feeds. The Gaussian ratio the code uses is {GAUSSIAN_RATIO:.5f}.")
 
-    print("\nIs the decline monotone, per feed? (1m .. 1d, only feeds carrying every interval)")
+    print("\nIs the decline monotone, per feed? (only feeds carrying every interval)")
+    print("  Hill stops at 4h: at 56 daily bars its top five percent is three observations.")
     full = [f for f in feeds if all((f, i) in got for i in INTERVALS)]
+    ladders = {"kurtosis": INTERVALS, "hill": INTERVALS[:-1], "p99_over_median": INTERVALS}
     for name, key in (("kurtosis", "kurtosis"), ("hill", "hill"), ("p99/median", "p99_over_median")):
         strict = weak = 0
         for f in full:
-            seq = [got[(f, i)][key] for i in INTERVALS]
+            seq = [got[(f, i)][key] for i in ladders[key]]
             if any(not math.isfinite(v) for v in seq):
                 continue
             weak += 1
@@ -236,13 +246,14 @@ def run() -> None:
         print(f"  {name:>12s}: {strict}/{weak} feeds decline at every step")
     # And the weaker, fairer statement: does it fall from the fastest to the slowest.
     for name, key in (("kurtosis", "kurtosis"), ("hill", "hill"), ("p99/median", "p99_over_median")):
+        last = ladders[key][-1]
         down = tot = 0
         for f in full:
-            a, b = got[(f, "1m")][key], got[(f, "1d")][key]
+            a, b = got[(f, "1m")][key], got[(f, last)][key]
             if math.isfinite(a) and math.isfinite(b):
                 tot += 1
                 down += 1 if b < a else 0
-        print(f"  {name:>12s}: {down}/{tot} feeds are thinner at 1d than at 1m")
+        print(f"  {name:>12s}: {down}/{tot} feeds are thinner at {last} than at 1m")
 
     print("\nby class, sigma / MAD:")
     print("  " + f"{'class':>10s}" + "".join(f"{i:>10s}" for i in INTERVALS))
@@ -250,7 +261,7 @@ def run() -> None:
         line = f"  {name:>10s}"
         for interval in INTERVALS:
             part = [v["ratio"] for (f, i), v in got.items() if i == interval and klass(f) == name]
-            line += f"{(st.median(part) if part else float('nan')):10.5f}"
+            line += f"{median_of(part):10.5f}"
         print(line)
 
     print("\nby class, kurtosis:")
@@ -259,7 +270,7 @@ def run() -> None:
         line = f"  {name:>10s}"
         for interval in INTERVALS:
             part = [v["kurtosis"] for (f, i), v in got.items() if i == interval and klass(f) == name]
-            line += f"{(st.median(part) if part else float('nan')):10.3f}"
+            line += f"{median_of(part):10.3f}"
         print(line)
 
     print("\nsplit sample - does the ratio hold between the two halves of the 60 days?")
@@ -274,8 +285,8 @@ def run() -> None:
         if len(pairs) < 3:
             continue
         gaps = [abs(a - b) for a, b in pairs]
-        print(f"  {interval:>9s} {len(pairs):6d} {st.median(a for a, _ in pairs):9.5f} "
-              f"{st.median(b for _, b in pairs):9.5f} {st.median(gaps):8.5f} {max(gaps):10.5f}")
+        print(f"  {interval:>9s} {len(pairs):6d} {median_of(a for a, _ in pairs):9.5f} "
+              f"{median_of(b for _, b in pairs):9.5f} {median_of(gaps):8.5f} {max(gaps):10.5f}")
 
     print("\nthe ten furthest from the Gaussian ratio, at 5m:")
     at5 = sorted(
