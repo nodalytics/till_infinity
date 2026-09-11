@@ -271,7 +271,7 @@ def _fold(x: np.ndarray, m: int) -> np.ndarray:
 
 def gen_rangebreak(n_ticks: int, step: float, band: int, mean_break_ticks: float,
                    break_jump: float, p0: float, rng, jump_pool=None,
-                   anchor: str = "edge"):
+                   anchor: str = "edge", mean_quiet_ticks: float | None = None):
     """Range Break: a bounded +-1 walk, and a memoryless break that re-ranges.
 
     `band` is the full width of the range in steps, the walk bounces off both
@@ -304,8 +304,22 @@ def gen_rangebreak(n_ticks: int, step: float, band: int, mean_break_ticks: float
     lo_edge = round(p0 / step)
     off = band // 2
     emitted = 0
+    # Two event types where `mean_quiet_ticks` is given: a *break*, which jumps
+    # the price and opens a new range, and a *quiet re-range*, which opens a new
+    # range around where the price already is and moves nothing. The second is
+    # what a one-band model cannot do - it lets the range be narrow enough to
+    # confine early while the price still diffuses between range centres, which
+    # is the only way to get a deep dip at twenty minutes and a plateau at 0.28
+    # out of the same process. It also keeps every tick at exactly one unit,
+    # which any additive second component would destroy.
+    if mean_quiet_ticks and mean_quiet_ticks > 0:
+        rate = 1.0 / mean_break_ticks + 1.0 / mean_quiet_ticks
+        mean_event = 1.0 / rate
+        p_break = (1.0 / mean_break_ticks) / rate
+    else:
+        mean_event, p_break = mean_break_ticks, 1.0
     while emitted < n_ticks:
-        seg = int(rng.exponential(mean_break_ticks)) + 1
+        seg = int(rng.exponential(mean_event)) + 1
         seg = min(seg, n_ticks - emitted)
         free = np.cumsum(np.where(rng.random(seg) < 0.5, 1, -1).astype(np.int64))
         lattice = lo_edge + _fold(off + free, band)
@@ -313,9 +327,12 @@ def gen_rangebreak(n_ticks: int, step: float, band: int, mean_break_ticks: float
         emitted += seg
         if emitted >= n_ticks:
             break
-        amp = (float(jump_pool[rng.integers(0, len(jump_pool))])
-               if jump_pool is not None else break_jump)
-        sign = 1 if rng.random() < 0.5 else -1
+        if rng.random() < p_break:
+            amp = (float(jump_pool[rng.integers(0, len(jump_pool))])
+                   if jump_pool is not None else break_jump)
+            sign = 1 if rng.random() < 0.5 else -1
+        else:
+            amp, sign = 0.0, 1 if rng.random() < 0.5 else -1
         landed = int(lattice[-1]) + sign * round(amp)
         if anchor == "centre":
             lo_edge, off = landed - band // 2, band // 2

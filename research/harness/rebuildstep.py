@@ -455,6 +455,113 @@ def published_study(n_bars: int, seed: int) -> dict:
     return out
 
 
+def curve_shape(feed: str) -> list[dict]:
+    """The published ex-break curve as `Var(T)` and its local log-log slope.
+
+    A variance ratio hides the shape. Written as `Var(T)` the confinement is a
+    dip in the slope - 1.0 is free diffusion, 0.0 is a hard box - and where the
+    dip sits is the timescale the range operates on.
+    """
+    tgt = PUBLISHED_VR[feed]["splice"]
+    rows = []
+    prev = None
+    for n in VR_N:
+        t = n * TPB
+        v = tgt[n] * t
+        slope = (math.log(v / prev[1]) / math.log(t / prev[0])) if prev else float("nan")
+        rows.append({"n": n, "T": t, "var": v, "slope": slope})
+        prev = (t, v)
+    return rows
+
+
+def shared_band_study(n_bars: int, seed: int) -> dict:
+    """Does one range width fit both indices?
+
+    The free per-feed fit above puts the widths at 60 and 45 and the residuals at
+    twenty minutes in *opposite* directions, which is what a width error looks
+    like when it points two ways. A product family with one generator and a rate
+    parameter should share a width, so the width is constrained to be equal and
+    only the break jump is allowed to differ. If the joint fit is no worse the
+    constraint is free and the sign flip was an artefact; if it is worse, the two
+    indices really are different processes.
+    """
+    print("\n[0b] ONE RANGE WIDTH FOR BOTH INDICES, OR TWO?")
+    print("     Width shared, only the break jump free per feed. tau1 = 2L^2/pi^2 is")
+    print("     the slowest relaxation mode of a reflecting box of width L, in minutes.")
+    print(f"     {'band':>5s} {'tau1 min':>9s} {'joint MAE':>10s}   per feed: "
+          f"{'J':>4s} {'MAE':>7s} {'flat':>6s}")
+    out = {}
+    for band in (50, 55, 60, 66, 72, 80):
+        row = {}
+        for feed in PUBLISHED_VR:
+            best = None
+            for jump in (90.0, 110.0, 130.0, 150.0, 180.0, 210.0, 240.0):
+                r = score_against_published(feed, "edge", band, jump, n_bars, seed)
+                sc = r["mae"] + abs(r["all_level_err"]) / 10.0
+                if best is None or sc < best["score"]:
+                    r["score"] = sc
+                    best = r
+            row[feed] = best
+        joint = sum(row[f]["mae"] for f in row) / len(row)
+        out[band] = {"joint_mae": joint, "tau1_min": 2 * band * band / math.pi ** 2 / TPB,
+                     "per_feed": row}
+        print(f"     {band:5d} {out[band]['tau1_min']:9.1f} {joint:10.4f}   "
+              + "  ".join(f"{row[f]['jump']:4.0f} {row[f]['mae']:7.4f} "
+                          f"{row[f]['flat']:6.3f}" for f in row))
+    bestband = min(out, key=lambda b: out[b]["joint_mae"])
+    print(f"\n     best shared width {bestband} steps, joint MAE "
+          f"{out[bestband]['joint_mae']:.4f}, tau1 {out[bestband]['tau1_min']:.1f} minutes")
+    print(f"     {'feed':24s} {'J':>5s} " + " ".join(f"{'n=' + str(n):>8s}" for n in VR_N))
+    for feed in PUBLISHED_VR:
+        r = out[bestband]["per_feed"][feed]
+        print(f"     {feed:24s} {r['jump']:5.0f} "
+              + " ".join(f"{v:+8.3f}" for v in r["err"]) + "   <- residual")
+    return {"by_band": out, "best": bestband}
+
+
+def quiet_rerange_study(n_bars: int, seed: int, band: int) -> dict:
+    """Does a second, quieter re-range event explain the residual?
+
+    A single box cannot have both a deep dip early and a high plateau late: the
+    plateau needs a wide box and a wide box relaxes slowly. A *quiet* re-range -
+    the range moving to where the price already is, with no jump - would let the
+    box be narrow while the price still diffuses between centres, and it is the
+    only such addition that keeps every tick at exactly one unit. So it is the
+    obvious candidate and it is worth one scan to kill or keep.
+    """
+    print("\n[0c] A SECOND, QUIET RE-RANGE EVENT - does it explain the residual?")
+    print(f"     {'feed':24s} {'quiet':>7s} {'J':>5s} {'MAE':>7s} {'flat':>6s}")
+    out: dict[str, list] = {}
+    for feed in PUBLISHED_VR:
+        tgt = PUBLISHED_VR[feed]["splice"]
+        rows = []
+        mbt = PUBLISHED_VR[feed]["minutes_per_break"] * TPB
+        for quiet in (None, 4000.0, 2000.0, 1000.0, 500.0):
+            best = None
+            for jump in (110.0, 150.0, 190.0, 230.0):
+                rng = np.random.default_rng(seed)
+                bb = G.bars_from_stream(
+                    G.gen_rangebreak(n_bars * TPB, 1.0, band, mbt, 0.0, 5000.0, rng,
+                                     jump_pool=np.array([jump]), anchor="edge",
+                                     mean_quiet_ticks=quiet),
+                    TPB, n_bars)
+                cur = vr_curves(bb, 1.0)
+                allv = [cur["all"][n] for n in VR_N]
+                err = [cur["splice"][n] - tgt[n] for n in VR_N]
+                mae = float(np.mean(np.abs(err)))
+                sc = mae + abs(np.mean(allv)
+                               - np.mean(list(PUBLISHED_VR[feed]["all"].values()))) / 10.0
+                if best is None or sc < best["score"]:
+                    best = {"score": sc, "mae": mae, "jump": jump, "quiet": quiet,
+                            "flat": max(allv) / min(allv), "err": err}
+            rows.append(best)
+            q = "none" if quiet is None else f"{quiet:.0f}"
+            print(f"     {feed:24s} {q:>7s} {best['jump']:5.0f} {best['mae']:7.4f} "
+                  f"{best['flat']:6.3f}")
+        out[feed] = rows
+    return out
+
+
 def main() -> None:
     rng = np.random.default_rng(4242)
     ledger: list[dict] = []
@@ -465,9 +572,24 @@ def main() -> None:
     print("=" * 120)
 
     # ---------------------------------------------------------- step index ----
+    pub_bars = int(os.environ.get("PUB_BARS", "100000"))
     payload["published"] = json.loads(json.dumps(
-        {f: v[:6] for f, v in published_study(
-            int(os.environ.get("PUB_BARS", "120000")), SEEDS[0]).items()}, default=float))
+        {f: v[:6] for f, v in published_study(pub_bars, SEEDS[0]).items()}, default=float))
+    print("\n[0a] WHERE THE RANGE OPERATES - the published curve as Var(T) and its slope")
+    print("     1.0 is free diffusion and 0.0 is a hard box, so the minimum of the slope")
+    print("     is the timescale the confinement acts on.")
+    for feed in PUBLISHED_VR:
+        rows = curve_shape(feed)
+        print(f"     {feed}")
+        print(f"       {'T ticks':>9s} {'T min':>7s} {'Var(T)':>10s} {'local slope':>12s}")
+        for r in rows:
+            sl = "-" if r["slope"] != r["slope"] else f"{r['slope']:.3f}"
+            print(f"       {r['T']:9d} {r['T'] / TPB:7.0f} {r['var']:10.1f} {sl:>12s}")
+        payload.setdefault("curve_shape", {})[feed] = rows
+    shared = shared_band_study(pub_bars, SEEDS[0])
+    payload["shared_band"] = json.loads(json.dumps(shared, default=float))
+    payload["quiet"] = json.loads(json.dumps(
+        quiet_rerange_study(pub_bars, SEEDS[0], shared["best"]), default=float))
 
     print("\n[1] STEP INDEX - the feed, and the four numbers the rebuild is given")
     rb = G.real_bars("step_index")
