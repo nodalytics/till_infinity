@@ -9,6 +9,11 @@ and tabulates, per feed, `lambda`, `E[g]`, `CV[g]`, `E[J]` and `median J`. Five
 numbers. This harness builds two rebuilds and the difference between them is the
 whole question:
 
+* **closed** - the same, with `E[J]` replaced by `lambda * E[g]`, which is what
+  the closure requires. `rebuildpaper.py` found the *published* triple misses its
+  own closure by 6-12% on all six feeds, so a path built from both means as given
+  is not a martingale; this asks whether the same is true of the triple fitted
+  here, and it is the build to prefer if it wins.
 * **spec** - the five published numbers alone. The grind is a gamma of the
   stated mean and coefficient of variation; the jump is a lognormal matched to
   the stated mean *and* median, which is exactly the shape information the table
@@ -211,15 +216,26 @@ def slippage(mid: np.ndarray, dist: float, tgt_d: float, side: int, cap: int) ->
 
 
 def build(fit: dict, grid: float, p0: float, n_bars: int, seed: int,
-          pool: bool, lam_mult: float = 1.0, keep_ticks: int = KEEP_TICKS) -> dict:
+          pool: bool, lam_mult: float = 1.0, keep_ticks: int = KEEP_TICKS,
+          close: bool = False) -> dict:
     # The seed is (run seed, feed, which build) so that six feeds and two builds
     # do not share one Gaussian stream - seeding them alike would make twelve
     # comparisons into two and put identical numbers down a column.
     rng = np.random.default_rng([int(seed),
                                  abs(hash(fit.get("tag", "-"))) % (2 ** 31)])
+    # `close` imposes E[J] = lambda*E[g] instead of using the two fitted means as
+    # given. `rebuildpaper.py` found the *published* pair misses its own closure
+    # by 6-12% on all six feeds, so a path built from both is not a martingale;
+    # the same question is worth asking of the pair fitted here. The median is
+    # scaled with the mean so the lognormal keeps its shape.
+    j_mean, j_med = fit["J_mean"], fit["J_med"]
+    if close:
+        forced = fit["lam"] * fit["g_mean"]
+        j_med = j_med * forced / j_mean
+        j_mean = forced
     stream = G.gen_boomcrash(
         n_bars * TPB, fit["lam"] * lam_mult, fit["g_mean"], fit["g_cv"],
-        fit["J_mean"], fit["J_med"], fit["side"], p0, grid, rng,
+        j_mean, j_med, fit["side"], p0, grid, rng,
         grind_pool=fit["_g"] if pool else None,
         jump_pool=fit["_J"] if pool else None)
     return G.bars_from_stream(stream, TPB, n_bars,
@@ -269,11 +285,12 @@ def main() -> None:
         n_bars = min(f["_bars"]["n"] * BMULT, 260_000)
         sims[feed] = {}
         pse = f["ticks_per_spike"] / math.sqrt(f["n_spikes"])
-        for tag, pool in (("spec", False), ("pool", True)):
+        for tag, pool, closed in (("spec", False, False), ("closed", False, True),
+                                  ("pool", True, False)):
             runs = []
             f["tag"] = f"{feed}/{tag}"
             for k, sd in enumerate(SEEDS):
-                bb = build(f, f["grid"], f["p0"], n_bars, sd, pool)
+                bb = build(f, f["grid"], f["p0"], n_bars, sd, pool, close=closed)
                 d2 = detect(bb["ticks"])
                 rr2 = G.logrets(bb["close"], bb["ts"])
                 keep = {"fit": d2, "ann": G.ann_vol(rr2), "kurt": G.kurtosis(rr2),
@@ -333,7 +350,7 @@ def main() -> None:
     print(f"{'feed':22s} {'build':>6s} {'grind KS D':>11s} {'p':>8s} {'n*':>11s} | "
           f"{'jump KS D':>10s} {'p':>8s} {'n*':>11s} | {'J q99 real':>11s} {'sim':>10s}")
     for feed, f in real.items():
-        for tag in ("spec", "pool"):
+        for tag in ("spec", "closed", "pool"):
             s = sims[feed][tag][0]["fit"]
             kg = G.ks2(f["_g"], s["_g"], rng=rng)
             kj = G.ks2(f["_J"], s["_J"], rng=rng)
@@ -362,7 +379,7 @@ def main() -> None:
             print(f"{N:6d} {'feed':>6s} {e['mean']:11.4f} {e['se_mean']:10.4f} "
                   f"{e['median']:11.4f} {e['sd']:11.4f} {e['p_profit']:10.4f} "
                   f"{e['q'][1]:11.4f} {e['q'][99]:11.4f}")
-            for tag in ("spec", "pool"):
+            for tag in ("spec", "closed", "pool"):
                 s = hold_stats(sims[feed][tag][0]["bars"]["ticks"][:2_000_000], N, f["side"])
                 if not s:
                     continue
@@ -395,7 +412,7 @@ def main() -> None:
                       f"{rowr['mean_slip_R']:12.3f} {rowr['p90_slip_R']:8.2f} "
                       f"{rowr['max_slip_R']:9.2f} {rowr['frac_over_half_R']:7.3f} "
                       f"{rowr['n']:7d}")
-            for tag in ("spec", "pool"):
+            for tag in ("spec", "closed", "pool"):
                 rows = slippage(sims[feed][tag][0]["bars"]["ticks"], D, D, -f["side"],
                                 SLIP_TICKS)
                 if not rows or not rowr:
@@ -425,7 +442,7 @@ def main() -> None:
           f"{'feed':>10s} {'VR q10':>8s} {'drift z':>8s} {'KS D (1m)':>10s} {'p':>8s} {'n*':>11s}")
     for feed, f in real.items():
         rr = np.diff(f["_bars"]["close"])
-        for tag in ("spec", "pool"):
+        for tag in ("spec", "closed", "pool"):
             runs = sims[feed][tag]
             av = G.spread_across([r["ann"] for r in runs])
             ku = G.spread_across([r["kurt"] for r in runs])
@@ -520,12 +537,12 @@ def main() -> None:
         print(f"{name:60s} {len(es):6d} {len(f2):6d} "
               f"{worst['feed'] + ' ' + format(worst['value'], '.5g'):>34s}")
     print(f"\n    {len(ledger)} pre-registered comparisons, {nf} fired.")
-    spec_f = sum(1 for e in ledger if e["fired"] and e["test"].startswith("[spec]"))
-    pool_f = sum(1 for e in ledger if e["fired"] and e["test"].startswith("[pool]"))
-    spec_n = sum(1 for e in ledger if e["test"].startswith("[spec]"))
-    pool_n = sum(1 for e in ledger if e["test"].startswith("[pool]"))
-    print(f"    of those: `spec` (five published numbers) {spec_f}/{spec_n}, "
-          f"`pool` (empirical marginals) {pool_f}/{pool_n}")
+    for tag, what in (("spec", "the fitted five numbers"),
+                      ("closed", "the same with E[J] := lambda*E[g]"),
+                      ("pool", "empirical marginals")):
+        f_ = sum(1 for e in ledger if e["fired"] and e["test"].startswith(f"[{tag}]"))
+        n_ = sum(1 for e in ledger if e["test"].startswith(f"[{tag}]"))
+        print(f"    of those: `{tag}` ({what}) {f_}/{n_}")
     payload["ledger"] = ledger
 
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
