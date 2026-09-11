@@ -123,6 +123,21 @@ still not been touched at the time of writing:
    two pages predict the same interval from different evidence and either can
    kill it.
 
+Added after the first tick run returned 2 usable episodes on RB100 and 3 on
+RB200 and could not read its own ladder. That run's episode filter was sized by
+the longest *window* rather than by the lag the ladder runs at - see
+`MIN_EPISODE_TICKS` - and relaxing it is a change to the data budget and not to
+the hypothesis, so 9 stands exactly as written and this is added beside it:
+
+10. **The tick ladder may not be read at all** unless the simulated box and the
+    simulated spring separate at the sample actually achieved: `box_mean -
+    2*box_sd > spring_mean + 2*spring_sd`, computed on the run's own replicates
+    before the measured value is compared to anything. This is a gate and not a
+    result - it fires on the *estimator's* power, so if it fires the honest
+    report is "still unmeasured", which is what the previous run had to say. The
+    number of episodes is reported beside it either way, because that is the
+    quantity the gate is really about.
+
 Real-data sections are skipped with a printed notice when `research.db` is not
 reachable, rather than silently producing nothing.
 """
@@ -157,11 +172,16 @@ LAGS = tuple(int(v) for v in (1, 2, 3, 4, 6, 8, 12, 16, 24, 32))
 # --------------------------------------------------------------------------
 
 
-def _episodes(n: int, episode: float, rng: np.random.Generator) -> np.ndarray:
+def _episodes(n: int, episode: float, rng: np.random.Generator, minlen: int = 8) -> np.ndarray:
     """Geometric episode lengths summing to about `n` bars.
 
     `deriving.md` measured the break arrival memoryless on both feeds (CV of the
     gap 1.003 and 1.076), so the episode length is geometric and nothing else.
+
+    `minlen` is the same cut the real data gets. It has to be, because the
+    de-meaning bias is a function of the episode-length distribution: filtering
+    the feed at 240 ticks and not the simulation would compare a truncated
+    geometric against an untruncated one and call the difference a spectrum.
     """
     guess = int(n / min(episode, n) * 1.4) + 20
     lens = np.minimum(rng.geometric(1.0 / episode, guess), n)
@@ -173,7 +193,7 @@ def _episodes(n: int, episode: float, rng: np.random.Generator) -> np.ndarray:
     # The cap matters: section 1 asks for one episode of 1e9 bars to isolate the
     # estimator from the episode machinery, and an uncapped geometric draw then
     # sized a mask of 2e10 cells and took the machine down.
-    return lens[lens >= 8]
+    return lens[lens >= minlen]
 
 
 def _pack(lens: np.ndarray):
@@ -199,7 +219,13 @@ def _flatten(mat: np.ndarray, mask: np.ndarray, ids: np.ndarray, demean: bool):
 
 
 def sim_box(
-    n: int, width: float, dvar: float, episode: float, rng: np.random.Generator, demean: bool = True
+    n: int,
+    width: float,
+    dvar: float,
+    episode: float,
+    rng: np.random.Generator,
+    demean: bool = True,
+    minlen: int = 8,
 ):
     """Reflecting Brownian motion in [0, W], once a bar, with memoryless breaks.
 
@@ -209,7 +235,7 @@ def sim_box(
     eigenvalues `exp(-lambda_k)` with `lambda_k = (k pi / W)^2 * dvar/2` exactly.
     Nothing about the spectrum is approximated.
     """
-    lens = _episodes(n, episode, rng)
+    lens = _episodes(n, episode, rng, minlen)
     mask, ids, m = _pack(lens)
     inc = rng.normal(0.0, math.sqrt(dvar), (len(lens), m))
     inc[:, 0] = 0.0
@@ -219,7 +245,13 @@ def sim_box(
 
 
 def sim_ou(
-    n: int, theta: float, svar: float, episode: float, rng: np.random.Generator, demean: bool = True
+    n: int,
+    theta: float,
+    svar: float,
+    episode: float,
+    rng: np.random.Generator,
+    demean: bool = True,
+    minlen: int = 8,
 ):
     """Ornstein-Uhlenbeck once a bar, same break hazard.
 
@@ -227,7 +259,7 @@ def sim_ou(
     step, so the Hermite eigenvalues are exactly `exp(-k*theta)` and the 1:2:3
     ladder is a property of the simulation rather than a hope about it.
     """
-    lens = _episodes(n, episode, rng)
+    lens = _episodes(n, episode, rng, minlen)
     mask, ids, m = _pack(lens)
     a = math.exp(-theta)
     s = math.sqrt(svar * (1.0 - a * a))
@@ -236,13 +268,20 @@ def sim_ou(
     return _flatten(lfilter([1.0], [1.0, -a], z, axis=1), mask, ids, demean)
 
 
-def sim_free(n: int, dvar: float, episode: float, rng: np.random.Generator, demean: bool = True):
+def sim_free(
+    n: int,
+    dvar: float,
+    episode: float,
+    rng: np.random.Generator,
+    demean: bool = True,
+    minlen: int = 8,
+):
     """A driftless random walk cut into episodes at the same hazard.
 
     The false-positive control. It has no discrete spectrum at all, so whatever
     ladder the estimator returns here is the estimator talking to itself.
     """
-    lens = _episodes(n, episode, rng)
+    lens = _episodes(n, episode, rng, minlen)
     mask, ids, m = _pack(lens)
     inc = rng.normal(0.0, math.sqrt(dvar), (len(lens), m))
     inc[:, 0] = 0.0
@@ -636,6 +675,30 @@ TICK_WINDOWS = (64, 128, 256, 512, 1024, 2048, 4096)
 #: bars and there is no such lag, which is why the bar reading answers a
 #: different question.
 TICK_LAG = int(os.environ.get("TICK_LAG", "60"))
+#: The shortest episode worth keeping, in ticks - and **the first version of this
+#: harness got this wrong in a way that cost the whole measurement.**
+#:
+#: It used `2 * TICK_WINDOWS[-1]` = 8,192 ticks, on the reasoning that an episode
+#: must be long enough to hold a lagged pair at the longest window. That is not
+#: what the pipeline needs. `windowed` already drops the remainder inside each
+#: episode, so an episode shorter than `m` contributes no windows at `m` and
+#: costs nothing; and the *ladder* - the statistic that actually answers box
+#: against spring - runs at `TICK_LAG` and needs only an episode long enough to
+#: carry lagged pairs at 60 ticks. So the filter was sized by the least
+#: important statistic and applied to all of them.
+#:
+#: What it cost: Range Break 100 breaks about every 5,190 ticks, so a threshold
+#: of 8,192 keeps only the tail of a geometric draw - **2 episodes of about 20 on
+#: RB100 and 3 of 7 on RB200**, and the estimator had no power at that sample.
+#: At `4 * TICK_LAG` nearly every episode survives, and the knee test is *also*
+#: better off, because a window of 4,096 now draws from every episode long
+#: enough to hold one instead of from the two that cleared 8,192.
+#:
+#: The same threshold is applied to the simulated truths, which matters more than
+#: the threshold itself: the de-meaning bias depends on the episode length
+#: distribution, so the calibration is only readable if both pipelines are cut
+#: the same way. The old code filtered the data and not the simulation.
+MIN_EPISODE_TICKS = int(os.environ.get("MIN_EPISODE_TICKS", str(4 * TICK_LAG)))
 #: Replicates for the tick-resolution calibration. Each is 86,400 samples, so
 #: this is cheap beside the bar power analysis.
 NREP_TICK = int(os.environ.get("NREP_TICK", "60"))
@@ -669,12 +732,14 @@ def load_ticks(feed: str) -> dict | None:
     step = float(np.median(np.abs(d[d != 0]))) if np.any(d != 0) else 1.0
     isbrk = np.abs(d) > 5.0 * step
     ep = np.concatenate([[0], np.cumsum(isbrk)])
-    # Drop the tick that carries the break itself, then keep episodes long enough
-    # to hold a lagged pair at the longest window.
+    # Drop the tick that carries the break itself, then keep every episode long
+    # enough to carry lagged pairs at TICK_LAG. Not long enough for the longest
+    # *window*: see MIN_EPISODE_TICKS for why that was the wrong cut and what it
+    # cost.
     keep = np.concatenate([[True], ~isbrk])
     x, e = mid[keep], ep[keep]
     uniq, inv, cnt = np.unique(e, return_inverse=True, return_counts=True)
-    ok = cnt[inv] >= 2 * TICK_WINDOWS[-1]
+    ok = cnt[inv] >= MIN_EPISODE_TICKS
     x, inv = x[ok], inv[ok]
     if x.size < 10000:
         ok = cnt[inv if x.size else np.array([], dtype=int)]
@@ -695,6 +760,9 @@ def load_ticks(feed: str) -> dict | None:
         "episode": inv,
         "step": step,
         "n_ticks": len(rows),
+        # Ticks that survive the episode filter - the sample the ladder actually
+        # sees, which is not len(rows) and was 24k of 86k under the old cut.
+        "n_used": int(x.size),
         "n_breaks": int(isbrk.sum()),
         "n_episodes": int(len(n_each)),
         "mean_episode_ticks": float(np.mean(n_each)),
@@ -712,6 +780,7 @@ def sim_at(
     lam: float,
     rep: int,
     demean: bool = True,
+    minlen: int = 8,
 ):
     """One replicate of a named truth at an arbitrary sampling resolution.
 
@@ -719,13 +788,17 @@ def sim_at(
     calibration has to be run at the tick sample size, the tick episode length
     and the tick step variance, or the bias the de-meaning causes is the wrong
     size and the comparison means nothing.
+
+    `minlen` is the fourth thing that has to match and the one the first version
+    missed: the feed's short episodes are dropped by `load_ticks`, so the
+    simulation's have to be dropped too or the two are not the same pipeline.
     """
     rng = np.random.default_rng(SEED + 7919 * rep + {"box": 11, "ou": 12, "free": 13}[kind])
     if kind == "box":
-        return sim_box(n, width, dvar, episode, rng, demean)
+        return sim_box(n, width, dvar, episode, rng, demean, minlen)
     if kind == "ou":
-        return sim_ou(n, lam, width * width / 12.0, episode, rng, demean)
-    return sim_free(n, dvar, episode, rng, demean)
+        return sim_ou(n, lam, width * width / 12.0, episode, rng, demean, minlen)
+    return sim_free(n, dvar, episode, rng, demean, minlen)
 
 
 def tick_stats(x: np.ndarray, ep: np.ndarray) -> dict:
@@ -1073,7 +1146,9 @@ def main() -> None:
             for kind, lab in (("box", "box"), ("ou", "spring"), ("free", "free walk")):
                 v2, v3, kn, ku = [], [], [], []
                 for rep in range(NREP_TICK):
-                    x, e = sim_at(kind, n, w, 1.0, epi, lam1_box, rep)
+                    x, e = sim_at(
+                        kind, n, w, 1.0, epi, lam1_box, rep, minlen=MIN_EPISODE_TICKS
+                    )
                     st = tick_stats(x, e)
                     v2.append(st["ladder"][1])
                     v3.append(st["ladder"][2])
@@ -1099,6 +1174,20 @@ def main() -> None:
             )
             lo_s, hi_b = rows["ou"]["l2_mean"], rows["box"]["l2_mean"]
             v = m["ladder"][1]
+            # Kill condition 10, and it is checked BEFORE the measured value is
+            # read against anything. Two simulated truths whose replicate bands
+            # overlap cannot tell a box from a spring no matter what the feed
+            # says, and the first tick run - 2 usable episodes on RB100 - failed
+            # exactly here and reported a ladder anyway in the log before the
+            # verdict line caught it.
+            gap = (hi_b - 2.0 * rows["box"]["l2_sd"]) - (lo_s + 2.0 * rows["ou"]["l2_sd"])
+            readable = gap > 0.0
+            print(
+                f"      power: box {hi_b:.3f}+-{rows['box']['l2_sd']:.3f} against spring "
+                f"{lo_s:.3f}+-{rows['ou']['l2_sd']:.3f}, two-sd gap {gap:+.3f} "
+                f"on {real[feed]['n_episodes']} episodes "
+                f"-> {'READABLE' if readable else 'NOT READABLE, and nothing below is a result'}"
+            )
             where = (
                 "BELOW the spring - not a confinement of this family"
                 if v < lo_s
@@ -1114,7 +1203,16 @@ def main() -> None:
                     f"      -> interpolated alpha = {alpha:.2f}, wall exponent "
                     f"p = {wall_hardness(alpha):.1f}"
                 )
-            cal_rows[feed] = {"sim": rows, "measured_l2": v, "alpha": alpha, "verdict": where}
+            cal_rows[feed] = {
+                "sim": rows,
+                "measured_l2": v,
+                "alpha": alpha,
+                "verdict": where,
+                "n_episodes": real[feed]["n_episodes"],
+                "n_ticks_used": int(real[feed].get("n_used", 0)),
+                "power_gap": gap,
+                "readable": bool(readable),
+            }
         out["tick_calibration"] = cal_rows
 
         # ---- the bar cross-check ----
