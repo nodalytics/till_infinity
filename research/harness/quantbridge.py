@@ -547,7 +547,12 @@ def load_aggregated(dbpath: str, feed: str, factor: int = NSUB):
     # Only groups that are contiguous in time are usable.
     n = (len(rows) // factor) * factor
     ts, op, hi, lo, cl = (v[:n].reshape(-1, factor) for v in (ts, op, hi, lo, cl))
-    ok = (np.diff(ts, axis=1) == 60).all(axis=1)
+    # research.db stamps in milliseconds and prices.db in seconds, so the bar
+    # spacing is read from the data rather than assumed. Assuming 60 made every
+    # aggregated row come back empty on the lab.
+    dts = np.diff(ts.ravel())
+    unit = int(np.median(dts[dts > 0])) if np.any(dts > 0) else 60
+    ok = (np.diff(ts, axis=1) == unit).all(axis=1)
     ts, op, hi, lo, cl = (v[ok] for v in (ts, op, hi, lo, cl))
     if len(op) < 200:
         return None
