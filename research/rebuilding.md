@@ -524,15 +524,43 @@ was built and scanned and it is **refuted**:
 Monotone, on both feeds, in the wrong direction. There is no second re-range
 event.
 
-**What is left, and what it points at.** Under the shared width the residual is
-no longer a sign flip but a shape: the rebuild is **too confined at one minute**
-(-0.086 and -0.018) and **too free at twenty** (+0.047 and +0.024). That is what
-a hard wall looks like against something smoother - a reflecting barrier bites
-immediately when the price is near it and then relaxes on a single slow mode,
-where a graded restoring force does less at short range and more at the scale of
-its own relaxation. The specification's missing piece is therefore not a second
-timescale and not a second event: it is the **shape of the confinement at the
-edge of the range**, and the data says it is softer than a wall.
+**Fourth, the soft edge - which is what the residual looks like, and which does
+not fix it either.** Under the shared width the residual is no longer a sign flip
+but a shape: the rebuild is **too confined at one minute** (-0.086 and -0.018)
+and **too free at twenty** (+0.047 and +0.024). That is what a hard wall looks
+like against something smoother - a reflecting barrier bites the moment the price
+is near it and then relaxes on a single slow mode, where a graded restoring force
+does less at short range and more at the scale of its own relaxation. So the
+wall was softened: a lattice walk whose up-probability is
+`0.5 - k (|x|/half)^q sign(x)`, which is a reflecting box as `q -> inf` and a
+harmonic well at `q = 1`, scanned over `q` in {1, 2, 4, 12}, `k` in {0.25, 0.5}
+and the width.
+
+It buys shape and pays for it in flatness:
+
+| mechanism | RB100 MAE | RB100 flatness | RB200 MAE | RB200 flatness |
+| --- | --- | --- | --- | --- |
+| **published** | | **1.118** | | **1.143** |
+| hard box, shared width 60 | 0.0427 | 1.266 | 0.0299 | 1.109 |
+| soft edge, best (width 72, k 0.25, q 4) | **0.0356** | 1.509 | **0.0282** | 1.407 |
+
+Twelve percent better on the ex-break curve and a third worse on the all-bars
+one, on both feeds. (The soft-edge scan runs at 40,000 bars against the shared-
+width scan's 100,000, so its mean absolute errors carry more Monte Carlo noise
+than the hard-box ones; the flatness gap is far too large to be that.) The best
+soft-edge width is 72 on both feeds, which is the shared-width result again from
+a different mechanism - so that finding survives the change - but the edge itself
+is not the missing piece.
+
+**What the residual actually is.** Stated at the end of four experiments, the gap
+is not a timescale and not an event: it is that **no single confinement matches
+the ex-break shape and the all-bars flatness at once**. Harden the wall and the
+total variance flattens while the crossover goes too gentle; soften it and the
+crossover sharpens while the total variance stops being flat. `deriving.md`
+section four's two headline facts - sub-diffusive between breaks, flat across
+three orders of magnitude - are, under every mechanism tried here, in tension at
+the 10-30% level. Something in Range Break couples the break to the range in a
+way none of these four candidates does.
 
 **So `deriving.md` is not complete enough to re-instantiate Range Break.** One
 parameter has to be supplied from outside the specification - a shared range
