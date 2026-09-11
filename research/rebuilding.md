@@ -32,6 +32,22 @@ feed are indistinguishable on the 86,410 the store holds, and on nine of twelve
 feeds the rebuild is *closer to the feed than the feed's own two halves are to
 each other*. The rest of the table is below.
 
+**And the adversarial version of it, which is the stronger claim.** Against the
+strongest classifier this environment carries, on the seven Volatility feeds
+whose quote grid is fine enough for a tick statistic to be about the law at all,
+**no arm beats its own real-against-real floor at any sample size** - the test
+arm sits *below* the floor on both views and `n*` is infinite. That took four
+attempts at one term of the specification, three of which are refuted and are
+published as such. The other families' `n*` runs from **8.2x the stored sample**
+(Step Index) to **59 ticks** (Boom 300, where the rebuild is simply wrong).
+
+**Two corrections came out of the loop rather than out of the plan.** The tick
+shortfall this page called a collection failure is not one - it is the repeated
+quote, and the two quantities agree on twelve feeds of twelve. And the shared
+Range Break width of 60 is **withdrawn**: given a simulated truth, the estimator
+that measures the range directly returns the width it was given to within 12%,
+and it says 39.
+
 ## The parameter budget, which is the whole experiment
 
 A rebuild is only evidence about a specification if it is given the
@@ -1334,20 +1350,36 @@ not as the instrument. At `L = 39` the same arithmetic gives `tau_1 = 308` ticks
 or **5.1 minutes** and a stationary spread of **11.3 steps**, and those are the
 numbers a further experiment should be pointed at.
 
-## What is still to run - one command, and what each outcome would mean
+## What was still to run - the pre-registration, and which rows came back
 
 ```bash
 ./.secrets/lab.sh run research/harness/rebuildall.py
 ```
 
-That is the whole blocked half. [`rebuildall.py`](harness/rebuildall.py) runs the
-five feed studies in one process, keeps going when one raises, and pools their
-failure ledgers into a single count over a single sample. About forty minutes of
-one core at the defaults.
+**This has now run**, along with [`rebuildladder.py`](harness/rebuildladder.py),
+[`rebuildwidth.py`](harness/rebuildwidth.py) and
+[`rebuildpredict.py`](harness/rebuildpredict.py). The table below is left exactly
+as it was written before any of it, because the point of writing it down was that
+the interpretation be fixed before the numbers existed. What came back:
 
-The point of writing this down now is that the interpretation is fixed before the
-numbers exist. Each row below is a thing that can happen and what it would mean;
-none of them is a thing I would like to happen.
+* **the Volatility family** landed on the first row - two numbers per instrument
+  re-instantiate the feed - but only on the seven feeds whose quote grid is fine
+  enough to tell, and only after the quantiser was corrected twice;
+* **KS rejected on more than 3 of 12 tick arms**, which the table calls "a
+  distributional defect a moment test cannot see". It was not: it was the
+  repeated quote, and the univariate feature map named it;
+* **`rebuildjudge`'s arms are above the floor on the pooled Volatility class**,
+  which the table says makes the univariate AUC table a map of what the
+  specification is missing. That is what it turned out to be, three times over;
+* **the randomness battery does not flag the venue's stream**, and the two cells
+  it does flag on the pooled class are the coarse feeds' rounding;
+* **`rebuildpower`'s `n*` is not above the real sample on every family** - Boom
+  and Crash separate in under a minute of ticks - so the honest headline is a
+  table rather than a single bound;
+* **the null controls did not reject above 5%**, so the `n*` table stands.
+
+Each row below is a thing that could have happened and what it would have meant;
+none of them was a thing I would have liked to happen.
 
 | what comes back | what it means |
 | --- | --- |
@@ -1399,3 +1431,24 @@ none of them is a thing I would like to happen.
   exact.** The n=1000 variance ratio is 86 non-overlapping windows on a
   jump-heavy process; its standard error is at least 15%, and the fits here are
   quoted to three decimals against it.
+* **The lattice ladder settles what the *observation* is, not what the venue
+  does.** `research.db` never stores a repeated quote, so no rule this page can
+  test distinguishes a venue that rounds a continuous price from one that moves
+  on its grid. The rebuild matches the observation; the generator's own quantiser
+  is unobservable from here and would need a tick feed that carries unchanged
+  quotes.
+* **The `n*` figures hold the AUC gap fixed as the sample grows, and it widens.**
+  Every finite figure is an upper bound on the separating sample for *this*
+  classifier and this feature set, and every `inf` means "not separable by this
+  battery", which is not identity.
+* **The prediction ladder excludes nine named generators and one sampling
+  convention.** Rung 3 assumes the venue draws one uniform a tick and maps it
+  through the inverse normal; Box-Muller or a ziggurat breaks that map and the
+  rung then says nothing. Rung 2 is arithmetically impossible on a quantised
+  quote and is untested rather than passed.
+* **The width recovery is a Monte Carlo on one mechanism.** `rebuildwidth.py`
+  tests both estimators against an edge-anchored *hard box*, which is the model
+  `quantising.md`'s eigenvalue ladder refutes. It is enough to show that the
+  direct estimator recovers a width it is given and that the curve does not
+  identify one, and it is not a measurement of a range under the true mechanism,
+  which nobody has yet written down.
