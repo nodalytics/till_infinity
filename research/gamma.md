@@ -119,23 +119,61 @@ Two further limits, both real:
   which is where `scaling.by_regime` already reaches. Nothing here has been
   joined to a P&L.
 
-## Test two, which this result justifies
+## Test two cannot be built from this source, and that is measured rather than assumed
 
-**Build the collector.** `prices/yahoo.py` already exists and yfinance already
-serves `Ticker.option_chain`, so a daily snapshot of strike, open interest,
-volume and implied volatility for the four indices is a small job. It has to run
-forward - there is no history to backfill - which is exactly why the calendar
-test came first.
+**Yahoo no longer serves open interest.** Checked before writing any collector,
+across every equity index and ETF proxy that has a chain:
+
+| ticker | expiry | contracts | volume>0 | **openInterest>0** | IV>0 |
+| --- | --- | --- | --- | --- | --- |
+| ^SPX | front | 462 | 454 | **1** | 378 |
+| ^NDX | front | 259 | 240 | **5** | 186 |
+| SPY | front | 366 | 359 | **0** | 195 |
+| QQQ | front | 370 | 357 | **3** | 211 |
+| IWM | front | 194 | 177 | **3** | 115 |
+
+SPY's front expiry carries **1,587,783 contracts of volume and zero open
+interest**, which is not a market state - it is a dead field. `bid` and `ask`
+are 0.0 throughout and `impliedVolatility` is a 0.00001 placeholder on the
+contracts it does not carry.
+
+So the gamma version of test two - open interest by strike, dealer gamma sign,
+pinning toward the largest-OI strike - **has no free data source**, and building
+the collector as designed would have stored zeros. `prices/options.py` already
+warns about exactly this shape: *"not a number nothing reads, but a number read
+as more than it is"*. That module reaches Deribit for BTC and ETH, which are the
+only instruments with real open interest on any path this repository has.
+
+### What is reachable, and it is a weaker claim
+
+**Volume by strike is real**, and so is implied volatility on about half the
+chain. That supports a different and smaller test: does price gravitate toward
+the strike with the most *traded volume today*, against the round-number control
+`rounding.md` says is the one that matters?
+
+It is weaker for a specific reason. Volume cannot separate opening from closing,
+so it does not measure positioning - `positioning.py` makes this argument about
+futures open interest and it applies with more force here. A strike can be the
+busiest because dealers are accumulating a hedge there or because they are
+unwinding one, and the price path is the opposite in each case.
+
+**Build the collector**, for volume and implied volatility by strike and not
+for open interest. `prices/yahoo.py` exists and `Ticker.option_chain` works, so
+a daily snapshot is a small job. It has to run forward - there is no history to
+backfill - which is exactly why the calendar test came first, and why finding
+the dead field before writing it cost an afternoon rather than a month.
 
 What it would then answer, and the calendar cannot:
 
-1. **Does price gravitate to the largest open-interest strike** into expiry, more
-   than to a random nearby strike? The strike is the control: "price ends near a
-   round number" and "price ends near the big strike" are different claims and
-   the second is only interesting if it beats the first.
-2. **Does the sign of dealer gamma predict the character of the day** - trend
-   when dealers are short gamma, mean-revert when long? This is the tradeable
-   version and the one worth the wait.
+1. **Does price gravitate to the busiest strike** into expiry, more than to the
+   nearest round number? The round number is the control and `rounding.md` is
+   why: Osler's finding is that round numbers predict as well as published
+   levels, so "price ends near the big strike" is only interesting if it beats
+   "price ends near a round number".
+2. ~~**Does the sign of dealer gamma predict the character of the day**~~ -
+   **not answerable.** It needs open interest, which is the dead field above.
+   This was the tradeable version and the one worth the wait, and it is the one
+   that is gone.
 3. **Is the effect in the hours or the day?** Intraday snapshots would say.
 
 ## The prior, written before test two

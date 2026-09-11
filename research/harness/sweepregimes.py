@@ -107,7 +107,7 @@ def num(d, key, default=0.0):
     return float(got) if isinstance(got, int | float) else default
 
 
-def candidates(conn, settings):
+def candidates(conn, settings, gate: bool = True):
     """Every published call `sweep-aware.accept` would take, with its context.
 
     The rule is transcribed from `scalper.SweepAware.accept` rather than
@@ -134,12 +134,15 @@ def candidates(conn, settings):
         if str(d.get("interval")) not in ENTRIES:
             refused["interval"] += 1
             continue
-        swept, swept_n = num(d, "sweep_rate"), num(d, "sweep_n")
+        # `gate=False` takes every published level call instead of the subset
+        # `sweep-aware` would accept, for questions about an *instrument* rather
+        # than about that strategy.
+        swept, swept_n = (num(d, "sweep_rate"), num(d, "sweep_n")) if gate else (0.0, 0.0)
         if swept_n >= settings.sweep_min_history and swept >= settings.sweep_max_rate:
             refused["swept_often"] += 1
             continue
         risk_vol = abs(num(d, "risk_vol"))
-        beyond = num(d, "liquidity_beyond_vol")
+        beyond = num(d, "liquidity_beyond_vol") if gate else 0.0
         if beyond > 0 and (risk_vol * 1.0) / beyond >= settings.sweep_max_exposure:
             refused["in_front"] += 1
             continue
