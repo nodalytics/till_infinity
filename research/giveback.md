@@ -126,3 +126,74 @@ digest's definition, "management has never acted" (a grep that required
 `trading: ` immediately before the keyword, where the real line has a ticket in
 between), and "the heartbeat saw them and did not act". Each was corrected by
 asking for the number rather than the story.
+
+# 2026-09-11: the field works now, and here is what it says
+
+Reported from watching the terminal again: *"the last GBPJPY trade went up to
+$60+ but we only banked $17 and even still ended with a loss"*.
+
+`best_r` is no longer a constant. 250 closes now carry a high-water mark, so
+this is answerable from the live record rather than by replay.
+
+| strategy | n | mean peak | mean realised | keeps | gave back | $ |
+| --- | --- | --- | --- | --- | --- | --- |
+| sweep-aware | 47 | +0.549R | +0.134R | **27.1%** | 0.415R | +92 |
+| thesis-only | 159 | +0.267R | -0.136R | **-13.7%** | 0.403R | **-441** |
+| confluence-scalp | 10 | +1.401R | -0.357R | 18.8% | **1.758R** | -92 |
+| opportunity | 5 | +0.489R | -0.209R | -71.5% | 0.698R | -23 |
+| runner | 17 | +0.003R | -0.127R | - | 0.130R | -39 |
+| fade-to-value | 9 | +0.020R | -0.573R | - | 0.593R | -160 |
+
+The user's observation is correct and it is not one trade.
+
+## Why sweep-aware gives it back: the exit cannot reach
+
+Its exits are **38 `hold`, 6 `stop`, 2 `target`** out of 47. Four in five end
+because the 30-minute clock ran out, not because a rule fired. A day of live
+logs shows **104 `trailing` lines against exactly one `break even` line**, and
+the trailing widths read `2.00v` and `2.07v` where the class asks for `0.5v`.
+
+`manage.stop_for` widens the trail to clear each level's own wicks:
+
+    room = max(trail_vol, wick + spread_sd * trail_sigmas)
+
+and **that rule has no ceiling**. Over 47,233 level calls the computed trail is
+the 0.5v floor only 59% of the time, exceeds 1v on 30.2%, exceeds 3v on 9.4%,
+and its maximum is **2,239v** — `wick_below_vol` itself reaches 4,360v and
+nothing clips it. On levels chosen for being swept, the wick distribution is
+exactly the fat-tailed one that rule cannot survive.
+
+A trail sits `room / risk_vol` R behind the peak and may only replace the
+original stop once it is in front of it, so a 2v trail on a typical 1.5v risk
+**cannot engage until the trade is up 1.33R**:
+
+| the trade ever reached | of 54 closes |
+| --- | --- |
+| 0.25R | 63.0% |
+| 0.50R | 50.0% |
+| **1.00R** — where `break_even_at` engages | **11.1%** |
+| **1.33R** — where a 2v trail engages | **7.4%** |
+| 2.00R | 3.7% |
+
+Median peak is **0.445R**. For nine trades in ten *neither* rule is reachable.
+The exit policy is not badly tuned; on this distribution it is **inert**.
+
+## What was changed, and what was not
+
+`confluence-scalp` was given `ride`'s exit and turned back on. It had **no exit
+policy at all** and a mean peak of 1.401R, which is the regime those thresholds
+were chosen for — the failure above is specifically that they sit *above* the
+distribution, and for this strategy they sit inside it.
+
+Two changes are **not** made, and the reason is worth recording:
+
+1. Cap the wick widening at the trade's own risk.
+2. Lower `break_even_at` from 1.0R toward the 0.445R median peak.
+
+Both follow from the arithmetic above. Neither is supported by the policy
+replay in [exiting.md](exiting.md), which cannot reproduce the effect at all —
+it exits 98% by stop where the live desk exits 81% by timeout. A replay that
+disagrees with the live exit mix that badly is evidence about the harness, and
+shipping a threshold on arithmetic alone is how a number ends up somewhere no
+measurement put it. The measurement these need is the live `best_r`
+distribution after a change, not another replay.
