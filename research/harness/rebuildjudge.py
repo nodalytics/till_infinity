@@ -678,9 +678,11 @@ def main() -> None:
     else:
         rbar = fbar = {"skipped": True}
 
-    nstar_rows = [("Volatility (12 feeds)", "k-tuple", m_kt, f_kt, KTUP, "ticks"),
-                  ("Volatility (12 feeds)", "window", m_w, f_w, W_TICK, "ticks"),
-                  ("Volatility (12 feeds)", "bar OHLC", rbar, fbar, W_BAR, "bars")]
+    vol_ticks = sum(x.size for x in realA)
+    vol_bars = sum(b["n"] // 2 for b in real_b)
+    nstar_rows = [("Volatility (12 feeds)", "k-tuple", m_kt, f_kt, KTUP, "ticks", vol_ticks),
+                  ("Volatility (12 feeds)", "window", m_w, f_w, W_TICK, "ticks", vol_ticks),
+                  ("Volatility (12 feeds)", "bar OHLC", rbar, fbar, W_BAR, "bars", vol_bars)]
     for nm, (r, floor) in (("k-tuple", (m_kt, f_kt)), ("window", (m_w, f_w)),
                            ("k-tuple 2nd", (m_kt2, f_kt)), ("window 2nd", (m_w2, f_w)),
                            ("bar OHLC", (rbar, fbar))):
@@ -826,7 +828,7 @@ def main() -> None:
             show(r, fl)
             per_family.setdefault(feed, {})[kind] = r
             nstar_rows.append((feed, "k-tuple" if kind == "ktuple" else "window", r, fl,
-                               KTUP if kind == "ktuple" else W_TICK, "ticks"))
+                               KTUP if kind == "ktuple" else W_TICK, "ticks", h))
             if not r.get("skipped") and not fl.get("skipped"):
                 ledger.append({"test": f"{feed} rebuild not caught ({kind})", "feed": feed,
                                "value": r["auc"] - fl["auc"],
@@ -948,21 +950,25 @@ def main() -> None:
     print("    its own real-against-real floor, so no sample separates it by this")
     print("    battery. The gap is held fixed as n grows and in practice it widens, so")
     print("    every finite figure is an upper bound rather than an estimate.")
+    print("    `have` is what one class of the arm is drawn from - half the feed, since")
+    print("    the other half is the floor - so an arm separates exactly when n* x the")
+    print("    window is below it.")
     print(f"{'family':26s} {'arm':10s} {'rows now':>9s} {'gap':>8s} {'n* rows':>12s} "
-          f"{'n* in units':>14s} {'have':>12s}")
-    have = {"ticks": sum(x.size for x in realA) * 2, "bars": sum(b["n"] for b in real_b)}
-    for fam, nm, r, fl, per, unit in nstar_rows:
+          f"{'n* in units':>18s} {'have':>12s} {'x over':>8s}")
+    for fam, nm, r, fl, per, unit, have in nstar_rows:
         if not r or r.get("skipped") or not fl or fl.get("skipped"):
             continue
         ns = G.auc_nstar(r, fl)
         units = ns * per
+        over = units / max(have, 1)
         print(f"{fam:26s} {nm:10s} {r['n']:9d} {r['auc'] - fl['auc']:+8.4f} "
               f"{('inf' if ns == float('inf') else format(ns, ',.0f')):>12s} "
-              f"{('inf' if ns == float('inf') else format(units, ',.0f')) + ' ' + unit:>14s} "
-              f"{format(have.get(unit, 0), ',d'):>12s}")
+              f"{(('inf' if ns == float('inf') else format(units, ',.0f')) + ' ' + unit):>18s} "
+              f"{format(int(have), ',d'):>12s} "
+              f"{('inf' if ns == float('inf') else format(over, ',.2f')):>8s}")
         payload.setdefault("nstar", []).append(
             {"family": fam, "arm": nm, "n": r["n"], "gap": r["auc"] - fl["auc"],
-             "nstar_rows": ns, "nstar_units": units, "unit": unit})
+             "nstar_rows": ns, "nstar_units": units, "unit": unit, "have": int(have)})
 
     print("\n[7] THE FAILURE LEDGER")
     by: dict[str, list] = {}
