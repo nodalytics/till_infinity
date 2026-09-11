@@ -120,6 +120,27 @@ class Volatility(Restorable):
     floor_bps: float = MIN_VOL_BPS
     warmup: int = WARMUP
     _mean_abs: float = 0.0
+    #: The same returns, squared. Its root is this series' own standard
+    #: deviation, and the ratio of the two is the conversion between the
+    #: mean-absolute and sigma conventions - **measured rather than assumed.**
+    #:
+    #: `MAD_TO_SIGMA` is `sqrt(pi/2)` = 1.2533, which is the conversion **for a
+    #: normal variable**, and returns are not normal at short horizons. Measured
+    #: over 53 feeds and 3.95M bars (`research/cascading.md`), the real ratio is
+    #: **1.546 at 1m**, 1.449 at 5m, 1.408 at 1h and 1.275 at 1d - so the
+    #: constant runs 23% low at 1m across the book and **27% low on FX**.
+    #:
+    #: A corrected *constant* would not fix it, for two reasons the same study
+    #: found: the ratio varies by timeframe, which is the one error a tuned
+    #: threshold cannot absorb; and on the generated book it is right from 5m up
+    #: because those series are genuinely Gaussian - the 12 Volatility indices
+    #: and Step Index measure `H = 0.50` and kurtosis 2.98 to 3.02. Since 72% of
+    #: this book is generated, a pooled correction would break the majority to
+    #: fix the minority.
+    #:
+    #: So each series measures its own. One extra multiply on an input already
+    #: in hand.
+    _mean_sq: float = 0.0
     _last: float = 0.0
     _seen: int = 0
     #: Rolling quantiles of the estimate itself. A number is not interpretable
@@ -231,6 +252,24 @@ class Volatility(Restorable):
         # quantile it would have to move is defended by every other change.
         return float(self._grid.get() or self._tick)
 
+    @property
+    def mad_to_sigma(self) -> float:
+        """This series' own conversion from mean-absolute to standard deviation.
+
+        `sqrt(E[r^2]) / E[|r|]`, measured. Falls back to the Gaussian constant
+        until warm, so a cold series behaves exactly as before.
+
+        **Bounded below at 1.0 because no distribution can go under it** -
+        Cauchy-Schwarz gives `E[r^2] >= E[|r|]^2`, so the ratio is at least one,
+        and a value below it means an arithmetic fault rather than a fat tail.
+        Bounded above at 3.0 because a ratio that large is a series with one
+        enormous observation in it, and a conversion factor is not the right
+        place to express that.
+        """
+        if self._seen < self.warmup or self._mean_abs <= 0 or self._mean_sq <= 0:
+            return MAD_TO_SIGMA
+        return min(max(math.sqrt(self._mean_sq) / self._mean_abs, 1.0), 3.0)
+
     def update(self, price: float) -> float:
         """Take one price, return the current volatility estimate in bps."""
         if price <= 0:
@@ -254,6 +293,10 @@ class Volatility(Restorable):
         alpha = _alpha(self.half_life)
         self._mean_abs = (
             move if self._seen == 1 else self._mean_abs + alpha * (move - self._mean_abs)
+        )
+        square = move * move
+        self._mean_sq = (
+            square if self._seen == 1 else self._mean_sq + alpha * (square - self._mean_sq)
         )
         # Same input, second opinion. Cheap: three multiplications.
         self._garch.update(price)
@@ -297,7 +340,7 @@ class Volatility(Restorable):
         # Score what everything said about this bar *before* folding it in, so
         # each member is judged on the forecast it actually had to make. Doing
         # it after would score them against a number they had already seen.
-        self._ensemble.settle(realised / MAD_TO_SIGMA)
+        self._ensemble.settle(realised / self.mad_to_sigma)
         members = {
             "ew": self.bps,
             "garch": self._garch.bps,
@@ -311,6 +354,11 @@ class Volatility(Restorable):
             members["vix"] = implied_bps
         self._ensemble.observe(
             members,
+            # **This series' own conversion, not the Gaussian one.** See
+            # `mad_to_sigma`: the constant is 23% low at 1m across the book and
+            # 27% on FX, and correcting it globally would break the 72% of the
+            # book that is genuinely Gaussian.
+            ratio=self.mad_to_sigma,
             # The range family reports a standard deviation, and so does VIX;
             # `ew` and `garch` are on the mean-absolute convention already.
             sigma_scaled=frozenset({"range", "har", "vix"}),

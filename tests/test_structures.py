@@ -3116,3 +3116,83 @@ def test_an_older_store_warms_with_less_rather_than_not_at_all(tmp_path):
 
     assert len(rows) == 4, "an older schema must still warm"
     assert "volume" not in rows[0]
+
+
+def _series(steps, seed=5):
+    """A `Volatility` fed one price path."""
+    import random
+
+    from till_infinity.structures.vol.garch import Garch
+    from till_infinity.structures.vol.har import Har
+    from till_infinity.structures.vol.ranges import Ranges
+    from till_infinity.structures.vol.volatility import Volatility
+
+    random.seed(seed)
+    vol = Volatility(_garch=Garch(), _ranges=Ranges(), _har=Har())
+    price = 100.0
+    for step in steps:
+        price = max(price + step, 1.0)
+        vol.update(price)
+    return vol
+
+
+def test_the_mad_conversion_is_measured_not_assumed():
+    """`MAD_TO_SIGMA` is `sqrt(pi/2)` - the conversion **for a normal
+    variable** - and returns are not normal at short horizons.
+
+    Measured over 53 feeds and 3.95M bars in `research/cascading.md`, the real
+    ratio is **1.546 at 1m** against the code's 1.2533: 23% low across the book
+    and **27% on FX**. A corrected constant would not fix it, because the ratio
+    varies by timeframe *and* the generated 72% of the book is genuinely
+    Gaussian at 1.2533. So each series measures its own."""
+    import math
+    import random
+
+    from till_infinity.structures.vol.consensus_vol import MAD_TO_SIGMA
+
+    random.seed(5)
+    fat = [
+        random.gauss(0, 0.05) if random.random() > 0.03 else random.gauss(0, 1.5)
+        for _ in range(400)
+    ]
+    assert _series(fat).mad_to_sigma > MAD_TO_SIGMA * 1.2, "a fat tail must read higher"
+
+    random.seed(7)
+    thin = [random.gauss(0, 0.2) for _ in range(3000)]
+    assert _series(thin).mad_to_sigma == pytest.approx(MAD_TO_SIGMA, abs=0.06), (
+        "and a Gaussian series must land on the textbook value, which is the "
+        "control that says this measures the right thing"
+    )
+    assert math.isclose(MAD_TO_SIGMA, math.sqrt(math.pi / 2))
+
+
+def test_a_cold_series_uses_the_gaussian_constant():
+    """Falling back means a series with no history behaves exactly as it did
+    before this existed - the change can only act once it has evidence."""
+    from till_infinity.structures.vol.consensus_vol import MAD_TO_SIGMA
+
+    assert _series([]).mad_to_sigma == MAD_TO_SIGMA
+    assert _series([0.1] * 5).mad_to_sigma == MAD_TO_SIGMA, "still inside warmup"
+
+
+def test_the_ratio_cannot_go_below_one():
+    """Cauchy-Schwarz gives `E[r^2] >= E[|r|]^2`, so the ratio is at least one
+    for **any** distribution. A value below it is an arithmetic fault rather
+    than a thin tail, and clamping says so rather than propagating it."""
+    steps = [0.1, -0.1] * 200  # every move identical: sigma == mean abs, ratio 1
+    assert _series(steps).mad_to_sigma >= 1.0
+
+
+def test_the_ensemble_takes_the_series_own_conversion():
+    """The ensemble converts sigma-scale members onto the mean-absolute
+    convention, and it was doing so with the Gaussian constant for every series
+    including the ones 27% away from it."""
+    from till_infinity.structures.vol.consensus_vol import MAD_TO_SIGMA, Ensemble
+
+    held = Ensemble()
+    held.observe({"range": 100.0}, sigma_scaled=frozenset({"range"}))
+    gaussian = held.bps
+
+    held.observe({"range": 100.0}, sigma_scaled=frozenset({"range"}), ratio=1.546)
+    assert held.bps < gaussian, "a larger conversion means a smaller reading"
+    assert gaussian == pytest.approx(100.0 / MAD_TO_SIGMA, abs=0.01)

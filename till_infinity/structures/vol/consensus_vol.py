@@ -134,16 +134,27 @@ class Ensemble(Restorable):
         return found
 
     def observe(
-        self, members: dict[str, float], *, sigma_scaled: frozenset[str] = frozenset()
+        self,
+        members: dict[str, float],
+        *,
+        sigma_scaled: frozenset[str] = frozenset(),
+        ratio: float = MAD_TO_SIGMA,
     ) -> None:
         """Take this bar's readings, converting anything on the sigma scale.
 
         `sigma_scaled` names the members that report a standard deviation - the
-        range estimators - so they are brought onto the mean-absolute
+        range estimators and `vix` - so they are brought onto the mean-absolute
         convention rather than being averaged against it directly.
+
+        `ratio` is **the series' own measured conversion**, defaulting to the
+        Gaussian `sqrt(pi/2)`. The default is a convenience for callers without
+        a series; the caller that has one should pass it, because the constant
+        is 23% low at 1m across this book and 27% on FX - and right on the
+        generated 72%, which is why it cannot simply be replaced. See
+        `Volatility.mad_to_sigma` and `research/cascading.md`.
         """
         self._members = {
-            name: (value / MAD_TO_SIGMA if name in sigma_scaled else value)
+            name: (value / ratio if name in sigma_scaled else value)
             for name, value in members.items()
             if value > 0
         }
