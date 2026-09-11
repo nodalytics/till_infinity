@@ -562,6 +562,63 @@ def quiet_rerange_study(n_bars: int, seed: int, band: int) -> dict:
     return out
 
 
+def soft_edge_study(n_bars: int, seed: int) -> dict:
+    """Does softening the range edge close what is left of the residual?
+
+    The residual under the shared width is a shape - too confined at one minute,
+    too free at twenty - which is what a hard wall looks like against something
+    smoother. This scans the softness directly. Reported against the hard box at
+    the shared width, on both the ex-break curve and the all-bars flatness,
+    because the two move in opposite directions and reporting only the first
+    would make a worse model look like a better one.
+    """
+    print("\n[0d] A SOFT RANGE EDGE - p_up = 0.5 - k (|x|/half)^q sign(x)")
+    print("     q -> infinity is the reflecting box, q = 1 is a harmonic well.")
+    out: dict[str, list] = {}
+    for feed in PUBLISHED_VR:
+        tgt = PUBLISHED_VR[feed]["splice"]
+        mbt = PUBLISHED_VR[feed]["minutes_per_break"] * TPB
+        rows = []
+        for band in (50, 60, 72):
+            for q in (1.0, 2.0, 4.0, 12.0):
+                for k in (0.25, 0.5):
+                    for jump in (130.0, 170.0, 210.0):
+                        rng = np.random.default_rng(
+                            [seed, band, int(q * 10), int(k * 100), int(jump)])
+                        bb = G.bars_from_stream(
+                            G.gen_softbox(n_bars * TPB, 1.0, band, mbt, jump,
+                                          5000.0, rng, k=k, q=q), TPB, n_bars)
+                        cur = vr_curves(bb, 1.0)
+                        allv = [cur["all"][n] for n in VR_N]
+                        err = [cur["splice"][n] - tgt[n] for n in VR_N]
+                        # a run too short for the n=1000 cell leaves a NaN, and a
+                        # NaN score sorts to the front and silently wins the scan
+                        mae = float(np.nanmean(np.abs(err)))
+                        lvl = abs(np.nanmean(allv)
+                                  - np.mean(list(PUBLISHED_VR[feed]["all"].values())))
+                        score = mae + lvl / 10.0
+                        if not math.isfinite(score) or not np.isfinite(err).all():
+                            score = float("inf")
+                        rows.append({"score": score, "mae": mae,
+                                     "flat": max(allv) / min(allv), "band": band,
+                                     "k": k, "q": q, "jump": jump, "err": err,
+                                     "splice": [cur["splice"][n] for n in VR_N]})
+        rows.sort(key=lambda r: r["score"])
+        out[feed] = rows[:6]
+        pub_flat = (max(PUBLISHED_VR[feed]["all"].values())
+                    / min(PUBLISHED_VR[feed]["all"].values()))
+        print(f"\n     {feed}: published flatness {pub_flat:.3f}")
+        print(f"     {'band':>5s} {'k':>5s} {'q':>4s} {'J':>5s} {'MAE':>7s} {'flat':>6s} "
+              + " ".join(f"{'n=' + str(n):>8s}" for n in VR_N))
+        print(f"     {'PUB':>5s} {'':5s} {'':4s} {'':5s} {'':7s} {pub_flat:6.3f} "
+              + " ".join(f"{tgt[n]:8.3f}" for n in VR_N))
+        for r in rows[:3]:
+            print(f"     {r['band']:5d} {r['k']:5.2f} {r['q']:4.0f} {r['jump']:5.0f} "
+                  f"{r['mae']:7.4f} {r['flat']:6.3f} "
+                  + " ".join(f"{v:8.3f}" for v in r["splice"]))
+    return out
+
+
 def main() -> None:
     rng = np.random.default_rng(4242)
     ledger: list[dict] = []
@@ -590,6 +647,9 @@ def main() -> None:
     payload["shared_band"] = json.loads(json.dumps(shared, default=float))
     payload["quiet"] = json.loads(json.dumps(
         quiet_rerange_study(pub_bars, SEEDS[0], shared["best"]), default=float))
+    payload["soft_edge"] = json.loads(json.dumps(
+        soft_edge_study(int(os.environ.get("SOFT_BARS", "40000")), SEEDS[0]),
+        default=float))
 
     print("\n[1] STEP INDEX - the feed, and the four numbers the rebuild is given")
     rb = G.real_bars("step_index")

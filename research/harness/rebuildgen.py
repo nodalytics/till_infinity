@@ -344,6 +344,55 @@ def gen_rangebreak(n_ticks: int, step: float, band: int, mean_break_ticks: float
             off = 0 if sign > 0 else band
 
 
+def gen_softbox(n_ticks: int, step: float, band: int, mean_break_ticks: float,
+                break_jump: float, p0: float, rng, k: float = 0.25, q: float = 4.0,
+                batch: int = 200):
+    """Range Break with a *soft* edge instead of a reflecting wall.
+
+    The walk still moves exactly one step a tick - anything additive would
+    destroy the 99.98% concentration on one magnitude that `generators.md`
+    measured - but its up-probability is pushed back towards the centre by
+
+        p_up(x) = 0.5 - k * (|x| / half) ** q * sign(x)
+
+    which is a reflecting box as `q -> inf` and a harmonic well at `q = 1`. The
+    bias is state-dependent so the folding trick does not apply and the walk has
+    to be stepped; it is stepped for `batch` independent range interiors at once,
+    which turns a loop over fifty million ticks into a loop over one range's
+    length with a vector inside it.
+
+    This exists to test one reading of the residual `rebuildstep.py` is left
+    with - too confined at one minute, too free at twenty, which is what a hard
+    wall looks like against something smoother. It is a candidate, not the
+    specification.
+    """
+    half = band / 2.0
+    price = round(p0 / step)
+    emitted = 0
+    tmax = int(6 * mean_break_ticks)
+    while emitted < n_ticks:
+        sign = 1 if rng.random() < 0.5 else -1
+        x = np.full(batch, -sign * half)
+        paths = np.empty((batch, tmax), dtype=np.int64)
+        for t in range(tmax):
+            u = np.minimum(np.abs(x) / half, 1.0) ** q
+            pr = 0.5 - k * u * np.sign(x)
+            x = x + np.where(rng.random(batch) < pr, 1.0, -1.0)
+            paths[:, t] = x
+        for i in range(batch):
+            seg = min(int(rng.exponential(mean_break_ticks)) + 1, tmax,
+                      n_ticks - emitted)
+            if seg <= 0:
+                break
+            piece = price + paths[i, :seg]
+            yield piece * step
+            emitted += seg
+            if emitted >= n_ticks:
+                return
+            jsign = 1 if rng.random() < 0.5 else -1
+            price = int(piece[-1]) + jsign * round(break_jump)
+
+
 def gen_boomcrash(n_ticks: int, lam: float, grind_mean: float, grind_cv: float,
                   jump_mean: float, jump_median: float, side: int, p0: float,
                   grid: float, rng, grind_pool=None, jump_pool=None,
