@@ -8084,3 +8084,43 @@ def test_a_speeds_built_normally_still_uses_its_own_warmup():
     loose = Speeds(warmup=10.0)
     loose._seen["gold"] = 50
     assert loose.ready("gold") is True
+
+
+async def test_an_unattributed_close_still_records_what_it_knows():
+    """**43% of one day's closes reached the journal carrying almost nothing.**
+
+    45 of 104 on 2026-09-11 - including a gold trade that made +$32.82 at
+    +8.40R, which the alert reported and the journal did not. The observation
+    branch had the `Live` in its hand the whole time: entry, stop, the tracked
+    extremes, everything the attributed branch writes except the parent
+    decision.
+
+    Losing the *link* is unavoidable when a position outlives the ref. Losing
+    the *arithmetic* was a choice nobody made on purpose, and it biased every
+    figure taken from the journal - what goes missing is exactly the trades that
+    lived long enough to span a deploy."""
+    made = settings()
+    trader = Trader(Bus(), settings=made, journal=None)
+    intent = _intent()
+
+    live = mock.Mock()
+    live.intent = intent
+    live.ref = ""  # no decision on record: this is the unattributed case
+    live.by = "sweep-aware"
+    live.position = mock.Mock(
+        ticket=5772381834,
+        symbol="XAUUSD",
+        magic=777707,
+        age=1000.0,
+        profit=32.82,
+        price_open=intent.entry,
+    )
+
+    got = trader._unattributed_context(live, price=intent.target or intent.entry, why="closed")
+
+    # The arithmetic the attributed branch records, on a close with no parent.
+    for key in ("r_multiple", "best_r", "adverse_r", "entry_wanted", "entry_filled", "exit_kind"):
+        assert key in got, key
+    assert got["unattributed"] == 1.0, "still flagged, so the two are separable"
+    assert got["strategy"] == "sweep-aware"
+    assert got["ticket"] == 5772381834

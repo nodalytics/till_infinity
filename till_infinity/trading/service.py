@@ -3829,6 +3829,55 @@ class Trader:
                 self._bank_due.discard(ticket)
         return settled
 
+    def _unattributed_context(self, live: Live, price: float, why: str) -> dict[str, Any]:
+        """What a close knows about itself when no decision is on record.
+
+        **43% of one day's closes reached the journal carrying almost nothing.**
+        45 of 104 on 2026-09-11, including a gold trade that made +32.82 at
+        **+8.40R** - a number the alert computed and the journal did not hold.
+
+        Losing the *link* is unavoidable: a position that outlives its `_refs`
+        entry has no parent, and `journal.outcome` refuses a parentless entry on
+        purpose. Losing the *arithmetic* was not. Everything below is already in
+        hand at this point - the intent's entry and stop, the extremes the
+        trailing rules have been tracking all along - and the branch was
+        throwing it away.
+
+        The bias is the reason it matters. What goes missing is exactly the
+        trades that lived long enough to span a deploy, so every figure taken
+        from `kind='outcome'` was computed on a set over-representing short
+        ones: `research/instruments.md`, `research/giveback.md`'s 27%-kept
+        figure, and the live fingerprints in the cross-check spec.
+
+        `unattributed` stays on the record, so the two populations remain
+        separable rather than being quietly merged.
+        """
+        position = live.position
+        profit = position.profit
+        return {
+            "feed": live.intent.feed,
+            "symbol": position.symbol,
+            "ticket": position.ticket,
+            "magic": position.magic,
+            "exit": price,
+            "profit": round(profit, 2),
+            "seconds": round(position.age),
+            "reason": why,
+            "exit_source": "last seen" if why == "gone" else "broker",
+            "exit_kind": _exit_kind(live, price),
+            "strategy": live.by,
+            "side": str(getattr(live.intent.side, "value", live.intent.side)),
+            "entry": round(live.intent.entry, 8),
+            "stop": round(live.intent.stop, 8),
+            "target": round(live.intent.target, 8) if live.intent.target else 0.0,
+            "r_multiple": _r_multiple(live.intent, price),
+            "best_r": round(self._reach(live), 3),
+            "adverse_r": round(self._heat(live), 3),
+            "entry_wanted": round(live.intent.entry, 8),
+            "entry_filled": round(position.price_open, 8),
+            "unattributed": 1.0,
+        }
+
     async def _settle(
         self, live: Live, price: float, why: str, profit: float | None = None
     ) -> None:
@@ -3885,18 +3934,7 @@ class Trader:
                     "which is what happens to anything that outlives a restart."
                 ),
                 actor="trading",
-                context={
-                    "feed": live.intent.feed,
-                    "symbol": position.symbol,
-                    "ticket": position.ticket,
-                    "exit": price,
-                    "profit": round(profit, 2),
-                    "seconds": round(position.age),
-                    "reason": why,
-                    "exit_kind": _exit_kind(live, price),
-                    "strategy": live.by,
-                    "unattributed": 1.0,
-                },
+                context=self._unattributed_context(live, price, why),
                 tags=(live.intent.feed, "close", "unattributed"),
             )
         if live.ref:

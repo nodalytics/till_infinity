@@ -129,6 +129,22 @@ asking for the number rather than the story.
 
 # 2026-09-11: the field works now, and here is what it says
 
+> **Caveat added the same day, and it is not small.** Every figure below is
+> computed on journal `outcome` entries, and **43% of that day's closes never
+> became one**: 45 of 104, recorded as `unattributed` observations carrying no
+> `r_multiple` and no `best_r`, because the position outlived the `_refs` entry
+> linking it to its decision.
+>
+> The loss is **not random**. Measured on 2026-09-11, unattributed closes were
+> held a median **1,683 seconds against 493** for attributed ones, and 49% of
+> them exceeded 1,800s against 17%. What goes missing is exactly the trades that
+> lived long enough to span a deploy - which is the same population this section
+> is about, since 38 of 47 `sweep-aware` closes ended on the hold timeout.
+>
+> So the give-back is real and the *size* of it is measured on the short half.
+> `Trader._unattributed_context` now records the arithmetic on parentless closes,
+> so a re-run after a few days of data will say by how much this was wrong.
+
 Reported from watching the terminal again: *"the last GBPJPY trade went up to
 $60+ but we only banked $17 and even still ended with a loss"*.
 
