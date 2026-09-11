@@ -236,6 +236,16 @@ TIMEFRAMES: tuple[str, ...] = confluence.TIMEFRAMES
 DEFAULT_TRADING_DIR = ".data/trading"
 DEFAULT_API_PATH = "/api/v1"
 
+#: Stop overshoot that applies with no configuration at all - see the
+#: `Settings.stop_overshoot` note for the measurement and for why 2.0 is a floor
+#: rather than the answer. Boom spikes up, so its gapped stop is a sell's; Crash
+#: spikes down, so it is a buy's.
+DEFAULT_STOP_OVERSHOOT: tuple[tuple[str, float], ...] = tuple(
+    (f"{family}_{size}_index.{side}", 2.0)
+    for family, side in (("boom", "sell"), ("crash", "buy"))
+    for size in (300, 500, 1000)
+)
+
 #: Stamped on every position this system opens, so `positions` and the panic
 #: close can be filtered to *ours*. Any stable non-zero number would do; what
 #: matters is that a hand-placed trade on the same terminal is never touched by
@@ -371,7 +381,16 @@ def _overshoot(raw: str) -> tuple[tuple[str, float], ...]:
 
     A malformed pair is dropped rather than raised on: this is a sizing
     reduction, and a typo in it should cost the correction, not the desk.
+
+    `none` turns the correction off entirely, and exists so that "unset" and
+    "deliberately empty" are different instructions. Without it an unset
+    variable would have to mean no scaling, which would silently discard
+    `DEFAULT_STOP_OVERSHOOT` - the exact drift `DEFAULT_FORMATION` was named to
+    stop, where a field default and its environment fallback disagreed and the
+    deployment got whichever one `from_env` happened to say.
     """
+    if raw.strip().lower() in ("none", "off"):
+        return (("", 0.0),)
     out: list[tuple[str, float]] = []
     for part in raw.split(","):
         name, _, value = part.partition("=")
@@ -718,10 +737,41 @@ class Settings:
     #: about the signal. The others read the market or the book; this reads the
     #: gap between the price this system chose and the price the broker got.
     #:
+    #: **Revised 2026-09-11: the spike side of Boom and Crash defaults on.**
+    #: A replay over 84,701 ticks puts the realised loss on a stop that can only
+    #: be gapped over at, for `boom_500` short:
+    #:
+    #: | stop width (spreads) | realised loss | factor |
+    #: | --- | --- | --- |
+    #: | 5 | -14.96R | 15.0 |
+    #: | 10 | -7.81R | 7.8 |
+    #: | 25 | -3.44R | 3.4 |
+    #: | 50 | -2.02R | 2.0 |
+    #:
+    #: and 93-98% of stopped trades slipping past half an R. That is the shape
+    #: that ends an account rather than the shape that costs it a quarter, and
+    #: an empty default is the claim that no instrument overshoots - which this
+    #: measurement contradicts. `by_slippage` never enlarges, so a default here
+    #: can only reduce size; it cannot do harm by being present.
+    #:
+    #: **2.0 is the floor of that table, not the right number.** The multiple
+    #: depends on the stop width in use and the table is monotone in it, so 2.0
+    #: is the one value that is never an over-correction at any width measured
+    #: and is 7.5x too small at five spreads. A deployment that actually trades
+    #: these should set `TRADING_STOP_OVERSHOOT` from the row matching its own
+    #: stop width - `research/generators.md` gives the rate to compute any row.
+    #: Encoding the sizing rule properly means reading the stop distance at size
+    #: time rather than a static table, which `overshoot_for` cannot do.
+    #:
+    #: Keyed by side because the two sides are not the same trade: Boom drifts
+    #: down and spikes up, so a **sell** has the gapped stop; Crash is the
+    #: mirror, so a **buy** does. The grind side measured +0.02R and is left
+    #: unscaled.
+    #:
     #: Held as pairs rather than a dict because `Settings` is slotted and
     #: frozen in spirit - a mapping default is a mutable shared between every
     #: instance that ever forgets to pass one.
-    stop_overshoot: tuple[tuple[str, float], ...] = ()
+    stop_overshoot: tuple[tuple[str, float], ...] = DEFAULT_STOP_OVERSHOOT
 
     #: Risk multiplier per entry timeframe, as `interval=weight` pairs.
     #: Anything unlisted sizes at full. See `scaling.by_interval` for the
@@ -1564,7 +1614,11 @@ class Settings:
             regime_floor=_float("TRADING_REGIME_FLOOR", 0.5),
             edge_full_at=_float("TRADING_EDGE_FULL_AT", 0.0),
             drawdown_halt_at=_float("TRADING_DRAWDOWN_HALT_AT", 0.0),
-            stop_overshoot=_overshoot(_env("TRADING_STOP_OVERSHOOT")),
+            # `or` the default, like `formation` above: an unset variable means
+            # "whatever was measured", not "no correction". `none` is how a
+            # deployment says no correction and get an empty table.
+            stop_overshoot=_overshoot(_env("TRADING_STOP_OVERSHOOT"))
+            or DEFAULT_STOP_OVERSHOOT,
             interval_weight=_overshoot(_env("TRADING_INTERVAL_WEIGHT")),
             hold_extends_at=_float("TRADING_HOLD_EXTENDS_AT", 0.0),
             max_hold_multiple=_float("TRADING_MAX_HOLD_MULTIPLE", 4.0),

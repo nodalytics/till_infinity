@@ -1258,3 +1258,44 @@ def test_a_quiet_book_is_not_reported_as_a_fault():
     from till_infinity.trading import service
 
     assert "if looked and not moved:" in inspect.getsource(service.Trader._manage)
+
+
+def test_the_measured_overshoot_applies_with_no_configuration():
+    """An empty default is the claim that no instrument overshoots.
+
+    A replay over 84,701 ticks says the spike side of Boom and Crash realises
+    2.0x its planned loss at a fifty-spread stop and 15.0x at five, with 93-98%
+    of stopped trades past half an R. Leaving that to an environment variable
+    means a deployment that forgets it sizes the tail as though it were 1R.
+    """
+    from till_infinity.trading.config import DEFAULT_STOP_OVERSHOOT
+
+    book = DEFAULT_STOP_OVERSHOOT
+    # Boom drifts down and spikes up, so the sell has the stop that gets gapped.
+    assert scaling.overshoot_for(book, "boom_500_index", Side.SELL) == 2.0
+    assert scaling.by_slippage(scaling.overshoot_for(book, "boom_500_index", Side.SELL)) == 0.5
+    # Crash is the mirror.
+    assert scaling.overshoot_for(book, "crash_500_index", Side.BUY) == 2.0
+    # The grind side measured +0.02R and stays unscaled, both families.
+    assert scaling.overshoot_for(book, "boom_500_index", Side.BUY) == 1.0
+    assert scaling.overshoot_for(book, "crash_500_index", Side.SELL) == 1.0
+    # Nothing else is touched.
+    assert scaling.overshoot_for(book, "gold", Side.SELL) == 1.0
+
+
+def test_an_unset_variable_does_not_wipe_the_measured_default(monkeypatch):
+    """`from_env` returning () for an unset variable is the `DEFAULT_FORMATION`
+    drift again: a field default and its environment fallback disagreeing, and
+    the deployment silently getting the weaker one."""
+    from till_infinity.trading.config import DEFAULT_STOP_OVERSHOOT, Settings
+
+    monkeypatch.delenv("TRADING_STOP_OVERSHOOT", raising=False)
+    assert Settings.from_env().stop_overshoot == DEFAULT_STOP_OVERSHOOT
+
+    monkeypatch.setenv("TRADING_STOP_OVERSHOOT", "boom_500_index.sell=12")
+    assert Settings.from_env().stop_overshoot == (("boom_500_index.sell", 12.0),)
+
+    # And there is still a way to say "no correction" on purpose.
+    monkeypatch.setenv("TRADING_STOP_OVERSHOOT", "none")
+    settings = Settings.from_env()
+    assert scaling.overshoot_for(settings.stop_overshoot, "boom_500_index", Side.SELL) == 1.0
