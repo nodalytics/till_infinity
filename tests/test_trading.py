@@ -389,6 +389,62 @@ def test_confluence_scalp_gives_the_stop_more_room():
     assert wider.stop < plain.stop  # a buy: further below the level
 
 
+def test_confluence_scalp_carries_rides_exit():
+    """It reached a mean peak of +1.401R over ten closes and realised -0.357R -
+    the largest give-back on the book - while running no exit policy at all.
+
+    These are the three numbers `ride` was measured to be best with over 31,820
+    replayed touches, and the ones `sweep-aware` already carries."""
+    engine = td.STRATEGIES["confluence-scalp"]
+    assert engine.target_multiple == 6.0
+    assert engine.trail_vol == 0.5
+    assert engine.break_even_at == 1.0
+
+    got = take("confluence-scalp", signal(confluence=["1h", "5m"]))
+    assert isinstance(got, Intent)
+    # The target has to be out where a trail, not a fixed level, ends the trade.
+    plain = take("level-scalp", signal(confluence=["1h", "5m"]))
+    assert got.target > plain.target
+
+
+def test_confluence_scalp_wears_the_sweep_gate():
+    """The presets table's own argument: `level-scalp` and `sweep-aware` are the
+    same point apart from an entry gate, so a gate worth having is worth having
+    here too."""
+    near_pool = signal(
+        confluence=["1h", "5m"],
+        features={"liquidity_beyond_vol": 1.0, "risk_vol": 1.0},
+    )
+    got = take("confluence-scalp", near_pool)
+    assert isinstance(got, Refusal)
+    assert got.gate == "in_front"
+
+    open_ground = signal(
+        confluence=["1h", "5m"],
+        features={"liquidity_beyond_vol": 20.0, "risk_vol": 1.0},
+    )
+    assert isinstance(take("confluence-scalp", open_ground), Intent)
+
+
+def test_the_sweep_gate_judges_each_strategy_own_stop():
+    """`confluence-scalp` stops 1.5x wider, so the same level can be open ground
+    for `sweep-aware` and in front of the pool for this one. That is the gate
+    working on the stop that would actually be placed, not an inconsistency."""
+    from till_infinity.trading.strategies.scalper import ConfluenceScalp, SweepAware
+
+    assert ConfluenceScalp.stop_multiple > SweepAware.stop_multiple
+
+    # Sized so a 1.0x stop clears the pool and a 1.5x one does not.
+    marginal = signal(
+        confluence=["1h", "5m"],
+        features={"liquidity_beyond_vol": 1.45, "risk_vol": 1.0},
+    )
+    assert isinstance(take("sweep-aware", marginal), Intent)
+    refused = take("confluence-scalp", marginal)
+    assert isinstance(refused, Refusal)
+    assert refused.gate == "in_front"
+
+
 # ------------------------------------------------------------ three speeds
 
 

@@ -229,7 +229,10 @@ PRESETS: dict[str, Shape] = {
         floor=4.0,
         reward_floor=1.0,
     ),
-    "confluence-scalp": Shape(stop=1.5, target=1.0, trail=0.0, protect=0.0, hold=0.0, pullback=0.0),
+    # Was the same shape as `level-scalp` with a wider stop, and gave back
+    # 1.758R a trade over ten closes doing it. Now carries `ride`'s exit too,
+    # so the only thing separating it from `sweep-aware` here is that stop.
+    "confluence-scalp": Shape(stop=1.5, target=6.0, trail=0.5, protect=1.0, hold=0.0, pullback=0.0),
     "snap": Shape(stop=1.0, target=1.0, trail=0.75, protect=0.5, hold=120.0, pullback=0.0),
     "fade-to-value": Shape(
         stop=1.0, target=1.0, trail=0.0, protect=0.0, hold=14400.0, pullback=0.0

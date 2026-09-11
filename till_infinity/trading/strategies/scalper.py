@@ -840,6 +840,38 @@ class ConfluenceScalp(LevelStrategy):
     **unvalidated and probably not better than `level-scalp`**. It is kept as a
     named strategy precisely so the journal can settle it rather than having
     the assumption buried as a flag inside the default.
+
+    ## 2026-09-11: ride's exit and sweep-aware's gate
+
+    Turned back on with both, because the live record says its problem is not
+    what it enters - it is what it does afterwards. Over ten closes it reached a
+    mean high-water mark of **+1.401R** and realised **-0.357R**: it gave back
+    **1.758R a trade**, the largest give-back of any strategy on the book, and
+    lost 92 units doing it.
+
+    A strategy that is right about direction often enough to average +1.4R of
+    open profit and still loses money has an exit problem, and this one had no
+    exit policy at all - a fixed target at one push, no trail, no protection.
+    `Ride`'s exit was measured over 31,820 replayed touches as the best of six.
+
+    **And unlike `sweep-aware`, its break-even can actually engage.** That
+    matters more than it sounds: `sweep-aware` protects at 1.0R and its median
+    trade peaks at 0.445R, so the rule fires on 11% of its trades and the other
+    89% ride to the hold timeout giving back whatever they made - one
+    `break even` line against 104 `trailing` lines in a day of logs. This
+    strategy's mean peak is 1.401R, which is the regime those numbers were
+    chosen for.
+
+    The sweep gate comes too, on the argument the presets table makes: it and
+    `level-scalp` are the same point apart from an entry gate, so if the gate is
+    worth having it is worth having here. Its wider stop makes the gate bite
+    harder - `stop_multiple` 1.5 against sweep-aware's 1.0 - which is the gate
+    doing its job rather than a setting that needs matching.
+
+    **All of this is a repair, not a claim that the strategy works.** The
+    breadth premise is still what strength.md refuses to support, and ten closes
+    cannot settle an exit policy. What it can do is stop the record being about
+    a question nobody asked.
     """
 
     name: ClassVar[str] = "confluence-scalp"
@@ -853,11 +885,24 @@ class ConfluenceScalp(LevelStrategy):
     needs_context: ClassVar[bool] = True
     stop_multiple: ClassVar[float] = 1.5
 
+    #: `ride`'s exit, the same three numbers `sweep-aware` carries. Six times
+    #: the modelled push is past the p99 of what touches reach, so it bounds
+    #: the trade without being what normally ends it; half a volatility unit
+    #: was the best trail of the six measured; and the trade protects itself
+    #: once it has paid for its own risk.
+    target_multiple: ClassVar[float] = 6.0
+    trail_vol: ClassVar[float] = 0.5
+    break_even_at: ClassVar[float] = 1.0
+
     # The requirement is `needs_context`, applied by `LevelStrategy.consider`
     # for every strategy that sets it. It used to live here as a bespoke check
     # against any other timeframe at all, which is a different and weaker
     # claim: a 1m call confirmed by 3m is not "confirmed by a higher
     # timeframe", it is the same fast noise seen twice.
+
+    def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
+        """`sweep-aware`'s gate, judged against *this* strategy's wider stop."""
+        return sweep_gate(self, payload, features)
 
 
 @register
@@ -1111,6 +1156,58 @@ class Inverse(LevelStrategy):
         return side.opposite
 
 
+def sweep_gate(
+    strategy: Any, payload: dict[str, Any], features: dict[str, float]
+) -> Refusal | None:
+    """`sweep-aware`'s entry gate, as something any level strategy can wear.
+
+    Lifted out of `SweepAware.accept` when `confluence-scalp` was given the same
+    gate, so the two cannot drift apart. `stop_multiple` is read off the
+    strategy rather than assumed, which matters: `confluence-scalp` stops 1.5x
+    wider than `sweep-aware`, so the same level can stand in open ground for one
+    and in front of the pool for the other. That is the gate working, not an
+    inconsistency - what it judges is where *this* strategy's stop would sit.
+
+    Two pieces of evidence, both from `structures.sweeps`:
+
+    * `sweep_rate` - the share of this level's decisive interactions, from this
+      side, that were price through and back.
+    * `liquidity_beyond_vol` - how far to the next level out, on the side a
+      sweep would travel.
+
+    Replayed over 54,873 calls it refuses 12,617 as `in_front` and 389 as
+    `swept_often`, so it is overwhelmingly the geometry doing the work and not
+    the level's own history.
+    """
+    feed = str(payload.get("feed") or "")
+    settings = strategy.settings
+
+    swept = _number(features, "sweep_rate")
+    swept_n = _number(features, "sweep_n")
+    if swept_n >= settings.sweep_min_history and swept >= settings.sweep_max_rate:
+        return Refusal(
+            "swept_often",
+            f"this level has been run {swept:.0%} of {swept_n:.0f} decisive "
+            f"interactions from this side",
+            feed,
+        )
+
+    beyond = _number(features, "liquidity_beyond_vol")
+    if beyond <= 0:
+        return None  # nothing within reach to be run toward
+
+    risk_vol = abs(_number(features, "risk_vol")) * strategy.stop_multiple
+    exposure = risk_vol / beyond
+    if exposure >= settings.sweep_max_exposure:
+        return Refusal(
+            "in_front",
+            f"a {risk_vol:.2f}v stop reaches {exposure:.0%} of the way to "
+            f"liquidity {beyond:.2f}v beyond",
+            feed,
+        )
+    return None
+
+
 @register
 class SweepAware(LevelStrategy):
     """The plain call, refused when the stop is standing in front of the door.
@@ -1198,30 +1295,4 @@ class SweepAware(LevelStrategy):
     break_even_at: ClassVar[float] = 1.0
 
     def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
-        feed = str(payload.get("feed") or "")
-        settings = self.settings
-
-        swept = _number(features, "sweep_rate")
-        swept_n = _number(features, "sweep_n")
-        if swept_n >= settings.sweep_min_history and swept >= settings.sweep_max_rate:
-            return Refusal(
-                "swept_often",
-                f"this level has been run {swept:.0%} of {swept_n:.0f} decisive "
-                f"interactions from this side",
-                feed,
-            )
-
-        beyond = _number(features, "liquidity_beyond_vol")
-        if beyond <= 0:
-            return None  # nothing within reach to be run toward
-
-        risk_vol = abs(_number(features, "risk_vol")) * self.stop_multiple
-        exposure = risk_vol / beyond
-        if exposure >= settings.sweep_max_exposure:
-            return Refusal(
-                "in_front",
-                f"a {risk_vol:.2f}v stop reaches {exposure:.0%} of the way to "
-                f"liquidity {beyond:.2f}v beyond",
-                feed,
-            )
-        return None
+        return sweep_gate(self, payload, features)
