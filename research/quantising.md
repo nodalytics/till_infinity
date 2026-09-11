@@ -461,13 +461,24 @@ same thing about the ladder at 4.2 standard deviations from the box, but its kne
 (-0.67) sits toward the free walk and its width has not converged, so on RB200
 only the negative half is reportable.
 
+**One reading does not fit, and it is the density.** RB100's kurtosis of -0.322
+sits *between* the simulated box and the simulated spring, which is a wall
+somewhere in the middle; the ladder puts the wall at or below the spring. Those
+two are not the same answer. The ladder has the tighter calibration and the
+density is the cruder statistic - a 4,096-tick window cannot see the whole
+stationary law, which is why the simulated box returns -0.894 rather than the
+uniform's -1.200 - so the ladder is the one reported. But a soft-wall model fitted
+to this instrument should be checked against both, and the honest summary is that
+the two agree on "not a box" and disagree on how far past the spring to go.
+
 **And `step_index` is still the control that makes all of this legible.** It
 returns `l2/l1 = 3.751` on one 86,393-tick episode - a provable fair coin
 returning very nearly the box's ladder, because with one long episode the window
-*is* the box. The same estimator on the same feed cut into 20 episodes returns
-2.183 for a simulated free walk. **The free walk's apparent ladder is a function
-of the episode length, which is exactly why the calibration has to be run at the
-feed's own episode length and why a ratio quoted without one is worthless.**
+*is* the box. The identical estimator on a *simulated* free walk cut into 20
+episodes of RB100's length returns 2.183. **The free walk's apparent ladder is a
+function of the episode length, which is exactly why the calibration has to be
+run at the feed's own episode length and why a ratio quoted without one is
+worthless.**
 **Ledger: three of ten fired, and the third is the section's result.**
 
 Condition 1 fired - the estimator does not recover 4 and 2 at the real sample
