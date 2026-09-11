@@ -691,6 +691,162 @@ of distinct values; run anyway they reported z = -334 and z = +120 on *every*
 stream including numpy's own. A test that fails its own positive control is not a
 finding.
 
+### Can the next tick be predicted before it prints - five rungs, and what each one had the power to say
+
+Not its distribution, which is settled above, but its **value**. This is the last
+route by which the generated 72% of this book could ever pay, and the prior is
+strongly that it closes negative: Deriv is regulated, audits its generator, and a
+cryptographic source is unpredictable from its outputs by construction. So the
+job is to write that null *well*, with the sample named, and to separate "we
+found nothing" from "we could not have found anything".
+[`rebuildpredict.py`](harness/rebuildpredict.py) is five rungs in increasing
+ambition. **All five close negative. Two of them close negative with no power,
+and saying which is the point of the section.**
+
+**Rung 0, the budget, which decides what is possible at all.** A discretised
+variate of standard deviation `s` lattice units carries about
+`log2(s sqrt(2 pi e))` bits. Per tick:
+
+| feed | sd in lattice units | **bits a tick** | ticks for a 48-bit LCG | 32-bit word? |
+| --- | --- | --- | --- | --- |
+| volatility_25_1s_index | 3,676 | **13.89** | 3.5 | no |
+| volatility_50_1s_index | 2,015 | 13.02 | 3.7 | no |
+| volatility_75_index | 893 | 11.85 | 4.1 | no |
+| jump_50_index | 1,555 | 12.65 | 3.8 | no |
+| boom_1000_index | 1,215 | 12.29 | 3.9 | no |
+| range_break_100_index | 1.93 | **3.00** | 16.0 | no |
+| step_index | 1.00 | **2.05** | 23.4 | no |
+
+**Rung 2 is impossible on this data and is reported as untested rather than as a
+pass.** Untempering MT19937 needs 624 consecutive *whole 32-bit words*; the
+richest feed here shows 13.89 bits a tick. No amount of collection fixes that -
+the quote grid throws the bits away before we see them - so a Mersenne Twister
+behind these feeds would be invisible to this attack and that is arithmetic
+rather than a result.
+
+**Rung 1: k-tuple lattice structure, and its own control says it is weak.** The
+empirical spectral test at k = 2, 3, 4 over 26 feeds. Nothing anywhere: the
+largest ratio on any real feed is **2.28** (`range_break_100_index`, k = 4)
+against numpy's PCG64 at 1.54 / 1.84 / 2.05 and a 3x bar. RANDU reads **2,910**
+in three dimensions, so the test has resolution.
+
+But a second control retires the claim this page previously made for it. **A
+48-bit LCG truncated to its top ten bits - which is the realistic hypothesis -
+reads 2.84 against PCG64's 1.54, inside the 3x bar.** Rung 1 catches a grossly
+broken generator and misses a plausibly broken one. A clean rung 1 therefore does
+**not** exclude the family rung 3 attacks, which is why rung 3 was run rather than
+argued away.
+
+**Rung 3: truncated-LCG recovery by lattice reduction, run rather than argued.**
+LLL plus Babai nearest-plane against a catalogue of nine published parameter
+sets. Two things make it mean something. The observed word is read off the
+**exact** interval the quote pins the uniform to -
+`Phi((k-0.5)g/s)` to `Phi((k+0.5)g/s)` - and a tick whose interval straddles a
+bit boundary is discarded rather than guessed; a rank transform recovers a uniform
+only to `O(1/sqrt(n))` and its leading bits are then wrong often enough to fail
+the positive control, which would have been read as a clean feed. And the control
+is run **per parameter set**, because the reduction's precision decides which
+moduli are attackable at all.
+
+| parameter set | modulus | outputs needed | **positive control recovered** |
+| --- | --- | --- | --- |
+| java.util.Random | 2^48 | 8 | **yes** |
+| MMIX (Knuth) | 2^64 | 10 | **yes** (extended precision; double fails) |
+| Numerical Recipes, Borland, MSVC | 2^32 | 6 | **yes** |
+| glibc TYPE_0, MINSTD x2, RANDU | 2^31 | 6 | **yes** |
+
+**Nine of nine parameter sets are recoverable from eight observed bits, and none
+of them recovers a real feed.** Forty consecutive-valid windows per feed per
+parameter set, on the three Volatility feeds carrying ten or more bits a tick:
+`volatility_75_index`, `volatility_25_1s_index`, `volatility_50_1s_index`. **0
+recoveries of 1,080 attempts.** The scope is exactly nine named generators and
+one sampling convention: the attack assumes the venue draws **one** uniform a
+tick and maps it through the inverse normal, and Box-Muller or a ziggurat breaks
+that map. So this excludes nine published LCGs behind an inverse-CDF sampler, and
+nothing wider.
+
+**Rung 4: the joint stream, where the interesting thing is the control.**
+`twins.md` found all sixteen synthetics publishing on one clock to within 9ms, so
+if one generator serves them all, consecutive draws appear as *different feeds at
+the same slot* and a cross-feed tuple is a k-tuple of that stream. Fifteen feeds
+aligned on 46,757 common one-second slots.
+
+* pairwise correlation of uniformised increments at the same slot: largest
+  `|r| = 0.01095`, **0 of 105 pairs** outside `+-4/sqrt(n)`;
+* cross-feed tuples read as one stream: lattice ratio 1.43 / 1.80 / 1.93 against
+  PCG64's 1.54 / 1.84 / 2.05 - **below the control on all three**;
+* two-dimensional grid chi-square: `p = 6.8e-64` on
+  (`volatility_75_1s_index`, `volatility_100_1s_index`), and a sign contingency
+  `p = 1.3e-31` on the two Range Breaks. **Both fire by an enormous margin.**
+
+And both are the clock. Only 46,757 of 86,400 one-second slots survive an
+intersection over fifteen feeds, so **46% of these aligned increments are sums of
+two or more real increments - and which ones is shared by every feed, because the
+mask is the intersection.** Run the identical two tests on **fifteen independent
+PCG64 rebuilds sampled on the same slot lattice** and they report `p = 1.8e-65`
+and `p = 6.0e-55`: *more* extreme than the feed, from fifteen generators with no
+shared state whatever. `twins.md` measured the same artefact as a faked +0.19 in
+`|return|` on a fixed grid; this is it again, at 64 decimal places. The
+cross-feed result is a null and the p-value is a property of the mask.
+
+**Rung 5: held-out forward prediction, and a control that changes two verdicts.**
+Fit on the first 60% of the sample in *time*, predict the sign of the next tick
+on the last 40%. (The first version of this harness split by interleaved blocks
+of row index, which puts a test row between two training rows minutes away; it
+read 0.4938 with an interval excluding 0.5, and that was the leak.)
+
+| target | features | n | AUC | 95% CI | verdict |
+| --- | --- | --- | --- | --- | --- |
+| volatility_75_1s_index | own last 8 | 85,972 | 0.5043 | [0.4978, 0.5095] | null |
+| *the same, PCG64 rebuild* | | 85,976 | *0.5003* | *[0.4945, 0.5068]* | |
+| step_index | own last 8 | 86,384 | **0.5059** | [0.5001, 0.5119] | *excludes 0.5* |
+| *the same, PCG64 rebuild* | | 199,991 | *0.5029* | *[0.4990, 0.5067]* | **same as rebuild** |
+| range_break_100_index | own last 8 | 86,391 | **0.5161** | [0.5095, 0.5217] | *excludes 0.5* |
+| *the same, PCG64 rebuild* | | 199,991 | *0.5162* | *[0.5123, 0.5200]* | **same as rebuild** |
+| volatility_10_1s_index | all 15 feeds, same slot | 46,756 | 0.4956 | [0.4862, 0.5046] | null |
+| **CONTROL: truncated LCG** | own last 8 | 299,991 | **0.4998** | [0.4965, 0.5032] | **missed** |
+
+Two feeds have next-tick sign AUCs whose intervals exclude 0.5, and **neither is
+about the generator**. Range Break is a bounded walk and a bounded walk
+mean-reverts, so its next tick is partly predictable from its own past by
+construction - the published mechanism, not a leak - and a PCG64-driven rebuild
+of the same box scores **0.5162 against the feed's 0.5161**, agreeing to one part
+in ten thousand. Step Index's 0.5059 against its rebuild's 0.5029 is the same
+story an order of magnitude smaller. Without this control the first version of
+this section reported the Range Break number as though it said something.
+
+**And the last row is the power statement.** A feed synthesised from a
+48-bit LCG - a generator that rung 3 breaks completely, in eight ticks, every
+time - is predicted by this classifier at **0.4998 [0.4965, 0.5032]**. The
+forward test **could not have found an LCG if one were there.** A gradient-boosted
+ensemble on eight lagged increments is not an instrument for recovering modular
+arithmetic, and its null is therefore evidence about *tradeable smooth
+structure* - which is what a desk would exploit - and no evidence at all about
+the soundness of the source.
+
+**What this closes, and at what strength.**
+
+| rung | verdict | had the power? |
+| --- | --- | --- |
+| 1, k-tuple lattice | null, largest ratio 2.28 against a 3x bar | **partly** - catches RANDU at 2,910x, **misses a truncated LCG at 2.84** |
+| 2, MT19937 untempering | **untested** | **no** - needs 32-bit words, the richest feed shows 13.89 bits |
+| 3, truncated-LCG lattice recovery | null, **0 of 1,080** attempts | **yes** - 9 of 9 positive controls recovered |
+| 4, joint sixteen-feed stream | null; the two firings are the shared slot mask | **yes** - independent rebuilds on the same mask fire harder |
+| 5, held-out forward prediction | null; two AUCs past 0.5 are both matched by a PCG64 rebuild | **for smooth structure yes, for an RNG no** - the LCG control reads 0.4998 |
+
+So: **nothing in this battery predicts the next tick, the one route that had real
+power against a broken generator found nothing in 1,080 attempts, and the route
+with the most commercial relevance has no power against an RNG at all.** The
+generated half of the book does not pay by prediction. That was the prior and it
+is now a measurement with its scope written down.
+
+One thing this section deliberately does not do. If a rung had bitten it would be
+a finding about the product and about counterparty risk, not a trading rule:
+every set of terms permits voiding trades made against a defective generator, a
+venue whose generator is predictable will discover it, and a position built on
+one is not bankable. The write-up would be the deliverable and the decision the
+desk's.
+
 ### A hundred and three published numbers, regenerated from the parameters alone
 
 [`rebuildpaper.py`](harness/rebuildpaper.py) is the whole of what can be done
