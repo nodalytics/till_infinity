@@ -336,9 +336,9 @@ drops the remainder inside each episode, so a short episode contributes no
 windows at the long lengths and costs nothing; and the ladder - the statistic
 that answers box against spring - runs at a lag of **60 ticks** and needs an
 episode two orders of magnitude shorter. **The filter was sized by the least
-important statistic and applied to all of them.** RB100 breaks about every 5,190
-ticks, so a threshold of 8,192 kept the tail of a geometric draw and nothing
-else.
+important statistic and applied to all of them.** RB100 breaks **every 4,320
+ticks** in the stored day, so a threshold of 8,192 kept the tail of a geometric
+draw and nothing else.
 
 Relaxing it to four lags keeps **20 episodes and 86,376 ticks on RB100** against
 2 and 32,688, and **6 and 86,225 on RB200** against 3 and 81,171. The same
@@ -518,13 +518,13 @@ residual is a **shape error in the relaxation** and not a missing timescale.
 
 | | fitted band | **measured band** | `tau_1` at the measured band | 20m in `tau_1` | residual at 20m |
 | --- | --- | --- | --- | --- | --- |
-| RB100 | 60 steps | **37.8** | 4.9 min | **4.10** | +0.047 |
+| RB100 | 60 steps | **37.8** | 4.8 min | **4.14** | +0.047 |
 | RB200 | 60 steps | **> 60** | > 12.2 min | **< 1.64** | +0.024 |
 
 At the *fitted* 60 the relaxation time is 12.2 minutes and twenty minutes is
 1.64 relaxation times on both feeds, which is how both pages arrived at the same
 1.6 from different evidence. At the measured widths RB100 is at 4.1 relaxation
-times and RB200 is at most 1.64 - still of order one on both, so the residual
+times and RB200 is at most 1.6 - still of order one on both, so the residual
 still sits on the box's own clock, but the two feeds are not at the same point on
 it. That is the same disagreement as the width, seen in the time domain.
 
@@ -796,56 +796,108 @@ empirical propagator, which needs tick data, which needs the lab.
 
 ## What this does not say
 
-* **Nothing here is measured on a Deriv synthetic.** The lab was unreachable
-  throughout. Sections one, two and four are exact evaluations or simulation;
-  section three's real leg is four *real* instruments from the local store.
-  Where [deriving.md](deriving.md)'s measured table appears it is used as
-  published, not re-measured.
 * **The 0.5826 result is a confirmation, not a discovery**, and the page says so
   twice. What is new is that it is a boundary condition, which makes it apply to
-  problems with no closed form.
-* **Section two's ladder is a prediction and not a result.** Its first
-  pre-registered kill condition fired on the estimator, and its third fired on
-  the control, which is why the free-walk result is reported before anything
-  else. The measured leg is one command: `./.secrets/lab.sh run
-  research/harness/quantspec.py`.
-* **Section three's real leg is four feeds and 249 to 453 bars each.** Enough to
-  establish the sign and roughly the size of a 13% effect, not enough to pin it,
-  and the coverage shortfall says the uncertainty model is imperfect even where
-  the mean is good. The synthetics would give 86,411 bars a feed.
+  problems with no closed form. It is still the only section here with no data in
+  it at all.
+* **The ladder's negative half is much stronger than its positive half.** "Not a
+  hard box" is 3.4 and 4.2 standard deviations. "At or below harmonic" is 0.9 and
+  1.9, and the free-walk control covers the measurement on both feeds, so the
+  ladder *on its own* does not even establish confinement - the knee and the
+  AR(1) half-life do that. Anyone quoting `p <= 2` from this page should quote
+  the standard errors with it.
+* **RB200 is six episodes.** Its width has not converged, its knee leans toward
+  the free walk, and its power gate passed by +0.010. The RB100 leg carries this
+  section and the RB200 leg corroborates only the negative half of it.
+* **The tick store is a fixed 24-hour snapshot**, 86,400 ticks a feed. Nothing
+  here waits on more of it any more - the earlier claim that the ladder needed
+  twelve days was an artefact of this harness - but the width on RB200 genuinely
+  does, because seven breaks is seven breaks.
+* **Section three's real-instrument leg is 249 to 453 bars a feed.** The
+  synthetic leg is 5,757 and 698 to 1,440, and the two agree on the sign and
+  roughly the size, which is the most that should be read from either.
 * **The bridge assumes constant volatility inside the bar.** It is estimated from
   the bar's own range, so there is no look-ahead, but a bar containing a
-  volatility burst is mis-specified and the under-coverage is where that shows.
+  volatility burst is mis-specified, the under-coverage is where that shows, and
+  `boom_500` is what it looks like when the assumption fails outright.
 * **None of this earns money by itself.** `E[net] = -(c/2) * turnover` is a
   theorem about any predictable position on a martingale and a change of notation
   does not escape it. The only thing here with a plausible price attached is
   section three, and what it buys is a less wrong measurement rather than an
   edge.
 
+## What is new here, and what is classical results in different notation
+
+Stated plainly, because the whole page is an exercise in borrowed notation and
+the borrowing has to be accounted for.
+
+**Classical results relabelled, and the page says so where it happens:**
+
+* **The 0.5826.** It is the expected overshoot of a Gaussian walk, it is in
+  Broadie-Glasserman-Kou, and three routes here reproduce it. Reproducing a known
+  constant is confirmation. What is not relabelling is the *use*: a correction to
+  two named formulas becomes a boundary condition, and a boundary condition
+  applies to barrier questions nobody has written a closed form for.
+* **The `(O, C)` half of the bar bridge.** Kalman smoother, Brownian bridge and
+  linear interpolation are the same function, checked to `7.1e-15` rather than
+  asserted. Pure notation, and the harness proves it instead of claiming it.
+* **The quote grid as a measurement operator.** Up to `Delta/sigma = 2` the exact
+  posterior and the Kalman smoother agree to 0.22%. Relabelling, reported as
+  such. It stops being relabelling above 2, where it is worth 5 to 15%.
+* **The confinement test.** An AR(1) half-life already answers "is this
+  confined" - 164 ticks against a fair coin's 11,176. The spectral machinery adds
+  nothing to that question and the knee is a more careful version of the same
+  classical idea.
+
+**New descriptions of these instruments, which is what is left:**
+
+* **Range Break is not a hard box.** Its second eigenvalue sits at or below the
+  harmonic value, `p <= 2`, at 3.4 and 4.2 standard deviations from a simulated
+  box run through the identical pipeline. No classical range model makes a
+  statement of this shape, because a mean-reversion fit only ever estimates
+  `lambda_1`. This is the one place where the quantum framing earns its keep on a
+  question the classical control cannot answer: *which* confinement.
+* **RB100's range is about 38 units and RB200's is above 60**, so the two indices
+  do not share a width, and the width saturates with episode length exactly as a
+  box requires while the Brownian control's does not.
+* **`H` and `L` carry about a quarter of the interior variance of a bar, and
+  attainment carries nearly half.** Measured against a true tick path, not
+  inferred. That is a property of OHLC data rather than of any instrument, and it
+  is the part with a price attached.
+* **Where the negativity of the Wigner function comes from.** See the section
+  above: it is the quote lattice, at the Brillouin zone edge, with the parity the
+  tight-binding picture predicts and no fitted parameter. The bound on how far the
+  analogy goes is now stated rather than assumed.
+
 ## What follows
 
-1. **Run the three harnesses on the lab the moment it is reachable.**
-   `./.secrets/lab.sh run research/harness/quantspec.py` settles the Range Break
-   ladder against a prediction two pages now agree on, and
-   `./.secrets/lab.sh run research/harness/quantbridge.py` repeats section three
-   on 86,411 bars a feed instead of 249 to 453. Neither needs a change.
+1. **Collect more Range Break ticks, for the width and not for the ladder.** The
+   ladder is settled at 24 hours. RB200's width is not: seven breaks in the stored
+   day, a scan still climbing at the longest cut, and no plateau. Two weeks of
+   RB200 ticks would settle it, and nothing else here is waiting on data.
 2. **Measure where in the range a break happens**, as a fraction of the range
    width. It is one query, it needs no model, and it decides whether the
    ex-break curve everything here is calibrated against is biased by conditioning
    on survival.
-3. **Replace linear interpolation with the conditioned bridge wherever a replay
-   reads inside a bar.** It removes a quarter of the interior variance for the
-   cost of one forward-backward pass, it beat linear on all four real feeds by 11
-   to 13%, and it is the only thing on this page with a price attached - a less
-   wrong measurement rather than an edge.
-4. **Build the attainment conditioning.** Two extra bits of state, "has the
-   running maximum reached `H`" and the same for `L`, turn the boundary condition
-   into a larger state space and are worth a further 9.88% out of sample. That is
-   as much again as everything section three currently buys.
-5. **Check `Delta/sigma` per feed before trusting any tick statistic.** Below 2
+3. **Replace linear interpolation with the attainment bridge wherever a replay
+   reads inside a bar.** Against a known true path it removes 39% to 48% of the
+   interior variance that linear interpolation leaves, for the cost of one
+   forward-backward pass over four copies of the grid. It is the only thing on
+   this page with a price attached - a less wrong measurement rather than an
+   edge - and the containment version it replaces is now the strictly worse of
+   the two on every feed measured.
+4. **Do not use either bridge on Boom or Crash without the ancilla.** Containment
+   is 2.7% *worse* than linear on `boom_500` ticks, because a bar's high set by a
+   single Poisson spike is a statement about attainment and not about containment.
+5. **Tell `rebuilding.md` to search downward.** Its soft-edge scan covers
+   `p = q + 1` for `q >= 1`, so it searched from the harmonic value upward, and
+   the within-episode spectrum puts the answer at `p <= 2`. The impasse between
+   the ex-break shape and the all-bars flatness will not close by hardening the
+   wall.
+6. **Check `Delta/sigma` per feed before trusting any tick statistic.** Below 2
    the Kalman smoother is the exact posterior and there is nothing to do; above
    it the exact treatment is worth 5 to 15%, and
    [twins.md](twins.md) has already quarantined one feed for exactly this.
-6. **Do not re-open the quantum walk.** H = 0.50 on all twelve Volatility indices
+7. **Do not re-open the quantum walk.** H = 0.50 on all twelve Volatility indices
    excludes ballistic spreading, the measurement is in
    [cascading.md](cascading.md), and it covers the 1s family too.

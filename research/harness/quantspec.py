@@ -693,7 +693,8 @@ TICK_LAG = int(os.environ.get("TICK_LAG", "60"))
 #: carry lagged pairs at 60 ticks. So the filter was sized by the least
 #: important statistic and applied to all of them.
 #:
-#: What it cost: Range Break 100 breaks about every 5,190 ticks, so a threshold
+#: What it cost: Range Break 100 breaks every 4,320 ticks in the stored day (the
+#: bar-resolution rate in `deriving.md` implies 5,190), so a threshold
 #: of 8,192 keeps only the tail of a geometric draw - **2 episodes of about 20 on
 #: RB100 and 3 of 7 on RB200**, and the estimator had no power at that sample.
 #: At `4 * TICK_LAG` nearly every episode survives, and the knee test is *also*
