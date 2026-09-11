@@ -25,14 +25,12 @@ lab. Each states its kill conditions in its docstring before any number, and
 each records - in the same docstring - which conditions were amended during a dry
 run against synthetic data and what forced the amendment.
 
-**The summary line, stated plainly.** The headline this page owes is the sample
-size at which a test starts separating the rebuild from the feed, per family.
-**It is not available for any family**, because it is a two-sample statistic and
-`research.db` is on a machine that has been unreachable since part-way through
-this work. What is available is on this page: 103 comparisons against published
-measurements, a calibrated adversarial discriminator and randomness battery, and
-one new number for Range Break. The `n*` table is one command away and the
-command is written down.
+**The summary line.** The headline this page owes is the sample size at which a
+test starts separating the rebuild from the feed. On one-minute log returns for
+the Volatility family it is **150,000 to 1.4 million bars** - the rebuild and the
+feed are indistinguishable on the 86,410 the store holds, and on nine of twelve
+feeds the rebuild is *closer to the feed than the feed's own two halves are to
+each other*. The rest of the table is below.
 
 ## The parameter budget, which is the whole experiment
 
@@ -217,6 +215,112 @@ generators - which is how the bugs below were found, and which establishes that
 the machinery behaves when the truth is known. It is not a result about Deriv.
 It is one command, [`rebuildall.py`](harness/rebuildall.py), and what each
 possible outcome would mean is written down below before the numbers exist.
+
+### The Volatility family, against the feed
+
+Two numbers per instrument - the volatility in the name and the publication rate
+- simulated as ticks, aggregated into bars, and compared with 86,410 real bars
+and 24 hours of real ticks a feed. Four seeds, ten times the real sample each.
+**189 pre-registered comparisons, 24 fired**, and the failures are concentrated
+rather than scattered.
+
+**Ten of the twelve are reproduced by two numbers.** Realised annualised
+volatility comes out between **0.9996 and 1.0005** of the name against a
+pre-registered band of 0.5%; kurtosis 2.994 to 3.004 against a feed reading
+2.982 to 3.018; the structure-function Hurst exponent 0.4988 to 0.5015; and the
+Parkinson-to-close ratio within **0.00% to 0.28%** of the feed's own, which is
+the sharpest of them because 0.870 and 0.909 are not inputs anywhere. Pooled by
+tick rate the rebuild reads **0.8702** and **0.9057** against the feed's 0.8698
+and 0.9084.
+
+**On bar returns the rebuild is indistinguishable, and by a margin.**
+
+| feed | KS D | 5% critical | n* | D, feed's own halves |
+| --- | --- | --- | --- | --- |
+| volatility_25_index | 0.00161 | 0.00509 | **1.4e6** | 0.00477 |
+| volatility_25_1s_index | 0.00188 | 0.00509 | **1.0e6** | 0.00517 |
+| volatility_50_1s_index | 0.00203 | 0.00509 | **8.9e5** | 0.00493 |
+| volatility_100_1s_index | 0.00220 | 0.00509 | **7.6e5** | 0.00811 |
+| volatility_10_index | 0.00234 | 0.00509 | **6.7e5** | 0.00363 |
+| volatility_75_index | 0.00337 | 0.00509 | **3.3e5** | 0.00536 |
+| volatility_100_index | 0.00433 | 0.00509 | **2.0e5** | 0.00771 |
+| volatility_50_index | 0.00500 | 0.00509 | **1.5e5** | 0.00812 |
+| *volatility_150_1s_index* | *0.01954* | *0.00509* | *9.7e3* | *0.02436* |
+
+Eleven of twelve do not reject, against a pre-registered bar of three. **On nine
+of twelve the rebuild sits closer to the feed than the feed's first thirty days
+sit to its last thirty.** So `n*` for this family is **150,000 to 1.4 million
+one-minute bars**, against the 86,410 that exist - between two and sixteen times
+the whole store.
+
+**On tick returns seven of twelve reject, and the reason is ours.** The failures
+are not scattered across the family; they are a near one-for-one function of how
+many ticks our own collector dropped:
+
+| feed | ticks captured of 86,400 | drop | KS D on tick returns |
+| --- | --- | --- | --- |
+| volatility_25_1s_index | 86,391 | 0.01% | 0.0033 |
+| volatility_50_1s_index | 86,384 | 0.02% | 0.0035 |
+| volatility_75_index | 43,179 | 0.05% | 0.0035 |
+| volatility_25_index | 43,103 | 0.2% | 0.0032 |
+| volatility_75_1s_index | 85,980 | 0.5% | **0.0081** |
+| volatility_10_1s_index | 84,468 | 2.2% | **0.0160** |
+| volatility_100_1s_index | 84,250 | 2.5% | **0.0259** |
+| volatility_100_index | 41,925 | 3.0% | **0.0263** |
+| volatility_250_1s_index | 83,644 | 3.2% | **0.0281** |
+| volatility_150_1s_index | 56,793 | **34.3%** | **0.3699** |
+
+`D` tracks the drop fraction almost exactly - 3% dropped gives 0.026, 34%
+dropped gives 0.37 - and every feed captured to better than half a percent
+passes. A dropped tick merges two increments into one, which fattens the
+tick-return distribution precisely where a KS test looks. This is a property of
+`research.db`'s collection, not of Deriv's generator and not of the rebuild, and
+`twins.md` already quarantined `volatility_150_1s_index` for the same reason.
+The one-minute bars are unaffected because the venue builds them from its own
+complete stream.
+
+**The two coarsely quoted feeds fail, and one of the failures is mine.**
+`volatility_150_1s_index` and `volatility_250_1s_index` are the pair `twins.md`
+flagged for a coarse quote grid, and `volatility_250_1s_index` is quoted at
+`1e-05` on a price of **0.2664**. Simulated for ten times the observed span its
+realised volatility comes out at **341.6 +- 183.2** against a nominal 250 and a
+feed reading 250.75. That is not a defect in the specification: a geometric
+process at 250% annual volatility wanders by a factor of `e^±6` over six hundred
+days, and a grid fixed in price that is fine at 0.27 is ruinous at 0.0004. **A
+geometric generator cannot be simulated for ten times its observed span when its
+quote grid is absolute**, and the honest rebuild of those two feeds is one at the
+feed's own length.
+
+**The controls behaved and the parameter recovery is clean.** The honest rebuild
+is caught by nothing; sigma 1% wrong is caught by the volatility test; Student-t
+tick innovations by kurtosis, Parkinson and the tick KS; half the publication
+rate by Parkinson and the tick KS and nothing else; a two-state volatility by
+four tests at once. Fitting the rebuild's own output back with the estimators
+used on the feeds recovers the input volatility to within **1.08 standard
+errors** on all ten sound feeds, with `H` in 0.4988-0.5015 and no drift past 1.65
+standard errors.
+
+**And the 0.5826 correction is emergent, on real bars.** The rebuild was never
+told about it:
+
+| a:b | P(up) on the feed | **on the rebuild** | continuous | BGK-corrected |
+| --- | --- | --- | --- | --- |
+| 5:5 | 0.5008 | **0.5018** | 0.5000 | 0.5000 |
+| 3:1 | 0.3073 | **0.3081** | 0.2500 | 0.3064 |
+| 2:10 | 0.8042 | **0.8053** | 0.8333 | 0.8038 |
+
+with `E[tau]` at 31.485 against the feed's 31.279 and a continuous 25.000.
+
+**The Jump family: reading A, and a tail that is still wrong.** Diffusion at the
+name with `1.322^2 - 1` of its variance in the jumps realises **1.3229 to
+1.3249** times the name on all five feeds; the alternative reading, diffusion
+already at 1.322x, gives **1.581** and is refuted. But the feed's one-minute
+kurtosis is **12.8 to 14.2** and the rebuild's is **7.2 to 8.1**, and resampling
+the jump magnitudes from the feed's own jumps only reaches 6.6 to 8.6. So the
+variance budget is right and **the jump size distribution is not**: the real
+Jump indices have far fatter tails than a Poisson process with the measured rate
+and magnitudes can produce, which means the jumps are either clustered or much
+more variable in size than a 24-hour sample shows.
 
 ### The discriminator is calibrated, and it has a map of its own blind spots
 
