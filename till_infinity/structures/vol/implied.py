@@ -239,6 +239,14 @@ class Implied(Restorable):
 #: that the source has stopped, which a daily series hides for a long time.
 POLL_SECONDS = float(os.environ.get("STRUCTURES_IMPLIED_POLL") or 3_600.0)
 
+#: Seconds a quote fetch may take. **Without this it can hang forever**, and it
+#: did: the fetch sits in the structures message loop, CI runs with no network -
+#: its workflow says so - and a Deploy job sat `in_progress` for **fifty
+#: minutes** blocking every deploy behind it. A quote is worth less than a
+#: trading loop, so it gets a short leash and a `MAX_AGE` that retires whatever
+#: it last read.
+FETCH_TIMEOUT = float(os.environ.get("STRUCTURES_IMPLIED_TIMEOUT") or 10.0)
+
 #: The one series. `implied.md` measured the matched indices and found them
 #: unnecessary: `own - vix` is +0.0014 for us100 at a day and **-0.0080** for
 #: us30, where plain VIX is better than VXD.
@@ -251,14 +259,17 @@ def latest(ticker: str = TICKER) -> float | None:
     Synchronous and blocking - yfinance does its own HTTP - so callers push it
     onto a thread, the way `prices/yahoo.py` does for the same reason.
 
-    Never raises. A source that is unreachable must leave the last good reading
-    in place and let `MAX_AGE` retire it, because an exception here would take
-    down a service whose actual job is levels.
+    Never raises, and **never blocks for long**. A source that is unreachable
+    must leave the last good reading in place and let `MAX_AGE` retire it,
+    because an exception here would take down a service whose actual job is
+    levels - and a hang would do worse, since this runs inside the message loop.
     """
     try:
         import yfinance as yf
 
-        got = yf.Ticker(ticker).history(period="5d", interval="1d", auto_adjust=False)
+        got = yf.Ticker(ticker).history(
+            period="5d", interval="1d", auto_adjust=False, timeout=FETCH_TIMEOUT
+        )
         for _when, row in reversed(list(got.iterrows())):
             close = row.get("Close")
             if close is not None and not math.isnan(close) and close > 0:

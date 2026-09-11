@@ -1408,7 +1408,22 @@ class Watcher:
             return
         self._implied_at = now
         try:
-            quote = await asyncio.to_thread(implied.latest)
+            # **Belt and braces, and the braces are the point.** `latest` asks
+            # yfinance for a timeout, which is a promise the library makes; this
+            # is the one the loop keeps. A fetch that hangs here does not slow
+            # the service, it stops it - and on CI, which has no network, it
+            # held a Deploy job `in_progress` for **fifty minutes**, blocking
+            # every deploy queued behind it.
+            #
+            # `to_thread` cannot be cancelled, so this frees the *loop* and
+            # leaves the thread running until the library gives up. That is the
+            # right trade - the service keeps working - and it is not a full
+            # answer: a wedged fetch still holds a worker. `FETCH_TIMEOUT` is
+            # what bounds that, and this is what bounds the damage if it does
+            # not hold.
+            quote = await asyncio.wait_for(
+                asyncio.to_thread(implied.latest), timeout=implied.FETCH_TIMEOUT * 2
+            )
         except Exception as exc:
             log.debug("structures: could not read %s: %s", implied.TICKER, exc)
             return

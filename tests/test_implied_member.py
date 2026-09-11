@@ -351,3 +351,49 @@ async def test_the_seed_is_applied_once_before_the_first_quote(enabled, monkeypa
         watcher.engine.vol.implied_bps("spx500", "1d", now=watcher.engine.vol.implied.at)
         is not None
     )
+
+
+def test_the_quote_fetch_cannot_hang():
+    """It sits in the structures **message loop**, and CI runs with no network -
+    its workflow says "No network in CI: every test runs against fakes".
+
+    Without a timeout the fetch blocks forever: a Deploy job sat `in_progress`
+    for **fifty minutes** on 2026-09-11, blocking every deploy behind it, and it
+    read as a failure when it was a hang. A quote is worth less than a trading
+    loop, so it gets a short leash."""
+    import inspect
+
+    from till_infinity.structures.vol import implied as mod
+
+    assert mod.FETCH_TIMEOUT > 0
+    source = inspect.getsource(mod.latest)
+    assert "timeout=" in source, "the library call must carry one"
+
+    # And the caller keeps its own ceiling, because a library's timeout is the
+    # library's promise rather than the loop's guarantee.
+    from till_infinity.structures import service
+
+    assert "wait_for" in inspect.getsource(service.Watcher._read_implied)
+
+
+async def test_a_hanging_quote_does_not_stop_the_loop(enabled, monkeypatch):
+    """The behavioural half: a fetch that never returns must leave the reading
+    alone and let the loop carry on, not take the service with it."""
+    import time as clock
+
+    from till_infinity.structures.vol import implied as mod
+
+    monkeypatch.setattr(mod, "FETCH_TIMEOUT", 0.02)
+    # Short on purpose. `asyncio.to_thread` cannot be cancelled, so `wait_for`
+    # frees the **loop** and leaves the thread running to completion - which is
+    # the right trade (the service keeps working) and a real limitation (a hung
+    # fetch still holds a worker until it returns). A 30s sleep here proved the
+    # same point and held the whole suite at teardown for 30 seconds.
+    monkeypatch.setattr(mod, "latest", lambda *_a, **_k: clock.sleep(0.4))
+
+    watcher = _watcher()
+    watcher.engine.vol.implied.observe(17.17, when=1.0)
+
+    await watcher._read_implied()
+
+    assert watcher.engine.vol.implied.level == pytest.approx(17.17), "the last quote stands"
