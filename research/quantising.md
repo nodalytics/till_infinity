@@ -858,15 +858,57 @@ made the rounding irrelevant to the posterior *mean*, and `volatility_100` is at
 high `k`, because the posterior mean is a low-`k` statistic and the negativity is
 a high-`k` one. Both are true and they are about different things.
 
-**The jump feeds are reported and deliberately not scored.** `boom_500_index`
-returns -0.0804 at lag 1, but its excess kurtosis is **+1281**, so a Gaussian
-matched on its *total* standard deviation is not a null for it in any useful
-sense: at `k = 53.9` that Gaussian gives `7.9e-43` and the feed gives **+0.814**,
-because a compound Poisson is a narrow core plus rare enormous jumps and `phi`
-decays on the core's width rather than the total. Neither the Gaussian condition
-nor the lattice condition is the right test for it, both buckets exclude it, and
-inventing a third null after seeing the number would be the thing this folder
-exists to avoid. It is on the page as an observation.
+**The jump feeds are deliberately not scored, and then turn out to say something
+anyway.** `boom_500_index` has excess kurtosis **+1281**, so a Gaussian matched on
+its *total* standard deviation is not a null for it in any useful sense: at
+`k = 53.9` that Gaussian gives `7.9e-43` and the feed gives **+0.814**, because a
+compound Poisson is a narrow core plus rare enormous jumps and `phi` decays on the
+core's width rather than the total. Neither the Gaussian condition nor the lattice
+condition is the right test for it, both buckets exclude it, and inventing a third
+null after seeing the number would be the thing this folder exists to avoid.
+
+But the *shape* of its negativity is not noise and is worth reading:
+
+| lag | 1 | 2 | 3 | 5 | 10 | 30 |
+| --- | --- | --- | --- | --- | --- | --- |
+| min `W` | -0.0804 | -0.3659 | -0.5083 | -0.6555 | -0.7944 | **-0.8736** |
+| `k` at the minimum | 248.7 | 136.9 | 94.1 | 60.5 | 30.7 | 10.2 |
+| `k * lag` | 248.7 | 273.9 | 282.2 | 302.7 | **307.4** | **307.4** |
+
+It deepens monotonically with lag, and the frequency at which it happens scales
+as `1/lag` - `k * lag` climbs and then **plateaus at 307.4**. That is the
+signature of a **deterministic drift**: for a compound Poisson with drift `g` the
+propagator is `exp(t(-ikg + lambda(phi_J(k) - 1)))`, whose real part carries the
+phase `k g t` and first turns over at `k g t = pi`, so `k * lag` must converge to
+`pi/|g|` and stop.
+
+**That reads a generator parameter off a phase, and reads it better than the
+sample mean can.** Measured directly on the ticks, Boom 500's drift between
+spikes is **`g = -0.009769` per tick**, so `pi/|g| = 321.6` against the plateau's
+**307.4 - agreement to 4.5%**, with nothing fitted. The spikes are **+4.78 on
+average, one per 529 ticks** against the 500 in the instrument's name.
+
+And the *sample mean* of the increments is **-0.000714**, **thirteen times
+smaller than `g`**, because the spikes very nearly cancel the drift - which is
+[deriving.md](deriving.md)'s `E[J] = lambda * E[g]` seen from here, and is why
+Boom is a martingale. **The mean cannot see the drift and the phase can**, because
+a rare enormous jump enters the mean at full weight and barely perturbs the
+low-order phase. That is a genuine use for a characteristic function on a jump
+feed.
+
+`jump_75_index` shows nothing - all twelve cells at their floors - and the reason
+is a limit of the probe rather than a property of the feed: the frequency grid is
+scaled to each feed's quote step, so Boom's runs to `k = 1396` and covers its
+turnover at 322, while `jump_75`'s stops at **`k = 19.3`** and its own turnover
+would be near 751. It is not a control for the Boom result, it is a feed whose
+window does not reach the effect, and saying otherwise would be claiming a null
+that was never tested.
+
+**Ledger: one of five fired**, and it is condition 1 on the three cells above -
+one real and two ties. The lattice condition held on 18 of 18 cells, the
+superposition control went to -0.9783 so the estimator is not blind, the
+negativity dies away with lag on every lattice feed as a lattice signature must,
+and the void check passed across 48 cells with extremes of -1.0000 and +0.0243.
 
 **The verdict, which is the point of running it.** There is **no negativity
 anywhere that the quote lattice and the measured increment law do not account
@@ -987,6 +1029,10 @@ the borrowing has to be accounted for.
   attainment carries nearly half.** Measured against a true tick path, not
   inferred. That is a property of OHLC data rather than of any instrument, and it
   is the part with a price attached.
+* **Boom's drift, read off the phase of its characteristic function** at
+  `pi/|g| = 321.6` against a plateau of 307.4, when the sample mean of its
+  increments is thirteen times smaller than that drift because the spikes cancel
+  it. A generator parameter measured by a route the obvious estimator cannot take.
 * **Where the negativity of the Wigner function comes from**, and that
   `volatility_100_index` is a lattice feed. The *mechanism* is textbook - that the
   characteristic function of a lattice law does not decay, and that `cos(dk)^n`
