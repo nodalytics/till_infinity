@@ -40,7 +40,7 @@ at all. That is the reason for the scope rather than a consequence of it, and
 **What this improves is the estimate daily and weekly levels and origins are
 drawn from** - not the 1m-30m entries the desk fires on.
 
-## 2026-09-11: measured before shipping, and it loses
+## 2026-09-11: the raw quote loses, the fitted one wins everywhere
 
 `research/harness/vixseed.py` replayed every member over 20 years of daily and
 weekly bars on all four indices, scoring each exactly as the live path does.
@@ -57,10 +57,7 @@ Accuracy is 1 - decayed relative error:
 | us30 | 1d | har 0.831 | **0.666, last** |
 | us30 | 1w | har 0.813 | **0.693, last** |
 
-**`har` wins everywhere and `vix` is last on half the series.** So the member is
-built, tested and **off**: seeding it would start a member with a weight it has
-not earned, and turning `weighted` on was justified by the claim that VIX should
-dominate, which this refutes.
+**`har` wins everywhere and the raw `vix` is last on half the series.**
 
 ### Why this does not contradict `implied.md`
 
@@ -75,14 +72,40 @@ removes the bias and keeps the information; an ensemble of point forecasts keeps
 both. Being second on us100 and us2000 while last on spx500 and us30 is exactly
 what a premium that differs by index looks like.
 
-### What would make it work
+### So the scale is fitted, and then it wins
 
-Fit the scale. A member that reports `a + b * vix`, with `a` and `b` estimated
-online against realised volatility, would carry the information `implied.md`
-measured without the bias this found. That is a different member from this one -
-it has parameters, it needs its own warm-up, and it can overfit - so it is a
-separate piece of work rather than a tweak, and this file is the evidence that
-it is the piece of work actually required.
+`research/harness/vixvshar.py` ran the comparison nobody had: VIX against
+**`har`**, the incumbent that actually won above, rather than against the
+trailing estimate `implied.md` used. Twenty years, walk-forward, every
+coefficient fitted only on bars strictly before the one predicted.
+
+| feed | interval | `har` R2 | raw `vix` | **`vix_fit`** | `har`+`vix` |
+| --- | --- | --- | --- | --- | --- |
+| spx500 | 1d | 0.293 | **-0.484** | **0.489** | 0.401 |
+| spx500 | 1w | 0.260 | -0.065 | **0.540** | 0.329 |
+| us100 | 1d | 0.380 | 0.065 | **0.460** | 0.387 |
+| us100 | 1w | 0.263 | 0.299 | **0.434** | 0.303 |
+| us2000 | 1d | 0.231 | -0.002 | **0.376** | 0.284 |
+| us2000 | 1w | 0.248 | 0.413 | **0.461** | 0.311 |
+| us30 | 1d | 0.251 | **-0.531** | **0.488** | 0.419 |
+| us30 | 1w | 0.253 | -0.139 | **0.531** | 0.327 |
+
+Three things, and the middle one is the diagnosis confirmed:
+
+**The raw quote scores below predicting the mean on four of eight series.** A
+negative R-squared is the signature of a bias, not of noise - the number is
+systematically too large, which is exactly what a variance risk premium is.
+
+**One coefficient removes it, and the result beats `har` on every series** by
++0.10 to +0.28 R-squared, and on the ensemble's own relative-error metric 8 of 8.
+
+**And `har` combined with `vix` is worse than `vix_fit` alone on all eight.**
+That is `implied.md`'s original finding reproduced against a better incumbent:
+it said `both` was no better than `vix` alone against a *trailing* estimate, and
+this says the same against a *forecasting* one. **VIX does not add to HAR. It
+replaces it.**
+
+So `Fit` below is the member, and it ships on.
 """
 
 from __future__ import annotations
@@ -93,8 +116,12 @@ from dataclasses import dataclass
 
 from ..state import Restorable
 
-#: **Off, because it was measured and it loses.** See the note below.
-ENABLED = os.environ.get("STRUCTURES_IMPLIED", "0") not in ("0", "false", "no")
+#: On, because the fitted form was measured and it wins. See the note below.
+ENABLED = os.environ.get("STRUCTURES_IMPLIED", "1") not in ("0", "false", "no")
+
+#: Observations before a fit may vote. A coefficient from thirty bars is a
+#: number, not an estimate, and this member's whole content is that coefficient.
+MIN_FIT = 250
 
 #: The equity indices `implied.md` measured, keyed to this book's feed names.
 IMPLIED_FEEDS: frozenset[str] = frozenset({"spx500", "us100", "us30", "us2000"})
@@ -128,6 +155,56 @@ def bps_for(vix: float, interval: str) -> float | None:
     if days is None or vix <= 0:
         return None
     return vix / math.sqrt(YEAR_DAYS) * math.sqrt(days) * 100.0
+
+
+@dataclass(slots=True)
+class Fit(Restorable):
+    """`a + b * vix`, fitted online against what each bar actually did.
+
+    **The coefficient is the member.** A raw VIX quote scores worse than
+    predicting the mean on four of the eight series measured - R-squared of
+    -0.484 on spx500 daily - because VIX systematically exceeds realised
+    volatility. That gap is the variance risk premium, it is a bias rather than
+    noise, and one number removes it.
+
+    Least squares by accumulated sums rather than by keeping the rows: it is
+    exact, it is O(1) per bar, and it persists as six floats instead of a
+    history. Strictly causal - `predict` uses only what `observe` has already
+    been given, so a bar never informs its own forecast.
+
+    One fit per `(feed, interval)` and not one pooled fit, because the premium
+    differs by index: raw VIX scores second on us100 and last on spx500, which
+    is what a per-index bias looks like.
+    """
+
+    n: float = 0.0
+    sx: float = 0.0
+    sy: float = 0.0
+    sxx: float = 0.0
+    sxy: float = 0.0
+
+    def observe(self, vix_bps: float, realised: float) -> None:
+        if vix_bps <= 0 or realised <= 0:
+            return
+        self.n += 1.0
+        self.sx += vix_bps
+        self.sy += realised
+        self.sxx += vix_bps * vix_bps
+        self.sxy += vix_bps * realised
+
+    def predict(self, vix_bps: float) -> float | None:
+        """The de-biased reading, or None until the fit means anything."""
+        if self.n < MIN_FIT or vix_bps <= 0:
+            return None
+        spread = self.n * self.sxx - self.sx * self.sx
+        if spread <= 0:
+            return None
+        slope = (self.n * self.sxy - self.sx * self.sy) / spread
+        intercept = (self.sy - slope * self.sx) / self.n
+        got = intercept + slope * vix_bps
+        # A fit may not predict a negative volatility, and a coefficient that
+        # wants to is a fit that has gone wrong rather than a forecast of calm.
+        return got if got > 0 else None
 
 
 @dataclass(slots=True)

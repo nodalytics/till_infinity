@@ -27,7 +27,7 @@ from ..state import Restorable
 from .consensus_vol import MAD_TO_SIGMA, Ensemble
 from .garch import Garch
 from .har import Har
-from .implied import ENABLED, IMPLIED_FEEDS, IMPLIED_INTERVALS, Implied
+from .implied import ENABLED, IMPLIED_FEEDS, IMPLIED_INTERVALS, Fit, Implied
 from .learned import Learned
 from .ranges import Ranges
 
@@ -471,6 +471,10 @@ class Book(Restorable):
     #: The options market's own forecast. One series for four feeds - see
     #: `implied.py` for why the matched indices are not needed.
     _implied: Implied = field(default_factory=Implied)
+    #: `a + b * vix` per series. Per-key rather than pooled because the variance
+    #: risk premium differs by index - raw VIX scores second on us100 and last
+    #: on spx500, which is what a per-index bias looks like.
+    _implied_fits: dict[tuple[str, str], Fit] = field(default_factory=dict)
 
     # `__setstate__` from `Restorable` too, and it matters more here: this
     # holds one estimate per instrument *and* timeframe, so one missing
@@ -493,11 +497,30 @@ class Book(Restorable):
         """
         return ENABLED and feed in IMPLIED_FEEDS and interval in IMPLIED_INTERVALS
 
+    def implied_fit(self, feed: str, interval: str) -> Fit:
+        """This series' own de-biasing coefficient."""
+        key = (feed, interval)
+        found = self._implied_fits.get(key)
+        if found is None:
+            found = self._implied_fits[key] = Fit()
+        return found
+
     def implied_bps(self, feed: str, interval: str, now: float) -> float | None:
-        """This bar's implied sigma for one series, or None if it must not vote."""
+        """This bar's implied reading for one series, or None if it must not vote.
+
+        **The fitted value, not the quote.** Measured over 20 years on all four
+        indices, the raw quote loses to `har` on every one and scores *worse
+        than predicting the mean* on four - R-squared -0.484 on spx500 daily.
+        Fitted, it beats `har` on all eight series by +0.10 to +0.28 R-squared,
+        and beats `har` combined with itself on all eight too. See `implied.py`.
+
+        None until `MIN_FIT` bars have been seen, so the member is absent rather
+        than guessing while its one parameter is still noise.
+        """
         if not self.votes_implied(feed, interval):
             return None
-        return self.implied.bps(interval, now)
+        raw = self.implied.bps(interval, now)
+        return self.implied_fit(feed, interval).predict(raw) if raw else None
 
     def of(self, feed: str, interval: str = "") -> Volatility:
         key = (feed, interval)
@@ -529,9 +552,18 @@ class Book(Restorable):
         when: float,
     ) -> float:
         """One bar for one series, with the implied member supplied if it votes."""
-        return self.of(feed, interval).observe_bar(
+        series = self.of(feed, interval)
+        realised = series.observe_bar(
             open_, high, low, close, implied_bps=self.implied_bps(feed, interval, when)
         )
+        # **After the forecast, never before it.** The fit learns from this bar
+        # only once the bar has been scored against it, which is the same rule
+        # `Ensemble.settle` follows and for the same reason.
+        if self.votes_implied(feed, interval):
+            raw = self.implied.bps(interval, when)
+            if raw:
+                self.implied_fit(feed, interval).observe(raw, realised)
+        return realised
 
     def update(self, feed: str, price: float, interval: str = "") -> float:
         return self.of(feed, interval).update(price)

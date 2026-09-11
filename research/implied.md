@@ -262,7 +262,7 @@ Writing that down before running it, because
 table was mistaken for a finding, and the defence that worked was deciding what
 would count as failure first.
 
-# 2026-09-11: it does not survive being made a point forecast
+# 2026-09-11: the raw quote fails as a point forecast, the fitted one wins
 
 The finding above was built into `structures/vol/implied.py` as a fifth member
 of the volatility ensemble, and **measured before it was switched on**. It
@@ -346,3 +346,72 @@ run, and until it is, the honest summary of this whole line of work is:
 
 > VIX beats a *trailing* estimate by a wide margin. Whether it beats a
 > *forecasting* one is an open question, and HAR is a forecast.
+
+## And then the comparison nobody had run
+
+The section above ended on an open question: `implied.md` beat a **trailing**
+estimate, `har` is a **forecast**, and the two had never met.
+`research/harness/vixvshar.py` ran it. Twenty years, walk-forward, every
+coefficient fitted only on bars strictly before the one being predicted.
+
+| feed | interval | `har` R2 | raw `vix` | **`vix_fit`** | `har`+`vix` |
+| --- | --- | --- | --- | --- | --- |
+| spx500 | 1d | 0.293 | **-0.484** | **0.489** | 0.401 |
+| spx500 | 1w | 0.260 | -0.065 | **0.540** | 0.329 |
+| us100 | 1d | 0.380 | 0.065 | **0.460** | 0.387 |
+| us100 | 1w | 0.263 | 0.299 | **0.434** | 0.303 |
+| us2000 | 1d | 0.231 | -0.002 | **0.376** | 0.284 |
+| us2000 | 1w | 0.248 | 0.413 | **0.461** | 0.311 |
+| us30 | 1d | 0.251 | **-0.531** | **0.488** | 0.419 |
+| us30 | 1w | 0.253 | -0.139 | **0.531** | 0.327 |
+
+`vix_fit` wins **8 of 8** on R-squared and 8 of 8 on the ensemble's own
+relative-error metric.
+
+### The negative R-squared is the whole explanation
+
+Four of the eight raw-quote cells score **below predicting the running mean**.
+That cannot be noise - noise gets you to zero, not past it. A systematically
+negative R-squared is what a **bias** looks like, and the bias is the variance
+risk premium: VIX prices thirty-day volatility above what tends to be realised,
+durably and by an amount that differs per index.
+
+One coefficient removes it. `a + b * vix`, fitted online, turns the worst member
+in the book into the best one on every series.
+
+That is why `vixseed.py` and this table are not in conflict. The first scored a
+raw point forecast and found the bias; the second fits the bias away and finds
+the information underneath. **Both were needed, and running only one of them
+would have produced a confident wrong answer in either direction.**
+
+### VIX replaces HAR, as it replaced the trailing estimate
+
+`har` + `vix` together is **worse than `vix_fit` alone on all eight series**.
+Test one found exactly this shape against `hist` - *"`both` is not better than
+`vix` alone"* - and it holds against a forecasting incumbent too.
+
+So the headline from test one survives being made harder: **VIX does not add to
+this book's volatility estimate, it replaces it** - now demonstrated against the
+best member rather than the most convenient one.
+
+### What shipped
+
+`structures/vol/implied.py` holds the fit, one per `(feed, interval)` because
+the premium differs by index, persisted as five floats rather than a history,
+and strictly causal - a bar informs the fit only after being scored against it.
+It is absent rather than guessing until `MIN_FIT` observations, and absent
+rather than stale past `MAX_AGE`. Four feeds, `1d` and `1w`, `weighted` on for
+those eight ensembles and nowhere else.
+
+### What is still not shown
+
+**None of this is money.** It is R-squared against realised volatility on four
+of fifty-three instruments at a day and up. A better volatility estimate feeds
+stop distances, target distances and the units levels are measured in - it does
+not make a directional call better, and `clustering.md` is still the reason to
+expect width rather than direction to be the modellable part.
+
+**And the fit can overfit in a way the other four members cannot.** It has a
+parameter. `MIN_FIT` at 250 bars and per-series estimation are the guards, and
+the ensemble scoring it live is the backstop: if the coefficient stops
+describing the market, the member loses its weight the same way any other would.
