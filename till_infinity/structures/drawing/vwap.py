@@ -36,7 +36,7 @@ Two consequences, both taken deliberately:
   wrong everywhere is the failure `research/inert.md` catalogues, wearing a
   better disguise.
 
-## Anchored, not rolling
+## Anchored, not rolling - and anchored to the clock, not to the buffer
 
 VWAP is cumulative from an anchor - conventionally the session open. A rolling
 window would be a moving average with volume weights, which is a different and
@@ -44,21 +44,40 @@ much weaker object: the whole claim is *the average price everyone who traded
 since the anchor got*, and that only means something if the anchor is a moment
 people agree on.
 
-`SPAN` bars is the anchor here rather than a calendar session, because this
-package is instrument-agnostic and the synthetics never close. It is the one
-compromise in the definition and it is stated rather than hidden.
+**The first version of this said that and then did the other thing.** It cut
+anchors into blocks of `SPAN` bars counted from the start of the array - and the
+array is a rolling window, so every bar that aged out shifted every anchor
+boundary by one bar and moved every VWAP with it. Measured 2026-09-11 on 500
+bars of 5m: rolling the window forward a single bar moved the oldest anchor's
+price by about half a point and its time by exactly one bar, on every roll.
+A level at a different price on every reform is not a level.
+
+So the anchor is a **wall-clock bucket**: `span` times the bar interval, counted
+from the epoch, which puts the boundary at the same instant for every window,
+every restart and every instrument. At 5m and the default span that is 00:00,
+08:00 and 16:00 UTC - within an hour of the three session opens without needing
+a calendar, which is the compromise this package can actually defend. The bar
+interval is inferred from the stamps rather than passed, because a pass that has
+to be told what it is looking at is a pass that will one day be told wrong.
+
+An anchor is emitted only once it holds a full `span` bars, so the one still
+filling never publishes a price that is going to change.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from itertools import pairwise
 
 from ..vol.volatility import Volatility
 from .pips import Point, Swing
 
 #: Bars per anchor. Reset this often and the VWAP is a short moving average;
 #: never, and it is a number from before anybody currently trading arrived.
+#:
+#: Read with the bar interval it lands on: 96 five-minute bars is eight hours,
+#: so anchors begin at 00:00, 08:00 and 16:00 UTC.
 SPAN = 96
 
 #: How near price must come, in volatility units, for the VWAP to count as a
@@ -69,6 +88,16 @@ TOUCH_VOL = 0.25
 #: How many bars must carry real volume before the weighted mean is one. Below
 #: this the anchor is a handful of bars and the average is theirs.
 MIN_WEIGHTED = 12
+
+
+def step_of(times: Sequence[float]) -> float:
+    """The bar interval these stamps are on, in seconds. 0 when it cannot tell.
+
+    The median gap rather than the first or the mean: a feed with a weekend in
+    it, a gap, or one duplicated stamp should not change what interval it is on.
+    """
+    gaps = sorted(float(b) - float(a) for a, b in pairwise(times) if float(b) > float(a))
+    return gaps[len(gaps) // 2] if gaps else 0.0
 
 
 def typical(high: float, low: float, close: float) -> float:
@@ -103,6 +132,11 @@ def points(
     confirmation time is the anchor's last bar: a VWAP is knowable only once
     the bars it averages have closed, and dating it from the anchor's start
     would be drawing a level at a price nobody could yet compute.
+
+    Anchors are wall-clock buckets `span` bars wide, so the same calendar moment
+    falls in the same anchor however much of the window has aged out. See the
+    module note - blocking by array index instead moved every level on every
+    bar.
     """
     n = len(times)
     if n < span or len({n, len(highs), len(lows), len(closes), len(volumes)}) != 1:
@@ -110,10 +144,23 @@ def points(
     unit = vol.price_units(float(closes[-1]), 1.0) if vol.bps else 0.0
     if unit <= 0:
         return []
+    step = step_of(times)
+    if step <= 0:
+        return []
+    width = span * step
+
+    # Bars grouped by the bucket their stamp falls in, in order. A bucket short
+    # of `span` bars is the one still filling, or one a gap ate; either way its
+    # mean would move the next time it is asked, so it does not publish.
+    buckets: dict[int, list[int]] = {}
+    for i, stamp in enumerate(times):
+        buckets.setdefault(int(float(stamp) // width), []).append(i)
 
     found: list[Point] = []
-    for start in range(0, n - span + 1, span):
-        stop = start + span
+    for _, rows in sorted(buckets.items()):
+        if len(rows) < span:
+            continue
+        start, stop = rows[0], rows[-1] + 1
         weighted = notional = 0.0
         seen = 0
         for i in range(start, stop):

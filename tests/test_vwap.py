@@ -106,3 +106,65 @@ def test_mismatched_inputs_are_refused_rather_than_zipped_short():
     volume = [100.0] * (len(closes) - 3)
 
     assert vwap.points(times, highs, lows, closes, volume, _vol(closes)) == []
+
+
+def test_the_anchor_does_not_move_when_the_window_rolls():
+    """The module note said "anchored, not rolling" and the code did the other.
+
+    Anchors were blocks of `span` bars counted from the start of the array, and
+    the array is a rolling window - so every bar that aged out shifted every
+    boundary by one and moved every VWAP with it. A level at a different price
+    on every reform is a volume-weighted moving average wearing the name.
+    """
+    n = 500
+    # Aligned to the epoch so the buckets are the ones production would see.
+    times = [float(1_780_000_000 - 1_780_000_000 % 300 + i * 300) for i in range(n)]
+    closes = [100.0 + 2.0 * math.sin(i * math.pi / 37) for i in range(n)]
+    highs = [c + 0.2 for c in closes]
+    lows = [c - 0.2 for c in closes]
+    volumes = [100.0 + (i % 17) for i in range(n)]
+    vol = _vol(closes)
+
+    whole = {
+        (int(point.time), round(point.price, 9))
+        for point in vwap.points(times, highs, lows, closes, volumes, vol)
+    }
+    assert whole, "the fixture has to produce anchors for this to mean anything"
+
+    for dropped in range(1, 8):
+        rolled = vwap.points(
+            times[dropped:],
+            highs[dropped:],
+            lows[dropped:],
+            closes[dropped:],
+            volumes[dropped:],
+            vol,
+        )
+        # Anchors still wholly inside the shortened window keep their exact
+        # price. Ones the roll cut into simply stop being published.
+        for point in rolled:
+            assert (int(point.time), round(point.price, 9)) in whole
+
+
+def test_the_bar_interval_is_read_off_the_stamps():
+    assert vwap.step_of([0.0, 60.0, 120.0, 180.0]) == 60.0
+    # A weekend, a gap and a repeat must not change what interval this is on.
+    assert vwap.step_of([0.0, 300.0, 600.0, 600.0, 300_000.0, 300_300.0]) == 300.0
+    assert vwap.step_of([]) == 0.0
+    assert vwap.step_of([5.0]) == 0.0
+
+
+def test_an_anchor_still_filling_does_not_publish():
+    """Its mean moves with the next bar, so a price from it is not yet a price."""
+    span = 96
+    step = 300.0
+    n = span + span // 2  # one whole bucket and half of the next
+    start = 1_780_000_000 - 1_780_000_000 % int(span * step)
+    times = [float(start + i * step) for i in range(n)]
+    closes = [100.0 + 2.0 * math.sin(i * math.pi / 23) for i in range(n)]
+    found = vwap.points(
+        times, [c + 0.2 for c in closes], [c - 0.2 for c in closes], closes,
+        [100.0] * n, _vol(closes),
+    )
+    assert len(found) == 1
+    assert found[0].time == times[span - 1]

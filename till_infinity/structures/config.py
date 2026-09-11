@@ -24,7 +24,25 @@ DEFAULT_NEWS_DB = ".data/news/news.db"
 #: drifted apart: the dataclass said all three passes and `from_env` said one,
 #: so a deployment that set nothing got a formation the documentation beside
 #: the field denied it had.
-DEFAULT_FORMATION = "pip,run,origin,profile"
+#:
+#: `wick`, `vwap` and `round` join the default on 2026-09-11. Not because any
+#: of them is believed to work - none has a record, and that is the point. A
+#: pass outside this string never runs in production, never publishes a level,
+#: never journals an outcome, and so **can never be judged**. Leaving one out
+#: is not caution about an unproven formation; it is a guarantee that it stays
+#: unproven. `round` and `vwap` were both broken in ways nobody could see for
+#: exactly this reason - see `engine.FORMATION_MIN_SWINGS` and the `vwap`
+#: module note.
+#:
+#: The cost was measured rather than guessed, on a 1,000-bar window: pip 11.2ms,
+#: run 4.1, origin 16.2, profile 35.0 - and the three joining them wick 20.3,
+#: vwap 2.5, round 0.08. That takes a reform from 66ms to 89ms, and with
+#: `REFORM_EVERY` at 20 bars across the production book it works out at roughly
+#: two reforms a minute: **0.3% of one core**, on a host with two.
+#:
+#: `pip` stays first because `Engine.swings` - and so `_record_shape` - reads
+#: `passes[0]` rather than the merge.
+DEFAULT_FORMATION = "pip,run,origin,profile,wick,vwap,round"
 
 #: Only fast data. Above five minutes a "cross-venue disagreement" is mostly
 #: different bar boundaries, not different opinions about the price.
