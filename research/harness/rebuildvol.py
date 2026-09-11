@@ -75,6 +75,38 @@ edited and what forced it.
 * **A resolution ladder** (sigma +1%, +0.5%, +0.2%) was added and is explicitly
   *not* required to be caught. Its job is to say where the battery runs out.
 
+## The tick-monitored barrier, predicted before it is measured
+
+`deriving.md` section one's whole table is **close-monitored**: `derivegbm.py`
+walks non-overlapping windows on one-minute closes, so `P(up) = (b+B)/(a+b+2B)`
+and `E[tau] = (a+B)(b+B)` are the answers for a rule that can only act once a
+minute. **A real stop is hit on a tick.** The correction scales as
+`beta * sigma * sqrt(dt)`, so at `tpb` ticks a minute the shift in one-minute
+sigmas falls from 0.5826 to `0.5826 / sqrt(tpb)` - **0.1064** at 30 ticks a bar
+and **0.0752** at 60 - and the trading-relevant hit probability sits *between*
+the continuous answer and the published one.
+
+Written down before any of it was run, at a 3:1 stop-to-target:
+
+| | continuous | close-monitored (published) | **tick-monitored (predicted)** |
+| --- | --- | --- | --- |
+| 3:1, 30 ticks a bar | 0.2500 | 0.3073 measured / 0.3064 derived | **0.2626** |
+| 3:1, 60 ticks a bar | 0.2500 | 0.3073 / 0.3064 | **0.2591** |
+| 1:3, 30 ticks a bar | 0.7500 | 0.6928 / 0.6936 | **0.7374** |
+| 2:10, 30 ticks a bar | 0.8333 | 0.8042 / 0.8038 | **0.8275** |
+
+That is a number this desk sizes on and does not have: a 1:3 barrier is a 25.0%
+shot continuously, a 30.7% shot to a rule that checks once a minute, and a
+**26.3%** shot to a stop that sits in the book. The published figure overstates
+it by four points.
+
+**It fails** if the measured tick-monitored `P(up)` is outside 0.005 of the
+prediction on the rebuilt paths, or if the real tick table - 43,000 to 86,400
+ticks a feed, about 400 non-overlapping 3:1 trades each, 5,000 pooled - puts it
+more than 3 standard errors away. The gap between the close-monitored and
+tick-monitored values is 0.045, which is 6.3 standard errors at that count, so
+the sample resolves it; if it did not, that would be said instead.
+
 ## The controls
 
 * **real against real** - the first thirty days against the last thirty, through
@@ -105,6 +137,10 @@ SEEDS = [int(s) for s in os.environ.get("SEEDS", "20260912,20260913,20260914,202
 #: brief: the simulation has to be the sharper instrument, not the blunter one.
 MULT = int(os.environ.get("MULT", "10"))
 JMULT = int(os.environ.get("JMULT", "4"))
+#: Ticks retained from the first seed's rebuild. The tick-return KS needs only as
+#: many as the feed has; the tick-monitored barrier needs enough trades to resolve
+#: a 0.045 gap, which is a few hundred thousand.
+TICK_KEEP = int(os.environ.get("TICK_KEEP", "2000000"))
 
 NOMINAL = {
     "volatility_10_index": 10.0, "volatility_25_index": 25.0,
@@ -162,6 +198,39 @@ def two_barrier(logp: np.ndarray, a: float, b: float, u: float) -> dict:
     t = np.array(taus, dtype=float)
     return {"n": len(taus), "p_up": ups / len(taus), "etau": float(t.mean()),
             "se_p": math.sqrt(0.25 / len(taus))}
+
+
+def tick_barrier(logp: np.ndarray, a: float, b: float, u: float,
+                 cap: int = 3_000_000) -> tuple[float, int]:
+    """The same non-overlapping barrier replay, monitored on every tick.
+
+    A list is used rather than a numpy array because the scan is inherently
+    sequential and Python list indexing is about three times faster than numpy
+    scalar indexing; at three million ticks that is the difference between
+    seconds and a minute.
+    """
+    x = (np.asarray(logp[:cap], dtype=float) / u).tolist()
+    n = len(x)
+    i, ups, taus = 0, 0, 0
+    while i < n - 1:
+        x0 = x[i]
+        j = i + 1
+        hit = 0
+        while j < n:
+            d = x[j] - x0
+            if d >= a:
+                hit = 1
+                break
+            if d <= -b:
+                hit = -1
+                break
+            j += 1
+        if hit == 0:
+            break
+        ups += 1 if hit > 0 else 0
+        taus += 1
+        i = j
+    return (ups / taus if taus else float("nan")), taus
 
 
 def battery(ts, _open, h, lo, cl, nominal, ticks=None, keep_rets=True) -> dict:
@@ -315,9 +384,11 @@ def main() -> None:
         runs = []
         for k, sd in enumerate(SEEDS):
             bb = simulate_vol(feed, nom, real[feed]["p0"], real[feed]["grid"], n_bars,
-                              sd, keep_ticks=real[feed]["_tickrets"].size + 1 if k == 0 else 0)
+                              sd, keep_ticks=TICK_KEEP if k == 0 else 0)
             st = battery(bb["ts"], bb["open"], bb["high"], bb["low"], bb["close"], nom,
                          ticks=bb["ticks"] if k == 0 else None, keep_rets=(k == 0))
+            if k == 0:
+                st["_ticks_long"] = bb["ticks"]
             runs.append(st)
         sims[feed] = runs
         sp = G.spread_across([r["ann_vol"] for r in runs])
@@ -560,6 +631,58 @@ def main() -> None:
               f"{tsx:9.3f} {a * b:8.3f} {(a + G.BETA) * (b + G.BETA):8.3f}")
         payload.setdefault("barrier", {})[k] = {"p_real": pr, "p_sim": ps, "p_cont": pc,
                                                 "p_disc": pd, "t_real": tr, "t_sim": tsx}
+
+    # ------------------------------------------- the tick-monitored barrier ---
+    print("\n[9b] THE TICK-MONITORED BARRIER - what a stop in the book actually gets")
+    print("     `deriving.md`'s table monitors at the close. A stop is hit on a tick, so")
+    print("     the shift is BETA/sqrt(tpb) of a one-minute sigma rather than BETA.")
+    print(f"{'feed':26s} {'tpb':>4s} {'a:b':>5s} {'P tick sim':>11s} {'n':>7s} "
+          f"{'P tick real':>12s} {'n':>7s} {'predicted':>10s} {'close-mon':>10s} "
+          f"{'continuous':>11s} {'z sim':>7s} {'z real':>7s}")
+    tickrows = []
+    for feed, nom in NOMINAL.items():
+        if feed not in real:
+            continue
+        tpb = ticks_per_bar(feed)
+        u = (nom / 100.0) / math.sqrt(G.MINUTES_PER_YEAR)
+        bp = G.BETA / math.sqrt(tpb)
+        rt = G.real_ticks(feed)
+        real_lg = np.log(rt["mid"])
+        sim_lg = np.log(sims[feed][0]["_ticks_long"])
+        for a, b in ((3, 1), (1, 3), (2, 10)):
+            pred = (b + bp) / (a + b + 2 * bp)
+            closed = (b + G.BETA) / (a + b + 2 * G.BETA)
+            ps, ns = tick_barrier(sim_lg, a, b, u)
+            pr, nr = tick_barrier(real_lg, a, b, u)
+            zs = (ps - pred) / math.sqrt(0.25 / ns) if ns else float("nan")
+            zr = (pr - pred) / math.sqrt(0.25 / nr) if nr else float("nan")
+            print(f"{feed:26s} {tpb:4d} {a}:{b:<3d} {ps:11.4f} {ns:7d} {pr:12.4f} "
+                  f"{nr:7d} {pred:10.4f} {closed:10.4f} {b / (a + b):11.4f} "
+                  f"{zs:+7.2f} {zr:+7.2f}")
+            tickrows.append({"feed": feed, "tpb": tpb, "a": a, "b": b, "pred": pred,
+                             "p_sim": ps, "n_sim": ns, "p_real": pr, "n_real": nr,
+                             "z_sim": zs, "z_real": zr, "closed": closed})
+            ledger.append({"test": "tick-monitored P(up) within 0.005 of the prediction",
+                           "feed": f"{feed} {a}:{b}", "value": ps - pred,
+                           "fired": abs(ps - pred) > 0.005})
+    print("\n     pooled over feeds, by tick rate and geometry:")
+    print(f"     {'tpb':>4s} {'a:b':>5s} {'sim':>9s} {'real':>9s} {'+-SE real':>10s} "
+          f"{'predicted':>10s} {'z real':>7s} {'close-mon':>10s} {'z vs close-mon':>15s}")
+    for tpb in (30, 60):
+        for a, b in ((3, 1), (1, 3), (2, 10)):
+            rows = [r for r in tickrows if r["tpb"] == tpb and r["a"] == a and r["b"] == b]
+            if not rows:
+                continue
+            nr = sum(r["n_real"] for r in rows)
+            ns = sum(r["n_sim"] for r in rows)
+            pr = sum(r["p_real"] * r["n_real"] for r in rows) / max(nr, 1)
+            ps = sum(r["p_sim"] * r["n_sim"] for r in rows) / max(ns, 1)
+            se = math.sqrt(0.25 / max(nr, 1))
+            pred, closed = rows[0]["pred"], rows[0]["closed"]
+            print(f"     {tpb:4d} {a}:{b:<3d} {ps:9.4f} {pr:9.4f} {se:10.4f} "
+                  f"{pred:10.4f} {(pr - pred) / se:+7.2f} {closed:10.4f} "
+                  f"{(pr - closed) / se:+15.2f}")
+    payload["tick_barrier"] = tickrows
 
     # --------------------------------------------------- cross-feed structure --
     print("\n[10] THE CROSS-FEED STRUCTURE - twins must be uncorrelated and no family")
