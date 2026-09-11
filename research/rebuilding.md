@@ -602,6 +602,73 @@ predicts. The AUC gap grew with n as expected (+0.018, +0.044, +0.038), which is
 why every finite `n*` is an upper bound on the separating sample rather than an
 estimate of it.
 
+### `n*`, per family and per arm - the headline this page owes
+
+An AUC at the floor is not proof of identity. It is failure to reject at the
+power available, and the honest form of the result is therefore the sample size
+at which each arm *would* reject:
+
+    n*  =  n x ( 1.96 x (se_test + se_floor) / (AUC_test - AUC_floor) )^2
+
+The two intervals are bootstrap intervals on a held-out sample, so their
+half-widths shrink as `1/sqrt(n)` while the gap between the AUCs does not - and
+that shrinkage was checked rather than assumed, at **2.00x over 4x the rows**
+against a predicted 2.00x. The gap *grows* with n in practice, because a boosted
+ensemble handed more rows finds more, so every finite figure below is an **upper
+bound** on the separating sample rather than an estimate of it. `inf` means the
+arm sits at or below its own real-against-real floor: no sample separates it by
+this battery, which is not the same as identity.
+
+`have` is what one class of the arm is drawn from - half the feed, because the
+other half is the floor - so an arm has already separated when `x over` is below
+one.
+
+| family | arm | gap over floor | `n*` | in ticks or bars | have | **x over** |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Volatility, fine band (7 feeds)** | window | -0.0066 | **inf** | **inf** | 176,000 | **inf** |
+| **Volatility, fine band (7 feeds)** | k-tuple | -0.0091 | **inf** | **inf** | 215,568 | **inf** |
+| Volatility, all 12 pooled | k-tuple | +0.0188 | 15,804 | 126,429 ticks | 362,718 | 0.35 |
+| Volatility, all 12 pooled | window | +0.0377 | 3,406 | 204,384 ticks | 362,718 | 0.56 |
+| Volatility, all 12 pooled | bar OHLC | +0.0144 | 23,742 | 712,271 bars | 475,255 | **1.50** |
+| Volatility, coarse band (4 feeds) | window | +0.1092 | 239 | 14,340 ticks | 55,000 | 0.26 |
+| Volatility, coarse band (4 feeds) | k-tuple | +0.0713 | 941 | 7,528 ticks | 73,568 | 0.10 |
+| Step Index | k-tuple | +0.0110 | 44,453 | 355,626 ticks | 43,196 | **8.2** |
+| Step Index | window | -0.0057 | **inf** | **inf** | 43,196 | **inf** |
+| Range Break 100 | k-tuple | +0.0132 | 25,351 | 202,810 ticks | 43,199 | **4.7** |
+| Range Break 100 | window | -0.0018 | **inf** | **inf** | 43,199 | **inf** |
+| Range Break 200 | k-tuple | -0.0037 | **inf** | **inf** | 43,199 | **inf** |
+| Range Break 200 | window | -0.0016 | **inf** | **inf** | 43,199 | **inf** |
+| Jump 75 | k-tuple | -0.0008 | **inf** | **inf** | 43,089 | **inf** |
+| Jump 75 | window | +0.0882 | 680 | 40,828 ticks | 43,089 | 0.95 |
+| Boom 500 | k-tuple | +0.1998 | 120 | **960 ticks** | 42,350 | 0.02 |
+| Crash 500 | k-tuple | +0.1390 | 197 | 1,577 ticks | 41,885 | 0.04 |
+| **Boom 300** | k-tuple | **+0.4753** | **7** | **59 ticks** | 40,950 | **0.001** |
+
+Read in three groups.
+
+**Where the answer is "more ticks than exist".** Step Index needs **8.2x** the
+stored sample on its k-tuple arm and is unseparable on its window arm; Range
+Break 100 needs **4.7x**; Range Break 200 and Jump 75 are unseparable on both.
+And the Volatility family on the seven feeds where the quote grid can carry a
+tick statistic is unseparable on both arms with the test arm *below* both floors.
+Those are the passes, and each of them is a bound rather than a claim of
+identity.
+
+**Where the answer is "a day and a half of bars".** The pooled Volatility bar arm
+would separate at 712,271 one-minute bars against the 475,255 held - **1.5x the
+store**, or about ninety more days of collection on twelve feeds. That is the one
+row on this table that says *collect more* rather than *fix the model*.
+
+**Where the rebuild is simply wrong.** Boom 300 separates on **59 ticks** - a
+minute of tape - and Boom 500 and Crash 500 on a thousand to five thousand. The
+Boom/Crash build is not close, and the failure ledger has said so since the first
+run: `n_distinct` reads AUC 0.309 there, meaning the rebuild has far fewer
+distinct grind magnitudes than the feed. A lognormal on two published moments
+does not pin the grind any better than it pins the jump, which is the same
+finding this page already recorded for `P(J > D)` and is now quantified: **the
+Boom/Crash rebuild is separable from its feed in under a minute of ticks**, and
+the quantiles of both `g` and `J` need publishing.
+
 ### The randomness battery is calibrated, and two of its tests were retired
 
 | stream | acf out of 50 | grid2 p | grid3 p | grid4 p | gap p | perm p | lattice 2-tuple | **lattice 3-tuple** |
