@@ -489,8 +489,8 @@ Bonferroni over the number of rows that **actually get an interval**, not over
 the number of rows printed. That is 5 here, not 12.
 
 Family-wise rate over the twelve-row strategy table - how often at least one
-row's interval excludes the truth - at 20,000 resamples, 2,000 books, both
-interval constructions:
+row's interval excludes the truth - at the shipping 20,000 resamples, 2,000
+books, seed 909, both interval constructions:
 
 | correction | percentile | studentised |
 | --- | ---: | ---: |
