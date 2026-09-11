@@ -24,12 +24,14 @@ from dataclasses import dataclass, field
 from river import stats
 
 from ..state import Restorable
+from . import stated
 from .consensus_vol import MAD_TO_SIGMA, Ensemble
 from .garch import Garch
 from .har import Har
 from .implied import ENABLED, IMPLIED_FEEDS, IMPLIED_INTERVALS, Fit, Implied, seeds
 from .learned import Learned
 from .ranges import Ranges
+from .stated import ENABLED as STATED_ENABLED
 
 #: Bars of history before the estimate is trusted. Below this the variance of
 #: the variance is larger than anything it would be used to decide.
@@ -319,6 +321,7 @@ class Volatility(Restorable):
         low: float,
         close: float,
         implied_bps: float | None = None,
+        stated_bps: float | None = None,
     ) -> float:
         """Fold one whole bar into the range estimates. Closes go to `update`.
 
@@ -352,6 +355,12 @@ class Volatility(Restorable):
         # whatever mapping it is given and a zero would be scored as a forecast.
         if implied_bps is not None and implied_bps > 0:
             members["vix"] = implied_bps
+        # **The number printed on the instrument.** A constant beats an
+        # estimator when there is nothing to estimate, and on these feeds there
+        # is not: they are exactly Brownian. Scored like everything else, so if
+        # the generator ever stops matching its name it loses its weight.
+        if stated_bps is not None and stated_bps > 0:
+            members["stated"] = stated_bps
         self._ensemble.observe(
             members,
             # **This series' own conversion, not the Gaussian one.** See
@@ -361,7 +370,7 @@ class Volatility(Restorable):
             ratio=self.mad_to_sigma,
             # The range family reports a standard deviation, and so does VIX;
             # `ew` and `garch` are on the mean-absolute convention already.
-            sigma_scaled=frozenset({"range", "har", "vix"}),
+            sigma_scaled=frozenset({"range", "har", "vix", "stated"}),
         )
         return realised
 
@@ -628,6 +637,21 @@ class Book(Restorable):
             )
         return found
 
+    def stated_bps(self, feed: str, interval: str) -> float | None:
+        """What this instrument's own name says its volatility is, per bar.
+
+        Only the Volatility and Jump families claim one. See `stated.py`: the
+        synthetics have **no volatility clustering at all**, so the rolling
+        estimator has nothing to track there and correlates with the next move
+        at -0.015 to +0.007 against 0.366 to 0.493 on real feeds - while the
+        true value is printed in the name and measures right to 0.49%.
+        """
+        if not STATED_ENABLED:
+            return None
+        from ..levels import SECONDS
+
+        return stated.bps_for(feed, float(SECONDS.get(interval, 0.0)))
+
     def observe_bar(
         self,
         feed: str,
@@ -641,7 +665,12 @@ class Book(Restorable):
         """One bar for one series, with the implied member supplied if it votes."""
         series = self.of(feed, interval)
         realised = series.observe_bar(
-            open_, high, low, close, implied_bps=self.implied_bps(feed, interval, when)
+            open_,
+            high,
+            low,
+            close,
+            implied_bps=self.implied_bps(feed, interval, when),
+            stated_bps=self.stated_bps(feed, interval),
         )
         # **After the forecast, never before it.** The fit learns from this bar
         # only once the bar has been scored against it, which is the same rule

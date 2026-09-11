@@ -3196,3 +3196,57 @@ def test_the_ensemble_takes_the_series_own_conversion():
     held.observe({"range": 100.0}, sigma_scaled=frozenset({"range"}), ratio=1.546)
     assert held.bps < gaussian, "a larger conversion means a smaller reading"
     assert gaussian == pytest.approx(100.0 / MAD_TO_SIGMA, abs=0.01)
+
+
+def test_the_stated_volatility_reads_the_name_and_the_jump_convention():
+    """Three studies on 2026-09-11 agreed the synthetics have **no volatility
+    clustering at all** - largest |acf| 0.017 against 0.219-0.453 real - so a
+    rolling estimator has nothing to track there, and measures it: correlation
+    with the next move is -0.015 to +0.007 against 0.366-0.493 on real feeds.
+
+    The true value is printed in the name and measures right to **0.49%** on 12
+    of 12. Jump indices are the exception and a consistent one: five feeds at
+    1.3128 to 1.3382, because the name is the diffusive volatility and the jumps
+    are extra."""
+    from till_infinity.structures.vol.stated import JUMP_MULTIPLE, bps_for, nominal
+
+    assert nominal("volatility_75_index") == 75.0
+    assert nominal("volatility_75_1s_index") == 75.0, "the 1s twin claims the same law"
+    assert nominal("jump_25_index") == pytest.approx(25.0 * JUMP_MULTIPLE)
+
+    # Documented mechanics but no published volatility - inventing one for these
+    # would be the failure this module exists to avoid.
+    for feed in ("boom_500_index", "step_index", "range_break_100_index", "eurusd", "gold"):
+        assert nominal(feed) == 0.0, feed
+        assert bps_for(feed, 60.0) is None
+
+
+def test_the_stated_volatility_annualises_over_365_days():
+    """These run 24/7 with no session and no weekend, so the factor is
+    `sqrt(365*24*60)` exactly. Using the 252-trading-day convention would put
+    every reading out by `sqrt(365/252)` = **1.20** - an error that looks like a
+    result rather than a fault."""
+    import math
+
+    from till_infinity.structures.vol.stated import MINUTES_PER_YEAR, bps_for
+
+    assert MINUTES_PER_YEAR == 365 * 24 * 60
+
+    by_hand = 0.75 * math.sqrt(1.0 / MINUTES_PER_YEAR) * 10_000.0
+    assert bps_for("volatility_75_index", 60.0) == pytest.approx(by_hand, abs=0.01)
+    assert by_hand == pytest.approx(10.35, abs=0.02)
+
+    # And it scales with the bar, so an hour is sqrt(60) of a minute.
+    hour = bps_for("volatility_75_index", 3600.0)
+    assert hour == pytest.approx(by_hand * math.sqrt(60.0), abs=0.1)
+
+
+def test_the_stated_member_ships_off():
+    """Every new member on this book arrives off and earns its way on. The VIX
+    one was measured over twenty years *before* being switched on and the raw
+    form lost - that is the standard this meets rather than an exception to."""
+    from till_infinity.structures.vol import stated
+    from till_infinity.structures.vol.volatility import Book
+
+    assert stated.ENABLED is False
+    assert Book().stated_bps("volatility_75_index", "1m") is None
