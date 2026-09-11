@@ -320,6 +320,84 @@ resolve and **this measurement belongs on ticks**, where there are sixty samples
 a bar. That is a statement about the instrument worth making before running
 anything, and it is what a power analysis is for.
 
+### And then it was measured, and the sample cannot carry it
+
+The lab came back and both legs ran. The ladder measurement belongs on **ticks**,
+because `tau_2` is 96 ticks and a one-minute bar cannot resolve it - and the tick
+measurement is defeated by something simpler than resolution.
+
+**Twenty-four hours of ticks holds 20 breaks on RB100 and 7 on RB200.** After
+requiring an episode long enough to carry the longest window, that leaves **2 and
+3 usable episodes**. The power analysis was run at 999 episodes and returned a
+0.0% separation error; re-run at each feed's own tick count, episode length and
+*measured* width, it returns this:
+
+| RB100, W = 45.6 | `l2/l1` | `l3/l1` | knee | kurtosis |
+| --- | --- | --- | --- | --- |
+| simulated box | 3.542 +- 0.551 | 7.473 | -0.33 | -0.783 |
+| simulated spring | 2.367 +- 0.286 | 4.536 | -0.27 | -0.110 |
+| simulated free walk | 2.957 +- 0.862 | 6.185 | -0.73 | +0.140 |
+| **measured** | **3.438** | 5.258 | **-0.32** | **-0.736** |
+
+| RB200, W = 67.1 | `l2/l1` | `l3/l1` | knee | kurtosis |
+| --- | --- | --- | --- | --- |
+| simulated box | 3.667 +- 0.593 | 7.669 | -0.53 | -0.423 |
+| simulated spring | 2.416 +- 0.244 | 4.688 | -0.49 | +0.018 |
+| simulated free walk | 2.931 +- 0.655 | 6.363 | -0.82 | +0.374 |
+| **measured** | **2.051** | 5.039 | **-0.70** | **-0.210** |
+
+**The bands overlap and the ladder is not readable.** RB100's 3.438 sits inside
+the box's interval *and* inside the free walk's. RB200's 2.051 sits below all
+three. And the row that settles it is the control: **`step_index`, which
+`deriving.md` proves is a fair coin to `p = 0.499734 +- 0.000220`, returns
+`l2/l1 = 3.751`** on the same code path - a provable free walk, indistinguishable
+from a box, exactly as section one warned. At two or three episodes the estimator
+has no power and nothing about the ladder is reported as a result.
+
+The bar cross-check says the same thing from the other side: at one-minute bars
+the ratios come out **1.347 and 1.795**, below even the spring's calibrated 2.154,
+which is what "a bar cannot resolve a 1.6-bar mode" looks like when you try
+anyway.
+
+**What it would take is arithmetic.** The estimator had 0.0% separation error at
+999 episodes and none at 2. Breaks arrive every 86.5 and 178.8 minutes, so 200
+episodes is **12 days of RB100 ticks and 25 days of RB200 ticks**, against the 24
+hours stored. That is the specific collection this measurement needs, and it is
+the useful form of the answer: the ladder is not unmeasurable, it is unmeasured,
+and the shortfall is a factor of twelve in tick history rather than anything
+about the method.
+
+### What the same run does settle: the width, twice over
+
+The tick data measures the range directly, two independent ways - `sqrt(12 Var)`,
+which is the width a uniform stationary law implies, and the mean within-episode
+range:
+
+| | `sqrt(12 Var)` | mean within-episode range | agreement |
+| --- | --- | --- | --- |
+| RB100 | **45.6** | **47.0** | 3.0% |
+| RB200 | **67.1** | **67.0** | 0.1% |
+
+Two estimators of the same quantity agreeing to 3% and 0.1%, and **the gap
+between the feeds is 21 units against a gap of at most 1.4 between the estimators
+on one feed**. So the widths are different and the difference is fifteen times
+the disagreement between the ways of measuring it.
+
+That resolves a three-way disagreement in this folder. This page's eigenvalue
+inversion of `deriving.md`'s published curve said **49 and 56**;
+[rebuilding.md](rebuilding.md)'s fit said **one shared 60 for both**; the feed
+says **46 and 67**. The inversion is right on RB100 to 6% and 16% low on RB200,
+and **the shared width is refuted** - it is not that the two indices share a range
+and differ only in break rate and break size, they have ranges differing by a
+factor of 1.46. That is a correction to a published number obtained from the data
+rather than from a fit, and it is the most solid thing in this section.
+
+The two secondary discriminators also point one way on RB100 and are mute on
+RB200. RB100's stationary kurtosis is **-0.736** against a simulated box's -0.783
+and a simulated spring's -0.110, and its knee is **-0.32** against a box's -0.33
+and a free walk's -0.73. On the density and the scaling, RB100 is a box. RB200's
+-0.210 and -0.70 sit between everything, which is what three episodes buys.
+
 **Ledger: two of nine fired, both on the first design and both instructive.**
 Condition 1 fired - the estimator does not recover 4 and 2 at the real sample
 size, because pooling episodes forces de-meaning - and the response was to
@@ -343,6 +421,11 @@ residual that is **too confined at one minute and too free at twenty**, and read
 that as the edge of the range being *softer than a wall*. That is a qualitative
 conclusion from a variance-ratio fit. The spectrum turns it into a number.
 
+**The shared width has since been refuted by the feed itself** - 45.6 and 67.1
+units, two independent estimators agreeing to 3% and 0.1%, in the section above -
+so the arithmetic below is re-run at the measured widths rather than at 60. It
+changes the relaxation times and not the argument.
+
 **First, the twenty minutes is not an arbitrary scale.** A reflecting box relaxes
 on its slowest mode in `tau_1 = 2W^2/pi^2` ticks at unit step variance, which at
 60 steps is 729 ticks, or **12.2 minutes**. So twenty minutes is `1.6 tau_1`, and
@@ -351,10 +434,17 @@ the residual sits on the box's own clock. `quantspec.py` computes 1.64 and
 arithmetic from a fitted curve and from an eigenvalue. That is what says the
 residual is a **shape error in the relaxation** and not a missing timescale.
 
-| | shared band | break jump | `tau_1` | 20m in `tau_1` | residual at 1m | at 20m |
-| --- | --- | --- | --- | --- | --- | --- |
-| RB100 | 60 steps | 130 | 12.16 min | **1.64** | -0.086 | +0.047 |
-| RB200 | 60 steps | 210 | 12.16 min | **1.64** | -0.018 | +0.024 |
+| | fitted band | **measured band** | `tau_1` at the measured band | 20m in `tau_1` | residual at 20m |
+| --- | --- | --- | --- | --- | --- |
+| RB100 | 60 steps | **45.6** | 7.0 min | **2.85** | +0.047 |
+| RB200 | 60 steps | **67.1** | 15.2 min | **1.32** | +0.024 |
+
+At the *fitted* 60 the relaxation time is 12.2 minutes and twenty minutes is
+1.64 relaxation times on both feeds, which is how both pages arrived at the same
+1.6 from different evidence. At the *measured* widths it is 2.85 and 1.32 - still
+of order one on both, so the residual still sits on the box's own clock, but the
+two feeds are no longer at the same point on it. That is the same disagreement as
+the width, seen in the time domain.
 
 **Second, `1:4:9` is a ceiling and not one option among several.** WKB gives
 `lambda_k ~ k^alpha` with `alpha = 2p/(p+2)` for a well `V ~ |x|^p`, which rises
