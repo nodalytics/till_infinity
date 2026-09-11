@@ -202,3 +202,83 @@ distribution; for this strategy they sit inside it.
 
 Ten closes cannot settle an exit policy. This makes the record be about the
 question that was asked.
+
+# 2026-09-11: decomposing the regime survivors, and a correction to my own reading
+
+`research/harness/sweepregimes.py` cuts sweep-aware's replayed trades by 21
+dimensions, split 60/40 by time, against a control of three random buckets of
+the same trades. Corrected for the same two look-aheads as `sweepstops` - the
+two harnesses now share one `walk`, because they had diverged and one was wrong
+- seven dimensions survive:
+
+| dimension | gap R | best | worst |
+| --- | --- | --- | --- |
+| risk_vol | **0.822** | high | low |
+| vol_bps | **0.636** | high | low |
+| vol_stretch | 0.186 | mid | low |
+| origin_size_vol | 0.185 | high | low |
+| edge | 0.185 | mid | high |
+| origin_distance_vol | 0.153 | mid | low |
+| strength | 0.152 | mid | high |
+
+Control gap 0.069R. `risk_vol` and `vol_bps` hold their ordering in **every**
+interval, which is the Simpson check this project needs after being caught by it
+three times.
+
+Both are also suspicious as *regimes* and obvious as *arithmetic*, so both were
+decomposed by re-running with one thing changed at a time.
+
+## `vol_bps` was the spread, entirely
+
+| run | pooled mean | `vol_bps` gap |
+| --- | --- | --- |
+| as it ships | -0.015R | 0.636 |
+| **spread charged at zero** | **+0.348R** | **absent** |
+| trail scaled to risk | -0.015R | 0.634 |
+
+Charge no spread and `vol_bps` **drops out of the survivor list altogether**.
+The mechanism is not subtle: R is normalised by risk, so the cost in R is
+`spread / (risk_vol * vol_bps)`, which grows without bound as volatility falls.
+Low-volatility setups do not lose because the market is quiet; they lose because
+the same spread is a larger fraction of a smaller move.
+
+That is a **cost** finding, not a regime one, and the two want different actions.
+"Do not trade quiet markets" is a rule about the market. "Refuse a setup whose
+spread is too large a share of what it is reaching for" is a rule about the
+trade, generalises to every instrument, and is the correct form.
+
+## `risk_vol` was **not** the trail, which was my hypothesis
+
+The guess was that a **fixed** 0.5v trail gives back 0.5R against a 1v stop and
+0.25R against a 2v one, so wider stops would score better for purely mechanical
+reasons. Scaling the trail to half the *risk* moves the gap from 0.822 to
+**0.812**. It is not the trail.
+
+Removing the cost moves it from 0.822 to 0.498, so roughly 40% of it is the same
+spread effect - a wider stop buys more R per unit of spread - and about 60%
+survives both tests unexplained.
+
+## A correction: the spread is not eating the live edge
+
+The natural reading of "+0.348R without cost against -0.015R with it" is that
+transaction costs consume this strategy's entire edge. **That reading is wrong,
+and the live record says so.** Over 305 journalled decisions carrying a spread,
+a risk and a target:
+
+| | median | p75 | p90 |
+| --- | --- | --- | --- |
+| spread / risk | **0.081** | 0.157 | 0.324 |
+| spread / reward | 0.112 | 0.189 | 0.275 |
+
+The desk actually pays about **0.08R**, not 0.36R. The difference is that the
+replay charges every call passing sweep-aware's *entry* rule, and `risk.py`'s
+`max_spread_fraction` gate then refuses the expensive ones before any of them
+becomes a trade.
+
+So the honest statement is narrower and more useful than the one the table
+first suggested: **the replay's pooled figure is not the desk's expected
+return**, because the desk does not take that population - the risk gates are
+doing real work, and a replay that skips them measures a strategy nobody runs.
+
+What the decomposition still establishes is the `vol_bps` result above, which
+does not depend on the level of the cost, only on its shape.
