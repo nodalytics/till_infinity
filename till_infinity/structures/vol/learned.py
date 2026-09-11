@@ -303,6 +303,19 @@ class Learned(Restorable):
     #: Head-to-head, all three asked about the same bar at the same moment.
     _scores: dict[str, Score] = field(default_factory=dict)
 
+    def forget(self, keep: set[str]) -> int:
+        """Drop the per-feed recents for feeds this desk no longer follows.
+
+        The pooled model itself is not touched. It is trained on scale-free
+        features precisely so that what it learned from a feed stays useful
+        after the feed is gone - dropping the tree because a symbol left would
+        throw away the part that generalises.
+        """
+        gone = [key for key in self._by_key if str(key).split("|", 1)[0] not in keep]
+        for key in gone:
+            del self._by_key[key]
+        return len(gone)
+
     def _recent(self, key: str) -> Recent:
         found = self._by_key.get(key)
         if found is None:

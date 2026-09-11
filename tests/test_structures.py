@@ -2917,3 +2917,94 @@ def test_the_window_is_settable_from_the_environment():
         else:
             os.environ["STRUCTURES_WINDOW"] = was
         importlib.reload(eng)
+
+
+def test_the_engine_forgets_feeds_outside_the_universe():
+    """The state grew to 349 feeds for a 53-instrument book and nothing shrank
+    it: `_series` held 3,280 entries and `vol._by_key` 5,416, together 324MB of
+    a 552MB state that costs 1.33GB resident.
+
+    Capping the price collector did not stop it, and that is the part worth
+    pinning. `PRICES_CCXT_TOP=25` bounds how many crypto pairs are discovered at
+    one moment; the top twenty-five by volume rotates, so 235 distinct crypto
+    feeds had produced a bar within three days. A rotating window against a
+    store that never forgets is unbounded whatever the cap is.
+    """
+    from till_infinity.structures.engine import Engine
+
+    engine = Engine()
+    for feed in ("eurusd", "gold", "ace_usdt_usdt", "mon_usdt_usdt"):
+        for interval in ("1m", "1h"):
+            engine.series(feed, interval)
+            engine.vol.of(feed, interval)
+
+    assert len({f for f, _ in engine._series}) == 4
+
+    dropped = engine.forget({"eurusd", "gold"})
+
+    assert dropped["feeds"] == 2
+    assert {f for f, _ in engine._series} == {"eurusd", "gold"}
+    assert {f for f, _ in engine.vol._by_key} == {"eurusd", "gold"}
+
+
+def test_forgetting_is_a_no_op_for_a_desk_that_has_not_configured_it():
+    """`feeds` empty means "whatever arrives", which is what it did before.
+    A bound nobody asked for that silently deletes learned state would be a
+    worse bug than the one it fixes."""
+    from till_infinity.structures.engine import Engine
+
+    engine = Engine()
+    engine.series("ace_usdt_usdt", "1m")
+    engine.vol.of("ace_usdt_usdt", "1m")
+
+    assert engine.forget(None, now=0.0) == {}
+    assert ("ace_usdt_usdt", "1m") in engine._series
+
+
+def test_a_feed_is_judged_quiet_across_all_its_intervals_not_one():
+    """A 1w series gets one bar a week and would look abandoned every time,
+    while a live feed's 1m series updates constantly. Judging per series would
+    evict the slow timeframes of perfectly live instruments."""
+    import time
+
+    from till_infinity.structures.engine import Engine
+
+    now = time.time()
+    engine = Engine()
+    engine.forget_feed = 3 * 86_400
+
+    fresh = engine.series("eurusd", "1m")
+    fresh.times.append(int(now))
+    stale_side = engine.series("eurusd", "1w")
+    stale_side.times.append(int(now - 30 * 86_400))
+    engine.vol.of("eurusd", "1w")
+
+    gone = engine.series("ace_usdt_usdt", "1m")
+    gone.times.append(int(now - 30 * 86_400))
+    engine.vol.of("ace_usdt_usdt", "1m")
+
+    dropped = engine.forget(None, now=now)
+
+    assert dropped["feeds"] == 1
+    assert ("eurusd", "1w") in engine._series, "a slow interval is not an abandoned feed"
+    assert ("ace_usdt_usdt", "1m") not in engine._series
+
+
+def test_forgetting_keeps_what_is_pooled():
+    """The learner's tree, the shape library and the regime labeller are trained
+    on scale-free features precisely so what they learned from a feed outlives
+    the feed. Dropping them because a symbol left throws away the part that
+    generalises."""
+    from till_infinity.structures.engine import Engine
+
+    engine = Engine()
+    engine.series("ace_usdt_usdt", "1m")
+    engine.vol.of("ace_usdt_usdt", "1m")
+    shapes, regimes = engine.shapes, engine.regimes
+    learned = engine.vol.learned
+
+    engine.forget({"eurusd"})
+
+    assert engine.shapes is shapes
+    assert engine.regimes is regimes
+    assert engine.vol.learned is learned

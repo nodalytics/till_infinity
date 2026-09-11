@@ -875,6 +875,22 @@ class Watcher:
             # settles nothing - and this one exists to settle whether the model
             # behind every level call is earning its complexity.
             log.info("structures: model bench\n%s", self.bench.report())
+        # **Before the write, because the write is what the size costs.** The
+        # state had grown to 349 feeds for a 53-instrument book and nothing
+        # shrank it; see `engine.Engine.forget`. Reported rather than silent -
+        # a store that quietly drops things is worse than one that quietly
+        # keeps them.
+        try:
+            dropped = self.engine.forget(self.settings.feeds or None, time.time())
+            if dropped:
+                log.info(
+                    "structures: forgot %d feed(s) the desk no longer follows - %s",
+                    dropped.get("feeds", 0),
+                    ", ".join(f"{k} {v}" for k, v in sorted(dropped.items()) if k != "feeds"),
+                )
+        except Exception as exc:  # forgetting must not be able to stop a save
+            log.warning("structures: could not forget stale feeds: %s", exc)
+
         try:
             store.save(
                 {

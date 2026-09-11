@@ -577,6 +577,24 @@ class Book(Restorable):
             changed=changed,
         )
 
+    def forget(self, keep: set[str]) -> int:
+        """Drop every estimate for a feed not in `keep`. Returns how many went.
+
+        The book held **5,416 estimates across 445 feeds** for a desk that
+        trades 53 instruments, at 21KB each - 111MB of a 552MB state. See
+        `engine.Engine.forget` for where those feeds came from and why bounding
+        the price collector did not bound this.
+        """
+        gone = [key for key in self._by_key if key[0] not in keep]
+        for key in gone:
+            del self._by_key[key]
+        learned = getattr(self, "_learned", None)
+        if learned is not None:
+            forget = getattr(learned, "forget", None)
+            if callable(forget):
+                forget(keep)
+        return len(gone)
+
     def feeds(self) -> list[str]:
         return sorted({feed for feed, _ in self._by_key})
 

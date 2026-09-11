@@ -107,6 +107,11 @@ class Settings(Restorable):
     #:
     #: On, it costs about 0.2% of one core and 1.2MB, publishes `learned_bps`
     #: and `learned_ratio` on every call, and logs a head-to-head each save.
+    #: The feeds this engine keeps state for. Empty means "whatever arrives",
+    #: which is what it did before and what let the state grow to 349 feeds for
+    #: a 53-instrument book - see `engine.Engine.forget`. Set it to the desk's
+    #: own symbol list and the accumulated residue is dropped on the next save.
+    feeds: tuple[str, ...] = ()
     vol_learner: bool = False
 
     #: How swings are found: `pip` takes bar extremes by prominence, `run` the
@@ -176,4 +181,15 @@ class Settings(Restorable):
             formation=os.environ.get("STRUCTURES_FORMATION") or DEFAULT_FORMATION,
             macro=os.environ.get("STRUCTURES_MACRO", "1") not in ("0", "false", "no"),
             vol_learner=os.environ.get("STRUCTURES_VOL_LEARNER", "0") not in ("0", "false", "no"),
+            # `SYMBOLS` is the desk's own list and is already set everywhere, so
+            # this defaults to it rather than inventing a second place to keep
+            # the same names in step. `STRUCTURES_FEEDS` overrides it for a
+            # replay that wants the whole corpus.
+            feeds=tuple(
+                name.strip()
+                for name in (
+                    os.environ.get("STRUCTURES_FEEDS") or os.environ.get("SYMBOLS") or ""
+                ).split(",")
+                if name.strip()
+            ),
         )

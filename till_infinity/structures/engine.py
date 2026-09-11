@@ -27,11 +27,11 @@ import sqlite3
 import statistics
 import time
 from collections import deque
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ..logging import get_logger
 from . import levels as lv
@@ -124,6 +124,15 @@ SWEEP_SIGMAS = 1.0
 #: is the number to raise first, and the environment variable is why that does
 #: not need a code change.
 WINDOW = int(os.environ.get("STRUCTURES_WINDOW") or 1_000)
+
+#: A feed silent for this long has its accumulated state dropped by
+#: `Engine.forget`. Seven days rather than three, because the rule is measured
+#: **per feed** across all its intervals - any live instrument's 1m series
+#: updates continuously - so the only thing a long threshold protects is a feed
+#: that genuinely stopped, and the only thing a short one risks is dropping an
+#: instrument over a holiday weekend. The universe filter is what reclaims
+#: quickly; this is the bound that holds when there is no universe to filter on.
+FORGET_FEED_SECONDS = float(os.environ.get("STRUCTURES_FORGET_FEED") or 7 * 86_400)
 
 #: Bars kept for the **fine** series, which is the one everything else is
 #: refined against.
@@ -974,6 +983,10 @@ class Engine:
         #: Open shape instances, waiting for the horizon to say what followed.
         self._pending: dict[tuple[str, str], tuple[int, float, int]] = {}
         self._series: dict[tuple[str, str], Series] = {}
+        #: How long a feed may go without a bar before `forget` drops what it
+        #: accumulated. Zero disables the staleness rule and leaves only the
+        #: universe filter. Measured per feed, not per series - see `forget`.
+        self.forget_feed: float = FORGET_FEED_SECONDS
         #: Pairs already told about, so `supports` says so once rather than on
         #: every reform. Not persisted: it is a log-noise guard, and saying it
         #: again after a restart is correct.
@@ -1012,6 +1025,99 @@ class Engine:
             )
 
     # --------------------------------------------------------------- levels
+
+    def forget(self, keep: Collection[str] | None, now: float = 0.0) -> dict[str, int]:
+        """Drop every per-feed store for a feed this desk no longer follows.
+
+        **The state grew to six times the book and nothing ever shrank it.**
+        Measured on a live 206MB save: `_series` held **3,280 entries across 349
+        feeds** and `vol._by_key` **5,416 across 445**, for a desk that trades
+        **53 instruments**. Together they were 324MB of a 552MB state, and that
+        state costs 1.33GB resident - the structural half of the OOM kills that
+        `research/starving.md` records.
+
+        The feeds are crypto swaps, and the interesting part is *why capping the
+        collector did not stop them*. `PRICES_CCXT_TOP=25` bounds how many are
+        discovered **at any one moment**; it says nothing about how many are
+        discovered over a month, because the top twenty-five by volume
+        **rotates**. 235 distinct crypto feeds had produced a bar within three
+        days of that save. A rotating window against a store that never forgets
+        is unbounded by construction, and no value of `TOP` fixes it.
+
+        So the bound has to live here, where the state does. Two rules:
+
+        * **Outside the universe.** When `keep` is given, a feed not in it is
+          dropped outright. That is immediate and is what reclaims what has
+          already accumulated.
+        * **Gone quiet.** A feed whose most recent bar, across *all* its
+          intervals, is older than `forget_feed` seconds. Per feed rather than
+          per series on purpose: a 1w series gets one bar a week and would look
+          abandoned every time, while a live feed's 1m series updates
+          constantly. This is the rule that handles rotation once the universe
+          filter is not set, and the safety net when it is.
+
+        `keep=None` with `now=0` is a no-op, so an unconfigured desk behaves
+        exactly as it did.
+
+        What is **not** dropped is anything pooled: the learner's tree, the
+        shape library, the regime labeller. Those are trained on scale-free
+        features precisely so what they learned from a feed outlives the feed.
+        """
+        keep_set = {str(f) for f in keep} if keep is not None else None
+        if keep_set is None and not (now and self.forget_feed > 0):
+            return {}
+
+        last: dict[str, float] = {}
+        for (feed, _interval), series in self._series.items():
+            times = series.times
+            if times:
+                last[feed] = max(last.get(feed, 0.0), float(times[-1]))
+
+        def doomed(feed: str) -> bool:
+            if keep_set is not None and feed not in keep_set:
+                return True
+            if not (now and self.forget_feed > 0):
+                return False
+            seen = last.get(feed)
+            # A feed with no bar at all is residue by definition, but only
+            # judge it once the engine has been running long enough to have
+            # asked for one.
+            return seen is None or (now - seen) > self.forget_feed
+
+        gone = {feed for feed in {f for f, _ in self._series} | set(last) if doomed(feed)}
+        gone |= {f for f, _ in self._levels if doomed(f)}
+        gone |= {f for f, _ in self._origins if doomed(f)}
+        gone |= {f for f in self._spread if doomed(f)}
+        if not gone:
+            return {}
+
+        counts = {"feeds": len(gone)}
+
+        def sweep(name: str, store: Any, at: int = 0) -> None:
+            if not isinstance(store, dict | set):
+                return
+            doomed_keys = [
+                k for k in store if (k[at] if isinstance(k, tuple) and len(k) > at else k) in gone
+            ]
+            for k in doomed_keys:
+                store.discard(k) if isinstance(store, set) else store.pop(k, None)
+            if doomed_keys:
+                counts[name] = len(doomed_keys)
+
+        sweep("series", self._series)
+        sweep("levels", self._levels)
+        sweep("origins", self._origins)
+        # Lazily created, so asked for by name. An attribute that does not
+        # exist yet holds nothing to forget.
+        sweep("changes", getattr(self, "_changes", None))
+        sweep("pending", self._pending)
+        sweep("spread", self._spread)
+        sweep("flat_bars", self._flat_bars)
+        sweep("declined", self._declined)
+        sweep("consensus", getattr(self.consensus, "_bars", None))
+        sweep("touches", getattr(self.tracker, "_open", None))
+        counts["vol"] = self.vol.forget({f for f, _ in self.vol._by_key if f not in gone})
+        return {k: v for k, v in counts.items() if v}
 
     def series(self, feed: str, interval: str) -> Series:
         key = (feed, interval)
