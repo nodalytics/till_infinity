@@ -250,6 +250,90 @@ of distinct values; run anyway they reported z = -334 and z = +120 on *every*
 stream including numpy's own. A test that fails its own positive control is not a
 finding.
 
+### Ninety-one published numbers, regenerated from the parameters alone
+
+[`rebuildpaper.py`](harness/rebuildpaper.py) is the whole of what can be done
+without the lab. `deriving.md`, `generators.md` and `twins.md` between them state
+about a hundred numbers measured off the real feeds, and every one of them is a
+number a correct simulator has to produce. None of them is an input to the
+rebuild, and all of them were measured before it existed.
+
+**103 comparisons, eleven fired**, at 400,000 bars a cell over three seeds - and
+six of the eleven are one finding counted six times.
+That is weaker than a two-sample test - it compares two summaries rather than two
+distributions, and it can only catch an error large enough to move a summary -
+and it is not nothing.
+
+**What passed.** The barrier table is the sharpest of them, because the rebuild
+was never told about the 0.5826 constant and the textbook closed form is wrong:
+
+| a:b | measured on the feed | **rebuilt** | continuous | corrected | E[tau] measured | **rebuilt** | continuous |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1:1 | 0.5000 | **0.5007** | 0.5000 | 0.5000 | 2.782 | **2.784** | 1.000 |
+| 5:5 | 0.5008 | **0.5014** | 0.5000 | 0.5000 | 31.279 | **31.431** | 25.000 |
+| 3:1 | 0.3073 | **0.3082** | 0.2500 | 0.3064 | 5.942 | **5.961** | 3.000 |
+| 9:1 | 0.1426 | **0.1430** | 0.1000 | 0.1417 | 15.382 | **15.423** | 9.000 |
+| 2:10 | 0.8042 | **0.8049** | 0.8333 | 0.8038 | 27.472 | **27.543** | 20.000 |
+
+Eight geometries, 430,975 replayed trades at the tightest: `P(up)` lands within
+**+0.0004 to +0.0012** of the feed's own measurement and `E[tau]` within
+**0.09% to 0.49%**, where the continuous form misses `P(up)` by 0.057 and
+`E[tau]` by 50-178%. `E[max]` and `E[range]` over 5, 15, 60 and 240 minutes land
+within **1.04%** and **0.30%**; the occupation-time deciles within **0.004** of
+the feed's; realised volatility within **0.04%** of the name; kurtosis inside
+2.98-3.02; Hurst 0.4998; the Parkinson ratios at **0.014%** and **0.10%** of
+0.870 and 0.909. Step Index reproduces its gambler's-ruin hit rates to within
+**0.79 standard errors** at all six geometries and both fill conventions - the
+one-step-past numbers 0.3536, 0.2732 and 0.1874 come back to 1.5%. The twins
+carry the `sqrt(2)` per-tick ratio to **0.03%** and identical volatility per
+second to **0.06%**. And Boom's five published numbers reproduce `genstop.py`'s
+**+13.96R, +6.81R, +2.44R and +1.02R** stop slippage at -8.5%, -16.2%, -18.7%
+and -4.6%, from a path that was never shown them.
+
+**What failed, and the big one is a correction to `deriving.md` rather than to
+the rebuild.** `deriving.md` section five states, per feed, `lambda`, `E[g]` and
+`E[J]`, and its own theorem says `E[J] = lambda * E[g]`. The published numbers do
+not satisfy it:
+
+| feed | lambda x E[g] / E[J] | closure z, 3M ticks | with `E[J] := lambda*E[g]` |
+| --- | --- | --- | --- |
+| boom_300_index | 0.9399 | **-6.70** | +0.22 |
+| boom_500_index | 1.0812 | **+5.65** | +2.13 |
+| boom_1000_index | 0.9374 | **-2.87** | -0.21 |
+| crash_300_index | 1.0848 | **+5.79** | +2.16 |
+| crash_500_index | 1.1182 | **+7.55** | +2.39 |
+| crash_1000_index | 1.0388 | **+2.92** | +0.95 |
+
+Six for six outside 2%, by **6% to 12%**. Each number is individually fine - the
+feed's own 24 hours cannot resolve the product to better than that, and
+`deriving.md` says as much when it reports `E[J]/E[g]` at 489.6 against a lambda
+of 529.4. But a rebuild at thirty-five times that sample sees the residual drift
+immediately, and a compound Poisson built from both published means is **not a
+martingale**. Replace `E[J]` by `lambda * E[g]` and every feed comes back inside
+2.4 standard errors. That is a one-line amendment to the specification with a
+real consequence: anyone simulating Boom or Crash from the published table gets a
+drift, and the whole `E[net] = -c` theorem assumes there is none.
+
+**The other failure is the jump's lower tail.** A lognormal matched to `E[J]` and
+`median J` - which is exactly what `deriving.md` publishes - has almost no small
+jumps, and `P(J > D)` comes out 1.000, 0.999, 0.919 and 0.607 against the
+measured 0.963, 0.888, 0.763 and 0.531. Three of four outside 0.05. Two moments
+do not pin a tail, and the quantity that depends on it - how often a stop is
+gapped straight through - is exactly the one `deriving.md` section five uses for
+sizing. **The quantiles of `J` need publishing, not just its mean and median.**
+
+The remaining two are small: Step Index's `E[tau]` at a 50:5 barrier is 7.6% off
+a published figure that was itself 6.9% off the theory on 323 trades, and one
+occupation decile is 0.0105 from the arcsine law against a bar of 0.01 - where
+the feed's own measurement is 0.0147 off in the same direction.
+
+**The negative controls behaved.** A generator with sigma 2% wrong fails the
+volatility condition and passes the Parkinson one; one at half the publication
+rate passes the volatility condition and fails the Parkinson one. The battery
+separates a scale error from a rate error, which is the only way to read a pass
+on either.
+
+
 ### Two results about the real instrument that go through published numbers
 
 **The 0.5826 correction emerges from the rebuild rather than being put into it.**
@@ -423,49 +507,37 @@ residual remains at the box's own relaxation time. That is a sharper statement o
 the gap than "the mechanism is not published", and it is three falsifiable
 claims: one shared width, no second re-range event, and a soft edge.
 
-## What is still to run, and exactly what it will settle
-
-Five commands, each one line, each detached with a flag file. They are in
-`research/README.md` beside the rest of the generator study and they need nothing
-but a reachable lab:
+## What is still to run - one command, and what each outcome would mean
 
 ```bash
-./.secrets/lab.sh run research/harness/rebuildvol.py MULT=10 JMULT=4
-./.secrets/lab.sh run research/harness/rebuildstep.py MULT=10 RBMULT=5
-./.secrets/lab.sh run research/harness/rebuildspike.py BMULT=2
-./.secrets/lab.sh run research/harness/rebuildjudge.py
-./.secrets/lab.sh run research/harness/rebuildpower.py
+./.secrets/lab.sh run research/harness/rebuildall.py
 ```
 
-What each one decides is already fixed, because the failure conditions are in
-the docstrings and the thresholds are numbers rather than judgements:
+That is the whole blocked half. [`rebuildall.py`](harness/rebuildall.py) runs the
+five feed studies in one process, keeps going when one raises, and pools their
+failure ledgers into a single count over a single sample. About forty minutes of
+one core at the defaults.
 
-* **`rebuildvol.py`** - 12 feeds x 4 seeds x 864,110 bars. Whether two numbers
-  per instrument reproduce the feed's realised volatility inside 0.5%, its
-  kurtosis inside 3 standard errors of 3.00, its Hurst exponent inside 0.01 of
-  0.50, and its Parkinson ratio inside 1%; whether a KS on one-minute log
-  returns rejects on more than 3 of the 12; and whether the 66 pairwise
-  correlations among the rebuilt feeds look like the 66 among the real ones.
-  The two readings of the Jump family's 1.322 are decided here too, and they
-  predict different kurtosis, so the data can choose.
-* **`rebuildstep.py`** - whether four numbers reproduce Step Index's 99.9988%
-  concentration, its fair coin, its sign autocorrelations and its gambler's-ruin
-  hit rates; and whether the Range Break rules fitted above survive being scored
-  against the feed's own rows rather than against a published table, with the
-  band re-estimated from the visited range and a 12-seed Monte Carlo null
-  standing in for a standard error that does not apply to a jump process.
-* **`rebuildspike.py`** - whether the **five published numbers** re-instantiate
-  Boom and Crash, or whether the empirical marginal is needed. Both are built and
-  the difference between them is the answer. It also has to reproduce
-  `genstop.py`'s +13.96R, +6.81R, +2.44R and +1.02R stop slippage from a path
-  that was never shown them.
-* **`rebuildjudge.py`** - the headline. Whether a classifier can tell the feed
-  from the rebuild, read against the feed-against-itself floor, plus the
-  randomness batteries on the venue's own increment stream against the RANDU and
-  PCG64 controls calibrated above.
-* **`rebuildpower.py`** - `n*` per family: the sample size at which a test starts
-  separating the rebuild from the feed, with the closed form and the empirical
-  crossing required to agree within a factor of three on the controls.
+The point of writing this down now is that the interpretation is fixed before the
+numbers exist. Each row below is a thing that can happen and what it would mean;
+none of them is a thing I would like to happen.
+
+| what comes back | what it means |
+| --- | --- |
+| **Volatility**: realised vol within 0.5% on 12 of 12, kurtosis inside 3.00 +- 3 SE, Hurst inside 0.50 +- 0.01, Parkinson inside 1%, KS rejecting on 3 or fewer | two numbers per instrument re-instantiate the feed. `deriving.md` is complete for this family and the twelve indices can be replaced by a simulator wherever a longer sample is wanted |
+| the same but **Parkinson misses while volatility passes** | the law is right and the publication rate is not. The venue's bars are not built from 30 and 60 ticks, and every discrete-monitoring number in `deriving.md` moves with it |
+| **KS rejects on more than 3 of 12** | a distributional defect a moment test cannot see. The per-feed `D` and the univariate feature AUCs in `rebuildjudge.py` say where, and the honest headline becomes an `n*` rather than a pass |
+| **Jump**: spec A realises 1.322x and spec B does not | `generators.md`'s reading is right - the name is the diffusion and the jumps are extra - and the conditional in `deriving.md` section six is priced against the correct process |
+| both readings realise 1.322x but their **kurtosis differs and only one matches** | the multiplier does not identify the generator and the rate does. Worth saying, because the barrier-product arithmetic in `deriving.md` section six depends on which |
+| **Step**: concentration, coin, sign ACF, runs and gambler's ruin all pass | four numbers re-instantiate the instrument exactly, which is the cleanest closure available on this book |
+| **Boom/Crash**: `spec` (five published numbers) passes and `pool` (empirical marginals) does no better | the published table re-instantiates the family and the sizing arithmetic can be computed for any stop width without re-running anything |
+| **`pool` passes and `spec` does not** | the mechanism is right and two moments do not pin the jump. `deriving.md` section five would need the quantiles of `J` published, not just its mean and median - and its own caveat about 86 to 306 spikes would become the binding constraint |
+| **the closure fails at the feed's own resolution on more than one feed** | the martingale claim is wrong somewhere, and since `deriving.md`'s whole theorem rests on it, that is the most expensive single outcome on this list |
+| **`rebuildjudge`**: every arm at or below the feed-against-itself floor | nothing available here tells the rebuild from the feed. That is the strongest statement the data can support and it is still only a statement about this battery at this sample size |
+| **an arm above the floor** | the univariate AUC table is a map of what the specification is missing, and it is more useful than a pass. The three arms separate the kinds: raw tuples read the joint law, windows read dependence, bar OHLC reads the tick rate |
+| **the randomness battery flags the venue's stream where PCG64 is clean** | a finding about the product rather than about a trade - counterparty risk, not an edge - and it gets written up as that. The lattice test is the one with teeth: it caught RANDU at 2,616x here |
+| **`rebuildpower`**: `n*` above the real sample on every family | "indistinguishable at 86,410 bars, separable above `n`" is the answer, and the bound is the result rather than a hedge |
+| **the null controls reject above 5%** | the whole `n*` table is void and nothing in it is reportable |
 
 ## What this page does not say
 

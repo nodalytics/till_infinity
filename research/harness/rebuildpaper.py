@@ -323,13 +323,23 @@ def main() -> None:
     print("    The rebuild was never told about the 0.5826 correction; the `corrected`")
     print("    column is printed only so the three routes can be compared.")
     u = (75.0 / 100.0) / math.sqrt(G.MINUTES_PER_YEAR)
-    lg = np.log(vol_runs[30][0]["bars"]["close"])
+    # Averaged over the seeds, because one path is not enough. A single
+    # 400,000-bar path ends a few hundred one-minute sigmas from where it
+    # started, and a non-overlapping barrier replay turns that terminal
+    # displacement straight into an apparent bias in P(up) - +0.0022 at a 1:1
+    # barrier and +0.009 at 10:10, which is exactly what the first run of this
+    # harness printed. `deriving.md`'s own section on the twenty-three rules
+    # says the same thing about its three positive-net rows.
+    lgs = [np.log(x["bars"]["close"]) for x in vol_runs[30]]
     print(f"{'a:b':>6s} {'P meas':>8s} {'P rebuilt':>10s} {'cont':>7s} {'corr':>7s} "
           f"{'err':>7s} | {'tau meas':>9s} {'tau rebuilt':>11s} {'cont':>7s} {'corr':>8s} "
           f"{'err':>7s} {'n':>7s}")
     for key, (p_meas, t_meas) in BARRIER.items():
         a, b = (float(x) for x in key.split(":"))
-        p_sim, t_sim, n = two_barrier(lg, a, b, u)
+        each = [two_barrier(x, a, b, u) for x in lgs]
+        n = sum(e[2] for e in each)
+        p_sim = sum(e[0] * e[2] for e in each) / n
+        t_sim = sum(e[1] * e[2] for e in each) / n
         pc, pd = b / (a + b), (b + G.BETA) / (a + b + 2 * G.BETA)
         tc, td = a * b, (a + G.BETA) * (b + G.BETA)
         print(f"{key:>6s} {p_meas:8.4f} {p_sim:10.4f} {pc:7.4f} {pd:7.4f} "
@@ -349,9 +359,14 @@ def main() -> None:
           f"{'rng meas':>9s} {'rng rebuilt':>12s} {'cont':>8s} {'err':>7s} {'n':>7s}")
     occ_sim = None
     for T, (m_meas, r_meas) in WINDOW.items():
-        w = windows(lg, u, T)
-        if not w:
+        ws = [windows(x, u, T) for x in lgs]
+        ws = [x for x in ws if x]
+        if not ws:
             continue
+        tot = sum(x["n"] for x in ws)
+        w = {"emax": sum(x["emax"] * x["n"] for x in ws) / tot,
+             "erange": sum(x["erange"] * x["n"] for x in ws) / tot,
+             "occ": sum(x["occ"] * x["n"] for x in ws) / tot, "n": tot}
         if T == 60:
             occ_sim = w["occ"]
         print(f"{T:5d} {m_meas:9.4f} {w['emax']:12.4f} {math.sqrt(2 * T / math.pi):8.4f} "
@@ -421,8 +436,12 @@ def main() -> None:
 
     # ------------------------------------------------------- boom and crash ---
     print("\n[6] BOOM AND CRASH - five published numbers a feed, and the rate back out")
+    print("    `lam*E[g]/E[J]` is the closure as the *published* numbers state it. It is")
+    print("    not 1: the five numbers are each accurate and their product is only good")
+    print("    to about 8%, so a rebuild long enough to see the difference carries a")
+    print("    drift the feed's own 24 hours cannot resolve.")
     print(f"{'feed':22s} {'lambda in':>10s} {'ticks/spike out':>16s} {'ratio':>7s} "
-          f"{'grind CV':>9s} {'closure z':>10s} {'gap CV':>7s}")
+          f"{'grind CV':>9s} {'lam E[g]/E[J]':>14s} {'closure z':>10s} {'gap CV':>7s}")
     boom_paths = {}
     for feed in BOOM:
         mid, par = boom_path(feed, min(NTICK, 3_000_000), SEEDS[0])
@@ -442,14 +461,45 @@ def main() -> None:
         gaps = np.diff(idx).astype(float)
         gcv = float(gaps.std(ddof=1) / gaps.mean()) if gaps.size > 2 else float("nan")
         gv = float(gg.std(ddof=1) / gg.mean())
+        pub_closure = par["lam"] * par["g"] / par["J"]
         print(f"{feed:22s} {par['lam']:10.1f} {tps:16.1f} {tps / par['lam']:7.3f} "
-              f"{gv:9.3f} {closure / cse:+10.2f} {gcv:7.3f}")
+              f"{gv:9.3f} {pub_closure:14.4f} {closure / cse:+10.2f} {gcv:7.3f}")
+        ledger.append({"test": "the published five numbers close to 2%", "feed": feed,
+                       "value": pub_closure - 1.0, "fired": abs(pub_closure - 1.0) > 0.02})
         fired("rebuilt spike rate recovers the published lambda", tps, par["lam"],
               0.10, ledger, feed=feed)
         ledger.append({"test": "grind CV in 0.63-0.68", "feed": feed, "value": gv,
                        "fired": not (0.63 <= gv <= 0.68)})
         ledger.append({"test": "spike-gap CV in 0.85-1.15", "feed": feed, "value": gcv,
                        "fired": not (0.85 <= gcv <= 1.15)})
+
+    print("\n    the same six feeds with the closure *imposed* - E[J] replaced by")
+    print("    lambda*E[g], which is what `deriving.md`'s own theorem says it must be:")
+    print(f"{'feed':22s} {'E[J] published':>15s} {'lam*E[g]':>10s} {'closure z':>10s}")
+    for feed in BOOM:
+        lam, gm, gcv0, jm, jmd, side, pay = BOOM[feed]
+        forced = lam * gm
+        rng2 = np.random.default_rng([SEEDS[0], 99])
+        chunks, got = [], 0
+        need = min(NTICK, 3_000_000)
+        for c in G.gen_boomcrash(need, lam, gm, gcv0, forced, jmd * forced / jm,
+                                 side, 100000.0, 0.0, rng2):
+            chunks.append(c)
+            got += c.size
+            if got >= need:
+                break
+        mid2 = np.concatenate(chunks)[:need]
+        dd = np.diff(mid2)
+        nz = np.abs(dd[dd != 0])
+        spike = np.abs(dd) > 10 * float(np.median(nz))
+        jj = np.abs(dd[spike & (np.sign(dd) == side)])
+        gg = np.abs(dd[~spike])
+        pp = jj.size / dd.size
+        cl = (1 - pp) * float(gg.mean()) - pp * float(jj.mean())
+        z = cl / float(dd.std(ddof=1) / math.sqrt(dd.size))
+        print(f"{feed:22s} {jm:15.4f} {forced:10.4f} {z:+10.2f}")
+        ledger.append({"test": "closure imposed: rebuilt path is a martingale",
+                       "feed": feed, "value": z, "fired": abs(z) > 3})
 
     print("\n[7] THE P&L OF A HOLD ON THE GRIND SIDE - boom_500_index, against the")
     print("    *observed* column in deriving.md section five")
