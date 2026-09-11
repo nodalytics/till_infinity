@@ -64,6 +64,11 @@ ZONE_SIGMA = 2.0
 #: crosses by accident, and every crossing would count as a touch.
 MIN_ZONE_VOL = 0.35
 
+#: Points a cluster needs before it is a level. Two is not enough: any two
+#: swings define a line. A formation that asserts prices rather than observing
+#: them needs a different number - see `engine.FORMATION_MIN_SWINGS`.
+MIN_SWINGS = 3
+
 #: ...and never wider than this, however scattered the touches. Past this the
 #: "level" is a region, and a region that wide predicts nothing.
 MAX_ZONE_VOL = 3.0
@@ -861,7 +866,7 @@ def form(
     vol: Volatility,
     *,
     tolerance_vol: float = 1.0,
-    min_swings: int = 3,
+    min_swings: int = MIN_SWINGS,
     origin: str = "pip",
 ) -> list[Level]:
     """Cluster swing points into levels.

@@ -2691,3 +2691,56 @@ def test_the_extremes_pass_refuses_ragged_input():
 
     with pytest.raises(ValueError, match="same length"):
         pips.extremes([1, 2, 3], [1.0, 2.0], [1.0, 2.0, 3.0], 4)
+
+
+def test_the_round_pass_can_form_a_level_at_all():
+    """It could not, for the whole life of the setting, and nothing said so.
+
+    `rounds` emits a grid whose step is a power of ten at least `STEP_VOL` = 5
+    volatility units wide, halved - so the closest two round numbers it can ever
+    emit are 2.5 units apart, against a clustering tolerance of 1.0. Every round
+    point is its own cluster of exactly one, and `form`'s default minimum of
+    three dropped every one of them at every instrument and every volatility.
+    """
+    from till_infinity.structures.drawing import rounds
+    from till_infinity.structures.engine import FORMATION_MIN_SWINGS
+
+    vol = _vol()
+    times = [float(1_780_000_000 + i * 300) for i in range(600)]
+    prices = [4400.0 + (i % 7) * 0.4 for i in range(600)]
+    turns = pips.turns(pips.as_of(rounds.points(times, prices, vol), times[-1] + 1))
+    assert turns, "the pass draws points; that was never the problem"
+
+    assert lv.form("gold", "5m", turns, vol, origin="round") == []
+    formed = lv.form(
+        "gold", "5m", turns, vol, origin="round", min_swings=FORMATION_MIN_SWINGS["round"]
+    )
+    assert formed
+    assert formed[0].origin == "round"
+
+
+def test_the_round_grid_is_always_sparser_than_the_cluster_tolerance():
+    """The proof behind `FORMATION_MIN_SWINGS['round']`, not a sample of it.
+
+    If two round numbers could ever land within a volatility unit of each other
+    the default minimum would occasionally work, and the constant would be a
+    workaround rather than a correction.
+    """
+    from till_infinity.structures.drawing import rounds
+
+    for bps, price in ((0.5, 1.1), (5.0, 4400.0), (30.0, 80_000.0), (120.0, 500_000.0)):
+        vol = _vol(bps)
+        step = rounds.step_for(price, vol)
+        assert step > 0
+        # Half-steps are the tightest thing the grid emits.
+        gap_bps = (step / 2) / price * 10_000
+        assert vol.units(gap_bps) >= rounds.STEP_VOL / 2
+
+
+def test_each_formation_brings_its_own_cluster_minimum():
+    from till_infinity.structures import engine as eng
+
+    assert eng.FORMATION_MIN_SWINGS.get("round") == 1
+    # Everything that observes turns keeps the default; three is evidence.
+    for name in ("pip", "run", "origin", "profile", "equal", "gap", "wick", "vwap"):
+        assert eng.FORMATION_MIN_SWINGS.get(name, lv.MIN_SWINGS) == lv.MIN_SWINGS

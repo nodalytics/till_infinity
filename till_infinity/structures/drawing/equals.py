@@ -29,9 +29,17 @@ which of them it emits and how it ranks them.
 `form` needs three turns to make a level, and an equal-high pair is two by
 construction. That is deliberate: on its own this pass draws a level only where
 price stopped at one price three times, which is a strong claim and a rare one.
-Where it finds only a pair, the points still merge into a level another pass
-drew, and `agree` records that this one found it too - which is the whole point
-of running several.
+
+**A pair is dropped, though, and an earlier version of this note said it was
+not.** It claimed the points of a pair "still merge into a level another pass
+drew". They do not: `levels.merge` takes levels, not points, and `engine._form`
+runs each pass all the way to levels before merging anything - so a pass that
+forms nothing contributes nothing, and `agree` never hears about it. Checked
+2026-09-11 alongside the same arithmetic that found `round` inert.
+
+That is a real cost - a double top only this pass would notice is lost unless a
+third extreme lands there - and it is left standing because the threshold is
+what makes the claim strong. What is fixed is the description.
 """
 
 from __future__ import annotations

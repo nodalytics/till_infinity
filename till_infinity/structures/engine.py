@@ -331,6 +331,29 @@ MIN_TICKS_PER_ZONE = 4.0
 #: the constraint is attention, not storage.
 MAX_LEVELS = 15
 
+#: How many points one formation needs in a cluster before it is a level.
+#:
+#: `levels.form` defaults to three and is right to: a cluster of observed turns
+#: is three independent times price turned at one price, and two is not evidence
+#: because any two points define a line.
+#:
+#: **`round` is not that kind of formation and the default made it inert.** Its
+#: grid is a power of ten at least `rounds.STEP_VOL` = 5 volatility units wide,
+#: halved, so the closest two round numbers it can ever emit are **2.5
+#: volatility units apart** against a clustering tolerance of 1.0. Every round
+#: point is therefore its own cluster of exactly one, and a minimum of three
+#: dropped every one of them - at every instrument, at every volatility, for the
+#: whole life of the setting. Measured 2026-09-11: 1 point drawn, 1 turn
+#: surviving `as_of`, 0 levels formed, and the arithmetic says that is not a
+#: sample but a proof.
+#:
+#: One is right for it because a round number is an **assertion, not a sample**.
+#: Three observations of one price is evidence; asking a grid to assert the same
+#: price three times is asking it to repeat itself. The density argument the
+#: default protects against does not apply either: the grid is 2.5 units apart
+#: by construction, which is sparser than anything the other passes produce.
+FORMATION_MIN_SWINGS: dict[str, int] = {"round": 1}
+
 
 def _widen_to_origin(low: float, high: float, origin: dict) -> tuple[float, float]:
     """Extend a level's zone to cover the origin it sits in.
@@ -1723,7 +1746,12 @@ class Engine:
         """
         if len(self.passes) == 1:
             return lv.form(
-                series.feed, series.interval, pips.turns(visible), vol, origin=self.passes[0]
+                series.feed,
+                series.interval,
+                pips.turns(visible),
+                vol,
+                origin=self.passes[0],
+                min_swings=FORMATION_MIN_SWINGS.get(self.passes[0], lv.MIN_SWINGS),
             )
         made: list = []
         for name in self.passes:
@@ -1733,6 +1761,7 @@ class Engine:
                 pips.turns(pips.as_of(self._points(name, series, vol), self._now)),
                 vol,
                 origin=name,
+                min_swings=FORMATION_MIN_SWINGS.get(name, lv.MIN_SWINGS),
             )
             made = found if not made else lv.merge(made, found, vol)
         return made
