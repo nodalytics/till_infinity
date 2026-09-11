@@ -555,6 +555,16 @@ def residual_geometry() -> dict:
     rather than from a variance-ratio fit, and it is falsifiable in both
     directions: 4 refutes the soft edge, 2 says the range is a harmonic well and
     not a box at all.
+
+    That page has since built the soft edge - a lattice walk with up-probability
+    `0.5 - k(|x|/half)^q sign(x)`, which is this same family with `p = q+1` - and
+    found it buys 12% on the ex-break curve while costing a third of the all-bars
+    flatness, concluding that no single confinement matches both at once. The
+    ladder is the right instrument for that impasse for a structural reason: a
+    variance-ratio curve mixes the confinement and the break into one number and
+    an eigenvalue does not, because the transfer-operator ladder is measured
+    strictly within episodes and never touches a break bar. So it can say which of
+    the two facts in tension is describing the confinement.
     """
     rows = {}
     for feed, r in REBUILD.items():

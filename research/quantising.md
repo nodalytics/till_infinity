@@ -379,10 +379,30 @@ then `alpha < 2` strictly, so
 Two pages, two kinds of evidence - a variance-ratio fit over three orders of
 magnitude in horizon, and an eigenvalue ladder - make the same prediction, and it
 is falsifiable in both directions. **4 refutes the soft edge**; **2 says the range
-is a harmonic well and not a box at all**; anything between is a measurement of
-how hard the wall is, which is a property of the instrument that neither page can
-currently name. It is pre-registered here as kill condition 9, and section two
-shows this sample separates 2 from 4 with a single-cut error of 0.0%.
+is a harmonic well and not a box at all**; anything between measures how hard the
+wall is, which is a property of the instrument that neither page can currently
+name. It is pre-registered here as kill condition 9, and section two shows this
+sample separates 2 from 4 with a single-cut error of 0.0%.
+
+**And that measurement now has a second job, because the soft edge has since been
+built and it does not settle things.** [rebuilding.md](rebuilding.md) has scanned
+a lattice walk with up-probability `0.5 - k(|x|/half)^q sign(x)` - which is this
+same `V ~ |x|^p` family with `p = q+1`, a reflecting box as `q` grows and a
+harmonic well at `q = 1`. Softening the edge **buys 12% on the ex-break curve and
+costs a third of the all-bars flatness, on both feeds**, and that page's verdict
+after four experiments is that *no single confinement matches the ex-break shape
+and the all-bars flatness at once* - [deriving.md](deriving.md) section four's two
+headline facts are in tension at the 10-30% level under every mechanism tried.
+
+The ladder is the right instrument for exactly that impasse, and the reason is
+structural rather than rhetorical: **a variance-ratio curve mixes the confinement
+and the break into one number, and an eigenvalue does not.** The transfer-operator
+ladder is measured strictly within episodes and never uses a break bar, so it
+reports the shape of the confinement without having to satisfy the all-bars
+constraint at the same time. If the ex-break curve wants a soft edge and the
+all-bars flatness wants a hard one, the within-episode ladder says which of the
+two is describing the confinement and which is describing the break. That is a
+question neither page can currently answer and one query on the lab would.
 
 ## Three: reconstructing the path inside a bar, which is the part with money in it
 
