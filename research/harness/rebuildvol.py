@@ -297,28 +297,29 @@ def simulate_vol(feed, nominal, p0, grid, n_bars, seed, keep_ticks=0, sigma_mult
     # harness did it.
     rng = np.random.default_rng([int(seed), G.feed_seed(feed)])
     tick_s = 60.0 / tpb
+    # `drop` is not a quantiser, it is an *observation* rule: the stream is the
+    # price-rounded one - which is what the venue's own bars are built from - and
+    # the repeated quotes are deleted from the ticks afterwards, which is what
+    # our collector does. It therefore applies to the deliberately wrong
+    # generators identically, and the over-collection is because the deletion
+    # shortens the tick stream.
+    dedup = lattice == "drop"
+    mode = "price" if dedup else lattice
+    want = int(keep_ticks * 1.6) if (dedup and keep_ticks) else keep_ticks
     if student_df:
         stream = _student_stream(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid,
-                                 rng, student_df, lattice=lattice)
+                                 rng, student_df, lattice=mode)
     elif cluster:
         stream = _cluster_stream(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid,
-                                 rng, tpb, lattice=lattice)
-    elif lattice == "drop":
-        # Bars from every tick, ticks with the repeated quotes deleted - which is
-        # what `research.db` holds and what the venue publishes, respectively.
-        # Over-collect because the deletion shortens the tick stream.
-        stream = G.gen_gbm(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid, rng,
-                           lattice="price")
-        out = G.bars_from_stream(stream, tpb, n_bars,
-                                 keep_ticks=int(keep_ticks * 1.6) if keep_ticks else 0)
-        tk = out["ticks"]
-        if tk.size:
-            out["ticks"] = tk[np.concatenate([[True], np.diff(tk) != 0])][:keep_ticks]
-        return out
+                                 rng, tpb, lattice=mode)
     else:
         stream = G.gen_gbm(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid, rng,
-                           lattice=lattice)
-    return G.bars_from_stream(stream, tpb, n_bars, keep_ticks=keep_ticks)
+                           lattice=mode)
+    out = G.bars_from_stream(stream, tpb, n_bars, keep_ticks=want)
+    if dedup and out["ticks"].size:
+        tk = out["ticks"]
+        out["ticks"] = tk[np.concatenate([[True], np.diff(tk) != 0])][:keep_ticks]
+    return out
 
 
 def _cluster_stream(n_ticks, sigma_ann, tick_seconds, p0, grid, rng, tpb,
