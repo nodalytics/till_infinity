@@ -293,6 +293,8 @@ class Runner(LevelStrategy):
     """
 
     name: ClassVar[str] = "runner"
+    #: Its thesis is duration. See `Strategy.stale_exempt`.
+    stale_exempt: ClassVar[bool] = True
 
     #: Four 1h bars, for the same reason the other swings carry one: `runner`
     #: took `max_hold`, which is thirty minutes, and a 1h entry cannot be held
@@ -388,6 +390,8 @@ class SwingLevel(LevelStrategy):
     """
 
     name: ClassVar[str] = "swing-level"
+    #: Its thesis is duration. See `Strategy.stale_exempt`.
+    stale_exempt: ClassVar[bool] = True
 
     #: Six hours on a daily-anchored level. The plainest swing here.
     style: ClassVar[str] = "swing"
@@ -713,6 +717,8 @@ class OriginSwing(LevelStrategy):
     """
 
     name: ClassVar[str] = "origin-swing"
+    #: Its thesis is duration. See `Strategy.stale_exempt`.
+    stale_exempt: ClassVar[bool] = True
     style: ClassVar[str] = "swing"
     description: ClassVar[str] = (
         "Between two origins: enter where price arrives first, run to the other."
@@ -750,9 +756,16 @@ class OriginSwing(LevelStrategy):
     #: this price, rather than one hour's worth on the entry bar.
     candle_interval: ClassVar[str] = "4h"
 
-    #: Six hours, like `swing-level`. The distance between two origins is not
-    #: covered inside a scalper's half hour.
-    hold_seconds: ClassVar[float] = 6 * 3_600.0
+    #: **Seventy-two hours.** Six was "like `swing-level`", which was a number
+    #: borrowed rather than argued for - and this strategy enters on 15m/30m
+    #: against a 4h rejection, aiming at the distance between two origins. That
+    #: is a multi-day idea being given an afternoon.
+    #:
+    #: It needs `max_hold_swing` to be at least this, because `hold_for` takes
+    #: `min(hold_seconds, ceiling)` and a declaration above the ceiling is
+    #: silently clamped - which is how a strategy ends up configured for one
+    #: thing and running as another.
+    hold_seconds: ClassVar[float] = 72 * 3_600.0
 
     #: More room than a scalp, for the reason `swing-level` takes it: the level
     #: is placed on slower data and the noise around it is proportionally
@@ -948,6 +961,8 @@ class FadeToValue(LevelStrategy):
     """
 
     name: ClassVar[str] = "fade-to-value"
+    #: Its thesis is duration. See `Strategy.stale_exempt`.
+    stale_exempt: ClassVar[bool] = True
 
     #: Forty-five minutes, and a thesis about where value is rather than
     #: about the next few ticks.

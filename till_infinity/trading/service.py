@@ -102,8 +102,12 @@ STALE_HOLDS = 2.0
 #: being killed at the 1,200s floor, **8% of the horizon it was opened for**.
 #: Its first live trade closed `stale` at 1,249s having peaked at 0.007R.
 #:
-#: A third, so a four-hour swing gets eighty minutes and a thirty-minute scalp
-#: gets ten - below the floor, which then wins, so nothing fast changes.
+#: A third, so a four-hour hold gets eighty minutes and a thirty-minute one gets
+#: ten - below the floor, which then wins, so nothing fast changes.
+#:
+#: The genuine swings are now exempt outright (`Strategy.stale_exempt`), so what
+#: this still governs is a strategy that is *not* a swing and has nonetheless
+#: asked for a long hold - `approach-scalp` at four hours is the live case.
 STALE_SHARE = 1.0 / 3.0
 
 #: How much of the sub-hour ensemble must be behind a motionless trade for it
@@ -2346,6 +2350,14 @@ class Trader:
         `stale_after` stays the floor: it still means "never sooner than this",
         and a series with no estimate yet behaves exactly as before.
         """
+        # **Off entirely for a strategy whose thesis is duration.** The rule
+        # exists because a level touch resolves in eighteen seconds at the
+        # median and 84% inside five minutes; that premise is true of a scalp
+        # and false of a swing, at any length of clock. Scaling it to the
+        # declared hold was the first attempt and it was a half-measure - it
+        # made a rule proportional when the rule does not apply.
+        if getattr(live.intent, "stale_exempt", False):
+            return 0.0
         floor = self.settings.stale_after
         if floor <= 0:
             return 0.0

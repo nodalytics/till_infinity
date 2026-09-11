@@ -231,6 +231,15 @@ class Intent:
     #: the strategy later, because by the time a position is being timed out
     #: the strategy that opened it is one of several and nothing links them.
     hold: float = 0.0
+    #: Whether the stale clock applies at all. Carried here for the same reason
+    #: `hold` is: by the time a position is being judged for going nowhere, the
+    #: strategy that opened it is a name in a log line.
+    #:
+    #: The stale rule exists because a level touch resolves in eighteen seconds
+    #: at the median and 84% inside five minutes, so a trade still at its entry
+    #: well past that is not the event it was opened for. A swing's thesis *is*
+    #: duration, and for those the premise is simply false.
+    stale_exempt: bool = False
     time: float = field(default_factory=_now)
 
     @property

@@ -776,6 +776,7 @@ class LevelStrategy(Strategy):
             stop_vol=abs(entry - stop) / unit if unit else 0.0,
             stop_scale=self.stop_floor_vol(interval) / (self.settings.min_stop_vol or 1.0),
             hold=self.hold_for(interval),
+            stale_exempt=self.stale_exempt,
             break_even_at=protect_at,
             trail_vol=protect_trail,
             # Carried on the intent for the same reason the two above are: by

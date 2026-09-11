@@ -392,6 +392,26 @@ class Strategy(ABC):
     #: distance trail; `SwingLevel` turns it on.
     trail_levels: ClassVar[bool] = False
 
+    #: Whether the stale clock is switched off for this strategy entirely.
+    #:
+    #: The rule exists because **a level touch resolves in eighteen seconds at
+    #: the median and 84% inside five minutes**, so a trade still sitting at its
+    #: entry well past that is not the event it was opened for. That premise is
+    #: true of a scalp on a touch and simply false of a swing, whose thesis
+    #: *is* duration - "it has not moved yet" says nothing about a six-hour
+    #: idea at the ninety-minute mark.
+    #:
+    #: Scaling the clock to the declared hold was the first attempt and it was
+    #: a half-measure: it made a rule proportional when the rule does not apply.
+    #:
+    #: **Declared, not derived.** Deriving it from `hold_seconds` would let a
+    #: new strategy inherit an exemption from a number it happened to pick;
+    #: this way it has to say what kind of thing it is. `approach-scalp`
+    #: declares a four-hour hold and is deliberately *not* exempt - it is named
+    #: a scalp, it trades toward a nearby level, and nothing measured says its
+    #: thesis is duration.
+    stale_exempt: ClassVar[bool] = False
+
     #: Rest the entry only when the rejection wick is at least this share of
     #: its bar's range. Zero keeps `pullback_fraction` unconditional.
     #:

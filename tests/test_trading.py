@@ -7978,3 +7978,61 @@ def _intent():
     got = take("level-scalp", signal())
     assert isinstance(got, Intent)
     return got
+
+
+def test_a_swing_is_exempt_from_the_stale_clock_entirely():
+    """The stale rule exists because *"the median touch resolves in eighteen
+    seconds and 84% inside five minutes, so a position still sitting at its
+    entry well past that is not the event it was opened for"*.
+
+    That is a statement about **level touches**. A swing entering on 1h with
+    2h/4h/1d/1w context is not betting on an immediate resolution - its thesis
+    *is* duration - so "it has not moved yet" carries no information about it.
+    Scaling the clock to the hold was a half-measure: the rule's premise does
+    not hold for these at any length."""
+    made = settings(stale_after=1200.0)
+    trader = Trader(Bus(), settings=made)
+
+    swing = mock.Mock()
+    swing.intent = replace(_intent(), hold=6 * 3600.0, stale_exempt=True)
+    scalp = mock.Mock()
+    scalp.intent = replace(_intent(), hold=1800.0, stale_exempt=False)
+
+    assert trader._stale_after(swing) == 0.0, "no clock at all"
+    assert trader._stale_after(scalp) == pytest.approx(1200.0)
+
+
+def test_the_swing_strategies_declare_the_exemption():
+    """Declared per strategy rather than derived from the hold, so a new
+    strategy has to say what kind of thing it is instead of inheriting an
+    exemption from a number it happened to pick."""
+    from till_infinity.trading.strategies.scalper import LevelScalp, SweepAware
+    from till_infinity.trading.strategies.swing import (
+        FadeToValue,
+        OriginSwing,
+        Runner,
+        SwingLevel,
+    )
+
+    for engine in (SwingLevel, OriginSwing, Runner, FadeToValue):
+        assert engine.stale_exempt is True, engine.name
+
+    for engine in (LevelScalp, SweepAware):
+        assert engine.stale_exempt is False, engine.name
+
+
+def test_origin_swing_holds_for_three_days_and_the_ceiling_allows_it():
+    """`hold_for` takes `min(hold_seconds, ceiling)`, so a declaration above
+    `max_hold_swing` is silently clamped - which is how a strategy ends up
+    configured for one thing and running as another. Both have to move."""
+    from till_infinity.trading.strategies.swing import OriginSwing
+
+    assert OriginSwing.hold_seconds == 72 * 3600.0
+
+    made = settings(max_hold_swing=72 * 3600.0)
+    engine = OriginSwing(made)
+    assert engine.hold_for("30m") == pytest.approx(72 * 3600.0)
+
+    # And the clamp is real, so the env change is not decoration.
+    tight = OriginSwing(settings(max_hold_swing=24 * 3600.0))
+    assert tight.hold_for("30m") == pytest.approx(24 * 3600.0)
