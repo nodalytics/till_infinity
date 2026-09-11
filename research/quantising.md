@@ -15,8 +15,9 @@ conditions is already a statement about these price processes.
 The field this borrows from is largely classical results in borrowed notation, so
 the rule here is that **every quantum construction is scored against a classical
 control doing the same job, and where the control matches, the page says the
-framing is notation**. Two of the five sections below reach exactly that verdict
-and say so, one of them by proving an identity rather than measuring one.
+framing is notation**. Two of the six sections below reach exactly that verdict
+and say so, one of them by proving an identity rather than measuring one, and a
+third measures the point past which the framing stops being notation.
 
 Four harnesses: [`quantimage.py`](harness/quantimage.py),
 [`quantspec.py`](harness/quantspec.py),
@@ -778,7 +779,97 @@ identity held to 7.1e-15, the 90% band covered 85.1%, the exact posterior beat
 the smoother somewhere (+15.19%), and no two different estimators returned the
 same number.
 
-## Two questions that are closed, and one that was not attempted
+## Five: the Wigner function, which is negative, and it is the quote grid
+
+Negativity of the Wigner function is the standard test of whether a quantum
+description is doing any work: a classical probability distribution over phase
+space is non-negative by definition, a quantum state need not be, and where it is
+not, no classical phase-space model reproduces it. Measuring it **bounds how far
+this whole analogy goes**, which is a statement the page could not previously
+make. `quantwigner.py`.
+
+**The construction collapses to one line, and that is not an approximation.**
+Under the Wick rotation the thermal density matrix is the Euclidean propagator
+normalised, `rho_tau(x, x') = K_tau(x, x')/Z`, and every generator on this book
+has stationary independent increments, so `K_tau(x, x') = f_tau(x - x')` depends
+only on the displacement and `rho` is translation invariant. The Wigner transform
+of a translation-invariant kernel is
+
+    W(q, p) = phi_tau(p) / (2 pi)
+
+- **the characteristic function of the lag-`tau` return, independent of `q`.** So
+"is the Wigner function negative" is "does the characteristic function of the
+returns dip below zero", and the answer is known in advance for two cases: a
+Gaussian increment has `phi = exp(-sigma^2 k^2/2)` and is strictly positive
+everywhere, while a lattice increment of fixed step `d` has `phi = cos(dk)^n` at
+`n` steps, which reaches **-1** at `k = pi/d` when `n` is odd and bottoms at
+**0** when `n` is even, because an even power of a cosine is non-negative. That
+is the sublattice symmetry of a tight-binding chain and it is **parameter-free**.
+
+Controls first, because a null from a blind estimator is not a null: a Gaussian
+returns -0.0028, a one-step lattice -1.0000, a two-step lattice -0.0015, a
+three-step -1.0000, a ten-step +0.0005, and the superposition positive control
+**-0.9783**. The estimator can see negativity when there is some.
+
+**On the lattice feeds the parameter-free prediction is exact.** `step_index` and
+Range Break move one unit a tick, so `phi(k) = cos(dk)^n`:
+
+| feed | lag 1 | lag 2 | lag 3 | lag 5 | lag 10 | lag 30 | `k*d/pi` at the minimum |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `step_index` | **-1.0000** | -0.0046 | **-0.9999** | **-0.9999** | +0.0012 | -0.0031 | **1.001** |
+| `range_break_100` | **-0.9998** | +0.0243 | **-0.9993** | **-0.9988** | +0.0092 | +0.0041 | **1.001** |
+| `range_break_200` | **-0.9999** | +0.0097 | **-0.9997** | **-0.9995** | -0.0001 | -0.0035 | **1.001** |
+| predicted | -1 | 0 | -1 | -1 | 0 | 0 | 1 |
+
+**Odd lags go to -1 and even lags to 0, on all three feeds, at the edge of the
+quote lattice's Brillouin zone to three decimal places.** Nothing is fitted: the
+step is measured from the feed and the rest is `cos(dk)^n`. Twelve of twelve
+cells land within 0.15 of the prediction and most within 0.003. **So the
+negativity is real and it is the quote grid**, which is the bounded, boring answer
+the section was written to get.
+
+**One "continuous" feed goes negative too, and the reason is measured rather than
+excused.** Of eighteen Volatility-index cells, seventeen sit at the matched
+Gaussian's noise floor. `volatility_100_index` at lag 1 returns **-0.0336** at
+`k = 53.9`, against a floor of -0.0110 and a single-frequency standard error of
+0.0035 - about **9.6 standard errors**, so it is structure and not noise, and
+**kill condition 1 fired.** The cause is not interference:
+
+* its tick increments take only **54 distinct absolute values, on a 0.01
+  lattice**. It is a lattice feed that this page had been calling continuous;
+* so its characteristic function **never decays to zero the way a continuous
+  law's does**. A Gaussian matched to its standard deviation gives
+  `phi(53.9) = 1.7e-12`; the feed gives -0.0336;
+* and `volatility_75_index`, whose lattice is the same 0.01 but whose per-tick
+  sigma is 8.93 rather than 0.1365 - so the grid is 65 times finer relative to
+  the move - returns **+0.005** at the same frequency, at the noise floor.
+
+Same mechanism, thirty times shallower, and the discriminator is `Delta/sigma`
+again. Note this is **not** section four's threshold: there `Delta/sigma` below 2
+made the rounding irrelevant to the posterior *mean*, and `volatility_100` is at
+0.073. A lattice too fine to matter for state estimation is still a lattice at
+high `k`, because the posterior mean is a low-`k` statistic and the negativity is
+a high-`k` one. Both are true and they are about different things.
+
+**The jump feeds are reported and deliberately not scored.** `boom_500_index`
+returns -0.0804 at lag 1, but its excess kurtosis is **+1281**, so a Gaussian
+matched on its *total* standard deviation is not a null for it in any useful
+sense: at `k = 53.9` that Gaussian gives `7.9e-43` and the feed gives **+0.814**,
+because a compound Poisson is a narrow core plus rare enormous jumps and `phi`
+decays on the core's width rather than the total. Neither the Gaussian condition
+nor the lattice condition is the right test for it, both buckets exclude it, and
+inventing a third null after seeing the number would be the thing this folder
+exists to avoid. It is on the page as an observation.
+
+**The verdict, which is the point of running it.** There is **no negativity
+anywhere that the quote lattice and the measured increment law do not account
+for**. The imaginary-time reading buys propagators, boundary conditions and
+spectra, all of which are classical objects in quantum notation; it does **not**
+buy anything that needs a genuinely quantum state, and the test that would have
+detected one comes back with the lattice and nothing else. **That is the bound on
+the analogy, and it is now a measurement rather than an assumption.**
+
+## Two questions that are closed, and one that is now answered
 
 **Quantum walks are excluded, and the measurement that excludes them is already
 in print.** A discrete-time quantum walk spreads ballistically, variance `~ t^2`,
@@ -801,12 +892,12 @@ feeds, and it is not stable. The exact generator is `-g d/dx + lambda (E[f(x+J)]
 one-parameter caricature is strictly worse than the exact kernel that is already
 available, and the fractional-operator literature adds nothing to this book.
 
-**State tomography was not attempted.** The Wigner function of (price, momentum)
-is well defined for these processes and its negativity is the standard test of
-whether a quantum description is doing any work; for a classical diffusion it
-should not be negative, and measuring that and reporting the null would bound how
-far the analogy goes. It is not here, and the reason is that it needs the
-empirical propagator, which needs tick data, which needs the lab.
+**State tomography was attempted after all, and it is section five above.** The
+Wigner function needs the empirical propagator, which needs tick data, which
+needed the lab; the lab came back. The answer is that the Wigner function of
+these processes **is** negative, that every case of it is the quote lattice at the
+Brillouin zone edge with the parity a tight-binding chain predicts, and that
+nothing survives which would need a quantum state to explain.
 
 ## What this does not say
 
