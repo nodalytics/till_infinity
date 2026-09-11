@@ -350,3 +350,259 @@ because every experiment on it appears to work.
 
 Recorded on 2026-09-10 in [generated.md](generated.md), on generated series at
 1h only - 2h and 4h had no bars to test.
+
+## Fifteen to eighteen: the audit that went looking — 2026-09-11
+
+`run_vol`, `pivot` and `round` were all found by hand, in one day, by somebody
+cutting a table. So every number this package publishes was enumerated and
+asked the same question mechanically: **does it vary, and over what window?**
+
+`research/harness/varying.py` is the harness and `tests/test_published.py` is
+the half that outlasts it - a gate that fails when a published feature is
+constant under a fixture rich enough to reach every producer.
+
+**Where the numbers come from.** Every production figure below was read from
+the instance's journal - 804,539 entries over 28.9 days - with the harness'
+`journal` route, streaming off the `(kind, time)` index at `nice -n 19`. Two
+things to know before re-running it. A distinct count of "4,000+" is the
+harness' own `CAP`, not the true count: it stops tracking distinct values at
+4,000 so a survey of a million rows cannot grow without bound on a field that
+is a price. And the local `.data/journal/journal.db` holds 465 rows, so nothing
+here can be reproduced from it - the local `fresh.db` (203,503 entries, 13 to
+27 August) is the nearest offline substitute and predates about half the
+fields. The fixture route needs neither.
+
+### The surface
+
+**123 numeric fields** reach the journal or a model from the structures side:
+
+| producer | fields |
+| --- | --- |
+| `Call.to_signal` literals | 37 |
+| `Engine._origin_at` | 20 |
+| `changing` + `_learned_at` | 5 |
+| the `service` publish site - `drawn_by_n`, `Breaks`, the calibrator, `Races`, both `LevelRange` boxes | 20 |
+| `emit` - `score` | 1 |
+| `Macro.features` | 16 |
+| **on a published level call** | **99** |
+| `reactions.Features`, less `strength` which is also on the call | 12 |
+| the inference dict on a non-actionable observation | 7 |
+| stamped on the resolution - `push_vol`, `excursion_vol`, `adverse_vol`, `seconds`, `confluence_n` | 5 |
+
+The production journal shows 95 of the 99 on a recent level call, and the four
+missing ones are finding seventeen below.
+
+### The most useful result is a retraction
+
+A first pass at this ran three **engine-only** fixtures over 970 calls and
+reported ten fields with one distinct value. Against the production journal -
+22,770 level decisions over 3.61 days - **all ten are alive**:
+
+| field | in the journal | why the fixture said otherwise |
+| --- | --- | --- |
+| `activity` | 4,000+ values, 3.6e-9 .. 20 | folded on in `service`; an engine-only fixture never runs it, and the bars carried no `volume` |
+| `hour_hold` | 4,000+ values, 0.39 .. 0.95 | `to_signal` got `clock=None` |
+| `hour_vol_share` | 4,000+ values, 0.078 .. 2.01 | as above |
+| `hour_n` | 210 values, 0 .. 588 | as above |
+| `liquidity_beyond_vol` | 4,000+ values, 66.0% zero | `peers` was empty |
+| `liquidity_beyond_n` | 6 values, 0 .. 5 | as above |
+| `change_up_tf` | 5 values, 92.5% zero | the drift detector watches 5m/15m/30m/1h; the fixture fed 5m alone |
+| `change_down_tf` | 5 values, 92.6% zero | as above |
+| `change_watched_tf` | 4 values, **98.2% on one** | as above |
+| `origin_confirmed` | 2 values, 85.1% zero | genuinely rare - already the tenth entry on this page |
+
+**Eight of the ten were the fixture and two were rarity. None was a bug.** A
+fixture that cannot reach a producer reports its own shape and calls it a
+finding, which is worse than not looking - and it is the same error this page
+records against the macro features, one layer down.
+
+`change_watched_tf` is the one to watch: 98.2% on a single value is a point and
+a half from `liveness.NEAR`, which is the shape a field takes while it is
+dying rather than after.
+
+### And the same caution, stated with a window
+
+`macro_us_core_inflation` is **two values across 11.8 days**, 99.8% on one.
+Core inflation is published **monthly**, so an 11.8-day window can contain at
+most one print, and it contains exactly one. The field moved the maximum number
+of times it was able to. Nothing on this page is called dead for being flat in
+a window shorter than its own release schedule.
+
+For the record, over the same 11.8-day sample: `macro_dollar` 3 values,
+`macro_us_breakeven` 5, `macro_us_curve` 5, `macro_us_real_yield` 6,
+`macro_carry_gap` 27. Slow, all of them, and all alive.
+
+### Fifteen: `break_probability` has never seen a touch
+
+`service._level_calls` scores the break model like this:
+
+```python
+extra.update(self.breaks.reading(getattr(call, "features", None) or {}))
+```
+
+`Call` is a `@dataclass(slots=True)` whose slots are `feed`, `interval`,
+`level`, `inference`, `price`, `time`, `origin`, `context`. There is no
+`features` slot, so the attribute **could never be set** - assigning one raises
+`AttributeError`. The `or {}` therefore fired on every call ever made, and
+`Breaks.inputs` reads six missing keys as zeros.
+
+Measured under the rich fixture: `Breaks.reading` was called **426 times, with
+an empty dict 426 times, producing exactly one distinct input vector** -
+`[0, 0, 0, 0, 0, 0]`. Every level on every instrument at every timeframe was
+scored on the same six numbers.
+
+**It does not read as a dead field, and that is the whole point.** In the
+production journal `break_probability` has 4,000+ distinct values across 6,086
+rows spanning 0.00011 to 0.99686. A fixed input through a continuously-learning
+logistic tracks its own standardiser's running mean, so the output wanders
+convincingly while carrying nothing about the call. That is the `drift.py`
+shape from earlier on this page, arrived at from the other direction: **a
+monitor reading a stale source reports perfect stability; a model reading a
+constant input reports plausible variety.** Neither falls silent.
+
+Fixed by giving `Call` the `features` field the publish site was already
+reaching for, populated in `Engine.check` where the object is already in hand.
+Same fixture afterwards: **426 calls, 426 distinct input vectors.**
+
+`trading/strategies/scalper.py` reads `break_probability` for risk, so this was
+not only a journalled number.
+
+### Sixteen: `break_seen` is exactly 2000 and always will be
+
+Constant `2000` across **22,770 production level decisions over 3.61 days**.
+Across a one-in-twenty sample of the whole 28.8-day record it runs 447.9 to
+2000 with **88.5% at 2000** - it climbed once, arrived, and stopped.
+
+Constant by construction, and provable rather than sampled. `Logistic.seen` is
+a decayed count:
+
+```python
+keep = max(0.0, 1.0 - 1.0 / SCORE_MEMORY)  # SCORE_MEMORY = 2_000
+self.seen = self.seen * keep + 1.0
+```
+
+whose fixed point is exactly `SCORE_MEMORY`. It is a **window length wearing a
+sample size's name**, and it is published beside `break_probability` as the
+evidence a consumer would weight the probability by - `Breaks.warm` is
+`seen >= 200`, so after roughly ten thousand resolutions the field says 2000
+for the rest of the deployment's life.
+
+**Not fixed**, because the fix is a decision rather than a repair. The change
+would be to keep an undecayed `resolutions` counter on `Logistic` beside the
+decayed `seen`, publish that as `break_seen`, and either drop the decayed one
+or publish it as `break_window`. `up_first_seen` on `Races` is the same
+construction and has not saturated yet - 60.1 to 1118.9 over 6.82 days - so it
+will arrive at the same place without anything changing.
+
+### Seventeen: four fields lost their producer and two consumers did not notice
+
+`origin_above_high`, `origin_above_revisits`, `origin_below_low` and
+`origin_below_revisits` were published until **2026-09-07**, when `c2e15f7`
+corrected the bracket to handle an origin price is standing *inside*. The
+corrected version chose its bound from a list of bare floats, which threw away
+which origin the bound came from - and with it those four fields.
+
+In the journal they are present on 1,769 to 1,870 rows across the 9.24 days
+ending four days ago, and absent from every row since. **Absent, not constant**,
+which is `liveness`' third state and the one no survey of the published rows
+can see: a field that is not there cannot be counted.
+
+`trading/strategies/swing.py` reads all four:
+
+* `OriginSwing._anchored_stop` asks for the far edge of the zone being traded
+  and falls back to the level-anchored stop without it - which is the exact
+  placement its own docstring says put "a stop *above* its own entry" and was
+  written to correct.
+* the `max_revisits` staleness gate reads a count that is never there, so it
+  **can never refuse anything**. Its comment is the giveaway: *"A missing count
+  is not a stale origin - it is an unknown one, and refusing on it would stand
+  this strategy down on every feed whose origins have not been published yet."*
+  Correct reasoning, and it converts a broken gate into silence - the same
+  safe-default trap this page opens with.
+
+Costing nothing today: `origin-swing` is not in the deployed
+`TRADING_STRATEGIES`. It would have cost from the first day it was.
+
+Fixed: the bracket now carries the zone alongside its edge, so the winning
+origin's far edge and revisit count are published again. Under the fixture the
+four are present on 262 to 346 of 360 calls with 17 to 64 distinct values each.
+
+### Eighteen: `net_edge_vol` is read by the position sizer and written by nothing
+
+```python
+scaling.by_edge(features.get("net_edge_vol"), settings.edge_full_at)
+```
+
+`net_edge_vol` has no producer anywhere in the package and appears on none of
+the 99 fields of a level call. `by_edge` returns 1.0 for a `None` edge, so the
+edge scaler is a no-op.
+
+**Doubly inert, and the second switch hides the first.** `edge_full_at`
+defaults to 0.0 and is unset in the deployment, and `by_edge` returns 1.0 on
+that before it ever looks at the edge. So the feature being absent is currently
+invisible, and turning `TRADING_EDGE_FULL_AT` on would change nothing at all -
+which reads as "sizing by edge does not help" rather than as "sizing by edge
+was never wired up". That is a landmine under a future experiment, not a
+present loss.
+
+**Not fixed.** Publishing it means deciding what "net edge per touch" is
+measured over and on what sample, which is `research/paying.md`'s open
+question and not a rename.
+
+### What the gate now guards
+
+`tests/test_published.py` drives the **service** - not the engine - over three
+feeds at three price scales, three venues, nine intervals covering
+`config.INTERVALS` and `config.DRIFT_INTERVALS`, real `open` and `volume`,
+quotes as well as bars, a real journal so `emit` remembers and the session
+clock can learn, and two and a half days of wall clock so the 4h swing anchor
+has twelve bars to find an origin in. It asserts:
+
+* no published numeric field is constant, and none is near-constant;
+* no kNN feature is constant;
+* **every level bucket has a volatility that warms**, which is the pivot fault
+  stated as a property instead of a symptom - `Engine.check` opens with
+  `if not vol.warm: return []`, and a bucket keyed by a session period had no
+  daily bar stream to warm one. Deterministic, where the `pivot` feature's
+  variation needs price to return to one of ten prices;
+* every configured formation pass drew at least one level, which is `round`;
+* the break model sees more than one input vector, which is fifteen;
+* the four origin bracket fields are present and vary, which is seventeen;
+* and a richness floor under all of it, because **a gate that can pass by
+  producing nothing is not a gate** - the count of published calls, of resolved
+  touches, of fields with enough rows to judge, and the three inputs an
+  engine-only fixture cannot supply, asserted directly rather than inferred
+  from the fields they feed.
+
+Falsified before being trusted, which is the part a gate is usually missing:
+
+* re-breaking `Engine._run` the way it was actually broken - returning 0.0 -
+  makes the kNN check fail with `run_vol: constant 0 across 686`;
+* reverting `Engine.vol_for` to `self.vol.of`, which is the code as it stood
+  before `869031d`, makes the bucket check fail with
+  `['btcusd/daily', 'eurusd/daily', 'gold/daily']`. With the fix in place the
+  list is empty.
+
+And it is not a one-seed result: seeds 23, 77 and 101 each judge 76 fields at
+2.5 days and each report nothing constant and nothing near-constant on either
+population.
+
+One deliberate softening. A field needs `MIN_ROWS = 25` rows before this has an
+opinion about it, because **one observation is not a distribution**.
+`swing_range_width_vol` needs origins on both sides of price and a trending
+stretch legitimately has open air on one, so on some seeds it is published
+three times - and a survey of three rows calls a field constant when it is
+merely unmeasured. Whatever falls under the floor is printed by the richness
+test rather than quietly dropped.
+
+Two entries on the allow-list, each with its reason in the file: `neighbours`,
+which is the sixth entry on this page and is near-constant in production too;
+and `pivot`, which is a rare-event flag on a formation that arrives at most once
+per instrument per day.
+
+### Filed so the next survey does not re-find them
+
+`channel_lower`, `channel_upper`, `channel_position` and `channel_width_vol`
+appear once each in a 28.8-day sample and look constant. They are **retired
+names** - `racing.py` records that `channel_position` became `range_position` -
+and a single surviving row is not a reading.

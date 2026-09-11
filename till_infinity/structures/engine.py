@@ -664,6 +664,26 @@ class Call(Restorable):
     #: should not have to know the other is in the same dictionary. Merged into
     #: the features the same way.
     context: dict = field(default_factory=dict)
+    #: How this touch was described to the kNN - the same `reactions.Features`
+    #: the tracker keeps on the touch.
+    #:
+    #: **Carried because the publish site had no way to reach it.**
+    #: `service._level_calls` scores the break model with
+    #: `getattr(call, "features", None) or {}`, and this is a slotted
+    #: dataclass, so before this field existed the attribute could never be
+    #: set and the `or {}` fired on every call ever made. `Breaks.inputs` then
+    #: read six missing keys as zeros, so the model scored one vector -
+    #: `[0, 0, 0, 0, 0, 0]` - for every level on every instrument, and
+    #: `break_probability` moved only as the standardiser's running mean
+    #: drifted. Measured on a fixture of 426 published calls: **one distinct
+    #: input vector across all of them.**
+    #:
+    #: It did not read as a dead field, which is why nothing caught it. A
+    #: constant input through a continuously-learning model produces a number
+    #: that varies plausibly and carries nothing about the call - the same
+    #: shape as the stale-file monitor in research/inert.md that reported a
+    #: model SETTLED because it was comparing one snapshot with itself.
+    features: reactions.Features | None = None
 
     def to_signal(
         self,
@@ -1592,21 +1612,41 @@ class Engine:
             # ends, going that way". For an origin above, that is where its
             # band starts. For one price is already inside, it is where that
             # band **finishes** - the far edge is the wall this move meets.
-            above = [o.low for o in found if o.low > price]
-            below = [o.high for o in found if o.high < price]
+            #
+            # **The zone travels with its edge.** Choosing the bound from a
+            # list of bare floats threw away which origin it came from, and
+            # with it `origin_above_high`, `origin_above_revisits`,
+            # `origin_below_low` and `origin_below_revisits` - four fields that
+            # were published until 2026-09-07 and are still read by
+            # `trading/strategies/swing.py`. `OriginSwing._anchored_stop` asks
+            # for the far edge and falls back to the level-anchored stop
+            # without it, which is the exact placement that commit was written
+            # to correct, and its `max_revisits` staleness gate reads a count
+            # that is never there, so it can never refuse anything. Neither
+            # failed: both took a documented default for "unknown".
+            above = [(o.low, o) for o in found if o.low > price]
+            below = [(o.high, o) for o in found if o.high < price]
             inside = [o for o in found if o.low <= price <= o.high]
-            above += [o.high for o in inside if o.high > price]
-            below += [o.low for o in inside if o.low < price]
+            above += [(o.high, o) for o in inside if o.high > price]
+            below += [(o.low, o) for o in inside if o.low < price]
             holding = min(inside, key=lambda o: o.high - o.low, default=None)
             bracket: dict[str, float] = {}
             if above:
-                edge = min(above)
+                edge, zone = min(above, key=lambda pair: pair[0])
                 bracket["origin_above_low"] = edge
                 bracket["origin_above_vol"] = (edge - price) / unit
+                # The far side of that zone, which is where a stop belongs -
+                # inside it is where the wicks are. The same number whether
+                # price is below the band or standing in it: going up, the wall
+                # this move finally meets is the band's high either way.
+                bracket["origin_above_high"] = zone.high
+                bracket["origin_above_revisits"] = float(zone.revisits)
             if below:
-                edge = max(below)
+                edge, zone = max(below, key=lambda pair: pair[0])
                 bracket["origin_below_high"] = edge
                 bracket["origin_below_vol"] = (price - edge) / unit
+                bracket["origin_below_low"] = zone.low
+                bracket["origin_below_revisits"] = float(zone.revisits)
             if holding is not None:
                 # Which zone price is standing in, kept apart from the bounds.
                 # A level inside an origin is a different object from one in
@@ -2570,6 +2610,10 @@ class Engine:
                     time=when,
                     origin=self._origin_at(feed, interval, level.price, vol),
                     context={**self.changing(feed, when), **self._learned_at(feed, interval)},
+                    # The same object the tracker put on the touch, so the
+                    # break model is scored on this touch rather than on zeros.
+                    # See `Call.features`.
+                    features=features,
                 )
             )
             self.calls += 1
