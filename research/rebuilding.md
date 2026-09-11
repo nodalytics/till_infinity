@@ -1251,6 +1251,17 @@ same simulated truth, at the feed's own sample, and see which one comes back wit
 the width it was given.** Six paths a width, Range Break 100 at the published
 86.6-minute break rate, episodes cut at the true break points.
 
+**First, the two defects that moved `quantising.md`'s own numbers, checked
+here.** That page found an episode filter sized by its longest window and applied
+to everything, which discarded nine tenths of its episodes; and the same filter
+applied to the data but not to the simulated truths. Neither is present in the
+scoring on this page, and the reason is structural rather than lucky. There is no
+episode filter at all - the variance-ratio curve is computed over every bar - and
+the estimator is one function, `rebuildstep.vr_curves`, run on the simulation and
+on the feed alike, which is why `rebuildgen.py` holds the battery rather than
+each study holding its own. So the fit is not defended by those two corrections
+and is not damaged by them: it fails for a different reason, below.
+
 **The direct estimator is biased low, and nowhere near enough to save 60.**
 
 | true `W` | episodes | saturating cut | **`W` recovered** | mean within-episode range | bias |

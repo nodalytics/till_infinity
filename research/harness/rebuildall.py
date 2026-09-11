@@ -80,7 +80,7 @@ def main() -> None:
               f"{results[-1]['seconds']:.0f}s", flush=True)
 
     print("\n" + "=" * 120)
-    print("THE POOLED LEDGER - every pre-registered condition across the five studies")
+    print("THE POOLED LEDGER - every pre-registered condition across the studies")
     print("=" * 120)
     pooled = []
     logs = os.path.dirname(OUT)
