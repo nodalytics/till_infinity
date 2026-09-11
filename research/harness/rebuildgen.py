@@ -181,15 +181,79 @@ def bars_from_stream(stream, tpb: int, n_bars: int, keep_ticks: int = 0):
 
 
 # ------------------------------------------------------------- generators ----
+LATTICE_MODES = ("price", "bump", "resample")
+
+
+def lattice_walk(px: np.ndarray, price: float, grid: float, mode: str,
+                 sigma_tick: float, rng) -> np.ndarray:
+    """Put a continuous price path onto the venue's quote lattice.
+
+    Three rules, and the whole of `rebuildladder.py`'s ladder is which one. None
+    of them costs a parameter - see `gen_gbm` for what each is and which are
+    refuted. Shared so the deliberately wrong generators in `rebuildvol.py` are
+    quantised the same way as the honest one: a control that differs from the
+    rebuild in the law *and* in the lattice rule is measuring both at once.
+    """
+    if not grid:
+        return px
+    if mode == "price":
+        return np.round(px / grid) * grid
+    d = np.diff(np.concatenate([[price], px]))
+    dl = np.round(d / grid)
+    idx = np.flatnonzero(dl == 0)
+    if idx.size and mode == "bump":
+        sgn = np.sign(d[idx])
+        sgn[sgn == 0] = np.where(rng.random(int((sgn == 0).sum())) < 0.5, -1.0, 1.0)
+        dl[idx] = sgn
+    elif idx.size:
+        # Redraw until the quote changes. The accepted increment is then a
+        # rounded Gaussian *conditioned on being nonzero*, which spreads the zero
+        # bin over every other bin in proportion rather than onto the one-unit
+        # bin alone - and the feed's own increment histogram says in proportion.
+        # The local price sd is `px * sigma_tick` because the process is
+        # geometric.
+        s_loc = px * sigma_tick
+        for _ in range(64):
+            nl = np.round(rng.standard_normal(idx.size) * s_loc[idx] / grid)
+            dl[idx] = nl
+            idx = idx[nl == 0]
+            if not idx.size:
+                break
+        if idx.size:  # a grid coarser than 64 rejections can clear
+            dl[idx] = np.where(rng.random(idx.size) < 0.5, -1.0, 1.0)
+    return price + np.cumsum(dl) * grid
+
+
+def lattice_mode(value) -> str:
+    m = {True: "bump", False: "price", None: "price"}.get(value, value)
+    if m not in LATTICE_MODES:
+        raise ValueError(f"lattice must be one of {LATTICE_MODES}, got {value!r}")
+    return m
+
+
 def gen_gbm(n_ticks: int, sigma_ann: float, tick_seconds: float, p0: float,
-            grid: float, rng, chunk: int = 2_000_000, lattice: bool = False):
+            grid: float, rng, chunk: int = 2_000_000, lattice="price"):
     """Driftless geometric Brownian motion in the log price.
 
     The only parameters are the annualised volatility in the instrument's name
     and the publication rate. `sigma_tick = (N/100) * sqrt(dt_years)`; the drift
     is zero in the log, which is one of the two conventions `deriving.md` section
     two showed sixty days cannot separate (they are 0.537 combined SE apart).
+
+    `lattice` is the rung of the discriminator ladder in `rebuildladder.py` and
+    it is the *only* thing that differs between them - no rung adds a parameter:
+
+    * ``"price"`` rounds the accumulated price onto the quote grid. Refuted:
+      the fraction of zero tick moves separated it from the feed at AUC 0.689
+      against a floor of 0.499.
+    * ``"bump"`` rounds the *increment* and moves one unit where it would have
+      rounded to nothing. Refuted in turn: it puts the whole of the zero bin
+      into the one-unit bin, which is 45% too many minimum-size moves.
+    * ``"resample"`` rounds the increment and redraws a zero until the quote
+      changes, which spreads the zero bin over every nonzero bin in proportion.
+      That is what the feed's own increment histogram shows.
     """
+    mode = lattice_mode(lattice)
     sigma_tick = (sigma_ann / 100.0) * math.sqrt(tick_seconds / SECONDS_PER_YEAR)
     logp = math.log(p0)
     price = p0
@@ -199,35 +263,9 @@ def gen_gbm(n_ticks: int, sigma_ann: float, tick_seconds: float, p0: float,
         path = logp + np.cumsum(rng.standard_normal(m) * sigma_tick)
         logp = float(path[-1])
         px = np.exp(path)
-        if not grid:
-            yield px
-        elif not lattice:
-            yield np.round(px / grid) * grid
-        else:
-            # Round the *increment* onto the lattice, not the accumulated price,
-            # and never let it round to nothing.
-            #
-            # `rebuildjudge.py` caught the rounded-price version on exactly this:
-            # the discriminator's largest single feature was the fraction of zero
-            # tick moves, at AUC 0.689 against a floor of 0.499, and measuring it
-            # directly showed the rebuild repeating a quote **4 to 82 times more
-            # often than the feed**. On `volatility_150_1s_index`, which carries
-            # only 1.1 lattice points per tick sigma, rounding a continuous price
-            # gives 28% repeated quotes and the feed shows 0.9%. So the venue does
-            # not round a continuous process onto its quote grid - it moves on the
-            # grid, and a tick that would have rounded to zero moves one unit
-            # instead.
-            d = np.diff(np.concatenate([[price], px]))
-            dl = np.round(d / grid)
-            zero = dl == 0
-            if zero.any():
-                sgn = np.sign(d[zero])
-                sgn[sgn == 0] = np.where(rng.random(int((sgn == 0).sum())) < 0.5,
-                                         -1.0, 1.0)
-                dl[zero] = sgn
-            out = price + np.cumsum(dl) * grid
-            price = float(out[-1])
-            yield out
+        out = lattice_walk(px, price, grid, mode, sigma_tick, rng)
+        price = float(out[-1])
+        yield out
         done += m
 
 

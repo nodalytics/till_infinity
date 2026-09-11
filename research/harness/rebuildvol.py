@@ -142,10 +142,14 @@ JMULT = int(os.environ.get("JMULT", "4"))
 #: a 0.045 gap, which is a few hundred thousand.
 TICK_KEEP = int(os.environ.get("TICK_KEEP", "2000000"))
 #: Move on the quote lattice rather than rounding a continuous price onto it.
-#: `rebuildjudge.py` established that the venue does the former; see the note in
-#: `rebuildgen.gen_gbm`. Set LATTICE=0 to rebuild the old behaviour and watch the
-#: discriminator find it.
-LATTICE = os.environ.get("LATTICE", "1") not in ("0", "false", "")
+#: `rebuildjudge.py` established that the venue does the former and
+#: `rebuildladder.py` settled which of the two ways: see `rebuildgen.gen_gbm`.
+#: One of "price" (round the accumulated price - refuted), "bump" (round the
+#: increment, move one unit on a zero - refuted) or "resample" (round the
+#: increment, redraw until the quote changes). "0"/"1" still name the first two.
+LATTICE = {"0": "price", "false": "price", "": "price", "1": "bump",
+           "true": "bump"}.get(os.environ.get("LATTICE", "resample").lower(),
+                               os.environ.get("LATTICE", "resample"))
 
 NOMINAL = {
     "volatility_10_index": 10.0, "volatility_25_index": 25.0,
@@ -288,10 +292,10 @@ def simulate_vol(feed, nominal, p0, grid, n_bars, seed, keep_ticks=0, sigma_mult
     tick_s = 60.0 / tpb
     if student_df:
         stream = _student_stream(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid,
-                                 rng, student_df)
+                                 rng, student_df, lattice=lattice)
     elif cluster:
         stream = _cluster_stream(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid,
-                                 rng, tpb)
+                                 rng, tpb, lattice=lattice)
     else:
         stream = G.gen_gbm(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid, rng,
                            lattice=lattice)
@@ -299,7 +303,7 @@ def simulate_vol(feed, nominal, p0, grid, n_bars, seed, keep_ticks=0, sigma_mult
 
 
 def _cluster_stream(n_ticks, sigma_ann, tick_seconds, p0, grid, rng, tpb,
-                    block_bars=60, lo=0.7, hi=1.3):
+                    block_bars=60, lo=0.7, hi=1.3, lattice=LATTICE):
     """The other deliberately wrong generator: the same average variance, but it
     alternates between two volatility states in hour-long blocks.
 
@@ -307,10 +311,12 @@ def _cluster_stream(n_ticks, sigma_ann, tick_seconds, p0, grid, rng, tpb,
     (`generators.md`: largest |acf| of |return| across 26 synthetics is 0.017
     against gold's 0.219). It exists to prove the clustering test has power.
     """
+    mode = G.lattice_mode(lattice)
     base = (sigma_ann / 100.0) * math.sqrt(tick_seconds / G.SECONDS_PER_YEAR)
     scale = base / math.sqrt((lo ** 2 + hi ** 2) / 2.0)
     blk = block_bars * tpb
     logp = math.log(p0)
+    price = p0
     done = 0
     state = 0
     while done < n_ticks:
@@ -320,23 +326,32 @@ def _cluster_stream(n_ticks, sigma_ann, tick_seconds, p0, grid, rng, tpb,
         path = logp + np.cumsum(rng.standard_normal(m) * scale * mult)
         logp = float(path[-1])
         px = np.exp(path)
-        yield np.round(px / grid) * grid if grid else px
+        # the same quantiser as the honest rebuild: a control that differs in the
+        # law *and* in the lattice rule cannot say which of the two was caught
+        out = G.lattice_walk(px, price, grid, mode, scale * mult, rng)
+        price = float(out[-1])
+        yield out
         done += m
 
 
-def _student_stream(n_ticks, sigma_ann, tick_seconds, p0, grid, rng, df, chunk=2_000_000):
+def _student_stream(n_ticks, sigma_ann, tick_seconds, p0, grid, rng, df, chunk=2_000_000,
+                    lattice=LATTICE):
     """The deliberately wrong generator: Student-t tick innovations rescaled to
     the same per-tick variance. Same volatility, same martingale, wrong law."""
+    mode = G.lattice_mode(lattice)
     sigma_tick = (sigma_ann / 100.0) * math.sqrt(tick_seconds / G.SECONDS_PER_YEAR)
     scale = sigma_tick / math.sqrt(df / (df - 2.0))
     logp = math.log(p0)
+    price = p0
     done = 0
     while done < n_ticks:
         m = min(chunk, n_ticks - done)
         path = logp + np.cumsum(rng.standard_t(df, m) * scale)
         logp = float(path[-1])
         px = np.exp(path)
-        yield np.round(px / grid) * grid if grid else px
+        out = G.lattice_walk(px, price, grid, mode, sigma_tick, rng)
+        price = float(out[-1])
+        yield out
         done += m
 
 
