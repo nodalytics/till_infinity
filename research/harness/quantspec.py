@@ -481,6 +481,64 @@ def implied_width(vr: dict, tpb: float = TICKS_PER_BAR) -> dict:
     }
 
 
+#: `research/rebuilding.md`'s best-fitting re-range rule and the ex-break variance
+#: ratio it produces, beside the published curve it is fitted to. The fitted band
+#: is in lattice steps and the series tick 60 times a minute.
+REBUILD = {
+    "range_break_100_index": {
+        "band": 60.0, "jump": 120.0, "episode_bars": 86.5,
+        "model": {1: 0.928, 5: 0.773, 20: 0.544, 100: 0.310, 500: 0.259, 1000: 0.262},
+    },
+    "range_break_200_index": {
+        "band": 45.0, "jump": 230.0, "episode_bars": 178.8,
+        "model": {1: 0.887, 5: 0.662, 20: 0.367, 100: 0.183, 500: 0.135, 1000: 0.148},
+    },
+}
+
+
+def residual_geometry() -> dict:
+    """Where the rebuild's residual sits on the box's own clock, and what that rules out.
+
+    `research/rebuilding.md` fits a uniform reflecting band plus a memoryless
+    break to the published ex-break curve, reaches a mean absolute error of
+    0.043, and is left with a residual that **sits at twenty minutes and points
+    the two indices in opposite directions**. A spectrum has three things to say
+    about that, none of which needs any data:
+
+    * a hard box's relaxation time is `tau_1 = 2 W^2 / pi^2` ticks at unit step
+      variance, so the same diagnostic lag lands at a different place on each
+      index's own clock, and the first question is where;
+    * **no confining potential relaxes faster than a hard box.** WKB gives
+      `lambda_k ~ k^(2p/(p+2))` for a well `V ~ |x|^p`, which rises to `k^2` as
+      the wall hardens and never passes it, so `1:4:9` is a *ceiling*. An index
+      that relaxes faster than the fitted box at matched `lambda_1` cannot be
+      explained by a steeper wall, and that removes a whole class of repairs;
+    * if the residual were one shape error in the crossover, the two indices'
+      residuals would **collapse onto one curve** when the lag is rescaled by
+      each index's own relaxation time. Whether they do is arithmetic.
+    """
+    rows = {}
+    for feed, r in REBUILD.items():
+        w = r["band"]
+        # Unit step variance per tick, so D = 1/2 and tau_1 = 1/(D (pi/W)^2).
+        tau_ticks = w * w * 2.0 / (math.pi ** 2)
+        tau_bars = tau_ticks / TICKS_PER_BAR
+        pub = PUBLISHED_VR[feed]
+        lags = sorted(pub)
+        rows[feed] = {
+            "band": w, "tau_1_bars": tau_bars,
+            "episode_bars": r["episode_bars"],
+            "relaxations_per_episode": r["episode_bars"] / tau_bars,
+            # How hard a position-dependent break hazard could bias the ex-break
+            # curve: the chance of a break within one relaxation time.
+            "break_rate_times_tau": tau_bars / r["episode_bars"],
+            "lags": lags,
+            "u": [n / tau_bars for n in lags],
+            "residual": [pub[n] - r["model"][n] for n in lags],
+        }
+    return rows
+
+
 def load_bars(feed: str) -> dict | None:
     if not os.path.exists(DB):
         return None
@@ -718,6 +776,50 @@ def main() -> None:
     print("    and it does not order them.")
 
     # ---- 5. real data ----------------------------------------------------
+    # ---- 4b. the rebuild's residual, on the box's own clock -------------
+    print("\n[4b] WHERE rebuilding.md's RESIDUAL SITS ON THE BOX'S OWN CLOCK")
+    print("     That page fits a uniform reflecting band plus a memoryless break to the")
+    print("     published curve, reaches a mean absolute error of 0.043, and is left with")
+    print("     a residual at twenty minutes pointing the two indices opposite ways. A")
+    print("     spectrum has three things to say about that and none needs any data.")
+    geo = residual_geometry()
+    out["residual_geometry"] = geo
+    print(f"\n     {'feed':24s} {'band':>6s} {'tau_1 (bars)':>13s} {'episode':>8s} "
+          f"{'tau/episode':>12s} {'n=20 in tau':>12s}")
+    for feed, g in geo.items():
+        u20 = 20.0 / g["tau_1_bars"]
+        print(f"     {feed:24s} {g['band']:6.0f} {g['tau_1_bars']:13.2f} "
+              f"{g['episode_bars']:8.1f} {g['break_rate_times_tau']:12.3f} {u20:12.2f}")
+    print("\n     residual (published minus rebuild), against the lag rescaled by each")
+    print("     index's own relaxation time - if this were one crossover shape error the")
+    print("     two rows would lie on one curve:")
+    for feed, g in geo.items():
+        print(f"       {feed}")
+        print("         u      " + " ".join(f"{v:8.2f}" for v in g["u"]))
+        print("         resid  " + " ".join(f"{v:+8.3f}" for v in g["residual"]))
+    a, b = (geo[k] for k in ("range_break_100_index", "range_break_200_index"))
+    print("\n     They do not. At comparable u the signs are opposite: RB100 reads")
+    print(f"     {a['residual'][2]:+.3f} at u = {a['u'][2]:.2f} and RB200 reads "
+          f"{b['residual'][1]:+.3f} at u = {b['u'][1]:.2f}.")
+    print("     So RB100 relaxes FASTER than the fitted box and RB200 SLOWER, at matched")
+    print("     lambda_1. WKB says lambda_k ~ k^(2p/(p+2)) for a well V ~ |x|^p, which")
+    print("     rises to k^2 as the wall hardens and never passes it, so 1:4:9 is a")
+    print("     CEILING: nothing that confines relaxes faster than a hard box, and RB100's")
+    print("     sign therefore cannot be repaired by a steeper wall at any width.")
+    ratio = a["break_rate_times_tau"] / b["break_rate_times_tau"]
+    print(f"\n     What does have the right sign is a break hazard that depends on where")
+    print("     the price is. If breaks happen at the edge, dropping break bars conditions")
+    print("     on being away from the edge and makes the survivor look more confined than")
+    print("     the box - and the size of that bias goes as the break rate times the")
+    print(f"     relaxation time, which is {a['break_rate_times_tau']:.3f} on RB100 against "
+          f"{b['break_rate_times_tau']:.3f} on RB200,")
+    print(f"     a factor of {ratio:.1f}. That predicts RB100 is pulled hard toward")
+    print("     more-confined and RB200 barely at all, which is the observed ordering. It")
+    print("     does not explain RB200's positive sign, so it is half an answer.")
+    print("\n     THE MEASUREMENT THAT SETTLES IT, and it needs one query: the price at the")
+    print("     break, relative to the range it was in. A uniform hazard puts it uniformly")
+    print("     inside; an edge hazard puts it at the edge. No model is involved.")
+
     print("\n[5] RANGE BREAK, MEASURED")
     real: dict = {}
     if not os.path.exists(DB):

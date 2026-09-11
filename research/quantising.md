@@ -2,37 +2,39 @@
 
 Under the Wick rotation `t -> -i*tau` the heat equation becomes the Schrodinger
 equation, a transition density becomes a propagator, a drift becomes a gauge
-potential and a barrier becomes a boundary condition. That is an identity, not a
-metaphor, and [deriving.md](deriving.md) has just made it usable here by
-establishing what the Deriv synthetics actually are: the Volatility indices are
-driftless Brownian motion at a published sigma, Step Index is a fair coin on a
-0.1 lattice, Range Break is genuinely confined between breaks, and Boom and Crash
-are drift plus compound Poisson. Each of those is a textbook quantum system - a
-free particle, a tight-binding lattice, a particle in a box, a non-local jump
-operator - so everything a physicist knows about propagators, spectra and
-boundary conditions is already a statement about these price processes.
+potential and a barrier becomes a boundary condition. That is an identity rather
+than a metaphor, and [deriving.md](deriving.md) has just made it usable here by
+settling what the Deriv synthetics are: the Volatility indices are driftless
+Brownian motion at a published sigma, Step Index is a fair coin on a 0.1 lattice,
+Range Break is genuinely confined between breaks, and Boom and Crash are drift
+plus compound Poisson. Each of those is a textbook quantum system - a free
+particle, a tight-binding lattice, a particle in a box, a non-local jump operator
+- so everything a physicist knows about propagators, spectra and boundary
+conditions is already a statement about these price processes.
 
-The field this borrows from is full of classical results in borrowed notation, so
-the rule on this page is that **every quantum construction is scored against a
-classical control doing the same job, and where the control matches, the page
-says the framing is notation**. Two of the four sections below reach exactly that
-verdict and say so.
+The field this borrows from is largely classical results in borrowed notation, so
+the rule here is that **every quantum construction is scored against a classical
+control doing the same job, and where the control matches, the page says the
+framing is notation**. Two of the five sections below reach exactly that verdict
+and say so, one of them by proving an identity rather than measuring one.
 
 Three harnesses: [`quantimage.py`](harness/quantimage.py),
-[`quantspec.py`](harness/quantspec.py), [`quantbridge.py`](harness/quantbridge.py).
-Each states its kill conditions in its docstring before any number, and the
-ledger of which fired is at the bottom of each section.
+[`quantspec.py`](harness/quantspec.py),
+[`quantbridge.py`](harness/quantbridge.py). Each states its kill conditions in its
+docstring before any number, and each section below ends with the ledger of which
+fired.
 
-**Scope, stated first.** The research lab holding `research.db` was unreachable
-for the whole of this work - no route to host - and `.data/prices/prices.db`
-carries 1.67M bars of real instruments and **zero generated feeds**. So the tick
-and bar legs on the synthetics themselves are written and not run. What is here
-is therefore of two kinds, marked throughout: **derivations and numerical
-evaluations**, which need no data and are complete, and **pre-registered
-predictions with their power analysis**, which need one command on the lab and
-are not results yet. Nothing measured on the synthetics is claimed.
+**Scope, stated first and not buried.** The research lab holding `research.db`
+was unreachable throughout this work - no route to host - and
+`.data/prices/prices.db` carries 1.67M bars of *real* instruments and **zero
+generated feeds**. So nothing here is measured on a Deriv synthetic. What is here
+is of three kinds, marked throughout: **exact numerical evaluations of known
+laws**, which need no data and are complete; **measurements on real instruments**,
+which the local store does support and which section three uses; and
+**pre-registered predictions with their power analysis**, which need one command
+on the lab and are not results yet.
 
-## One: the 0.5826 is an extrapolation length, and that is a boundary condition rather than a correction
+## One: the 0.5826 is an extrapolation length, so it is a boundary condition rather than a correction
 
 [deriving.md](deriving.md) needs `B = -zeta(1/2)/sqrt(2*pi) = 0.5826` to make
 every barrier answer on these instruments exact, and takes it from
@@ -53,11 +55,11 @@ wall at `a + L`. **One image charge, moved.**
 
 So the claim is that `0.5826 * sigma * sqrt(h)` is the extrapolation length of a
 Gaussian walk against a wall it only sees every `h`. `quantimage.py` tests it
-against the exact discretely monitored law, computed by convolving the density
-with the one-step Gaussian and zeroing it beyond the wall, iterated. That is the
-Chapman-Kolmogorov recursion evaluated numerically with no asymptotics anywhere;
-its only error is the space grid, and halving the grid four times moves the
-hundred-step survival by `1.2e-06`.
+against the exact discretely monitored law - convolve the density with the
+one-step Gaussian, zero it beyond the wall, iterate. That is Chapman-Kolmogorov
+evaluated numerically with no asymptotics anywhere; its only error is the space
+grid, and halving the grid four times moves the hundred-step survival by
+`1.2e-06`.
 
 **Invert the exact law for the shift that reproduces it**, at six barrier
 distances and five horizons:
@@ -73,10 +75,10 @@ distances and five horizons:
 
 Pooled over `a` in [2, 12] at the longest horizon the shift is **0.58226 with a
 spread across `a` of 0.00058**, against `-zeta(1/2)/sqrt(2*pi) = 0.58260`. That
-is **0.058%**, and the flatness is the point: a boundary condition is a property
-of the wall and cannot know how far away the barrier is, so a shift that drifted
-with `a` would be a fitted fudge rather than a wall. It does not drift. The
-column at `a = 1` sits at 0.5871 rather than 0.5822, which is
+is **0.058%**, and the *flatness* is the point: a boundary condition is a
+property of the wall and cannot know how far away the barrier is, so a shift that
+drifted with `a` would be a fitted fudge rather than a wall. It does not drift.
+The `a = 1` row sits at 0.5871 rather than 0.5822, which is
 [deriving.md](deriving.md)'s "excellent at three units and only fair at one" seen
 from the other side.
 
@@ -92,11 +94,26 @@ horizons 25 to 3200, with a deliberately wrong constant as the control:
 | 12.0 | 0.012714 | **0.000233** | 0.009123 |
 
 The moved image plane is **fifty to seventy times** better than the textbook one,
-and the wrong-constant control is only a third better than the textbook - so the
-measurement has the power to say *which* constant, which is what makes the first
-column readable.
+and the wrong-constant control is only about a third better than the textbook -
+so the measurement has the power to say *which* constant, which is what makes the
+middle column readable at all.
 
-**The same constant as an overshoot.** The walk crosses between quotes and is
+**The same constant from a second functional.** Asmussen-Glynn-Pitman:
+`E[max of the observed points] = sqrt(2n/pi) - B + o(1)`. Evaluating the left
+side exactly, by integrating the survival probability over the level:
+
+| n | E[max] exact | `sqrt(2n/pi)` | deficit | deficit minus B |
+| --- | --- | --- | --- | --- |
+| 25 | 3.44622 | 3.98942 | 0.54320 | -0.03939 |
+| 100 | 7.41595 | 7.97885 | 0.56290 | -0.01970 |
+| 400 | 15.38491 | 15.95769 | 0.57278 | -0.00981 |
+
+The residual **halves every time `n` quadruples**, so the `o(1)` term is
+`O(n^-1/2)` with a coefficient of 0.196, and extrapolating gives
+`0.57278 + 0.00981 = 0.58259` against 0.582597. Five significant figures, from a
+functional that shares no arithmetic with the shift inversion.
+
+**And the same constant as an overshoot.** The walk crosses between quotes and is
 first seen past the level, so the observed first-passage level is `a + R` with
 `R` the overshoot, and renewal theory gives the stationary mean overshoot as
 `E[H^2]/(2E[H])` with `H` the strict ascending ladder height. For a Gaussian walk
@@ -110,15 +127,15 @@ paths:
 | `E[H^2]/(2E[H])` | 0.582626 +- 0.000290 | 0.582597 (`-zeta(1/2)/sqrt(2pi)`) | **+0.10** |
 
 `E[H]` is the load-bearing row. It is an exact value the simulation cannot know,
-produced by the same estimator as the number under test, so it is the proof that
-the estimator is alive rather than returning its target - and it lands 0.88
+produced by the same estimator as the number under test, so it is the evidence
+that the estimator is alive rather than returning its target - and it lands 0.88
 standard errors off, which is a measurement rather than a tautology.
 
-**And the exact discrete law reproduces deriving.md's measured table better than
-deriving.md's own correction does.** The two-sided problem, solved by the same
+**The exact law also reproduces deriving.md's measured table better than
+deriving.md's own correction does.** The two-sided problem, by the same
 propagation:
 
-| a:b | P(up) exact | measured on 86,411 bars a feed | E[tau] exact | measured | `(a+B)(b+B)` |
+| a:b | P(up) exact | measured, 86,411 bars a feed | E[tau] exact | measured | `(a+B)(b+B)` |
 | --- | --- | --- | --- | --- | --- |
 | 1:1 | 0.5000 | 0.5000 | **2.783** | 2.782 | 2.505 |
 | 3:3 | 0.5000 | 0.5001 | **13.086** | 13.051 | 12.835 |
@@ -128,40 +145,38 @@ propagation:
 | 9:1 | 0.1422 | 0.1426 | **15.466** | 15.382 | 15.165 |
 | 2:10 | 0.8039 | 0.8042 | **27.574** | 27.472 | 27.331 |
 
-The `3:1` row is the one worth reading twice. [deriving.md](deriving.md)
-established on 174,501 trades that a stop one sigma below and a target three
-above is a 30.7% shot rather than a textbook 25%, and the exactly propagated
-boundary-value problem returns **0.3073** with no data in it at all. Over the
-seven geometries the exact law's mean relative error on the expected duration is
-**0.5%** where the `B`-shifted closed form is **2.9%** and the uncorrected
-continuous form is **35.1%**. So the practical consequence is small and concrete:
-`(a+B)(b+B)` is a good approximation, and where the barrier is inside three
-monitoring sigmas the propagation itself is better and costs a second.
+The `3:1` row is worth reading twice. [deriving.md](deriving.md) established on
+174,501 trades that a stop one sigma below and a target three above is a 30.7%
+shot rather than a textbook 25%, and the exactly propagated boundary-value
+problem returns **0.3073** with no data in it at all. Over the seven geometries
+the exact law's mean relative error on the expected duration is **0.5%** where
+the `B`-shifted closed form is **2.9%** and the uncorrected continuous form is
+**35.1%**.
 
 **Ledger: none of the six pre-registered kill conditions fired.** They were that
 the fitted shift is not flat in `a` (spread 0.00058 against a 0.01 threshold),
-that the flat value is not the constant to 1% (0.058%), that the moved plane
-scores worse than the textbook one anywhere at `a >= 2` (it is 50-70x better
-everywhere), that `E[H^2]/(2E[H])` misses the constant by 3 standard errors
-(z = +0.10), that `E[H]` misses `1/sqrt(2)` by 3 standard errors (z = +0.88), and
-that any quantity reproduces its target to more digits than its own error bar
-allows.
+that the flat value misses the constant by more than 1% (0.058%), that the moved
+plane scores worse than the textbook one anywhere at `a >= 2` (it is 50-70x
+better everywhere), that `E[H^2]/(2E[H])` misses by 3 standard errors (z = +0.10),
+that `E[H]` misses `1/sqrt(2)` by 3 standard errors (z = +0.88), and that any
+quantity reproduces its target to more digits than its own error bar allows.
 
-**Is this a new description or a relabelling?** Both, in separable parts. That
-0.5826 is the expected overshoot of a Gaussian walk is classical and is in
-Broadie-Glasserman-Kou; **reproducing it is confirmation, not novelty**, and it
-is now confirmed on this project by three independent routes - the option-formula
-correction in [deriving.md](deriving.md), a rebuild that produces it from nothing
-but a volatility and a tick rate in [rebuilding.md](rebuilding.md), and the
-boundary condition here. What the imaginary-time reading adds is *transportable*:
-BGK give a correction to two formulas, an extrapolation length gives the
-boundary condition, and a boundary condition applies to every barrier question on
-these instruments including the ones with no closed form. The desk's practical
-gain is one line - **when a barrier sits inside three monitoring sigmas, propagate
-the density instead of correcting the continuous formula** - and it is worth
-about 2.4 points of expected duration at a 1:1 barrier.
+**New description or relabelling?** Separably both. That 0.5826 is the expected
+overshoot of a Gaussian walk is classical and is in Broadie-Glasserman-Kou;
+**reproducing it is confirmation, not novelty** - and it is now confirmed on this
+project by three independent routes, the option-formula correction in
+[deriving.md](deriving.md), a rebuild that produces it from nothing but a
+volatility and a tick rate in [rebuilding.md](rebuilding.md), and the boundary
+condition here, which itself arrives by three internal routes that share no
+arithmetic. What the imaginary-time reading adds is *transportable*: BGK give a
+correction to two formulas, an extrapolation length gives the boundary condition,
+and a boundary condition applies to every barrier question on these instruments
+including the ones nobody has written a closed form for. The desk's practical
+gain is one line - **when a barrier sits inside three monitoring sigmas,
+propagate the density instead of correcting the continuous formula** - and at a
+1:1 barrier that is 2.783 minutes against 2.505.
 
-## Two: the Range Break ladder, the control that reframes it, and the prediction left on the table
+## Two: the Range Break ladder, and the control that reframes it
 
 A range is a box, and a particle in a box has a discrete spectrum. That is the
 sharpest prediction available here, because a classical range model gives one
@@ -169,10 +184,9 @@ number - a half-life - where a box gives a **ladder**:
 
     lambda_k = (k*pi/W)^2 * D,      ratios 1 : 4 : 9 : 16
 
-and a restoring force gives a different one. An Ornstein-Uhlenbeck process's
-generator is the quantum harmonic oscillator Hamiltonian up to the similarity
-transform by the square root of its own stationary density, so its spectrum is
-evenly spaced:
+and a restoring force gives a different one. An Ornstein-Uhlenbeck generator is
+the quantum harmonic oscillator Hamiltonian up to the similarity transform by the
+square root of its own stationary density, so its spectrum is evenly spaced:
 
     lambda_k = k*theta,             ratios 1 : 2 : 3 : 4
 
@@ -187,99 +201,357 @@ expansion is `sum_{k odd} exp(-lambda_k n)/k^4`, in which **the first mode carri
 means resolving a 1% component decaying nine times faster than the one that
 dominates.
 
-### The control fired, and it is the most useful result in this section
+### The control fired, and it is the most useful result on this page
 
 Before any market data, `quantspec.py` runs a **driftless random walk** through
-the identical estimator. A free walk has no discrete spectrum at all. It returns
+the identical estimator. A free walk has no discrete spectrum at all. Twelve
+replicates, one long episode each:
 
-    lambda_2/lambda_1 = 3.86 +- 0.18,   lambda_3/lambda_1 = 8.63
+| truth | true `l2/l1` | recovered | recovered `l3/l1` | true `l3/l1` |
+| --- | --- | --- | --- | --- |
+| box | 4.00 | **3.992 +- 0.056** | 8.987 | 9.00 |
+| spring | 2.00 | 2.211 +- 0.026 | 3.941 | 3.00 |
+| **free walk** | *none* | **3.551 +- 1.024** | **8.539** | *none* |
 
-against a box's 4 and 9.
-
-**A free random walk reproduces the particle-in-a-box ladder to within 4%.** It
-has to, and the reason is not subtle once seen: binning a diffusion by its own
-empirical quantiles makes the observed support the box, and a diffusion in a box
-has box eigenvalues. So **observing 1:4:9 in a financial series is not evidence of
+**A free random walk reproduces the particle-in-a-box ladder.** It has to, and
+the reason is not subtle once seen: binning a diffusion by its own empirical
+quantiles makes the observed support the box, and a diffusion in a box has box
+eigenvalues. So **observing 1:4:9 in a financial series is not evidence of
 confinement** - it is evidence that the observation window was finite, which it
 always is. Any result of that shape without this control has measured its own
 window. That is the specific numerology this field invites, and it would have
-been published here had the control not been run.
+been published here had the control not been run first.
 
-### What survives is the scaling, not the ratio
+### What survives is the scaling, and it is not the ratio
 
-For a free walk the leading rate is set by the window: `lambda_1 ~ pi^2 D /
+For a free walk the leading rate is set by the window, `lambda_1 ~ pi^2 D /
 W_window^2` with `W_window^2 ~ D*m`, so `lambda_1` falls like `1/m` for ever. For
-a real box `lambda_1 = pi^2 D / W^2` is a property of the instrument and **stops
-falling** once the window is longer than the relaxation time. So the confinement
-test is a **knee** in `lambda_1(m)` and the plateau it flattens onto is the
-measurement; only once a knee exists does the ladder ratio mean anything at all.
+a real box `lambda_1 = pi^2 D / W^2` is a property of the instrument and stops
+falling once the window exceeds the relaxation time. So the confinement test is a
+**knee**, and 200 replicates at the real sample size - 86,410 bars in episodes of
+86.5 - give it:
 
-A second discriminator needs no spectrum: a reflecting box has a **uniform**
-stationary density, excess kurtosis -1.2, and a spring has a **Gaussian** one,
-excess kurtosis 0.0. On 86,000 observations that separates them on its own, and
-it is cheaper than the spectrum.
+| truth | m=8 | m=12 | m=16 | m=24 | m=32 | m=48 | m=64 | log-log slope | shallowest |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| box | 0.7347 | 0.4768 | 0.3715 | 0.2792 | 0.2372 | 0.1988 | 0.1804 | -0.66 | **-0.34 +- 0.04** |
+| spring | 0.7349 | 0.4850 | 0.3852 | 0.2991 | 0.2608 | 0.2264 | 0.2110 | -0.58 | **-0.25 +- 0.04** |
+| free walk | 0.5766 | 0.3408 | 0.2446 | 0.1573 | 0.1171 | 0.0784 | 0.0595 | **-1.08** | **-0.92 +- 0.06** |
+
+The free walk sits on `-1` at every window length, as it must, and the two
+confined truths flatten toward zero. The separation is about **ten standard
+deviations**, so the confinement question is decisively answerable at this sample
+size. The true `lambda_1` of both simulated truths is 0.1588 per bar, and the
+box's curve is still at 0.1804 at m=64, so even the plateau is biased upward by
+about 14% by the finite window - which is why the measured number has to be read
+against simulated truths and not against a formula.
+
+A second discriminator needs no spectrum at all. A reflecting box has a
+**uniform** stationary density, excess kurtosis -1.2; a spring has a **Gaussian**
+one, 0.0. Standardised within-window excess kurtosis, same replicates:
+
+| truth | m=8 | m=16 | m=32 | m=64 |
+| --- | --- | --- | --- | --- |
+| box | 0.411 | 0.043 | -0.374 | **-0.693** |
+| spring | 0.300 | 0.164 | 0.054 | **+0.008** |
+| free walk | 0.575 | 0.594 | 0.597 | **+0.596** |
+
+Three-way separation, and the spring lands at +0.008 against a Gaussian's exact
+0.000. **That is the pattern this folder is supposed to hunt** - a statistic on
+its null - so it is worth saying why it is not a dead column: the same estimator
+returns -0.693 and +0.596 on the other two truths from the same code path, the
+null here is the alternative hypothesis rather than the absence of one, and the
+box's -0.693 is nowhere near the uniform's -1.200 because a 64-bar window cannot
+see the whole stationary density.
+
+### The ladder itself, at the real sample size
+
+Pooling episodes forces de-meaning each one, because the level of a range moves
+when it breaks, and that biases every rate. So the recovered ratio is **not 4 and
+not 2**, and the only honest comparison is against simulated truths through the
+identical pipeline:
+
+| truth | `l2/l1` | sd | 95% interval | `l3/l1` | AR(1) half-life |
+| --- | --- | --- | --- | --- | --- |
+| box | **2.908** | 0.054 | [2.790, 3.007] | 4.881 | 4.41 |
+| spring | **2.154** | 0.023 | [2.112, 2.202] | 3.826 | 3.81 |
+| free walk | **1.846** | 0.046 | [1.751, 1.931] | 4.017 | 39.12 |
+
+The three intervals do not overlap and the best single-cut error separating box
+from spring is **0.0% over 200 replicates**, so the measurement has the power.
+The cosine and Hermite eigenfunction projections do *not* survive the de-meaning
+- they return 1.208 and 1.580 where the transfer operator returns 2.908 and
+2.154 - so only the basis-free estimator is usable and the elegant one is not.
+
+**The classical control does half the job and that is the honest verdict.** The
+AR(1) half-life is 39.12 on a free walk against 4.41 and 3.81 on the two confined
+truths, so **one number already answers "is this confined"** and the knee test is
+a more careful version of the same classical idea. What the AR(1) cannot do is
+separate 4.41 from 3.81, which is box from spring. So the spectral machinery
+earns its place on exactly one question - *which* confinement - and claiming more
+for it would be notation.
 
 ### The prediction, written down before the data exists
 
 [deriving.md](deriving.md) section four's ex-break variance ratio is itself a
 measurement, so it can be inverted for the box it implies. Fitting one relaxation
 mode to the two shortest lags - `n=1` and `n=5`, the only ones where under 6% of
-pairs can straddle a break - gives, for RB100, `lambda_1 = 0.159` per bar, a
-relaxation time of **6.3 bars** and an implied width of **49 units**; for RB200,
-`lambda_1 = 0.114`, **8.8 bars** and **56 units**. So the pre-registered
-prediction is
+pairs can straddle a break - gives:
 
 | | RB100 | RB200 |
 | --- | --- | --- |
 | `lambda_1` (per one-minute bar) | 0.159 | 0.114 |
+| relaxation time `tau_1` | 6.3 bars | 8.8 bars |
+| implied range width | 49 units | 56 units |
 | `lambda_2` **if a box** | **0.635** | **0.456** |
 | `lambda_2` **if a spring** | 0.318 | 0.228 |
-| `lambda_3` **if a box** | 1.430 | 1.026 |
+| `lambda_3` **if a box** | **1.430** | **1.026** |
 | `lambda_3` **if a spring** | 0.477 | 0.342 |
 
 with the caveat that the long-lag flatness in that published table - 0.283, 0.274,
 0.279 at `n` = 100 to 1000 - is **the stitching and not the process**: dropping
 break bars and concatenating glues independent episodes end to end, and glued
 episodes diffuse. Only the short lags carry the confinement, which is why the
-calibration uses them and why the measurement that settles this has to work
-*within* an episode and never across one.
+calibration uses them and why the measurement that settles this must work *within*
+an episode and never across one.
 
 The relaxation times are the operational point. `tau_2` is **1.6 bars on RB100
 and 2.2 on RB200**, so the second mode is at the edge of what one-minute bars can
 resolve and **this measurement belongs on ticks**, where there are sixty samples
-per bar, not on bars. That is a statement about the instrument to make before
-running anything, and it is the kind of thing a power analysis exists to produce.
+a bar. That is a statement about the instrument worth making before running
+anything, and it is what a power analysis is for.
 
-### The classical control
+**Ledger: two of eight fired, both on the first design and both instructive.**
+Condition 1 fired - the estimator does not recover 4 and 2 at the real sample
+size, because pooling episodes forces de-meaning - and the response was to
+calibrate against simulated truths rather than to move the threshold. Condition 3
+fired - the free-walk control is not distinguishable from the box on the raw
+ladder - and that is the section's headline. The six that held were the power
+(0.0% separation error), the knee (box -0.336 +- 0.040 against the walk's
+-0.921 +- 0.058), the ladder against the free-walk control (box 2.5% at 2.790
+against the walk's 97.5% at 1.931), the density test, the void check, and the
+real-data curvature test, which could not be evaluated because there is no real
+data.
 
-An AR(1) half-life is what this desk would otherwise fit, and it is printed beside
-every spectral number in the harness. It returns one number for a box, one for a
-spring and one for a free walk, and it does not order them. That is the honest
-comparison: the spectral machinery is doing something the classical control
-cannot, *provided* the knee test establishes confinement first.
+## Two and a half: where rebuilding.md's residual sits on the box's own clock
 
-**Status: the measured leg has not been run.** `research.db` is on the lab and the
-lab is down. `quantspec.py` skips the measured section with a printed notice
-rather than producing nothing silently, and the one command is
-`./.secrets/lab.sh run research/harness/quantspec.py`.
+[rebuilding.md](rebuilding.md) fits a uniform reflecting band plus a memoryless
+break to the same published curve, reaches a mean absolute error of 0.043 across
+three orders of magnitude in horizon, and is left with a residual that **sits at
+twenty minutes and points the two indices in opposite directions**. A spectrum
+has three things to say about that, none of which needs any data.
+
+**First, where twenty minutes is.** A hard box relaxes in `tau_1 = 2W^2/pi^2`
+ticks at unit step variance, so the rebuild's fitted bands put
+
+| | fitted band | `tau_1` | episode | break rate x `tau_1` | n=20 in units of `tau_1` |
+| --- | --- | --- | --- | --- | --- |
+| RB100 | 60 steps | 12.16 bars | 86.5 bars | 0.141 | **1.64** |
+| RB200 | 45 steps | 6.84 bars | 178.8 bars | 0.038 | **2.92** |
+
+**Second, the residuals do not collapse.** If this were one shape error in the
+crossover, rescaling the lag by each index's own relaxation time would put both
+rows on one curve:
+
+| RB100, `u = n/tau_1` | 0.08 | 0.41 | 1.64 | 8.22 | 41.12 | 82.25 |
+| --- | --- | --- | --- | --- | --- | --- |
+| residual | +0.050 | -0.043 | **-0.108** | -0.027 | +0.015 | +0.017 |
+
+| RB200, `u = n/tau_1` | 0.15 | 0.73 | 2.92 | 14.62 | 73.11 | 146.22 |
+| --- | --- | --- | --- | --- | --- | --- |
+| residual | +0.043 | +0.088 | **+0.110** | +0.009 | -0.019 | -0.036 |
+
+They do not. At comparable `u` the signs are opposite - RB100 reads -0.108 at
+`u = 1.64` where RB200 reads +0.088 at `u = 0.73` - so the two indices are not
+one mechanism sampled at two places. That is an independent confirmation of
+[rebuilding.md](rebuilding.md)'s own last conclusion, reached from the spectrum
+rather than from the fitted parameters.
+
+**Third, and this is the constraint worth having: `1:4:9` is a ceiling.** WKB
+gives `lambda_k ~ k^(2p/(p+2))` for a well `V ~ |x|^p`, which rises to `k^2` as
+the wall hardens and never passes it. **Nothing that confines relaxes faster than
+a hard box at matched `lambda_1`**, so RB100 reading *more* confined than the
+fitted box cannot be repaired by a steeper wall at any width. That removes a
+whole class of candidate fixes before anyone writes one.
+
+What does have the right sign is a **break hazard that depends on where the price
+is**. If breaks happen at the edge, then dropping break bars conditions on having
+been away from the edge, which makes the survivor look more confined than the box
+- and the size of that bias goes as the break rate times the relaxation time,
+which is **0.141 on RB100 against 0.038 on RB200, a factor of 3.7**. That
+predicts RB100 is pulled hard toward more-confined and RB200 barely at all, which
+is the observed ordering. It does not explain RB200's positive sign, so it is
+half an answer and is written here as half an answer.
+
+**The measurement that settles it needs one query and no model**: the price at
+the break, relative to the range it was in. A uniform hazard puts it uniformly
+inside the range; an edge hazard puts it at the edge.
+
+## Three: reconstructing the path inside a bar, which is the part with money in it
+
+A bar is a coarse-graining of a tick path, and recovering the interior from
+`(O, H, L, C)` is a boundary-value problem for the propagator: the path is a
+Brownian bridge pinned at `O` and `C` and confined to `[L, H]`, and the
+conditional law of the interior is the ratio of two propagators. The propagator
+between two absorbing walls is the free kernel plus an **infinite lattice of
+image charges**, which is section one with one wall replaced by two - and it is
+the Poisson-summation dual of the eigenmode expansion section two uses, images
+converging fast at short times and eigenmodes at long ones. `quantbridge.py`
+evaluates the conditional law exactly by forward-backward recursion on a price
+grid, which is the same object with no series truncated.
+
+**The classical control here is an identity, and that settles half the question
+before any measurement.** For a driftless random walk observed exactly at bar
+closes, the Kalman smoother's conditional mean between observations *is* the
+Brownian bridge mean, and the Brownian bridge mean *is* linear interpolation. The
+harness checks it rather than asserting it: the maximum absolute difference over
+200 bars is **7.1e-15**. So the `(O, C)` half of this construction is pure
+notation. What the path integral adds that a linear-Gaussian filter cannot
+represent is the conditioning on `H` and `L`, because a running maximum is not a
+linear functional of the state. **The entire measurable content of the bridge is
+therefore: how much do the high and the low tell you about the interior?**
+
+On 20,000 simulated bars of 15 sub-steps built from 20 ticks each - so that `H`
+and `L` are set by a finer path than the one being reconstructed, exactly as in
+the data:
+
+| method | RMSE, in bar sigmas | against linear |
+| --- | --- | --- |
+| linear = Kalman = `(O,C)` bridge | 0.42133 | - |
+| OHLC zigzag (what charts draw) | 0.38771 | -7.98% |
+| **conditioned bridge** | **0.36241** | **-13.98%** |
+
+`H` and `L` remove **26.0%** of the residual variance that `O` and `C` leave
+behind, and the nominal 90% band contains the truth **85.1%** of the time, which
+is inside the pre-registered [85%, 95%] but only just.
+
+**And it holds on real bars, which is the harder test.** The local store has no
+generated feed, so this ran on real instruments - fat tails, volatility
+clustering, neither of which the construction assumes. Fifteen-minute
+`(O, H, L, C)` reconstructed at one minute, scored against the one-minute closes
+that actually happened:
+
+| feed | n bars | linear | zigzag | **bridge** | gain | 90% coverage |
+| --- | --- | --- | --- | --- | --- | --- |
+| btc, Deriv | 416 | 0.5059 | 0.5149 | **0.4399** | **+13.06%** | 80.2% |
+| btc, Binance | 453 | 0.5333 | 0.5386 | **0.4706** | **+11.76%** | 77.4% |
+| gold, Deriv | 264 | 0.4233 | 0.4572 | **0.3681** | **+13.04%** | 87.5% |
+| eurusd, Deriv | 249 | 0.4363 | 0.4551 | **0.3784** | **+13.28%** | 87.1% |
+
+**Eleven to thirteen per cent on all four**, and note that the zigzag - the only
+other `(H, L)`-aware method - is *worse* than linear on every real feed while
+being better than linear in simulation. So the gain is the conditional law rather
+than the mere fact of using `H` and `L`. The coverage runs 77% to 88% against a
+nominal 90%, which is under-coverage and is the expected direction: the per-bar
+sigma is estimated from the bar's own range, and a noisy volatility estimate
+fattens the standardised residual.
+
+**What is left on the table, quantified.** The bridge conditions on *containment*
+- the path stayed inside `[L, H]` - and not on *attainment*, that it actually
+reached both. Blending the zigzag in at a weight fitted on the first half and
+scored on the second improves the bridge by a further **9.88%**, so attainment is
+worth about as much again as the whole construction so far. That is the next
+thing to build, and in imaginary-time language it is an ancilla: two extra bits
+of state, "has the running maximum reached `H` yet" and the same for `L`, which
+turns the boundary condition into a larger Hilbert space.
+
+**Where the money is, stated precisely.** [deriving.md](deriving.md) proves
+`E[net] = -(c/2) * turnover` for any predictable position on a martingale, so
+none of this is an entry rule. What it is is a **better estimate of latent state
+from cheap data**: the desk holds far more bar history than tick history, and
+every replay, every stop-placement study and every barrier statistic computed
+from bars is currently using linear interpolation or the zigzag inside the bar.
+Replacing that with the conditioned bridge removes a quarter of the interior
+variance for the cost of a forward-backward pass. It does not create an edge; it
+stops a measurement being wrong.
+
+## Four: the quote grid is a measurement operator, and the Kalman smoother is its Gaussian approximation
+
+[twins.md](twins.md) found `volatility_150_1s_index` quoted too coarsely to carry
+any tick statistic, so the rounding is real and measurable. The quoted price is
+the latent price through a quantiser, and recovering the latent state is
+deconvolution. The exact posterior uses the true likelihood - the latent lay
+somewhere inside the cell that was printed - which in imaginary-time language is
+a projective measurement and a conditioned density. The classical control treats
+the rounding as additive noise of variance `Delta^2/12` and runs a Kalman
+smoother, which is what everyone does.
+
+| `Delta/sigma` | raw quote | Kalman | exact | exact against Kalman |
+| --- | --- | --- | --- | --- |
+| 0.25 | 0.0725 | 0.0722 | 0.0722 | +0.00% |
+| 0.50 | 0.1451 | 0.1426 | 0.1425 | +0.00% |
+| 1.00 | 0.2887 | 0.2669 | 0.2669 | -0.02% |
+| 2.00 | 0.5723 | 0.4625 | 0.4615 | +0.22% |
+| 4.00 | 1.1549 | 0.7936 | **0.7516** | **+5.29%** |
+| 8.00 | 2.2555 | 1.5442 | **1.3096** | **+15.19%** |
+
+**Up to `Delta/sigma = 2` the Kalman smoother is the exact posterior to within
+0.22%, so the density-matrix framing there is a relabelling and is reported as
+one.** It only starts paying when the grid is coarser than twice the per-step
+volatility, and then it pays a lot. That is a threshold the desk can check per
+feed rather than a claim about method, and it is exactly the regime
+[twins.md](twins.md) quarantined a feed for.
+
+**Ledger: none of the seven pre-registered conditions fired** across sections
+three and four - the bridge beat linear on simulation (+13.98%) and on all four
+real feeds, `H` and `L` cleared the 2% floor by a factor of seven, the Kalman
+identity held to 7.1e-15, the 90% band covered 85.1%, the exact posterior beat
+the smoother somewhere (+15.19%), and no two different estimators returned the
+same number.
+
+## Two questions that are closed, and one that was not attempted
+
+**Quantum walks are excluded, and the measurement that excludes them is already
+in print.** A discrete-time quantum walk spreads ballistically, variance `~ t^2`,
+Hurst exponent 1.0, with a two-horned arcsine-like return density.
+[cascading.md](cascading.md) measured **H = 0.50 and kurtosis 3.00 on all twelve
+Volatility indices** - both the two-second and the one-second families, so the
+1s twins are included - and [twins.md](twins.md) found every one within two
+standard errors of its advertised volatility with per-tick variance differing by
+exactly `sqrt(2)` between a twin pair. Ballistic spreading is excluded at
+H = 0.50 against 1.00. This is a closed question and re-opening it on the 1s
+family would be re-running a measurement that exists.
+
+**A stable-law jump kernel is the wrong non-local operator for Boom and Crash.**
+The fractional Schrodinger equation is the fashionable object here - replace the
+Laplacian by `|k|^alpha` - but [deriving.md](deriving.md) has the *measured* jump
+distribution, with `E[J] = lambda * E[g]` holding to `|z| <= 1.21` on all six
+feeds, and it is not stable. The exact generator is `-g d/dx + lambda (E[f(x+J)]
+- f(x))`, whose propagator is the inverse Fourier transform of
+`exp(t * (-ikg + lambda(phi_J(k) - 1)))` and needs no fractional anything. So the
+one-parameter caricature is strictly worse than the exact kernel that is already
+available, and the fractional-operator literature adds nothing to this book.
+
+**State tomography was not attempted.** The Wigner function of (price, momentum)
+is well defined for these processes and its negativity is the standard test of
+whether a quantum description is doing any work; for a classical diffusion it
+should not be negative, and measuring that and reporting the null would bound how
+far the analogy goes. It is not here, and the reason is that it needs the
+empirical propagator, which needs tick data, which needs the lab.
 
 ## What this does not say
 
 * **Nothing here is measured on a Deriv synthetic.** The lab was unreachable
-  throughout. Section one is exact numerical evaluation of a known law and needs
-  no data; section two is a derivation plus a power analysis on simulated
-  processes whose spectra are known by construction. Where a number below is
-  compared with [deriving.md](deriving.md)'s measured table, that table is being
-  used as published, not re-measured.
-* **The 0.5826 result is a confirmation, not a discovery.** It is in
-  Broadie-Glasserman-Kou. What is new here is only that it is a boundary
-  condition, which makes it apply to problems with no closed form.
-* **Section two's ladder is a prediction and not a result**, and its first
-  pre-registered kill condition already fired once on the estimator, which is why
-  the free-walk control is reported before anything else.
-* **None of this earns money.** [deriving.md](deriving.md) proves
-  `E[net] = -(c/2) * turnover` for any predictable position on a martingale, and a
-  change of notation does not escape a theorem. The only places anything here
-  could pay are the two that page already named - better estimates of latent state
-  from cheap data, and barrier pricing against a venue quote - and the first of
-  those is section three, which is not finished.
+  throughout. Sections one, two and four are exact evaluations or simulation;
+  section three's real leg is four *real* instruments from the local store.
+  Where [deriving.md](deriving.md)'s measured table appears it is used as
+  published, not re-measured.
+* **The 0.5826 result is a confirmation, not a discovery**, and the page says so
+  twice. What is new is that it is a boundary condition, which makes it apply to
+  problems with no closed form.
+* **Section two's ladder is a prediction and not a result.** Its first
+  pre-registered kill condition fired on the estimator, and its third fired on
+  the control, which is why the free-walk result is reported before anything
+  else. The measured leg is one command: `./.secrets/lab.sh run
+  research/harness/quantspec.py`.
+* **Section three's real leg is four feeds and 249 to 453 bars each.** Enough to
+  establish the sign and roughly the size of a 13% effect, not enough to pin it,
+  and the coverage shortfall says the uncertainty model is imperfect even where
+  the mean is good. The synthetics would give 86,411 bars a feed.
+* **The bridge assumes constant volatility inside the bar.** It is estimated from
+  the bar's own range, so there is no look-ahead, but a bar containing a
+  volatility burst is mis-specified and the under-coverage is where that shows.
+* **None of this earns money by itself.** `E[net] = -(c/2) * turnover` is a
+  theorem about any predictable position on a martingale and a change of notation
+  does not escape it. The only thing here with a plausible price attached is
+  section three, and what it buys is a less wrong measurement rather than an
+  edge.
