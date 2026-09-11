@@ -823,17 +823,24 @@ Range Break move one unit a tick, so `phi(k) = cos(dk)^n`:
 
 **Odd lags go to -1 and even lags to 0, on all three feeds, at the edge of the
 quote lattice's Brillouin zone to three decimal places.** Nothing is fitted: the
-step is measured from the feed and the rest is `cos(dk)^n`. Twelve of twelve
-cells land within 0.15 of the prediction and most within 0.003. **So the
-negativity is real and it is the quote grid**, which is the bounded, boring answer
-the section was written to get.
+step is measured from the feed and the rest is `cos(dk)^n`. **Eighteen of
+eighteen** cells land within 0.15 of the prediction, fifteen of them within 0.01,
+and the worst is 0.024. **So the negativity is real and it is the quote grid**,
+which is the bounded, boring answer the section was written to get.
 
 **One "continuous" feed goes negative too, and the reason is measured rather than
-excused.** Of eighteen Volatility-index cells, seventeen sit at the matched
-Gaussian's noise floor. `volatility_100_index` at lag 1 returns **-0.0336** at
+excused.** **Kill condition 1 fired**, on three of eighteen Volatility-index
+cells - but two of the three are not findings and the page should say so first:
+`volatility_75_1s` at lag 1 and lag 30 sit **0.0015 and 0.0001** below their
+floors, and that floor is itself a Monte Carlo estimate from 60 matched-Gaussian
+replicates, so an excursion of one ten-thousandth is inside the error of the
+threshold rather than evidence against it. A condition written as a hard
+inequality fires on ties, and those are ties.
+
+The third is real. `volatility_100_index` at lag 1 returns **-0.0336** at
 `k = 53.9`, against a floor of -0.0110 and a single-frequency standard error of
-0.0035 - about **9.6 standard errors**, so it is structure and not noise, and
-**kill condition 1 fired.** The cause is not interference:
+0.0035 - about **9.6 standard errors**, and 22 times further past its floor than
+the other two combined. The cause is not interference:
 
 * its tick increments take only **54 distinct absolute values, on a 0.01
   lattice**. It is a lattice feed that this page had been calling continuous;
