@@ -612,6 +612,22 @@ class Watcher:
         if not self.settings.warm:
             return 0
         feeds = self.unwarmed()
+        # **The universe filters admission, not only eviction.** `Engine.forget`
+        # drops what the desk no longer follows at every save, and without this
+        # the warm-up spent eight minutes replaying price history for **392
+        # feeds** against a 53-symbol book - 339 of which the very next save
+        # discarded. Bounding a store at the exit while filling it at the
+        # entrance is a treadmill, not a bound.
+        keep = set(self.settings.feeds)
+        if keep:
+            skipped = [f for f in feeds if f not in keep]
+            feeds = tuple(f for f in feeds if f in keep)
+            if skipped:
+                log.info(
+                    "structures: not warming %d feed(s) outside the %d-symbol universe",
+                    len(skipped),
+                    len(keep),
+                )
         if not feeds:
             return 0
         log.info("structures: warming %d feed(s) with no history: %s", len(feeds), ", ".join(feeds))

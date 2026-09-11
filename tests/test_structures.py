@@ -3008,3 +3008,49 @@ def test_forgetting_keeps_what_is_pooled():
     assert engine.shapes is shapes
     assert engine.regimes is regimes
     assert engine.vol.learned is learned
+
+
+def test_the_warm_up_skips_feeds_outside_the_universe(tmp_path):
+    """`Engine.forget` drops what the desk no longer follows at every save, and
+    without this the warm-up replayed price history for **392 feeds** against a
+    53-symbol book - 339 of which the next save discarded.
+
+    Bounding a store at the exit while filling it at the entrance is a
+    treadmill, not a bound."""
+    from till_infinity.bus import Bus
+    from till_infinity.structures.config import Settings
+    from till_infinity.structures.service import Watcher
+
+    watcher = Watcher(
+        Bus(),
+        settings=Settings(
+            warm=True, journalling=False, feeds=("eurusd", "gold"), state_dir=tmp_path
+        ),
+    )
+    watcher.unwarmed = lambda: ("eurusd", "gold", "ace_usdt_usdt", "mon_usdt_usdt")
+    seen = []
+    watcher.engine.seed = lambda _db, feeds=(), **k: seen.extend(feeds) or 0
+
+    watcher.warm_new()
+
+    assert set(seen) == {"eurusd", "gold"}, "339 of 392 were outside the book"
+
+
+def test_an_unconfigured_universe_still_warms_everything(tmp_path):
+    """`feeds` empty means "whatever arrives", which is what it did before. A
+    filter nobody asked for that silently skips history would be a worse bug
+    than the one it fixes."""
+    from till_infinity.bus import Bus
+    from till_infinity.structures.config import Settings
+    from till_infinity.structures.service import Watcher
+
+    watcher = Watcher(
+        Bus(), settings=Settings(warm=True, journalling=False, feeds=(), state_dir=tmp_path)
+    )
+    watcher.unwarmed = lambda: ("eurusd", "ace_usdt_usdt")
+    seen = []
+    watcher.engine.seed = lambda _db, feeds=(), **k: seen.extend(feeds) or 0
+
+    watcher.warm_new()
+
+    assert set(seen) == {"eurusd", "ace_usdt_usdt"}
