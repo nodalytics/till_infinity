@@ -328,10 +328,100 @@ what a family with one generator and a rate parameter should look like, and it i
 the clearest evidence on this page that the mechanism is close but not the one
 Deriv is running.
 
-**So `deriving.md` is not complete enough to re-instantiate Range Break.** Two
-parameters have to be supplied from outside the specification, and even supplied
-they leave a structured residual. That is the honest answer, and it is a sharper
-statement of the gap than "the mechanism is not published".
+### The twenty-minute residual, chased
+
+That residual is the most specific unexplained thing on the page, so it is worth
+three experiments. All three need only the published table.
+
+**First, what twenty minutes is.** A variance ratio hides the shape; written as
+`Var(T)` the confinement is a dip in the local log-log slope, where 1.0 is free
+diffusion and 0.0 is a hard box:
+
+| T (ticks) | T (min) | RB100 `Var(T)` | slope | RB200 `Var(T)` | slope |
+| --- | --- | --- | --- | --- | --- |
+| 60 | 1 | 58.7 | | 55.8 | |
+| 300 | 5 | 219.0 | 0.818 | 225.0 | 0.866 |
+| 1,200 | 20 | 523.2 | **0.628** | 572.4 | 0.674 |
+| 6,000 | 100 | 1,698.0 | 0.731 | 1,152.0 | **0.435** |
+| 30,000 | 500 | 8,220.0 | 0.980 | 3,480.0 | 0.687 |
+| 60,000 | 1,000 | 16,740.0 | 1.026 | 6,720.0 | 0.949 |
+
+The dip bottoms at **600 ticks (10 minutes)** on RB100 and **2,700 ticks (45
+minutes)** on RB200, and it is deeper on RB200 - 0.435 against 0.628. Both
+recover to free diffusion at the longest horizons, which is the price hopping
+between ranges. A reflecting box of width `L` relaxes on its slowest eigenmode in
+
+    tau_1 = 2 L^2 / pi^2
+
+and at the width that carries the plateau - 60 steps - that is **729 ticks, or
+12.2 minutes**. The residual peaks one cell later, at twenty minutes, which is
+**1.6 tau_1**. So twenty minutes is not an arbitrary scale: it is the box's own
+fundamental relaxation time, and the residual is the rebuild getting the *shape*
+of that relaxation wrong rather than its position.
+
+**Second, why the sign flipped - and it stops flipping.** The free per-feed fit
+put the widths at 60 and 45, which is backwards: RB200 holds its range twice as
+long and its dip is deeper and later, so if anything its range is *wider*. A
+product family with one generator and a rate parameter should share a width, so
+force it - one width for both indices, only the break jump free per feed:
+
+| shared width | tau_1 (min) | joint MAE | RB100 J / MAE | RB200 J / MAE |
+| --- | --- | --- | --- | --- |
+| 50 | 8.4 | 0.0603 | 130 / 0.0825 | 210 / 0.0380 |
+| 55 | 10.2 | 0.0416 | 130 / 0.0565 | 210 / 0.0267 |
+| **60** | **12.2** | **0.0363** | 130 / 0.0427 | 210 / 0.0299 |
+| 66 | 14.7 | 0.0475 | 130 / 0.0448 | 210 / 0.0501 |
+| 72 | 17.5 | 0.0650 | 110 / 0.0554 | 210 / 0.0747 |
+| 80 | 21.6 | 0.0897 | 110 / 0.0700 | 210 / 0.1094 |
+
+**The constraint is free, and it is better than free.** A single shared width of
+60 steps scores a joint mean absolute error of **0.0363**, against **0.047** for
+the unconstrained per-feed fits - fewer parameters and a closer fit. And the sign
+flip goes with it: at twenty minutes the residuals become **+0.047** and
+**+0.024**, the same sign on both indices. The opposite-direction residual was
+never a property of the instrument; it was two widths absorbing one shape error
+in opposite directions.
+
+So the specification gains a number it did not have: **Range Break 100 and 200
+share one range, about 60 steps wide, and differ only in how often they break and
+how far the break carries** - 130 steps against 210. The break rate and the break
+size scale together, the range does not.
+
+**Third, the one addition that could have fixed it, and does not.** A single box
+cannot have a deep dip early *and* a high plateau late, because the plateau needs
+a wide box and a wide box relaxes slowly. The obvious escape is a second, quieter
+re-range - the range moving to where the price already is, with no jump - which
+would let the box be narrow while the price still diffuses between centres, and
+which is the only such addition that leaves every tick at exactly one unit. It
+was built and scanned and it is **refuted**:
+
+| quiet re-range every | RB100 MAE | RB200 MAE |
+| --- | --- | --- |
+| **never** | **0.0493** | **0.0369** |
+| 4,000 ticks | 0.0941 | 0.1569 |
+| 2,000 ticks | 0.2335 | 0.2418 |
+| 1,000 ticks | 0.2826 | 0.3703 |
+| 500 ticks | 0.4132 | 0.4831 |
+
+Monotone, on both feeds, in the wrong direction. There is no second re-range
+event.
+
+**What is left, and what it points at.** Under the shared width the residual is
+no longer a sign flip but a shape: the rebuild is **too confined at one minute**
+(-0.086 and -0.018) and **too free at twenty** (+0.047 and +0.024). That is what
+a hard wall looks like against something smoother - a reflecting barrier bites
+immediately when the price is near it and then relaxes on a single slow mode,
+where a graded restoring force does less at short range and more at the scale of
+its own relaxation. The specification's missing piece is therefore not a second
+timescale and not a second event: it is the **shape of the confinement at the
+edge of the range**, and the data says it is softer than a wall.
+
+**So `deriving.md` is not complete enough to re-instantiate Range Break.** One
+parameter has to be supplied from outside the specification - a shared range
+width of about 60 steps - plus a per-feed break size, and even then a structured
+residual remains at the box's own relaxation time. That is a sharper statement of
+the gap than "the mechanism is not published", and it is three falsifiable
+claims: one shared width, no second re-range event, and a soft edge.
 
 ## What is still to run, and exactly what it will settle
 
