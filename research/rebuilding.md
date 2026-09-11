@@ -534,7 +534,10 @@ does less at short range and more at the scale of its own relaxation. So the
 wall was softened: a lattice walk whose up-probability is
 `0.5 - k (|x|/half)^q sign(x)`, which is a reflecting box as `q -> inf` and a
 harmonic well at `q = 1`, scanned over `q` in {1, 2, 4, 12}, `k` in {0.25, 0.5}
-and the width.
+and the width. The bias is state-dependent so the folding trick that makes the
+hard box cheap does not apply; `gen_softbox` steps two hundred independent range
+interiors at once instead, which turns a loop over fifty million ticks into a
+loop over one range's length with a vector inside it.
 
 It buys shape and pays for it in flatness:
 
@@ -543,6 +546,10 @@ It buys shape and pays for it in flatness:
 | **published** | | **1.118** | | **1.143** |
 | hard box, shared width 60 | 0.0427 | 1.266 | 0.0299 | 1.109 |
 | soft edge, best (width 72, k 0.25, q 4) | **0.0356** | 1.509 | **0.0282** | 1.407 |
+
+The soft-edge row is its *best ex-break fit* rather than its best overall, which
+is the strongest case that can be made for it - the configuration the scan ranks
+first on the combined score does worse on both.
 
 Twelve percent better on the ex-break curve and a third worse on the all-bars
 one, on both feeds. (The soft-edge scan runs at 40,000 bars against the shared-
