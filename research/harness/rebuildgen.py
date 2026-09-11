@@ -182,7 +182,7 @@ def bars_from_stream(stream, tpb: int, n_bars: int, keep_ticks: int = 0):
 
 # ------------------------------------------------------------- generators ----
 def gen_gbm(n_ticks: int, sigma_ann: float, tick_seconds: float, p0: float,
-            grid: float, rng, chunk: int = 2_000_000):
+            grid: float, rng, chunk: int = 2_000_000, lattice: bool = False):
     """Driftless geometric Brownian motion in the log price.
 
     The only parameters are the annualised volatility in the instrument's name
@@ -192,13 +192,42 @@ def gen_gbm(n_ticks: int, sigma_ann: float, tick_seconds: float, p0: float,
     """
     sigma_tick = (sigma_ann / 100.0) * math.sqrt(tick_seconds / SECONDS_PER_YEAR)
     logp = math.log(p0)
+    price = p0
     done = 0
     while done < n_ticks:
         m = min(chunk, n_ticks - done)
         path = logp + np.cumsum(rng.standard_normal(m) * sigma_tick)
         logp = float(path[-1])
         px = np.exp(path)
-        yield np.round(px / grid) * grid if grid else px
+        if not grid:
+            yield px
+        elif not lattice:
+            yield np.round(px / grid) * grid
+        else:
+            # Round the *increment* onto the lattice, not the accumulated price,
+            # and never let it round to nothing.
+            #
+            # `rebuildjudge.py` caught the rounded-price version on exactly this:
+            # the discriminator's largest single feature was the fraction of zero
+            # tick moves, at AUC 0.689 against a floor of 0.499, and measuring it
+            # directly showed the rebuild repeating a quote **4 to 82 times more
+            # often than the feed**. On `volatility_150_1s_index`, which carries
+            # only 1.1 lattice points per tick sigma, rounding a continuous price
+            # gives 28% repeated quotes and the feed shows 0.9%. So the venue does
+            # not round a continuous process onto its quote grid - it moves on the
+            # grid, and a tick that would have rounded to zero moves one unit
+            # instead.
+            d = np.diff(np.concatenate([[price], px]))
+            dl = np.round(d / grid)
+            zero = dl == 0
+            if zero.any():
+                sgn = np.sign(d[zero])
+                sgn[sgn == 0] = np.where(rng.random(int((sgn == 0).sum())) < 0.5,
+                                         -1.0, 1.0)
+                dl[zero] = sgn
+            out = price + np.cumsum(dl) * grid
+            price = float(out[-1])
+            yield out
         done += m
 
 

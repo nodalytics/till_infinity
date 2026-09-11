@@ -141,6 +141,11 @@ JMULT = int(os.environ.get("JMULT", "4"))
 #: many as the feed has; the tick-monitored barrier needs enough trades to resolve
 #: a 0.045 gap, which is a few hundred thousand.
 TICK_KEEP = int(os.environ.get("TICK_KEEP", "2000000"))
+#: Move on the quote lattice rather than rounding a continuous price onto it.
+#: `rebuildjudge.py` established that the venue does the former; see the note in
+#: `rebuildgen.gen_gbm`. Set LATTICE=0 to rebuild the old behaviour and watch the
+#: discriminator find it.
+LATTICE = os.environ.get("LATTICE", "1") not in ("0", "false", "")
 
 NOMINAL = {
     "volatility_10_index": 10.0, "volatility_25_index": 25.0,
@@ -271,7 +276,7 @@ def battery(ts, _open, h, lo, cl, nominal, ticks=None, keep_rets=True) -> dict:
 
 
 def simulate_vol(feed, nominal, p0, grid, n_bars, seed, keep_ticks=0, sigma_mult=1.0,
-                 student_df=0, tpb_override=0, cluster=False):
+                 student_df=0, tpb_override=0, cluster=False, lattice=LATTICE):
     tpb = tpb_override or ticks_per_bar(feed)
     # The seed is (run seed, feed) rather than the run seed alone. Seeding every
     # feed identically would hand all twelve rebuilds the same Gaussian draws
@@ -288,7 +293,8 @@ def simulate_vol(feed, nominal, p0, grid, n_bars, seed, keep_ticks=0, sigma_mult
         stream = _cluster_stream(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid,
                                  rng, tpb)
     else:
-        stream = G.gen_gbm(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid, rng)
+        stream = G.gen_gbm(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid, rng,
+                           lattice=lattice)
     return G.bars_from_stream(stream, tpb, n_bars, keep_ticks=keep_ticks)
 
 
