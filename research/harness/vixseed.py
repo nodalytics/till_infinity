@@ -46,7 +46,12 @@ import sys
 from till_infinity.structures.vol.consensus_vol import Ensemble
 from till_infinity.structures.vol.garch import Garch
 from till_infinity.structures.vol.har import Har
-from till_infinity.structures.vol.implied import IMPLIED_FEEDS, IMPLIED_INTERVALS, bps_for
+from till_infinity.structures.vol.implied import (
+    IMPLIED_FEEDS,
+    IMPLIED_INTERVALS,
+    Fit,
+    bps_for,
+)
 from till_infinity.structures.vol.ranges import Ranges
 from till_infinity.structures.vol.volatility import Volatility
 
@@ -108,29 +113,53 @@ def run() -> None:
                 continue
 
             vol = Volatility(_garch=Garch(), _ranges=Ranges(), _har=Har(), _ensemble=Ensemble())
+            # The fit is accumulated the way `Fit.observe` does, so the seed and
+            # the live path are the same arithmetic rather than two versions of
+            # it. **This is the half that decides whether the member votes at
+            # all**: `MIN_FIT` is 250 observations and production gets one daily
+            # bar a day, so without it the member is about a year from speaking.
+            fit = Fit()
             matched = 0
             for ts, opened, high, low, close in rows:
                 if None in (opened, high, low, close):
                     continue
                 day = dt.datetime.fromtimestamp(ts, dt.UTC).date().isoformat()
                 quote = vix.get(day)
-                implied = bps_for(quote, interval) if quote else None
+                raw = bps_for(quote, interval) if quote else None
+                # **The member is the fitted value, not the quote**, because
+                # that is what `Book.implied_bps` hands the ensemble live.
+                # Scoring the raw number here would seed the ensemble with a
+                # description of a member production does not run - and the raw
+                # one is the *worst* of the five while the fitted one is the
+                # best, so the seed would demote on arrival.
+                implied = fit.predict(raw) if raw else None
                 matched += implied is not None
                 vol.update(float(close))
-                vol.observe_bar(
+                realised = vol.observe_bar(
                     float(opened), float(high), float(low), float(close), implied_bps=implied
                 )
+                if raw:
+                    # After the bar is scored against it, never before - the
+                    # same rule the live path follows.
+                    fit.observe(raw, realised)
 
             scores = {
                 name: {"error": score.error, "seen": score.seen}
                 for name, score in vol._ensemble._scores.items()
                 if score.seen > 0
             }
-            seeds.setdefault(feed, {})[interval] = scores
+            seeds.setdefault(feed, {})[interval] = {
+                "scores": scores,
+                "fit": {"n": fit.n, "sx": fit.sx, "sy": fit.sy, "sxx": fit.sxx, "sxy": fit.sxy},
+            }
             ranked = sorted(scores.items(), key=lambda kv: kv[1]["error"])
             best = ", ".join(f"{n} {1 - s['error']:.3f}" for n, s in ranked)
+            slope = fit.predict(100.0)
             print(f"  {feed:>8s} {interval:>3s}  {len(rows):5d} bars, "
-                  f"{matched:5d} with VIX  |  {best}")
+                  f"{matched:5d} scored fitted, fit n={fit.n:.0f} "
+                  f"(100bps -> {slope:.1f} if warm)  |  {best}"
+                  if slope
+                  else f"  {feed:>8s} {interval:>3s}  {len(rows):5d} bars, fit cold  |  {best}")
     with open(OUT, "w") as handle:
         json.dump(seeds, handle, indent=2, sort_keys=True)
     print(f"\nwritten to {OUT}")

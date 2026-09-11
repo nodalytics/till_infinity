@@ -110,11 +110,18 @@ So `Fit` below is the member, and it ships on.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from dataclasses import dataclass
+from functools import cache
+from pathlib import Path
+from typing import Any
 
+from ...logging import get_logger
 from ..state import Restorable
+
+log = get_logger(__name__)
 
 #: On, because the fitted form was measured and it wins. See the note below.
 ENABLED = os.environ.get("STRUCTURES_IMPLIED", "1") not in ("0", "false", "no")
@@ -259,3 +266,31 @@ def latest(ticker: str = TICKER) -> float | None:
     except Exception:
         return None
     return None
+
+
+#: Scores and fit coefficients measured over twenty years, shipped with the
+#: package. 6KB, derived from public Yahoo data, deterministic, and versioned
+#: with the code that reads it.
+SEEDS = Path(__file__).with_name("seeds") / "vix.json"
+
+
+@cache
+def seeds() -> dict[str, dict[str, dict[str, Any]]]:
+    """`feed -> interval -> {"scores": ..., "fit": ...}`, or empty if unreadable.
+
+    **Why a file rather than a warm-up.** `MIN_FIT` is 250 observations and
+    production gets one daily bar a day, so a member with no seed is about a
+    *year* from voting, and `SCORE_WARMUP` at 60 daily bars is three months
+    before its weight means anything. A design that does nothing until next year
+    is not a design - see `research/specs/2026-09-11-vix-ensemble-member-design.md`.
+
+    Never raises. A missing or malformed seed means the member warms the slow
+    way, which is correct and slow rather than absent and silent.
+    """
+    try:
+        with SEEDS.open() as handle:
+            got = json.load(handle)
+    except Exception as exc:
+        log.warning("structures: could not read the implied seed (%s) - warming cold", exc)
+        return {}
+    return got if isinstance(got, dict) else {}

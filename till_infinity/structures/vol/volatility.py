@@ -27,7 +27,7 @@ from ..state import Restorable
 from .consensus_vol import MAD_TO_SIGMA, Ensemble
 from .garch import Garch
 from .har import Har
-from .implied import ENABLED, IMPLIED_FEEDS, IMPLIED_INTERVALS, Fit, Implied
+from .implied import ENABLED, IMPLIED_FEEDS, IMPLIED_INTERVALS, Fit, Implied, seeds
 from .learned import Learned
 from .ranges import Ranges
 
@@ -521,6 +521,45 @@ class Book(Restorable):
             return None
         raw = self.implied.bps(interval, now)
         return self.implied_fit(feed, interval).predict(raw) if raw else None
+
+    def seed_implied(self) -> int:
+        """Give the implied member the scores and coefficient history measured.
+
+        **Without this the member cannot speak for about a year.** `MIN_FIT` is
+        250 observations and production gets one daily bar a day; `SCORE_WARMUP`
+        is 60 more before its weight means anything. The seed is twenty years of
+        public data, 6KB, shipped with the package.
+
+        **Never overwrites what was learned live.** A seed applied on every
+        restart would stop live observations accumulating past one container's
+        lifetime - the fit would reset to its historical value every deploy, and
+        on a day with ten deploys it would never learn anything at all. So a
+        series whose fit already has more observations than the seed is left
+        exactly as it is. Returns how many series were seeded.
+
+        A seed is a **prior, not a floor**: `Score.record` decays toward what it
+        is currently seeing and `Fit` accumulates on top, so live evidence that
+        contradicts the seed wins - it just has to arrive first rather than
+        wait a year to start.
+        """
+        seeded = 0
+        for feed, intervals in seeds().items():
+            for interval, part in intervals.items():
+                if not self.votes_implied(feed, interval):
+                    continue
+                fit = self.implied_fit(feed, interval)
+                numbers = part.get("fit") or {}
+                if fit.n >= float(numbers.get("n") or 0):
+                    continue  # live has already gone further than history
+                for name in ("n", "sx", "sy", "sxx", "sxy"):
+                    setattr(fit, name, float(numbers.get(name) or 0.0))
+                ensemble = self.of(feed, interval)._ensemble
+                for name, score in (part.get("scores") or {}).items():
+                    ensemble.seed(
+                        name, error=float(score.get("error", 1.0)), seen=float(score.get("seen", 0))
+                    )
+                seeded += 1
+        return seeded
 
     def of(self, feed: str, interval: str = "") -> Volatility:
         key = (feed, interval)

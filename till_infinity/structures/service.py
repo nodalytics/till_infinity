@@ -549,6 +549,8 @@ class Watcher:
         #: then became unanswerable from the log, which is the one property the
         #: line was added to provide.
         self._implied_said = False
+        #: Seeded once per process, after any restore. See `_read_implied`.
+        self._implied_seeded = False
         #: Messages this watcher threw on and skipped rather than died on.
         #: Reported in the save log, because a consumer quietly discarding a
         #: tenth of its input is a different thing from one that is healthy and
@@ -1388,6 +1390,19 @@ class Watcher:
         """
         if not implied.ENABLED:
             return
+        # **Seeded before the first quote, not at construction.** The engine may
+        # be restored after `__init__`, and seeding a book that is about to be
+        # replaced would seed the wrong one. Idempotent and cheap: a series
+        # whose fit has already gone further than history is left alone.
+        if not self._implied_seeded:
+            self._implied_seeded = True
+            seeded = self.engine.vol.seed_implied()
+            if seeded:
+                log.info(
+                    "structures: seeded the implied member on %d series from 20 years - "
+                    "without it MIN_FIT is about a year of daily bars away",
+                    seeded,
+                )
         now = time.monotonic()
         if self._implied_at and now - self._implied_at < implied.POLL_SECONDS:
             return

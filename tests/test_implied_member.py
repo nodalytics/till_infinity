@@ -271,3 +271,83 @@ async def test_it_says_it_is_live_once_per_process_not_once_per_level(enabled, m
     watcher._implied_at = 0.0
     await watcher._read_implied()
     assert watcher._implied_said is True, "and only once"
+
+
+def test_the_seed_file_is_shipped_and_shaped_right():
+    """`MIN_FIT` is 250 observations and production gets **one daily bar a day**,
+    so without a seed the member is about a year from voting. The file is 6KB,
+    derived from twenty years of public Yahoo data, and ships with the package
+    so a fresh container has it without extra infrastructure."""
+    from till_infinity.structures.vol.implied import IMPLIED_FEEDS, IMPLIED_INTERVALS, seeds
+
+    got = seeds()
+
+    assert set(got) == set(IMPLIED_FEEDS)
+    for feed, intervals in got.items():
+        assert set(intervals) == set(IMPLIED_INTERVALS), feed
+        for interval, part in intervals.items():
+            assert part["fit"]["n"] > 250, f"{feed} {interval} would not warm anything"
+            assert "vix" in part["scores"]
+
+
+def test_seeding_gives_the_member_a_vote_immediately(enabled):
+    """The whole point: a fresh book with no history must already be able to
+    price the member, rather than waiting a year of daily bars."""
+    from till_infinity.structures.vol.volatility import Book
+
+    cold = Book()
+    cold.implied.observe(17.2, when=1000.0)
+    assert cold.implied_bps("spx500", "1d", now=1000.0) is None, "the premise"
+
+    warm = Book()
+    warm.seed_implied()
+    warm.implied.observe(17.2, when=1000.0)
+
+    got = warm.implied_bps("spx500", "1d", now=1000.0)
+    assert got is not None
+    assert 0 < got < 200, "a de-biased daily sigma in bps"
+
+    # And the ensemble starts weighted by what history said, not by nothing.
+    assert warm.of("spx500", "1d")._ensemble.accuracy("vix") > 0.5
+
+
+def test_seeding_never_overwrites_what_was_learned_live(enabled):
+    """A seed is a prior. Applying it on every restart would make live
+    observations unable to accumulate past one container's lifetime, which is
+    the failure `Ensemble.seed`'s own docstring warns about in reverse."""
+    from till_infinity.structures.vol.volatility import Book
+
+    book = Book()
+    book.seed_implied()
+    fit = book.implied_fit("spx500", "1d")
+    before = fit.n
+
+    for i in range(50):
+        fit.observe(100.0 + i, 50.0 + i)
+    grown = fit.n
+    assert grown == before + 50
+
+    book.seed_implied()
+    assert book.implied_fit("spx500", "1d").n == grown, "the seed must not reset it"
+
+
+async def test_the_seed_is_applied_once_before_the_first_quote(enabled, monkeypatch):
+    """Built and never called is how the last three features shipped inert. The
+    seed runs on the poll rather than in `__init__`, because the engine may be
+    restored afterwards and seeding a book about to be replaced seeds nothing."""
+    from till_infinity.structures.vol import implied as mod
+
+    monkeypatch.setattr(mod, "latest", lambda *_a, **_k: 17.29)
+    watcher = _watcher()
+
+    assert watcher.engine.vol.implied_fit("spx500", "1d").n == 0
+    await watcher._read_implied()
+
+    assert watcher.engine.vol.implied_fit("spx500", "1d").n > 250
+    assert watcher._implied_seeded is True
+
+    # And it can price the member immediately, which is the whole point.
+    assert (
+        watcher.engine.vol.implied_bps("spx500", "1d", now=watcher.engine.vol.implied.at)
+        is not None
+    )
