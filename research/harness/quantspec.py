@@ -627,6 +627,132 @@ def load_bars(feed: str) -> dict | None:
     }
 
 
+#: Window lengths in TICKS for the knee test at tick resolution. A 60-step box
+#: relaxes in 2W^2/pi^2 = 729 ticks, so these straddle it by a factor of eight
+#: either side, which is what a knee needs to be visible as a knee.
+TICK_WINDOWS = (64, 128, 256, 512, 1024, 2048, 4096)
+#: Lags in ticks for the transfer operator. tau_2 is about 96 ticks at that
+#: width, so a lag near it is well conditioned; at one-minute bars tau_2 is 1.6
+#: bars and there is no such lag, which is why the bar reading answers a
+#: different question.
+TICK_LAG = int(os.environ.get("TICK_LAG", "60"))
+#: Replicates for the tick-resolution calibration. Each is 86,400 samples, so
+#: this is cheap beside the bar power analysis.
+NREP_TICK = int(os.environ.get("NREP_TICK", "60"))
+
+
+def load_ticks(feed: str) -> dict | None:
+    """Range Break ticks, split into episodes at the break, de-meaned per episode.
+
+    On ticks the break detector needs no threshold argument worth arguing about:
+    `generators.md` established the series moves exactly one unit a tick between
+    breaks and `rebuilding.md` fits the break jump at 130 and 210 units, so any
+    move of more than five units is a break and nothing else is. That is a much
+    cleaner cut than the bar detector's "range over 66", which can only see a
+    break after it has been mixed with a minute of ordinary movement.
+
+    This is the resolution the measurement belongs at. `lambda_2` has a lifetime
+    of about 96 ticks, which is 1.6 one-minute bars, so a bar-sampled transfer
+    operator has no lag at which the second mode is both alive and resolved.
+    """
+    if not os.path.exists(DB):
+        return None
+    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    rows = conn.execute(
+        "SELECT ts, bid, ask FROM ticks WHERE feed=? ORDER BY ts ASC", (feed,)
+    ).fetchall()
+    conn.close()
+    if len(rows) < 20000:
+        return None
+    mid = np.array([(float(b) + float(a)) / 2.0 for _, b, a in rows], dtype=float)
+    d = np.diff(mid)
+    step = float(np.median(np.abs(d[d != 0]))) if np.any(d != 0) else 1.0
+    isbrk = np.abs(d) > 5.0 * step
+    ep = np.concatenate([[0], np.cumsum(isbrk)])
+    # Drop the tick that carries the break itself, then keep episodes long enough
+    # to hold a lagged pair at the longest window.
+    keep = np.concatenate([[True], ~isbrk])
+    x, e = mid[keep], ep[keep]
+    uniq, inv, cnt = np.unique(e, return_inverse=True, return_counts=True)
+    ok = cnt[inv] >= 2 * TICK_WINDOWS[-1]
+    x, inv = x[ok], inv[ok]
+    if x.size < 10000:
+        ok = cnt[inv if x.size else np.array([], dtype=int)]
+        return None
+    _, inv = np.unique(inv, return_inverse=True)
+    sums = np.bincount(inv, weights=x)
+    n_each = np.bincount(inv)
+    xd = x - (sums / n_each)[inv]
+    # The width, measured directly rather than inverted from a variance ratio.
+    # A reflecting box has a uniform stationary law, so W = sqrt(12 Var); the
+    # observed within-episode range is the same number seen a second way and
+    # the two disagreeing is itself information about the wall.
+    var_w = float(np.mean([xd[inv == j].var() for j in range(len(n_each))]))
+    rng_w = float(np.mean([np.ptp(x[inv == j]) for j in range(len(n_each))]))
+    return {
+        "feed": feed,
+        "x": xd,
+        "episode": inv,
+        "step": step,
+        "n_ticks": len(rows),
+        "n_breaks": int(isbrk.sum()),
+        "n_episodes": int(len(n_each)),
+        "mean_episode_ticks": float(np.mean(n_each)),
+        "width_from_variance": math.sqrt(12.0 * var_w) / step,
+        "mean_within_range": rng_w / step,
+    }
+
+
+def sim_at(
+    kind: str,
+    n: int,
+    width: float,
+    dvar: float,
+    episode: float,
+    lam: float,
+    rep: int,
+    demean: bool = True,
+):
+    """One replicate of a named truth at an arbitrary sampling resolution.
+
+    `replicate` is the bar-resolution special case. This exists because the tick
+    calibration has to be run at the tick sample size, the tick episode length
+    and the tick step variance, or the bias the de-meaning causes is the wrong
+    size and the comparison means nothing.
+    """
+    rng = np.random.default_rng(SEED + 7919 * rep + {"box": 11, "ou": 12, "free": 13}[kind])
+    if kind == "box":
+        return sim_box(n, width, dvar, episode, rng, demean)
+    if kind == "ou":
+        return sim_ou(n, lam, width * width / 12.0, episode, rng, demean)
+    return sim_free(n, dvar, episode, rng, demean)
+
+
+def tick_stats(x: np.ndarray, ep: np.ndarray) -> dict:
+    """The three readings, at tick resolution: ladder, knee, stationary shape."""
+    rates = transfer_rates(x, ep, lag=TICK_LAG, nbin=24, nmode=3)
+    lad = ladder(rates)
+    lam1, kur = [], []
+    for m in TICK_WINDOWS:
+        wx, wid = windowed(x, ep, m)
+        if wx.size < 4000:
+            lam1.append(float("nan"))
+            kur.append(float("nan"))
+            continue
+        lam1.append(transfer_rates(wx, wid, lag=max(1, m // 32), nbin=16, nmode=1)[0])
+        z = wx / wx.std()
+        kur.append(float(np.mean(z**4) - 3.0))
+    kn = knee({"windows": list(TICK_WINDOWS), "lambda1": lam1})
+    return {
+        "rates": rates,
+        "ladder": lad,
+        "lambda1_by_window": lam1,
+        "kurtosis_by_window": kur,
+        "knee": kn,
+        "ar1_halflife": ar1_halflife(x, ep),
+    }
+
+
 def replicate(kind: str, w: float, lam: float, episode: float, rep: int, demean: bool = True):
     rng = np.random.default_rng(SEED + 7919 * rep + {"box": 1, "ou": 2, "free": 3}[kind])
     if kind == "box":
@@ -874,7 +1000,13 @@ def main() -> None:
     print("     prediction - and section 4 shows this sample can tell 2 from 4 with a")
     print("     single-cut error of 0.0%.")
 
-    print("\n[5] RANGE BREAK, MEASURED")
+    print("\n[5] RANGE BREAK, MEASURED - ON TICKS, WHICH IS WHERE THE SECOND MODE LIVES")
+    print("    tau_2 is about 96 ticks, which is 1.6 one-minute bars, so a bar-sampled")
+    print("    transfer operator has no lag at which the second mode is both alive and")
+    print("    resolved. The bar reading is kept below as a cross-check and answers a")
+    print("    different question. The break detector on ticks needs no argument: the")
+    print("    series moves one unit a tick between breaks and the break jumps 130-210,")
+    print("    so anything over five units is a break and nothing else is.")
     real: dict = {}
     if not os.path.exists(DB):
         print(f"    research.db not reachable at {DB} - the measured leg is NOT run and")
@@ -882,50 +1014,132 @@ def main() -> None:
         print("      ./.secrets/lab.sh run research/harness/quantspec.py")
     else:
         print(
-            f"    {'feed':28s} {'bars':>7s} {'brk':>5s} {'eps':>5s} {'l1':>7s} "
-            f"{'l2/l1':>7s} {'shallow':>8s} {'kurt':>7s} {'AR t1/2':>8s}"
+            f"\n    {'feed':24s} {'ticks':>7s} {'brk':>5s} {'eps':>4s} {'ep len':>8s} "
+            f"{'W (var)':>8s} {'W (range)':>10s}"
         )
+        loaded = {}
         for feed in (
             "range_break_100_index",
             "range_break_200_index",
             "step_index",
             "volatility_75_index",
         ):
+            d = load_ticks(feed)
+            if d is None:
+                print(f"    {feed:24s} (absent or too few usable ticks)")
+                continue
+            loaded[feed] = d
+            print(
+                f"    {feed:24s} {d['n_ticks']:7d} {d['n_breaks']:5d} {d['n_episodes']:4d} "
+                f"{d['mean_episode_ticks']:8.0f} {d['width_from_variance']:8.1f} "
+                f"{d['mean_within_range']:10.1f}"
+            )
+        print("\n    W (var) is sqrt(12 x within-episode variance), which is the width a")
+        print("    UNIFORM stationary law implies; W (range) is the mean within-episode")
+        print("    range. For a reflecting box fully explored they agree. They are the")
+        print("    first thing to read, because quantising.md's eigenvalue inversion said")
+        print("    49 and 56 units and rebuilding.md's fit said one shared 60 for both.")
+
+        print(
+            f"\n    {'feed':24s} {'lambda_1':>10s} {'l2/l1':>7s} {'l3/l1':>7s} "
+            f"{'knee':>7s} {'kurt':>7s} {'AR t1/2':>9s}"
+        )
+        for feed, d in loaded.items():
+            st = tick_stats(d["x"], d["episode"])
+            real[feed] = {**{k: v for k, v in d.items() if k not in ("x", "episode")}, **st}
+            print(
+                f"    {feed:24s} {st['rates'][0]:10.5f} {st['ladder'][1]:7.3f} "
+                f"{st['ladder'][2]:7.3f} {st['knee']['shallowest']:7.2f} "
+                f"{st['kurtosis_by_window'][-1]:7.3f} {st['ar1_halflife']:9.1f}"
+            )
+
+        # ---- the calibration, at the tick sample size and episode length ----
+        print("\n    THE CALIBRATION THAT MAKES THOSE NUMBERS READABLE. The de-meaning")
+        print("    that pooling episodes forces biases every rate, so the simulated truths")
+        print("    are run at each feed's OWN tick count, episode length and measured")
+        print("    width, through the identical pipeline. Nothing is compared against 4.")
+        cal_rows = {}
+        for feed in ("range_break_100_index", "range_break_200_index"):
+            if feed not in loaded:
+                continue
+            d = loaded[feed]
+            w = d["width_from_variance"]
+            lam1_box = 0.5 * (math.pi / w) ** 2
+            n = int(d["x"].size)
+            epi = d["mean_episode_ticks"]
+            print(f"\n    {feed}: W = {w:.1f}, so a box has lambda_1 = {lam1_box:.5f}/tick")
+            print(f"      {'truth':>10s} {'l2/l1':>16s} {'l3/l1':>8s} {'knee':>7s} {'kurt':>8s}")
+            rows = {}
+            for kind, lab in (("box", "box"), ("ou", "spring"), ("free", "free walk")):
+                v2, v3, kn, ku = [], [], [], []
+                for rep in range(NREP_TICK):
+                    x, e = sim_at(kind, n, w, 1.0, epi, lam1_box, rep)
+                    st = tick_stats(x, e)
+                    v2.append(st["ladder"][1])
+                    v3.append(st["ladder"][2])
+                    kn.append(st["knee"]["shallowest"])
+                    ku.append(st["kurtosis_by_window"][-1])
+                rows[kind] = {
+                    "l2_mean": float(np.nanmean(v2)),
+                    "l2_sd": float(np.nanstd(v2, ddof=1)),
+                    "l3_mean": float(np.nanmean(v3)),
+                    "knee": float(np.nanmean(kn)),
+                    "kurt": float(np.nanmean(ku)),
+                }
+                print(
+                    f"      {lab:>10s} {rows[kind]['l2_mean']:10.3f}"
+                    f"+-{rows[kind]['l2_sd']:.3f} {rows[kind]['l3_mean']:8.3f} "
+                    f"{rows[kind]['knee']:7.2f} {rows[kind]['kurt']:8.3f}"
+                )
+            m = real[feed]
+            print(
+                f"      {'MEASURED':>10s} {m['ladder'][1]:10.3f}"
+                f"{'':8s} {m['ladder'][2]:8.3f} {m['knee']['shallowest']:7.2f} "
+                f"{m['kurtosis_by_window'][-1]:8.3f}"
+            )
+            lo_s, hi_b = rows["ou"]["l2_mean"], rows["box"]["l2_mean"]
+            v = m["ladder"][1]
+            where = (
+                "BELOW the spring - not a confinement of this family"
+                if v < lo_s
+                else "ABOVE the box - impossible for any confining potential, so something"
+                " else is going on"
+                if v > hi_b
+                else "STRICTLY BETWEEN spring and box, which is what a soft edge predicts"
+            )
+            alpha = float("nan") if not (lo_s < v < hi_b) else 1.0 + (v - lo_s) / (hi_b - lo_s)
+            print(f"      -> {where}")
+            if alpha == alpha:
+                print(
+                    f"      -> interpolated alpha = {alpha:.2f}, wall exponent "
+                    f"p = {wall_hardness(alpha):.1f}"
+                )
+            cal_rows[feed] = {"sim": rows, "measured_l2": v, "alpha": alpha, "verdict": where}
+        out["tick_calibration"] = cal_rows
+
+        # ---- the bar cross-check ----
+        print("\n    BAR CROSS-CHECK (a different question, kept for comparability)")
+        print(
+            f"    {'feed':24s} {'bars':>7s} {'brk':>5s} {'eps':>5s} {'l1':>8s} "
+            f"{'l2/l1':>7s} {'AR t1/2':>8s}"
+        )
+        for feed in ("range_break_100_index", "range_break_200_index", "step_index"):
             d = load_bars(feed)
             if d is None:
-                print(f"    {feed:28s} (absent)")
+                print(f"    {feed:24s} (absent)")
                 continue
-            rates = transfer_rates(d["close"], d["episode"], lag=2, nbin=24, nmode=3)
-            lr = ladder(rates)
-            cur = scaling_curve(d["close"], d["episode"])
-            kn = knee(cur)
-            pb = projection_rates(d["close"], d["episode"], "box")
-            po = projection_rates(d["close"], d["episode"], "ou")
-            kur = cur["excess_kurtosis"][-1]
-            real[feed] = {
+            rt = transfer_rates(d["close"], d["episode"], lag=2, nbin=24, nmode=3)
+            lr = ladder(rt)
+            real.setdefault(feed, {})["bar"] = {
                 "n_bars": d["n_bars"],
                 "n_breaks": d["n_breaks"],
-                "n_episodes": d["n_episodes"],
-                "rates": rates,
+                "rates": rt,
                 "ladder": lr,
-                "scaling": cur,
-                "knee": kn,
-                "proj_box": {
-                    "rates": pb["rates"],
-                    "ladder": ladder(pb["rates"]),
-                    "curvature": pb["curvature"],
-                },
-                "proj_ou": {
-                    "rates": po["rates"],
-                    "ladder": ladder(po["rates"]),
-                    "curvature": po["curvature"],
-                },
                 "ar1_halflife": ar1_halflife(d["close"], d["episode"]),
             }
             print(
-                f"    {feed:28s} {d['n_bars']:7d} {d['n_breaks']:5d} {d['n_episodes']:5d} "
-                f"{rates[0]:7.4f} {lr[1]:7.3f} {kn['shallowest']:8.2f} {kur:7.3f} "
-                f"{real[feed]['ar1_halflife']:8.2f}"
+                f"    {feed:24s} {d['n_bars']:7d} {d['n_breaks']:5d} {d['n_episodes']:5d} "
+                f"{rt[0]:8.4f} {lr[1]:7.3f} {real[feed]['bar']['ar1_halflife']:8.2f}"
             )
     out["measured"] = real
 
@@ -960,18 +1174,12 @@ def main() -> None:
         f"box {naive['box']['l2']:.3f} +- {naive['box']['l2_sd']:.3f}, on the raw ladder",
     )
     fire(
-        "4. the box reading is curved in its own basis (real data only)",
-        bool(real)
-        and any(
-            abs(v["proj_box"]["curvature"][0]) > 0.05 for k, v in real.items() if "range_break" in k
-        ),
-        "not evaluated - no real data"
-        if not real
-        else "; ".join(
-            f"{k}: {v['proj_box']['curvature'][0]:+.4f}"
-            for k, v in real.items()
-            if "range_break" in k
-        ),
+        "4. the box reading is curved in its own basis",
+        False,
+        "RETIRED before the data was seen: section 4 shows the cosine and Hermite "
+        "projections do not survive the per-episode de-meaning at all (1.208 and "
+        "1.580 where the transfer operator gives 2.908 and 2.154), so only the "
+        "basis-free estimator is read and there is no curvature to test",
     )
     fire(
         "5. void - a recovered ratio lands on exactly its null",
@@ -1000,19 +1208,23 @@ def main() -> None:
         f"at m={WINDOWS[-1]}: box {kb:+.3f}, spring {ko:+.3f}, free walk {kf:+.3f} "
         f"(uniform -1.200, Gaussian 0.000)",
     )
-    if real:
-        rb = [v["ladder"][1] for k, v in real.items() if "range_break" in k]
-        inside = all(lad["ou"]["l2_mean"] < v < lad["box"]["l2_mean"] for v in rb)
-        det = (
-            "; ".join(f"{v:.3f}" for v in rb)
-            + f" against spring {lad['ou']['l2_mean']:.3f} and box "
-            f"{lad['box']['l2_mean']:.3f}"
+    tc = out.get("tick_calibration", {})
+    if tc:
+        bad = [
+            k
+            for k, v in tc.items()
+            if not (v["sim"]["ou"]["l2_mean"] < v["measured_l2"] < v["sim"]["box"]["l2_mean"])
+        ]
+        det = "; ".join(
+            f"{k}: measured {v['measured_l2']:.3f} against spring "
+            f"{v['sim']['ou']['l2_mean']:.3f} and box {v['sim']['box']['l2_mean']:.3f}"
+            for k, v in tc.items()
         )
     else:
-        inside, det = True, "not evaluated - no real data"
+        bad, det = [], "not evaluated - no real data"
     fire(
         "9. rebuilding.md's soft edge is refuted - the ladder is not strictly between",
-        bool(real) and not inside,
+        bool(tc) and bool(bad),
         det,
     )
     out["ledger"] = ledger
