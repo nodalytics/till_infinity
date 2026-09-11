@@ -5,9 +5,10 @@ launches and five waits. This is the one launch:
 
     ./.secrets/lab.sh run research/harness/rebuildall.py
 
-It runs `rebuildvol`, `rebuildstep`, `rebuildspike`, `rebuildjudge` and
-`rebuildpower` in that order, in one process, and keeps going when one of them
-raises - a broken study should cost its own results and not the other four. Each
+It runs `rebuildvol`, `rebuildstep`, `rebuildspike`, `rebuildjudge`,
+`rebuildpower`, `rebuildladder`, `rebuildwidth` and `rebuildpredict` in that
+order, in one process, and keeps going when one of them raises - a broken study
+should cost its own results and not the other seven. Each
 study writes its own JSON exactly as it does when run alone; this adds one more,
 `rebuildall.json`, holding the pooled failure ledger and the wall time of each.
 
@@ -23,8 +24,9 @@ rather than five counts that might not be comparable.
 
 ## Cost
 
-Roughly forty minutes of one core at the defaults, dominated by `rebuildjudge`'s
-discriminator arms and `rebuildvol`'s twelve feeds at ten times the real sample.
+Roughly two hours of one core at the defaults, dominated by `rebuildjudge`'s and
+`rebuildladder`'s discriminator arms and `rebuildvol`'s twelve feeds at ten times
+the real sample. `rebuildpredict`'s lattice reduction adds about ten minutes.
 Every knob is an environment variable and `lab.sh run` passes them through:
 
     ./.secrets/lab.sh run research/harness/rebuildall.py MULT=4 BMULT=1 TREES=80
@@ -47,7 +49,8 @@ import rebuildgen as G
 OUT = os.environ.get("OUT", os.path.expanduser("~/till_infinity/logs/rebuildall.json"))
 ONLY = [s for s in os.environ.get("ONLY", "").split(",") if s]
 
-STUDIES = ("rebuildvol", "rebuildstep", "rebuildspike", "rebuildjudge", "rebuildpower")
+STUDIES = ("rebuildvol", "rebuildstep", "rebuildspike", "rebuildjudge", "rebuildpower",
+           "rebuildladder", "rebuildwidth", "rebuildpredict")
 
 
 def main() -> None:
