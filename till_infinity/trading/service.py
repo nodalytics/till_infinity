@@ -143,6 +143,36 @@ ATTEMPT = "_attempt"
 #: learns from outcomes will attach to.
 TOPICS: tuple[str, ...] = (SIGNALS, QUOTES, EVENTS, RESOLUTIONS)
 
+#: How long to wait between attempts to attach to the terminal, in seconds, and
+#: the ceiling that backoff climbs to.
+#:
+#: **Trading does not give up on the bridge.** `Trader.start` raises
+#: `NotConnectedError` when the health route does not answer, and for the life
+#: of this service that exception left `listen` uncaught: the task died, the
+#: stack supervisor logged one ERROR line, and the process stayed up with the
+#: container still reporting `healthy`. On 2026-09-11 the bridge missed a single
+#: health check at 19:24:54 UTC - it was answering again within minutes - and
+#: the desk did not place an order for the next three hours. Structures went on
+#: publishing 698 journal entries and 117 level calls on traded symbols, alerts
+#: went on reaching the channel, and nothing anywhere said trading was gone.
+#:
+#: `listen` already guards its message loop for exactly this reason, and the
+#: comment there names the 2026-09-08 outage it was written after. Start-up had
+#: no such guard, so the same fault recurred one phase earlier.
+#:
+#: Retried indefinitely rather than a fixed number of times, because the failure
+#: this protects against is a *transient* outage at the wrong moment, and there
+#: is no attempt count at which the right answer becomes "stay down while the
+#: terminal is up". Loud instead: every attempt is logged and `ATTACH_SHOUT_EVERY`
+#: of them raise an alert, so a genuinely misconfigured bridge is noisy rather
+#: than silent.
+ATTACH_BACKOFF, ATTACH_BACKOFF_MAX = 5.0, 60.0
+
+#: Raise an alert on the first failed attach and every Nth after it. One per
+#: attempt would bury the channel during an overnight outage; never after the
+#: first would let a long one look like it had been handled.
+ATTACH_SHOUT_EVERY = 10
+
 
 @dataclass(slots=True)
 class Live:
@@ -4427,7 +4457,7 @@ async def listen(
     drop whatever was published between the first task starting and the second.
     """
     trader = Trader(bus, settings=settings, journal=journal, broker=broker)
-    await trader.start()
+    await _attach(trader)
 
     streams = {topic: bus.subscribe(topic, group="trading") for topic in TOPICS}
     queue: asyncio.Queue[Message | None] = asyncio.Queue()
@@ -4481,6 +4511,66 @@ async def listen(
         await asyncio.gather(*tasks, return_exceptions=True)
         await trader.close()
     return trader
+
+
+async def _attach(trader: Trader) -> None:
+    """Bring the trader up, waiting for the terminal rather than dying without it.
+
+    See `ATTACH_BACKOFF`. The one thing this must never do is return while the
+    trader is not started, because the caller goes straight on to subscribe and
+    would then consume signals with no broker behind them.
+    """
+    attempt = 0
+    while True:
+        try:
+            await trader.start()
+            if attempt:
+                log.info("trading: attached after %d failed attempt(s)", attempt)
+                await _shout(
+                    trader,
+                    "trading is back",
+                    f"attached to the terminal after {attempt} failed attempt(s)",
+                    "info",
+                )
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            attempt += 1
+            wait = min(ATTACH_BACKOFF * attempt, ATTACH_BACKOFF_MAX)
+            log.error(
+                "trading: cannot attach (%s) - attempt %d, retrying in %.0fs",
+                exc,
+                attempt,
+                wait,
+                exc_info=attempt == 1,
+            )
+            if attempt == 1 or attempt % ATTACH_SHOUT_EVERY == 0:
+                await _shout(
+                    trader,
+                    "trading is not attached",
+                    f"{exc}\n\nattempt {attempt}; retrying every {wait:.0f}s. "
+                    "No orders can be placed until this clears.",
+                    "error",
+                )
+            await asyncio.sleep(wait)
+
+
+async def _shout(trader: Trader, title: str, body: str, level: str) -> None:
+    """Put a line on the alerts channel. Never raises - this is the alarm, and
+    an alarm that can fail during the fault it reports is not one."""
+    try:
+        await trader.bus.publish(
+            ALERTS,
+            {
+                "title": f"{trader.settings.mode}: {title}",
+                "body": body,
+                "level": level,
+            },
+            source="trading",
+        )
+    except Exception:  # pragma: no cover - the alarm is best effort by design
+        log.debug("trading: could not publish the attach alert", exc_info=True)
 
 
 async def _heartbeat(trader: Trader) -> None:

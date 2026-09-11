@@ -8223,3 +8223,95 @@ def test_the_shipped_spread_risk_limit_is_the_measured_one():
     this is mostly insurance against the condition returning. The group it
     targets ran -0.471R at 53% stopped."""
     assert td.Settings().max_spread_risk_fraction == pytest.approx(0.16)
+
+
+# ------------------------------------------- attaching to a terminal that is late
+
+
+class LateBroker(PaperBroker):
+    """A terminal that refuses to attach the first `fail` times it is asked.
+
+    The 2026-09-11 outage in one object: the bridge missed a health check at
+    start-up and answered normally minutes later.
+    """
+
+    def __init__(self, made, fail: int) -> None:
+        super().__init__(made)
+        self.left = fail
+        self.attempts = 0
+
+    async def connect(self):
+        self.attempts += 1
+        if self.left > 0:
+            self.left -= 1
+            raise td.NotConnectedError("the bridge has no terminal attached")
+        return await super().connect()
+
+
+async def test_a_terminal_that_is_late_does_not_kill_trading(monkeypatch):
+    """`listen` called `trader.start()` unguarded, so one failed health check at
+    start-up ended the trading task for good.
+
+    The stack supervisor caught it, logged a single ERROR and did not restart,
+    so the process stayed up and the container stayed `healthy` while no order
+    could be placed. On 2026-09-11 that cost three hours, during which
+    structures published 698 journal entries and the alerts channel looked
+    entirely normal.
+    """
+    from till_infinity.trading import service as svc
+
+    monkeypatch.setattr(svc, "ATTACH_BACKOFF", 0.0)
+    monkeypatch.setattr(svc, "ATTACH_BACKOFF_MAX", 0.0)
+
+    made = settings()
+    broker = LateBroker(made, fail=3)
+    bus = Bus()
+    trader = svc.Trader(bus, settings=made, broker=broker)
+
+    await svc._attach(trader)
+
+    assert broker.attempts == 4, "it should have retried until the terminal answered"
+    assert trader.equity, "and it is genuinely started, not merely past the loop"
+
+
+async def test_the_alarm_fires_while_trading_is_not_attached(monkeypatch):
+    """A silent retry is the same outage with a nicer log line.
+
+    The first failure raises an alert and every tenth after it, so an overnight
+    outage is noisy at the start and does not bury the channel.
+    """
+    from till_infinity.trading import service as svc
+
+    monkeypatch.setattr(svc, "ATTACH_BACKOFF", 0.0)
+    monkeypatch.setattr(svc, "ATTACH_BACKOFF_MAX", 0.0)
+
+    made = settings()
+    bus = Bus()
+    stream = bus.subscribe(ALERTS, group="test")
+    trader = svc.Trader(bus, settings=made, broker=LateBroker(made, fail=1))
+
+    await svc._attach(trader)
+
+    # Exactly two: the first failure, and the recovery. `next()` blocks on an
+    # empty channel, so this reads the count it expects rather than draining.
+    titles = []
+    for _ in range(2):
+        message = await asyncio.wait_for(stream.next(), timeout=2.0)
+        assert message is not None
+        titles.append(str(message.payload.get("title", "")))
+    assert any("not attached" in t for t in titles), titles
+    assert any("is back" in t for t in titles), "and it says when it recovers"
+
+
+async def test_the_alarm_cannot_take_the_retry_down_with_it():
+    """An alarm that fails during the fault it reports is not an alarm."""
+    from till_infinity.trading import service as svc
+
+    made = settings()
+
+    class DeafBus(Bus):
+        async def publish(self, *args, **kwargs):
+            raise RuntimeError("the channel is down too")
+
+    trader = svc.Trader(DeafBus(), settings=made, broker=PaperBroker(made))
+    await svc._shout(trader, "title", "body", "error")  # must not raise
