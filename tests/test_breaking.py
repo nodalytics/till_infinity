@@ -452,6 +452,39 @@ def test_the_engine_actually_calls_the_slope():
     assert '"slope", "prior_slope"' in source
 
 
+def test_every_feature_the_builder_takes_has_a_producer():
+    """The generalisation of the test above, written because the narrow one
+    covered `slope` and missed `run_vol`.
+
+    `run_vol` was a keyword-only argument of `features_for` with a default of
+    0.0 and **no producer in any revision** - so it was 0.0 on every journal row
+    ever written, three models carried a dead input each, and
+    `research/harness/force.py` scored the column and got AUC exactly 0.5000,
+    which was then published as "distance already covered does not matter".
+
+    An AUC of *exactly* 0.5 is the signature of a constant. The tell was in the
+    number and nobody read it that way, so this asserts the mechanism instead:
+    every numeric feature the builder accepts must be named at the engine's own
+    construction site."""
+    import inspect
+
+    from till_infinity.structures import engine as eng
+    from till_infinity.structures import reactions
+
+    source = inspect.getsource(eng.Engine)
+    taken = {
+        name
+        for name, p in inspect.signature(reactions.features_for).parameters.items()
+        if p.kind is inspect.Parameter.KEYWORD_ONLY and isinstance(p.default, float)
+    }
+    # Named where the engine builds them, whether directly or via the `zip`
+    # spread it uses for the slope pair.
+    missing = sorted(
+        name for name in taken if f"{name}=" not in source and f'"{name}"' not in source
+    )
+    assert not missing, f"features the builder accepts and the engine never supplies: {missing}"
+
+
 def test_slowing_is_bounded():
     """It is a ratio and its denominator can be almost zero. The break model's
     own standardiser had a running mean of 141,380,329 for this feature against

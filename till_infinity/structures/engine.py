@@ -897,9 +897,28 @@ def _read_bars(
             # Oldest first, and grouped so every venue on one bar arrives
             # together - the consensus needs them adjacent to reach a quorum on
             # that timestamp. `bars * 8` because several venues report each one.
+            # **`open` and `volume` travel too**, and their absence was a
+            # silent defect rather than an omission. The live notice carries
+            # both, so a warmed series held `volumes` full of `nan` while a live
+            # one did not - and `profile`, which is enabled and draws 13,919 of
+            # the book's levels, falls back to equal weights when its weights
+            # are nan. Its own comment says "`Series.volumes` is what it was
+            # waiting for"; on warmed history it was still waiting. `vwap`
+            # cannot draw at all without them.
+            #
+            # **Asked for only if the table has them**, because naming a column
+            # that is not there raises `no such column` and the handler below
+            # turns that into one warning line and *no warm at all*. A store
+            # that is merely older should warm with less, not silently fail to
+            # warm - which is what a narrower fixture did the moment these two
+            # were added.
+            held = {row[1] for row in conn.execute("PRAGMA table_info(bars)")}
+            columns = ["feed", "venue", "interval", "ts", "high", "low", "close"]
+            columns += [name for name in ("open", "volume") if name in held]
+            picked = ", ".join(columns)
             found = conn.execute(
-                "SELECT feed, venue, interval, ts, high, low, close FROM ("
-                "  SELECT feed, venue, interval, ts, high, low, close,"
+                f"SELECT {picked} FROM ("
+                f"  SELECT {picked},"
                 "         ROW_NUMBER() OVER (PARTITION BY feed, interval ORDER BY ts DESC) AS rn"
                 f"  FROM bars WHERE {where}"
                 ") WHERE rn <= ? ORDER BY ts, feed, interval",
@@ -2445,6 +2464,7 @@ class Engine:
                 price,
                 vol,
                 approach_vol=self._speed(feed, interval, vol),
+                run_vol=self._run(feed, interval, vol),
                 # Whether price is easing off into the level or still coming.
                 # Orthogonal to the speed above it - see `_slowing`.
                 slowing=self._slowing(feed, interval),
@@ -2639,6 +2659,43 @@ class Engine:
             return (rise / spread) / price * 10_000 / vol.bps
 
         return fit(closes[bars:]), fit(closes[:bars])
+
+    def _run(self, feed: str, interval: str, vol: Volatility, bars: int = 20) -> float:
+        """How far the leg arriving here has already travelled, in vol units.
+
+        **This had no producer at all until 2026-09-11.** `features_for` took it
+        as a keyword-only argument defaulting to 0.0, and no call site in any
+        revision passed one - so the column was 0.0 on every row the journal has
+        ever held, and three consumers (`reactions`' kNN metric, `baseline`'s
+        logistic, `facto`) carried a dead input each.
+
+        It also produced a published finding. `research/harness/force.py` scored
+        the column and got **AUC exactly 0.5000**, which `breaking.py` cited as
+        "distance already covered does not matter". An AUC of *exactly* 0.5 is
+        the signature of a constant rather than of a null - an uninformative
+        feature lands near 0.5 and essentially never on it. That claim is now
+        retracted and the question is open.
+
+        Distance from the extreme of the recent window to here, which is the leg
+        as `docs/idea.md` means it: not how fast price arrived - `_speed` is
+        that, and the two are meant to be different - but how much ground was
+        already covered getting here.
+
+        Needs no new state, like `_speed` and `_slowing`: the series window
+        already holds the closes. Returns 0.0 when there is no series, no
+        volatility estimate yet, or nothing to measure - which everything
+        downstream reads as "no reading".
+        """
+        series = self._series.get((feed, interval))
+        if series is None or len(series.closes) < 2 or vol.bps <= 0:
+            return 0.0
+        closes = list(series.closes)[-bars:]
+        here = closes[-1]
+        # The side the leg came from: distance from whichever extreme is
+        # further, so an approach from below and one from above read alike.
+        travelled = max(abs(here - min(closes)), abs(here - max(closes)))
+        unit = here * vol.bps / 10_000.0
+        return round(travelled / unit, 4) if unit > 0 else 0.0
 
     def _slowing(self, feed: str, interval: str, near: int = 3, far: int = 3) -> float:
         """Speed over the last `near` bars, over the speed of the `far` before.

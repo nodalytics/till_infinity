@@ -3054,3 +3054,65 @@ def test_an_unconfigured_universe_still_warms_everything(tmp_path):
     watcher.warm_new()
 
     assert set(seen) == {"eurusd", "ace_usdt_usdt"}
+
+
+def test_the_warm_path_carries_volume_and_open(tmp_path):
+    """The live notice carries both and the warm SELECT dropped them, so a
+    warmed series held `volumes` full of `nan` while a live one did not.
+
+    That is not only `vwap`'s problem. `profile` is **enabled and draws 13,919
+    of the book's levels**, and it falls back to equal weights when its weights
+    are nan - its own comment says `Series.volumes` "is what it was waiting
+    for", and on warmed history it was still waiting."""
+    import sqlite3
+
+    from till_infinity.structures.engine import _read_bars
+
+    db = tmp_path / "prices.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE bars (feed TEXT, venue TEXT, interval TEXT, ts INTEGER,"
+            " open REAL, high REAL, low REAL, close REAL, volume REAL)"
+        )
+        for i in range(5):
+            conn.execute(
+                "INSERT INTO bars VALUES ('gold','BINANCE','1m',?,?,?,?,?,?)",
+                (1000 + i, 100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i, 1234.0 + i),
+            )
+
+    rows = list(_read_bars(db, feeds=("gold",), intervals=("1m",), bars=50))
+
+    assert rows, "the fixture has to produce something for the rest to mean anything"
+    for row in rows:
+        assert row["volume"] is not None, "volume dropped on the way in"
+        assert row["open"] is not None, "and the open with it"
+    assert rows[0]["volume"] == 1234.0
+
+
+def test_an_older_store_warms_with_less_rather_than_not_at_all(tmp_path):
+    """Naming a column the table does not have raises `no such column`, and the
+    handler turns that into one warning line and **no warm at all**.
+
+    A store that is merely older should warm with less. This is not theoretical:
+    adding `open` and `volume` to the SELECT broke a narrower fixture instantly,
+    and the symptom was zero bars read with a single line in the log."""
+    import sqlite3
+
+    from till_infinity.structures.engine import _read_bars
+
+    db = tmp_path / "old.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE bars (feed TEXT, venue TEXT, interval TEXT, ts INTEGER,"
+            " high REAL, low REAL, close REAL)"
+        )
+        for i in range(4):
+            conn.execute(
+                "INSERT INTO bars VALUES ('gold','BINANCE','1m',?,?,?,?)",
+                (1000 + i, 101.0 + i, 99.0 + i, 100.5 + i),
+            )
+
+    rows = list(_read_bars(db, feeds=("gold",), intervals=("1m",), bars=50))
+
+    assert len(rows) == 4, "an older schema must still warm"
+    assert "volume" not in rows[0]

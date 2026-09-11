@@ -35,9 +35,22 @@ the model saying the same thing the quintiles do.
   separator uncorrelated with a strong one adds information; a second strong
   one that agrees restates it.
 
-`run_vol` - how far the leg had already travelled - does nothing at all, AUC
-0.5000. Speed on arrival matters and distance already covered does not, which
-is worth stating because they are the same intuition and only half survives.
+~~`run_vol` - how far the leg had already travelled - does nothing at all, AUC
+0.5000.~~ **Retracted 2026-09-11. That AUC measured a constant.**
+
+`run_vol` was a keyword-only parameter of `features_for` with a default of 0.0
+and **no producer anywhere in the engine, in any revision** - `grep -rn
+"run_vol="` finds the pass-through and nothing that computes it. So every row in
+the journal carried 0.0, and `research/harness/force.py` scored the column
+faithfully.
+
+An AUC of **exactly** 0.5000 is the signature of a constant, not of a null
+result: a genuinely uninformative feature lands *near* 0.5 and essentially never
+*on* it. That is the tell, and it was in the number all along.
+
+So the sentence that followed - "speed on arrival matters and distance already
+covered does not" - is unsupported. It may still be true; nothing has tested it.
+A producer is now wired, and the question is open again.
 
 ## Point in time, checked
 
