@@ -57,7 +57,10 @@ be the most surprising thing in this folder.
 ## What would count as failure, written before any number is printed
 
 1. **The null dies** if a continuous feed - any Volatility index - shows a
-   minimum of `phi` below three standard errors under zero. Those are Gaussian to
+   minimum of `phi` below what a **matched Gaussian of the same sample size
+   returns from the same 1,500 frequencies**. A per-frequency standard error is
+   the wrong floor: the statistic is a minimum over 1,500 frequencies and the
+   multiplicity has to be inside the null. Those are Gaussian to
    `H = 0.50` and kurtosis 3.00 (`research/cascading.md`) and have no business
    being negative anywhere.
 2. **The lattice explanation dies** if `cos(dk)^n` with the *measured* step and
@@ -75,9 +78,9 @@ be the most surprising thing in this folder.
 ## What this cannot say
 
 `phi` is estimated from a finite sample, so at large `k` it is dominated by noise
-with a floor of order `1/sqrt(n)`; the standard error is computed analytically
-from `Var(cos(kX)) = (1 + phi(2k))/2 - phi(k)^2` and no minimum inside three of
-them is read. And the whole construction assumes
+with a floor of order `1/sqrt(n)`, and the statistic reported is a *minimum* over
+1,500 frequencies, so the floor is taken from a matched Gaussian run through the
+identical grid rather than from a per-frequency standard error. And the whole construction assumes
 stationary independent increments, which `research/deriving.md` establishes for
 these generators and which is **false** for Range Break inside a range - so Range
 Break is reported with that caveat attached rather than silently.
@@ -132,12 +135,20 @@ def increments(feed: str, lag: int) -> tuple[np.ndarray, float] | None:
 
 
 def cf(x: np.ndarray, ks: np.ndarray) -> np.ndarray:
-    """Empirical characteristic function, real part, of a symmetric increment.
+    """Empirical characteristic function, real part, of the raw increment.
 
-    `W(q, p) = phi(p) / (2 pi)`, so up to the positive constant this *is* the
-    Wigner function and its sign is the thing under test.
+    `W(q, p) = phi(p) / (2 pi)`, so up to a positive constant this *is* the Wigner
+    function and its sign is the thing under test. The real part is not a
+    convenience: the density matrix has to be Hermitian, `rho(x,x') =
+    conj(rho(x',x))`, which for a translation-invariant kernel means symmetrising
+    the increment law, and that is exactly `Re phi`.
+
+    **The mean is not subtracted, and the first version of this harness did.**
+    Centring multiplies `phi` by a phase `exp(-i k mu)`, which is harmless at
+    small `k` and catastrophic at the lattice revival: on `range_break_200` at a
+    thirty-tick lag it rotated a true `phi(4 pi) = +1.0000` into a measured
+    -0.9907 and fired a kill condition on an artefact of the estimator.
     """
-    x = x - x.mean()
     return np.cos(np.outer(ks, x)).mean(axis=1)
 
 
@@ -145,14 +156,28 @@ def cf_se(x: np.ndarray, ks: np.ndarray) -> np.ndarray:
     """Standard error of the empirical characteristic function, analytically.
 
     `Var(cos(kX)) = (1 + phi(2k))/2 - phi(k)^2`, so the error bar needs no
-    resampling - which matters, because bootstrapping a characteristic function
-    over 1,500 frequencies and 86,000 points is 3.6 billion cosines and the first
-    version of this harness would not have finished.
+    resampling - which matters, because bootstrapping over 1,500 frequencies and
+    86,000 points is 3.6 billion cosines.
     """
     p1 = cf(x, ks)
     p2 = cf(x, 2.0 * ks)
     v = np.maximum((1.0 + p2) / 2.0 - p1 * p1, 0.0)
     return np.sqrt(v / x.size)
+
+
+def gaussian_floor(n: int, sd: float, ks: np.ndarray, rng, nrep: int = 60) -> float:
+    """How negative does `min_k phi` go for a Gaussian of the same size and width?
+
+    This is the floor that matters, and a per-frequency standard error is not it:
+    the statistic is a **minimum over 1,500 frequencies**, so the multiplicity has
+    to be in the null or a one-in-a-thousand frequency reads as a ten-sigma
+    finding. A Gaussian's true `phi` is strictly positive everywhere, so whatever
+    this returns is pure estimation noise at this sample size.
+    """
+    mins = np.empty(nrep)
+    for i in range(nrep):
+        mins[i] = cf(rng.standard_normal(n) * sd, ks).min()
+    return float(np.quantile(mins, 0.01))
 
 
 def main() -> None:
@@ -202,7 +227,7 @@ def main() -> None:
         meas: dict = {}
         print(
             f"    {'feed':26s} {'lag':>4s} {'n':>8s} {'step':>8s} {'min W':>9s} "
-            f"{'k at min':>9s} {'k*step/pi':>10s} {'-3 SE':>9s} {'lattice':>9s}"
+            f"{'k at min':>9s} {'k*step/pi':>10s} {'G floor':>9s} {'lattice':>9s}"
         )
         for feed in FEEDS:
             for lag in LAGS:
@@ -220,7 +245,7 @@ def main() -> None:
                 kk = np.linspace(0.0, 4.0 * math.pi / step, NK)
                 w = cf(x, kk)
                 j = int(np.argmin(w))
-                blo = float(-3.0 * cf_se(x, kk).max())
+                blo = gaussian_floor(x.size, sd, kk, rng)
                 # What a pure lattice walk of the same number of steps predicts.
                 lat_pred = float(np.min(np.cos(kk * step) ** lag))
                 meas.setdefault(feed, {})[lag] = {
@@ -230,7 +255,7 @@ def main() -> None:
                     "min_W": float(w[j]),
                     "k_at_min": float(kk[j]),
                     "k_step_over_pi": float(kk[j] * step / math.pi),
-                    "noise_floor_3se": blo,
+                    "gaussian_floor_1pct": blo,
                     "lattice_prediction": lat_pred,
                 }
                 print(
@@ -253,10 +278,10 @@ def main() -> None:
     cont = {f: v for f, v in meas.items() if f.startswith("volatility")}
     latf = {f: v for f, v in meas.items() if f.startswith(("step", "range_break"))}
     bad_cont = [
-        f"{f} lag {lag}: {r['min_W']:+.4f} against floor {r['noise_floor_3se']:+.4f}"
+        f"{f} lag {lag}: {r['min_W']:+.4f} against floor {r['gaussian_floor_1pct']:+.4f}"
         for f, lv in cont.items()
         for lag, r in lv.items()
-        if r["min_W"] < r["noise_floor_3se"]
+        if r["min_W"] < r["gaussian_floor_1pct"]
     ]
     fire(
         "1. a continuous feed goes negative below its own bootstrap floor",
