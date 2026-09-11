@@ -113,6 +113,13 @@ still not been touched at the time of writing:
 8. **The density test is void** if the standardised within-window excess kurtosis
    of the free-walk control lies between the uniform's -1.2 and the Gaussian's
    0.0 by less than its own standard error from either.
+9. **`research/rebuilding.md`'s soft edge is refuted** if the measured
+   `lambda_2/lambda_1` on Range Break, read against the simulated truths through
+   the identical pipeline, does not land strictly between the spring's value and
+   the box's. That page concludes from a variance-ratio fit that the edge of the
+   range is softer than a wall; WKB says a soft edge is a shallow ladder; so the
+   two pages predict the same interval from different evidence and either can
+   kill it.
 
 Real-data sections are skipped with a printed notice when `research.db` is not
 reachable, rather than silently producing nothing.
@@ -481,61 +488,95 @@ def implied_width(vr: dict, tpb: float = TICKS_PER_BAR) -> dict:
     }
 
 
-#: `research/rebuilding.md`'s best-fitting re-range rule and the ex-break variance
-#: ratio it produces, beside the published curve it is fitted to. The fitted band
-#: is in lattice steps and the series tick 60 times a minute.
+#: `research/rebuilding.md`'s Range Break fit, after that page replaced its two
+#: free per-feed widths with **one shared width of 60 lattice steps** and left
+#: only the break jump free. The series tick 60 times a minute.
 REBUILD = {
     "range_break_100_index": {
-        "band": 60.0, "jump": 120.0, "episode_bars": 86.5,
-        "model": {1: 0.928, 5: 0.773, 20: 0.544, 100: 0.310, 500: 0.259, 1000: 0.262},
+        "band": 60.0,
+        "jump": 130.0,
+        "episode_bars": 86.5,
+        "resid_1m": -0.086,
+        "resid_20m": +0.047,
     },
     "range_break_200_index": {
-        "band": 45.0, "jump": 230.0, "episode_bars": 178.8,
-        "model": {1: 0.887, 5: 0.662, 20: 0.367, 100: 0.183, 500: 0.135, 1000: 0.148},
+        "band": 60.0,
+        "jump": 210.0,
+        "episode_bars": 178.8,
+        "resid_1m": -0.018,
+        "resid_20m": +0.024,
     },
 }
 
 
+def wall_hardness(alpha: float) -> float:
+    """The exponent `p` of the well `V ~ |x|^p` whose WKB ladder goes as `k^alpha`.
+
+    WKB gives `lambda_k ~ k^(2p/(p+2))`, so `alpha = 2p/(p+2)` and inverting,
+    `p = 2*alpha/(2-alpha)`. A hard wall is `p -> infinity`, `alpha = 2`, the
+    ladder 1:4:9. A harmonic well is `p = 2`, `alpha = 1`, the ladder 1:2:3.
+    Nothing that confines has `alpha > 2`, which makes 1:4:9 a ceiling rather
+    than one option among several.
+    """
+    if alpha >= 2.0:
+        return float("inf")
+    return 2.0 * alpha / (2.0 - alpha)
+
+
 def residual_geometry() -> dict:
-    """Where the rebuild's residual sits on the box's own clock, and what that rules out.
+    """What rebuilding.md's soft edge means for the ladder, and what that predicts.
 
-    `research/rebuilding.md` fits a uniform reflecting band plus a memoryless
-    break to the published ex-break curve, reaches a mean absolute error of
-    0.043, and is left with a residual that **sits at twenty minutes and points
-    the two indices in opposite directions**. A spectrum has three things to say
-    about that, none of which needs any data:
+    That page fits a uniform reflecting band plus a memoryless break to
+    `deriving.md`'s published ex-break curve. Under one shared 60-step width it
+    reaches a joint mean absolute error of 0.0363 - better than two free widths -
+    and is left with a residual that is **too confined at one minute and too free
+    at twenty**, which it reads as the edge of the range being softer than a wall.
 
-    * a hard box's relaxation time is `tau_1 = 2 W^2 / pi^2` ticks at unit step
-      variance, so the same diagnostic lag lands at a different place on each
-      index's own clock, and the first question is where;
-    * **no confining potential relaxes faster than a hard box.** WKB gives
-      `lambda_k ~ k^(2p/(p+2))` for a well `V ~ |x|^p`, which rises to `k^2` as
-      the wall hardens and never passes it, so `1:4:9` is a *ceiling*. An index
-      that relaxes faster than the fitted box at matched `lambda_1` cannot be
-      explained by a steeper wall, and that removes a whole class of repairs;
-    * if the residual were one shape error in the crossover, the two indices'
-      residuals would **collapse onto one curve** when the lag is rescaled by
-      each index's own relaxation time. Whether they do is arithmetic.
+    The spectrum turns that reading into a number. Three statements, none of
+    which needs any data:
+
+    * **The twenty minutes is not arbitrary.** A reflecting box relaxes on its
+      slowest mode in `tau_1 = 2 W^2 / pi^2` ticks at unit step variance, which at
+      60 steps is 729 ticks, or 12.2 minutes. Twenty minutes is `1.6 tau_1` - the
+      residual sits on the box's own clock, which is what says it is a shape error
+      in the relaxation rather than a missing timescale.
+    * **`1:4:9` is a ceiling, not an option.** WKB gives `lambda_k ~ k^alpha` with
+      `alpha = 2p/(p+2)` for a well `V ~ |x|^p`, rising to 2 as the wall hardens
+      and never passing it. So no confinement relaxes faster than a hard box at
+      matched `lambda_1`.
+    * **Therefore a soft edge is a shallow ladder, and the prediction is an
+      interval.** If the edge really is softer than a wall then `alpha < 2`
+      strictly, so the measured `lambda_2/lambda_1` must land **strictly between 2
+      and 4** - and where it lands measures the wall, because `p = 2*alpha/(2-alpha)`.
+
+    That is the same claim `rebuilding.md` makes, arrived at from a spectrum
+    rather than from a variance-ratio fit, and it is falsifiable in both
+    directions: 4 refutes the soft edge, 2 says the range is a harmonic well and
+    not a box at all.
     """
     rows = {}
     for feed, r in REBUILD.items():
         w = r["band"]
-        # Unit step variance per tick, so D = 1/2 and tau_1 = 1/(D (pi/W)^2).
-        tau_ticks = w * w * 2.0 / (math.pi ** 2)
+        tau_ticks = w * w * 2.0 / (math.pi**2)
         tau_bars = tau_ticks / TICKS_PER_BAR
-        pub = PUBLISHED_VR[feed]
-        lags = sorted(pub)
         rows[feed] = {
-            "band": w, "tau_1_bars": tau_bars,
+            "band": w,
+            "jump": r["jump"],
+            "tau_1_bars": tau_bars,
+            "tau_1_ticks": tau_ticks,
             "episode_bars": r["episode_bars"],
+            "twenty_min_in_tau": 20.0 / tau_bars,
             "relaxations_per_episode": r["episode_bars"] / tau_bars,
-            # How hard a position-dependent break hazard could bias the ex-break
-            # curve: the chance of a break within one relaxation time.
-            "break_rate_times_tau": tau_bars / r["episode_bars"],
-            "lags": lags,
-            "u": [n / tau_bars for n in lags],
-            "residual": [pub[n] - r["model"][n] for n in lags],
+            "resid_1m": r["resid_1m"],
+            "resid_20m": r["resid_20m"],
         }
+    rows["ladder_prediction"] = {
+        "alpha_bounds": [1.0, 2.0],
+        "ratio_bounds": [2.0, 4.0],
+        "p_at_alpha_1.5": wall_hardness(1.5),
+        "p_at_alpha_1.8": wall_hardness(1.8),
+        "p_hard_wall": "inf",
+    }
     return rows
 
 
@@ -777,48 +818,49 @@ def main() -> None:
 
     # ---- 5. real data ----------------------------------------------------
     # ---- 4b. the rebuild's residual, on the box's own clock -------------
-    print("\n[4b] WHERE rebuilding.md's RESIDUAL SITS ON THE BOX'S OWN CLOCK")
-    print("     That page fits a uniform reflecting band plus a memoryless break to the")
-    print("     published curve, reaches a mean absolute error of 0.043, and is left with")
-    print("     a residual at twenty minutes pointing the two indices opposite ways. A")
-    print("     spectrum has three things to say about that and none needs any data.")
+    # ---- 4b. the rebuild's soft edge, as a ladder prediction -------------
+    print("\n[4b] rebuilding.md's SOFT EDGE, TRANSLATED INTO A LADDER")
+    print("     That page fits one shared 60-step range to both indices, beats its own")
+    print("     two-free-width fit, and is left with a residual that is too confined at")
+    print("     one minute and too free at twenty. It reads that as an edge softer than a")
+    print("     wall. A spectrum turns that reading into an interval.")
     geo = residual_geometry()
     out["residual_geometry"] = geo
-    print(f"\n     {'feed':24s} {'band':>6s} {'tau_1 (bars)':>13s} {'episode':>8s} "
-          f"{'tau/episode':>12s} {'n=20 in tau':>12s}")
-    for feed, g in geo.items():
-        u20 = 20.0 / g["tau_1_bars"]
-        print(f"     {feed:24s} {g['band']:6.0f} {g['tau_1_bars']:13.2f} "
-              f"{g['episode_bars']:8.1f} {g['break_rate_times_tau']:12.3f} {u20:12.2f}")
-    print("\n     residual (published minus rebuild), against the lag rescaled by each")
-    print("     index's own relaxation time - if this were one crossover shape error the")
-    print("     two rows would lie on one curve:")
-    for feed, g in geo.items():
-        print(f"       {feed}")
-        print("         u      " + " ".join(f"{v:8.2f}" for v in g["u"]))
-        print("         resid  " + " ".join(f"{v:+8.3f}" for v in g["residual"]))
-    a, b = (geo[k] for k in ("range_break_100_index", "range_break_200_index"))
-    print("\n     They do not. At comparable u the signs are opposite: RB100 reads")
-    print(f"     {a['residual'][2]:+.3f} at u = {a['u'][2]:.2f} and RB200 reads "
-          f"{b['residual'][1]:+.3f} at u = {b['u'][1]:.2f}.")
-    print("     So RB100 relaxes FASTER than the fitted box and RB200 SLOWER, at matched")
-    print("     lambda_1. WKB says lambda_k ~ k^(2p/(p+2)) for a well V ~ |x|^p, which")
-    print("     rises to k^2 as the wall hardens and never passes it, so 1:4:9 is a")
-    print("     CEILING: nothing that confines relaxes faster than a hard box, and RB100's")
-    print("     sign therefore cannot be repaired by a steeper wall at any width.")
-    ratio = a["break_rate_times_tau"] / b["break_rate_times_tau"]
-    print(f"\n     What does have the right sign is a break hazard that depends on where")
-    print("     the price is. If breaks happen at the edge, dropping break bars conditions")
-    print("     on being away from the edge and makes the survivor look more confined than")
-    print("     the box - and the size of that bias goes as the break rate times the")
-    print(f"     relaxation time, which is {a['break_rate_times_tau']:.3f} on RB100 against "
-          f"{b['break_rate_times_tau']:.3f} on RB200,")
-    print(f"     a factor of {ratio:.1f}. That predicts RB100 is pulled hard toward")
-    print("     more-confined and RB200 barely at all, which is the observed ordering. It")
-    print("     does not explain RB200's positive sign, so it is half an answer.")
-    print("\n     THE MEASUREMENT THAT SETTLES IT, and it needs one query: the price at the")
-    print("     break, relative to the range it was in. A uniform hazard puts it uniformly")
-    print("     inside; an edge hazard puts it at the edge. No model is involved.")
+    print(
+        f"\n     {'feed':24s} {'band':>5s} {'jump':>5s} {'tau_1 (min)':>12s} "
+        f"{'20m in tau_1':>13s} {'resid 1m':>9s} {'resid 20m':>10s}"
+    )
+    for feed in ("range_break_100_index", "range_break_200_index"):
+        g = geo[feed]
+        print(
+            f"     {feed:24s} {g['band']:5.0f} {g['jump']:5.0f} {g['tau_1_bars']:12.2f} "
+            f"{g['twenty_min_in_tau']:13.2f} {g['resid_1m']:+9.3f} {g['resid_20m']:+10.3f}"
+        )
+    print("\n     The twenty minutes is not arbitrary: tau_1 = 2W^2/pi^2 is 729 ticks at a")
+    print("     60-step width, so twenty minutes is 1.6 relaxation times. The residual")
+    print("     sits on the box's own clock, which is what makes it a shape error in the")
+    print("     relaxation rather than a missing timescale - and rebuilding.md reaches the")
+    print("     same 1.6 from the other side.")
+    print("\n     WKB: lambda_k ~ k^alpha with alpha = 2p/(p+2) for a well V ~ |x|^p.")
+    print(f"     {'well':>22s} {'p':>8s} {'alpha':>8s} {'lambda_2/lambda_1':>18s}")
+    for label, alpha in (
+        ("harmonic (a spring)", 1.0),
+        ("soft wall", 1.5),
+        ("stiff wall", 1.8),
+        ("hard box", 2.0),
+    ):
+        pp = wall_hardness(alpha)
+        pstr = "inf" if pp == float("inf") else f"{pp:.1f}"
+        print(f"     {label:>22s} {pstr:>8s} {alpha:8.2f} {2.0**alpha:18.2f}")
+    print("\n     So 1:4:9 is a CEILING and not one option among several: nothing that")
+    print("     confines relaxes faster than a hard box at matched lambda_1. If")
+    print("     rebuilding.md's soft edge is right then alpha < 2 strictly, and")
+    print("\n       *** the measured lambda_2/lambda_1 must land strictly between 2 and 4,")
+    print("       *** and where it lands measures the wall: p = 2*alpha/(2-alpha).")
+    print("\n     Falsifiable both ways: 4 refutes the soft edge, 2 says the range is a")
+    print("     harmonic well and not a box at all. Two pages, two kinds of evidence, one")
+    print("     prediction - and section 4 shows this sample can tell 2 from 4 with a")
+    print("     single-cut error of 0.0%.")
 
     print("\n[5] RANGE BREAK, MEASURED")
     real: dict = {}
@@ -940,6 +982,21 @@ def main() -> None:
     kb = scal["box"]["kurtosis_mean"][-1]
     ko = scal["ou"]["kurtosis_mean"][-1]
     kf = scal["free"]["kurtosis_mean"][-1]
+    if real:
+        rb = [v["ladder"][1] for k, v in real.items() if "range_break" in k]
+        inside = all(lad["ou"]["l2_mean"] < v < lad["box"]["l2_mean"] for v in rb)
+        det = (
+            "; ".join(f"{v:.3f}" for v in rb)
+            + f" against spring {lad['ou']['l2_mean']:.3f} and box "
+            f"{lad['box']['l2_mean']:.3f}"
+        )
+    else:
+        inside, det = True, "not evaluated - no real data"
+    fire(
+        "9. rebuilding.md's soft edge is refuted - the ladder is not strictly between",
+        bool(real) and not inside,
+        det,
+    )
     fire(
         "8. the density test is void - the free walk sits on top of one of the truths",
         min(abs(kf - kb), abs(kf - ko)) < 0.05,

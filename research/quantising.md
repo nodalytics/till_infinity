@@ -332,59 +332,56 @@ against the walk's 97.5% at 1.931), the density test, the void check, and the
 real-data curvature test, which could not be evaluated because there is no real
 data.
 
-## Two and a half: where rebuilding.md's residual sits on the box's own clock
+## Two and a half: rebuilding.md's soft edge is a shallow ladder, and that is one prediction from two directions
 
-[rebuilding.md](rebuilding.md) fits a uniform reflecting band plus a memoryless
-break to the same published curve, reaches a mean absolute error of 0.043 across
-three orders of magnitude in horizon, and is left with a residual that **sits at
-twenty minutes and points the two indices in opposite directions**. A spectrum
-has three things to say about that, none of which needs any data.
+[rebuilding.md](rebuilding.md) rebuilds Range Break as a reflecting band plus a
+memoryless break and fits it to the same published curve. Under **one shared
+range width of 60 lattice steps** - fewer parameters than two free widths, and a
+closer fit, joint mean absolute error 0.0363 against 0.047 - it is left with a
+residual that is **too confined at one minute and too free at twenty**, and reads
+that as the edge of the range being *softer than a wall*. That is a qualitative
+conclusion from a variance-ratio fit. The spectrum turns it into a number.
 
-**First, where twenty minutes is.** A hard box relaxes in `tau_1 = 2W^2/pi^2`
-ticks at unit step variance, so the rebuild's fitted bands put
+**First, the twenty minutes is not an arbitrary scale.** A reflecting box relaxes
+on its slowest mode in `tau_1 = 2W^2/pi^2` ticks at unit step variance, which at
+60 steps is 729 ticks, or **12.2 minutes**. So twenty minutes is `1.6 tau_1`, and
+the residual sits on the box's own clock. `quantspec.py` computes 1.64 and
+[rebuilding.md](rebuilding.md) reaches 1.6 from the other side - the same
+arithmetic from a fitted curve and from an eigenvalue. That is what says the
+residual is a **shape error in the relaxation** and not a missing timescale.
 
-| | fitted band | `tau_1` | episode | break rate x `tau_1` | n=20 in units of `tau_1` |
-| --- | --- | --- | --- | --- | --- |
-| RB100 | 60 steps | 12.16 bars | 86.5 bars | 0.141 | **1.64** |
-| RB200 | 45 steps | 6.84 bars | 178.8 bars | 0.038 | **2.92** |
-
-**Second, the residuals do not collapse.** If this were one shape error in the
-crossover, rescaling the lag by each index's own relaxation time would put both
-rows on one curve:
-
-| RB100, `u = n/tau_1` | 0.08 | 0.41 | 1.64 | 8.22 | 41.12 | 82.25 |
+| | shared band | break jump | `tau_1` | 20m in `tau_1` | residual at 1m | at 20m |
 | --- | --- | --- | --- | --- | --- | --- |
-| residual | +0.050 | -0.043 | **-0.108** | -0.027 | +0.015 | +0.017 |
+| RB100 | 60 steps | 130 | 12.16 min | **1.64** | -0.086 | +0.047 |
+| RB200 | 60 steps | 210 | 12.16 min | **1.64** | -0.018 | +0.024 |
 
-| RB200, `u = n/tau_1` | 0.15 | 0.73 | 2.92 | 14.62 | 73.11 | 146.22 |
-| --- | --- | --- | --- | --- | --- | --- |
-| residual | +0.043 | +0.088 | **+0.110** | +0.009 | -0.019 | -0.036 |
+**Second, `1:4:9` is a ceiling and not one option among several.** WKB gives
+`lambda_k ~ k^alpha` with `alpha = 2p/(p+2)` for a well `V ~ |x|^p`, which rises
+to 2 as the wall hardens and never passes it:
 
-They do not. At comparable `u` the signs are opposite - RB100 reads -0.108 at
-`u = 1.64` where RB200 reads +0.088 at `u = 0.73` - so the two indices are not
-one mechanism sampled at two places. That is an independent confirmation of
-[rebuilding.md](rebuilding.md)'s own last conclusion, reached from the spectrum
-rather than from the fitted parameters.
+| well | `p` | `alpha` | `lambda_2/lambda_1` |
+| --- | --- | --- | --- |
+| harmonic - a spring | 2 | 1.00 | **2.00** |
+| soft wall | 6 | 1.50 | 2.83 |
+| stiff wall | 18 | 1.80 | 3.48 |
+| hard box | infinity | 2.00 | **4.00** |
 
-**Third, and this is the constraint worth having: `1:4:9` is a ceiling.** WKB
-gives `lambda_k ~ k^(2p/(p+2))` for a well `V ~ |x|^p`, which rises to `k^2` as
-the wall hardens and never passes it. **Nothing that confines relaxes faster than
-a hard box at matched `lambda_1`**, so RB100 reading *more* confined than the
-fitted box cannot be repaired by a steeper wall at any width. That removes a
-whole class of candidate fixes before anyone writes one.
+Nothing that confines relaxes faster than a hard box at matched `lambda_1`. That
+removes a whole class of candidate repairs before anyone writes one.
 
-What does have the right sign is a **break hazard that depends on where the price
-is**. If breaks happen at the edge, then dropping break bars conditions on having
-been away from the edge, which makes the survivor look more confined than the box
-- and the size of that bias goes as the break rate times the relaxation time,
-which is **0.141 on RB100 against 0.038 on RB200, a factor of 3.7**. That
-predicts RB100 is pulled hard toward more-confined and RB200 barely at all, which
-is the observed ordering. It does not explain RB200's positive sign, so it is
-half an answer and is written here as half an answer.
+**Third, and this is the convergence.** If the edge really is softer than a wall
+then `alpha < 2` strictly, so
 
-**The measurement that settles it needs one query and no model**: the price at
-the break, relative to the range it was in. A uniform hazard puts it uniformly
-inside the range; an edge hazard puts it at the edge.
+> **the measured `lambda_2/lambda_1` on Range Break must land strictly between 2
+> and 4, and where it lands measures the wall: `p = 2*alpha/(2-alpha)`.**
+
+Two pages, two kinds of evidence - a variance-ratio fit over three orders of
+magnitude in horizon, and an eigenvalue ladder - make the same prediction, and it
+is falsifiable in both directions. **4 refutes the soft edge**; **2 says the range
+is a harmonic well and not a box at all**; anything between is a measurement of
+how hard the wall is, which is a property of the instrument that neither page can
+currently name. It is pre-registered here as kill condition 9, and section two
+shows this sample separates 2 from 4 with a single-cut error of 0.0%.
 
 ## Three: reconstructing the path inside a bar, which is the part with money in it
 
