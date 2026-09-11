@@ -356,7 +356,18 @@ def ours(base: int, magic: int) -> bool:
 
 
 def _overshoot(raw: str) -> tuple[tuple[str, float], ...]:
-    """`feed=multiple` pairs, as in `boom_500_index=1.25,boom_1000_index=1.2`.
+    """`feed=multiple` pairs, optionally keyed by side: `boom_500_index.sell=12`.
+
+    **The side matters and a per-feed number is wrong on a jump instrument.**
+    On `boom_500_index`, 84,506 of 84,701 tick moves are down and 162 are up, of
+    which 160 are spikes - so a stop above price can never be *walked* to, only
+    jumped over, while a stop below behaves normally. Measured in
+    `research/generators.md`: the spike side overshoots by **+9.9R to +19.1R**
+    and the grind side by **+0.02R**. One number for the feed would either leave
+    the tail unsized or shrink the side that works.
+
+    A bare `feed=` still applies to both sides, so existing settings are
+    unchanged.
 
     A malformed pair is dropped rather than raised on: this is a sizing
     reduction, and a typo in it should cost the correction, not the desk.

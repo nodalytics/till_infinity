@@ -248,6 +248,21 @@ def by_interval(interval: str, weights: Sequence[tuple[str, float]]) -> float:
     return 1.0
 
 
+def overshoot_for(book: Sequence[tuple[str, float]], feed: str, side: object = None) -> float:
+    """This feed's stop overshoot, preferring a side-specific entry.
+
+    `boom_500_index.sell` beats `boom_500_index`, because on a jump instrument
+    the two sides are not the same trade: a stop on the spike side can only be
+    gapped over. See `config._overshoot`.
+    """
+    held = dict(book)
+    name = feed.strip().lower()
+    word = str(getattr(side, "value", side) or "").strip().lower()
+    if word and f"{name}.{word}" in held:
+        return held[f"{name}.{word}"]
+    return held.get(name, 1.0)
+
+
 def by_slippage(overshoot: float) -> float:
     """Give back the size an instrument's stops overshoot by.
 
@@ -265,6 +280,18 @@ def by_slippage(overshoot: float) -> float:
     between -1.00R and -1.09R with none past 1.1R. Five stops, so the number is
     thin - which the reciprocal handles gracefully, since a wrong estimate near
     1.0 barely moves the size.
+
+    **Revised 2026-09-11, and the old number was thin by its own admission.**
+    The 1.25 above rests on five stops. A mechanical replay over 84,701 ticks
+    puts the *spike side* of Boom and Crash at **+9.9R to +19.1R**, with 93-98%
+    of stopped trades past 0.5R, against +0.02R on the grind side and +0.061R on
+    a symmetric control. Widening narrows it and never closes it: boom_500 still
+    overshoots 1.02R at a fifty-spread stop.
+
+    So sizing off stop distance understates tail risk by **15x at five spreads
+    and 2x at fifty** on those sides - which is the shape that ends an account
+    rather than the shape that costs it a quarter. See
+    `research/generators.md`, and `overshoot_for` for why this is keyed by side.
 
     Never enlarges. An instrument whose stops come back *better* than 1R is not
     a reason to trade it bigger; it is a reason to distrust the measurement.

@@ -115,6 +115,14 @@ def settings(**over):
     One shared temporary directory has the same fault; it has to be per call.
     """
     made = td.Settings(symbols=("gold",), account_equity=10_000.0, paper_equity=10_000.0)
+    # **The spread-against-risk gate is off for tests that are not about it.**
+    # It ships at 0.16 and refuses 7.1% of the last week's live decisions, but
+    # this file's gold fixture quotes a 1.0 spread against a 4.4 risk - 23% -
+    # so every test asking "does a signal become a position" would be answering
+    # "does it survive a gate calibrated from production" instead. The tests
+    # that *are* about it set it explicitly, and one of them asserts the
+    # shipped default is what it claims.
+    made.max_spread_risk_fraction = 0.0
     made.state_dir = Path(tempfile.mkdtemp(prefix="till-trading-test-"))
     for key, value in over.items():
         setattr(made, key, value)
@@ -8168,3 +8176,50 @@ def test_the_risk_spread_gate_can_be_switched_off():
 
     got = guard.allows(intent, tick=dear, positions=[])
     assert got is None or got.gate != "spread_risk"
+
+
+def test_the_stop_overshoot_is_keyed_by_side_on_a_jump_instrument():
+    """On `boom_500_index`, **84,506 of 84,701 tick moves are down** and 162 are
+    up, of which 160 are spikes. A stop above price can never be *walked* to,
+    only jumped over; a stop below behaves like any other instrument.
+
+    Measured in `research/generators.md`: the spike side overshoots by **+9.9R
+    to +19.1R** with 93-98% of stopped trades past 0.5R, against **+0.02R** on
+    the grind side. One number for the feed would either leave the tail unsized
+    or shrink the side that works - and the side that works is the grind."""
+    from till_infinity.trading import scaling
+    from till_infinity.trading.models import Side
+
+    book = (("boom_500_index.sell", 12.0), ("boom_500_index", 1.25), ("gold", 1.1))
+
+    assert scaling.overshoot_for(book, "boom_500_index", Side.SELL) == 12.0
+    assert scaling.overshoot_for(book, "boom_500_index", Side.BUY) == 1.25, "falls back to the feed"
+    assert scaling.overshoot_for(book, "gold", Side.SELL) == 1.1, "a bare key still covers both"
+    assert scaling.overshoot_for(book, "eurusd", Side.BUY) == 1.0, "unlisted sizes at full"
+
+    # And the sizing consequence is an order of magnitude, not a trim.
+    assert scaling.by_slippage(12.0) == pytest.approx(1 / 12.0, abs=0.001)
+    assert scaling.by_slippage(1.25) == pytest.approx(0.8, abs=0.001)
+
+
+def test_an_unfillable_stop_is_sized_down_by_an_order_of_magnitude():
+    """The point of the correction: `by_slippage` is a reciprocal, so a stop
+    that costs 12R is sized at a twelfth. Sizing off stop *distance* understates
+    the tail by 15x at a five-spread stop, which is the shape that ends an
+    account rather than the shape that costs it a quarter."""
+    from till_infinity.trading import scaling
+
+    assert scaling.by_slippage(19.1) < 0.06
+    assert scaling.by_slippage(1.0) == 1.0, "and it never enlarges"
+    assert scaling.by_slippage(0.5) == 1.0, "a better-than-1R stop is distrust, not licence"
+
+
+def test_the_shipped_spread_risk_limit_is_the_measured_one():
+    """The helper above switches this off for tests that are not about it, so
+    something has to assert what production actually runs.
+
+    0.16 refuses **24.6% of all decisions and 7.1% of the last week's** - the
+    expensive population collapsed from 79% of closes in late August to 5%, so
+    this is mostly insurance against the condition returning. The group it
+    targets ran -0.471R at 53% stopped."""
+    assert td.Settings().max_spread_risk_fraction == pytest.approx(0.16)

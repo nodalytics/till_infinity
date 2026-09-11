@@ -742,7 +742,7 @@ class LevelStrategy(Strategy):
                 * self.momentum_scale(features, side)
                 # Crowding, volatility, measured edge and drawdown. All four
                 # off unless set, and none can enlarge - see `scaling.py`.
-                * self.risk_scale(feed, features, positions, equity, peak, interval)
+                * self.risk_scale(feed, features, positions, equity, peak, interval, side)
             ),
             stop_distance=abs(entry - stop),
             max_risk_money=settings.max_risk_money,
