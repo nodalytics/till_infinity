@@ -8036,3 +8036,51 @@ def test_origin_swing_holds_for_three_days_and_the_ceiling_allows_it():
     # And the clamp is real, so the env change is not decoration.
     tight = OriginSwing(settings(max_hold_swing=24 * 3600.0))
     assert tight.hold_for("30m") == pytest.approx(24 * 3600.0)
+
+
+def test_speeds_survives_a_warmup_that_came_back_as_none():
+    """`restore_number` passes `None` through **deliberately** - "a value that
+    will not convert is left exactly as it was, so the fault stays visible at
+    the point of use rather than being turned into a plausible zero".
+
+    It stayed visible by raising `'>=' not supported between 'int' and
+    'NoneType'` inside `ready`, which the per-message guard turned into a
+    skipped signal: six of them in twenty-seven minutes on 2026-09-11. Same
+    family as `Seen.price` that morning - a restored numeric field coming back
+    None and then being compared.
+
+    The guard belongs at the comparison, because no restore path can bypass it:
+    `__post_init__` is skipped by the codec's `__setstate__`, which is exactly
+    how the value got here."""
+    from till_infinity.trading.speeds import WARMUP, Speeds
+
+    assert WARMUP > 0, "the fallback and the field default are the same number"
+
+    # As the codec restores it: constructed through `__new__`, fields assigned.
+    stale = Speeds.__new__(Speeds)
+    for name, value in (
+        ("half_lives", (3.0, 12.0, 48.0)),
+        ("warmup", None),
+        ("_values", {}),
+        ("_seen", {"gold": 99}),
+    ):
+        object.__setattr__(stale, name, value)
+
+    assert stale.ready("gold") is True, "99 observations is ready by any warmup"
+    assert stale.ready("eurusd") is False
+
+    # And `agree` reaches `ready`, which is the path that actually raised.
+    assert stale.agree("gold", 1) is False, "no values held, but no raise either"
+
+
+def test_a_speeds_built_normally_still_uses_its_own_warmup():
+    """The fallback must not quietly override a real setting."""
+    from till_infinity.trading.speeds import Speeds
+
+    tight = Speeds(warmup=100.0)
+    tight._seen["gold"] = 50
+    assert tight.ready("gold") is False
+
+    loose = Speeds(warmup=10.0)
+    loose._seen["gold"] = 50
+    assert loose.ready("gold") is True

@@ -250,3 +250,24 @@ def _watcher():
     from till_infinity.structures.service import Watcher
 
     return Watcher(Bus(), settings=Settings(warm=False, journalling=False))
+
+
+async def test_it_says_it_is_live_once_per_process_not_once_per_level(enabled, monkeypatch):
+    """`Implied.level` **persists**. Restored at 17.17 from the previous
+    container, `level > 0` was already true at start, so the line inferring
+    "first quote" from it never printed - and "is this running" became
+    unanswerable from the log, which is the one thing the line was for."""
+    from till_infinity.structures.vol import implied as mod
+
+    monkeypatch.setattr(mod, "latest", lambda *_a, **_k: 17.29)
+    watcher = _watcher()
+    # As restored: a level already standing from a previous process.
+    watcher.engine.vol.implied.observe(17.17, when=1.0)
+
+    assert watcher._implied_said is False
+    await watcher._read_implied()
+    assert watcher._implied_said is True, "it has to say so even with a level held"
+
+    watcher._implied_at = 0.0
+    await watcher._read_implied()
+    assert watcher._implied_said is True, "and only once"

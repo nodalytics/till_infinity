@@ -542,6 +542,13 @@ class Watcher:
         #: because a quote that is daily and a state that is 206MB want very
         #: different cadences.
         self._implied_at = 0.0
+        #: Whether this process has said the member is live. Tracked here rather
+        #: than inferred from `Implied.level`, which **persists**: the level was
+        #: restored at 17.17 from the previous container, so `level > 0` was
+        #: already true at start and the line never printed. "Is it running"
+        #: then became unanswerable from the log, which is the one property the
+        #: line was added to provide.
+        self._implied_said = False
         #: Messages this watcher threw on and skipped rather than died on.
         #: Reported in the save log, because a consumer quietly discarding a
         #: tenth of its input is a different thing from one that is healthy and
@@ -1397,9 +1404,9 @@ class Watcher:
             )
             return
         held = self.engine.vol.implied
-        first = held.level <= 0
         held.observe(quote, when=time.time())
-        if first:
+        if not self._implied_said:
+            self._implied_said = True
             log.info(
                 "structures: %s at %.2f - the implied member is live on %s at %s",
                 implied.TICKER,

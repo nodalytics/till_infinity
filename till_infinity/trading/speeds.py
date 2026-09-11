@@ -37,6 +37,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+#: Observations of one feed before `ready` says yes, and the fallback when a
+#: restored state has no usable number. Named rather than inline so the default
+#: and the fallback cannot drift apart - a fallback that disagrees with the
+#: default is a second policy nobody chose.
+WARMUP = 12.0
+
 
 @dataclass(slots=True)
 class Speeds:
@@ -63,7 +69,7 @@ class Speeds:
     #: observation makes `agree` easier to satisfy, so the gate is looser than
     #: it reads for a while after a feed appears. Being loose on a gate that has
     #: never once fired is the better failure.
-    warmup: float = 12.0
+    warmup: float = WARMUP
     _values: dict[str, list[float]] = field(default_factory=dict)
     _seen: dict[str, int] = field(default_factory=dict)
 
@@ -83,8 +89,22 @@ class Speeds:
 
         See `warmup` for why this is not the slowest half-life any more, and
         what is given up by lowering it.
+
+        **The fallback is here rather than in a constructor because no restore
+        path can bypass a comparison.** `restore_number` passes `None` through
+        deliberately - "a value that will not convert is left exactly as it was,
+        so the fault stays visible at the point of use rather than being turned
+        into a plausible zero" - and it stayed visible by raising `'>=' not
+        supported between 'int' and 'NoneType'` here, which the per-message
+        guard turned into six skipped signals in twenty-seven minutes on
+        2026-09-11.
+
+        A `__post_init__` would not have caught it: the codec builds through
+        `cls.__new__` and a generated `__setstate__`, which is exactly how the
+        `None` arrived. Same family as `Seen.price` the same morning.
         """
-        return self._seen.get(key, 0) >= self.warmup
+        warmup = self.warmup if isinstance(self.warmup, int | float) else WARMUP
+        return self._seen.get(key, 0) >= warmup
 
     def agree(self, key: str, sign: int) -> bool:
         """True when all three lines point the way `sign` does."""
