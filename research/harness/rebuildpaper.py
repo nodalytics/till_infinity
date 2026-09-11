@@ -220,7 +220,7 @@ def ruin_on_lattice(lat: np.ndarray, stop: int, tgt: int, past: bool) -> tuple[f
 
 def boom_path(feed: str, n_ticks: int, seed: int) -> tuple[np.ndarray, dict]:
     lam, gm, gcv, jm, jmd, side, pay = BOOM[feed]
-    rng = np.random.default_rng([seed, abs(hash(feed)) % (2 ** 31)])
+    rng = np.random.default_rng([seed, G.feed_seed(feed)])
     chunks = []
     got = 0
     for c in G.gen_boomcrash(n_ticks, lam, gm, gcv, jm, jmd, side, 100000.0, 0.0, rng):

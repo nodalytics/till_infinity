@@ -222,7 +222,7 @@ def build(fit: dict, grid: float, p0: float, n_bars: int, seed: int,
     # do not share one Gaussian stream - seeding them alike would make twelve
     # comparisons into two and put identical numbers down a column.
     rng = np.random.default_rng([int(seed),
-                                 abs(hash(fit.get("tag", "-"))) % (2 ** 31)])
+                                 G.feed_seed(fit.get("tag", "-"))])
     # `close` imposes E[J] = lambda*E[g] instead of using the two fitted means as
     # given. `rebuildpaper.py` found the *published* pair misses its own closure
     # by 6-12% on all six feeds, so a path built from both is not a martingale;

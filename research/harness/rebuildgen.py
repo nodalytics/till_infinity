@@ -38,6 +38,7 @@ from __future__ import annotations
 import math
 import os
 import sqlite3
+import zlib
 
 import numpy as np
 
@@ -806,6 +807,18 @@ def exactly_null(value: float, null: float, places: int = 6) -> bool:
     """`research/README.md`'s dead-column check: a statistic landing on exactly
     its null to `places` decimals is a constant column until proved otherwise."""
     return (not math.isnan(value)) and round(value, places) == round(null, places)
+
+
+def feed_seed(name: str) -> int:
+    """A stable per-feed seed offset.
+
+    `hash()` on a string is salted per process, so seeding a rebuild with it
+    makes the harness un-rerunnable: the same command on the same data produced
+    AUCs 0.03 apart across two runs of `rebuildladder.py` before this was found,
+    and every Monte Carlo figure in `rebuilding.md` carried that wobble without
+    saying so. `crc32` is stable across processes and machines.
+    """
+    return zlib.crc32(name.encode()) % (2 ** 31)
 
 
 def machine() -> str:

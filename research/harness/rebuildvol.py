@@ -288,7 +288,7 @@ def simulate_vol(feed, nominal, p0, grid, n_bars, seed, keep_ticks=0, sigma_mult
     # produces byte-identical variance ratios down the column. That is the
     # dead-column failure in a new costume, and the first version of this
     # harness did it.
-    rng = np.random.default_rng([int(seed), abs(hash(feed)) % (2 ** 31)])
+    rng = np.random.default_rng([int(seed), G.feed_seed(feed)])
     tick_s = 60.0 / tpb
     if student_df:
         stream = _student_stream(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid,
