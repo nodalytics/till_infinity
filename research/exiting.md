@@ -72,3 +72,133 @@ touches a month earlier.
 to let `ride` and `sweep-aware` run side by side on the live stream, which the
 current strategy list already does: `ride` is first and `sweep-aware` fourth.
 The comparison will make itself, on real fills, in a few days.
+
+# 2026-09-11: the exit that cannot engage, and two look-aheads in the replay
+
+## The observation that started it
+
+*"We give back more in sweep-aware. The last trade went up to $60+ but we only
+banked $17 and even still ended with a loss."*
+
+Every trading outcome carries `best_r`, the high-water mark. So this is directly
+measurable from the live record rather than by replay, and it is not one trade:
+
+| strategy | n | mean peak | mean realised | keeps | $ |
+| --- | --- | --- | --- | --- | --- |
+| sweep-aware | 47 | +0.549R | +0.134R | **27.1%** | +92 |
+| thesis-only | 159 | +0.267R | -0.136R | **-13.7%** | **-441** |
+| confluence-scalp | 10 | +1.401R | -0.357R | 18.8% | -92 |
+| opportunity | 5 | +0.489R | -0.209R | -71.5% | -23 |
+| fade-to-value | 9 | +0.020R | -0.573R | - | -160 |
+
+`thesis-only` is the larger bleed and was already out of the strategy list.
+`confluence-scalp` gives back **1.758R a trade**, the most of any of them.
+
+## Why sweep-aware gives it back: the exit never gets to act
+
+Its exits break down as **38 `hold`, 6 `stop`, 2 `target`** out of 47. Four in
+five trades end because the 30-minute clock ran out, not because any rule fired.
+
+The reason is arithmetic, and it is visible in a day of logs: **104 `trailing`
+lines against exactly one `break even` line**, and the trailing widths read
+`2.00v` and `2.07v` where the class asks for `0.5v`.
+
+`manage.stop_for` widens the trail to clear the level's own wicks:
+
+    room = max(trail_vol, wick + spread_sd * trail_sigmas)
+
+and that rule **has no ceiling**. Over 47,233 level calls the computed trail is
+the 0.5v floor only 59% of the time, exceeds 1v on 30.2%, exceeds 3v on 9.4%,
+and its maximum is **2,239v** - because `wick_below_vol` itself reaches 4,360v
+and nothing clips it. On levels selected for being swept, the wick distribution
+is exactly the fat-tailed one that rule cannot survive.
+
+A trail sits `room / risk_vol` R behind the peak, and the trail is only allowed
+to replace the original stop once it is in front of it. So with a 2v trail on a
+typical 1.5v risk, **the trail cannot engage until the trade is up 1.33R**. And:
+
+| the trade ever reached | of 54 closes |
+| --- | --- |
+| 0.25R | 63.0% |
+| 0.50R | 50.0% |
+| **1.00R** - where `break_even_at` engages | **11.1%** |
+| **1.33R** - where a 2v trail engages | **7.4%** |
+| 2.00R | 3.7% |
+
+Median peak is **0.445R**. So for roughly nine trades in ten, *neither* the
+break-even nor the widened trail is reachable, and the trade rides to the
+timeout giving back whatever it made. The exit policy is not badly tuned; on
+this distribution it is **inert**.
+
+That is the mechanism behind the $60 that became $17.
+
+## What the policy replay says, and why it took three tries to believe it
+
+`research/harness/sweepstops.py` replays sweep-aware's own entries over 11,053
+trades under 18 exit policies, paired, spread charged, split 60/40 by time.
+
+**The first version reported `grace_10` - ignore the stop for ten bars - at
++1.335R against the shipping policy's +0.344R, better on 63.5% of the same
+trades, holding in both halves.** It was a look-ahead. During the grace window
+the trail kept tightening while exits were forbidden, so the exit at bar ten
+booked a stop price the market had already passed through and left.
+
+Fixing that exposed a second one: the trail was being raised on a bar's own
+high and then allowed to fill on that same bar, which protects a trade with
+information it did not have. Bar order is unknowable from OHLC, so the only
+honest sequence is to test the levels that were resting when the bar opened and
+only then let the bar's extreme move them. A gap fill was added at the same
+time - a bar that opens through the stop fills at the open, not the stop.
+
+Corrected, on the live 30-bar hold:
+
+| policy | discovery | verify | vs current (verify) | better on |
+| --- | --- | --- | --- | --- |
+| `beyond_pool` | -0.052 | **+0.051** | +0.019 | 46.0% |
+| `wick_cap_1v` | -0.204 | +0.032 | +0.001 | 6.8% |
+| **`current`** (ships) | -0.198 | +0.032 | - | - |
+| `live_wick` | -0.199 | +0.018 | -0.013 | 9.2% |
+| `grace_10` | -0.188 | +0.014 | -0.017 | 44.0% |
+| `no_trail` | -0.227 | -0.007 | -0.039 | 26.3% |
+| `close_only` | -0.226 | -0.033 | -0.064 | 29.7% |
+
+`grace_10` went from +1.335R to noise. **None of the eighteen beats what ships
+by more than noise.** `no_trail` is clearly worse, so the trail earns its place;
+`close_only` - stopping on the close rather than the wick, which sounded like
+the natural policy for a sweep-aware strategy - is worse, not better.
+
+### The replay disagrees with the live record, and the live record wins
+
+The replay exits **98%** by stop; live exits **81%** by timeout. It also scores
+`live_wick` the same as `current`, which does not reproduce the inert-trail
+effect the live logs show directly. Something about the replay's trail is
+firing when the real one cannot - most likely that `best` is tracked live from
+the quote stream at 20-second resolution while the replay uses 1m bars.
+
+So the policy table is **not** evidence that the exit is fine. It is evidence
+that this replay cannot see the problem, and the arithmetic above can.
+
+## What this supports
+
+1. **Cap the wick widening.** A trail wider than the trade's own risk can never
+   engage before 1R, and 89% of these trades never reach 1R. `min(room, risk)`
+   is the natural ceiling; the uncapped rule producing a 2,239v trail is not a
+   tuning question.
+2. **Lower `break_even_at`.** At 1.0R it fires on 11% of trades. The median
+   peak is 0.445R.
+3. **Neither is supported by the replay**, which is why neither has been
+   changed here. They are supported by the live distribution of `best_r`, and
+   the honest next step is to measure them against it rather than to ship a
+   number because the arithmetic is suggestive.
+
+## What was changed, and why that one was different
+
+`confluence-scalp` was given `ride`'s exit and turned back on. Not because the
+replay supports it - it does not - but because that strategy had **no exit
+policy at all** and its mean peak is **1.401R**, which is the regime those
+numbers were chosen for and the regime `sweep-aware` never reaches. The failure
+mode documented above is specifically that the thresholds sit above the
+distribution; for this strategy they sit inside it.
+
+Ten closes cannot settle an exit policy. This makes the record be about the
+question that was asked.
