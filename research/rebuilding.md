@@ -550,6 +550,30 @@ a collection failure. The KS rejections stand, because a rebuild that emits ever
 tick is being compared with an observation that does not; what changes is that
 the fix is in the rebuild rather than in the collector.
 
+**The prediction this makes, tested.** If the tick-return rejections above are
+the repeated quote, a rebuild that deletes its own repeated quotes should shrink
+them. It does, and not all the way:
+
+| feed | KS `D`, `price` rebuild | **KS `D`, `drop` rebuild** | change |
+| --- | --- | --- | --- |
+| volatility_250_1s_index | 0.0281 | **0.0151** | **-46%** |
+| volatility_100_1s_index | 0.0259 | **0.0161** | **-38%** |
+| volatility_150_1s_index | 0.3699 | **0.2893** | **-22%** |
+| volatility_100_index | 0.0263 | **0.0192** | **-27%** |
+| volatility_75_1s_index | 0.0081 | **0.0064** | -21% |
+| volatility_50_1s_index | 0.0035 | 0.0025 | -29% |
+| volatility_10_1s_index | 0.0160 | 0.0173 | +8% |
+
+Six of twelve still reject where seven did, and the distances on the four feeds
+that rejected hardest fall by **22% to 46%**. So the repeated quote is most of
+that gap and not all of it, and what is left is the same thing the band split
+names: the rebuild's price level wanders on its own path, so its lattice points
+per sigma follow a different trajectory from the feed's, and a KS test on tick
+returns is sensitive to exactly that. Every feed that passes is one with 87 or
+more points per sigma; every feed that rejects has 17 or fewer. `n*` on the KS
+statistic runs from **1.7e5 to 5.9e5** ticks on the passing feeds and **44** on
+`volatility_150_1s_index`.
+
 **`drop` rather than `resample`, on one number.** The two have the same tick law
 and different bars. Redrawing a zero increment until the quote changes raises the
 per-tick second moment by `1/(1-P(0))` - **1.5% of sigma on
