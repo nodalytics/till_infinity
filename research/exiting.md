@@ -282,3 +282,67 @@ doing real work, and a replay that skips them measures a strategy nobody runs.
 
 What the decomposition still establishes is the `vol_bps` result above, which
 does not depend on the level of the cost, only on its shape.
+
+# 2026-09-11: the number that chose this exit was inflated tenfold
+
+`exits.py` scored `sweep-aware`'s old exit at **+0.099R against ride's +0.655R**
+over 30,875 replayed calls, and that is why `SweepAware` carries
+`target_multiple=6.0`, `trail_vol=0.5` and `break_even_at=1.0` in production.
+
+That harness had both look-aheads found this morning. It has been rewritten onto
+the shared kernel (`till_infinity/shared/replay.py`), and the old arithmetic
+kept beside it as `_legacy_walk` so both can run over **the same trades** and the
+difference attributed to the bug rather than to the data.
+
+18,272 replayed calls, both walks, both policies, spread charged:
+
+| walk | policy | mean R | median | win | stopped | ride − own | better on |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| legacy | old | -0.052 | +0.427 | 58.3% | 41.7% | | |
+| legacy | **ride** | **+0.381** | +0.208 | 58.1% | 99.9% | **+0.432** | **68.0%** |
+| kernel | old | -0.058 | +0.498 | 58.3% | 41.7% | | |
+| kernel | **ride** | **-0.013** | +0.133 | 54.4% | 98.9% | **+0.046** | **36.3%** |
+
+**The bug was worth +0.386R to the trailing policy and +0.006R to the
+fixed-target one.** That asymmetry is the whole finding, and it was predicted
+before the run: a trailing stop benefits from being raised on a bar's own high
+and from being filled at its own price on a bar that gapped through it. A fixed
+target does neither.
+
+It holds in both halves - ride's advantage goes 0.439 -> 0.038 in discovery and
+0.422 -> 0.057 in verify - so this is not a period effect.
+
+## What that does and does not say
+
+**It does not say revert.** Ride's exit still has a positive mean edge on the
+corrected walk, +0.046R pooled and +0.057R on the verify half.
+
+**It does say the decision rested on evidence about ten times weaker than the
+number it was made on**, and that the *shape* of the trade-off is different from
+the one documented. The original write-up said "the median falls while the mean
+rises - a trail wins by the right tail". That was true and is now much more
+extreme: the median falls from **+0.498 to +0.133** and the policy is worse on
+**64% of the same trades**, winning only through a thin right tail.
+
+An edge that lives entirely in a tail is a different risk profile from one that
+is broadly present, and it needs a larger sample before anyone should be
+confident in it - 18,272 replayed trades is a lot, but a tail is measured by its
+rare members rather than by its total.
+
+**And the live record now agrees with the corrected version rather than the
+original.** `giveback.md` records that `sweep-aware` keeps **27%** of its
+high-water mark and that 38 of its 47 closes end on the hold timeout rather than
+on any rule. A policy that is worse on two trades in three, winning only in the
+tail, is what that feels like from the outside.
+
+## The methodological point
+
+This is the second time in one day that a replay's answer moved by an order of
+magnitude on a bug fix, and both times the original passed every statistical
+guard applied to it. The guards test whether a result is stable and general.
+**None of them can test whether the simulation was honest**, and a look-ahead
+produces results that are stable, general and reproducible.
+
+That is the argument for the kernel, and it is why the walk now lives in the
+package where CI lints it and the suite covers it, rather than in the one part
+of this repository that had no gate on it.

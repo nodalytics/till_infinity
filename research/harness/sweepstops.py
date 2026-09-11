@@ -68,12 +68,13 @@ from collections import defaultdict
 from research.harness.sweepregimes import (
     BARS,
     ENTRIES,
+    HOLD,
     JOURNAL,
     bars_for,
     candidates,
     spreads,
-    walk,
 )
+from till_infinity.shared.replay import walk
 
 SPLIT = float(os.environ.get("SPLIT", "0.6"))
 MIN_N = int(os.environ.get("MIN_N", "300"))
@@ -136,7 +137,7 @@ def replay(trades, bars_db, spread):
             cost = t["level"] * bps / 10_000.0
             out = {}
             for name, policy in POLICIES.items():
-                answer = walk(rows, start, t, cost, policy)
+                answer = walk(rows, start, t, cost=cost, hold=HOLD, policy=policy)
                 if answer is None:
                     break
                 out[name] = answer

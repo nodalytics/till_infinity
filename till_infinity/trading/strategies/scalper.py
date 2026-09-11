@@ -1275,6 +1275,31 @@ class SweepAware(LevelStrategy):
     # The spread is real and does not reverse it - it costs the old policy
     # 0.073R a trade, 42% of everything that policy made.
     #
+    # **Those numbers are inflated about tenfold and the exit stays anyway.**
+    # The harness that produced them had two look-aheads: the trail was raised
+    # on a bar's own high and then allowed to fill on that same bar, and a stop
+    # was booked at its own price even on a bar that gapped through it. A
+    # trailing policy benefits from both; a fixed target does neither.
+    #
+    # Re-run on the corrected walk over 18,272 calls, with the old arithmetic
+    # kept beside it so both saw **the same trades**, the bug was worth
+    # **+0.386R to this exit and +0.006R to the one it beat**:
+    #
+    #     legacy walk    ride - own  +0.432R, better on 68.0%
+    #     corrected      ride - own  +0.046R, better on 36.3%
+    #
+    # So the advantage is real and an order of magnitude smaller, and the shape
+    # is not what the paragraph above describes. The median falls from +0.498 to
+    # **+0.133** and the policy is worse on **64% of the same trades**, winning
+    # only through a thin right tail. Held in both halves of a split sample.
+    #
+    # It is kept rather than reverted because the corrected edge is still
+    # positive, and changed on evidence rather than on a number's collapse. But
+    # a tail edge is a different risk profile from a broad one, and
+    # `research/giveback.md` measures what it feels like live: this strategy
+    # keeps **27%** of its high-water mark and 38 of its 47 closes end on the
+    # hold timeout rather than on any rule here firing at all.
+    #
     # **Only the exit moves.** The stop, the entry price and the resting
     # behaviour are what the replay held constant; changing them would make
     # this a different trade rather than the same trade with a better exit,
