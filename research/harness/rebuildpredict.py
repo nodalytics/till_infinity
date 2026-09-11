@@ -161,6 +161,41 @@ def align(feeds: list[str], slot_ms: int) -> tuple[list[str], np.ndarray]:
     return names, np.array(rows)
 
 
+def forward_auc(x: np.ndarray, y: np.ndarray, names: list[str], seed: int,
+                frac: float = 0.6, boots: int = 400) -> dict:
+    """Fit on the first `frac` of time, predict the rest. Nothing else will do.
+
+    The generic `discriminate` splits by interleaved blocks of *row index*, which
+    is right for telling two samples apart and wrong for a forecast: the two
+    label groups interleave in time, so a block split puts a test row between two
+    training rows minutes away and any local structure leaks straight across it.
+    The first version of this harness did that and read 0.4938 with an interval
+    excluding 0.5, which is the leak rather than a prediction.
+    """
+    n = x.shape[0]
+    if n < 2000 or y.sum() < 200 or (n - y.sum()) < 200:
+        return {"n": n, "auc": float("nan"), "skipped": "too few rows or one-sided"}
+    cut = int(n * frac)
+    tr, te = slice(0, cut), slice(cut, n)
+    if y[te].sum() < 100 or (y[te].size - y[te].sum()) < 100:
+        return {"n": n, "auc": float("nan"), "skipped": "test side one-sided"}
+    x = np.clip(np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0), -1e12, 1e12)
+    model = G._Booster(seed=seed, n_trees=TREES).fit(x[tr], y[tr])
+    sc = model.decision(x[te])
+    a = G.auc(sc, y[te])
+    rng = np.random.default_rng(seed + 1)
+    idx = np.arange(sc.size)
+    boot = [G.auc(sc[t], y[te][t]) for t in
+            (rng.choice(idx, idx.size, replace=True) for _ in range(boots))]
+    boot = [v for v in boot if v == v]
+    lo, hi = (float(np.percentile(boot, 2.5)), float(np.percentile(boot, 97.5))) \
+        if boot else (float("nan"), float("nan"))
+    uni = sorted(((names[j], G.auc(x[te][:, j], y[te])) for j in range(len(names))),
+                 key=lambda t: -abs(t[1] - 0.5))
+    return {"n": int(n), "n_test": int(sc.size), "auc": a, "lo": lo, "hi": hi,
+            "univariate": uni[:5]}
+
+
 def sign_features(u: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Rows of `k` past increments, label = the sign of the next one."""
     d = np.diff(u)
@@ -277,14 +312,42 @@ def main() -> None:
         print(f"      largest |r| {np.abs(c[iu]).max():.5f}, mean {np.abs(c[iu]).mean():.5f}, "
               f"{npast} of {len(iu[0])} past +-4/sqrt(n) = {band:.5f} "
               f"(expected {0.0000633 * len(iu[0]):.2f})")
+        # The grid chi-square needs a variable the rank transform can actually
+        # make uniform. Step Index and the two Range Breaks move by exactly one
+        # unit, so their increments are two atoms and an 8x8 grid rejects on the
+        # marginal rather than on any dependence - it read p = 0 on exactly that
+        # pair in the first run. Those feeds get a sign contingency test instead,
+        # which is the right test for a binary stream.
+        rich = [i for i in range(len(names))
+                if np.unique(inc[i]).size >= 64]
         worst_p, worst_pair = 1.0, None
-        nb = max(2, int(len(iu[0])))
-        for a, b in zip(*iu, strict=False):
+        pairs = [(a, b) for a in rich for b in rich if a < b]
+        nb = max(2, len(pairs))
+        for a, b in pairs:
             g = J.grid_chi2(np.column_stack([uu[a], uu[b]]).ravel(), 2, 8)
             if g.get("p", 1.0) < worst_p:
                 worst_p, worst_pair = g["p"], (names[a], names[b])
-        print(f"      worst 2-D grid chi-square over {nb} pairs: p = {worst_p:.3g} on "
-              f"{worst_pair}, Bonferroni bar {0.001 / nb:.3g}")
+        print(f"      worst 2-D grid chi-square over {nb} pairs of the {len(rich)} feeds")
+        print(f"      with 64+ distinct increments: p = {worst_p:.3g} on {worst_pair}, "
+              f"Bonferroni bar {0.001 / nb:.3g}")
+        from scipy.stats import chi2 as _chi2
+        lat_idx = [i for i in range(len(names)) if i not in rich]
+        worst_s, worst_sp = 1.0, None
+        for a in lat_idx:
+            for b in range(len(names)):
+                if b == a:
+                    continue
+                sa = (inc[a] > 0).astype(np.int64)
+                sb = (inc[b] > 0).astype(np.int64)
+                tab = np.bincount(sa * 2 + sb, minlength=4).reshape(2, 2).astype(float)
+                tot = tab.sum()
+                exp = np.outer(tab.sum(1), tab.sum(0)) / tot
+                st = float(((tab - exp) ** 2 / np.maximum(exp, 1e-9)).sum())
+                pv = float(_chi2.sf(st, 1))
+                if pv < worst_s:
+                    worst_s, worst_sp = pv, (names[a], names[b])
+        print(f"      the lattice feeds by sign contingency instead: worst p = "
+              f"{worst_s:.3g} on {worst_sp}")
         # the cross-feed tuple: feeds in order at one slot, as a k-tuple
         flat = uu.T.ravel()
         cross = {k: J.lattice_gap(flat, k, 12 if k == 2 else 10 if k == 3 else 6)
@@ -301,6 +364,9 @@ def main() -> None:
         ledger.append({"test": "no cross-feed 2-D dependence after Bonferroni",
                        "feed": "joint", "value": worst_p,
                        "fired": worst_p < 0.001 / nb})
+        ledger.append({"test": "no cross-feed sign dependence on the lattice feeds",
+                       "feed": "joint", "value": worst_s,
+                       "fired": worst_s < 0.001 / max(len(lat_idx) * len(names), 1)})
         ledger.append({"test": "no lattice in the cross-feed tuple", "feed": "joint",
                        "value": max(v for v in cv if v == v), "fired": hit})
         payload["joint"] = {"feeds": names, "n": int(n),
@@ -314,6 +380,8 @@ def main() -> None:
     print("\n[4] RUNG 5 - A HELD-OUT FORWARD PREDICTION, WHICH IS THE ONLY CLAIM THAT COUNTS")
     print("    Predict the sign of the next tick. Two feature sets: a feed's own last")
     print(f"    {KLAGS} increments, and all aligned feeds at the current slot.")
+    print("    The split is by *time* - fit the first 60%, predict the last 40%. A")
+    print("    block split on row index leaks, because the two label groups interleave.")
     print(f"{'target':28s} {'features':28s} {'n':>8s} {'AUC':>8s} {'95% CI':>17s} "
           f"{'verdict':>10s}")
     for feed in ("volatility_75_1s_index", "step_index", "range_break_100_index",
@@ -324,11 +392,17 @@ def main() -> None:
         x, y, nm = sign_features(t["mid"].astype(float), KLAGS)
         if not x.size:
             continue
-        r = G.discriminate(x[y == 0][:MAXROW], x[y == 1][:MAXROW], nm, seed=SEED,
-                           n_trees=TREES)
+        r = forward_auc(x, y, nm, SEED)
+        if r.get("skipped"):
+            print(f"{feed:28s} {'own last ' + str(KLAGS):28s} {r['n']:8d} "
+                  f"{'':>8s} {r['skipped']:>17s}")
+            continue
         ok = r["lo"] <= 0.5 <= r["hi"]
         print(f"{feed:28s} {'own last ' + str(KLAGS):28s} {r['n']:8d} {r['auc']:8.4f} "
               f"[{r['lo']:.4f},{r['hi']:.4f}] {'-' if ok else 'PREDICTS':>10s}")
+        if not ok:
+            print(f"{'':28s} {'top features':28s} " + ", ".join(
+                f"{n2}={a2:.3f}" for n2, a2 in r["univariate"][:3]))
         ledger.append({"test": "next-tick sign AUC interval contains 0.5", "feed": feed,
                        "value": r["auc"] - 0.5, "fired": not ok})
         payload.setdefault("predict", {})[feed] = {"own": r}
@@ -338,12 +412,14 @@ def main() -> None:
         y = (d[tgt, 1:] > 0).astype(float)
         x = np.ascontiguousarray(d[:, :-1].T)
         nm = [f"f{i}" for i in range(x.shape[1])]
-        r = G.discriminate(x[y == 0][:MAXROW], x[y == 1][:MAXROW], nm, seed=SEED,
-                           n_trees=TREES)
-        ok = r["lo"] <= 0.5 <= r["hi"]
-        print(f"{names[tgt]:28s} {'all ' + str(len(names)) + ' feeds, same slot':28s} "
-              f"{r['n']:8d} {r['auc']:8.4f} [{r['lo']:.4f},{r['hi']:.4f}] "
-              f"{'-' if ok else 'PREDICTS':>10s}")
+        r = forward_auc(x, y, nm, SEED)
+        ok = r.get("skipped") is None and r["lo"] <= 0.5 <= r["hi"]
+        if r.get("skipped"):
+            print(f"{names[tgt]:28s} {'all feeds':28s} {r['n']:8d} {r['skipped']:>26s}")
+        else:
+            print(f"{names[tgt]:28s} {'all ' + str(len(names)) + ' feeds, same slot':28s} "
+                  f"{r['n']:8d} {r['auc']:8.4f} [{r['lo']:.4f},{r['hi']:.4f}] "
+                  f"{'-' if ok else 'PREDICTS':>10s}")
         ledger.append({"test": "next-tick sign AUC interval contains 0.5",
                        "feed": names[tgt] + " from all feeds",
                        "value": r["auc"] - 0.5, "fired": not ok})
@@ -352,8 +428,7 @@ def main() -> None:
     lu = trunc_lcg(300_000, 10, seed=7)
     lmid = np.cumsum(np.round((lu - 0.5) * 200)) + 10000.0
     x, y, nm = sign_features(lmid, KLAGS)
-    r = G.discriminate(x[y == 0][:MAXROW], x[y == 1][:MAXROW], nm, seed=SEED,
-                       n_trees=TREES)
+    r = forward_auc(x, y, nm, SEED)
     seen = not (r["lo"] <= 0.5 <= r["hi"])
     print(f"{'CONTROL truncated LCG':28s} {'own last ' + str(KLAGS):28s} {r['n']:8d} "
           f"{r['auc']:8.4f} [{r['lo']:.4f},{r['hi']:.4f}] "
