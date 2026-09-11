@@ -141,15 +141,22 @@ JMULT = int(os.environ.get("JMULT", "4"))
 #: many as the feed has; the tick-monitored barrier needs enough trades to resolve
 #: a 0.045 gap, which is a few hundred thousand.
 TICK_KEEP = int(os.environ.get("TICK_KEEP", "2000000"))
-#: Move on the quote lattice rather than rounding a continuous price onto it.
-#: `rebuildjudge.py` established that the venue does the former and
-#: `rebuildladder.py` settled which of the two ways: see `rebuildgen.gen_gbm`.
-#: One of "price" (round the accumulated price - refuted), "bump" (round the
-#: increment, move one unit on a zero - refuted) or "resample" (round the
-#: increment, redraw until the quote changes). "0"/"1" still name the first two.
+#: How a continuous price is put onto the venue's quote lattice, which is the
+#: whole of `rebuildladder.py`'s ladder. One of "price" (round the accumulated
+#: price - refuted by P(0)), "bump" (round the increment and move one unit on a
+#: zero - refuted by the one-unit bin), "resample" (round the increment and
+#: redraw until the quote changes) or the default "drop" (round the price, build
+#: the bars from every tick, and delete the repeated quotes from the tick stream
+#: only). "0"/"1" still name the first two.
+#:
+#: `drop` rather than `resample` because they have the same tick law and
+#: different bars. `resample` raises the per-tick second moment by 1/(1-P(0)) -
+#: 1.5% of sigma on volatility_100_index, against a pre-registered volatility
+#: band of 0.5% - where `drop` leaves the bars exactly as the venue builds them,
+#: from its own complete stream including the quotes it repeats.
 LATTICE = {"0": "price", "false": "price", "": "price", "1": "bump",
-           "true": "bump"}.get(os.environ.get("LATTICE", "resample").lower(),
-                               os.environ.get("LATTICE", "resample"))
+           "true": "bump"}.get(os.environ.get("LATTICE", "drop").lower(),
+                               os.environ.get("LATTICE", "drop"))
 
 NOMINAL = {
     "volatility_10_index": 10.0, "volatility_25_index": 25.0,
@@ -296,6 +303,18 @@ def simulate_vol(feed, nominal, p0, grid, n_bars, seed, keep_ticks=0, sigma_mult
     elif cluster:
         stream = _cluster_stream(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid,
                                  rng, tpb, lattice=lattice)
+    elif lattice == "drop":
+        # Bars from every tick, ticks with the repeated quotes deleted - which is
+        # what `research.db` holds and what the venue publishes, respectively.
+        # Over-collect because the deletion shortens the tick stream.
+        stream = G.gen_gbm(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid, rng,
+                           lattice="price")
+        out = G.bars_from_stream(stream, tpb, n_bars,
+                                 keep_ticks=int(keep_ticks * 1.6) if keep_ticks else 0)
+        tk = out["ticks"]
+        if tk.size:
+            out["ticks"] = tk[np.concatenate([[True], np.diff(tk) != 0])][:keep_ticks]
+        return out
     else:
         stream = G.gen_gbm(n_bars * tpb, nominal * sigma_mult, tick_s, p0, grid, rng,
                            lattice=lattice)

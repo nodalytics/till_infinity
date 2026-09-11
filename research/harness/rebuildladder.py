@@ -206,18 +206,10 @@ def build(feeds: dict, rung: str, seed: int) -> dict:
     simA, simB, bars, coarse = [], [], [], []
     for feed, d in feeds.items():
         want = d["ri"].size + 4
-        # `drop` keeps every tick in the bar and deletes the repeated quotes
-        # from the tick stream afterwards, so it needs more raw ticks to end up
-        # with as many stored ones as the feed has.
-        over = 1.6 if rung == "drop" else 1.0
         bb = V.simulate_vol(feed, d["nom"], d["p0"], d["grid"],
-                            max(d["n_bars"], (int(want * over) // d["tpb"]) + 2), seed,
-                            keep_ticks=int(want * over),
-                            lattice="price" if rung == "drop" else rung)
-        tk = bb["ticks"]
-        if rung == "drop":
-            tk = tk[np.concatenate([[True], np.diff(tk) != 0])]
-        si = np.diff(np.log(tk)) / d["u"]
+                            max(d["n_bars"], (want // d["tpb"]) + 2), seed,
+                            keep_ticks=want, lattice=rung)
+        si = np.diff(np.log(bb["ticks"])) / d["u"]
         si = si[np.isfinite(si)][: d["ri"].size]
         h = d["h"]
         if d["fine"]:
