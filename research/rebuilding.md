@@ -261,7 +261,7 @@ of distinct values; run anyway they reported z = -334 and z = +120 on *every*
 stream including numpy's own. A test that fails its own positive control is not a
 finding.
 
-### Ninety-one published numbers, regenerated from the parameters alone
+### A hundred and three published numbers, regenerated from the parameters alone
 
 [`rebuildpaper.py`](harness/rebuildpaper.py) is the whole of what can be done
 without the lab. `deriving.md`, `generators.md` and `twins.md` between them state
@@ -419,9 +419,9 @@ out a single width correction.
 **And the two rules that fit best disagree about what the parameters are.** The
 fitted band is 60 steps on RB100 and 45 on RB200, and the fitted jump 120 against
 230 - so under this mechanism the two indices do not share one range. That is not
-what a family with one generator and a rate parameter should look like, and it is
-the clearest evidence on this page that the mechanism is close but not the one
-Deriv is running.
+what a family with one generator and a rate parameter should look like. The next
+section shows it is also not true: the widths were absorbing a shape error and
+one shared width fits both feeds better than two free ones.
 
 ### The twenty-minute residual, chased
 
@@ -552,20 +552,34 @@ none of them is a thing I would like to happen.
 
 ## What this page does not say
 
-* **It is not yet a result about Deriv.** Everything above is either apparatus
-  calibrated on ground truth, or a comparison against numbers `deriving.md` and
-  `generators.md` already published. The two-sample tests against
-  `research.db`'s own rows have not run, and until they do this page reports a
-  method and a Range Break finding, not a verdict on the other four families.
+* **Nothing here is a two-sample test against the feed.** Everything above is
+  either apparatus calibrated on ground truth, or a comparison against a number
+  `deriving.md`, `generators.md` or `twins.md` already published. A published
+  summary can only catch an error large enough to move that summary, and it
+  cannot see the ordering of the increments at all - which is precisely what the
+  discriminator was built for and precisely what has not run.
+* **The two corrections are corrections to a *specification*, not to a
+  measurement.** The closure failure says the three published Boom parameters
+  are mutually inconsistent at the 6-12% level, not that `deriving.md` measured
+  any of them wrongly; its own text puts `E[J]/E[g]` at 489.6 against a lambda
+  of 529.4 and does not remark on it. The jump-tail failure says two moments do
+  not determine a tail, which is arithmetic.
 * **A rebuild that survives is not a proof of identity.** It is a statement that
   nothing in this battery, at this sample size, separates the two - which is
   exactly why the headline is `n*` and not a pass mark.
 * **The randomness battery is small.** A million uniforms is four orders of
   magnitude short of TestU01's SmallCrush. It excludes a grossly broken source
   and certifies nothing.
-* **The Range Break scan is a scan, not a derivation.** Two parameters were
-  chosen by minimising a distance to a published curve. The residual at twenty
-  minutes is evidence the mechanism is wrong in a specific way; it is not
-  evidence about what the right one is.
-* **The jump size for Range Break 200 sits at the edge of the scanned grid**
-  (230 of a grid ending at 230), so that parameter is a bound rather than a fit.
+* **The Range Break scan is a scan, not a derivation.** The shared width was
+  chosen by minimising a distance to a published curve over a six-point grid, and
+  the grid's resolution - 5 steps - is the precision of "about 60". The residual
+  at twenty minutes is evidence the mechanism is wrong in a specific way; the
+  soft-edge reading of it is an interpretation and is marked as one.
+* **The Range Break comparison is against six numbers a feed**, which is a
+  coarser target than the raw rows. When the lab returns, `rebuildstep.py`
+  re-estimates the width from the feed's own visited ranges and scores the curve
+  against a twelve-seed Monte Carlo null instead of against a printed table.
+* **`deriving.md`'s own Range Break numbers carry noise this page treats as
+  exact.** The n=1000 variance ratio is 86 non-overlapping windows on a
+  jump-heavy process; its standard error is at least 15%, and the fits here are
+  quoted to three decimals against it.
