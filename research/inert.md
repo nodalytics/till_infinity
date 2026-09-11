@@ -568,6 +568,11 @@ has twelve bars to find an origin in. It asserts:
 * every configured formation pass drew at least one level, which is `round`;
 * the break model sees more than one input vector, which is fifteen;
 * the four origin bracket fields are present and vary, which is seventeen;
+* the fields this fixture **cannot** reach are still exactly the two prefixes
+  documented as unreachable - `macro_` and `learned_`. A note about what is
+  missing is worth nothing if nothing checks it, which is the subject of this
+  page, so the note is an assertion: if a documented prefix starts appearing
+  the entry is stale and has to go, rather than be believed;
 * and a richness floor under all of it, because **a gate that can pass by
   producing nothing is not a gate** - the count of published calls, of resolved
   touches, of fields with enough rows to judge, and the three inputs an
