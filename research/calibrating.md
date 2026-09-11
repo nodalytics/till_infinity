@@ -5,9 +5,9 @@ of the market. [spending.md](spending.md) has a book-wide figure that flips sign
 depending on which closes carry a `risk_money` field.
 [winning.md](winning.md) ran 43 entry features against a 300-permutation
 control and nothing cleared the noise floor. [aligning.md](aligning.md) records
-a Simpson reversal where the pooled figure says the opposite of every stratum. The desk's answer each time was to
-write the lesson down; the lesson each time failed to survive the next
-question.
+a Simpson reversal where the pooled figure says the opposite of every stratum.
+The desk's answer each time was to write the lesson down; the lesson each time
+failed to survive the next question.
 
 This page does something different. It measures **how often the desk's own
 analysis reports an edge on data where the true answer is known to be zero**,
@@ -32,8 +32,11 @@ Run on the lab, 64 cores:
 ```
 ./.secrets/lab.sh run research/harness/calibnull.py CLOSES=1000000
 ./.secrets/lab.sh run research/harness/calibfpr.py BOOKS=2000
-./.secrets/lab.sh run research/harness/calibscan.py BOOKS=400
+./.secrets/lab.sh run research/harness/calibscan.py BOOKS=1000 CLOSES=420000
 ```
+
+`calibfpr.py` was run twice, at seed 606 and seed 909; where a number moves
+between them both are given.
 
 ## The answer, before the working
 
@@ -289,77 +292,91 @@ as having passed or failed.
 
 ## 5. The feature scan, and what its control is worth
 
-`calibscan.py` runs `winning.py`'s `scan` and `control` unchanged on null books
-of 397 closes carrying 47 entry features computed from the simulated bars, of
-which 45 have enough spread to tercile. They are the same kinds of quantity the
-live decision carries - trend, stretch, efficiency, position in a range, wick
-shape, clock, and the order's own geometry - at a comparable count, because the
-statistic that matters is the largest gap over the whole set and that depends
-on how many there are and how correlated they are.
+`calibscan.py` runs `winning.py`'s `scan` and `control` unchanged on 1,000
+disjoint null books of 397 closes, each carrying 47 entry features computed
+from the simulated bars, of which 45 have enough spread to tercile. They are
+the same kinds of quantity the live decision carries - trend, stretch,
+efficiency, position in a range, wick shape, clock, and the order's own
+geometry - at a comparable count, because the statistic that matters is the
+largest gap over the whole set and that depends on how many there are and how
+correlated they are. The pool is 420,024 closes with a mean R of -0.02530
++-0.00128 against the theorem's -0.02700, z = +1.33.
 
 **The instrument first.** 43 independent Gaussian features against an
 independent Gaussian target, 600 trials: the scan clears its own permutation
-control **5.00% +-0.89** of the time. That is the rate a permutation test must
+control **5.00% +-0.89** of the time. That is what a permutation test must
 produce, and it lands on it exactly - which by this project's own rule is a bug
 to hunt rather than a success. Hunted: 600 trials fire 30 times, and 30/600 is
-exactly 0.0500. The granularity of the estimate is 0.167 points and the
-probability of landing on that cell is about one in eleven. It is a
-coincidence, and the ledger records that the check fired.
+exactly 0.0500. The granularity of the estimate is 0.167 points and the chance
+of landing on that cell is about one in eleven. A coincidence, and the ledger
+records that the check fired.
 
 **On null books**, target R - the only one of `winning.md`'s three targets the
 theorem covers:
 
 | | rate |
 | --- | ---: |
-| the biggest gap clears the permutation control | 8.00% +-1.36 |
-| ... and holds its sign into the verify half (the full gate) | 3.00% +-0.85 |
-| at least one feature separates its terciles at an uncorrected p<0.05 | **98.25% +-0.66** |
-| the biggest feature does | 96.50% +-0.92 |
-| the biggest gap reaches `winning.md`'s live 0.433 | 23.25% +-2.11 |
+| the biggest gap clears the permutation control | **4.80% +-0.68** |
+| ... and holds its sign into the verify half (the full gate) | 2.30% +-0.47 |
+| at least one feature separates its terciles at an uncorrected p<0.05 | **98.50% +-0.38** |
+| the biggest feature does | 97.00% +-0.54 |
+| the biggest gap reaches `winning.md`'s live 0.433 | 12.90% +-1.06 |
 
-**`winning.md`'s control is doing almost all of the work.** Without it, 98% of
-null books contain a feature that looks significant, and a null book carries
-5.8 of them on average out of 45. With it, the rate is 8.00% +-1.36 - about two
-standard errors above nominal, so the control is mildly anti-conservative
-rather than exact, and the four-part gate brings it to 3.00%.
+**`winning.md`'s permutation control is the only thing standing between that
+page and a false positive, and it works.** Without it, 98.5% of null books
+contain a feature that looks significant at p<0.05 and a null book carries 5.5
+of them out of 45. With it, the rate is 4.80% +-0.68 - nominal - and the
+four-part gate takes it to 2.30%.
+
+That is the one method on this desk that calibrates. It is also the only one
+built with its own null in the harness rather than added afterwards.
 
 The live book's largest gap on R was 0.433 and did not clear its control. A
-null book reaches 0.433 in 23% of cases. **`winning.md`'s null is reproduced
-exactly: nothing in the feature set separates winners from losers, and the
-number it reported is an ordinary draw from a world with nothing in it.**
+null book's biggest gap reaches 0.433 in 12.9% of cases. **`winning.md`'s null
+is reproduced: nothing in the feature set separates winners from losers, and
+the number that page reported is an ordinary draw from a world with nothing in
+it.**
 
 ### The one feature that did clear, and why it is arithmetic
 
 `winning.md`'s single survivor is `spread_over_risk` on the target `P(stop)`.
 The theorem does **not** cover `P(stop)`: in a world with no edge whatever, a
 trade whose stop sits closer in volatility units is genuinely more likely to be
-stopped. So the null world should reproduce that result, and it does:
+stopped, and one whose target sits further away is genuinely less likely to
+reach it. So the null world should reproduce that result, and it does:
 
 | target | biggest gap clears the control |
 | --- | ---: |
-| R (covered by the theorem) | 8.00% +-1.36 |
-| **P(stop)** | **98.25% +-0.66** |
-| P(R>0) | 8.25% +-1.38 |
+| R - covered by the theorem | 4.80% +-0.68 |
+| **P(stop)** - not covered | **98.30% +-0.41** |
+| P(R>0) - not covered | 12.40% +-1.04 |
 
 And when the cost is charged as a **price** rather than as a share of risk - so
 that `spread_over_risk` varies between trades the way it does live - the
 mechanical effect reaches R itself:
 
-| priced arm, 200 books | clears the control | names `spread_over_risk` |
+| priced arm, 300 books | clears the control | names `spread_over_risk` |
 | --- | ---: | ---: |
-| target R | 47.50% +-3.53 | 26.00% +-3.10 |
-| target P(stop) | 100.00% | 65.50% +-3.36 |
-
-The priced pool's mean R is -0.1627 against the theorem's -0.1670 - minus the
-mean of `spread_over_risk` itself, z = +1.34. So the arm is a null too: the
-spread is the only thing paying, and it is paying exactly what it costs.
+| target R | 34.00% +-2.73 | 13.67% +-1.98 |
+| target P(stop) | **99.67% +-0.33** | 50.33% +-2.89 |
 
 **`spread_over_risk` predicting stops is not a discovery about this book.** It
-is what a spread does, and the null world produces it at 98-100%. That does not
-make the gate wrong - charging less spread is still worth doing, and
-[exiting.md](exiting.md) derived it from a cost decomposition rather than from
-this scan - but it should stop being cited as the one feature that survived a
-scan. It survived because it is the cost, and the cost is not information.
+is what a spread does, and a world with no edge in it produces the same result
+98 to 100 times in a hundred. That does not make the gate wrong - charging less
+spread is still worth doing, and [exiting.md](exiting.md) derived it from a
+cost decomposition rather than from this scan - but it should stop being cited
+as the feature that survived a scan. It survived because it is the cost, and
+the cost is not information.
+
+One pre-registered condition fired here and is not explained away. The priced
+pool's mean R is -0.14449 +-0.00226 against the theorem's -0.15140 - minus the
+mean of `spread_over_risk` itself - which is **z = +3.06**, so that arm is
+0.69 points of risk better than an exact null, or 4.6% of the 15.1 points it
+charges. A smaller independent pool at another seed reads +0.33 points
+(z = +0.61), so the miss sits at the edge of what the check can resolve, and it
+is not concentrated in any one instrument family. It is reported rather than
+resolved because it cannot touch what the priced arm is used for: a bias of
+half a point of risk does not move a rate of 99.67%.
 
 ### Power, on the scan side
 
@@ -367,15 +384,17 @@ An edge injected into half the book, chosen by a feature the scan already sees:
 
 | edge | scan clears its control | names the right feature |
 | ---: | ---: | ---: |
-| +5% of risk | 6.00% +-2.37 | 0.00% |
-| +10% | 7.00% +-2.55 | 1.00% +-0.99 |
-| +20% | 12.00% +-3.25 | 1.00% +-0.99 |
-| +40% | 41.00% +-4.92 | 21.00% +-4.07 |
+| +5% of risk | 6.00% +-1.50 | 0.40% +-0.40 |
+| +10% | 7.20% +-1.63 | 0.40% +-0.40 |
+| +20% | 12.00% +-2.06 | 2.40% +-0.97 |
+| +40% | **41.20% +-3.11** | 25.60% +-2.76 |
 
 **At 397 closes the scan cannot see a 20%-of-risk effect.** It finds a
-40%-of-risk one two times in five and names the right feature one time in five.
-A method with an 8% false-positive rate and no power is not a conservative
-method; it is a method that returns "no" whatever is true.
+40%-of-risk one two times in five and names the right feature one time in four.
+A method with a nominal false-positive rate and no power is not a conservative
+method; it returns "nothing here" almost whatever is true, and `winning.md`'s
+null should be read as "this book cannot answer the question" rather than as
+"the answer is no".
 
 ## 6. Power on the bootstrap side, and what `spending.md` got wrong
 
@@ -441,19 +460,28 @@ sizes.**
 
 ### How many closes before a cut means anything
 
+The width of a 95% interval on return-on-risk over `n` closes is
+**about 330 / sqrt(n) points of risk**. Measured: 59 points at n=29, 29 at
+n=133, 19 at n=300, 11 at n=1,000 - the rule is a little wide below n=50, which
+is the under-coverage of section 1 seen from the other side. That one line
+settles most arguments before any test is run: **a claim smaller than the
+interval's own width is not a claim.**
+
 | you want to claim | closes needed |
 | --- | ---: |
-| a strategy is separately worse than the book, at all | **250 in that strategy** - below that the interval is wider than the effect |
-| a genuine +10% of risk, one test | 622 |
-| a genuine +10% of risk, one row of a five-row table | 857 |
-| a genuine +5% of risk, one test | 2,393 |
-| a genuine +5% of risk, one row of a five-row table | 3,769 |
+| a strategy is 20 points of risk worse than the book | **~270 in that strategy** |
+| a strategy is 10 points worse | ~1,100 |
+| a genuine +10% of risk, one test, 80% power | 620-630 |
+| a genuine +10% of risk, one row of a five-row table | 860-900 |
+| a genuine +5% of risk, one test, 80% power | 2,400-2,600 |
+| a genuine +5% of risk, one row of a five-row table | 3,400-3,800 |
 | a genuine +2% of risk | beyond 8,000 |
+| an entry feature worth +20% of risk, by the tercile scan | far beyond 397 |
 
-The 250 comes from the width column: at n=250 a 95% interval is about 20 points
-of risk wide, so a claim of "this strategy is 20 points worse" is the smallest
-one it can carry. At n=29 the interval is 59 points wide and no strategy-level
-claim smaller than that means anything at all.
+Ranges are the spread between seed 606 and seed 909. At n=29 - where half this
+book's tables are cut - the interval is 59 points wide, so **no strategy-level
+claim smaller than 59 points means anything at all**, and the largest claim on
+`spending.md`'s strategy table is 34.
 
 ### The correction for a twelve-row table
 
@@ -551,8 +579,9 @@ as strengthened by monotonicity across two tables.
   book-rate world.
 * The monotone falling shape arises by chance in 15.40% +-0.81 of null books,
   against 16.67% for a coin.
-* The two tables are statistically independent, so "monotone in two tables" is
-  a factor of 2.7, not corroboration.
+* The two tables are statistically independent, so requiring both to be
+  monotone moves the null rate from 36.25% to 15.25% - a factor of 2.4, which
+  is the whole value of the corroboration.
 * At n=30 the interval is ~58 points wide, the bootstrap is anti-conservative
   there, and the endpoints move 0.6 to 0.9 points between seeds.
 
@@ -560,23 +589,43 @@ What is left is a **-53.3%** point estimate on 30 closes. In the world where
 every row truly runs at the book's own -22.2%, the three-band cut names at
 least one row reading `<= -34.3%` with an interval excluding zero **42.80%
 +-1.11** of the time, so a band that looks much worse than the book is what a
-three-row cut of a uniformly losing book produces two times in five. The
-*mechanism* in `spending.md` - that a
-planned reward-to-risk is an output of level geometry rather than a decision,
-and that the median trade reaches 38.5% of its own target - is measured
-separately and does not depend on this table. **Keep the mechanism; drop the
-interval.**
+three-row cut of a uniformly losing book produces two times in five.
 
-### Confirmed: `winning.md`'s null
+The *mechanism* in `spending.md` - that a planned reward-to-risk is an output
+of level geometry rather than a decision, and that the median trade reaches
+38.5% of its own target - is measured separately and does not depend on this
+table. **Keep the mechanism; drop the interval.**
+
+### Never was evidence: the exit-kind table's two closing intervals
+
+`spending.md`'s exit table has `stop` at **-102.7% [-110.3%, -94.4%]** and
+`target` at **+81.5% [+54.9%, +116.7%]**, both excluding zero. Neither is a
+finding about anything: a stop that fires returns about -1R by definition and a
+target that fires returns about +1R times its own ratio. The null world
+reproduces both - its stop row reads -1.0146 on the untrailed shapes against a
+nominal -1.000, and its target row +0.786 against the live +0.796. They are
+useful as a check that the accounting works, which is how the null world uses
+them, and they should never be counted among the intervals a page "found".
+
+### Confirmed, with a caveat about what it means: `winning.md`'s null
 
 Nothing in the feature set separates winners from losers, and the calibration
-says the report was right for the right reason: a null book's biggest gap
-reaches 0.433 in 23% of cases, and the permutation control clears at 8.00%
-+-1.36 rather than 98% without it.
+says the page was right for the right reason. Its permutation control clears at
+**4.80% +-0.68** on null books - nominal - against 98.50% for the uncontrolled
+read it replaces, and a null book's biggest gap reaches the live 0.433 in 12.9%
+of cases. That is the only method on this desk that calibrates.
+
+The caveat is power: at 397 closes the same scan finds an injected
++20%-of-risk effect 12.00% +-2.06 of the time. So `winning.md`'s null is
+honest, and it means "this book cannot answer the question" rather than "the
+answer is no".
 
 ### Withdrawn as evidence: `spread_over_risk` on `P(stop)`
 
-It clears in 98.25% +-0.66 of null books. It is the cost, not a pattern.
+It clears the same control in **98.30% +-0.41** of null books, and 99.67%
++-0.33 when the cost is charged as a price. It is the cost, not a pattern. The
+gate it motivated can stay - `exiting.md` derived it from a cost decomposition
+that does not depend on this scan - but the scan is not evidence for it.
 
 ## Two seeds, and the spread between them
 
@@ -604,7 +653,7 @@ from 2,000 books cannot say more than that.
 Written into the harness docstrings before any number was read.
 `calibfpr.py` fired 2 of 13 at seed 909 and 3 of 12 at seed 606 - the
 difference is the n=133 condition above and one condition added between the two
-runs - `calibscan.py` 2 of 6, `calibnull.py` 1 of 5.
+runs - `calibscan.py` 3 of 6, `calibnull.py` 1 of 5.
 
 | condition | outcome |
 | --- | --- |
@@ -621,9 +670,10 @@ runs - `calibscan.py` 2 of 6, `calibnull.py` 1 of 5.
 | Bonferroni over the rows that get an interval restores 5%, percentile | **FIRED** - 10.15%, so it is not recommended on the percentile bootstrap |
 | the same, studentised | **held** - 2.65%, conservative, and recommended with that stated |
 | the permutation control does not reject at 5% on Gaussian toy data | **held** - 5.00% +-0.89 |
-| the permutation control does not reject at 5% on null books | **held** - 8.00% +-1.36, two SE high and reported as such |
-| the scan cannot find a 40%-of-risk edge at 80% | **FIRED** - 41.00%, so the scan has almost no power and its nulls mean less than they look |
-| the null world's mean R misses the theorem by 3 SE | **held** - z = -0.65 on a million closes, z = +1.30 on the scan's flat pool, z = +1.34 on its priced pool |
+| the permutation control does not reject at 5% on null books | **held** - 4.80% +-0.68 over 1,000 books |
+| the scan cannot find a 40%-of-risk edge at 80% | **FIRED** - 41.20% +-3.11, so the scan has little power and its nulls mean less than they look |
+| the priced pool's mean R equals minus mean `spread_over_risk` within 3 SE | **FIRED** - z = +3.06, 0.69 points of risk on a 15.1-point cost; reported, not resolved |
+| the null world's mean R misses the theorem by 3 SE | **held** - z = -0.65 on a million closes and z = +1.33 on the scan's flat pool of 420,024 |
 | the null book does not resemble the live one | **partly FIRED** - the stop row reads -0.806 against -1.028 because trailed exits wear the `stop` label; -1.0146 on the untrailed shapes |
 
 ## What this does not say
