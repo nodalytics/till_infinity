@@ -229,29 +229,7 @@ def build(feeds: dict, rung: str, seed: int) -> dict:
     return {"A": simA, "B": simB, "bars": bars, "coarse": coarse}
 
 
-def auc_nstar(test: dict, floor: dict, z: float = 1.96) -> float:
-    """Rows per class at which this arm would clear the floor.
-
-    The arm separates when the test AUC's lower bound clears the floor's upper
-    bound. Both intervals are bootstrap intervals on a held-out sample, so their
-    half-widths shrink as `1/sqrt(n)` while the gap between the two AUCs does
-    not - which gives
-
-        n* = n * (z * (se_test + se_floor) / (auc_test - auc_floor))**2
-
-    Two things this does not claim. The gap is held fixed, and in practice it
-    *grows* with n because a boosted ensemble handed more rows finds more - so
-    `n*` is an upper bound on the separating sample for this classifier, not an
-    estimate of it. And it says nothing about a different battery. Section five
-    checks the `1/sqrt(n)` half of it empirically rather than assuming it.
-    """
-    if test.get("skipped") or floor.get("skipped"):
-        return float("nan")
-    delta = test["auc"] - floor["auc"]
-    if delta <= 0:
-        return float("inf")
-    se = (test["hi"] - test["lo"]) / (2 * z) + (floor["hi"] - floor["lo"]) / (2 * z)
-    return float(test["n"] * (z * se / delta) ** 2)
+auc_nstar = G.auc_nstar
 
 
 def run_arm(tag: str, xa: np.ndarray, xb: np.ndarray, names: list[str], seed: int,
@@ -512,6 +490,51 @@ def main() -> None:  # noqa: PLR0915
         results[rung]["measured"] = {"frac_zero_real": fz_real, "frac_zero_sim": fz_sim,
                                      "absq10_real": q10_real, "absq10_sim": q10_sim}
     payload["ladder"] = results
+
+    # ------------------------------- [4b] where the residual actually lives ---
+    print("\n[4b] THE SAME ARMS, SPLIT BY QUOTE RESOLUTION")
+    print("    The quote grid is fixed in price and the price is geometric, so the")
+    print("    *effective* resolution - lattice points per per-tick sigma - drifts within")
+    print("    the sample and drifts differently on every realised path. A rebuild given")
+    print("    only a volatility and a tick rate cannot match that: it is a property of")
+    print("    the path, not of the law. If that is what the surviving arms read, the")
+    print("    coarse band carries the residual and the fine band sits at its floor.")
+    print(f"{'band':16s} {'feeds':>6s} {'arm':12s} {'n/class':>8s} {'AUC':>8s} "
+          f"{'95% CI':>17s} {'floor':>7s} {'gap':>8s} {'verdict':>11s} {'n*':>11s}")
+    best = RUNGS[-1]
+    bands = {"pts/sigma >= 50": {f: d for f, d in fine.items() if d["res"] >= 50},
+             "pts/sigma < 50": {f: d for f, d in fine.items() if d["res"] < 50}}
+    payload["bands"] = {}
+    for bname, sub in bands.items():
+        if len(sub) < 2:
+            continue
+        ra = cat([d["ri"][: d["h"]] for d in sub.values()])
+        rb2 = cat([d["ri"][d["h"]: 2 * d["h"]] for d in sub.values()])
+        bb = build(sub, best, SEED)
+        sa = cat(bb["A"])
+        cw = min(ra.size // W_TICK, MAXROW)
+        ck = min(ra.size // KTUP, MAXROW)
+        for kind, cp, fn in (("window", cw, J.tick_window_features),
+                             ("k-tuple", ck, J.ktuple_features)):
+            arg = W_TICK if kind == "window" else KTUP
+            xa2, nms = fn(ra, arg)
+            xb2, _ = fn(rb2, arg)
+            xs2, _ = fn(sa, arg)
+            fl = run_arm("floor", xa2, xb2, nms, SEED + 2, cp)
+            tt = run_arm("test", xa2, xs2, nms, SEED + 4, cp)
+            if fl.get("skipped") or tt.get("skipped"):
+                continue
+            ns = auc_nstar(tt, fl)
+            print(f"{bname:16s} {len(sub):6d} {kind:12s} {tt['n']:8d} {tt['auc']:8.4f} "
+                  f"[{tt['lo']:.4f},{tt['hi']:.4f}] {fl['auc']:7.4f} "
+                  f"{tt['auc'] - fl['auc']:+8.4f} "
+                  f"{'CAUGHT' if tt['lo'] > fl['hi'] else 'at floor':>11s} "
+                  f"{('inf' if ns == float('inf') else format(ns, ',.0f')):>11s}")
+            payload["bands"].setdefault(bname, {})[kind] = {"test": tt, "floor": fl,
+                                                            "nstar": ns}
+            ledger.append({"test": f"rung `{best}` not caught in the {bname} band",
+                           "feed": kind, "value": tt["auc"] - fl["auc"],
+                           "fired": tt["lo"] > fl["hi"]})
 
     # ------------------------------------------ [5] does n* scale as it says --
     print("\n[5] DOES THE INTERVAL SHRINK AS 1/sqrt(n)? - the assumption behind n*")

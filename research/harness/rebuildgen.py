@@ -751,6 +751,34 @@ def qq(a: np.ndarray, b: np.ndarray, probs=QQ_P) -> list[dict]:
     return out
 
 
+def auc_nstar(test: dict, floor: dict, z: float = 1.96) -> float:
+    """Rows per class at which a discriminator arm would clear its own floor.
+
+    An arm separates when the test AUC's lower bound clears the floor's upper
+    bound. Both are bootstrap intervals on a held-out sample, so their
+    half-widths shrink as `1/sqrt(n)` while the gap between the two AUCs does
+    not, which gives
+
+        n* = n * (z * (se_test + se_floor) / (auc_test - auc_floor))**2
+
+    Two things this does not claim. The gap is held fixed and in practice it
+    *grows* with n, because a boosted ensemble handed more rows finds more - so
+    `n*` is an upper bound on the separating sample for this classifier rather
+    than an estimate of it. And an arm already at or below its floor returns
+    infinity, which means "not separable by this battery", not "identical".
+    `rebuildladder.py` section five checks the `1/sqrt(n)` half empirically.
+    """
+    if not test or not floor or test.get("skipped") or floor.get("skipped"):
+        return float("nan")
+    if "lo" not in test or "lo" not in floor:
+        return float("nan")
+    delta = test["auc"] - floor["auc"]
+    if delta <= 0:
+        return float("inf")
+    se = (test["hi"] - test["lo"]) / (2 * z) + (floor["hi"] - floor["lo"]) / (2 * z)
+    return float(test["n"] * (z * se / delta) ** 2)
+
+
 def nstar(d: float, alpha_c: float = 1.3581) -> float:
     """Sample size at which a two-sample KS at alpha = 0.05 separates two
     distributions whose true sup-distance is `D`.
