@@ -25,8 +25,11 @@ Five rungs, in increasing ambition.
    few bits of whatever was drawn, because the quote is quantised. Truncated
    LCGs fall to lattice reduction on consecutive outputs, and the number of
    outputs needed is about `modulus bits / observed bits`. Rung 1 is the
-   detector for exactly this hypothesis: an LCG small enough to be attackable
-   leaves a lattice, so a clean rung 1 excludes the family rung 3 would attack.
+   detector for a *grossly* broken source and no more: its own positive control
+   says so. RANDU reads 2,616x there, and a 48-bit LCG truncated to ten bits -
+   the realistic case - reads 2.84 against numpy's 1.54, which is inside the 3x
+   bar. **A clean rung 1 therefore does not exclude the family rung 3 attacks**,
+   which is why rung 3 is run rather than argued away.
    The attack runs against a catalogue of nine published parameter sets and needs
    the *leading bits of the draw*, not a rank - so the observed word is read off
    the exact inverse-normal interval the quote pins the uniform to, and a tick
@@ -303,7 +306,7 @@ def observed_words(mid: np.ndarray, grid: float, sigma_tick: float, bits: int):
     return wl.astype(np.int64), ok
 
 
-def align(feeds: list[str], slot_ms: int) -> tuple[list[str], np.ndarray]:
+def align(feeds: list[str], slot_ms: int) -> tuple[list[str], np.ndarray, np.ndarray]:
     """Line the feeds up by publication slot.
 
     `twins.md` measured all sixteen synthetics publishing on one clock to within
@@ -321,7 +324,7 @@ def align(feeds: list[str], slot_ms: int) -> tuple[list[str], np.ndarray]:
         uniq, first = np.unique(slot, return_index=True)
         per[f] = (uniq, t["mid"][first])
     if len(per) < 2:
-        return [], np.empty((0, 0))
+        return [], np.empty((0, 0)), np.empty(0)
     common = None
     for f, (u, _m) in per.items():
         common = u if common is None else np.intersect1d(common, u, assume_unique=True)
@@ -331,7 +334,7 @@ def align(feeds: list[str], slot_ms: int) -> tuple[list[str], np.ndarray]:
         idx = np.searchsorted(u, common)
         rows.append(m[idx])
         names.append(f)
-    return names, np.array(rows)
+    return names, np.array(rows), common
 
 
 def forward_auc(x: np.ndarray, y: np.ndarray, names: list[str], seed: int,
@@ -391,6 +394,19 @@ def rebuild_ticks(feed: str, n: int, seed: int) -> np.ndarray:
         return bb["ticks"]
     if feed == "step_index":
         return S.sim_step(max(rb["n"], n // S.TPB + 4), 0.5, seed, p0)["ticks"]
+    if feed in V.JUMP_NOMINAL:
+        nom = V.JUMP_NOMINAL[feed]
+        d = np.diff(rt["mid"])
+        jmed = float(np.median(np.abs(d[d != 0])))
+        idx = np.flatnonzero(np.abs(d) > 10 * jmed)
+        span = (rt["ts"][-1] - rt["ts"][0]) / 60000.0
+        rate = max(idx.size / span, 1e-6)
+        sig = (nom / 100.0) / math.sqrt(G.MINUTES_PER_YEAR)
+        js = math.sqrt(0.7477 * sig ** 2 / rate)
+        return G.bars_from_stream(
+            G.gen_jump(n + 120, nom, 1.0, rate, js, p0, G.quote_grid(rt["mid"]),
+                       np.random.default_rng([seed, G.feed_seed(feed)])),
+            60, max(rb["n"], n // 60 + 4), keep_ticks=n + 4)["ticks"]
     if feed.startswith("range_break"):
         d = np.diff(rt["mid"])
         stp = float(np.median(np.abs(d[d != 0])))
@@ -596,6 +612,7 @@ def main() -> None:
                                                  "found": found}
 
     # --------------------------------------------------- rung 4: joint stream --
+    from scipy.stats import chi2 as _chi2
     print("\n[4] RUNG 4 - THE JOINT STREAM, WHICH IS THE ANGLE SPECIFIC TO THIS VENUE")
     print("    twins.md: all sixteen synthetics publish on one clock to within 9ms. If one")
     print("    stream feeds them all, consecutive draws appear as different feeds at the")
@@ -603,7 +620,7 @@ def main() -> None:
     one_sec = [f for f in SYNTH if "_1s_" in f or f in
                ("step_index", "range_break_100_index", "range_break_200_index")
                or f.startswith("jump_")]
-    names, mat = align(one_sec, 1000)
+    names, mat, common = align(one_sec, 1000)
     if mat.size:
         inc = np.diff(mat, axis=1)
         n = inc.shape[1]
@@ -635,7 +652,6 @@ def main() -> None:
         print(f"      worst 2-D grid chi-square over {nb} pairs of the {len(rich)} feeds")
         print(f"      with 64+ distinct increments: p = {worst_p:.3g} on {worst_pair}, "
               f"Bonferroni bar {0.001 / nb:.3g}")
-        from scipy.stats import chi2 as _chi2
         lat_idx = [i for i in range(len(names)) if i not in rich]
         worst_s, worst_sp = 1.0, None
         for a in lat_idx:
@@ -663,6 +679,60 @@ def main() -> None:
               + " ".join(f"k={k}:{v:.2f}" for k, v in zip((2, 3, 4), cv, strict=False))
               + f"  (PCG64 {pcgr[0]:.2f}/{pcgr[1]:.2f}/{pcgr[2]:.2f})")
         hit = any(v > 3 * b for v, b in zip(cv, pcgr, strict=False) if v == v)
+        # THE CONTROL. Only 46,757 of 86,400 one-second slots survive the
+        # intersection over fifteen feeds, so more than half of these aligned
+        # increments are sums of two or more real increments - and *which* ones
+        # is shared by every feed, because the mask is the intersection. That
+        # manufactures dependence in |increment| and, on the lattice feeds, in
+        # the sign indicator, with no shared state whatever. `twins.md` already
+        # measured the same artefact as a faked +0.19 in |return|. So the same
+        # two tests are run on fifteen independent PCG64 rebuilds sampled on the
+        # *same* slot lattice: whatever they report is the mask, not the venue.
+        base = int(common[0])
+        need = int(common[-1] - base) + 4
+        sim_rows, sim_names = [], []
+        for f in names:
+            tk = rebuild_ticks(f, need, SEED + 77)
+            if tk.size < need:
+                continue
+            sim_rows.append(tk[(common - base).astype(np.int64)])
+            sim_names.append(f)
+        ctl_chi = ctl_sign = float("nan")
+        if len(sim_rows) >= 2:
+            sinc = np.diff(np.array(sim_rows), axis=1)
+            su = np.array([J.to_uniform(sinc[i], rng) for i in range(sinc.shape[0])])
+            srich = [i for i in range(len(sim_names)) if np.unique(sinc[i]).size >= 64]
+            ctl_chi = 1.0
+            for a in srich:
+                for b in srich:
+                    if a >= b:
+                        continue
+                    g = J.grid_chi2(np.column_stack([su[a], su[b]]).ravel(), 2, 8)
+                    ctl_chi = min(ctl_chi, g.get("p", 1.0))
+            slat = [i for i in range(len(sim_names)) if i not in srich]
+            ctl_sign = 1.0
+            for a in slat:
+                for b in range(len(sim_names)):
+                    if b == a:
+                        continue
+                    sa = (sinc[a] > 0).astype(np.int64)
+                    sb = (sinc[b] > 0).astype(np.int64)
+                    tab = np.bincount(sa * 2 + sb, minlength=4).reshape(2, 2).astype(float)
+                    exp = np.outer(tab.sum(1), tab.sum(0)) / tab.sum()
+                    st = float(((tab - exp) ** 2 / np.maximum(exp, 1e-9)).sum())
+                    ctl_sign = min(ctl_sign, float(_chi2.sf(st, 1)))
+        print(f"      CONTROL - {len(sim_rows)} independent PCG64 rebuilds on the same "
+              f"{n:,} slots,")
+        print(f"      {100 * (1 - n / ((common[-1] - common[0]) or 1)):.0f}% of which are "
+              f"gaps shared by every feed: worst grid p = {ctl_chi:.3g}, "
+              f"worst sign p = {ctl_sign:.3g}")
+        payload.setdefault("joint_control", {}).update(
+            {"n_feeds": len(sim_rows), "grid_p": ctl_chi, "sign_p": ctl_sign})
+        ledger.append({"test": "cross-feed dependence beyond what the shared slot mask "
+                               "makes on independent rebuilds", "feed": "joint",
+                       "value": math.log10(max(worst_p, 1e-300))
+                       - math.log10(max(ctl_chi, 1e-300)),
+                       "fired": worst_p < 0.01 * ctl_chi if ctl_chi == ctl_chi else False})
         ledger.append({"test": "no cross-feed correlation past the band",
                        "feed": "joint", "value": float(np.abs(c[iu]).max()),
                        "fired": npast > 3})
