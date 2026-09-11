@@ -12,16 +12,27 @@ a model, and a model can be interrogated where the sample runs out - which is
 exactly where this desk keeps needing answers, because sixty days of bars and
 twenty-four hours of ticks is not enough sample to price a tail.
 
-Six harnesses. [`rebuildgen.py`](harness/rebuildgen.py) holds the generators, the
-statistical battery and the discriminator, and states no results;
-[`rebuildvol.py`](harness/rebuildvol.py),
+Eight harnesses. [`rebuildgen.py`](harness/rebuildgen.py) holds the generators,
+the statistical battery and the discriminator, and states no results;
+[`rebuildall.py`](harness/rebuildall.py) is the one command that runs the rest.
+Of the studies, [`rebuildpaper.py`](harness/rebuildpaper.py) needs no database
+at all and has run; [`rebuildvol.py`](harness/rebuildvol.py),
 [`rebuildstep.py`](harness/rebuildstep.py),
 [`rebuildspike.py`](harness/rebuildspike.py),
 [`rebuildpower.py`](harness/rebuildpower.py) and
-[`rebuildjudge.py`](harness/rebuildjudge.py) are the studies. Each states its
-kill conditions in its docstring before any number, and each records - in the
-same docstring - which conditions were amended during a dry run against
-synthetic data and what forced the amendment.
+[`rebuildjudge.py`](harness/rebuildjudge.py) read `research.db` and wait on the
+lab. Each states its kill conditions in its docstring before any number, and
+each records - in the same docstring - which conditions were amended during a dry
+run against synthetic data and what forced the amendment.
+
+**The summary line, stated plainly.** The headline this page owes is the sample
+size at which a test starts separating the rebuild from the feed, per family.
+**It is not available for any family**, because it is a two-sample statistic and
+`research.db` is on a machine that has been unreachable since part-way through
+this work. What is available is on this page: 103 comparisons against published
+measurements, a calibrated adversarial discriminator and randomness battery, and
+one new number for Range Break. The `n*` table is one command away and the
+command is written down.
 
 ## The parameter budget, which is the whole experiment
 
