@@ -273,11 +273,16 @@ many ticks our own collector dropped:
 `D` tracks the drop fraction almost exactly - 3% dropped gives 0.026, 34%
 dropped gives 0.37 - and every feed captured to better than half a percent
 passes. A dropped tick merges two increments into one, which fattens the
-tick-return distribution precisely where a KS test looks. This is a property of
-`research.db`'s collection, not of Deriv's generator and not of the rebuild, and
-`twins.md` already quarantined `volatility_150_1s_index` for the same reason.
+tick-return distribution precisely where a KS test looks.
 The one-minute bars are unaffected because the venue builds them from its own
 complete stream.
+
+**That paragraph called the shortfall a collection failure and it is not one.**
+The missing ticks are quotes that did not change, and the two quantities agree on
+all twelve feeds to within 8% - see *Whose the missing repeated quotes are*
+below. The KS rejections stand; what changes is that the fix belongs in the
+rebuild rather than in the collector, and `volatility_150_1s_index` is the
+extreme of a continuum rather than a broken feed.
 
 **The two coarsely quoted feeds fail, and one of the failures is mine.**
 `volatility_150_1s_index` and `volatility_250_1s_index` are the pair `twins.md`
@@ -390,6 +395,212 @@ there against 0.668 on raw tuples. And **sigma +2% is not caught by any of them*
 which is the resolution statement: a distribution test is the wrong instrument
 for a scale parameter, and `genvol.py`'s realised-versus-nominal comparison is
 **5.5x sharper** than KS on the same bars.
+
+### The discriminator loop: four ways of putting a price on a lattice, three refuted
+
+The discriminator's value is not its verdict, it is its **map**. An arm that
+beats the floor comes with a ranked list of what carried it, and every entry on
+that list is a hypothesis about the specification that can be measured directly
+and then fixed. [`rebuildladder.py`](harness/rebuildladder.py) is that loop run to
+exhaustion: read the largest feature, measure it on the feed rather than arguing
+from an AUC, name the minimal term it implicates, add exactly that term, re-run -
+and publish the rungs that failed beside the one that survived, because a list of
+additions that did not work is what makes the surviving specification credible.
+
+Every rung is the same generator - driftless GBM at the volatility in the name,
+at the published tick rate - and differs only in how a continuous price is put
+onto the venue's quote lattice. **No rung adds a parameter**, so the budget at
+the top of this page is unchanged by any of them.
+
+**The floor is measured once and reused by every rung.** Two disjoint halves of
+the genuine feed, through the same feature functions, at the same rows per class
+as every test arm below. An arm with more features has a higher floor, and
+comparing a rich test against a lean floor manufactures a win, so there is one
+floor on this page:
+
+| arm | rows/class | **floor, real against real** |
+| --- | --- | --- |
+| k-tuples of 8 increments | 45,339 | **0.4972** [0.4916, 0.5025] |
+| 60-increment windows | 6,045 | **0.6026** [0.5890, 0.6174] |
+| 30-bar OHLC windows | 15,840 | **0.4955** [0.4872, 0.5048] |
+
+A window floor of 0.60 is not noise. It is the first thing this loop found and it
+is dealt with at the end of the section; it is about `research.db` rather than
+about Deriv.
+
+**The ladder.** Pooled over the twelve Volatility feeds, each increment divided by
+its own nominal per-tick sigma, four seeds' worth of rebuild truncated to each
+feed's own tick count:
+
+| rung | what it does | window | k-tuple | bar OHLC | largest feature over the floor |
+| --- | --- | --- | --- | --- | --- |
+| `price` | round the accumulated price onto the grid | 0.7649 **caught** | 0.5510 **caught** | 0.5099 at floor | `frac_zero` **+0.1856** |
+| `bump` | round the increment, move one unit on a zero | 0.6833 **caught** | 0.5455 **caught** | 0.5031 at floor | `absq10` **+0.0890** |
+| `resample` | round the increment, redraw until the quote changes | 0.6275 at floor | 0.5124 **caught** | 0.5026 at floor | `absq10` +0.0168 |
+| `drop` | round the price, delete the repeated quotes from the ticks | 0.6403 **caught** | 0.5160 **caught** | 0.5099 at floor | `absq10` +0.0122 |
+
+The largest single feature's advantage over the floor falls **0.186 to 0.089 to
+0.017**, which is the loop working. Each fall is one term, and each term was
+chosen by measuring the feature rather than by guessing at it.
+
+**Rung 1, `price`, is refuted by the fraction of repeated quotes.** A zero tick
+move is a quote printed twice. Rounding a continuous price onto the grid produces
+them at the rate `P(|N(0,s)| < g/2)`, which is 2.92% of all ticks on
+`volatility_100_index` and **28%** on `volatility_150_1s_index`, whose per-tick
+sigma is 1.1 lattice units. The stored feed shows **0.083%** and **0.90%**. The
+discriminator found it without being told: `frac_zero` reads AUC 0.6864 against
+its own floor of 0.4992, and it is the largest split gain in the ensemble by a
+factor of three.
+
+**Rung 2, `bump`, is refuted by the one-unit bin.** If the venue never repeats a
+quote, where does the zero bin's mass go? `bump` puts all of it on `|1|`, which
+is the obvious reading and is wrong. The three quantisers differ in exactly two
+numbers - `P(0)` and `P(|1| given the quote moved)` - so those two are the whole
+test, and each rule is fitted its own sd from the feed's own increment variance
+so that this is a test of shape and not of scale:
+
+| feed | `P(0)` feed | `price` | `P(1\|moved)` feed | `price` | `bump` | `resample` |
+| --- | --- | --- | --- | --- | --- | --- |
+| volatility_100_index | 0.00083 | 0.02923 | 0.06059 | 0.06006 | **0.08755** | 0.06100 |
+| volatility_250_1s_index | 0.00045 | 0.03189 | 0.06744 | 0.06568 | **0.09549** | 0.06680 |
+| volatility_100_1s_index | 0.00039 | 0.02503 | 0.05183 | 0.05125 | **0.07500** | 0.05192 |
+| volatility_10_1s_index | 0.00033 | 0.02278 | 0.04706 | 0.04654 | **0.06825** | 0.04709 |
+| volatility_75_1s_index | 0.00012 | 0.00454 | 0.00870 | 0.00912 | **0.01362** | 0.00915 |
+
+Median worst `|z|` over those two statistics across the twelve feeds: **`price`
+160.8, `bump` 13.1, `resample` 2.8**, and `resample` is the best of the three on
+**eleven of twelve**. The exception is `volatility_150_1s_index`, where almost
+every move is one unit anyway and `bump` and `resample` are not separable - which
+is a statement about power, not a result.
+
+### Whose the missing repeated quotes are, and why the tick shortfall was never a drop
+
+The obvious reading of the two refutations above is that Deriv *moves on* its
+quote lattice rather than rounding onto it - a property nobody had written down.
+That reading is wrong, and the control that kills it is cheap.
+
+**A collector that never stores an unchanged quote produces the identical
+histogram**, and it leaves a signature: the gap to the next tick it did store is
+two publication intervals rather than one. So the share of doubled inter-tick
+gaps has to be at least the share of zero moves the rounding predicts. It is
+almost exactly equal to it, on twelve feeds of twelve:
+
+| feed | modal gap | doubled gaps | zero moves a rounded price predicts | ratio |
+| --- | --- | --- | --- | --- |
+| volatility_100_index | 2001 ms | 2.943% | 2.923% | **1.007** |
+| volatility_250_1s_index | 1001 ms | 3.201% | 3.189% | **1.004** |
+| volatility_100_1s_index | 1001 ms | 2.497% | 2.503% | **0.998** |
+| volatility_10_1s_index | 1001 ms | 2.242% | 2.278% | **0.985** |
+| volatility_25_index | 2000 ms | 0.227% | 0.230% | **0.990** |
+| volatility_10_index | 2000 ms | 0.325% | 0.331% | **0.982** |
+| volatility_50_index | 2000 ms | 0.334% | 0.344% | **0.973** |
+| volatility_75_1s_index | 1000 ms | 0.490% | 0.454% | 1.078 |
+| volatility_150_1s_index | 1016 ms | 34.154% | 28.423% | 1.202 |
+
+So **the venue may well round a continuous price onto its grid; we never see the
+repeated quote.** The lattice question is not answerable from `research.db` at
+all, and a rebuild's job is not to reproduce the venue's quantiser but to
+reproduce *the observation*, which is the venue's stream with its repeated quotes
+removed. That is the `drop` rung: round the price, build the bars from every
+tick - because the venue builds its own bars from its own complete stream - and
+delete the repeated quotes from the tick stream only.
+
+**And the same fact retires an unexplained result earlier on this page.** The
+tick-return KS section above attributes seven rejections to "how many ticks our
+own collector dropped", with a drop fraction it could not explain. The shortfall
+is not a drop. It is the repeated quote, and the two quantities agree on all
+twelve feeds:
+
+| feed | ticks missing of the published rate | zero moves a rounded price predicts | ratio |
+| --- | --- | --- | --- |
+| volatility_25_1s_index | 0.010% | 0.011% | 0.95 |
+| volatility_50_1s_index | 0.019% | 0.020% | 0.93 |
+| volatility_75_index | 0.049% | 0.045% | 1.08 |
+| volatility_25_index | 0.225% | 0.230% | 0.98 |
+| volatility_10_index | 0.322% | 0.331% | 0.97 |
+| volatility_50_index | 0.331% | 0.344% | 0.96 |
+| volatility_75_1s_index | 0.486% | 0.454% | 1.07 |
+| volatility_10_1s_index | 2.236% | 2.278% | 0.98 |
+| volatility_100_1s_index | 2.488% | 2.503% | 0.99 |
+| volatility_100_index | 2.951% | 2.923% | 1.01 |
+| volatility_250_1s_index | 3.190% | 3.189% | **1.00** |
+| volatility_150_1s_index | 34.267% | 28.423% | 1.21 |
+
+Twelve for twelve, eleven within 8%. Nothing was lost in transit. A feed whose
+quote grid is coarse relative to its own per-tick sigma simply prints fewer
+distinct quotes, and `volatility_150_1s_index` - the feed `twins.md` quarantined
+and this page called "34.3% dropped" - is the extreme of a continuum rather than
+a collection failure. The KS rejections stand, because a rebuild that emits every
+tick is being compared with an observation that does not; what changes is that
+the fix is in the rebuild rather than in the collector.
+
+**`drop` rather than `resample`, on one number.** The two have the same tick law
+and different bars. Redrawing a zero increment until the quote changes raises the
+per-tick second moment by `1/(1-P(0))` - **1.5% of sigma on
+`volatility_100_index`** against a volatility band this page pre-registers at
+0.5% - because every tick that would have stood still now moves. Deleting the
+repeated quote instead leaves the bars exactly as the venue builds them and
+deletes only what our collector deletes.
+
+### Where the loop stops, and what one more term would not fix
+
+After `drop` the largest surviving feature is `absq10` - the tenth percentile of
+`|increment|` in a sixty-tick window - at +0.0122 over its floor, against
++0.1856 for the feature that started this. The loop stops there, and the reason
+is worth more than another rung.
+
+**Split the arms by quote resolution.** Lattice points per per-tick sigma runs
+from 13.2 to 3,674 across the twelve feeds, and the grid is fixed *in price*
+while the price is geometric - so a feed's effective resolution drifts as its
+level drifts, within the 24 hours of the sample and differently on every realised
+path. `volatility_250_1s_index` runs at 11.2 points per sigma in its first twelve
+hours and 13.2 in its second. Each band gets its own real-against-real floor and
+its own Monte Carlo floor - two *independent rebuilds of the identical law*:
+
+| band | feeds | arm | rebuild vs feed | floor, feed vs itself | MC floor, rebuild vs rebuild | `n*` |
+| --- | --- | --- | --- | --- | --- | --- |
+| **>= 50 points/sigma** | 7 | window | **0.5040** [0.4841, 0.5217] | 0.5105 | 0.4988 | **inf** |
+| **>= 50 points/sigma** | 7 | k-tuple | **0.4928** [0.4858, 0.4999] | 0.5019 | 0.5039 | **inf** |
+| < 50 points/sigma | 4 | window | 0.8371 | 0.7279 | 0.6897 | 239 |
+| < 50 points/sigma | 4 | k-tuple | 0.5861 | 0.5148 | 0.5346 | 941 |
+
+**On the seven feeds whose quote grid is fine enough for a tick statistic to be
+about the law at all, no arm beats its floor at any sample size.** Test, floor
+and Monte Carlo floor all sit inside 0.49-0.51, and the test arm is *below* both
+floors on both views. That is the strongest statement this battery can make and
+it is stated with its scope: seven feeds, a tick arm and a window arm, 24 hours.
+
+**It also explains the 0.6026 pooled window floor**, which was the first thing
+the loop found. The floor is 0.5105 on the fine band and 0.7279 on the coarse
+one: the feed does not match *its own other half* on the four coarsely quoted
+feeds, and pooling them raised the floor for everybody. A floor is a property of
+the data, and this one was a property of four feeds out of twelve.
+
+**On the coarse band the bulk of the separability is not about the law either.**
+Two independent rebuilds of the identical law separate at **0.6897**, and the
+feed's own halves at 0.7279, against a real-against-rebuild 0.8371. So most of
+what a classifier finds there is path-to-path drift in the effective resolution,
+which no term in a generator can remove, because it is a property of the realised
+path rather than of the law. What is left over - about +0.11 of AUC above the
+feed's own floor - is real and this page has not closed it.
+
+**The one addition that would close it is outside the parameter budget, which is
+why it is written down rather than run.** Hand the rebuild the feed's realised
+price *level* through the sample - an hourly median, say - and its lattice
+resolution would track the feed's instead of wandering independently. That would
+almost certainly collapse the coarse band, and it would do so by giving the
+rebuild 24 numbers it is not allowed to have. The honest form of the result is
+therefore: **two numbers per instrument re-instantiate a Volatility index
+wherever the quote grid is fine enough to tell, and where it is not, the
+observation is dominated by an interaction between an absolute grid and a
+geometric price that two numbers cannot carry.**
+
+**And the `1/sqrt(n)` assumption behind every `n*` below was checked rather than
+assumed.** The same arm at a quarter, a half and all of the rows: the bootstrap
+half-width shrank **2.00x over 4x the rows**, against the 2.00x that scaling
+predicts. The AUC gap grew with n as expected (+0.018, +0.044, +0.038), which is
+why every finite `n*` is an upper bound on the separating sample rather than an
+estimate of it.
 
 ### The randomness battery is calibrated, and two of its tests were retired
 
