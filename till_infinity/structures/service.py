@@ -461,6 +461,15 @@ class Watcher:
         #: fields", which is a question about now, and a field that dies is
         #: visible within one window rather than diluted by months of history.
         self._published: deque[dict[str, float]] = deque(maxlen=LIVENESS_WINDOW)
+        #: Per constant field, the value it last held and for how many saves.
+        #: **Constant is not the same as dead.** The first production run of the
+        #: tally reported nine constant macro features; every one carried real,
+        #: moving values and was simply slow - `macro_us_core_inflation` is one
+        #: value across 23,721 decisions because core inflation is published
+        #: monthly. A check that cries wolf on correct behaviour trains people
+        #: to ignore it, which is the failure it exists to prevent.
+        self._constant_at: dict[str, float] = {}
+        self._constant_for: dict[str, int] = {}
         self.memory = memory
         self.detector = Detector(
             warmup=self.settings.warmup,
@@ -862,7 +871,9 @@ class Watcher:
         published = getattr(self, "_published", None)
         if not published:
             return "no published features yet"
-        got = liveness.report(published)
+        readings = liveness.survey(published)
+        liveness.stuck(readings, self._constant_at, self._constant_for)
+        got = liveness.report(published, runs=self._constant_for)
         return f"features: {got}" if got else f"features: all {len(published)} rows vary"
 
     def change_tally(self) -> str:

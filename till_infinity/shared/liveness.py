@@ -23,12 +23,38 @@ This asks. One question, mechanically: **does it vary?**
 
 ## Three states, because they want different actions
 
-* **constant** - one distinct value across the sample. Dead.
+* **constant** - one distinct value across the sample. Dead *if the sample is
+  long enough that it should have moved*, and that caveat is load-bearing: see
+  the note on slow series below.
 * **near-constant** - above `NEAR` share on a single value. Alive by the letter,
   useless in practice, and the shape a field takes while it is dying.
 * **absent** - the key is not on the rows at all. A different fault from being
   present and zero, and currently indistinguishable in every cut this project
   makes.
+
+## Constant is not the same as dead, and the first run proved it
+
+Deployed on 2026-09-11, the tally's first production save reported **nine
+constant macro features** - `macro_dollar`, `macro_us_breakeven`,
+`macro_us_real_yield` and six more. That read as a large find and it was a false
+positive.
+
+Checked against the journal, those fields carry real, moving values: the dollar
+at 118.07 and 118.75, breakevens at 2.35/2.37/2.40, real yields at
+2.42/2.43/2.46. They are **slow**, not dead. `macro_us_core_inflation` is truly
+one value across 23,721 decisions - because core inflation is published
+**monthly**, which is correct behaviour rather than a fault.
+
+The tally read a window of a few hours. A monthly series is constant in any
+window shorter than a month, so it will *always* look dead there - and a check
+that cries wolf on correct behaviour trains people to ignore it, which is
+precisely the failure it exists to prevent.
+
+So a field is only called dead when it has been constant **across saves**. One
+window says "it did not move today"; a value that is identical at every save for
+days is a field that has stopped. `Watcher.liveness_tally` keeps the previous
+reading per field and reports how many consecutive saves it has been stuck for,
+and `SLOW_SAVES` is the line between the two.
 
 ## What it deliberately ignores
 
@@ -48,6 +74,12 @@ from typing import Any
 #: still varies, so `constant` is None - but a feature that moves on one row in
 #: two hundred is not carrying information, it is decaying.
 NEAR = 0.99
+
+#: Consecutive saves a field must be constant for before it is called dead
+#: rather than slow. Macro series update monthly; a save happens every few
+#: minutes, so anything below this cannot distinguish a stopped field from an
+#: economic release schedule.
+SLOW_SAVES = 12
 
 
 @dataclass(slots=True)
@@ -143,7 +175,11 @@ def assert_alive(rows: Iterable[Mapping[str, Any]], *keys: str) -> None:
         )
 
 
-def report(rows: Iterable[Mapping[str, Any]], within: str | None = None) -> str:
+def report(
+    rows: Iterable[Mapping[str, Any]],
+    within: str | None = None,
+    runs: dict[str, int] | None = None,
+) -> str:
     """The dead and the dying, as a line somebody will actually read.
 
     Empty when everything varies, so it can be logged unconditionally without
@@ -159,15 +195,47 @@ def report(rows: Iterable[Mapping[str, Any]], within: str | None = None) -> str:
             if inner
         ]
         return "; ".join(parts)
-    return _line(got)
+    return _line(got, runs)
 
 
-def _line(readings: dict[str, Reading]) -> str:
-    dead = sorted(k for k, v in readings.items() if v.constant is not None)
+def stuck(
+    readings: dict[str, Reading], previous: dict[str, float], runs: dict[str, int]
+) -> dict[str, int]:
+    """How many consecutive readings each constant field has held the same value.
+
+    Mutates `previous` and `runs`, which the caller owns across saves. A field
+    that is constant *and* holds the value it held last time has its run
+    extended; one that moved starts again, which is what separates a monthly
+    economic series from a feature that has stopped.
+    """
+    for name, reading in readings.items():
+        if reading.constant is None:
+            runs.pop(name, None)
+            previous.pop(name, None)
+            continue
+        if previous.get(name) == reading.constant:
+            runs[name] = runs.get(name, 1) + 1
+        else:
+            runs[name] = 1
+        previous[name] = reading.constant
+    for name in list(runs):
+        if name not in readings:
+            runs.pop(name, None)
+            previous.pop(name, None)
+    return runs
+
+
+def _line(readings: dict[str, Reading], runs: dict[str, int] | None = None) -> str:
+    runs = runs or {}
+    constant = sorted(k for k, v in readings.items() if v.constant is not None)
+    dead = [k for k in constant if runs.get(k, 1) >= SLOW_SAVES]
+    slow = [k for k in constant if k not in dead]
     dying = sorted(k for k, v in readings.items() if v.near_constant)
     parts = []
     if dead:
-        parts.append(f"{len(dead)} constant ({', '.join(dead)})")
+        parts.append(f"{len(dead)} DEAD ({', '.join(dead)})")
+    if slow:
+        parts.append(f"{len(slow)} constant this window ({', '.join(slow)})")
     if dying:
         parts.append(f"{len(dying)} near-constant ({', '.join(dying)})")
     return ", ".join(parts)

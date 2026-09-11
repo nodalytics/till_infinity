@@ -89,3 +89,43 @@ def test_booleans_are_not_numbers_here():
     got = survey(rows(actionable=[False] * 20, edge=[1.0] * 20))
 
     assert "actionable" not in got
+
+
+def test_a_slow_field_is_not_a_dead_one():
+    """The tally's first production run called nine macro features constant, and
+    every one was carrying real moving values - the dollar at 118.07 and 118.75,
+    breakevens at 2.35/2.37/2.40. They update slowly, and the window was hours.
+
+    `macro_us_core_inflation` is genuinely one value across 23,721 decisions,
+    because core inflation is published **monthly**. That is correct behaviour."""
+    from till_infinity.shared.liveness import SLOW_SAVES, report, stuck, survey
+
+    at, runs = {}, {}
+
+    # A monthly series: constant within each window, but it moves between them.
+    for value in (2.37, 2.37, 2.35, 2.35, 2.40):
+        readings = survey(rows(macro_us_breakeven=[value] * 50))
+        stuck(readings, at, runs)
+    assert runs["macro_us_breakeven"] < SLOW_SAVES
+    assert "DEAD" not in report(rows(macro_us_breakeven=[2.40] * 50), runs=runs)
+
+    # A field that has stopped: the same value, save after save.
+    at, runs = {}, {}
+    for _ in range(SLOW_SAVES):
+        stuck(survey(rows(run_vol=[0.0] * 50)), at, runs)
+    assert runs["run_vol"] >= SLOW_SAVES
+    assert "DEAD" in report(rows(run_vol=[0.0] * 50), runs=runs)
+
+
+def test_a_field_that_starts_moving_again_loses_its_run():
+    """Otherwise a field is condemned once and never pardoned, and the tally
+    becomes a list of historical grievances rather than a reading of now."""
+    from till_infinity.shared.liveness import stuck, survey
+
+    at, runs = {}, {}
+    for _ in range(20):
+        stuck(survey(rows(edge=[0.0] * 40)), at, runs)
+    assert runs["edge"] == 20
+
+    stuck(survey(rows(edge=[float(i) for i in range(40)])), at, runs)
+    assert "edge" not in runs, "it varies now"

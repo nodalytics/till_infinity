@@ -93,6 +93,19 @@ PUSH_DECAY = 0.05
 #: there would close every trade that is merely slower than the median.
 STALE_HOLDS = 2.0
 
+#: Share of a strategy's **own declared hold** before a trade that has not moved
+#: counts as going nowhere.
+#:
+#: `_stale_after` already adapts to the *instrument's* expected hold, which is
+#: measured from level resolutions and is therefore minutes. It did not adapt to
+#: the *strategy's*, and `origin-swing` declares four hours - so a swing was
+#: being killed at the 1,200s floor, **8% of the horizon it was opened for**.
+#: Its first live trade closed `stale` at 1,249s having peaked at 0.007R.
+#:
+#: A third, so a four-hour swing gets eighty minutes and a thirty-minute scalp
+#: gets ten - below the floor, which then wins, so nothing fast changes.
+STALE_SHARE = 1.0 / 3.0
+
 #: How much of the sub-hour ensemble must be behind a motionless trade for it
 #: to be given more time. A majority, because half the timeframes pointing one
 #: way is what a coin flip looks like.
@@ -2337,9 +2350,12 @@ class Trader:
         if floor <= 0:
             return 0.0
         expected = self._holds.expected(live.intent.feed, live.intent.interval)
-        if not expected or expected <= 0:
-            return floor
-        return max(floor, STALE_HOLDS * float(expected))
+        adaptive = STALE_HOLDS * float(expected) if expected and expected > 0 else 0.0
+        # **And a share of what this strategy said it wanted.** A four-hour
+        # swing judged against a floor built for scalps is judged against
+        # somebody else's horizon - see `STALE_SHARE`.
+        declared = STALE_SHARE * float(live.intent.hold or 0.0)
+        return max(floor, adaptive, declared)
 
     def _turn_wanted(self, feed: str) -> float:
         """How much of a turn this instrument has to show, in volatility units.

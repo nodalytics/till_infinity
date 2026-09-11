@@ -7948,3 +7948,33 @@ def test_repair_drops_a_level_whose_price_is_not_a_number_at_all():
     book._levels["gold"] = [junk]
     book.repair()
     assert book._levels["gold"] == []
+
+
+def test_the_stale_clock_respects_a_strategy_own_horizon():
+    """`origin-swing` declares a four-hour hold and was being closed `stale` at
+    the 1,200s floor - **8% of the horizon it was opened for**. Its first live
+    trade closed at 1,249s having peaked at 0.007R.
+
+    A trade that has not moved after a third of its own intended hold is going
+    nowhere. After 8% of it, nobody knows yet."""
+    from till_infinity.trading.service import STALE_SHARE
+
+    made = settings(stale_after=1200.0)
+    trader = Trader(Bus(), settings=made)
+
+    swing = mock.Mock()
+    swing.intent = replace(_intent(), hold=4 * 3600.0)
+    scalp = mock.Mock()
+    scalp.intent = replace(_intent(), hold=1800.0)
+
+    assert trader._stale_after(swing) == pytest.approx(4 * 3600.0 * STALE_SHARE)
+    assert trader._stale_after(swing) > 4000, "eighty minutes, not twenty"
+    # A fast strategy's third is below the floor, so the floor still wins and
+    # nothing that was working changes.
+    assert trader._stale_after(scalp) == pytest.approx(1200.0)
+
+
+def _intent():
+    got = take("level-scalp", signal())
+    assert isinstance(got, Intent)
+    return got
