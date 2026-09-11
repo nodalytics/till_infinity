@@ -381,6 +381,44 @@ That is one bridge call away from settled. `/api/v1/symbols/...` returns
 > cross. If it is materially less, it is a deterministic weekly payment and the
 > only question left is size.
 
+### Settled 2026-09-11: there is nothing here, and the swap says why
+
+The bridge call was made. Live specs, `swap_mode` 1 (points):
+
+| leg | side | swap, points/night | **triple lands** |
+| --- | --- | ---: | --- |
+| CADJPY | short | -7.81 | **Wednesday** |
+| USDJPY | long | +5.00 | **Wednesday** |
+| USDCAD | short | -9.83 | **Thursday** |
+
+**`swap_rollover3days` is 4 on USDCAD and 3 on the other two**, and that single
+field is the whole explanation. USDCAD settles **T+1** - it is the textbook
+exception - so its triple charge lands on Thursday, while the T+2 majors take
+theirs on Wednesday. The synthetic CADJPY is built as USDJPY over USDCAD, so on
+Thursday the denominator carries a three-day forward adjustment that neither the
+direct CADJPY nor USDJPY carries. **The Thursday anomaly is a settlement
+convention showing up in the synthetic, not a mispricing of the direct quote**,
+which is why it appears on nine Thursdays out of nine and nowhere else.
+
+The arithmetic, per one lot a leg, held through the Wednesday night:
+
+| leg | points charged | USD |
+| --- | ---: | ---: |
+| CADJPY short, tripled | -23.43 | -15.25 |
+| USDJPY long, tripled | +15.00 | +9.76 |
+| USDCAD short, single | -9.83 | -7.09 |
+| | | **-12.58** |
+
+Against roughly 100,000 USD of notional a leg that is **-1.258bps for one
+night**, against the **+0.69bps** the triangle collects. **Net -0.568bps.**
+
+The condition fired on the side it was written to fire on. The +0.69bps is a
+receipt, exactly as the paragraph above guessed, and the broker takes back
+rather more than it hands over. The two things that page said were true either
+way still are: CADJPY's price disagrees with the rest of the book, so anything
+built on it is built on a different curve; and seven of the fifteen FX
+instruments are redundant to within a tenth of a basis point.
+
 Two things that are true either way, and cost nothing to know. **CADJPY is the
 one instrument in the book whose price disagrees with the rest of the book**,
 so any level, volatility or consensus figure built on it is built on a
