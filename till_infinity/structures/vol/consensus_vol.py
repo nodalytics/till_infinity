@@ -171,6 +171,25 @@ class Ensemble(Restorable):
             return sum(self._members.values()) / len(self._members)
         return sum(self._members[n] * w for n, w in weights.items()) / total
 
+    def seed(self, name: str, *, error: float, seen: float) -> None:
+        """Start a member with a score measured off history rather than live.
+
+        **`SCORE_WARMUP` is 60**, and at daily bars that is about three months
+        before a member earns any weight - over a year at weekly. A member that
+        does nothing until December is not a member, so the score can be seeded
+        from a replay over history and then left to live observations.
+
+        The seed is a **prior, not a floor.** `Score.record` decays toward what
+        it is currently seeing, so a seed the live bars contradict loses; and
+        `seen` is what decides how long that takes, which is why it is supplied
+        rather than assumed. A seed is a claim about history and not a
+        measurement of this code, so live standings are worth logging beside it.
+        """
+        if not (0.0 <= error <= 1.0) or seen <= 0:
+            return
+        got = self._score(name)
+        got.error, got.seen = float(error), float(seen)
+
     def accuracy(self, name: str) -> float:
         """How well one member has been doing, in [0, 1]. Zero until warm."""
         return self._score(name).accuracy

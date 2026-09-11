@@ -27,6 +27,7 @@ from ..state import Restorable
 from .consensus_vol import MAD_TO_SIGMA, Ensemble
 from .garch import Garch
 from .har import Har
+from .implied import ENABLED, IMPLIED_FEEDS, IMPLIED_INTERVALS, Implied
 from .learned import Learned
 from .ranges import Ranges
 
@@ -268,7 +269,14 @@ class Volatility(Restorable):
     def bps(self) -> float:
         return max(self._mean_abs, self.floor_bps)
 
-    def observe_bar(self, open_: float, high: float, low: float, close: float) -> float:
+    def observe_bar(
+        self,
+        open_: float,
+        high: float,
+        low: float,
+        close: float,
+        implied_bps: float | None = None,
+    ) -> float:
         """Fold one whole bar into the range estimates. Closes go to `update`.
 
         Returns **this bar's own realised volatility** in bps - the number the
@@ -290,16 +298,22 @@ class Volatility(Restorable):
         # each member is judged on the forecast it actually had to make. Doing
         # it after would score them against a number they had already seen.
         self._ensemble.settle(realised / MAD_TO_SIGMA)
+        members = {
+            "ew": self.bps,
+            "garch": self._garch.bps,
+            "range": self._ranges.bps,
+            "har": self._har.predict(),
+        }
+        # **The one member that is not a function of the past.** Absent rather
+        # than zero when it is stale or out of scope, because the ensemble takes
+        # whatever mapping it is given and a zero would be scored as a forecast.
+        if implied_bps is not None and implied_bps > 0:
+            members["vix"] = implied_bps
         self._ensemble.observe(
-            {
-                "ew": self.bps,
-                "garch": self._garch.bps,
-                "range": self._ranges.bps,
-                "har": self._har.predict(),
-            },
-            # The range family reports a standard deviation; the other two are
-            # on the mean-absolute convention already.
-            sigma_scaled=frozenset({"range", "har"}),
+            members,
+            # The range family reports a standard deviation, and so does VIX;
+            # `ew` and `garch` are on the mean-absolute convention already.
+            sigma_scaled=frozenset({"range", "har", "vix"}),
         )
         return realised
 
@@ -454,10 +468,36 @@ class Book(Restorable):
     #: estimates would be persisted 424 times and would learn from a few
     #: hundred bars each instead of from all of them.
     _learned: Learned = field(default_factory=Learned)
+    #: The options market's own forecast. One series for four feeds - see
+    #: `implied.py` for why the matched indices are not needed.
+    _implied: Implied = field(default_factory=Implied)
 
     # `__setstate__` from `Restorable` too, and it matters more here: this
     # holds one estimate per instrument *and* timeframe, so one missing
     # field takes out every one of them at once.
+
+    @property
+    def implied(self) -> Implied:
+        """The shared VIX reading. Lazily created for a state that predates it."""
+        got = getattr(self, "_implied", None)
+        if got is None:
+            got = self._implied = Implied()
+        return got
+
+    def votes_implied(self, feed: str, interval: str) -> bool:
+        """Whether VIX is a member here at all.
+
+        Four feeds of fifty-three, at `1d` and `1w`. A property to assert rather
+        than a convention to remember - see `implied.py` for why the scope is
+        narrow on purpose.
+        """
+        return ENABLED and feed in IMPLIED_FEEDS and interval in IMPLIED_INTERVALS
+
+    def implied_bps(self, feed: str, interval: str, now: float) -> float | None:
+        """This bar's implied sigma for one series, or None if it must not vote."""
+        if not self.votes_implied(feed, interval):
+            return None
+        return self.implied.bps(interval, now)
 
     def of(self, feed: str, interval: str = "") -> Volatility:
         key = (feed, interval)
@@ -468,9 +508,30 @@ class Book(Restorable):
                 _garch=Garch(half_life=self.half_life),
                 _ranges=Ranges(),
                 _har=Har(),
-                _ensemble=Ensemble(),
+                # **Weighting only where VIX votes.** `Ensemble` is per
+                # `(feed, interval)`, so a fifth member that should carry most
+                # of the vote can earn it without changing how the other 49
+                # instruments combine theirs. Equal weights are still the
+                # default everywhere else, and the module note in
+                # `consensus_vol` is still the reason.
+                _ensemble=Ensemble(weighted=self.votes_implied(feed, interval)),
             )
         return found
+
+    def observe_bar(
+        self,
+        feed: str,
+        interval: str,
+        open_: float,
+        high: float,
+        low: float,
+        close: float,
+        when: float,
+    ) -> float:
+        """One bar for one series, with the implied member supplied if it votes."""
+        return self.of(feed, interval).observe_bar(
+            open_, high, low, close, implied_bps=self.implied_bps(feed, interval, when)
+        )
 
     def update(self, feed: str, price: float, interval: str = "") -> float:
         return self.of(feed, interval).update(price)

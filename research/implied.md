@@ -261,3 +261,88 @@ Writing that down before running it, because
 [forecasting.md](forecasting.md) records three occasions in one day where a clean
 table was mistaken for a finding, and the defence that worked was deciding what
 would count as failure first.
+
+# 2026-09-11: it does not survive being made a point forecast
+
+The finding above was built into `structures/vol/implied.py` as a fifth member
+of the volatility ensemble, and **measured before it was switched on**. It
+loses.
+
+`research/harness/vixseed.py` replays every member over 20 years of daily and
+weekly bars on all four indices, scoring each exactly as the live path does -
+symmetric relative error against what the next bar actually did, decayed.
+Accuracy is `1 - error`, larger better:
+
+| feed | interval | best | `vix` |
+| --- | --- | --- | --- |
+| spx500 | 1d | har 0.816 | **0.635, last of five** |
+| spx500 | 1w | har 0.811 | **0.708, last** |
+| us100 | 1d | har 0.827 | 0.761, second |
+| us100 | 1w | har 0.823 | 0.800, second |
+| us2000 | 1d | har 0.802 | 0.735, second |
+| us2000 | 1w | har 0.815 | 0.808, second |
+| us30 | 1d | har 0.831 | **0.666, last** |
+| us30 | 1w | har 0.813 | **0.693, last** |
+
+`har` wins on every series and `vix` is last on half of them.
+
+## Why this does not contradict the result above
+
+**It measures a different quantity, and the difference is the whole finding.**
+
+Test one regressed forward realised volatility on VIX **walk-forward, refitting
+the coefficient at every step**, and reported R-squared. That asks: *how much
+does VIX tell you about what is coming?* The answer was, and remains, a great
+deal - more than any price-only estimator here.
+
+The ensemble scores **raw point forecasts** with no coefficient at all. That
+asks a different question: *is the number VIX prints a good guess at this bar's
+range?* And it is not, because VIX systematically exceeds realised volatility.
+That gap is the **variance risk premium**, it is one of the most durable facts in
+options markets, and it is a bias rather than noise.
+
+A regression removes the bias and keeps the information. An ensemble of point
+forecasts keeps both. So:
+
+> **VIX is informative and biased. Test one measured the information. This
+> measured the bias.**
+
+Being *second* on us100 and us2000 while *last* on spx500 and us30 is exactly
+what a premium that differs by index looks like - and it is the detail that
+makes the explanation testable rather than convenient.
+
+## What this cost and what it bought
+
+The member is built, tested, and **ships off** behind `STRUCTURES_IMPLIED`.
+Nothing was seeded, and `Ensemble.weighted` stays false everywhere - it was
+going to be turned on for these eight series on the argument that VIX should
+dominate them, which this refutes.
+
+What it bought is that the argument was settled by twenty years of bars before
+production saw it, rather than three months afterwards by wondering why the
+daily volatility estimate had got worse. The harness printed the condition
+itself - *"if `vix` is not at or near the top here, `implied.md` has not
+transferred and the member should not be seeded at all"* - before the numbers
+were read.
+
+## What would make it work
+
+**Fit the scale.** A member reporting `a + b * vix`, with `a` and `b` estimated
+online against realised volatility, carries test one's information without this
+bias. It is a different member: it has parameters, it needs its own warm-up, and
+it can overfit in a way none of the current five can.
+
+That is the piece of work actually required, and it is now specified by evidence
+rather than guessed at. The existing member is the scaffolding for it -
+collection, staleness, scope and scoring are all built and tested.
+
+## What is still unresolved
+
+**Whether a scaled VIX would beat `har`**, which is the incumbent it would have
+to displace and which won every column above. Test one never compared VIX
+against HAR - it compared VIX against a trailing realised estimate, which is
+`ew`, and `ew` is not the best member here either. That comparison has not been
+run, and until it is, the honest summary of this whole line of work is:
+
+> VIX beats a *trailing* estimate by a wide margin. Whether it beats a
+> *forecasting* one is an open question, and HAR is a forecast.

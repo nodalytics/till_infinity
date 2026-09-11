@@ -2101,7 +2101,12 @@ class Engine:
             vol.update(float(close))
             # Whole-bar estimates, once per bar rather than once per venue -
             # same reasoning as the line above.
-            realised = vol.observe_bar(opened, high, low, float(close))
+            # Through the book rather than the series, so the implied member is
+            # supplied where it votes. Four feeds at 1d and 1w; everywhere else
+            # this is exactly what it was. See `vol/implied.py`.
+            realised = self.vol.observe_bar(
+                feed, interval, opened, high, low, float(close), when=self._now or time.time()
+            )
             # And this timeframe's change detectors, after the volatility so
             # they are scaled by an estimate that has seen this bar. Wrapped
             # because a reading nobody gates on must not be able to stop the
