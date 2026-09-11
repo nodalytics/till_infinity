@@ -648,9 +648,10 @@ the data:
 behind, and the nominal 90% band contains the truth **85.1%** of the time, which
 is inside the pre-registered [85%, 95%] but only just.
 
-**And it holds on real bars, which is the harder test.** The local store has no
-generated feed, so this ran on real instruments - fat tails, volatility
-clustering, neither of which the construction assumes. Fifteen-minute
+**And it holds on real bars, which is the harder test.** This leg was run against
+the local store, which carries only real instruments - fat tails, volatility
+clustering, neither of which the construction assumes - and it is kept as the
+harder test rather than superseded by the synthetic leg below. Fifteen-minute
 `(O, H, L, C)` reconstructed at one minute, scored against the one-minute closes
 that actually happened:
 
