@@ -666,25 +666,29 @@ def cost_of_cutting(world: World) -> tuple[dict, list[dict]]:
               f"{fmt_rate(float(cum.mean()), st['books']):>16} "
               f"{fmt_rate(float(cum_z.mean()), st['books']):>16}")
 
-    # The second world: every strategy truly loses at the book's own rate. This
-    # is the null `spending.md`'s reading actually needs, because the claim is
-    # not "snap loses" - the whole book loses - it is "snap is the one that is
-    # separately identifiable".
+    # The second world: every row truly loses at the book's own rate. This is the
+    # null `spending.md`'s reading actually needs, because the claim is not
+    # "snap loses" - the whole book loses - it is "snap is the one that is
+    # separately identifiable". A cut of a uniformly losing book will name a
+    # culprit; the question is how often it names one that is not there.
     shift = LIVE_BOOK_ON_RISK - world.truth
-    got2 = run_table(LIVE_SIZES, SEED + 31337, BOOKS, shift=shift)
-    out["book-rate world"] = got2
+    print(f"\n  the same cuts in a world where every row truly runs at the book's own")
+    print(f"  {LIVE_BOOK_ON_RISK * 100:+.1f}% of risk - so every row that is named is named wrongly\n")
+    print(f"  {'cut':34} {'books':>6} {'>=1 excl truth':>16} {'>=1 excl zero':>16} "
+          f"{'>=1 <= -34.3% and excl 0':>25}")
+    for label, sizes in list(cuts.items()) + [("one spending.py run (all three)", page)]:
+        got2 = run_table(sizes, SEED + 31337 + len(label), BOOKS, shift=shift)
+        out["book rate: " + label] = got2
+        b = got2["books"]
+        hit = float((((got2["ests"] <= SNAP_ON_RISK) & got2["per_zero"]).any(axis=1)).mean())
+        print(f"  {label:34} {b:6d} {fmt_rate(float(got2['any_truth'].mean()), b):>16} "
+              f"{fmt_rate(float(got2['any_zero'].mean()), b):>16} {fmt_rate(hit, b):>25}")
+    got2 = out["book rate: strategy (12 rows, live sizes)"]
     b = got2["books"]
-    print(f"\n  the same twelve rows in a world where every strategy truly runs at the")
-    print(f"  book's own {LIVE_BOOK_ON_RISK * 100:+.1f}% of risk, {b} books:")
-    print(f"    >=1 row's interval excludes the truth:  "
-          f"{fmt_rate(float(got2['any_truth'].mean()), b)}")
-    print(f"    >=1 row's interval excludes zero:       "
-          f"{fmt_rate(float(got2['any_zero'].mean()), b)}")
     first = float(got2["per_zero"][:, 0].mean())
-    print(f"    the 29-close row alone excludes zero:   {fmt_rate(first, b)}")
-    hit = float((((got2["ests"] <= SNAP_ON_RISK) & got2["per_zero"]).any(axis=1)).mean())
-    print(f"    >=1 row reads <= {SNAP_ON_RISK * 100:.1f}% *and* excludes zero: "
-          f"{fmt_rate(hit, b)}")
+    print(f"\n  in that world the 29-close row alone excludes zero {fmt_rate(first, b)}"
+          f" of the time,\n  and reads <= {SNAP_ON_RISK * 100:.1f}% as well in "
+          f"{fmt_rate(float(((got2['ests'][:, 0] <= SNAP_ON_RISK) & got2['per_zero'][:, 0]).mean()), b)}.")
 
     led = [{"test": "the twelve-row cut fires more often than one row does",
             "value": float(st["any_truth"].mean()) - float(st["per_truth"][:, 0].mean()),
@@ -1004,15 +1008,44 @@ def methods(world: World) -> list[dict]:
     return led
 
 
+def studentised(profit: np.ndarray, risk: np.ndarray, rng, draws: int, alpha: float):
+    """The bootstrap-t interval at an arbitrary alpha.
+
+    `[7]` finds this is the construction that holds its nominal rate at the row
+    sizes a strategy table has, so `[8]` asks what it does when the alpha is
+    also corrected - which is the combination this page ends up recommending
+    and therefore the one that has to be measured rather than assumed.
+    """
+    n = profit.size
+    theta = on_risk(profit, risk)
+    se = ratio_se(profit, risk, theta)
+    if se <= 0:
+        return None
+    idx = draw_idx(n, draws, rng)
+    pg, qg = profit[idx], risk[idx]
+    q_sum = qg.sum(axis=1)
+    ratios = pg.sum(axis=1) / q_sum
+    num = (pg * pg).sum(axis=1) - 2.0 * ratios * (pg * qg).sum(axis=1) \
+        + ratios * ratios * (qg * qg).sum(axis=1)
+    se_b = np.sqrt(np.maximum(num, 0.0) * n / (n - 1)) / q_sum
+    ok = se_b > 0
+    if ok.sum() < 100:
+        return None
+    t = np.sort((ratios[ok] - theta) / se_b[ok])
+    m = t.size
+    hi_i = min(int(m * (1 - alpha / 2)), m - 1)
+    return float(theta - t[hi_i] * se), float(theta - t[int(m * alpha / 2)] * se)
+
+
 def _corrected_job(args):
-    """The same cut at a corrected alpha.
+    """The same cut at a corrected alpha, by one interval construction.
 
     Run at the shipping 20,000 resamples rather than `BDRAWS`: a Bonferroni
     alpha of 0.05/12 asks for the 0.21% quantile of the bootstrap distribution,
     and four thousand draws put sixteen of them below it. A correction judged on
     a quantile estimated from sixteen points is judging the draw count.
     """
-    sizes, offset, k, seed, alpha = args
+    sizes, offset, k, seed, alpha, method = args
     rng = np.random.default_rng(seed)
     profit, risk, truth = _W["profit"], _W["risk"], _W["truth"]
     total = sum(sizes)
@@ -1027,8 +1060,14 @@ def _corrected_job(args):
             if want < MIN_INTERVAL_N:
                 continue
             p, q = profit[sel], risk[sel]
-            ratios = np.sort(resample_ratios(p, q, DRAWS, rng))
-            lo, hi = float(ratios[lo_i]), float(ratios[hi_i])
+            if method == "studentised":
+                got = studentised(p, q, rng, DRAWS, alpha)
+                if got is None:
+                    continue
+                lo, hi = got
+            else:
+                ratios = np.sort(resample_ratios(p, q, DRAWS, rng))
+                lo, hi = float(ratios[lo_i]), float(ratios[hi_i])
             if not (lo <= truth <= hi):
                 any_out[b] = True
             if not (lo <= 0.0 <= hi):
@@ -1046,20 +1085,25 @@ def correction(world: World) -> list[dict]:
               f"Sidak over {wide}": 1 - (1 - 0.05) ** (1 / wide)}
     led: list[dict] = []
     total = sum(LIVE_SIZES)
+    print(f"  {'':52} {'percentile':>26}   {'studentised':>26}")
     for label, a in alphas.items():
-        jobs = [(LIVE_SIZES, off, k, SEED + 17 * s + int(a * 1e6), a)
-                for s, (off, k) in enumerate(_slices(total, BOOKS, WORKERS))]
-        with CTX.Pool(WORKERS) as pool:
-            got = pool.map(_corrected_job, jobs)
-        take = sum(g[0] for g in got)
-        hit = sum(g[1] for g in got)
-        zero = sum(g[2] for g in got)
-        print(f"  {label:52} family-wise {fmt_rate(hit / take, take)}"
-              f"   >=1 excludes zero {fmt_rate(zero / take, take)}")
-        if "Bonferroni over the" in label:
-            led.append({"test": "Bonferroni over the rows that get an interval restores 5%",
-                        "value": hit / take - 0.05,
-                        "fired": hit / take > 0.05 + 3 * se_rate(0.05, take)})
+        line = f"  {label:52}"
+        for method in ("percentile", "studentised"):
+            jobs = [(LIVE_SIZES, off, k, SEED + 17 * s + int(a * 1e6), a, method)
+                    for s, (off, k) in enumerate(_slices(total, BOOKS, WORKERS))]
+            with CTX.Pool(WORKERS) as pool:
+                got = pool.map(_corrected_job, jobs)
+            take = sum(g[0] for g in got)
+            hit = sum(g[1] for g in got)
+            zero = sum(g[2] for g in got)
+            line += f" {fmt_rate(hit / take, take):>13} / 0:{fmt_rate(zero / take, take):>13}"
+            if "Bonferroni over the" in label:
+                led.append({"test": f"Bonferroni over the {wide} rows restores 5%, {method}",
+                            "value": hit / take - 0.05,
+                            "fired": hit / take > 0.05 + 3 * se_rate(0.05, take)})
+        print(line)
+    print("\n  each cell: how often at least one of the twelve rows excludes the truth,"
+          "\n  then how often at least one excludes zero.")
     return led
 
 

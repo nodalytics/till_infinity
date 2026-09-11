@@ -91,6 +91,12 @@ PERMUTATIONS = int(os.environ.get("PERMUTATIONS", "300"))
 TOY_TRIALS = int(os.environ.get("TOY_TRIALS", "600"))
 SEED = int(os.environ.get("SEED", "4242"))
 WORKERS = int(os.environ.get("WORKERS", str(min(60, os.cpu_count() or 8))))
+#: Workers for the pool build only. Forty rolling series over a block of bars is
+#: about thirty megabytes a worker, and sixty of those at once is a gigabyte of
+#: feature arrays for no gain: the build is generator-bound, not core-bound.
+BUILD_WORKERS = int(os.environ.get("BUILD_WORKERS", str(max(4, WORKERS // 2))))
+#: Bars per generated block. Each one carries every rolling series at once.
+BLOCK = int(os.environ.get("BLOCK", "120000"))
 COST_R = N.COST_R
 #: The priced arm's spread, as a share of the *close*, per family. The live
 #: `spread_over_risk` has a median near 0.05 and a long right tail; a fixed
@@ -229,7 +235,7 @@ def one_family(args):
     made = 0
     t0 = time.time()
     while made < n_trades:
-        bars_d = N.bars_for(name, kind, sigma, tick_s, 200_000, rng)
+        bars_d = N.bars_for(name, kind, sigma, tick_s, BLOCK, rng)
         n = bars_d["n"]
         if n < 400:
             break
@@ -295,13 +301,13 @@ def one_family(args):
 def build_pool(n_closes: int, priced: bool, seed: int) -> dict:
     rr, rv, _rm, src = N.live_draws()
     fams = list(N.FAMILIES)
-    shards = max(1, WORKERS // len(fams)) if WORKERS > len(fams) else 1
+    shards = max(1, BUILD_WORKERS // len(fams)) if BUILD_WORKERS > len(fams) else 1
     per = max(200, n_closes // (len(fams) * shards) + 1)
     jobs = [(nm, k, sg, t, per, seed + 1000 * j + 7 * sh, priced, rr, rv)
             for j, (nm, k, sg, t) in enumerate(fams) for sh in range(shards)]
     print(f"  {len(fams)} families x {shards} shards x {per} closes,"
           f" {'priced' if priced else 'flat'} cost, geometry from {src}", flush=True)
-    with CTX.Pool(WORKERS) as pool:
+    with CTX.Pool(BUILD_WORKERS) as pool:
         got = pool.map(one_family, jobs)
     names: list[str] = []
     feed_idx = []
