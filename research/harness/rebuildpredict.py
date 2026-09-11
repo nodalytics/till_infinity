@@ -27,6 +27,10 @@ Five rungs, in increasing ambition.
    outputs needed is about `modulus bits / observed bits`. Rung 1 is the
    detector for exactly this hypothesis: an LCG small enough to be attackable
    leaves a lattice, so a clean rung 1 excludes the family rung 3 would attack.
+   The attack runs against a catalogue of nine published parameter sets and needs
+   the *leading bits of the draw*, not a rank - so the observed word is read off
+   the exact inverse-normal interval the quote pins the uniform to, and a tick
+   whose interval straddles a bit boundary is discarded rather than guessed.
 4. **The joint stream, which is the angle specific to this venue.**
    `twins.md` found **all sixteen synthetics publish on one clock to within
    9ms**. If one stream feeds all sixteen then consecutive draws from it appear
@@ -49,13 +53,22 @@ Five rungs, in increasing ambition.
    after Bonferroni, or a cross-feed lattice ratio past the same 3x bar.
 3. **The null dies** if the held-out classifier's AUC interval excludes 0.5 on
    the sign of the next tick, from either feature set.
-4. **The run is void** if the positive control is missed: a feed synthesised from
+4. **The null dies** if any parameter set in rung 3's catalogue recovers a real
+   feed's generator state and that state then reproduces the observed words.
+5. **The run is void** if the positive control is missed: a feed synthesised from
    a truncated LCG, quantised exactly as the real feed is, must be caught by
-   rung 1 and must be predicted above 0.5 by rung 5. A battery that cannot see a
-   generator known to be broken says nothing about one that might be sound.
-5. **The run is void** if an AUC lands on exactly 0.5000 or a lattice ratio on
+   rung 1, must be *recovered* by rung 3, and must be predicted above 0.5 by
+   rung 5. A battery that cannot see a generator known to be broken says nothing
+   about one that might be sound. Rung 3's control is run **per parameter set**,
+   because the reduction's precision decides which moduli are attackable at all.
+6. **The run is void** if an AUC lands on exactly 0.5000 or a lattice ratio on
    exactly its control's value - both are dead columns rather than nulls.
-6. **Any rung the data cannot support is reported as untested**, with the
+7. **A rung 5 AUC past 0.5 is not a finding on its own.** Range Break is a
+   bounded walk and a bounded walk mean-reverts, so its next tick is partly
+   predictable from its own past by construction. Every target is therefore run
+   twice - once on the feed and once on the same family driven by numpy's PCG64 -
+   and only an AUC clear of the rebuild's counts.
+8. **Any rung the data cannot support is reported as untested**, with the
    arithmetic that says so, and is not counted as a pass.
 
 ## One thing this page will not do
@@ -73,12 +86,14 @@ import json
 import math
 import os
 import sys
+import time
 
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rebuildgen as G
 import rebuildjudge as J
+import rebuildstep as S
 import rebuildvol as V
 
 OUT = os.environ.get("OUT", os.path.expanduser("~/till_infinity/logs/rebuildpredict.json"))
@@ -128,6 +143,164 @@ def trunc_lcg(n: int, bits_out: int, mod_bits: int = 48, a: int = 25214903917,
         x = (a * x + c) % m
         out[i] = (x >> shift) / (1 << bits_out)
     return out
+
+
+#: Published LCG parameter sets, as (name, multiplier, increment, modulus bits).
+#: Rung 3 attacks a *named* generator: recovering the multiplier as well as the
+#: seed from truncated outputs is a different and much harder problem, and rung 1
+#: is the detector for the family as a whole. So a clean rung 3 excludes these
+#: nine and not every LCG there is.
+LCG_CATALOGUE = [
+    ("java.util.Random", 25214903917, 11, 48),
+    ("glibc TYPE_0", 1103515245, 12345, 31),
+    ("MINSTD (16807)", 16807, 0, 31),
+    ("MINSTD (48271)", 48271, 0, 31),
+    ("Numerical Recipes", 1664525, 1013904223, 32),
+    ("Borland C", 22695477, 1, 32),
+    ("MSVC", 214013, 2531011, 32),
+    ("RANDU", 65539, 0, 31),
+    ("MMIX (Knuth)", 6364136223846793005, 1442695040888963407, 64),
+]
+
+
+def _gso(b: np.ndarray):
+    n = b.shape[0]
+    bs = np.zeros_like(b)
+    mu = np.zeros((n, n))
+    nrm = np.zeros(n)
+    for i in range(n):
+        v = b[i].copy()
+        for j in range(i):
+            if nrm[j] > 0:
+                mu[i, j] = float(b[i] @ bs[j]) / nrm[j]
+                v = v - mu[i, j] * bs[j]
+        bs[i] = v
+        nrm[i] = float(v @ v)
+    return bs, mu, nrm
+
+
+def lll(basis: np.ndarray, delta: float = 0.99, max_steps: int = 4000) -> np.ndarray:
+    """Lenstra-Lenstra-Lovasz reduction, in whatever float type it is handed.
+
+    Called with `np.longdouble` for a 64-bit modulus, where float64's 53-bit
+    mantissa loses the reduction outright - the MMIX entry in the catalogue is
+    *not* recovered in double precision and is in extended, which is why the
+    positive control is run per parameter set rather than once.
+    """
+    b = np.array(basis, dtype=basis.dtype)
+    n = b.shape[0]
+    bs, mu, nrm = _gso(b)
+    k, steps = 1, 0
+    while k < n and steps < max_steps:
+        steps += 1
+        for j in range(k - 1, -1, -1):
+            r = np.round(mu[k, j])
+            if r:
+                b[k] = b[k] - r * b[j]
+                bs, mu, nrm = _gso(b)
+        if nrm[k] >= (delta - mu[k, k - 1] ** 2) * nrm[k - 1]:
+            k += 1
+        else:
+            b[[k, k - 1]] = b[[k - 1, k]]
+            bs, mu, nrm = _gso(b)
+            k = max(k - 1, 1)
+    return b
+
+
+def babai(basis: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Nearest plane: the lattice vector closest to `target`."""
+    bs, _mu, nrm = _gso(basis)
+    n = basis.shape[0]
+    w = np.array(target, dtype=basis.dtype)
+    out = np.zeros(n, dtype=basis.dtype)
+    for i in range(n - 1, -1, -1):
+        if nrm[i] <= 0:
+            continue
+        r = np.round(float(w @ bs[i]) / nrm[i])
+        w = w - r * basis[i]
+        out = out + r * basis[i]
+    return out
+
+
+def lcg_recover(y, bits_out: int, a: int, c: int, mod_bits: int, dtype=np.float64):
+    """Recover an LCG's state from the top `bits_out` bits of consecutive outputs.
+
+    `x_i = A_i x_0 + C_i (mod m)` with `A_i`, `C_i` known, and each observation
+    pins `x_i` to a window of `2^s`. Eliminating `x_0` in favour of
+    `u = x_1 - (centre of its window)` leaves the hidden number problem
+    `D_i u - S_i = small (mod m)`, whose lattice has every unknown the same size -
+    which is what lets Babai on an LLL-reduced basis find it. Returns the
+    recovered seed, or None, and **None is only meaningful beside a positive
+    control on the same parameter set**: a failure can be the precision of the
+    reduction rather than the soundness of the source.
+    """
+    m = 1 << mod_bits
+    s = mod_bits - bits_out
+    k = len(y)
+    if k < 3 or s < 1:
+        return None
+    A, C = [], []
+    ai, ci = 1, 0
+    for _ in range(k):
+        ai = (ai * a) % m
+        ci = (ci * a + c) % m
+        A.append(ai)
+        C.append(ci)
+    half = 1 << (s - 1)
+    T = [(((int(y[i]) << s) + half) - C[i]) % m for i in range(k)]
+    try:
+        inv1 = pow(A[0], -1, m)
+    except ValueError:
+        return None
+    D = [(A[i] * inv1) % m for i in range(k)]
+    Sv = [(T[i] - D[i] * T[0]) % m for i in range(1, k)]
+    basis = np.zeros((k, k), dtype=dtype)
+    for j in range(k - 1):
+        basis[j, j] = dtype(m)
+    for i in range(1, k):
+        basis[k - 1, i - 1] = dtype(D[i])
+    basis[k - 1, k - 1] = dtype(1)
+    tgt = np.array([dtype(x) for x in Sv] + [dtype(0)], dtype=dtype)
+    u = int(round(float(babai(lll(basis), tgt)[-1])))
+    for shift in (0, m, -m):
+        x0 = ((T[0] + u + shift) % m) * inv1 % m
+        x = x0
+        ok = True
+        for i in range(k):
+            x = (a * x + c) % m
+            if (x >> s) != int(y[i]):
+                ok = False
+                break
+        if ok:
+            return x0
+    return None
+
+
+def observed_words(mid: np.ndarray, grid: float, sigma_tick: float, bits: int):
+    """The top `bits` bits of the draw behind each tick, where they are certain.
+
+    The attack needs the leading bits of the generator's *output*, not a rank.
+    If the venue draws one uniform and maps it through the inverse normal - which
+    is the assumption, and Box-Muller or a ziggurat breaks it - then an observed
+    lattice increment `k` says only that the uniform lay in
+    `[Phi((k-0.5)g/s), Phi((k+0.5)g/s)]`. The leading bits are determined exactly
+    when that interval lies inside one `2^-bits` cell, and the tick is discarded
+    when it straddles a boundary. This is what makes the rung testable at all:
+    a rank transform recovers the uniform only to `O(1/sqrt(n))` and its leading
+    bits are then wrong about a third of the time, which fails the positive
+    control and would have been read as a clean feed.
+    """
+    from scipy.special import ndtr
+    d = np.diff(np.asarray(mid, dtype=float))
+    sl = np.asarray(mid[:-1], dtype=float) * sigma_tick
+    kk = np.round(d / grid)
+    lo = ndtr((kk - 0.5) * grid / np.maximum(sl, 1e-300))
+    hi = ndtr((kk + 0.5) * grid / np.maximum(sl, 1e-300))
+    scale = float(1 << bits)
+    wl = np.floor(lo * scale)
+    wh = np.floor(hi * scale)
+    ok = (wl == wh) & (wl >= 0) & (wl < scale)
+    return wl.astype(np.int64), ok
 
 
 def align(feeds: list[str], slot_ms: int) -> tuple[list[str], np.ndarray]:
@@ -194,6 +367,40 @@ def forward_auc(x: np.ndarray, y: np.ndarray, names: list[str], seed: int,
                  key=lambda t: -abs(t[1] - 0.5))
     return {"n": int(n), "n_test": int(sc.size), "auc": a, "lo": lo, "hi": hi,
             "univariate": uni[:5]}
+
+
+def rebuild_ticks(feed: str, n: int, seed: int) -> np.ndarray:
+    """The same family, driven by numpy's PCG64 - the control rung 5 needs.
+
+    An AUC above 0.5 on the sign of the next tick is not evidence of a
+    predictable generator until the same test is run on a stream whose source is
+    unpredictable by construction. Range Break is a bounded walk and a bounded
+    walk mean-reverts, so its next tick *is* partly predictable from its own past
+    and always was: that is the published mechanism, not a leak. Without this
+    control the first version of this section reported a Range Break AUC of
+    0.5191 as though it said something about the RNG.
+    """
+    rb, rt = G.real_bars(feed), G.real_ticks(feed)
+    if not rb.get("n") or not rt.get("n"):
+        return np.empty(0)
+    p0 = float(rb["close"][0])
+    if feed in V.NOMINAL:
+        tpb = V.ticks_per_bar(feed)
+        bb = V.simulate_vol(feed, V.NOMINAL[feed], p0, G.quote_grid(rt["mid"]),
+                            max(rb["n"], n // tpb + 4), seed, keep_ticks=n + 4)
+        return bb["ticks"]
+    if feed == "step_index":
+        return S.sim_step(max(rb["n"], n // S.TPB + 4), 0.5, seed, p0)["ticks"]
+    if feed.startswith("range_break"):
+        d = np.diff(rt["mid"])
+        stp = float(np.median(np.abs(d[d != 0])))
+        brk = S.break_stats(rb, stp)
+        vis = S.visited_ranges(rb, stp)
+        mbt = brk["minutes_per_break"] * S.TPB
+        band, _m, _k = S.fit_band(vis, mbt, brk["_jump"], p0, stp, seed)
+        return S.sim_rb(max(rb["n"], n // S.TPB + 4), band, mbt, brk["_jump"], seed,
+                        p0, stp, "edge")["ticks"]
+    return np.empty(0)
 
 
 def sign_features(u: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray, list[str]]:
@@ -290,8 +497,106 @@ def main() -> None:
                    "value": rows[2]["lat"][2].get("ratio", 0), "fired": not lcg_hit})
     payload["lattice"] = json.loads(json.dumps(rows, default=float))
 
+    # ------------------------------------------------ rung 3: lattice recovery --
+    print("\n[3] RUNG 3 - TRUNCATED-LCG RECOVERY BY LATTICE REDUCTION")
+    print("    The budget first. Each tick shows the leading bits of one draw, and a")
+    print("    truncated LCG of an n-bit modulus falls to lattice reduction on about")
+    print("    n/bits consecutive outputs - so the attack is cheap if the bits are real.")
+    print("    They are only real under one assumption, stated before any number: that")
+    print("    the venue draws ONE uniform per tick and maps it through the inverse")
+    print("    normal. Box-Muller or a ziggurat breaks that map and this rung then says")
+    print("    nothing, which is why every parameter set carries its own positive")
+    print("    control built the same way.")
+    from scipy.special import ndtri
+
+    def _synth(a, c, mod_bits, n, grid, sigma_tick, p0, seed=12345):
+        """A feed whose every increment is one LCG draw through the inverse normal."""
+        m = 1 << mod_bits
+        x = seed % m
+        price = p0
+        out = np.empty(n)
+        for i in range(n):
+            x = (a * x + c) % m
+            u = (x + 0.5) / m
+            d = ndtri(u) * price * sigma_tick
+            price += round(d / grid) * grid
+            out[i] = price
+        return out
+
+    def _runs(ok, k, limit):
+        idx, i, n = [], 0, ok.size
+        while i + k <= n and len(idx) < limit:
+            if ok[i:i + k].all():
+                idx.append(i)
+                i += k
+            else:
+                i += 1
+        return idx
+
+    bits_obs = int(os.environ.get("LCG_BITS", "8"))
+    n_win = int(os.environ.get("LCG_WINDOWS", "40"))
+    ref = "volatility_25_1s_index"
+    rt = G.real_ticks(ref)
+    ref_grid = G.quote_grid(rt["mid"])
+    ref_sig = (25.0 / 100.0) / math.sqrt(G.MINUTES_PER_YEAR * 60)
+    ref_p0 = float(np.median(rt["mid"]))
+    print(f"\n    {'parameter set':22s} {'mod bits':>8s} {'k needed':>8s} "
+          f"{'control recovered':>18s} {'usable windows':>15s} {'ms/attempt':>11s}")
+    ctl_ok = {}
+    for name, a, c, mb in LCG_CATALOGUE:
+        k = max(6, math.ceil(mb / bits_obs) + 2)
+        dt = np.longdouble if mb > 48 else np.float64
+        syn = _synth(a, c, mb, 4000, ref_grid, ref_sig, ref_p0)
+        w, ok = observed_words(syn, ref_grid, ref_sig, bits_obs)
+        idx = _runs(ok, k, 6)
+        t0 = time.time()
+        hit = any(lcg_recover(w[i:i + k], bits_obs, a, c, mb, dt) is not None for i in idx)
+        ms = 1000 * (time.time() - t0) / max(len(idx), 1)
+        ctl_ok[name] = hit
+        print(f"    {name:22s} {mb:8d} {k:8d} {str(hit):>18s} "
+              f"{f'{len(idx)} of 6':>15s} {ms:11.1f}")
+        ledger.append({"test": "VOID unless the LCG control is recovered", "feed": name,
+                       "value": float(hit), "fired": not hit})
+    live = [n for n, ok2 in ctl_ok.items() if ok2]
+    print(f"\n    {len(live)} of {len(LCG_CATALOGUE)} parameter sets are attackable at "
+          f"{bits_obs} observed bits on this")
+    print("    machine's arithmetic; the rest are reported as untested rather than clean.")
+    print(f"\n    {'feed':26s} {'bits/tick':>9s} {'usable windows':>14s} "
+          f"{'sets tried':>10s} {'recovered':>10s}")
+    # the Volatility family only: the attack maps one uniform through the inverse
+    # normal, and a Jump index's marginal is a mixture, so its words would be
+    # wrong for a reason that is about the marginal rather than about the source
+    targets = [f for f in V.NOMINAL if bits.get(f, {}).get("bits", 0) >= 10.0]
+    for feed in targets:
+        t = G.real_ticks(feed)
+        grid = G.quote_grid(t["mid"])
+        nom = V.NOMINAL.get(feed) or V.JUMP_NOMINAL.get(feed)
+        if not nom:
+            continue
+        sig = (nom / 100.0) / math.sqrt(G.MINUTES_PER_YEAR * V.ticks_per_bar(feed))
+        w, ok = observed_words(t["mid"], grid, sig, bits_obs)
+        found, tried, nwin = [], 0, 0
+        for name, a, c, mb in LCG_CATALOGUE:
+            if not ctl_ok[name]:
+                continue
+            k = max(6, math.ceil(mb / bits_obs) + 2)
+            dt = np.longdouble if mb > 48 else np.float64
+            idx = _runs(ok, k, n_win)
+            nwin = max(nwin, len(idx))
+            tried += 1
+            for i in idx:
+                if lcg_recover(w[i:i + k], bits_obs, a, c, mb, dt) is not None:
+                    found.append((name, int(i)))
+                    break
+        print(f"    {feed:26s} {bits[feed]['bits']:9.2f} {nwin:14d} {tried:10d} "
+              f"{len(found):10d}")
+        ledger.append({"test": "no catalogue LCG recovers a real feed's state",
+                       "feed": feed, "value": float(len(found)), "fired": bool(found)})
+        payload.setdefault("rung3", {})[feed] = {"windows": nwin, "sets": tried,
+                                                 "found": found}
+
     # --------------------------------------------------- rung 4: joint stream --
-    print("\n[3] RUNG 4 - THE JOINT STREAM, WHICH IS THE ANGLE SPECIFIC TO THIS VENUE")
+    print("\n[4] RUNG 4 - THE JOINT STREAM, WHICH IS THE ANGLE SPECIFIC TO THIS VENUE")
     print("    twins.md: all sixteen synthetics publish on one clock to within 9ms. If one")
     print("    stream feeds them all, consecutive draws appear as different feeds at the")
     print("    same slot, and a cross-feed tuple is a k-tuple of that stream.")
@@ -377,7 +682,7 @@ def main() -> None:
         print("    could not align the feeds - skipped")
 
     # ---------------------------------------- rung 5: held-out forward prediction --
-    print("\n[4] RUNG 5 - A HELD-OUT FORWARD PREDICTION, WHICH IS THE ONLY CLAIM THAT COUNTS")
+    print("\n[5] RUNG 5 - A HELD-OUT FORWARD PREDICTION, WHICH IS THE ONLY CLAIM THAT COUNTS")
     print("    Predict the sign of the next tick. Two feature sets: a feed's own last")
     print(f"    {KLAGS} increments, and all aligned feeds at the current slot.")
     print("    The split is by *time* - fit the first 60%, predict the last 40%. A")
@@ -400,12 +705,27 @@ def main() -> None:
         ok = r["lo"] <= 0.5 <= r["hi"]
         print(f"{feed:28s} {'own last ' + str(KLAGS):28s} {r['n']:8d} {r['auc']:8.4f} "
               f"[{r['lo']:.4f},{r['hi']:.4f}] {'-' if ok else 'PREDICTS':>10s}")
+        # the control: the same test on the same family driven by PCG64
+        ctl = rebuild_ticks(feed, t["n"], SEED)
+        rc = {"auc": float("nan"), "lo": float("nan"), "hi": float("nan")}
+        if ctl.size > 2000:
+            xc, yc, nc = sign_features(ctl.astype(float), KLAGS)
+            if xc.size:
+                rc = forward_auc(xc, yc, nc, SEED)
+        beyond = (not ok) and not (rc.get("lo", 0) <= r["auc"] <= rc.get("hi", 1))
+        if rc.get("auc") == rc.get("auc"):
+            print(f"{'  ^ PCG64 rebuild':28s} {'same test, sound source':28s} "
+                  f"{rc['n']:8d} {rc['auc']:8.4f} [{rc['lo']:.4f},{rc['hi']:.4f}] "
+                  f"{'BEYOND' if beyond else 'same as rebuild':>10s}")
         if not ok:
             print(f"{'':28s} {'top features':28s} " + ", ".join(
                 f"{n2}={a2:.3f}" for n2, a2 in r["univariate"][:3]))
         ledger.append({"test": "next-tick sign AUC interval contains 0.5", "feed": feed,
                        "value": r["auc"] - 0.5, "fired": not ok})
-        payload.setdefault("predict", {})[feed] = {"own": r}
+        ledger.append({"test": "next-tick sign AUC is no higher than a PCG64 rebuild's",
+                       "feed": feed, "value": r["auc"] - (rc.get("auc") or 0.5),
+                       "fired": bool(beyond)})
+        payload.setdefault("predict", {})[feed] = {"own": r, "pcg64_control": rc}
     if mat.size and mat.shape[0] > 2:
         tgt = 0
         d = np.diff(mat, axis=1)
@@ -437,7 +757,7 @@ def main() -> None:
                    "value": r["auc"] - 0.5, "fired": not seen})
     payload.setdefault("predict", {})["control_lcg"] = r
 
-    print("\n[5] THE FAILURE LEDGER")
+    print("\n[6] THE FAILURE LEDGER")
     by: dict[str, list] = {}
     for e in ledger:
         by.setdefault(e["test"], []).append(e)
