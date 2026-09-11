@@ -482,6 +482,28 @@ share one range, about 60 steps wide, and differ only in how often they break an
 how far the break carries** - 130 steps against 210. The break rate and the break
 size scale together, the range does not.
 
+**The box, written out, so another route can check it.** The mechanism this
+reduces to is a particle in a one-dimensional box, and every number in it is
+fixed by the fit above:
+
+* width **L = 60 steps**, the same for Range Break 100 and Range Break 200;
+* diffusion **D = 1/2 step^2 per tick** - the walk moves exactly one step a tick,
+  so `D = sigma^2/2` with `sigma = 1`;
+* the box is **reflecting** at both ends and re-anchored at the break point, so a
+  new range opens with the price at one edge;
+* eigenvalues `lambda_k = k^2 pi^2 D / L^2`, hence relaxation times
+  `tau_k = 2L^2 / (k^2 pi^2)` = **730, 182, 81, 46 ticks** for k = 1, 2, 3, 4, which in
+  minutes is **12.16, 3.04, 1.35, 0.76**;
+* stationary spread `L / sqrt(12)` = **17.3 steps**, and displacement variance
+  accumulated inside one range `L^2/3` = **1,200 step^2** because the price
+  starts at an edge rather than at the centre;
+* breaks arrive memorylessly every **5,196 ticks** (RB100) and **10,734**
+  (RB200), carrying **130** and **210** steps.
+
+Anything deriving the same instrument as a box should land on the same `L` and
+the same `tau_1`; if it lands somewhere else, one of the two routes is wrong and
+the disagreement is more informative than either result alone.
+
 **Third, the one addition that could have fixed it, and does not.** A single box
 cannot have a deep dip early *and* a high plateau late, because the plateau needs
 a wide box and a wide box relaxes slowly. The obvious escape is a second, quieter
