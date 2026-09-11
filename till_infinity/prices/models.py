@@ -275,6 +275,27 @@ class PruneResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ReindexResult:
+    """What an index rebuild found and what it did about it.
+
+    `checked` separately from `rebuilt` because the interesting answer is often
+    that nothing was wrong: an index reported as corrupt by one query and clean
+    by `integrity_check` is a different problem from one that rebuilds.
+    """
+
+    checked: tuple[str, ...] = ()
+    rebuilt: tuple[str, ...] = ()
+    complaints: tuple[str, ...] = ()
+
+    def __str__(self) -> str:
+        if not self.checked:
+            return "no indexes to check"
+        found = "; ".join(self.complaints) if self.complaints else "no complaints"
+        done = ", ".join(self.rebuilt) if self.rebuilt else "nothing"
+        return f"checked {len(self.checked)} index(es), {found} - rebuilt {done}"
+
+
+@dataclass(frozen=True, slots=True)
 class SeriesInfo:
     """Summary of a stored series, for `prices info`."""
 

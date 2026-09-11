@@ -354,6 +354,40 @@ def prune(db, data_dir, keep, vacuum, yes):
 
 
 @prices.command()
+@click.option("--db", type=click.Path(path_type=Path))
+@click.option("--dir", "data_dir", type=click.Path(path_type=Path))
+@click.option(
+    "--only",
+    help="One index by name, rather than every index in the file.",
+)
+def reindex(db, data_dir, only):
+    """Check the indexes and rebuild any that complain.
+
+    A corrupt index is not a corrupt database. `quotes_feed_ts` on the instance
+    has been unusable since 2026-09-10 while every row in `quotes` reads back
+    fine - a query that plans through it fails and the same query without it
+    does not. That is one B-tree to rebuild, not a database to restore.
+
+    Cheap enough to run on a full disk: rebuilding an index needs room for the
+    index, not for a second copy of the file the way `--vacuum` does, and no row
+    is ever read as authoritative from an index, so nothing is lost if it fails.
+
+    `--only quotes_feed_ts` is the targeted form. Without it every index in the
+    file is checked, and on a multi-gigabyte quotes table that walk is the
+    expensive part - so name the one you mean when you know it.
+    """
+    settings = _settings(db, data_dir, include_partial=False)
+    target = settings.database
+
+    async def go() -> px.ReindexResult:
+        store = px.open_store("sqlite", database=target, data_dir=settings.data_dir)
+        async with store:
+            return await store.reindex(only)
+
+    console.print(f"[bold]{target}[/]: {run(go())}")
+
+
+@prices.command()
 @click.option(
     "--store",
     "store_kind",

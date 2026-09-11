@@ -13,6 +13,7 @@ import sqlite3
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Self
 
@@ -26,6 +27,7 @@ from .models import (
     PruneResult,
     Quote,
     QuoteKey,
+    ReindexResult,
     SeriesInfo,
     SeriesKey,
     Symbol,
@@ -296,6 +298,125 @@ class SqliteStore(Store):
             # Outside the transaction: VACUUM cannot run inside one.
             conn.execute("VACUUM")
         return PruneResult(deleted=before - after, kept=after, vacuumed=vacuum)
+
+    async def reindex(self, only: str | None = None) -> ReindexResult:
+        """Check this file's indexes and rebuild any that complain.
+
+        **A corrupt index is not a corrupt database**, and the difference has
+        very different answers. `quotes_feed_ts` on the production file has been
+        unusable since 2026-09-10 while every row in `quotes` reads back fine: a
+        query that plans through it fails and the same query without it does
+        not. That is one B-tree to rebuild, not a database to restore - and two
+        agents were told the file was corrupt on the strength of the first
+        symptom.
+
+        `REINDEX` reads the table and writes a new tree, so it needs room for
+        the index but not for a second copy of the file. That is the difference
+        between a repair that can run on a full instance and one that cannot -
+        and unlike `VACUUM`, nothing is lost if it fails, because no row is ever
+        read as authoritative from an index.
+
+        Targeted rather than blanket: `only` names one index, because rebuilding
+        every index on a multi-gigabyte quotes table to fix one of them is how a
+        repair becomes an outage.
+        """
+        async with self._lock:
+            return await asyncio.to_thread(self._reindex, only)
+
+    def _reindex(self, only: str | None) -> ReindexResult:
+        conn = self._require()
+        # Index name -> the table it is on, so a complaint traces to the one
+        # tree that has to be rebuilt rather than to the whole file.
+        owned = {
+            str(name): str(table)
+            for name, table in conn.execute(
+                "SELECT name, tbl_name FROM sqlite_master"
+                " WHERE type='index' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        }
+        if only is not None and only not in owned:
+            raise ValueError(f"no index named {only!r} - have {', '.join(owned) or 'none'}")
+        names = (only,) if only is not None else tuple(owned)
+
+        complaints: list[str] = []
+        rebuilt: list[str] = []
+        # One check per *table*: that is the only granularity the pragma has -
+        # it takes a table name and walks its indexes with it, and naming an
+        # index is "no such table". Cached, so a table carrying three indexes is
+        # walked once rather than three times. On the production quotes table
+        # that walk is the expensive half of this call.
+        said: dict[str, list[str]] = {}
+        for name in names:
+            table = owned[name]
+            if table not in said:
+                try:
+                    found = conn.execute(f"PRAGMA integrity_check('{table}')").fetchall()
+                    said[table] = [
+                        str(row[0]) for row in found if str(row[0]).strip().lower() != "ok"
+                    ]
+                except sqlite3.DatabaseError as exc:
+                    said[table] = [str(exc)]
+            if not said[table]:
+                continue
+            complaints.extend(f"{name} (on {table}): {line}" for line in said[table])
+            how = self._rebuild(conn, name)
+            if how is None:
+                complaints.append(f"{name}: could not be rebuilt in place")
+                continue
+            rebuilt.append(name if how == "reindex" else f"{name} (recreated)")
+        if rebuilt:
+            conn.commit()
+        return ReindexResult(checked=names, rebuilt=tuple(rebuilt), complaints=tuple(complaints))
+
+    @staticmethod
+    def _rebuild(conn: sqlite3.Connection, name: str) -> str | None:
+        """Rebuild one index. Returns how it was done, or None if it could not be.
+
+        `REINDEX` is tried first because it is the narrow operation - it keeps
+        the definition and replaces the tree. It can itself fail on a badly
+        enough damaged tree, raising the same "database disk image is malformed"
+        that sent us here, because it has to walk what it is replacing.
+
+        So the fallback is to drop the definition and write it again from
+        `sqlite_master.sql`, which is the index's own `CREATE INDEX` statement
+        as SQLite stored it. That is still only an index: the rows are
+        untouched either way, and an index that cannot be rebuilt by either
+        route is reported rather than raised, because the caller reached for a
+        repair and an exception is not one.
+        """
+        try:
+            conn.execute(f"REINDEX {name}")
+            return "reindex"
+        except sqlite3.DatabaseError:
+            pass
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name=?", (name,)
+        ).fetchone()
+        if not row or not row[0]:
+            return None  # an implicit index has no statement to replay
+        # A savepoint, because the two halves are one operation: a DROP that
+        # succeeds and a CREATE that does not leaves the table with no index at
+        # all, which is slower than a corrupt one and much harder to notice.
+        #
+        # The unwind is guarded too. On a file damaged badly enough, the rollback
+        # raises the same malformed-image error as the work it is undoing, and a
+        # repair that throws from its own cleanup has told the caller nothing
+        # except that something is wrong - which they knew.
+        try:
+            conn.execute("SAVEPOINT reindex_rebuild")
+        except sqlite3.DatabaseError:
+            return None
+        try:
+            conn.execute(f"DROP INDEX {name}")
+            conn.execute(str(row[0]))
+        except sqlite3.DatabaseError:
+            with suppress(sqlite3.DatabaseError):
+                conn.execute("ROLLBACK TO reindex_rebuild")
+                conn.execute("RELEASE reindex_rebuild")
+            return None
+        with suppress(sqlite3.DatabaseError):
+            conn.execute("RELEASE reindex_rebuild")
+        return "recreate"
 
     async def series(self) -> list[SeriesInfo]:
         async with self._lock:

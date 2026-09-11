@@ -336,3 +336,95 @@ def test_deriv_is_tracked_and_fxcm_is_not():
     venues = {s.venue for feed in FEEDS.values() for s in feed.for_source("tradingview")}
     assert "DERIV" in venues  # served by the socket, though the scanner 404s
     assert "FXCM" not in venues  # delisted from TradingView entirely
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_file_reports_no_complaints_and_rebuilds_nothing(tmp_path):
+    async with SqliteStore(tmp_path / "p.db") as store:
+        for i in range(50):
+            await store.write_quote(KEY, Quote(1000.0 + i, 1.0, 2.0 + i * 0.01))
+        got = await store.reindex()
+    assert got.checked
+    assert got.complaints == ()
+    assert got.rebuilt == ()
+
+
+@pytest.mark.asyncio
+async def test_one_index_can_be_named(tmp_path):
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write_quote(KEY, Quote(1000.0, 1.0, 2.0))
+        assert (await store.reindex("quotes_feed_ts")).checked == ("quotes_feed_ts",)
+        with pytest.raises(ValueError, match="no index named"):
+            await store.reindex("not_an_index")
+
+
+@pytest.mark.asyncio
+async def test_a_corrupt_index_is_reported_rather_than_raised(tmp_path):
+    """The caller reached for a repair; an exception is not one.
+
+    Corruption bad enough to defeat both rebuild routes is still the useful
+    answer - it says restore rather than repair - and the rows stay readable
+    throughout, which is the distinction the whole method exists to make.
+    """
+    import sqlite3
+
+    path = tmp_path / "p.db"
+    async with SqliteStore(path) as store:
+        for i in range(400):
+            await store.write_quote(KEY, Quote(1000.0 + i, 1.0, 2.0 + i * 0.01))
+
+    conn = sqlite3.connect(path)
+    root = conn.execute(
+        "SELECT rootpage FROM sqlite_master WHERE name='quotes_feed_ts'"
+    ).fetchone()[0]
+    size = conn.execute("PRAGMA page_size").fetchone()[0]
+    conn.close()
+    raw = bytearray(path.read_bytes())
+    at = (root - 1) * size
+    raw[at + 8 : at + 60] = b"\xff" * 52
+    path.write_bytes(bytes(raw))
+
+    async with SqliteStore(path) as store:
+        got = await store.reindex("quotes_feed_ts")
+        assert got.complaints
+        # The rows were never the problem and are still all there.
+        assert len(await store.quotes(KEY)) == 400
+
+
+@pytest.mark.asyncio
+async def test_the_index_is_recreated_when_reindex_itself_cannot_run(tmp_path):
+    """`REINDEX` walks the tree it is replacing, so a bad enough one defeats it.
+
+    Dropping the definition and replaying `sqlite_master.sql` does not, and the
+    two halves are one operation - a DROP that lands with a CREATE that does not
+    leaves the table with no index, which is slower than a corrupt one and much
+    harder to notice.
+    """
+    import sqlite3
+
+    class NoReindex:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def execute(self, sql, *args, **kwargs):
+            if sql.strip().upper().startswith("REINDEX"):
+                raise sqlite3.DatabaseError("database disk image is malformed")
+            return self._inner.execute(sql, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    async with SqliteStore(tmp_path / "p.db") as store:
+        for i in range(200):
+            await store.write_quote(KEY, Quote(1000.0 + i, 1.0, 2.0 + i * 0.01))
+        conn = store._require()
+        assert SqliteStore._rebuild(conn, "quotes_feed_ts") == "reindex"
+        assert SqliteStore._rebuild(NoReindex(conn), "quotes_feed_ts") == "recreate"
+        plan = str(
+            conn.execute(
+                "EXPLAIN QUERY PLAN SELECT ts FROM quotes WHERE feed=? ORDER BY ts DESC",
+                (KEY.feed,),
+            ).fetchall()
+        )
+        assert "quotes_feed_ts" in plan
+        assert len(await store.quotes(KEY)) == 200
