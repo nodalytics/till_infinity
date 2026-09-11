@@ -349,8 +349,10 @@ against an untruncated one and calls the difference a spectrum. The old code did
 exactly that.
 
 So the honest correction to the previous paragraph is that **the ladder needed
-twelve times the tick history only because the harness was throwing nine tenths
-of it away.** The stored day is enough.
+twelve times the tick history only because the harness was throwing away nine
+tenths of its episodes** - which is the sample size the estimator is actually
+sensitive to, since every rate here is estimated within an episode. The stored day
+is enough.
 
 ### The width, and the scan that is itself the box test
 
