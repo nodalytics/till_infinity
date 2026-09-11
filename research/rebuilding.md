@@ -561,13 +561,55 @@ is not the missing piece.
 
 **What the residual actually is.** Stated at the end of four experiments, the gap
 is not a timescale and not an event: it is that **no single confinement matches
-the ex-break shape and the all-bars flatness at once**. Harden the wall and the
+the ex-break shape and the all-bars flatness at once** - and, as the next section
+records, the two constraints may not have been one another's business in the
+first place. Harden the wall and the
 total variance flattens while the crossover goes too gentle; soften it and the
 crossover sharpens while the total variance stops being flat. `deriving.md`
 section four's two headline facts - sub-diffusive between breaks, flat across
 three orders of magnitude - are, under every mechanism tried here, in tension at
 the 10-30% level. Something in Range Break couples the break to the range in a
 way none of these four candidates does.
+
+### The same width from a completely different direction
+
+[quantising.md](quantising.md) attacks the same instrument as a quantum-mechanics
+problem - Wick-rotate the heat equation, read the confinement as a potential well
+and the relaxation as an eigenvalue ladder - and inverts `deriving.md`'s published
+curve for the box it implies. It uses only the two shortest lags and gets a range
+width of **49 units on RB100 and 56 on RB200**, with a fundamental relaxation
+time of 6.3 and 8.8 bars.
+
+This page gets **60 steps shared** and `tau_1` = 12.2 minutes by fitting all six
+lags of a variance-ratio curve. Two routes, no shared machinery beyond the
+published table, and they land within 10-20% of each other on the width and
+within a factor of 1.5 on the relaxation time. They also agree on the thing that
+matters more: **the two indices have nearly the same range**, which is what the
+shared-width constraint here asserts and what their independent per-feed
+inversion produces without being asked to.
+
+And their page makes a methodological point this one had better take. **The
+long-lag cells are the splice, not the process.** Dropping break bars and
+concatenating what is left glues independent episodes end to end, and glued
+episodes diffuse - so the flatness at `n` = 100 to 1000 is a property of the
+stitching rule, and only the short lags carry the confinement. That is right, and
+it cuts at the scoring used above, which weights all six lags equally.
+
+It does not move the answer. Rescored on `n = 1` and `n = 5` alone - the only
+cells where under 6% of pairs can straddle a break - the best shared width is
+**still 60**, with 55 next:
+
+| shared width | 40 | 45 | 50 | 55 | **60** | 66 | 72 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| joint \|error\| on the short lags | 0.1013 | 0.0649 | 0.0400 | 0.0307 | **0.0253** | 0.0341 | 0.0397 |
+
+But it does reframe the impasse. The tension this page ends on - no single
+confinement matching the ex-break shape and the all-bars flatness at once - is
+partly a tension between a statement about the **range** and a statement about the
+**break and the stitching rule**, which were never obliged to be satisfied by one
+mechanism. The instrument that separates them is a transfer operator measured
+strictly *inside* an episode, which is what that page builds and this one does
+not.
 
 **So `deriving.md` is not complete enough to re-instantiate Range Break.** One
 parameter has to be supplied from outside the specification - a shared range
