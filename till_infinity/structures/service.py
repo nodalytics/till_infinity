@@ -54,6 +54,7 @@ from .learning.breaking import Breaks
 from .learning.drift import Drift
 from .learning.racing import Races
 from .models import Shape, Signal
+from .vol import implied
 
 #: How many published feature sets `liveness_tally` reads. Enough that a
 #: genuinely rare value still appears, small enough that a field which dies
@@ -528,6 +529,10 @@ class Watcher:
         self._seeded: set[str] = set()
         self.outcomes = 0
         self._saved = 0.0
+        #: When the implied quote was last re-read. Separate from `_saved`
+        #: because a quote that is daily and a state that is 206MB want very
+        #: different cadences.
+        self._implied_at = 0.0
         #: Messages this watcher threw on and skipped rather than died on.
         #: Reported in the save log, because a consumer quietly discarding a
         #: tenth of its input is a different thing from one that is healthy and
@@ -1335,6 +1340,47 @@ class Watcher:
             return await self._read_macro()
         return []
 
+    async def _read_implied(self) -> None:
+        """Re-read the implied quote, if it is due and the member is on.
+
+        On a thread because yfinance does its own HTTP, and wrapped because a
+        quote is not worth an outage - `latest` already swallows its own errors
+        and this is the belt for the braces.
+
+        **Silence is handled by not writing.** A source that stops returns None,
+        the last good reading stays where it is, and `Implied.MAX_AGE` retires
+        it after three days. That is the failure mode that matters for a daily
+        series: it looks alive for a long time after it dies.
+        """
+        if not implied.ENABLED:
+            return
+        now = time.monotonic()
+        if self._implied_at and now - self._implied_at < implied.POLL_SECONDS:
+            return
+        self._implied_at = now
+        try:
+            quote = await asyncio.to_thread(implied.latest)
+        except Exception as exc:
+            log.debug("structures: could not read %s: %s", implied.TICKER, exc)
+            return
+        if quote is None:
+            log.warning(
+                "structures: %s did not read - the last quote stands until it ages out",
+                implied.TICKER,
+            )
+            return
+        held = self.engine.vol.implied
+        first = held.level <= 0
+        held.observe(quote, when=time.time())
+        if first:
+            log.info(
+                "structures: %s at %.2f - the implied member is live on %s at %s",
+                implied.TICKER,
+                quote,
+                ", ".join(sorted(implied.IMPLIED_FEEDS)),
+                "/".join(implied.IMPLIED_INTERVALS),
+            )
+
     async def _read_macro(self) -> list[Signal]:
         """Re-read the policy series, and speak if a stance turned.
 
@@ -1631,6 +1677,7 @@ class Watcher:
                     # Every message, because a resolution that is not drained
                     # promptly is one the engine is holding for no reason.
                     await self.record_outcomes()
+                    await self._read_implied()
                     if time.monotonic() - self._saved >= self.settings.save_seconds:
                         self.save()
             finally:

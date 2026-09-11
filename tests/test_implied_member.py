@@ -194,3 +194,59 @@ def test_it_reports_the_fitted_value_and_not_the_quote(enabled):
     got = book.implied_bps("spx500", "1d", now=1400.0)
     assert got is not None
     assert got != pytest.approx(bps_for(20.0, "1d"), abs=1.0), "that is the raw quote"
+
+
+async def test_the_quote_is_polled_and_reaches_the_book(enabled, monkeypatch):
+    """Built and never fed is how a member ships inert: `Implied.level` stays
+    zero, `fresh` is false, and it is absent from every ensemble while looking
+    entirely configured."""
+    from till_infinity.structures.vol import implied as mod
+
+    monkeypatch.setattr(mod, "latest", lambda *_a, **_k: 17.29)
+    watcher = _watcher()
+
+    await watcher._read_implied()
+
+    assert watcher.engine.vol.implied.level == pytest.approx(17.29)
+    assert watcher.engine.vol.implied.fresh(now=__import__("time").time())
+
+
+async def test_a_source_that_stops_leaves_the_last_quote_standing(enabled, monkeypatch):
+    """The failure that matters for a daily series: it looks alive long after it
+    dies. Silence must not overwrite, and `MAX_AGE` is what retires the reading
+    rather than a zero written over it."""
+    from till_infinity.structures.vol import implied as mod
+
+    watcher = _watcher()
+    monkeypatch.setattr(mod, "latest", lambda *_a, **_k: 17.29)
+    await watcher._read_implied()
+
+    monkeypatch.setattr(mod, "latest", lambda *_a, **_k: None)
+    watcher._implied_at = 0.0
+    await watcher._read_implied()
+
+    assert watcher.engine.vol.implied.level == pytest.approx(17.29), "not zeroed"
+
+
+async def test_polling_respects_its_own_interval(enabled, monkeypatch):
+    """VIX is published daily. Asking Yahoo on every bus message would be rude
+    and would learn nothing."""
+    from till_infinity.structures.vol import implied as mod
+
+    calls = []
+    monkeypatch.setattr(mod, "latest", lambda *_a, **_k: calls.append(1) or 17.29)
+    watcher = _watcher()
+
+    await watcher._read_implied()
+    await watcher._read_implied()
+    await watcher._read_implied()
+
+    assert len(calls) == 1, "one read, then the interval holds"
+
+
+def _watcher():
+    from till_infinity.bus import Bus
+    from till_infinity.structures.config import Settings
+    from till_infinity.structures.service import Watcher
+
+    return Watcher(Bus(), settings=Settings(warm=False, journalling=False))

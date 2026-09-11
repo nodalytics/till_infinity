@@ -225,3 +225,37 @@ class Implied(Restorable):
     def bps(self, interval: str, now: float) -> float | None:
         """This bar's implied sigma in bps, or None when it must not vote."""
         return bps_for(self.level, interval) if self.fresh(now) else None
+
+
+#: How often the quote is re-read. VIX is published daily, so this is about
+#: catching the day's close rather than tracking a tape - and about noticing
+#: that the source has stopped, which a daily series hides for a long time.
+POLL_SECONDS = float(os.environ.get("STRUCTURES_IMPLIED_POLL") or 3_600.0)
+
+#: The one series. `implied.md` measured the matched indices and found them
+#: unnecessary: `own - vix` is +0.0014 for us100 at a day and **-0.0080** for
+#: us30, where plain VIX is better than VXD.
+TICKER = os.environ.get("STRUCTURES_IMPLIED_TICKER") or "^VIX"
+
+
+def latest(ticker: str = TICKER) -> float | None:
+    """The most recent VIX close, or None if it cannot be read.
+
+    Synchronous and blocking - yfinance does its own HTTP - so callers push it
+    onto a thread, the way `prices/yahoo.py` does for the same reason.
+
+    Never raises. A source that is unreachable must leave the last good reading
+    in place and let `MAX_AGE` retire it, because an exception here would take
+    down a service whose actual job is levels.
+    """
+    try:
+        import yfinance as yf
+
+        got = yf.Ticker(ticker).history(period="5d", interval="1d", auto_adjust=False)
+        for _when, row in reversed(list(got.iterrows())):
+            close = row.get("Close")
+            if close is not None and not math.isnan(close) and close > 0:
+                return float(close)
+    except Exception:
+        return None
+    return None
