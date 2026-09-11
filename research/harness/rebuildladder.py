@@ -491,8 +491,13 @@ def main() -> None:  # noqa: PLR0915
     print("    only a volatility and a tick rate cannot match that: it is a property of")
     print("    the path, not of the law. If that is what the surviving arms read, the")
     print("    coarse band carries the residual and the fine band sits at its floor.")
+    print("    Each band carries its own real-vs-real floor AND its own Monte Carlo")
+    print("    floor - two independent rebuilds of the same law. If sim-vs-sim scores")
+    print("    what real-vs-sim scores, the residual is path-to-path drift in the")
+    print("    effective resolution and not a defect in the law.")
     print(f"{'band':16s} {'feeds':>6s} {'arm':12s} {'n/class':>8s} {'AUC':>8s} "
-          f"{'95% CI':>17s} {'floor':>7s} {'gap':>8s} {'verdict':>11s} {'n*':>11s}")
+          f"{'95% CI':>17s} {'floor':>7s} {'MCfloor':>7s} {'gap':>8s} {'verdict':>11s} "
+          f"{'n*':>11s}")
     best = RUNGS[-1]
     bands = {"pts/sigma >= 50": {f: d for f, d in fine.items() if d["res"] >= 50},
              "pts/sigma < 50": {f: d for f, d in fine.items() if d["res"] < 50}}
@@ -503,7 +508,14 @@ def main() -> None:  # noqa: PLR0915
         ra = cat([d["ri"][: d["h"]] for d in sub.values()])
         rb2 = cat([d["ri"][d["h"]: 2 * d["h"]] for d in sub.values()])
         bb = build(sub, best, SEED)
-        sa = cat(bb["A"])
+        sa, sb2 = cat(bb["A"]), cat(bb["B"])
+        # and a second, independent rebuild, so the band carries its own Monte
+        # Carlo floor. The quote grid is fixed in price, so two rebuilds of the
+        # same law differ in effective resolution exactly as a rebuild differs from
+        # the feed - and if sim-vs-sim scores what real-vs-sim scores, the whole
+        # residual is path-to-path drift and not a defect in the law.
+        b2 = build(sub, best, SEED + 4242)
+        sa2 = cat(b2["A"])
         cw = min(ra.size // W_TICK, MAXROW)
         ck = min(ra.size // KTUP, MAXROW)
         for kind, cp, fn in (("window", cw, J.tick_window_features),
@@ -512,18 +524,26 @@ def main() -> None:  # noqa: PLR0915
             xa2, nms = fn(ra, arg)
             xb2, _ = fn(rb2, arg)
             xs2, _ = fn(sa, arg)
+            xm2, _ = fn(sa2, arg)
+            xs2b, _ = fn(sb2, arg)
             fl = run_arm("floor", xa2, xb2, nms, SEED + 2, cp)
             tt = run_arm("test", xa2, xs2, nms, SEED + 4, cp)
+            mc = run_arm("mc", xm2, xs2b, nms, SEED + 6, cp)
             if fl.get("skipped") or tt.get("skipped"):
                 continue
             ns = auc_nstar(tt, fl)
             print(f"{bname:16s} {len(sub):6d} {kind:12s} {tt['n']:8d} {tt['auc']:8.4f} "
                   f"[{tt['lo']:.4f},{tt['hi']:.4f}] {fl['auc']:7.4f} "
+                  f"{mc.get('auc', float('nan')):7.4f} "
                   f"{tt['auc'] - fl['auc']:+8.4f} "
                   f"{'CAUGHT' if tt['lo'] > fl['hi'] else 'at floor':>11s} "
                   f"{('inf' if ns == float('inf') else format(ns, ',.0f')):>11s}")
             payload["bands"].setdefault(bname, {})[kind] = {"test": tt, "floor": fl,
-                                                            "nstar": ns}
+                                                            "mc": mc, "nstar": ns}
+            ledger.append({"test": "the band's rebuild-vs-rebuilt floor is no higher "
+                                   "than its real-vs-real one", "feed": f"{bname} {kind}",
+                           "value": mc.get("auc", 0.5) - fl["auc"],
+                           "fired": bool(mc.get("lo", 0) > fl["hi"])})
             ledger.append({"test": f"rung `{best}` not caught in the {bname} band",
                            "feed": kind, "value": tt["auc"] - fl["auc"],
                            "fired": tt["lo"] > fl["hi"]})
