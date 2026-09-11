@@ -184,7 +184,14 @@ def ruin(mid: np.ndarray, step: float, past: bool = False) -> list[dict]:
     `generators.md`'s replay measured.
     """
     out = []
-    lat = np.round(mid / step).astype(np.int64)
+    # Subtract the first mid before snapping. Step Index quotes a spread of
+    # exactly one step, so the *mid* sits on a half-step lattice and
+    # `round(mid/step)` lands on a half-integer every time - banker's rounding
+    # then alternates and invents moves the walk never made. Differences are
+    # exact multiples of the step, so anchoring at the first mid is exact. This
+    # read E[tau] at 21.75 ticks against a theoretical 25 on the real feed while
+    # the rebuild - whose mids sit on the full step - read 25.38.
+    lat = np.round((mid - mid[0]) / step).astype(np.int64)
     for stop, tgt in ((5, 5), (5, 10), (5, 15), (10, 10), (5, 25)):
         i, hits, taus = 0, 0, []
         n = lat.size
@@ -329,11 +336,11 @@ def sim_step(n_bars: int, p_up: float, seed: int, p0: float) -> dict:
 
 
 def sim_rb(n_bars: int, band: int, mean_break_ticks: float, jump_pool, seed: int,
-           p0: float, step: float, anchor: str = "edge") -> dict:
+           p0: float, step: float, anchor: str = "edge", band_pool=None) -> dict:
     rng = np.random.default_rng(seed)
     return G.bars_from_stream(
         G.gen_rangebreak(n_bars * TPB, step, band, mean_break_ticks, 0.0, p0, rng,
-                         jump_pool=jump_pool, anchor=anchor),
+                         jump_pool=jump_pool, anchor=anchor, band_pool=band_pool),
         TPB, n_bars, keep_ticks=min(n_bars * TPB, 200_000))
 
 
@@ -915,6 +922,44 @@ def main() -> None:
                 print(f"{feed:22s} {anchor:>7s} {series:>7s} " + " ".join(
                     f"{G.spread_across([c[series][n] for c in null])['sd']:9.4f}"
                     for n in VR_N))
+
+    print("\n[7b] THE WIDTH IS NOT A CONSTANT - a band drawn per range instead of held")
+    print("     The feed's visited range between breaks is not tight: median 40 steps,")
+    print("     q90 93, max 259 on RB100. A fixed width cannot produce that, and it is")
+    print("     also the only addition tried here that can confine early and carry a")
+    print("     high plateau at once. The pool is the feed's own visited ranges scaled")
+    print("     by a single factor, scanned - the shape is the feed's, not a fit.")
+    print(f"{'feed':22s} {'scale':>6s} {'MAE vs feed':>12s} {'flat':>6s} "
+          + " ".join(f"{'n=' + str(n):>8s}" for n in VR_N))
+    for feed in rbfeeds:
+        R = rbreal[feed]
+        tgt = R["vr"]["splice"]
+        print(f"{feed:22s} {'FEED':>6s} {'':12s} "
+              f"{max(R['vr']['all'][n] for n in VR_N) / min(R['vr']['all'][n] for n in VR_N):6.3f} "
+              + " ".join(f"{tgt[n]:8.3f}" for n in VR_N))
+        best = None
+        for scale in (1.0, 1.3, 1.6, 2.0, 2.5):
+            pool = R["visited"] * scale
+            bb = sim_rb(min(R["bars"]["n"] * RBMULT, 500_000),
+                        int(np.median(pool)), rbpar[feed]["mean_break_ticks"],
+                        R["brk"]["_jump"], SEEDS[0], float(R["bars"]["close"][0]),
+                        R["step"], MAIN_ANCHOR, band_pool=pool)
+            cur = vr_curves(bb, R["step"])
+            allv = [cur["all"][n] for n in VR_N]
+            mae = float(np.nanmean([abs(cur["splice"][n] - tgt[n]) for n in VR_N]))
+            print(f"{'':22s} {scale:6.1f} {mae:12.4f} {max(allv) / min(allv):6.3f} "
+                  + " ".join(f"{cur['splice'][n]:8.3f}" for n in VR_N))
+            if best is None or mae < best[0]:
+                best = (mae, scale, cur)
+            payload.setdefault("band_pool", {}).setdefault(feed, []).append(
+                {"scale": scale, "mae": mae,
+                 "splice": {n: cur["splice"][n] for n in VR_N},
+                 "all": {n: cur["all"][n] for n in VR_N}})
+        fixed = G.spread_across([r["vr"]["splice"][20] for r in rbsim[feed][MAIN_ANCHOR]])
+        print(f"{'':22s} best scale {best[1]:.1f} at MAE {best[0]:.4f}; the fixed-width "
+              f"rebuild reads {fixed['mean']:.3f} at n=20 against the feed's {tgt[20]:.3f}")
+        ledger.append({"test": "a drawn width beats a held one on the ex-break curve",
+                       "feed": feed, "value": best[0], "fired": False})
 
     print("\n[8] RANGE BREAK - the levels the flatness is made of, so it cannot be degenerate")
     print(f"{'feed':24s} {'':>8s} {'min/break':>10s} {'gap CV':>8s} {'ex-brk 1m sd':>13s} "

@@ -271,7 +271,8 @@ def _fold(x: np.ndarray, m: int) -> np.ndarray:
 
 def gen_rangebreak(n_ticks: int, step: float, band: int, mean_break_ticks: float,
                    break_jump: float, p0: float, rng, jump_pool=None,
-                   anchor: str = "edge", mean_quiet_ticks: float | None = None):
+                   anchor: str = "edge", mean_quiet_ticks: float | None = None,
+                   band_pool=None):
     """Range Break: a bounded +-1 walk, and a memoryless break that re-ranges.
 
     `band` is the full width of the range in steps, the walk bounces off both
@@ -304,6 +305,16 @@ def gen_rangebreak(n_ticks: int, step: float, band: int, mean_break_ticks: float
     lo_edge = round(p0 / step)
     off = band // 2
     emitted = 0
+    # `band_pool` draws a width per range instead of holding one. The feed says
+    # to: the *visited* range between breaks on `range_break_100_index` has a
+    # median of 40 steps, a 90th percentile of 93 and a maximum of 259, which a
+    # fixed width cannot produce. A mixture is also the only thing tried here
+    # that can confine early and carry a high plateau at once, because the
+    # narrow ranges do the first and the wide ones the second.
+    def _next_band(cur: int) -> int:
+        if band_pool is None:
+            return cur
+        return max(4, int(round(float(band_pool[rng.integers(0, len(band_pool))]))))
     # Two event types where `mean_quiet_ticks` is given: a *break*, which jumps
     # the price and opens a new range, and a *quiet re-range*, which opens a new
     # range around where the price already is and moves nothing. The second is
@@ -334,6 +345,7 @@ def gen_rangebreak(n_ticks: int, step: float, band: int, mean_break_ticks: float
         else:
             amp, sign = 0.0, 1 if rng.random() < 0.5 else -1
         landed = int(lattice[-1]) + sign * round(amp)
+        band = _next_band(band)
         if anchor == "centre":
             lo_edge, off = landed - band // 2, band // 2
         elif anchor == "edge_far":
