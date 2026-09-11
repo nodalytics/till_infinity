@@ -173,6 +173,81 @@ def concentration(pairs: list[tuple[float, float]], label: str) -> None:
     print(f"  without the five worst: {on_risk(trimmed) * 100:+.1f}% of risk\n")
 
 
+#: Planned reward-to-risk bands. Chosen at the natural boundaries - below
+#: parity, the ordinary range, and ambitious - before any number was cut by
+#: them, because `winning.md` has already shown that a scan over this book does
+#: not clear its own noise floor and a band picked after the fact would be that
+#: scan with one survivor reported.
+BANDS: tuple[tuple[str, float, float], ...] = (
+    ("below 1:1", 0.0, 1.0),
+    ("1:1 to 2:1", 1.0, 2.0),
+    ("2:1 and above", 2.0, float("inf")),
+)
+
+
+def banded(rows: list[dict[str, Any]], label: str) -> None:
+    """Outcome by the reward-to-risk the order was written at.
+
+    The ratio is worth cutting by precisely because no strategy chooses it:
+    targets are placed at structure, so it is set by how far the next level
+    happens to be. A book that sizes or selects on it is treating an output of
+    the level geometry as a decision.
+    """
+    print(f"## {label}\n")
+    print(f"  {'band':16} {'n':>4} {'hit':>7} {'on risk':>9} {'95%':>22} {'plan':>7} {'payoff':>8}")
+    for name, low, high in BANDS:
+        part = [
+            row
+            for row in rows
+            if row.get("reward_to_risk")
+            and low <= float(row["reward_to_risk"]) < high
+            and row.get("profit") is not None
+            and float(row.get("risk_money") or 0) > 0
+        ]
+        if not part:
+            continue
+        pairs = [(float(row["profit"]), float(row["risk_money"])) for row in part]
+        got = [p / r for p, r in pairs]
+        wins = [g for g in got if g > 0]
+        losses = [g for g in got if g < 0]
+        payoff = (
+            abs(statistics.mean(wins) / statistics.mean(losses))
+            if wins and losses
+            else float("nan")
+        )
+        print(
+            f"  {name:16} {len(part):4} {len(wins) / len(got) * 100:6.1f}% "
+            f"{on_risk(pairs) * 100:+8.1f}% {band(pairs):>22} "
+            f"{statistics.median(float(row['reward_to_risk']) for row in part):7.2f} "
+            f"{payoff:8.3f}"
+        )
+    print()
+
+
+def kept(rows: list[dict[str, Any]], label: str) -> None:
+    """What each exit aimed at against what it actually collected.
+
+    The point of pairing them: an exit kind's mean says whether it was a good
+    day, and the ratio says whether the rule that fired was the rule the trade
+    was sized for. A clock that lands at 5% of the target it replaced is not an
+    exit policy, it is the absence of one.
+    """
+    print(f"## {label}\n")
+    print(f"  {'exit':12} {'n':>4} {'planned':>9} {'realised':>9} {'kept':>7}")
+    grouped: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in rows:
+        if row.get("reward_to_risk") and float(row.get("risk_money") or 0) > 0:
+            grouped[str(row.get("exit_kind") or "unknown")].append(row)
+    for name, part in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
+        aimed = statistics.median(float(row["reward_to_risk"]) for row in part)
+        took = statistics.median(float(row["profit"]) / float(row["risk_money"]) for row in part)
+        print(
+            f"  {name:12} {len(part):4} {aimed:+9.3f} {took:+9.3f} "
+            f"{took / aimed * 100 if aimed else 0:6.0f}%"
+        )
+    print()
+
+
 def cut_by(rows: list[dict[str, Any]], field: str, label: str) -> None:
     print(f"## {label}\n")
     grouped: dict[str, list[tuple[float, float]]] = collections.defaultdict(list)
@@ -199,8 +274,10 @@ def main() -> None:
     pairs = payable(real)
     geometry(real, pairs, "Real markets")
     concentration(pairs, "Real markets")
+    banded(real, "Real markets by the reward-to-risk the trade was planned at")
     cut_by(real, "strategy", "Real markets by strategy")
     cut_by(real, "exit_kind", "Real markets by how the trade ended")
+    kept(real, "What each exit kind aimed at and what it collected")
 
 
 if __name__ == "__main__":

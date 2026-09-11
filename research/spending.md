@@ -113,6 +113,83 @@ is a clock running out, and on this book that is mildly positive. It is not an
 edge - it is what is left of a trade that neither reached its target nor its
 stop, and its mean sits near zero because that is what "neither" means.
 
+## The far targets are the loss, and the near ones are the only thing working
+
+Split the same 133 real-market closes by the reward-to-risk each trade was
+**planned** at, which is written on the order:
+
+| planned | n | hit rate | on risk | 95% |
+| --- | ---: | ---: | ---: | --- |
+| below 1:1 | 50 | 62.0% | **−2.1%** | [−18.3%, +13.8%] |
+| 1:1 to 2:1 | 53 | 30.2% | −21.9% | [−47.8%, +4.7%] |
+| 2:1 and above | 30 | 23.3% | **−53.3%** | **[−84.6%, −19.0%]** |
+
+**This is the reverse of the obvious reading, and the obvious reading was
+about to be shipped as a gate.** A trade whose target sits closer than its stop
+looks like the thing to remove: it needs a hit rate above two thirds to pay.
+It gets one - 62.0% against the 66.9% its median plan needs - and it is the
+only group on the book that is not losing. The trades aiming at two-to-one and
+better hit 23.3% against the 26.2% *they* need, which is nearly adequate, and
+still lose more than half the risk they deploy.
+
+The hit rates are all close to what each group needs. What separates them is
+what the winners actually collect:
+
+| planned | median plan | win, of risk | loss, of risk | realised payoff |
+| --- | ---: | ---: | ---: | ---: |
+| below 1:1 | 0.494 | +32.5% | −56.4% | 0.577 |
+| 1:1 to 2:1 | 1.504 | +86.4% | −78.2% | 1.105 |
+| 2:1 and above | 2.818 | +78.2% | **−96.1%** | **0.813** |
+
+A trade planned at 2.8:1 realises 0.81:1. It pays a near-full stop when it is
+wrong and collects less than an R when it is right.
+
+### What fires instead of the target
+
+| exit | n | median planned | median realised | kept |
+| --- | ---: | ---: | ---: | ---: |
+| target | 17 | +0.574R | +0.628R | **109%** |
+| hold | 50 | +1.167R | +0.058R | **5%** |
+| stop | 42 | +1.546R | −0.989R | −64% |
+| stale | 8 | +0.859R | −0.040R | −5% |
+
+Ordered by the distance the trade was aiming at, and monotone in it. **Trades
+that aimed at 0.57R hit it and collected 109% of it. Trades that aimed at 1.17R
+ran out of clock at 5% of it. Trades that aimed at 1.55R paid the stop.**
+
+So the exit that fires is chosen by the target's distance, and only the nearest
+band ever reaches the rule it was sized for. On the 35 closes since 2026-09-03
+where the peak is trustworthy, the median trade reaches **38.5%** of its own
+target and a quarter of them reach under 10% of it.
+
+### Where the far targets come from
+
+Not from a strategy asking for one. The stop distance is flat across all three
+bands - 1.47, 1.26 and 1.23 volatility units - so a high planned ratio is a
+**far target**, not a tight stop. Targets are placed at structure, so the ratio
+is set by how far the next level happens to be, and a trade entered in front of
+a distant level is handed a flattering reward-to-risk it has no better chance
+of reaching. `fade-to-value` and `sweep-aware` supply nine each of the thirty,
+on gold eleven times.
+
+That is the actionable shape: **the planned reward-to-risk is an output of the
+level geometry, not a decision, and the book sizes and selects on it as though
+it were a decision.**
+
+### How far to trust this
+
+Three bands is three comparisons, not forty, and the bands were chosen before
+the numbers at the natural boundaries. But `winning.md` ran 43 entry features
+against a 300-permutation control on this same book and **nothing cleared the
+noise floor**, so any cut of this data that is not pre-registered should be
+assumed to be inside it. Cuts by stop distance, by feed and by hour were run
+and are not reported here: every interval spanned zero and reporting the
+largest would be the scan `winning.md` already refuted.
+
+What survives is the ordering, because it is monotone across three bands in
+two independent tables - the payoff one and the exit one - and because the
+2:1-and-above interval excludes zero on its own.
+
 ## By strategy, on real markets only
 
 | strategy | n | on risk | 95% |
@@ -161,11 +238,18 @@ the restriction, so it is withdrawn rather than reported.
    points off break-even at the payoff the book plans and 18.4 points off at the
    payoff it realises. Every further point of hit rate is worth about a fifth of
    what closing the payoff gap is worth, so work on the exit before the signal.
-3. **Decide what the generated half is for.** 43% of closes are on instruments
+3. **Stop selecting on planned reward-to-risk, and consider capping it.** The
+   ratio is an output of where the next level sits rather than a choice, the
+   2:1-and-above band loses **−53.3% [−84.6%, −19.0%]**, and the band that looks
+   worst on paper is the only one near flat. A target beyond about 1R is not
+   reached: it is replaced by the clock at 5% of its value or by the stop at a
+   full one. Either shorten the target to what the hold can deliver, or lengthen
+   the hold to what the target needs - the present pairing does neither.
+4. **Decide what the generated half is for.** 43% of closes are on instruments
    that cannot pay in expectation. If they are there to exercise the machinery
    cheaply, that is a defensible answer and should be written down as the
    reason. If they are there to make money, `deriving.md` has already settled it.
-4. **Do not quote a pooled book figure again.** Every number on this page
+5. **Do not quote a pooled book figure again.** Every number on this page
    changes sign, size or significance depending on which half it is drawn from.
 
 ## What this does not say
