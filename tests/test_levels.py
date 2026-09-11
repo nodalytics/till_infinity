@@ -2744,3 +2744,44 @@ def test_each_formation_brings_its_own_cluster_minimum():
     # Everything that observes turns keeps the default; three is evidence.
     for name in ("pip", "run", "origin", "profile", "equal", "gap", "wick", "vwap"):
         assert eng.FORMATION_MIN_SWINGS.get(name, lv.MIN_SWINGS) == lv.MIN_SWINGS
+
+
+def test_pivot_levels_are_actually_checked():
+    """They were built, merged, pruned - and never looked at once.
+
+    `check` opens with `if not vol.warm: return []` and asked for
+    `vol.of(feed, 'daily')`. There is no daily bar stream to warm one, so every
+    pivot level was skipped on the first line of every bar and every quote.
+    That is why `pivot` reads identically zero across 20,000 journalled
+    outcomes: not a dead feature, levels nobody checked.
+    """
+    engine = Engine(intervals=("5m",))
+    calls = []
+    for bar in _range_bound(1400):
+        calls += engine.observe_bar(bar)
+
+    daily = engine.levels("gold", "daily")
+    assert daily, "the sessions completed and the pivots were built"
+    from_pivots = [
+        call
+        for call in calls
+        if getattr(call, "level", None) is not None and pivots.is_pivot(call.level)
+    ]
+    assert from_pivots
+    assert any(level.touches >= 1.0 for level in daily)
+
+
+def test_a_session_period_borrows_the_reference_estimate():
+    engine = Engine(intervals=("5m",))
+    for bar in _range_bound(1400):
+        engine.observe_bar(bar)
+
+    # The bar interval has its own and keeps it.
+    assert engine.vol_for("gold", "5m") is engine.vol.of("gold", "5m")
+    # A session period has none at all, so it takes the one pivots were priced
+    # with - which is what `_roll_sessions` already does when it builds them.
+    for period in pivots.PERIODS:
+        borrowed = engine.vol_for("gold", period)
+        assert borrowed.warm
+        assert borrowed is engine.reference("gold")
+        assert not engine.vol.of("gold", period).warm

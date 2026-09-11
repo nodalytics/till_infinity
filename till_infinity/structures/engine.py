@@ -2402,7 +2402,33 @@ class Engine:
             # re-arms it once price is REARM_VOL away, which is what "over"
             # means.
             level.waiting = True
-            self._deliver(level, touch, self.vol.of(touch.feed, touch.interval), when)
+            self._deliver(level, touch, self.vol_for(touch.feed, touch.interval), when)
+
+    def vol_for(self, feed: str, interval: str) -> Volatility:
+        """The estimate a level at this interval is measured against.
+
+        Bar intervals have their own estimate and should use it. **Session
+        periods do not have one at all**, and that is what made pivots inert.
+
+        `_roll_sessions` already knows this - it builds pivots with
+        `reference(feed)` because a session structure is priced at today's
+        scale rather than at whichever bar interval happened to complete the
+        day. Everything that came *after* the build asked `vol.of(feed, period)`
+        instead, and there is no `daily` bar stream to warm one, so it got a
+        fresh estimate that was never warm.
+
+        `check` opens with `if not vol.warm: return []`, so every pivot level
+        was skipped on the first line, on every bar and every quote, for the
+        whole life of the formation. They were built, merged and pruned
+        correctly and then never looked at: measured 2026-09-11 on 1,400 bars
+        of gold, 4 daily pivot levels formed and **0** of 231 calls came from
+        one. That is why `pivot` is identically zero across 20,000 journalled
+        outcomes - the feature was not dead, the levels carrying it were never
+        checked. See `service.liveness_tally`.
+        """
+        if interval in pivots.PERIODS:
+            return self.reference(feed)
+        return self.vol.of(feed, interval)
 
     def check(
         self,
@@ -2434,7 +2460,7 @@ class Engine:
         todo 0g. A touch that began inside this bar therefore sees only the
         close, and picks the wick up on the next bar it genuinely lives through.
         """
-        vol = self.vol.of(feed, interval)
+        vol = self.vol_for(feed, interval)
         if not vol.warm:
             return []
         calls: list[Call] = []

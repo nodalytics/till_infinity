@@ -866,11 +866,20 @@ class Watcher:
         """Which published features have stopped carrying information.
 
         Same argument as `origin_tally`, `drift_tally` and `change_tally`, and a
-        sharper case for it: **`run_vol` and `pivot` are identically zero across
-        20,000 outcomes** and have been for as long as the journal reaches. They
+        sharper case for it: **`run_vol` and `pivot` were identically zero across
+        20,000 outcomes** and had been for as long as the journal reached. They
         are published on every level call, journalled on every outcome, and fed
         to models that weight them. Nothing noticed until somebody cut by them
         by hand.
+
+        Both causes are now found, and neither was the feature. `run_vol` had no
+        producer. `pivot` had levels that were never checked: `Engine.check`
+        opens with `if not vol.warm: return []` and asked `vol.of(feed, 'daily')`
+        for a period that has no bar stream to warm one, so every pivot level was
+        skipped on its first line, on every bar and every quote, for the whole
+        life of the formation - see `Engine.vol_for`. A zero column is a question
+        about the pipeline before it is a question about the market, and this
+        tally exists to ask it at the next save rather than the next audit.
 
         Read off the decisions this process has published rather than off the
         journal, so it costs no query and describes what *this* build is
