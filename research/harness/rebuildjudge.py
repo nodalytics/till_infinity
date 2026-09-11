@@ -711,6 +711,29 @@ def main() -> None:
             ledger.append({"test": "VOID: AUC exactly 0.5000", "feed": r["tag"],
                            "value": 0.5, "fired": True})
 
+    print("\n    the feature the discriminator leans on hardest, measured directly:")
+    print("    a zero tick move is a repeated quote, and it is the one thing rounding a")
+    print("    continuous process to a lattice gets wrong if the venue does not round.")
+    print(f"      {'feed':26s} {'points/sigma':>12s} {'zero moves, feed':>17s} "
+          f"{'rebuilt':>10s} {'ratio':>8s}")
+    for feed, nom in VOL.items():
+        rt = G.real_ticks(feed)
+        rb = G.real_bars(feed)
+        if not rt.get("n") or not rb.get("n"):
+            continue
+        tpb = V.ticks_per_bar(feed)
+        grid = G.quote_grid(rt["mid"])
+        res = next((r[3] for r in resolution if r[0] == feed), float("nan"))
+        zr = float((np.diff(rt["mid"]) == 0).mean())
+        bb = V.simulate_vol(feed, nom, float(rb["close"][0]), grid,
+                            max(rb["n"], rt["n"] // tpb + 2), SEED,
+                            keep_ticks=rt["n"] + 2)
+        zs = float((np.diff(bb["ticks"]) == 0).mean())
+        print(f"      {feed:26s} {res:12.1f} {zr:17.6f} {zs:10.6f} "
+              f"{(zs / zr if zr else float('inf')):8.3f}")
+        payload.setdefault("zero_moves", {})[feed] = {"real": zr, "sim": zs,
+                                                      "points_per_sigma": res}
+
     print("\n    what the discriminator leans on - the ten features with the largest")
     print("    univariate AUC on the real-against-rebuilt window arm, each beside the")
     print("    same feature's AUC on the real-against-real floor:")
