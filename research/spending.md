@@ -1,0 +1,186 @@
+# Where the book spends its trades
+
+The desk has two halves and they are not the same business. One is the
+instruments the venue generates; the other is real markets. They are traded by
+the same strategies, sized by the same rules and scored in the same journal,
+and almost every figure this folder quotes pools them.
+
+This page separates them, and the separation changes what the problem is.
+
+Run `.venv/bin/python research/harness/spending.py` against the closes export.
+688 closes, 2026-08-30 to 2026-09-11.
+
+## The split
+
+| | closes | P&L |
+| --- | ---: | ---: |
+| generated | 294 | **+167.94** |
+| real markets | 394 | **−1,408.94** |
+
+**43% of the trades are on instruments where a theorem says there is nothing to
+find.** [deriving.md](deriving.md) establishes that a predictable position on a
+martingale has zero gross expectancy, so `E[net] = −(c/2) × turnover` for every
+stop, target, trail, entry filter and sizing rule. The synthetics are
+martingales to the precision anything here can measure. The only reachable
+improvement on that half is to trade it less.
+
+## Put in units of what was risked, one half survives the check and one does not
+
+A P&L compares position sizes. `risk_money` - what the trade stood to lose at
+its stop - is on the close record, and P&L over risk deployed is the comparable
+figure. It is present on 264 of the 688 closes, which is a big enough
+restriction that the honest thing is to report both halves with and without it:
+
+| | | closes | P&L | on risk of | = |
+| --- | --- | ---: | ---: | ---: | ---: |
+| **generated** | every close | 294 | +167.94 | | |
+| | with a risk figure | 131 | **+462.04** | 2,635.50 | +17.5% |
+| | without one | 163 | **−294.10** | | |
+| **real markets** | every close | 394 | −1,408.94 | | |
+| | with a risk figure | 133 | **−673.27** | 3,029.73 | **−22.2%** |
+| | without one | 261 | **−735.67** | | |
+
+The generated half's sign **flips** with the restriction: the closes that carry
+a risk figure made +462 and the ones that do not lost 294. So `+17.5% of risk`
+is a statement about which closes carry that field, not about those
+instruments, and it is quoted here only to be withdrawn. This is the third time
+today a result has turned out to be a property of a selection.
+
+The real-market half does not flip. It loses on the restricted set (−673), on
+the complement (−736) and on everything (−1,409), in roughly the proportion the
+counts predict. **−22.2% of risk deployed, 95% bootstrap [−36.7%, −7.5%]**, and
+the interval excludes zero.
+
+It is not five closes either. The five worst lost 172.90 between them; drop all
+five and it is still **−17.2%**.
+
+## The geometry, which is the actual finding
+
+On those 133 real-market closes:
+
+| | n | mean, as a share of the risk |
+| --- | ---: | ---: |
+| wins | 54 | **+54.4%** |
+| losses | 79 | **−78.2%** |
+
+Hit rate **40.6%**. Realised payoff **0.70:1**. Break-even at that payoff needs
+**59.0%**, so the book is **18.4 points short**.
+
+Now the same arithmetic against the payoff it *aimed* for. `reward_to_risk` is
+written at entry, and its median across the same 133 is **1.36:1**. A book with
+a 1.36:1 payoff breaks even at 42.3%.
+
+**It hits 40.6%. At the payoff it plans, it is short by 1.7 points.**
+
+That is the whole result. The entries are within noise of adequate. The exits
+realise **half** the payoff the entries were sized for - 0.70 against 1.36 -
+and that halving is the entire loss. A win comes in at 54% of its risk where a
+loss comes in at 78% of it, so the book keeps four tenths of what it plans to
+win and pays eight tenths of what it plans to lose.
+
+### Which is not the give-back, and the difference matters
+
+[giveback.md](giveback.md) is about a trade that reaches +2R and closes at its
+original stop, and that was real, was traced to `_best` being thrown away
+across a restart, and was fixed on 2026-09-04. This is a different thing and it
+survives that fix: a book whose average win is 0.54R is not mostly giving back
+open profit, it is mostly never getting far enough in front to have any.
+
+## How trades ended
+
+| exit | n | on risk |
+| --- | ---: | ---: |
+| hold | 50 | +7.5% |
+| stop | 42 | **−102.7%** |
+| target | 17 | **+81.5%** |
+| stale | 8 | −9.4% |
+| unknown | 16 | −24.5% |
+
+Two things to read off this and one trap.
+
+**Stops cost what a stop should.** −102.7% against a nominal −100%, which is
+2.7 points of slippage and spread, on real markets. That is the number
+[generators.md](generators.md) found to be 10-19R on the spike side of Boom and
+Crash; nothing like it happens here.
+
+**Targets pay, and they are the smallest group.** +81.5% on 17 closes, and the
+median *planned* payoff on those particular trades was 0.574R against a
+realised median of 0.628R - a ratio of **1.089**. Targets deliver slightly more
+than they promise. There are just 17 of them against 42 stops.
+
+The trap is the `hold` row: +7.5% on 50 closes, the largest group. A hold exit
+is a clock running out, and on this book that is mildly positive. It is not an
+edge - it is what is left of a trade that neither reached its target nor its
+stop, and its mean sits near zero because that is what "neither" means.
+
+## By strategy, on real markets only
+
+| strategy | n | on risk | 95% |
+| --- | ---: | ---: | --- |
+| snap | 29 | **−34.3%** | **[−65.2%, −2.0%]** |
+| thesis-only | 28 | −1.0% | [−22.4%, +19.7%] |
+| sweep-aware | 23 | −25.1% | [−68.1%, +23.0%] |
+| runner | 17 | −5.6% | [−36.9%, +21.7%] |
+| fade-to-value | 16 | −38.7% | [−78.7%, +5.0%] |
+| inverse | 6 | −72.4% | too few |
+| approach-scalp | 3 | −83.4% | too few |
+
+**`snap` is the only one whose interval excludes zero.** −34.3% over 29 closes,
+27.6% hit rate against the 52.2% its own payoff needs, median hold **114
+seconds**, on gold, us30, silver, ger40, us100 and btc. Its shape is
+`stop=1.0, target=1.0, hold=120s` - a 1:1 with two minutes to find it, which
+charges the spread on both legs of every attempt and needs better than a coin
+to clear it. It does not have better than a coin.
+
+Everything else is unresolved. `thesis-only` is flat at −1.0% over 28.
+`sweep-aware` reads −25.1% on real markets against the +0.154R it shows
+book-wide, and the difference is that its book-wide figure is mostly generated
+instruments - the same pooling this page exists to undo.
+
+## What would have killed this
+
+Written into `spending.py` before the numbers were read:
+
+| condition | outcome |
+| --- | --- |
+| the real half's sign moves under the risk-figure restriction | **survived** - −673, −736, −1,409, all the same sign |
+| the loss is five closes | **survived** - −17.2% with the five worst removed |
+| one strategy carries it | **partly fired** - `snap` is a third of it and is named separately |
+| the bootstrap interval includes zero | **survived** - [−36.7%, −7.5%] |
+
+And one that fired against the other half: the generated result did move under
+the restriction, so it is withdrawn rather than reported.
+
+## What follows
+
+1. **Turn `snap` off on real markets.** It is the one strategy measured
+   negative with an interval that excludes zero, the mechanism is understood - a
+   1:1 payoff over 114 seconds cannot clear two crossings of the spread - and it
+   is a third of the real-market loss.
+2. **The exits are the problem, not the entries.** A 40.6% hit rate is 1.7
+   points off break-even at the payoff the book plans and 18.4 points off at the
+   payoff it realises. Every further point of hit rate is worth about a fifth of
+   what closing the payoff gap is worth, so work on the exit before the signal.
+3. **Decide what the generated half is for.** 43% of closes are on instruments
+   that cannot pay in expectation. If they are there to exercise the machinery
+   cheaply, that is a defensible answer and should be written down as the
+   reason. If they are there to make money, `deriving.md` has already settled it.
+4. **Do not quote a pooled book figure again.** Every number on this page
+   changes sign, size or significance depending on which half it is drawn from.
+
+## What this does not say
+
+It does not say the real-market entries work. "Within 1.7 points of break-even
+at the planned payoff" is not an edge, it is an absence of a large negative, and
+1.7 points on 133 closes is far inside the noise.
+
+It does not measure costs separately. The −22.2% is net of spread and swap, and
+nothing here says how much of it is cost rather than direction.
+
+And 133 closes is small. The per-close return on risk has a standard
+deviation of **0.805**, so separating a genuine +5% of risk from zero at 95%
+needs about **1,000 closes** and +10% needs about **250**. The −22.2% measured
+here needs 51, which is why that one interval closes and nothing else on the
+page does. What is established is the *shape*: which half the money goes to,
+and that the gap between planned and realised payoff is several times the gap
+between the hit rate and break-even.
