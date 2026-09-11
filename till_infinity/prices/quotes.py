@@ -44,6 +44,10 @@ SCANNER_URL = "https://scanner.tradingview.com/symbol"
 
 #: Fields to ask for. Both transports name them the same way.
 QUOTE_FIELDS: tuple[str, ...] = ("lp", "bid", "ask", "volume", "ch", "chp", "lp_time")
+#: The scanner accepts `lp_time` and answers `null` for it (checked 2026-09-11,
+#: the same response that returns `lp` as null unauthenticated), so it is left
+#: out rather than requested for nothing. Only the websocket carries the venue
+#: clock; scanner-sourced quotes have `venue_time` None, which is honest.
 SCANNER_FIELDS = ",".join(f for f in QUOTE_FIELDS if f != "lp_time")
 
 QuoteSink = Callable[[QuoteKey, Quote], Awaitable[WriteResult]]
@@ -129,6 +133,10 @@ def parse_quote(payload: Any, *, now: float) -> Quote | None:
         return None
     quote = Quote(
         time=now,
+        # **The venue's own clock, which was being requested and discarded.**
+        # See `Quote.venue_time`: without it every venue on the record carries
+        # our receive time and no lead-lag is measurable from stored data.
+        venue_time=_number(payload.get("lp_time")),
         bid=_number(payload.get("bid")),
         ask=_number(payload.get("ask")),
         last=_number(payload.get("lp")),
@@ -593,7 +601,12 @@ class BrokerQuotes(QuoteSource):
         # shut market is recognised, and overwriting it would erase exactly
         # that evidence.
         when = _number(row.get("time")) or time.time()
-        return Quote(time=when, bid=bid, ask=ask, last=(bid + ask) / 2.0)
+        # `venue_time` as well as `time`: every other source puts its own clock
+        # there and our receive clock in `time`, and lead-lag work reads
+        # `venue_time` across sources expecting one meaning. Leaving it None here
+        # would make the broker - the only book we actually deal on - the one row
+        # that drops out of that comparison.
+        return Quote(time=when, venue_time=when, bid=bid, ask=ask, last=(bid + ask) / 2.0)
 
 
 QUOTE_SOURCES: dict[str, type[QuoteSource]] = {

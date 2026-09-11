@@ -123,6 +123,71 @@ async def test_quotes_round_trip_through_sqlite(tmp_path):
     assert stored.change_pct == 0.03
 
 
+def test_parse_quote_keeps_the_venues_own_clock():
+    """`lp_time` was requested and discarded for two years.
+
+    Every venue on the record therefore carried our *receive* time, which makes
+    cross-venue lead-lag unmeasurable from stored data at any horizon - the
+    single limit that capped `research/lagging.md` and `research/crossing.md`.
+    """
+    quote = parse_quote({"bid": 1.1, "ask": 1.2, "lp_time": 1789000000}, now=1789000000.4)
+    assert quote is not None
+    assert quote.venue_time == 1789000000.0
+    assert quote.time == 1789000000.4  # ours, and different: that gap is the point
+
+
+def test_a_quote_without_a_venue_clock_is_still_a_quote():
+    quote = parse_quote({"bid": 1.1, "ask": 1.2}, now=1.0)
+    assert quote is not None
+    assert quote.venue_time is None
+
+
+@pytest.mark.asyncio
+async def test_the_venue_clock_survives_sqlite_at_sub_second_resolution(tmp_path):
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write_quote(KEY, Quote(2000.0, 1.0, 2.5, venue_time=1999.25))
+        (stored,) = await store.quotes(KEY)
+    # Milliseconds, because a lead-lag measured in seconds measures nothing.
+    assert stored.venue_time == pytest.approx(1999.25)
+    assert stored.time - stored.venue_time == pytest.approx(0.75)
+
+
+@pytest.mark.asyncio
+async def test_a_live_database_grows_the_venue_column(tmp_path):
+    """`CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists.
+
+    Without the migration the column would reach new databases and silently miss
+    every running one - which is the only kind we have.
+    """
+    import sqlite3
+
+    path = tmp_path / "p.db"
+    old = sqlite3.connect(path)
+    old.executescript(
+        "CREATE TABLE quotes (source TEXT NOT NULL, feed TEXT NOT NULL,"
+        " venue TEXT NOT NULL, ticker TEXT NOT NULL, ts INTEGER NOT NULL,"
+        " bid REAL, ask REAL, last REAL, mid REAL, spread REAL, spread_bps REAL,"
+        " volume REAL, change REAL, change_pct REAL,"
+        " PRIMARY KEY (source, feed, venue, ticker, ts)) WITHOUT ROWID;"
+    )
+    old.execute(
+        "INSERT INTO quotes (source, feed, venue, ticker, ts, bid, ask)"
+        " VALUES (?, ?, ?, ?, 1000, 1.0, 2.0)",
+        (KEY.source, KEY.feed, KEY.symbol.venue, KEY.symbol.ticker),
+    )
+    old.commit()
+    old.close()
+
+    async with SqliteStore(path) as store:
+        await store.write_quote(KEY, Quote(2000.0, 1.0, 2.5, venue_time=1999.0))
+        rows = await store.quotes(KEY)
+    # The row written before the column existed reads back as unknown, not lost.
+    assert [q.venue_time for q in rows] == [None, 1999.0]
+
+    async with SqliteStore(path) as store:  # opening twice must not re-add it
+        assert len(await store.quotes(KEY)) == 2
+
+
 @pytest.mark.asyncio
 async def test_jsonl_quotes_land_under_a_quotes_directory(tmp_path):
     from till_infinity.prices import JsonlStore

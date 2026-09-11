@@ -176,6 +176,25 @@ class Quote:
     volume: float | None = None
     change: float | None = None
     change_pct: float | None = None
+    #: When the **venue** says the price was made, epoch seconds, or None.
+    #:
+    #: `time` above is when *we* received it, and for two years that was the
+    #: only clock on the record. `QUOTE_FIELDS` has always requested `lp_time`
+    #: and `parse_quote` has always thrown it away, which means every venue in
+    #: the consensus carries our receive time and **no cross-venue lead-lag is
+    #: measurable from anything stored, at any horizon.**
+    #:
+    #: That silently capped two studies on 2026-09-11. `research/lagging.md`
+    #: found 44% of one venue's rows landing in a single decile of the second -
+    #: a venue arriving on a schedule, which reads exactly like a lead - and
+    #: could not separate it from transport; `research/crossing.md` calls
+    #: storing this "the highest-value change this study found".
+    #:
+    #: Optional because not every venue sends it, and a quote without one is
+    #: still a quote.
+    #: **Last in the field order on purpose:** `Quote` is built positionally
+    #: in several places, so a new field belongs at the end.
+    venue_time: float | None = None
 
     @property
     def mid(self) -> float | None:
@@ -218,6 +237,7 @@ class Quote:
             "v": self.volume,
             "ch": self.change,
             "chp": self.change_pct,
+            "vt": self.venue_time,
         }
 
 

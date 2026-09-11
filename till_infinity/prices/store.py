@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS quotes (
     volume     REAL,
     change     REAL,
     change_pct REAL,
+    venue_ts   INTEGER,  -- epoch milliseconds the *venue* says the price was made
     PRIMARY KEY (source, feed, venue, ticker, ts)
 ) WITHOUT ROWID;
 
@@ -80,8 +81,8 @@ CREATE INDEX IF NOT EXISTS quotes_feed_ts
 
 _INSERT_QUOTE = """
 INSERT OR IGNORE INTO quotes (source, feed, venue, ticker, ts, bid, ask, last, mid,
-                              spread, spread_bps, volume, change, change_pct)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              spread, spread_bps, volume, change, change_pct, venue_ts)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _UPSERT = """
@@ -148,6 +149,25 @@ class Store(ABC):
     async def write_quote(self, key: QuoteKey, quote: Quote) -> WriteResult: ...
 
 
+#: Columns added to `quotes` after the table shipped, newest last.
+#:
+#: `CREATE TABLE IF NOT EXISTS` is the only schema mechanism here, and it does
+#: nothing at all to a table that already exists - so a column added to SCHEMA
+#: reaches new databases and silently misses every live one. Adding it here too
+#: is what makes the two agree.
+_QUOTE_COLUMNS: tuple[tuple[str, str], ...] = (("venue_ts", "INTEGER"),)
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """Bring an existing `quotes` table up to the current schema. Idempotent."""
+    have = {row[1] for row in conn.execute("PRAGMA table_info(quotes)")}
+    if not have:  # the table was just created from SCHEMA and already has them
+        return
+    for column, kind in _QUOTE_COLUMNS:
+        if column not in have:
+            conn.execute(f"ALTER TABLE quotes ADD COLUMN {column} {kind}")
+
+
 class SqliteStore(Store):
     """One database file, one writer connection, WAL for concurrent readers."""
 
@@ -167,6 +187,7 @@ class SqliteStore(Store):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = shared_db.connect(self.path)
         conn.executescript(SCHEMA)
+        _add_missing_columns(conn)
         conn.commit()
         self._conn = conn
 
@@ -322,6 +343,7 @@ class SqliteStore(Store):
             quote.volume,
             quote.change,
             quote.change_pct,
+            None if quote.venue_time is None else int(quote.venue_time * 1000),
         )
         before = conn.total_changes
         with conn:
@@ -344,13 +366,22 @@ class SqliteStore(Store):
     def _quotes(self, key: QuoteKey, limit: int) -> list[Quote]:
         conn = self._require()
         rows = conn.execute(
-            "SELECT ts, bid, ask, last, volume, change, change_pct FROM quotes"
+            "SELECT ts, bid, ask, last, volume, change, change_pct, venue_ts FROM quotes"
             " WHERE source=? AND feed=? AND venue=? AND ticker=? ORDER BY ts DESC LIMIT ?",
             (key.source, key.feed, key.symbol.venue, key.symbol.ticker, limit),
         ).fetchall()
         return [
-            Quote(ts / 1000, bid, ask, last, volume, change, change_pct)
-            for ts, bid, ask, last, volume, change, change_pct in reversed(rows)
+            Quote(
+                ts / 1000,
+                bid,
+                ask,
+                last,
+                volume,
+                change,
+                change_pct,
+                venue_time=None if venue_ts is None else venue_ts / 1000,
+            )
+            for ts, bid, ask, last, volume, change, change_pct, venue_ts in reversed(rows)
         ]
 
     async def bars(self, key: SeriesKey, limit: int = 500) -> list[Bar]:
