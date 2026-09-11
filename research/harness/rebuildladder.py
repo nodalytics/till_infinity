@@ -22,6 +22,10 @@ the comparison against `rebuilding.md`'s parameter budget honest.
 2. ``bump`` - round the *increment* and move one unit where it would have
    rounded to nothing.
 3. ``resample`` - round the increment and redraw until the quote changes.
+4. ``drop`` - round the accumulated price, build the bars from every tick, and
+   delete the repeated quotes from the *tick stream only*. Same tick law as
+   ``resample`` and the right bar law, and it is what section two says the
+   observation actually is.
 
 ## What would count as failure, written before any number was looked at
 
@@ -76,7 +80,7 @@ KTUP = int(os.environ.get("KTUP", "8"))
 TREES = int(os.environ.get("TREES", "120"))
 MAXROW = int(os.environ.get("MAXROW", "60000"))
 RESOLUTION_MIN = float(os.environ.get("RESOLUTION_MIN", "8"))
-RUNGS = tuple(os.environ.get("RUNGS", "price,bump,resample").split(","))
+RUNGS = tuple(os.environ.get("RUNGS", "price,bump,resample,drop").split(","))
 #: rows per class for the empirical `n*` ladder, as fractions of the full arm
 SUBSAMPLE = (0.25, 0.5, 1.0)
 
@@ -202,10 +206,18 @@ def build(feeds: dict, rung: str, seed: int) -> dict:
     simA, simB, bars, coarse = [], [], [], []
     for feed, d in feeds.items():
         want = d["ri"].size + 4
+        # `drop` keeps every tick in the bar and deletes the repeated quotes
+        # from the tick stream afterwards, so it needs more raw ticks to end up
+        # with as many stored ones as the feed has.
+        over = 1.6 if rung == "drop" else 1.0
         bb = V.simulate_vol(feed, d["nom"], d["p0"], d["grid"],
-                            max(d["n_bars"], (want // d["tpb"]) + 2), seed,
-                            keep_ticks=want, lattice=rung)
-        si = np.diff(np.log(bb["ticks"])) / d["u"]
+                            max(d["n_bars"], (int(want * over) // d["tpb"]) + 2), seed,
+                            keep_ticks=int(want * over),
+                            lattice="price" if rung == "drop" else rung)
+        tk = bb["ticks"]
+        if rung == "drop":
+            tk = tk[np.concatenate([[True], np.diff(tk) != 0])]
+        si = np.diff(np.log(tk)) / d["u"]
         si = si[np.isfinite(si)][: d["ri"].size]
         h = d["h"]
         if d["fine"]:
@@ -408,6 +420,43 @@ def main() -> None:  # noqa: PLR0915
                        "fired": G.exactly_null(r["auc"], 0.5, 4)})
     payload["floor"] = {"ktuple": f_kt, "window": f_w, "bar": f_b}
 
+    print("\n    What the floor is made of. A window floor at 0.60 is not noise - the")
+    print("    feed's own first and second halves differ, and until that is named every")
+    print("    arm on this page is reading it as well as whatever it is meant to read.")
+    print(f"      {'feature':14s} {'AUC, half vs half':>18s}")
+    for nm, a in f_w["univariate"][:6]:
+        print(f"      {nm:14s} {a:18.4f}")
+    print(f"\n      {'feed':26s} {'repeat% A':>10s} {'repeat% B':>10s} "
+          f"{'pts/sig A':>10s} {'pts/sig B':>10s} {'absq10 A':>9s} {'absq10 B':>9s}")
+    halves = {}
+    for feed, d in fine.items():
+        ts = d["ticks"]["ts"]
+        mid = d["ticks"]["mid"]
+        hm = mid.size // 2
+        row = {}
+        for lab, sl in (("A", slice(0, hm)), ("B", slice(hm, 2 * hm))):
+            g = np.diff(ts[sl].astype(np.int64))
+            g = g[g > 0]
+            md = float(np.median(g)) if g.size else 0.0
+            sub = d["ri"][sl] if lab == "A" else d["ri"][d["h"]: 2 * d["h"]]
+            row[lab] = {
+                "repeat": float((g > 1.5 * md).mean()) if g.size else float("nan"),
+                "pts_sigma": (d["u"] * float(np.median(mid[sl]))) / d["grid"]
+                if d["grid"] else float("inf"),
+                "absq10": float(np.percentile(np.abs(sub), 10)),
+            }
+        halves[feed] = row
+        print(f"      {feed:26s} {100 * row['A']['repeat']:10.3f} "
+              f"{100 * row['B']['repeat']:10.3f} {row['A']['pts_sigma']:10.1f} "
+              f"{row['B']['pts_sigma']:10.1f} {row['A']['absq10']:9.4f} "
+              f"{row['B']['absq10']:9.4f}")
+        ledger.append({"test": "the feed's two halves repeat quotes at the same rate",
+                       "feed": feed,
+                       "value": row["B"]["repeat"] - row["A"]["repeat"],
+                       "fired": abs(row["B"]["repeat"] - row["A"]["repeat"])
+                       > 0.25 * max(row["A"]["repeat"], 1e-9)})
+    payload["halves"] = halves
+
     # ------------------------------------------------------- [4] the ladder --
     print("\n[4] THE LADDER - one term at a time, against that one floor")
     print(f"{'rung':12s} {'arm':24s} {'n/class':>8s} {'AUC':>8s} {'95% CI':>17s} "
@@ -477,8 +526,14 @@ def main() -> None:  # noqa: PLR0915
     scaling = []
     for frac in SUBSAMPLE:
         c = max(400, int(cap_w * frac))
-        tt = run_arm("sub", xa_w, xs_w, w_names, SEED + 4, c)
-        ff = run_arm("sub", xa_w, xb_w, w_names, SEED + 2, c)
+        # every m-th row, not the first c. The pooled block is twelve feeds end
+        # to end, so a prefix is the first two or three feeds and a subsample
+        # that changes the feed mixture is measuring the mixture. The first
+        # version of this section took a prefix and read a floor that climbed
+        # from 0.51 to 0.60 as the rows grew, which was the composition moving.
+        step = max(1, int(round(1.0 / frac)))
+        tt = run_arm("sub", xa_w[::step], xs_w[::step], w_names, SEED + 4, c)
+        ff = run_arm("sub", xa_w[::step], xb_w[::step], w_names, SEED + 2, c)
         hw = (tt["hi"] - tt["lo"]) / 2
         scaling.append({"n": c, "auc": tt["auc"], "hw": hw, "floor": ff["auc"]})
         print(f"      {c:11d} {tt['auc']:9.4f} {hw:11.5f} {ff['auc']:10.4f} "
