@@ -320,17 +320,18 @@ resolve and **this measurement belongs on ticks**, where there are sixty samples
 a bar. That is a statement about the instrument worth making before running
 anything, and it is what a power analysis is for.
 
-**Ledger: two of eight fired, both on the first design and both instructive.**
+**Ledger: two of nine fired, both on the first design and both instructive.**
 Condition 1 fired - the estimator does not recover 4 and 2 at the real sample
 size, because pooling episodes forces de-meaning - and the response was to
 calibrate against simulated truths rather than to move the threshold. Condition 3
 fired - the free-walk control is not distinguishable from the box on the raw
-ladder - and that is the section's headline. The six that held were the power
+ladder - and that is the section's headline. The seven that held were the power
 (0.0% separation error), the knee (box -0.336 +- 0.040 against the walk's
 -0.921 +- 0.058), the ladder against the free-walk control (box 2.5% at 2.790
-against the walk's 97.5% at 1.931), the density test, the void check, and the
-real-data curvature test, which could not be evaluated because there is no real
-data.
+against the walk's 97.5% at 1.931), the density test, and the void check. Two of
+the seven - the real-data curvature test and condition 9 below - could not be
+evaluated at all, because there is no real data, and they are counted as held
+only in the sense that nothing killed them.
 
 ## Two and a half: rebuilding.md's soft edge is a shallow ladder, and that is one prediction from two directions
 
@@ -552,3 +553,31 @@ empirical propagator, which needs tick data, which needs the lab.
   does not escape it. The only thing here with a plausible price attached is
   section three, and what it buys is a less wrong measurement rather than an
   edge.
+
+## What follows
+
+1. **Run the three harnesses on the lab the moment it is reachable.**
+   `./.secrets/lab.sh run research/harness/quantspec.py` settles the Range Break
+   ladder against a prediction two pages now agree on, and
+   `./.secrets/lab.sh run research/harness/quantbridge.py` repeats section three
+   on 86,411 bars a feed instead of 249 to 453. Neither needs a change.
+2. **Measure where in the range a break happens**, as a fraction of the range
+   width. It is one query, it needs no model, and it decides whether the
+   ex-break curve everything here is calibrated against is biased by conditioning
+   on survival.
+3. **Replace linear interpolation with the conditioned bridge wherever a replay
+   reads inside a bar.** It removes a quarter of the interior variance for the
+   cost of one forward-backward pass, it beat linear on all four real feeds by 11
+   to 13%, and it is the only thing on this page with a price attached - a less
+   wrong measurement rather than an edge.
+4. **Build the attainment conditioning.** Two extra bits of state, "has the
+   running maximum reached `H`" and the same for `L`, turn the boundary condition
+   into a larger state space and are worth a further 9.88% out of sample. That is
+   as much again as everything section three currently buys.
+5. **Check `Delta/sigma` per feed before trusting any tick statistic.** Below 2
+   the Kalman smoother is the exact posterior and there is nothing to do; above
+   it the exact treatment is worth 5 to 15%, and
+   [twins.md](twins.md) has already quarantined one feed for exactly this.
+6. **Do not re-open the quantum walk.** H = 0.50 on all twelve Volatility indices
+   excludes ballistic spreading, the measurement is in
+   [cascading.md](cascading.md), and it covers the 1s family too.

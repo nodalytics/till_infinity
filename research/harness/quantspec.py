@@ -46,10 +46,12 @@ discriminator independent of the ratios.
 ## The control that reframes the whole measurement, and it fired
 
 A **driftless random walk** run through the identical estimator. It has no
-discrete spectrum whatever. It returns `lambda_2/lambda_1 = 3.86 +- 0.18` and
-`lambda_3/lambda_1 = 8.63`.
+discrete spectrum whatever. Over twelve replicates it returns
+`lambda_2/lambda_1 = 3.55 +- 1.02` and `lambda_3/lambda_1 = 8.54`, against a true
+box's 3.99 +- 0.06 and 8.99 and a true spring's 2.21 and 3.94.
 
-**A free random walk reproduces the particle-in-a-box ladder to within 4%.** It
+**A free random walk lands on the particle-in-a-box ladder and not on the
+spring's.** It
 has to: binning a diffusion by its own empirical quantiles makes the observed
 support the box, and a diffusion in a box has box eigenvalues. So *observing
 1:4:9 is not evidence of confinement* - it is evidence that the observation
@@ -982,6 +984,12 @@ def main() -> None:
     kb = scal["box"]["kurtosis_mean"][-1]
     ko = scal["ou"]["kurtosis_mean"][-1]
     kf = scal["free"]["kurtosis_mean"][-1]
+    fire(
+        "8. the density test is void - the free walk sits on top of one of the truths",
+        min(abs(kf - kb), abs(kf - ko)) < 0.05,
+        f"at m={WINDOWS[-1]}: box {kb:+.3f}, spring {ko:+.3f}, free walk {kf:+.3f} "
+        f"(uniform -1.200, Gaussian 0.000)",
+    )
     if real:
         rb = [v["ladder"][1] for k, v in real.items() if "range_break" in k]
         inside = all(lad["ou"]["l2_mean"] < v < lad["box"]["l2_mean"] for v in rb)
@@ -996,12 +1004,6 @@ def main() -> None:
         "9. rebuilding.md's soft edge is refuted - the ladder is not strictly between",
         bool(real) and not inside,
         det,
-    )
-    fire(
-        "8. the density test is void - the free walk sits on top of one of the truths",
-        min(abs(kf - kb), abs(kf - ko)) < 0.05,
-        f"at m={WINDOWS[-1]}: box {kb:+.3f}, spring {ko:+.3f}, free walk {kf:+.3f} "
-        f"(uniform -1.200, Gaussian 0.000)",
     )
     out["ledger"] = ledger
     print(f"\n    {sum(1 for x in ledger if x['fired'])} of {len(ledger)} fired.")
