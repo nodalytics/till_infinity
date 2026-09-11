@@ -1065,12 +1065,19 @@ in opposite directions.
 
 So the specification gains a number it did not have: **Range Break 100 and 200
 share one range, about 60 steps wide, and differ only in how often they break and
-how far the break carries** - 130 steps against 210. The break rate and the break
+how far the break carries**
+
+> **This is wrong and the correction is below.** A direct measurement on the feed
+> puts RB100 at about 39 units and RB200 above 60, and the estimator that says so
+> was checked against a known truth first. The shared width is withdrawn - see
+> *The shared width of 60 is refuted*. - 130 steps against 210. The break rate and the break
 size scale together, the range does not.
 
 **The box, written out, so another route can check it.** The mechanism this
 reduces to is a particle in a one-dimensional box, and every number in it is
-fixed by the fit above:
+fixed by the fit above. *Read it as the hard box that best fits a published curve
+it cannot match rather than as the instrument: the width is refuted below, and
+the eigenvalue ladder measured on the feed says the range is not a box at all.*
 
 * width **L = 60 steps**, the same for Range Break 100 and Range Break 200;
 * diffusion **D = 1/2 step^2 per tick** - the walk moves exactly one step a tick,
@@ -1173,6 +1180,14 @@ matters more: **the two indices have nearly the same range**, which is what the
 shared-width constraint here asserts and what their independent per-feed
 inversion produces without being asked to.
 
+> **Both halves of that agreement have since been withdrawn.** That page's own
+> direct tick measurement supersedes its inversion and puts RB100 at 38 and RB200
+> above 60 - a factor of at least 1.6 apart, so the ranges are not nearly the
+> same - and the section below refutes the 60 here. Two routes agreeing on a
+> number that a third and more direct route refutes is worth recording as such:
+> both were inversions of the *same published curve*, and a shared input is not
+> independent evidence.
+
 And their page makes a methodological point this one had better take. **The
 long-lag cells are the splice, not the process.** Dropping break bars and
 concatenating what is left glues independent episodes end to end, and glued
@@ -1180,7 +1195,9 @@ episodes diffuse - so the flatness at `n` = 100 to 1000 is a property of the
 stitching rule, and only the short lags carry the confinement. That is right, and
 it cuts at the scoring used above, which weights all six lags equally.
 
-It does not move the answer. Rescored on `n = 1` and `n = 5` alone - the only
+It does not move the answer, and that turns out to be a symptom rather than a
+reassurance: the section below shows the scan cannot separate 52 from 60 at all.
+Rescored on `n = 1` and `n = 5` alone - the only
 cells where under 6% of pairs can straddle a break - the best shared width is
 **still 60**, with 55 next:
 
