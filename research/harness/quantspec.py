@@ -654,6 +654,12 @@ def load_bars(feed: str) -> dict | None:
     uniq, inv, cnt = np.unique(ep, return_inverse=True, return_counts=True)
     ok = cnt[inv] >= 8
     cl, inv = cl[ok], inv[ok]
+    # Re-index after the filter. Without this `inv` keeps the ids of episodes
+    # that were dropped, so `np.bincount` has empty cells, `sums / n_each`
+    # divides 0 by 0 and warns, and `n_episodes` counts episodes that are not in
+    # the sample. The values were right - the NaNs sit in cells nothing indexes -
+    # but a spurious warning here is exactly what would hide a real one.
+    _, inv = np.unique(inv, return_inverse=True)
     sums = np.bincount(inv, weights=cl)
     n_each = np.bincount(inv)
     return {
@@ -662,7 +668,7 @@ def load_bars(feed: str) -> dict | None:
         "episode": inv,
         "n_bars": len(rows),
         "n_breaks": int(isbrk.sum()),
-        "n_episodes": len(uniq),
+        "n_episodes": int(len(n_each)),
     }
 
 
@@ -754,11 +760,56 @@ def load_ticks(feed: str) -> dict | None:
     # the two disagreeing is itself information about the wall.
     var_w = float(np.mean([xd[inv == j].var() for j in range(len(n_each))]))
     rng_w = float(np.mean([np.ptp(x[inv == j]) for j in range(len(n_each))]))
+    # And the width as a function of how long an episode has to be to count.
+    #
+    # This is the test that says whether the range is a box at all, and it costs
+    # nothing. A short episode has not explored its range, so it understates the
+    # width; a box equilibrates in a few `tau_1 = 2W^2/pi^2`, so once the cut is
+    # past a few relaxation times **the estimate must stop moving**. A width that
+    # keeps climbing with the cut is a process that never equilibrates in its
+    # range, which is not a box however sub-diffusive it looks.
+    #
+    # It also settles which number to publish. The ladder wants every episode and
+    # the width wants the long ones, and averaging per-episode variances
+    # unweighted over a sample that includes short episodes biases the width down
+    # - which is exactly the difference between the 45.6 this harness published
+    # from an 8,192-tick cut and the 34.0 it gets from all episodes.
+    scan = []
+    for cut in (MIN_EPISODE_TICKS, 512, 1024, 2048, 4096, 8192, 16384):
+        js = [j for j in range(len(n_each)) if n_each[j] >= cut]
+        if not js:
+            continue
+        scan.append(
+            {
+                "cut": int(cut),
+                "n_episodes": len(js),
+                "n_ticks": int(sum(n_each[j] for j in js)),
+                "width_from_variance": math.sqrt(
+                    12.0 * float(np.mean([xd[inv == j].var() for j in js]))
+                )
+                / step,
+                "mean_within_range": float(np.mean([np.ptp(x[inv == j]) for j in js])) / step,
+            }
+        )
+    # The width to calibrate against is the SATURATED one, not the all-episode
+    # one. The ladder wants every episode and the width wants only the episodes
+    # that have equilibrated, and those are different samples; using the
+    # all-episode width to set the simulated box's lambda_1 would calibrate
+    # against a box narrower than the feed's. The rule is the largest cut that
+    # still retains five episodes - below five this is one path's range rather
+    # than an estimate of a width, which is exactly what the 45.6 published from
+    # two episodes turned out to be.
+    sat = [r for r in scan if r["n_episodes"] >= 5]
+    width_sat = sat[-1]["width_from_variance"] if sat else math.sqrt(12.0 * var_w) / step
     return {
         "feed": feed,
         "x": xd,
         "episode": inv,
         "step": step,
+        "width_scan": scan,
+        "width_saturated": width_sat,
+        "width_saturated_cut": int(sat[-1]["cut"]) if sat else 0,
+        "width_saturated_eps": int(sat[-1]["n_episodes"]) if sat else 0,
         "n_ticks": len(rows),
         # Ticks that survive the episode filter - the sample the ladder actually
         # sees, which is not len(rows) and was 24k of 86k under the old cut.
@@ -1107,6 +1158,25 @@ def main() -> None:
                 f"{d['mean_episode_ticks']:8.0f} {d['width_from_variance']:8.1f} "
                 f"{d['mean_within_range']:10.1f}"
             )
+        print("\n    DOES THE WIDTH SATURATE? A short episode has not explored its range, so")
+        print("    it understates the width; a box equilibrates in a few tau_1 and the")
+        print("    estimate then stops moving. A width that keeps climbing with the cut is")
+        print("    a process that never equilibrates in its range - not a box, however")
+        print("    sub-diffusive it looks between breaks.")
+        for feed, d in loaded.items():
+            if not d.get("width_scan"):
+                continue
+            print(f"\n    {feed}")
+            print(
+                f"      {'min episode':>12s} {'eps':>5s} {'ticks':>7s} "
+                f"{'W (var)':>9s} {'W (range)':>10s}"
+            )
+            for r in d["width_scan"]:
+                print(
+                    f"      {r['cut']:12d} {r['n_episodes']:5d} {r['n_ticks']:7d} "
+                    f"{r['width_from_variance']:9.1f} {r['mean_within_range']:10.1f}"
+                )
+
         print("\n    W (var) is sqrt(12 x within-episode variance), which is the width a")
         print("    UNIFORM stationary law implies; W (range) is the mean within-episode")
         print("    range. For a reflecting box fully explored they agree. They are the")
@@ -1136,19 +1206,21 @@ def main() -> None:
             if feed not in loaded:
                 continue
             d = loaded[feed]
-            w = d["width_from_variance"]
+            w = d["width_saturated"]
             lam1_box = 0.5 * (math.pi / w) ** 2
             n = int(d["x"].size)
             epi = d["mean_episode_ticks"]
-            print(f"\n    {feed}: W = {w:.1f}, so a box has lambda_1 = {lam1_box:.5f}/tick")
+            print(
+                f"\n    {feed}: W = {w:.1f} (saturated, from the {d['width_saturated_cut']}-tick "
+                f"cut on {d['width_saturated_eps']} episodes), so a box has "
+                f"lambda_1 = {lam1_box:.5f}/tick"
+            )
             print(f"      {'truth':>10s} {'l2/l1':>16s} {'l3/l1':>8s} {'knee':>7s} {'kurt':>8s}")
             rows = {}
             for kind, lab in (("box", "box"), ("ou", "spring"), ("free", "free walk")):
                 v2, v3, kn, ku = [], [], [], []
                 for rep in range(NREP_TICK):
-                    x, e = sim_at(
-                        kind, n, w, 1.0, epi, lam1_box, rep, minlen=MIN_EPISODE_TICKS
-                    )
+                    x, e = sim_at(kind, n, w, 1.0, epi, lam1_box, rep, minlen=MIN_EPISODE_TICKS)
                     st = tick_stats(x, e)
                     v2.append(st["ladder"][1])
                     v3.append(st["ladder"][2])
@@ -1325,6 +1397,25 @@ def main() -> None:
         bool(tc) and bool(bad),
         det,
     )
+    if tc:
+        unread = [k for k, v in tc.items() if not v.get("readable")]
+        fire(
+            "10. the tick ladder may not be read - box and spring do not separate at the"
+            " sample achieved",
+            bool(unread),
+            "; ".join(
+                f"{k}: box {v['sim']['box']['l2_mean']:.3f}+-{v['sim']['box']['l2_sd']:.3f} "
+                f"against spring {v['sim']['ou']['l2_mean']:.3f}+-{v['sim']['ou']['l2_sd']:.3f}, "
+                f"two-sd gap {v['power_gap']:+.3f} on {v['n_episodes']} episodes"
+                for k, v in tc.items()
+            ),
+        )
+    else:
+        fire(
+            "10. the tick ladder may not be read - box and spring do not separate",
+            False,
+            "not evaluated - no real data",
+        )
     out["ledger"] = ledger
     print(f"\n    {sum(1 for x in ledger if x['fired'])} of {len(ledger)} fired.")
 
