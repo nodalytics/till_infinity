@@ -31,6 +31,7 @@ the previous state intact rather than a truncated file that fails to load.
 
 from __future__ import annotations
 
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -183,17 +184,62 @@ def _fingerprint() -> dict[str, Any]:
     }
 
 
+def _stream(state: dict[str, Any], fingerprint: dict[str, Any], stream: Any) -> int:
+    """Write the whole payload to `stream`, a node at a time.
+
+    The outer map is written directly rather than through `codec.pack`, which
+    is what `_encode` did too: the fingerprint is plain data and tagging it
+    would change the format for no gain. Only `state` goes through the codec,
+    and it goes through `pack_into` rather than `pack`.
+    """
+    import msgpack
+
+    from .codec import pack_into
+
+    packer = msgpack.Packer(use_bin_type=True)
+    written = 0
+    stream.write(packer.pack_map_header(len(fingerprint) + 1))
+    for key, value in fingerprint.items():
+        chunk = packer.pack(key) + packer.pack(value)
+        stream.write(chunk)
+        written += len(chunk)
+    stream.write(packer.pack("state"))
+    return written + pack_into(state, stream)
+
+
 def save(state: dict[str, Any], directory: Path | str) -> Path:
-    """Write model state atomically. Returns the file written."""
+    """Write model state atomically. Returns the file written.
+
+    **Streamed, because the save was the thing killing the container.** The
+    obvious form - `write_bytes(msgpack.packb(pack(state)))` - holds three
+    copies of everything at once: the live state, the parallel tree `pack`
+    builds, and the contiguous `bytes` msgpack renders it into. On production's
+    206MB state that measured **+0.58GB** on top of a 1.45GB baseline against a
+    2.6GB limit, and it is why the desk was OOM-killed 23 times in ten days.
+
+    Writing through `pack_into` costs one 4MB buffer instead. The bytes are
+    identical, so a file written either way reads back the same - which is what
+    made this safe to change under a live state rather than a migration.
+
+    The temp-file-then-rename is unchanged and is now doing more work: a
+    streamed write is only atomic because of it. A crash halfway through leaves
+    a partial `.tmp` and the last good file still in place.
+    """
     target = Path(directory)
     target.mkdir(parents=True, exist_ok=True)
     path = target / STATE_FILE
-    payload = {**_fingerprint(), "state": state}
 
     temp = path.with_suffix(".tmp")
-    temp.write_bytes(_encode(payload))
+    with temp.open("wb") as handle:
+        written = _stream(state, _fingerprint(), handle)
+        # The state is worth more than the latency. Without this the rename can
+        # publish a file whose bytes are still in the page cache, and a machine
+        # that loses power between the two comes back to a truncated state that
+        # passes every check in `load` until it fails mid-parse.
+        handle.flush()
+        os.fsync(handle.fileno())
     temp.replace(path)  # atomic on POSIX
-    log.debug("structures: saved model state to %s", path)
+    log.debug("structures: saved %d bytes of model state to %s", written, path)
     return path
 
 

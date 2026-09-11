@@ -156,6 +156,186 @@ def pack(value: Any) -> Any:
     return {TAG: RAW, "b": pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)}
 
 
+#: Bytes to gather before touching the file. The point of `pack_into` is that
+#: nothing whole-sized is ever resident, so the buffer has to be small against
+#: the state and large against a syscall - 4MB is 2% of the live file and
+#: amortises the writes of a few hundred thousand nodes.
+CHUNK = 4 << 20
+
+
+def pack_into(value: Any, stream: Any) -> int:  # noqa: PLR0915 - `walk` is one
+    # branch per container the codec knows, and each has to stay visibly the same
+    # branch `pack` has. Splitting them across helpers is what would let the two
+    # drift apart, which is the only way this function can be wrong.
+    """Write `value` to `stream` as msgpack, without building the packed form.
+
+    **The same bytes `msgpack.packb(pack(value))` produces, at a fraction of the
+    memory.** `pack` builds a complete parallel tree of plain dicts and lists
+    mirroring the entire state, and `packb` then renders that tree into one
+    contiguous `bytes`. Both exist in full, alongside the live state, at the
+    moment of the write.
+
+    Measured on production's own 206MB state: holding it costs 1.33GB resident
+    and a save adds **+0.58GB** on top - against a 2.6GB container limit and a
+    1.45GB baseline. That transient is what OOM-killed the desk 23 times
+    between 1 and 10 September, and hourly sampling never saw it because it
+    lives entirely between samples. See `research/starving.md`.
+
+    This walks the same structure and emits each node as it is reached, so the
+    extra memory is one `CHUNK` plus whatever a single leaf costs, rather than
+    two copies of everything.
+
+    Returns the number of bytes written, because a save that silently wrote
+    nothing is the failure this replaces a single `write_bytes` with.
+
+    **It must stay a mirror of `pack`.** Every branch below is the same branch
+    in the same order, and a tag written here that `unpack` does not know is a
+    file nobody can read. `test_streaming_a_save_writes_what_packing_it_would`
+    is what holds the two together.
+    """
+    import msgpack
+
+    packer = msgpack.Packer(use_bin_type=True)
+    buffer = bytearray()
+    written = 0
+
+    def emit(chunk: bytes) -> None:
+        nonlocal written
+        buffer.extend(chunk)
+        if len(buffer) >= CHUNK:
+            flush()
+
+    def flush() -> None:
+        nonlocal written
+        if buffer:
+            stream.write(buffer)
+            written += len(buffer)
+            buffer.clear()
+
+    def walk(node: Any) -> None:
+        if node is None or isinstance(node, bool | int | float | str | bytes):
+            emit(packer.pack(node))
+            return
+        if dataclasses.is_dataclass(node) and not isinstance(node, type):
+            emit(packer.pack_map_header(2))
+            emit(packer.pack(TAG))
+            emit(packer.pack(key_for(type(node))))
+            emit(packer.pack("f"))
+            fields = dataclasses.fields(node)
+            emit(packer.pack_map_header(len(fields)))
+            for field in fields:
+                emit(packer.pack(field.name))
+                walk(getattr(node, field.name, None))
+            return
+        if isinstance(node, deque):
+            emit(packer.pack_map_header(3))
+            emit(packer.pack(TAG))
+            emit(packer.pack("deque"))
+            emit(packer.pack("n"))
+            emit(packer.pack(node.maxlen))
+            emit(packer.pack("v"))
+            emit(packer.pack_array_header(len(node)))
+            for item in node:
+                walk(item)
+            return
+        if isinstance(node, dict):
+            emit(packer.pack_map_header(2))
+            emit(packer.pack(TAG))
+            emit(packer.pack("map"))
+            emit(packer.pack("v"))
+            emit(packer.pack_array_header(len(node)))
+            for key, item in node.items():
+                emit(packer.pack_array_header(2))
+                walk(key)
+                walk(item)
+            return
+        if isinstance(node, tuple | set | frozenset):
+            emit(packer.pack_map_header(2))
+            emit(packer.pack(TAG))
+            emit(packer.pack("tuple" if isinstance(node, tuple) else "set"))
+            emit(packer.pack("v"))
+            emit(packer.pack_array_header(len(node)))
+            for item in node:
+                walk(item)
+            return
+        if isinstance(node, list):
+            emit(packer.pack_array_header(len(node)))
+            for item in node:
+                walk(item)
+            return
+        # Anything else - river models, mostly. Opaque, and deliberately so.
+        #
+        # **And this branch is where the state actually lives.** Measured on
+        # production's own file: 206MB packed, of which 200.1MB is *three*
+        # pickle blobs - `engine` at 178.4MB, `detector` at 20.6MB, `drift` at
+        # 1.1MB - and only 5.9MB is codec structure. None of those three is a
+        # dataclass, so `pack` falls through to here and pickles each whole.
+        #
+        # So streaming the structure alone was never going to be the fix, and
+        # measuring said so: walking the tree instead of building it took the
+        # save transient from 0.395GB to 0.321GB, because the remaining 0.32GB
+        # is `pickle.dumps` returning a 178MB `bytes` in one piece.
+        #
+        # `pickle.Pickler` writes to a file object incrementally, so the blob
+        # goes to a spooled temporary file, its length is then known, and the
+        # bytes are copied through in `CHUNK`-sized pieces behind a manually
+        # written msgpack `bin32` header. Peak cost becomes one chunk and one
+        # temp file instead of one copy of the largest model in the book.
+        emit(packer.pack_map_header(2))
+        emit(packer.pack(TAG))
+        emit(packer.pack(RAW))
+        emit(packer.pack("b"))
+        _spill(node, emit, stream, flush)
+
+    walk(value)
+    flush()
+    # `_spill` writes its body straight to the stream, past the buffer, so the
+    # running total is not the whole story. The file's own size is.
+    return stream.tell() if hasattr(stream, "tell") else written
+
+
+def _spill(node: Any, emit: Any, stream: Any, flush: Any) -> None:
+    """Pickle `node` through a temp file rather than into one `bytes`.
+
+    `msgpack` needs the length before the body, which is the only reason the
+    temp file exists: pickling twice to measure it would cost the time instead
+    of the memory, and pickling into a list of chunks costs the memory again
+    under a different name.
+
+    The header is written by hand because `msgpack.Packer` exposes
+    `pack_map_header` and `pack_array_header` but nothing for `bin`.
+
+    **The width has to match what `packb` would have chosen**, which is the
+    narrowest that fits: `bin8` under 256 bytes, `bin16` under 65536, `bin32`
+    above. Always writing `bin32` is valid msgpack and reads back identically -
+    and it is not the same bytes, so
+    `test_streaming_a_save_writes_what_packing_it_would` failed on a one-byte
+    difference at offset 339. That test exists for exactly this: a difference
+    that changes nothing about meaning and everything about whether the two
+    writers can be swapped under a live 206MB file.
+    """
+    import struct
+    import tempfile
+
+    with tempfile.TemporaryFile() as spool:
+        pickle.Pickler(spool, protocol=pickle.HIGHEST_PROTOCOL).dump(node)
+        size = spool.tell()
+        spool.seek(0)
+        if size < 1 << 8:
+            header = b"\xc4" + struct.pack(">B", size)
+        elif size < 1 << 16:
+            header = b"\xc5" + struct.pack(">H", size)
+        else:
+            header = b"\xc6" + struct.pack(">I", size)
+        emit(header)
+        flush()  # the header must land before the body is copied past the buffer
+        while True:
+            chunk = spool.read(CHUNK)
+            if not chunk:
+                break
+            stream.write(chunk)
+
+
 @cache
 def _homes() -> dict[str, str]:
     """Module basename -> where that module lives now.

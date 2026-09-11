@@ -137,3 +137,69 @@ five-minute transient, and six flat readings looked like evidence of stability
 while the container was dying between them. Twenty-second sampling, with a marker
 for whether a save fell in the interval, is what turns this from an argument into
 a measurement.
+
+## Resolution: the transient is gone, and it was not where the plan said
+
+Measured on production's own 206MB state, off production, with both writers in
+their own process and `PYTHONHASHSEED` pinned so the byte comparison means
+something (`research/harness/savestream.py`):
+
+| path | held | peak | **added** | secs |
+| --- | --- | --- | --- | --- |
+| `packb(pack(state))` | 1.327 GB | 1.722 GB | **0.394 GB** | 1.9 |
+| `pack_into(state, file)` | 1.326 GB | 1.326 GB | **0.000 GB** | 1.7 |
+
+Byte-identical output, same 216,000,789 bytes, same SHA-256. The transient is
+**gone**, and the save is fractionally *faster*.
+
+### The first attempt only got a fifth of it
+
+Item 2 above said the transient was `codec.pack` building the whole structure
+before writing. Streaming that took 0.394GB to **0.321GB** - real, and nowhere
+near enough. The composition is why:
+
+| | bytes | share |
+| --- | --- | --- |
+| raw pickle blobs | 209,804,076 | **97.1%** |
+| codec structure | 6,192,049 | 2.9% |
+
+**Three blobs**, and one of them is 178.4MB:
+
+| top-level key | packed | what it is |
+| --- | --- | --- |
+| `engine` | 178.4 MB | one pickle blob |
+| `detector` | 20.6 MB | one pickle blob |
+| `bench` | 4.7 MB | codec structure |
+| `drift` | 1.1 MB | one pickle blob |
+| `clock`, `activity`, `races`, `breaks` | 1.2 MB | codec structure |
+
+`Engine`, `Detector` and `Drift` are not dataclasses, so `codec.pack` falls
+through to its opaque branch and pickles each whole. Streaming the *structure*
+was streaming 2.9% of the file.
+
+### What actually fixed it
+
+`pickle.Pickler` writes to a file object incrementally, so each blob goes to a
+spooled temporary file, its length is then known, and the body is copied through
+in 4MB pieces behind a hand-written msgpack `bin` header. Peak cost becomes one
+chunk and one temp file rather than one copy of the largest model on the desk.
+
+The header has to pick the same width `packb` would - `bin8` under 256 bytes,
+`bin16` under 65536, `bin32` above - because always writing `bin32` is valid
+msgpack, reads back identically, and is **not the same bytes**. That is a
+one-byte difference at offset 339 in a 4,866-byte fixture, and it is the
+difference between an optimisation and a migration of 206MB of learned state.
+`test_streaming_a_save_writes_what_packing_it_would` exists for precisely that
+and is what caught it.
+
+### What this does and does not buy
+
+The container had a 1.15GB margin and the save spent a third of it. That third
+is back. **What remains is the resident cost**: 1.33GB to hold a 206MB file, a
+factor of 6.4, which is item 1 on the list above and is untouched by any of
+this. A state that keeps growing still walks into the same wall, just later.
+
+So the honest scoreboard is: the *periodic* cause of the kills is removed, the
+*structural* one is not. The next move is still to shrink what is persisted -
+and the composition table above says where to look, because 97% of it is three
+objects that nothing in the codec can see inside.

@@ -15,7 +15,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..shared.codec import ALIASES, RAW, TAG, _homes, _Relocating, _unpickle, key_for, pack
+from ..shared.codec import (
+    ALIASES,
+    RAW,
+    TAG,
+    _homes,
+    _Relocating,
+    _unpickle,
+    key_for,
+    pack,
+    pack_into,
+)
 from ..shared.codec import registry as _registry
 from ..shared.codec import unpack as _unpack
 
@@ -33,6 +43,7 @@ __all__ = [
     "_unpickle",
     "key_for",
     "pack",
+    "pack_into",
     "registry",
     "unpack",
 ]

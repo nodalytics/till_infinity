@@ -149,3 +149,112 @@ def test_a_legacy_file_two_formats_behind_is_not_migrated(tmp_path):
     payload["format"] = store.FORMAT - 2
     (tmp_path / store.LEGACY_FILE).write_bytes(pickle.dumps(payload))
     assert store.load(tmp_path) is None
+
+
+def test_streaming_a_save_writes_what_packing_it_would():
+    """`pack_into` must stay a byte-for-byte mirror of `msgpack.packb(pack(x))`.
+
+    This is the test that makes the streaming save safe to put under a live
+    206MB state rather than behind a migration. The two code paths walk the same
+    structure, and any divergence - a tag spelled differently, a map written
+    with the wrong header count, a branch `pack` has and this one does not -
+    produces a file that either fails to parse or, worse, parses into the wrong
+    shape.
+
+    Every container the codec knows is in the fixture on purpose: dataclass,
+    bounded deque, dict with a tuple key, list, tuple, set, and a raw pickle
+    node for something the codec cannot describe.
+    """
+    import io
+
+    import msgpack
+
+    from till_infinity.structures.codec import pack_into
+    from till_infinity.structures.context.sessions import Hour
+
+    state = {
+        "held": Hour(decisive=1.0, held=2.0, vol_bps=3.0, seen=4.0),
+        "ring": deque([1, 2, 3], maxlen=8),
+        "mixed": [1, 2.5, "three", None, True, b"four"],
+        "pairs": {("gold", "5m"): Hour(decisive=0.5)},
+        "grouped": frozenset({1, 2, 3}),
+        "shaped": ("a", "b"),
+        "opaque": Opaque(9),
+    }
+
+    want = msgpack.packb(pack(state), use_bin_type=True)
+    buffer = io.BytesIO()
+    written = pack_into(state, buffer)
+    got = buffer.getvalue()
+
+    assert got == want, "the streamed bytes must equal the packed ones"
+    assert written == len(got), "the byte count is what says a save wrote anything"
+
+    back = unpack(msgpack.unpackb(got, raw=False, strict_map_key=False))
+    assert back["held"].decisive == 1.0
+    assert back["pairs"][("gold", "5m")].decisive == 0.5
+    assert back["ring"].maxlen == 8
+    assert back["opaque"] == Opaque(9)
+
+
+def test_a_streamed_save_round_trips_through_load(tmp_path):
+    """The end the transient was costing: state written by the streaming path
+    has to come back as the same objects, or the saving is free and useless."""
+    from till_infinity.structures.context.sessions import Hour
+
+    state = {
+        "hour": Hour(decisive=7.0, held=1.0),
+        "pairs": {("eurusd", "1m"): Hour(decisive=3.0)},
+        "window": deque([1.0, 2.0], maxlen=4),
+    }
+    store.save(state, tmp_path)
+    got = store.load(tmp_path)
+
+    assert got is not None
+    assert got["hour"].decisive == 7.0
+    assert got["pairs"][("eurusd", "1m")].decisive == 3.0
+    assert got["window"].maxlen == 4, "a deque restored unbounded grows until the box dies"
+
+
+def test_the_save_buffer_is_small_against_the_state_it_writes():
+    """`CHUNK` is the whole memory argument: the streaming save's extra cost is
+    one buffer, so a buffer that grew to state-sized would give back exactly
+    what this change bought. 4MB is ~2% of the live file."""
+    from till_infinity.shared import codec
+
+    assert codec.CHUNK <= 8 << 20
+
+
+def test_a_save_interrupted_partway_leaves_the_last_good_file(tmp_path):
+    """A streamed write is only atomic because of the temp-file rename, and it
+    spends far longer partially written than a single `write_bytes` did."""
+    from till_infinity.structures.context.sessions import Hour
+
+    store.save({"hour": Hour(decisive=1.0)}, tmp_path)
+    good = (tmp_path / store.STATE_FILE).read_bytes()
+
+    with pytest.raises(RuntimeError):
+        store.save({"hour": Hour(decisive=2.0), "boom": _Exploding()}, tmp_path)
+
+    assert (tmp_path / store.STATE_FILE).read_bytes() == good
+    assert store.load(tmp_path)["hour"].decisive == 1.0
+
+
+class Opaque:
+    """Not a dataclass, so it takes the codec's raw-pickle branch."""
+
+    def __init__(self, n):
+        self.n = n
+
+    def __eq__(self, other):
+        return isinstance(other, Opaque) and other.n == self.n
+
+    def __hash__(self):
+        return hash(self.n)
+
+
+class _Exploding:
+    """Raises while being written, partway through the stream."""
+
+    def __reduce__(self):
+        raise RuntimeError("no")
