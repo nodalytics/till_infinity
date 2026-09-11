@@ -217,9 +217,10 @@ def selftest() -> bool:
 # ------------------------------------------------------------------- runs
 
 
-def section_grid(ticks: dict, t0: int, t1: int, step_s: int) -> None:
+def section_grid(ticks: dict, t0: int, t1: int, step_s: int,
+                 label: str = "24h", quiet: bool = False) -> None:
     print(f"\n=== 1. wall-clock cross-correlation, {step_s}s grid, "
-          f"lags {-MAXLAG}..{MAXLAG}s ===")
+          f"{label}, lags {-MAXLAG}..{MAXLAG}s ===")
     rets, live = {}, {}
     for feed, (ts, mid, _bid) in ticks.items():
         _, m, fresh = on_grid(ts, mid, t0, t1, step_s)
@@ -231,14 +232,17 @@ def section_grid(ticks: dict, t0: int, t1: int, step_s: int) -> None:
         rets[feed] = r
         live[feed] = (float(fresh[1:].mean()), float(np.mean(r != 0)), float(r.std()))
 
-    print(f"  {'feed':26s} {'n':>7s} {'fresh%':>7s} {'nonzero%':>9s} {'sd':>10s}")
+    if not quiet:
+        print(f"  {'feed':26s} {'n':>7s} {'fresh%':>7s} {'nonzero%':>9s} {'sd':>10s}")
     for feed in FEEDS:
         if feed not in rets:
             continue
         f, nz, sd = live[feed]
-        print(f"  {feed:26s} {len(rets[feed]):7d} {100*f:7.1f} {100*nz:9.1f} {sd:10.2e}")
+        if not quiet:
+            print(f"  {feed:26s} {len(rets[feed]):7d} {100*f:7.1f} {100*nz:9.1f} "
+                  f"{sd:10.2e}")
         if sd <= 0 or nz < 0.01:
-            print("    ^ DEAD COLUMN - any statistic against this is meaningless")
+            print(f"    {feed}: DEAD COLUMN - any statistic against it is meaningless")
 
     rows = []
     for a, b in combinations([f for f in FEEDS if f in rets], 2):
@@ -248,11 +252,13 @@ def section_grid(ticks: dict, t0: int, t1: int, step_s: int) -> None:
         best, lag, at0 = peak(c, MAXLAG)
         rows.append((kind(a, b), a, b, at0, best, lag, n))
 
-    report_pairs(rows, f"{step_s}s grid")
+    report_pairs(rows, f"{step_s}s grid, {label}")
 
 
-def report_pairs(rows: list, label: str) -> None:
-    print(f"\n  --- {label}: |corr| at the best of {2*MAXLAG+1} lags ---")
+def report_pairs(rows: list, label: str, nlags: int = None,
+                 unit: str = "s") -> None:
+    nlags = 2 * MAXLAG + 1 if nlags is None else nlags
+    print(f"\n  --- {label}: |corr| at the best of {nlags} lags ---")
     print(f"  {'kind':>9s} {'pairs':>6s} {'mean|r|':>9s} {'max|r|':>9s}   largest")
     order = {"twin": 0, "mismatch": 1, "stranger": 2}
     ctrl = [abs(r[4]) for r in rows if r[0] != "twin"]
@@ -261,7 +267,7 @@ def report_pairs(rows: list, label: str) -> None:
         mags = [abs(r[4]) for r in got]
         w = max(got, key=lambda r: abs(r[4]))
         print(f"  {k:>9s} {len(got):6d} {np.mean(mags):9.4f} {max(mags):9.4f}   "
-              f"{w[1]} / {w[2]} = {w[4]:+.4f} @ {w[5]:+d}s")
+              f"{w[1]} / {w[2]} = {w[4]:+.4f} @ {w[5]:+d}{unit}")
     if ctrl:
         mu, sd = float(np.mean(ctrl)), float(np.std(ctrl))
         mm = [abs(r[4]) for r in rows if r[0] == "mismatch"]
@@ -275,8 +281,8 @@ def report_pairs(rows: list, label: str) -> None:
             if k != "twin":
                 continue
             z = (abs(best) - mu) / sd if sd > 0 else float("nan")
-            print(f"  {a + ' / ' + b:>46s} {at0:+9.4f} {best:+9.4f} {lag:+6d} "
-                  f"{z:+13.2f}")
+            print(f"  {a + ' / ' + b:>46s} {at0:+9.4f} {best:+9.4f} "
+                  f"{str(lag) + unit:>6s} {z:+13.2f}")
         hi = max(ctrl)
         over = [r for r in rows if r[0] == "twin" and abs(r[4]) > hi]
         print(f"  twins exceeding the largest control ({hi:.4f}): "
@@ -521,15 +527,25 @@ def section_spacing(ticks: dict) -> None:
     above can and cannot see."""
     print("\n=== 0b. tick spacing ===")
     print(f"  {'feed':26s} {'ticks':>7s} {'median dt':>10s} {'p10':>7s} {'p90':>7s} "
-          f"{'gaps>3s':>8s} {'spread':>10s}")
+          f"{'gaps>3s':>8s} {'spread':>10s} {'sd/tick':>10s} {'sd/sqrt(s)':>11s}"
+          f" {'ann %':>7s}")
     for feed in FEEDS:
         if feed not in ticks:
             continue
         ts, mid, bid = ticks[feed]
         dt = np.diff(ts) / 1000.0
-        print(f"  {feed:26s} {len(ts):7d} {np.median(dt):10.3f} "
+        r = logret(mid)
+        sd = float(r.std())
+        med = float(np.median(dt))
+        # Per-tick sd divided by sqrt(seconds per tick) is the per-second
+        # volatility. If a twin pair is the same law at two tick rates these
+        # two columns disagree by sqrt(2) and the last one agrees exactly.
+        per_s = sd / math.sqrt(med)
+        print(f"  {feed:26s} {len(ts):7d} {med:10.3f} "
               f"{np.percentile(dt, 10):7.3f} {np.percentile(dt, 90):7.3f} "
-              f"{np.mean(dt > 3.0):8.4f} {np.median((mid - bid) * 2):10.4f}")
+              f"{np.mean(dt > 3.0):8.4f} {np.median((mid - bid) * 2):10.4f} "
+              f"{sd:10.3e} {per_s:11.3e} "
+              f"{100 * per_s * math.sqrt(365 * 86400):7.1f}")
 
 
 def section_absgrid(ticks: dict, t0: int, t1: int, step_s: int) -> None:
@@ -542,6 +558,9 @@ def section_absgrid(ticks: dict, t0: int, t1: int, step_s: int) -> None:
     """
     print(f"\n=== 3b. |return| cross-correlation, {step_s}s grid, "
           f"lags {-MAXLAG}..{MAXLAG}s ===")
+    print("  READ SECTION 0c FIRST. Feeds sharing a publication clock share "
+          "their\n  grid zeros, which correlates |r| by itself. 3d is the "
+          "grid-free version.")
     a_rets = {}
     for feed, (ts, mid, _bid) in ticks.items():
         _, m, _f = on_grid(ts, mid, t0, t1, step_s)
@@ -612,6 +631,102 @@ def local_max(zb: np.ndarray, ev: np.ndarray, w: int) -> float:
     return float(acc.mean())
 
 
+def section_publish(ticks: dict) -> None:
+    """When do these feeds print, relative to each other?
+
+    This is not a curiosity. Section 3b below correlates |return| on a fixed
+    grid, and on a one-second grid a two-second feed contributes a zero on
+    every other step. If two feeds print on the *same* clock their zeros line
+    up, and |r| correlates strongly between them for reasons that have nothing
+    to do with their values. Measuring the clock first is what tells a shared
+    driver from a shared timetable.
+    """
+    print("\n=== 0c. publication clock: how closely do feeds print together? ===")
+    feeds = [f for f in FEEDS if f in ticks]
+    print(f"  median |t_A - nearest t_B|, ms.  Independent 2s clocks would give"
+          f" ~500ms; one shared clock gives single-digit ms.")
+    print(f"  {'pair kind':>10s} {'pairs':>6s} {'median offset ms':>18s} "
+          f"{'min':>8s} {'max':>8s}")
+    buckets = {}
+    for a, b in combinations(feeds, 2):
+        ta, tb = ticks[a][0], ticks[b][0]
+        idx = np.clip(np.searchsorted(tb, ta), 1, len(tb) - 1)
+        d = np.minimum(np.abs(ta - tb[idx]), np.abs(ta - tb[idx - 1]))
+        bump("publish_offset", 1)
+        rate_a = "2s" if "_1s_" not in a else "1s"
+        rate_b = "2s" if "_1s_" not in b else "1s"
+        key = "same rate" if rate_a == rate_b else "1s vs 2s"
+        buckets.setdefault(key, []).append((float(np.median(d)), a, b))
+    for key, got in buckets.items():
+        meds = [g[0] for g in got]
+        print(f"  {key:>10s} {len(got):6d} {np.median(meds):18.1f} "
+              f"{min(meds):8.1f} {max(meds):8.1f}")
+    worst = min((g for gs in buckets.values() for g in gs), key=lambda g: g[0])
+    print(f"  closest pair of all: {worst[1]} / {worst[2]} at {worst[0]:.1f}ms")
+    print("  phase, ms into each 2-second slot (median):")
+    for feed in feeds:
+        ts = ticks[feed][0]
+        print(f"    {feed:26s} {float(np.median(ts % 2000)):8.1f}")
+
+
+def section_tickclock(ticks: dict, t0: int, t1: int, label: str = "24h") -> None:
+    """The volatility clock at tick resolution, without a grid.
+
+    Realised variance per minute, computed from each feed's own ticks and
+    divided by that minute's tick count so a feed that printed fewer times is
+    not thereby quieter. No forward fill, no zero inflation, so nothing here
+    can be the sampling artefact that section 3b has.
+    """
+    print(f"\n=== 3d. volatility clock from ticks, {label}: per-minute realised variance ===")
+    minute = 60_000
+    edges = np.arange(t0, t1 + minute, minute, dtype=np.int64)
+    lv = {}
+    for feed, (ts, mid, _bid) in ticks.items():
+        r2 = logret(mid) ** 2
+        who = np.searchsorted(edges, ts[1:], side="right") - 1
+        ok = (who >= 0) & (who < len(edges) - 1)
+        tot = np.bincount(who[ok], weights=r2[ok], minlength=len(edges) - 1)
+        cnt = np.bincount(who[ok], minlength=len(edges) - 1)
+        good = cnt >= 10
+        lv[feed] = (np.log(np.maximum(tot / np.maximum(cnt, 1), 1e-300)), good)
+    common = None
+    for _v, g in lv.values():
+        common = g if common is None else (common & g)
+    print(f"  {int(common.sum())} minutes with at least 10 ticks on every feed")
+    series = {f: v[common] for f, (v, _g) in lv.items()}
+    rows = []
+    for a, b in combinations([f for f in FEEDS if f in series], 2):
+        c = xcorr(series[a], series[b], 10)
+        bump("tickclock", 21)
+        best, lag, at0 = peak(c, 10)
+        rows.append((kind(a, b), a, b, at0, best, lag, int(common.sum())))
+    report_pairs(rows, f"log RV per minute, from ticks, {label}", 21, "m")
+
+
+def section_quantisation(ticks: dict) -> None:
+    """Is a feed's tick-level autocorrelation its generator or its rounding?
+
+    A price stored on a grid coarse relative to its own step size has
+    differences that carry the rounding error twice, once with each sign, and
+    that alone produces a negative first-order autocorrelation. So the step
+    size is measured against the move size before any of it is called a
+    generator artefact.
+    """
+    print("\n=== 5b. quote grid against step size ===")
+    print(f"  {'feed':26s} {'price':>12s} {'quote step':>11s} {'sd(dstep)':>10s} "
+          f"{'sd/step':>8s} {'distinct':>9s}")
+    for feed in FEEDS:
+        if feed not in ticks:
+            continue
+        _ts, mid, bid = ticks[feed]
+        dp = quote_decimals(bid)
+        step = 10.0 ** (-dp)
+        d = np.diff(mid)
+        print(f"  {feed:26s} {float(np.median(mid)):12.4f} {step:11.5f} "
+              f"{float(d.std()):10.5f} {float(d.std())/step:8.2f} "
+              f"{len(np.unique(np.rint(d / step))):9d}")
+
+
 def run() -> None:
     t_start = time.time()
     print("=== 0. positive control on the estimator ===")
@@ -635,15 +750,25 @@ def run() -> None:
           f"{(t1-t0)/3_600_000:.2f}h, {sum(len(v[0]) for v in ticks.values()):,} ticks")
 
     section_spacing(ticks)
+    section_publish(ticks)
     section_grid(ticks, t0, t1, 1)
     section_grid(ticks, t0, t1, 2)
     section_index(ticks)
     section_tails(ticks, t0, t1)
     section_absgrid(ticks, t0, t1, 1)
     section_absgrid(ticks, t0, t1, 2)
+    section_tickclock(ticks, t0, t1)
     section_exceed(ticks, t0, t1, 2)
+
+    # Split-sample. One day cannot be split far, but a result that only holds
+    # in one half of it is not a result, and saying so costs one more pass.
+    mid_t = (t0 + t1) // 2
+    for name, (a, b) in (("first 12h", (t0, mid_t)), ("second 12h", (mid_t, t1))):
+        section_grid(ticks, a, b, 2, name, quiet=True)
+        section_tickclock(ticks, a, b, name)
     section_repeats(ticks)
     section_tickacf(ticks)
+    section_quantisation(ticks)
 
     print("\n=== comparisons made ===")
     for k, v in sorted(COMPARISONS.items()):

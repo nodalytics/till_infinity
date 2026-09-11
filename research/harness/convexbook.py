@@ -314,6 +314,10 @@ def main() -> None:
         flat = [r["R"] * typical for r in sized]
         actual = [r["profit"] for r in sized]
         print(
+            f"    {len(sized)} of {len(attributed)} closes carry risk_money; both columns below "
+            f"are that subset, so the comparison is within one population"
+        )
+        print(
             f"    risk per trade: median {typical:.2f}, p95 {sorted(risk)[int(0.95 * len(risk))]:.2f}, "
             f"max {max(risk):.2f}  -  a {max(risk) / typical:.1f}x spread in size alone"
         )
@@ -326,6 +330,18 @@ def main() -> None:
             f"    largest as traded {got_actual['best']:+.2f}; at one flat size the same "
             f"book's largest is {got_flat['best']:+.2f}"
         )
+
+    print("\n  does the concentration hold in both halves of the window?")
+    edge = int(len(attributed) * SPLIT)
+    for half, part in (("discovery", attributed[:edge]), ("verify", attributed[edge:])):
+        cash = shares([r["profit"] for r in part if isinstance(r.get("profit"), int | float)])
+        multiple = shares([r["R"] for r in part if r.get("R") is not None])
+        if cash and multiple:
+            print(
+                f"    {half:<10s} n={cash['n']:4d}  money: top 5% {cash['top0.05']:6.1%} "
+                f"(worst 5% {cash['bot0.05']:6.1%})   R: top 5% {multiple['top0.05']:6.1%} "
+                f"(worst 5% {multiple['bot0.05']:6.1%})"
+            )
 
     print("\n  is 35% a lot? the thin-tailed reference:")
     for label, values in (("money, attributed", money_att), ("R, attributed", r_att)):
@@ -365,7 +381,7 @@ def main() -> None:
           f"(`best_r` was a constant until 2026-09-02; see giveback.md)")
     if peaked:
         peaked.sort(key=lambda r: -r["best_r"])
-        print(f"\n    {'peak decile':>14s} {'n':>5s} {'mean peak':>10s} {'mean kept':>10s} "
+        print(f"\n    {'peak fifth':>14s} {'n':>5s} {'mean peak':>10s} {'mean kept':>10s} "
               f"{'keeps':>8s} {'ends on clock':>14s} {'stopped':>8s} {'target':>7s}")
         size = max(MIN_CELL, len(peaked) // 5)
         for i in range(0, len(peaked), size):

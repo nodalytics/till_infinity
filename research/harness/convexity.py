@@ -114,6 +114,14 @@ CONTROLS = int(os.environ.get("CONTROLS", "500"))
 #: Cap the candidate set. Zero means all of it; a small number is for checking
 #: that the thing runs before committing an hour of a 64-core box to it.
 LIMIT = int(os.environ.get("LIMIT", "0"))
+#: `GATE=0` takes every published level call instead of the subset `sweep-aware`
+#: would accept. Section 3 is about an *instrument* rather than about that
+#: strategy, and its gate refuses most Boom and Crash calls on the `in_front`
+#: branch - so the gated run cannot populate that table and the ungated one can.
+GATE = os.environ.get("GATE", "1") != "0"
+#: Sides of one synthetic family are a smaller population than a policy row and
+#: want their own floor. `spikeside.py` worked with 266-670 a cell.
+SIDE_MIN = int(os.environ.get("SIDE_MIN", "120"))
 SEED = int(os.environ.get("SEED", "20260911"))
 
 #: The live desk's hold, in 1m bars. `giveback.md`: a 30-minute clock, and four
@@ -424,7 +432,7 @@ def sides(title: str, rows: list[dict], policies: tuple[str, ...]) -> None:
         print(f"    under {name}:")
         print(f"      {'family':<8s} {'side':<5s} {'n':>7s} {'mean R':>9s} {'p95':>9s} {'win':>7s}")
         for (fam, side), rs in sorted(by.items()):
-            if len(rs) < MIN_N:
+            if len(rs) < SIDE_MIN:
                 continue
             got = stats(rs)
             # The spike runs *with* a boom buy and *with* a crash sell. That is
@@ -438,7 +446,7 @@ def sides(title: str, rows: list[dict], policies: tuple[str, ...]) -> None:
         gaps = {}
         for fam in ("boom", "crash", "other"):
             buys, sells = by.get((fam, "buy"), []), by.get((fam, "sell"), [])
-            if len(buys) >= MIN_N and len(sells) >= MIN_N:
+            if len(buys) >= SIDE_MIN and len(sells) >= SIDE_MIN:
                 gaps[fam] = st.fmean(buys) - st.fmean(sells)
                 print(f"      {fam}: buy - sell = {gaps[fam]:+.3f}R")
         if "boom" in gaps and "crash" in gaps:
@@ -578,12 +586,13 @@ def main() -> None:
     settings = Settings.from_env()
     jn = sqlite3.connect(f"file:{JOURNAL}?mode=ro", uri=True, timeout=300.0)
     spread = spreads(jn)
-    trades, seen, refused = candidates(jn, settings, gate=True)
+    trades, seen, refused = candidates(jn, settings, gate=GATE)
     jn.close()
     print("=" * 78)
     print("CONVEXITY: the hold cap, the exit shape, and the one-sided generators")
     print("=" * 78)
-    print(f"{seen} published level calls; {len(trades)} pass sweep-aware's rule")
+    rule = "pass sweep-aware's rule" if GATE else "taken ungated (GATE=0)"
+    print(f"{seen} published level calls; {len(trades)} {rule}")
     print(f"  refused {refused}")
     print(f"  {len(GRID)} policies, {len(LADDER)} hold rungs x 3 exits = {COMPARISONS} comparisons")
     print(f"  runway required: {RUNWAY} bars after entry, so every rung is the same trades")

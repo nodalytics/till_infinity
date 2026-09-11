@@ -39,6 +39,13 @@ So: independently generated. The mirror hypothesis, which would have been worth
 the most, is dead. That is worth having - it closes a line of speculation rather
 than leaving it open.
 
+**Extended at tick resolution in [twins.md](twins.md).** One minute cannot see a
+lead of seconds, so the twin question was reopened on the tick table with lags
+from -600s to +600s, on tails, on the volatility clock and on tick-index
+alignment. Same answer, 916,248 comparisons later - and the reason is there too:
+the volatility indices are exact geometric Brownian motions, so there is no
+clustering and no tail for a twin to share.
+
 ## Two: FOCuS detections and origins are independent events
 
 `focus.THRESHOLD` is 12.0 nats and `_note_change` *adds* to it on faster rungs,

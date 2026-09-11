@@ -21,6 +21,28 @@ R is reconstructed as `(exit - entry) * side / risk` on every row rather than
 read from `r_multiple`, which 118 of the 398 outcomes predate. The two agree to
 5e-5 on the rows carrying both, and that check is printed rather than trusted.
 
+## Which copy of the journal
+
+`JOURNAL` names the database. The research machine's replica is the default and
+it **lagged production by a day** when this was first run - 325 attributed
+closes against 398, missing all of 2026-09-11, which is the day `sweep-aware`
+went from 16 closes to 87. On a record this short that is not a rounding
+difference, so the headline run reads a copy taken from the production instance
+and the replica's 325-close subset is kept as a second sample. Both are reported
+in `research/compounding.md`; they agree on every conclusion and disagree on the
+second decimal of the mean, which is itself the most useful thing a 398-trade
+sample can tell anyone.
+
+Running it:
+
+    ./.secrets/lab.sh run research/harness/compounding.py \
+        PATHS=40000 HORIZON=1000 BOOTSTRAPS=20000 WORKERS=48
+
+against the replica, or with `JOURNAL=` pointing at a copy of production's
+`journal.db` for the current record. Nothing here needs more than a few hundred
+rows of that database, and it must not be run on the instance: two cores, and
+research has OOM-killed the live desk before (`research/starving.md`).
+
 ## Both populations are read
 
 43% of one day's closes never became an `outcome`: the position outlived the
@@ -253,11 +275,13 @@ def _cell(args) -> tuple:
     seed, n = args
     rng = np.random.default_rng(seed)
     step = _draw(rng, n)
-    path = np.cumsum(step, axis=1)
-    low = np.minimum.accumulate(path, axis=1)
-    ruined = low[:, -1] <= _S["barrier"]
-    finals = path[:, -1]
+    path = np.cumsum(step, axis=1, out=step)
+    ruined = path.min(axis=1) <= _S["barrier"]
+    finals = path[:, -1].copy()
     hits = []
+    if not _S["targets"]:
+        return int(ruined.sum()), finals, hits
+    low = np.minimum.accumulate(path, axis=1)
     for logt in _S["targets"]:
         reached = path >= logt
         any_ = reached.any(axis=1)
@@ -302,7 +326,10 @@ def simulate(sample, blocks, f, scheme="day", halt=0.0, paths=PATHS,
     length = np.array([len(s) for s in prepared], dtype=np.int64)
     offset = np.concatenate([[0], np.cumsum(length)[:-1]]).astype(np.int64)
 
-    per = max(1, min(4000, int(40_000_000 / max(1, horizon))))
+    # Chunk on *elements*, not paths: a 120,000-trade horizon at 4,000 paths
+    # a chunk is 3.8GB in one worker, and 48 of those is how a 64-core machine
+    # gets OOM-killed doing arithmetic that fits on a laptop.
+    per = max(1, min(4000, int(4_000_000 / max(1, horizon))))
     jobs, done = [], 0
     i = 0
     while done < paths:
@@ -413,8 +440,28 @@ def main() -> None:
         v = rs[np.array(daylists[d])]
         print(f"    {d}  n={len(v):3d}  mean {v.mean():+.4f}  sum {v.sum():+8.2f}")
     dm = np.array([rs[np.array(v)].mean() for v in daylists.values()])
-    print(f"  {len(dm)} day means: {dm.mean():+.4f} +/- {dm.std(ddof=1):.4f}. "
-          f"A bootstrap over 15 blocks is a wide instrument and §5 says so.")
+    print(f"  {len(dm)} day means: {dm.mean():+.4f} +/- {dm.std(ddof=1):.4f}")
+
+    # Is the day-to-day spread real, or is it what 15 groups of these sizes
+    # produce from one urn? The day scheme's whole claim is that a bad day is
+    # several trades rather than one, and that claim is testable. Between-group
+    # sum of squares against 20,000 shuffles of R across days, day sizes held.
+    sizes = np.array([len(v) for v in daylists.values()])
+    grand = rs.mean()
+    observed = float((sizes * (dm - grand) ** 2).sum())
+    edges = np.concatenate([[0], np.cumsum(sizes)])
+    null = np.empty(BOOTSTRAPS)
+    for i in range(BOOTSTRAPS):
+        shuffled = rs[rng.permutation(len(rs))]
+        means = np.array([shuffled[edges[j]:edges[j + 1]].mean() for j in range(len(sizes))])
+        null[i] = float((sizes * (means - grand) ** 2).sum())
+    pval = float((null >= observed).mean())
+    print(f"  clustering test: between-day SS {observed:.2f} against a shuffled null "
+          f"of {null.mean():.2f} +/- {null.std(ddof=1):.2f},  p = {pval:.3f}")
+    print("  " + ("days cluster: the day column in §5 is the honest one."
+                  if pval < 0.05 else
+                  "not separable from chance at 15 days. The day column in §5 is an "
+                  "upper bound, the iid column a lower one, and the truth is between."))
 
     # ---------------------------------------------------------------- 2
     rule("2. does the half that went missing change the sign")
@@ -544,14 +591,14 @@ def main() -> None:
             g = growth(s, f)
             if g <= 0:
                 continue
-            need = int(min(120_000, max(2_000, math.ceil(3.0 * math.log(max(targets)) / g))))
+            need = int(min(60_000, max(2_000, math.ceil(2.0 * math.log(max(targets)) / g))))
             sim = simulate(s, blocks, f, "day", 0.0, horizon=need,
-                           paths=max(6_000, int(40_000_000 / need)),
+                           paths=max(4_000, min(PATHS, int(8_000_000 / need))),
                            targets=targets, seed=SEED + 4)
             cells = []
             for h in sim["hits"]:
                 tr = h["median_trades"]
-                yrs = tr / PER_DAY / 252 if tr == tr else float("nan")
+                yrs = float("nan") if math.isnan(tr) else tr / PER_DAY / 252
                 cells.append(f"{100 * h['reached']:9.1f}% {tr:8.0f} {yrs:6.1f} "
                              f"{100 * h['ruin_first']:7.1f}%")
             print(f"  {mu:+6.2f} {f:7.4f} {f / k:6.2f} | " + " | ".join(cells)
@@ -562,24 +609,111 @@ def main() -> None:
     print("Power to reject 'mean R <= 0' at 95% one-sided, drawing from the measured")
     print("shape shifted to each edge. The shape is what makes this bite: a skewed,")
     print("fat-tailed sample needs more trades than the normal formula asks for.")
-    sd = rs.std(ddof=1)
-    print(f"\n  {'edge':>6} {'normal n':>10} {'resampled n (80% power)':>25} "
-          f"{'days at %.0f/day' % PER_DAY:>18}")
-    grid = (100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600, 51200, 102400)
-    for mu in (0.02, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50):
+    print("A tail-shaped edge is harder to see as well as harder to size: the")
+    print("variance that made it dangerous in §6 is the same variance that hides it.")
+    per_day = f"days at {PER_DAY:.0f}/day"
+    print(f"\n  {'edge':>6} {'shape':>10} {'sd':>6} {'normal n':>10} "
+          f"{'resampled n (80% power)':>25} {per_day:>18}")
+    grid = (25, 50, 75, 100, 150, 200, 300, 400, 600, 800, 1200, 1600, 2400,
+            3200, 4800, 6400, 9600, 12800, 19200, 25600, 38400, 51200, 76800)
+    cases = [(mu, "broad", shift_to(rs, mu))
+             for mu in (0.02, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50)]
+    cases += [(mu, f"tail {sh:.2f}", tail_edge(rs, mu, sh))
+              for mu in (0.05, 0.10, 0.20) for sh in (0.36, 0.10, 0.02)]
+    for mu, shape, s in cases:
+        sd = s.std(ddof=1)
         normal = (1.645 + 0.842) ** 2 * sd ** 2 / mu ** 2
-        s = shift_to(rs, mu)
         found = None
         for n in grid:
-            trials = 4000
-            draws = s[rng.integers(0, len(s), size=(trials, n))]
-            m = draws.mean(axis=1)
-            se = draws.std(axis=1, ddof=1) / math.sqrt(n)
-            if float((m - 1.645 * se > 0).mean()) >= 0.80:
+            trials, wins = 4000, 0
+            for _ in range(trials // 200):  # chunked so a wide n cannot blow memory
+                draws = s[rng.integers(0, len(s), size=(200, n))]
+                m = draws.mean(axis=1)
+                se = draws.std(axis=1, ddof=1) / math.sqrt(n)
+                wins += int((m - 1.645 * se > 0).sum())
+            if wins / trials >= 0.80:
                 found = n
                 break
-        days = f"{found / PER_DAY:.0f}" if found else ">4096"
-        print(f"  {mu:+6.2f} {normal:10.0f} {str(found or '>102400'):>25} {days:>18}")
+        days = f"{found / PER_DAY:.0f}" if found else ">3072"
+        print(f"  {mu:+6.2f} {shape:>10} {sd:6.3f} {normal:10.0f} "
+              f"{found or '>76800'!s:>25} {days:>18}")
+
+    # ---------------------------------------------------------------- 9
+    rule("9. the table to act on")
+    print("For each edge, the largest risk fraction whose probability of halving")
+    print(f"over {HORIZON} trades stays inside a budget, found by bisection on the")
+    print("day-block scheme, and what that fraction then buys. `to 100x` is the")
+    print(f"median first passage in years at {PER_DAY:.0f} closes a day.")
+
+    def largest_under(s, budget, halt, lo=0.0, hi=None, rounds=8):
+        hi = min(hi or 0.30, ceiling_for(s) * 0.95)
+        if simulate(s, blocks, hi, "day", halt, paths=12_000, seed=SEED + 6)["ruin"] <= budget:
+            return hi
+        for _ in range(rounds):
+            mid = (lo + hi) / 2
+            if simulate(s, blocks, mid, "day", halt, paths=12_000, seed=SEED + 6)["ruin"] <= budget:
+                lo = mid
+            else:
+                hi = mid
+        return lo
+
+    for budget in (0.01, 0.05):
+        print(f"\n  ruin budget: P(halve within {HORIZON} trades) <= {100 * budget:.0f}%")
+        print(f"  {'edge':>9} {'Kelly':>7} | {'f (no halt)':>12} {'f/K':>6} {'g/trade':>9} "
+              f"{'median x':>12} {'p5 x':>9} {'to 100x, yr':>12} | {'f (3% halt)':>12} {'f/K':>6}")
+        for label, s in named:
+            k = kelly(s)
+            if k <= 0:
+                print(f"  {label:>9} {k:7.3f} | {'none':>12} {'-':>6} {'-':>9} {'-':>12} "
+                      f"{'-':>9} {'never':>12} | {'none':>12} {'-':>6}")
+                continue
+            f = largest_under(s, budget, 0.0)
+            fh = largest_under(s, budget, HALT)
+            g = growth(s, f) if f > 0 else 0.0
+            cell = simulate(s, blocks, f, "day", 0.0, seed=SEED + 8) if f > 0 else None
+            years = (math.log(100.0) / g / PER_DAY / 252) if g > 0 else float("inf")
+            print(f"  {label:>9} {k:7.3f} | {f:12.4f} {f / k:6.2f} {g:+9.5f} "
+                  f"{cell['median']:12.3f} {cell['p05']:9.4f} {years:12.2f} | "
+                  f"{fh:12.4f} {fh / k:6.2f}")
+
+    # ---------------------------------------------------------------- 10
+    rule("10. the one strategy with a positive point estimate, sized")
+    print("`sweep-aware` is the only strategy on the book whose mean R is above")
+    print("zero. Its interval covers zero, so this is not a recommendation - it is")
+    print("what the sizing question looks like when it is asked of a real")
+    print("distribution rather than a shifted one, and how far the answer moves")
+    print("between the point estimate and the bottom of its own interval.")
+    for name in ("sweep-aware", "thesis-only"):
+        rows = [r for r in attributed if r["R"] is not None and r.get("strategy") == name]
+        if len(rows) < 25:
+            continue
+        sub = np.array([r["R"] for r in rows])
+        subday: dict[str, list[int]] = {}
+        for i, r in enumerate(rows):
+            subday.setdefault(day_of(r), []).append(i)
+        subblocks = [np.array(v, dtype=np.int64) for v in subday.values()]
+        b = boot_mean(sub, rng, BOOTSTRAPS)
+        lo5 = float(np.percentile(b, 5))
+        print(f"\n  {name}: n={len(sub)} over {len(subblocks)} days, mean {sub.mean():+.4f}R, "
+              f"sd {sub.std(ddof=1):.3f}, 5th pct of the bootstrap {lo5:+.4f}R, "
+              f"Kelly on the point estimate {kelly(sub):.4f}")
+        print(f"  {'f':>7} | {'iid':>8} {'day':>8} {'day+halt':>9} | {'median x':>10} "
+              f"{'p5 x':>9} {'g/trade':>9}")
+        for f in FRACTIONS:
+            if f >= ceiling_for(sub):
+                continue
+            a_ = simulate(sub, subblocks, f, "iid", 0.0, seed=SEED + 9)
+            d_ = simulate(sub, subblocks, f, "day", 0.0, seed=SEED + 9)
+            h_ = simulate(sub, subblocks, f, "day", HALT, seed=SEED + 9)
+            print(f"  {f:7.4f} | {100 * a_['ruin']:7.2f}% {100 * d_['ruin']:7.2f}% "
+                  f"{100 * h_['ruin']:8.2f}% | {d_['median']:10.3f} {d_['p05']:9.4f} "
+                  f"{d_['growth']:+9.5f}")
+        # What the same book looks like if the truth is the bottom of the interval.
+        pess = sub - sub.mean() + lo5
+        print(f"  at the 5th percentile of its own mean ({lo5:+.4f}R): Kelly "
+              f"{kelly(pess):.4f}, and at f=0.01 the chance of halving over "
+              f"{HORIZON} trades is "
+              f"{100 * simulate(pess, subblocks, 0.01, 'day', 0.0, seed=SEED + 9)['ruin']:.2f}%")
 
     print(f"\ndone in {time.time() - t0:.0f}s")
 
