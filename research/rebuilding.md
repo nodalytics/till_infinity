@@ -322,6 +322,53 @@ Jump indices have far fatter tails than a Poisson process with the measured rate
 and magnitudes can produce, which means the jumps are either clustered or much
 more variable in size than a 24-hour sample shows.
 
+### The tick-monitored barrier: the published hit rate overstates a 3:1 target by four points
+
+This is the result with money attached and it was predicted before it was
+measured. `deriving.md` section one is **close-monitored** - `derivegbm.py` walks
+non-overlapping windows on one-minute closes - so `P(up) = (b+B)/(a+b+2B)` with
+`B = 0.5826` is the answer for a rule that can only act once a minute. **A real
+stop is hit on a tick.** The Broadie-Glasserman-Kou shift scales as
+`beta*sigma*sqrt(dt)`, so at `tpb` ticks a minute it falls from 0.5826 of a
+one-minute sigma to `0.5826/sqrt(tpb)` - 0.1064 at thirty ticks a bar, 0.0752 at
+sixty - and the trading-relevant hit probability sits between the continuous
+answer and the published one.
+
+Replayed tick by tick on the rebuilt paths and on `research.db`'s own tick table:
+
+| ticks/bar | a:b | rebuilt | **real feed** | +-SE | **predicted** | z vs predicted | published (close) | z vs published |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 30 | 3:1 | 0.2608 | **0.2664** | 0.0110 | **0.2626** | +0.34 | 0.3064 | **-3.63** |
+| 30 | 1:3 | 0.7355 | **0.7425** | 0.0110 | **0.7374** | +0.47 | 0.6936 | **+4.44** |
+| 30 | 2:10 | 0.8235 | 0.8385 | 0.0253 | 0.8275 | +0.43 | 0.8038 | +1.37 |
+| 60 | 3:1 | 0.2621 | **0.2638** | 0.0091 | **0.2591** | +0.52 | 0.3064 | **-4.69** |
+| 60 | 1:3 | 0.7439 | **0.7458** | 0.0091 | **0.7409** | +0.54 | 0.6936 | **+5.73** |
+| 60 | 2:10 | 0.8358 | 0.8430 | 0.0227 | 0.8292 | +0.61 | 0.8038 | +1.72 |
+
+Six pooled cells, about 2,100 and 2,600 real non-overlapping trades. **The feed
+agrees with the prediction to within 0.61 standard errors everywhere and
+disagrees with the published close-monitored figure by up to 5.7.** Per feed,
+across 36 cells, the rebuilt column sits within 2.02 standard errors of the
+prediction and mostly within one.
+
+So the operational number is this. A trade with a stop one sigma away and a
+target three sigmas away is:
+
+* **25.0%** continuously - the textbook answer, and wrong;
+* **30.7%** to a rule that can only act on the close - `deriving.md`'s table;
+* **26.3%** to a stop sitting in the book, which is every stop this desk places.
+
+**The published figure overstates a 3:1 target's chance by four points**, which
+is a fifth of the edge such a geometry is supposed to carry, and it is the figure
+`deriving.md` recommends replacing estimators with. The correction is one
+substitution - `B -> B/sqrt(tpb)` - and it is now measured on both a rebuild and
+the feed.
+
+It does not change the expectancy. `E[net] = -c` holds against any monitoring
+rule, because the barrier is still symmetric about a martingale. What it changes
+is the *shape* a sizing rule assumes, and a desk that believes a 3:1 is a 30.7%
+shot when it is a 26.3% shot is mis-stating its own hit rate by a seventh.
+
 ### The discriminator is calibrated, and it has a map of its own blind spots
 
 On ground truth - a rebuild against a feed drawn from the identical law - every
