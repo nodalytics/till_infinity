@@ -1203,6 +1203,120 @@ residual remains at the box's own relaxation time. That is a sharper statement o
 the gap than "the mechanism is not published", and it is three falsifiable
 claims: one shared width, no second re-range event, and a soft edge.
 
+### The shared width of 60 is refuted, and the estimator that refutes it was tested first
+
+[quantising.md](quantising.md) now measures Range Break's range **directly off
+the feed** - `W = sqrt(12 Var)` on within-episode ticks, de-meaned per episode,
+scanned against a minimum episode length - and reads **RB100 at about 38 units**,
+flat to 2% across its last three cuts, with `RB200 above 60 and not converged`.
+This page fitted a simulated variance-ratio curve to `deriving.md`'s published
+table and got **one shared 60**. Those cannot both be right.
+
+Neither page had run the thing that settles it, so
+[`rebuildwidth.py`](harness/rebuildwidth.py) does: **give both estimators the
+same simulated truth, at the feed's own sample, and see which one comes back with
+the width it was given.** Six paths a width, Range Break 100 at the published
+86.6-minute break rate, episodes cut at the true break points.
+
+**The direct estimator is biased low, and nowhere near enough to save 60.**
+
+| true `W` | episodes | saturating cut | **`W` recovered** | mean within-episode range | bias |
+| --- | --- | --- | --- | --- | --- |
+| 30 | 17.5 | 5,461 | **29.5 +- 0.7** | 30.0 | -1.7% |
+| 38 | 19.0 | 4,096 | **36.6 +- 0.7** | 38.0 | -3.8% |
+| 45 | 17.0 | 4,779 | **43.6 +- 1.3** | 44.9 | -3.2% |
+| 52 | 17.2 | 4,096 | **48.9 +- 0.7** | 51.0 | -6.0% |
+| **60** | 20.2 | 4,096 | **53.1 +- 2.4** | 57.7 | **-11.5%** |
+| 72 | 18.7 | 5,461 | **63.8 +- 4.2** | 70.0 | -11.4% |
+
+The bias is real and it grows with the width, exactly as a finite episode should
+make it - a wider box needs longer to equilibrate and an episode of about 5,000
+ticks is fewer relaxation times of a wide box than of a narrow one. At twenty
+times the sample it falls to -0.1% to -4.0%, which is what says it is a
+finite-episode bias rather than a defect in the estimator.
+
+**But a true 60 reads 53.1, not 38.** The feed reads 37.8. That is **6.3 standard
+deviations** from what a true 60 produces under the same estimator at the same
+sample, and a true 38 reads 36.6 +- 0.7, which is what the feed shows. Corrected
+for its own -3.8% bias, the feed's number is a range of about **39 to 40 units on
+RB100**. The shared width of 60 on this page is **refuted**, and the escape that
+would have saved it - that the estimator is biased low by a third - does not
+exist.
+
+**And the curve this page fitted does not identify a width at all.** Scored the
+way this page ends on - the two short lags, after `quantising.md` showed the long
+ones are the splice rather than the process - the best hard box is **52**, with 60
+next and separated by **0.7 Monte Carlo standard deviations**. A best-fit quoted
+as "about 60" from a scan whose neighbours are within one standard deviation was
+quoting a precision the estimator never had.
+
+| hard box `W` | `n=1` | `n=5` | `n=20` | `n=100` | MAE, all six | **MAE, short lags** |
+| --- | --- | --- | --- | --- | --- | --- |
+| **published** | **0.978** | **0.730** | **0.436** | **0.283** | | |
+| 30 | 0.780 | 0.474 | 0.215 | 0.124 | 0.1937 | 0.2270 +- 0.0273 |
+| 38 | 0.836 | 0.590 | 0.294 | 0.160 | 0.1461 | 0.1408 +- 0.0247 |
+| 45 | 0.874 | 0.650 | 0.371 | 0.210 | 0.0961 | 0.0916 +- 0.0228 |
+| **52** | 0.902 | 0.720 | 0.461 | 0.250 | **0.0522** | **0.0453 +- 0.0178** |
+| 60 | 0.914 | 0.768 | 0.529 | 0.312 | 0.0618 | 0.0569 +- 0.0059 |
+| 72 | 0.926 | 0.797 | 0.583 | 0.360 | 0.0776 | 0.0591 +- 0.0058 |
+
+**Read the `n=1` column and the fit stops being a measurement.** The published
+one-bar ex-break variance ratio is **0.978 +- 0.007**, which is a series barely
+confined at a one-minute horizon - and *every* hard box undershoots it, rising
+monotonically through 0.780, 0.836, 0.874, 0.902, 0.914, 0.926 and never
+arriving. No box in the scan reaches it and no wider one would arrive in time,
+because a box that free at one minute is not a box at twenty. So the scan's
+preferred width is the width that minimises an error dominated by **a cell no
+hard box can reach**, and pushing it wider is the fit trying to escape
+confinement rather than measure it. That is why the curve says 52-to-72 where the
+feed says 39.
+
+**The correction, stated plainly.** Range Break 100's range is about **39 units**,
+measured on the feed at tick resolution and corrected for a bias measured on a
+known truth. This page's **60 is withdrawn**, and so is the claim that the two
+indices share one width - `quantising.md` gets RB100 at 38 and RB200 above 60 and
+not converged, which is a factor of at least 1.6 between them. What survives from
+the shared-width experiment is only the negative half of it: the free per-feed fit
+at 60 and 45 had RB200 *narrower* than RB100, which is backwards, and the
+direct measurement agrees that it is backwards.
+
+**A caveat that bears on anyone repeating either measurement.** Cutting episodes
+at *bar* granularity inflates the direct estimate by **24% to 42%**:
+
+| true `W` | 30 | 38 | 45 | 52 | 60 | 72 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `W` from true break ticks | 29.5 | 36.6 | 43.6 | 48.9 | 53.1 | 63.8 |
+| `W` from `break_bars` on one-minute bars | 41.1 | 47.0 | 61.3 | 57.8 | 75.6 | 85.1 |
+
+A bar detector can only see a break after it has been mixed with a minute of
+ordinary movement, so the episode boundary lands up to sixty ticks late and the
+de-meaned episode spans two ranges. Neither page's width is affected - both cut
+at tick resolution, where a move over five units is a break and nothing else is -
+but `rebuildstep.py`'s `break_bars` is a bar detector and it is used here for the
+break *rate*, where a sixty-tick error is irrelevant. Anything that fed it into a
+width would be 30% out.
+
+**And the soft edge's own prediction is refuted, in the direction neither page
+had a row for.** This page and `quantising.md` jointly pre-registered that if the
+range's edge is softer than a wall then `lambda_2/lambda_1` must land **strictly
+between 2 and 4**. Measured against simulated truths through the identical
+pipeline it is **2.076 on RB100 and 1.976 on RB200** - at or below the harmonic
+value, so not a hard box, not a soft wall, and not even a spring. The soft-edge
+scan on this page searched from the harmonic upward and the answer is at the
+other end of it. Kill condition fired; the soft-edge reading of the twenty-minute
+residual is withdrawn along with the width.
+
+**What is left of this page's Range Break section is the part that never depended
+on the width**: that a bounded walk plus a memoryless break reproduces the
+sub-diffusion and the flat total at the 10-30% level and not better, that a
+second quiet re-range is refuted monotonically on both feeds, and that
+`deriving.md` is not complete enough to re-instantiate Range Break. The box
+written out below - `L = 60`, `tau_1 = 12.16` minutes, stationary spread 17.3 -
+should be read as the hard box that best fits a published curve it cannot match,
+not as the instrument. At `L = 39` the same arithmetic gives `tau_1 = 308` ticks
+or **5.1 minutes** and a stationary spread of **11.3 steps**, and those are the
+numbers a further experiment should be pointed at.
+
 ## What is still to run - one command, and what each outcome would mean
 
 ```bash
