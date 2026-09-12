@@ -361,6 +361,7 @@ def trials(r, sigma, good, a, b, start_at=0, stop_at=None, maxbars=MAXBARS):
     n = r.size if stop_at is None else min(stop_at, r.size)
     i = start_at
     ups, durs, ss = [], [], []
+    dropped = 0
     cum = np.cumsum(r)
     while i < n - 2:
         if not good[i]:
@@ -376,13 +377,21 @@ def trials(r, sigma, good, a, b, start_at=0, stop_at=None, maxbars=MAXBARS):
         tu = up_hit[0] if up_hit.size else 10**9
         td = dn_hit[0] if dn_hit.size else 10**9
         if tu == 10**9 and td == 10**9:
+            # Unresolved inside the horizon. Dropping these is a **selection**,
+            # not a rounding: a trial fails to resolve when the realised
+            # volatility falls short of the entry estimate, so the dropped set is
+            # the quiet periods and keeping quiet about it would bias every wide
+            # geometry toward the noisy half of the sample. It is counted and
+            # reported, and the horizon is set from the geometry rather than
+            # fixed so the rate stays small where it can.
+            dropped += 1
             i = j
             continue
         ups.append(1 if tu < td else 0)
         durs.append(int(min(tu, td)) + 1)
         ss.append(i)
         i += int(min(tu, td)) + 1
-    return np.asarray(ups), np.asarray(durs), np.asarray(ss)
+    return np.asarray(ups), np.asarray(durs), np.asarray(ss), dropped
 
 
 # --------------------------------------------------------------------------
@@ -435,7 +444,10 @@ def run_feed(args) -> dict | None:
     out = {"feed": feed, "n_bars": int(r.size), "kurtosis_z": kurt, "cells": {}}
     for a, b in GEOMS:
         key = f"{a:g}:{b:g}"
-        up, dur, ss = trials(r, sig, good, a, b, start_at=half)
+        # The horizon scales with the geometry's own expected duration, so a wide
+        # geometry is not judged on a window a narrow one was sized for.
+        horizon = int(max(MAXBARS, 30.0 * closed_form(a, b)[1]))
+        up, dur, ss, dropped = trials(r, sig, good, a, b, start_at=half, maxbars=horizon)
         if up.size < 60:
             continue
         p_t = float(up.mean())
@@ -466,6 +478,9 @@ def run_feed(args) -> dict | None:
             tgt.update(acc)
         out["cells"][key] = {
             "n": int(up.size), "p_truth": p_t, "se": se,
+            "dropped": int(dropped),
+            "drop_rate": float(dropped / max(dropped + up.size, 1)),
+            "horizon": horizon,
             "dur_truth": float(dur.mean()),
             "A_closed": p_a, "A_bars": e_a,
             "B_gauss": gb["p_up"], "B_bars": gb["e_bars"],
@@ -494,7 +509,8 @@ def summarise(rows: list[dict], title: str) -> dict:
                 f"{c['A_closed'] - t:+7.4f} {c['C_iid'] - t:+7.4f} {c['D_regime'] - t:+7.4f} "
                 f"{c['D_shuffled'] - t:+7.4f}"
             )
-            g = agg.setdefault(key, {k: [] for k in ("A", "B", "C", "D", "Dsh", "z", "n")})
+            g = agg.setdefault(key, {k: [] for k in ("A", "B", "C", "D", "Dsh", "z", "n", "drop")})
+            g["drop"].append(c["drop_rate"])
             g["A"].append(abs(c["A_closed"] - t))
             g["B"].append(abs(c["B_gauss"] - t))
             g["C"].append(abs(c["C_iid"] - t))
@@ -502,20 +518,35 @@ def summarise(rows: list[dict], title: str) -> dict:
             g["Dsh"].append(abs(c["D_shuffled"] - t))
             g["z"].append((c["A_closed"] - t) / max(c["se"], 1e-9))
             g["n"].append(c["n"])
-    print(f"\n  pooled mean |error| by geometry, {title}")
+    print(f"\n  pooled by geometry, {title}")
     print(
-        f"  {'geom':>7s} {'feeds':>6s} {'trials':>8s} {'|A-T|':>8s} {'|B-T|':>8s} "
-        f"{'|C-T|':>8s} {'|D-T|':>8s} {'|Dsh-T|':>8s} {'mean z of A':>12s}"
+        f"  {'geom':>7s} {'feeds':>6s} {'trials':>8s} {'drop%':>6s} {'|A-T|':>7s} {'|B-T|':>7s} "
+        f"{'|C-T|':>7s} {'|D-T|':>7s} {'|Dsh-T|':>8s} | {'mean z A':>9s} {'t over feeds':>12s} "
+        f"{'sign':>7s} {'best':>5s}"
     )
     pooled = {}
     for key, g in agg.items():
-        pooled[key] = {k: float(np.mean(v)) for k, v in g.items() if k != "n"}
-        pooled[key]["feeds"] = len(g["A"])
-        pooled[key]["trials"] = int(np.sum(g["n"]))
+        z = np.asarray(g["z"], dtype=float)
+        nf = z.size
+        # The 19 real feeds are not 19 independent samples - indices co-move - so
+        # the interval quoted is a t interval over FEEDS, which charges the
+        # between-feed spread rather than the within-feed trial count. That is the
+        # conservative choice and it is the one `research/calibrating.md` would
+        # insist on for a table with this many rows in it.
+        tz = float(z.mean() / (z.std(ddof=1) / math.sqrt(nf))) if nf > 1 and z.std(ddof=1) > 0 else float("nan")
+        same = int(max((z > 0).sum(), (z < 0).sum()))
+        means = {k: float(np.mean(g[k])) for k in ("A", "B", "C", "D", "Dsh")}
+        best = min(means, key=means.get)
+        pooled[key] = {
+            **means, "feeds": nf, "trials": int(np.sum(g["n"])),
+            "mean_z": float(z.mean()), "t_over_feeds": tz,
+            "sign_consistency": f"{same}/{nf}", "best_arm": best,
+            "drop_rate": float(np.mean(g["drop"])),
+        }
         print(
-            f"  {key:>7s} {len(g['A']):6d} {int(np.sum(g['n'])):8d} "
-            f"{np.mean(g['A']):8.4f} {np.mean(g['B']):8.4f} {np.mean(g['C']):8.4f} "
-            f"{np.mean(g['D']):8.4f} {np.mean(g['Dsh']):8.4f} {np.mean(g['z']):12.2f}"
+            f"  {key:>7s} {nf:6d} {int(np.sum(g['n'])):8d} {100 * np.mean(g['drop']):6.2f} "
+            f"{means['A']:7.4f} {means['B']:7.4f} {means['C']:7.4f} {means['D']:7.4f} "
+            f"{means['Dsh']:8.4f} | {z.mean():9.2f} {tz:12.2f} {same:3d}/{nf:<3d} {best:>5s}"
         )
     return pooled
 
