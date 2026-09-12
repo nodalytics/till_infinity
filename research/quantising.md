@@ -1251,6 +1251,11 @@ nothing survives which would need a quantum state to explain.
 * **Section three's real-instrument leg is 249 to 453 bars a feed.** The
   synthetic leg is 5,757 and 698 to 1,440, and the two agree on the sign and
   roughly the size, which is the most that should be read from either.
+* **Section six measures an ingredient and not a backtest.** Nothing here ran
+  `replay.py` with the correction in, and the ambiguous share depends on a
+  barrier geometry chosen for the test rather than read off the book. The
+  accuracy comparison does not depend on that geometry, because it conditions on
+  ambiguity; the points-of-risk figures do.
 * **The bridge assumes constant volatility inside the bar.** It is estimated from
   the bar's own range, so there is no look-ahead, but a bar containing a
   volatility burst is mis-specified, the under-coverage is where that shows, and
@@ -1283,6 +1288,10 @@ the borrowing has to be accounted for.
   confined" - 164 ticks against a fair coin's 11,176. The spectral machinery adds
   nothing to that question and the knee is a more careful version of the same
   classical idea.
+* **Sub-bar volatility from a coarse bar.** Garman-Klass, 1980, is within 5-8% of
+  unbiased and the reconstruction understates by a factor of two. The path
+  integral loses to a closed form forty-five years old, for the stated reason
+  that a conditional mean is smooth. Reported as a loss, not omitted.
 
 **New descriptions of these instruments, which is what is left:**
 
@@ -1308,8 +1317,17 @@ the borrowing has to be accounted for.
   box requires while the Brownian control's does not.
 * **`H` and `L` carry about a quarter of the interior variance of a bar, and
   attainment carries nearly half.** Measured against a true tick path, not
-  inferred. That is a property of OHLC data rather than of any instrument, and it
-  is the part with a price attached.
+  inferred. That is a property of OHLC data rather than of any instrument.
+* **`replay.py`'s Rule 3 is a coin flip worth 9 to 44 points of risk a trade**,
+  one-sided, in the regime `manage.advance` puts every winning position into -
+  and the ordering probability that replaces it is 66-93% accurate. That is the
+  only thing on this page with a price attached to a line of shipping code, and
+  section six is the spec for changing it.
+* **And the bound that says what cannot be improved**, which is the more useful
+  half: `H` and `L` are the extremes exactly, so wick statistics, single-barrier
+  hit tests and the range family are already exact from bars. A quarter of this
+  desk's bar-derived machinery was a candidate for improvement before that line
+  was written and is not one after it.
 * **Boom's drift, read off the phase of its characteristic function** at
   `pi/|g| = 321.6` against a plateau of 307.4, when the sample mean of its
   increments is thirteen times smaller than that drift because the spikes cancel
@@ -1327,33 +1345,52 @@ the borrowing has to be accounted for.
 
 ## What follows
 
-1. **Collect more Range Break ticks, for the width and not for the ladder.** The
+Ordered by what is worth doing, not by what is interesting.
+
+1. **Change `shared/replay.py`'s Rule 3.** Where a bar touches both barriers, take
+   the five-state ordering probability instead of "the stop is checked first". It
+   is 0.079 ms a bar batched, it applies to 0% of fresh entries and 10-43% of
+   bars once the stop has trailed up, and it removes a one-sided bias of 9 to 44
+   points of risk per resolved trade - which `calibrating.md` makes visible at 56
+   to 1,400 closes and which is the same size as the largest claim on
+   `spending.md`'s strategy table. Section six is the spec.
+2. **Re-run the published replay numbers with it in.** This page measured the
+   ingredient, not an end-to-end backtest, and the bias points one way on every
+   feed, so any number produced by a trailing-stop replay is pessimistic by an
+   amount nobody has yet quoted.
+3. **Look at the lab's `prices.db`.** Every real-instrument table on it reads back
+   "database disk image is malformed", so the real leg of section six had to run
+   against the local store at a twentieth of the sample. That is not this page's
+   finding but it blocked this page's work and it will block the next one's.
+4. **Collect more Range Break ticks, for the width and not for the ladder.** The
    ladder is settled at 24 hours. RB200's width is not: seven breaks in the stored
    day, a scan still climbing at the longest cut, and no plateau. Two weeks of
-   RB200 ticks would settle it, and nothing else here is waiting on data.
-2. **Measure where in the range a break happens**, as a fraction of the range
+   RB200 ticks would settle it.
+5. **Measure where in the range a break happens**, as a fraction of the range
    width. It is one query, it needs no model, and it decides whether the
    ex-break curve everything here is calibrated against is biased by conditioning
    on survival.
-3. **Replace linear interpolation with the attainment bridge wherever a replay
-   reads inside a bar.** Against a known true path it removes 39% to 48% of the
-   interior variance that linear interpolation leaves, for the cost of one
-   forward-backward pass over four copies of the grid. It is the only thing on
-   this page with a price attached - a less wrong measurement rather than an
-   edge - and the containment version it replaces is now the strictly worse of
-   the two on every feed measured.
-4. **Do not use either bridge on Boom or Crash without the ancilla.** Containment
-   is 2.7% *worse* than linear on `boom_500` ticks, because a bar's high set by a
-   single Poisson spike is a statement about attainment and not about containment.
-5. **Tell `rebuilding.md` to search downward.** Its soft-edge scan covers
+6. **Tell `rebuilding.md` to search downward.** Its soft-edge scan covers
    `p = q + 1` for `q >= 1`, so it searched from the harmonic value upward, and
    the within-episode spectrum puts the answer at `p <= 2`. The impasse between
    the ex-break shape and the all-bars flatness will not close by hardening the
    wall.
-6. **Check `Delta/sigma` per feed before trusting any tick statistic.** Below 2
+7. **Check `Delta/sigma` per feed before trusting any tick statistic.** Below 2
    the Kalman smoother is the exact posterior and there is nothing to do; above
    it the exact treatment is worth 5 to 15%, and
    [twins.md](twins.md) has already quarantined one feed for exactly this.
-7. **Do not re-open the quantum walk.** H = 0.50 on all twelve Volatility indices
-   excludes ballistic spreading, the measurement is in
-   [cascading.md](cascading.md), and it covers the 1s family too.
+
+And four things **not** to do, which section six established and which are worth
+as much as the list above:
+
+8. **Do not change `volatility.py`.** Garman-Klass is already in `ranges.py`,
+   already within 5-8% of unbiased on the fine-scale realised volatility, and
+   beats every reconstruction tried by a factor of two.
+9. **Do not touch the wick statistics.** `levels.observe_wick` reads an extreme,
+   extremes are exact from bars, and there is nothing there to improve.
+10. **Do not reconstruct interiors to count level touches.** The true path crosses
+    its own mid 2.7 to 3.3 times a bar, a bar implies one, and a reconstruction
+    says 0.7 - it makes the undercount worse.
+11. **Do not re-open the quantum walk.** H = 0.50 on all twelve Volatility indices
+    excludes ballistic spreading, the measurement is in
+    [cascading.md](cascading.md), and it covers the 1s family too.
