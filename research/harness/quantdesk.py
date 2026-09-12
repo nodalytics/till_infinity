@@ -233,8 +233,17 @@ def load_fine(dbpath: str, feed: str, interval: str, venue: str | None, factor: 
     if venue:
         q += " AND venue=?"
         args.append(venue)
-    rows = conn.execute(q + " ORDER BY ts", args).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(q + " ORDER BY ts", args).fetchall()
+    except sqlite3.DatabaseError as exc:
+        # The lab's copy of prices.db reads back "database disk image is
+        # malformed" on the real-instrument tables. A corrupt store should cost
+        # the feeds it holds and not the whole run, and saying which feeds were
+        # lost is better than a shorter table with no explanation.
+        print(f"    {feed}/{venue or 'any'}: unreadable - {exc}")
+        return None
+    finally:
+        conn.close()
     rows = [r for r in rows if None not in r and float(r[2]) > float(r[3])]
     if len(rows) < factor * 50:
         return None
