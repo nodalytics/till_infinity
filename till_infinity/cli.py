@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sqlite3
 import time
@@ -73,6 +74,66 @@ def _load_env() -> None:
 def main() -> None:
     """till-infinity."""
     _load_env()
+
+
+@main.command()
+@click.option(
+    "--file",
+    "path",
+    type=click.Path(path_type=Path),
+    help="Where the running stack left its status. Defaults to STACK_STATUS_FILE.",
+)
+@click.option(
+    "--max-age",
+    type=float,
+    default=300.0,
+    show_default=True,
+    help="Seconds before a status file is treated as stale and the stack as gone.",
+)
+def health(path: Path | None, max_age: float) -> None:
+    """Exit non-zero when a service that should be running is not.
+
+    **The container reported `healthy` for three hours with no trading service.**
+    On 2026-09-11 the MT5 bridge missed one health check at start-up, the
+    trading task raised out of `listen`, `stack._start`'s supervisor caught it
+    and wrote one ERROR line, and nothing restarted it. The probe in
+    `Dockerfile` was `till-infinity --version`, which proves the package imports
+    and the entry point resolves - and a dead service is precisely what a
+    restart fixes, so it is precisely what the probe should have caught.
+
+    Three ways to be unhealthy, and the third is the one that would have caught
+    it a minute in rather than three hours in:
+
+    * a service in `failed` - it started and died;
+    * nothing in `running` at all;
+    * a status file older than `--max-age` - the stack is not writing, so
+      whatever it last said about itself is not evidence about now.
+    """
+    target = path or st.STATUS_FILE
+    if not target.exists():
+        console.print(f"[red]no status at {target}[/] - the stack has not started")
+        raise SystemExit(1)
+    try:
+        got = json.loads(target.read_text())
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]unreadable status at {target}[/]: {exc}")
+        raise SystemExit(1) from exc
+
+    age = time.time() - float(got.get("written") or 0.0)
+    running = [str(x) for x in got.get("running") or []]
+    failed = {str(k): str(v) for k, v in (got.get("failed") or {}).items()}
+
+    if failed:
+        for name, why in sorted(failed.items()):
+            console.print(f"[red]{name} stopped[/]: {why}")
+        raise SystemExit(1)
+    if not running:
+        console.print("[red]nothing running[/]")
+        raise SystemExit(1)
+    if age > max_age:
+        console.print(f"[red]status is {age:,.0f}s old[/] - the stack is not writing")
+        raise SystemExit(1)
+    console.print(f"[green]{len(running)} running[/]: {', '.join(running)} · {age:,.0f}s ago")
 
 
 @main.group()

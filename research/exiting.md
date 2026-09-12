@@ -335,6 +335,38 @@ high-water mark and that 38 of its 47 closes end on the hold timeout rather than
 on any rule. A policy that is worse on two trades in three, winning only in the
 tail, is what that feels like from the outside.
 
+## Re-run 2026-09-12 with rule 3 declined, and it changes nothing here
+
+`shared/replay.py`'s rule 3 - "a stop and a target both touched in one bar
+resolve as the stop" - turns out to be **0.47 to 0.68 accurate**, and 0.415 on
+btc, against a five-state reconstruction. Because it always says the same thing
+its error is a one-sided bias rather than noise, worth -9 to -44 points of risk
+per resolved trade. This page chose the exit policy that ships, off replayed
+*trailed* exits, which is exactly where that bias was expected to bite.
+
+It does not bite here. Re-run with `ambiguous="expected"`, which returns the
+probability-weighted R instead of asserting the worse barrier:
+
+| walk | policy | mean R | | |
+| --- | --- | ---: | ---: | ---: |
+| kernel | old | **+0.076** | | |
+| kernel | ride | **+0.134** | | |
+| weighted | old | **+0.082** | | |
+| weighted | ride | **+0.135** | | |
+
+**146 of 36,544 resolutions were ambiguous - 0.4%** - and the two columns agree
+to 0.006R on the untrailed arm and 0.001R on the trailed one. So the comparison
+that put ride's exit on the desk never rested on the convention, and the
+conclusion stands as written.
+
+Worth separating two things that are both true. The bias is real and the fix was
+right to make: on a book where ambiguity reaches 10% to 43% of resolving bars -
+which is what happens once a stop has trailed right up to price - it is the size
+of the findings it feeds. On *this* harness it is 0.4%, because `ride` aims at
+six times the push and `old` closes before the trail ever engages. A rule can be
+badly wrong and still not matter for a particular question, and saying which is
+the point of re-running rather than arguing.
+
 ## The methodological point
 
 This is the second time in one day that a replay's answer moved by an order of

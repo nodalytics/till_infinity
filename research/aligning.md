@@ -68,9 +68,22 @@ enough to believe and not enough to dismiss.
 
 ## What follows
 
-An alignment gate is justified **at 3m and 5m and nowhere else**. At 1m it
-would refuse trades for nothing; at 15m the evidence points the other way.
-2.5 to 4.1 points of held rate is worth having and is not transformative.
+An alignment gate is justified **at 5m and nowhere else**. At 1m it would refuse
+trades for nothing; at 15m the evidence points the other way. 2.5 to 4.1 points
+of held rate is worth having and is not transformative.
+
+**Corrected 2026-09-12: 3m does not survive.** This section said "3m and 5m",
+and `research/auditing.md` recomputed both rungs from this page's own counts:
+3m is **z = +1.78, p = 0.074** and 5m is **z = +2.73**. The 3m rung is not
+significant at the conventional bar *before* any correction for having tested
+four rungs, and with one it is not close. Nothing gates on this today - the
+paragraph below held it pending a split against closes - so the cost is a
+recommendation that would have been acted on, not a live refusal.
+
+Worth naming why it read as a finding: four rungs were tested and the two that
+pointed the same way were reported together, which is the maximum-of-K null that
+`auditing.md` finds is the one systematic gap in this folder's discipline. 5m
+would survive a correction for four comparisons; 3m never cleared one.
 
 **Held rate is not profit.** [reachable.md](reachable.md) is the standing
 reminder that a level holding and a trade paying are different events, and this

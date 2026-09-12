@@ -50,10 +50,23 @@ VOLUME ["/app/.data"]
 
 USER till
 
-# Liveness rather than readiness: the CLI answering proves the package
-# imported and the entry point resolves, which is what a restart would fix.
-HEALTHCHECK --interval=60s --timeout=10s --start-period=20s --retries=3 \
-    CMD till-infinity --version || exit 1
+# **`--version` reported healthy for three hours with no trading service.**
+# On 2026-09-11 the MT5 bridge missed one health check at start-up, the trading
+# task raised out of `listen`, the stack supervisor caught it and wrote one
+# ERROR line, and nothing restarted it. The old probe proved the package
+# imported and the entry point resolved - both true the whole time - and a dead
+# service is exactly what a restart fixes, so it is exactly what the probe
+# should have seen and could not.
+#
+# `health` reads the status the running stack writes and fails when a service
+# has died, when nothing is running, or when the file has gone stale - the last
+# being the case where the process is up and no longer doing anything.
+#
+# The start period covers the warm-up: structures reads six thousand levels and
+# eight thousand resolutions before it says anything, and failing during that is
+# a restart loop rather than a diagnosis.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 \
+    CMD till-infinity health || exit 1
 
 ENTRYPOINT ["till-infinity"]
 CMD ["run"]

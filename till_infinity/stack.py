@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import time
 from collections.abc import Callable
@@ -150,6 +151,23 @@ class Plan:
         return [name for name in ORDER if getattr(self, name)]
 
 
+#: Where the running stack leaves what it is doing, for anything outside the
+#: process to read.
+#:
+#: **The container reported `healthy` for three hours with no trading service.**
+#: On 2026-09-11 the MT5 bridge missed one health check at start-up, `listen`
+#: raised out of `trader.start()`, `_start`'s supervisor caught it and wrote one
+#: ERROR line, and nothing restarted it. `Dockerfile`'s probe is
+#: `till-infinity --version`, which proves the package imports and the entry
+#: point resolves - and a dead service is exactly the thing a restart would fix,
+#: so it is exactly what the probe should have seen and could not.
+#:
+#: A file rather than a port: the probe runs as a separate `docker exec` and
+#: cannot reach an in-process object, and adding a socket to be scraped is more
+#: surface than the question deserves.
+STATUS_FILE = Path(os.environ.get("STACK_STATUS_FILE") or ".data/stack.json")
+
+
 @dataclass(slots=True)
 class Status:
     """What actually started, and why anything did not."""
@@ -170,6 +188,32 @@ class Status:
         if self.failed:
             parts.append(f"failed {', '.join(sorted(self.failed))}")
         return " · ".join(parts)
+
+    def publish(self) -> None:
+        """Leave the picture where a healthcheck can read it. Never raises.
+
+        Called on every change rather than once at start-up, because the case
+        this exists for is a service that dies *after* the stack came up - which
+        is what happened on 2026-09-11 and what `--version` could not see.
+
+        Swallows its own errors: a status file that cannot be written is worth a
+        debug line, not a stack that stops because it could not describe itself.
+        """
+        try:
+            STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            STATUS_FILE.write_text(
+                json.dumps(
+                    {
+                        "running": sorted(self.running),
+                        "failed": dict(self.failed),
+                        "skipped": dict(self.skipped),
+                        "started": self.started,
+                        "written": time.time(),
+                    }
+                )
+            )
+        except Exception:  # pragma: no cover - the reporter must not be the fault
+            log.debug("stack: could not write %s", STATUS_FILE, exc_info=True)
 
 
 def check(plan: Plan) -> dict[str, str]:
@@ -248,6 +292,7 @@ class Stack:
                     task = self._start(group, name, book, say)
                     if task is not None:
                         self.status.running.append(name)
+                        self.status.publish()
                         say(name, "started")
                         if name in COLLECTORS:
                             collectors.append(task)
@@ -313,6 +358,9 @@ class Stack:
                 # One service failing is a service failing, not a stack failing.
                 reason = first_cause(exc)
                 self.status.failed[name] = reason
+                if name in self.status.running:
+                    self.status.running.remove(name)
+                self.status.publish()
                 log.error("stack: %s stopped: %s", name, reason, exc_info=True)
                 say(name, f"stopped: {reason}")
 

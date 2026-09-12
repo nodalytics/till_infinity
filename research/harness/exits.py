@@ -174,7 +174,16 @@ def run():
     for t in trades:
         by_feed[t["feed"]].append(t)
 
-    keys = [(w, p) for w in ("legacy", "kernel") for p in ("old", "ride")]
+    # `weighted` is `kernel` with rule 3 declined. Both arms are exposed to it
+    # and not equally: `ride` trails, which is where an ambiguous bar actually
+    # happens, and `old` carries a near target, which is the other way to reach
+    # one. So the *comparison* can be biased even if each arm is only slightly
+    # wrong, which is why this is a third column rather than a replacement.
+    keys = [
+        (w, p)
+        for w in ("legacy", "kernel", "weighted")
+        for p in ("old", "ride")
+    ]
     policies = {"old": OLD_EXIT, "ride": RIDE_EXIT}
     done = []
     for feed, part in by_feed.items():
@@ -191,10 +200,15 @@ def run():
             for policy_name, policy in policies.items():
                 a = _legacy_walk(rows, start, t, cost, policy)
                 b = walk(rows, start, t, cost=cost, hold=HOLD, policy=policy)
-                if a is None or b is None:
+                c = walk(
+                    rows, start, t, cost=cost, hold=HOLD, policy=policy,
+                    ambiguous="expected",
+                )
+                if a is None or b is None or c is None:
                     break
                 got[("legacy", policy_name)] = a
                 got[("kernel", policy_name)] = b
+                got[("weighted", policy_name)] = c
             if len(got) == len(keys) + 1:
                 done.append(got)
     conn.close()
@@ -206,9 +220,24 @@ def run():
     report("discovery", done[:edge], keys)
     report("verify", done[edge:], keys)
 
+    # How often rule 3 was even reachable, which decides whether the third
+    # column can differ from the second at all.
+    both = sum(
+        1
+        for r in done
+        for name in ("old", "ride")
+        if r[("weighted", name)][1] == "both"
+    )
+    total = len(done) * 2
+    print(f"\nambiguous bars: {both} of {total} resolutions ({both / total * 100:.1f}%)")
+
     print("\nThe `legacy` rows carry two look-aheads on purpose. The question is")
     print("whether ride's exit still wins under `kernel`, because the original")
     print("+0.655R against +0.099R is why sweep-aware ships that exit today.")
+    print("`weighted` is `kernel` with rule 3 declined - always-stop is 0.47 to")
+    print("0.68 accurate and its error is one-sided, so it biases the trailed")
+    print("arm more than the untrailed one. If the two columns agree, the exit")
+    print("choice never rested on the convention.")
 
 
 if __name__ == "__main__":
