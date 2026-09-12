@@ -260,6 +260,71 @@ def keeps_table(rows) -> None:
               f"[{lo_c:+10.3f},{hi_c:+9.3f}]")
 
 
+def uncontrolled_read(rows) -> None:
+    """The scan `winning.md`'s control replaced, run on the live book.
+
+    `calibrating.md` [5] measured that a book with no edge in it carries **5.5**
+    features separating their terciles at an uncorrected p<0.05, out of 45, and
+    that at least one does in 98.50% +-0.38 of such books. This counts the same
+    thing on the live record. If the live count is inside the null's, then every
+    page that read the top of a feature table without a permutation control was
+    reading the same noise - and several predate `winning.md`.
+    """
+    print("\n## The uncontrolled feature read, on the live book")
+    scored = [r for r in rows if r.get("r_multiple") is not None]
+    cover: dict[str, int] = collections.Counter()
+    for row in scored:
+        for key, val in row.items():
+            if isinstance(val, int | float) and not isinstance(val, bool):
+                cover[key] += 1
+    skip = {"r_multiple", "best_r", "adverse_r", "profit", "seconds", "ticket",
+            "magic", "volume", "level_id", "entry", "stop", "target", "level",
+            "zone_low", "zone_high", "entry_wanted", "entry_filled", "sweep_low",
+            "sweep_high", "origin_price", "origin_low", "origin_high", "range_upper",
+            "range_lower", "swing_range_upper", "swing_range_lower", "origin_below_low",
+            "origin_below_high", "origin_above_low", "origin_above_high",
+            "origin_holding_low", "origin_holding_high", "fair_value", "risk_money",
+            "risk_price"}
+    feats = sorted(k for k, c in cover.items() if c >= 75 and k not in skip)
+    hits, ts = [], []
+    for feat in feats:
+        vals = [(float(r[feat]), float(r["r_multiple"])) for r in scored
+                if isinstance(r.get(feat), int | float) and not isinstance(r.get(feat), bool)]
+        if len(vals) < 75:
+            continue
+        arr = np.array(vals)
+        order = np.sort(arr[:, 0])
+        lo, hi = order[len(order) // 3], order[2 * len(order) // 3]
+        if lo == hi:
+            continue
+        low = arr[arr[:, 0] <= lo, 1]
+        high = arr[arr[:, 0] > hi, 1]
+        if low.size < 10 or high.size < 10:
+            continue
+        den = math.sqrt(low.var(ddof=1) / low.size + high.var(ddof=1) / high.size)
+        if den <= 0:
+            continue
+        t = abs(float(high.mean() - low.mean()) / den)
+        ts.append((t, feat, float(high.mean() - low.mean())))
+        if t > 1.96:
+            hits.append(feat)
+    ts.sort(reverse=True)
+    print(f"   {len(ts)} decision features with enough coverage to tercile, on "
+          f"{len(scored)} closes carrying R")
+    print(f"   separating their terciles at an uncorrected p<0.05: **{len(hits)}**")
+    print(f"   a null book of 397 closes carries 5.5 of 45 (calibrating.md [5]),"
+          f" and at least one in 98.50% of books\n")
+    for t, feat, gap in ts[:6]:
+        mark = " <- would be reported" if t > 1.96 else ""
+        print(f"     {feat:26} t {t:5.2f}   top tercile minus bottom {gap:+.3f}R{mark}")
+    if len(hits) > 0:
+        crit = t_crit(len(scored) - 1, 0.05 / max(len(ts), 1))
+        survive = [f for t, f, _ in ts if t > crit]
+        print(f"\n   Bonferroni over the {len(ts)} features scanned needs "
+              f"|t| > {crit:.2f}: {len(survive)} survive"
+              f"{': ' + ', '.join(survive) if survive else ''}")
+
+
 def main() -> None:
     path = Path(sys.argv[1] if len(sys.argv) > 1 else ".data/closes.json")
     rows = rows_of(path)
@@ -303,6 +368,7 @@ def main() -> None:
     show("instruments.md: the generated half, by instrument", group(gen, "feed"),
          note="deriving.md's theorem says every row here is -(cost) and nothing else")
     keeps_table(rows)
+    uncontrolled_read(rows)
 
     print("\n[NOTE] Cuts over replayed populations are not recomputable from the")
     print("       closes export - exiting.md's eighteen policies, sweepregimes'")
