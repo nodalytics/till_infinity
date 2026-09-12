@@ -714,26 +714,39 @@ worth running before either of the two long harnesses.
 
 ## What follows
 
-1. **Publish the Skew Step and Multi Step specifications.** Seven instruments'
-   increment laws are pinned exactly here - magnitudes, shares, `p(up)` to five
-   decimals, closure `z` - and none of them existed in this folder an hour ago.
-   [generators.md](generators.md) is where they belong.
-2. **Settle what the number in a DEX name means.** It is not the tick rate: 600
-   spikes every 186 ticks, 900 every 320, 1500 every 706. One question to the
-   broker's specification, no model.
-3. **Re-run Drift Switch on a month of ticks with a size-aware rule.** The one
-   lever this page did not pull is holding a *position* rather than a sign - the
-   turnover is 0.73 to 0.99 a bar, and the breakeven is a linear function of it.
-   A rule that trades a tenth as often needs a tenth of the gross, and the
-   threshold rule reached 0.884 of the spread on one cell. It is still probably
-   under 1.0 but 0.884 is close enough that it is worth one more measurement, and
-   it is the only cell in the study that is.
-4. **Add Drift Switch to `generators.md`'s martingale verification.** That page
-   verified twenty-six synthetics four ways; this family was not among them and it
-   is the one that fails. A table asserting the property should name the exception.
-5. **Check whether `TRADING_STOP_OVERSHOOT` should cover Boom and Crash 50 to 900.**
-   `till_infinity/trading/config.py` carries it for 300, 500 and 1000 only. The rate
-   is confirmed to the name on all eighteen feeds here and the spike-to-grind ratio
-   runs to 905x, so the mechanism that justified the multiple is present on the
-   twelve that are not covered. This page does not measure slippage and so does not
-   propose a number.
+1. **Finish the model arm.** `./.secrets/lab.sh run research/harness/fammodels.py`,
+   about twenty minutes, no new data - the tick cache is warm and the run is
+   resumable from it. It owes 28 `spike_next` cells and the pooled direction and
+   volatility table. Section seven's claims are each from a completed cell and
+   none of them is expected to move, which is exactly why the run should be done
+   rather than assumed.
+2. **Publish the Skew Step and Multi Step specifications.** Seven instruments'
+   increment laws are pinned exactly here - magnitudes, shares, `p(up)` to six
+   decimals, closure `z` - and a repo-wide search finds no prior measurement of
+   any of them. [generators.md](generators.md) is where they belong, beside the
+   base Step Index it already carries.
+3. **Settle what the number in a DEX name means.** It is not the tick rate: 600
+   spikes every 186 ticks, 900 every 320, 1500 every 706, and the ratios 0.31,
+   0.35 and 0.47 are not constant. One question to the broker's specification, no
+   model. The same question applies to the map from a Skew Step's magnitude count
+   to its 4:1 and 9:1 skew, which two instruments cannot determine.
+4. **Try a continuous position on Drift Switch, which is the one lever this page
+   did not pull.** Both rules tested here take a *sign*, so turnover is 0.73 to
+   0.99 a bar and is nearly fixed. A position proportional to the forecast moves
+   gross and turnover by different amounts, and breakeven is `2 * gross /
+   turnover` - so it is the ratio and not either term that has to improve. The
+   threshold rule, which is the stand-aside version of the same idea, made seven
+   of nine cells worse and one better (0.692 to 0.884). That one cell is the only
+   thing in this study close enough to 1.0 to be worth another measurement, and
+   a month of ticks rather than three days is what it would need.
+5. **Add Drift Switch to `generators.md`'s martingale verification.** That page
+   verified twenty-six synthetics four ways; this family was not among them and
+   it is the one that fails. A table asserting the property should name its
+   exception rather than leave it out of scope.
+6. **Check whether `TRADING_STOP_OVERSHOOT` should cover Boom and Crash 50 to 900.**
+   `till_infinity/trading/config.py` carries it for 300, 500 and 1000 only. The
+   rate is confirmed to the name on all eighteen feeds here, and the one-sided
+   grind that justified the multiple - 99.78% of `Boom 500` tick moves are down -
+   is a property of the family and not of three of its members. This page does not
+   measure slippage and so does not propose a number; it says the twelve uncovered
+   feeds have the same mechanism as the six covered ones.
