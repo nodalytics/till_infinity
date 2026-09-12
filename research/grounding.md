@@ -642,13 +642,134 @@ hunted rather than explained: four control feeds tripped a flag comparing
 every control number is zero to three decimals. Condition 4 held after being
 restated during the dry run to name its estimator. Conditions 5, 6 and 7 held.
 
+## Seven: the same law at tick resolution, which is the scale the desk trades
+
+Section five is close-monitored, and `barriers.py`'s own headline correction is
+that **a real stop is hit on a tick**: the shift falls as `B / sqrt(n)` at `n`
+ticks a bar. A bar-sampled replay cannot test that.
+[`feed.py`](harness/feed.py) can - 200,000 ticks a symbol with millisecond stamps
+off the terminal - so [`groundtick.py`](harness/groundtick.py) asks the same
+question at the other end of the scale.
+
+The reformulation removes the bar entirely. `SHIFT` is 0.5826 of **one
+monitoring interval's** sigma whatever that interval is, so the barriers are
+placed in units of **one tick's** sigma and monitored every tick, and the
+prediction is the identical formula with no rate conversion left to get wrong.
+
+**What the tick scale shows that the bar scale cannot**, measured before any
+barrier is placed:
+
+| | ticks | median gap | per min | grid / sigma | spread / sigma | zero moves | **lag-1 acf** |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Volatility 75 Index | 129,547 | 2000 ms | 30.0 | 1.49 | 1.85 | 0.00% | **-0.001** |
+| Step Index | 200,000 | 1000 ms | 60.0 | 1.00 | 1.00 | 0.00% | **+0.001** |
+| XAUUSD | 200,000 | 98 ms | 612.2 | 3.13 | 2.47 | 0.18% | **-0.056** |
+| EURUSD | 200,000 | 155 ms | 387.1 | 1.73 | 4.12 | 0.94% | **-0.277** |
+| GBPUSD | 200,000 | 101 ms | 594.1 | 1.89 | 4.39 | 1.68% | **-0.119** |
+| USDJPY | 200,000 | 99 ms | 606.1 | 1.44 | 2.76 | 0.50% | **-0.062** |
+| BTCUSD | 200,000 | 105 ms | 571.4 | 123.70 | 1.65 | 0.21% | **+0.150** |
+| XAGUSD | 200,000 | 115 ms | 521.7 | 1.46 | 9.06 | 1.45% | **-0.045** |
+
+**The two synthetics have no tick autocorrelation at all** - -0.001 and +0.001 -
+and every real feed does, negative on five of six. That is the bid-ask bounce,
+pre-registered in the harness docstring as the first of three things that live
+only at this resolution, and BTCUSD is the exception at **+0.150**, which matters
+below.
+
+### The law holds where it is supposed to, at this scale too
+
+| group | geometry | trials | mean z | \|z\|>2 | duration ratio | predicted `1/VR` | residual |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **control** | 5:5 | 9,656 | +0.01 | 0/2 | 1.084 | 0.992 | +0.092 |
+| control | 10:10 | 2,820 | -0.07 | 0/2 | 1.036 | 0.984 | +0.053 |
+| control | 20:20 | 781 | -0.04 | 0/2 | **0.985** | 0.975 | +0.010 |
+| control | 15:5 | 3,592 | +0.41 | 0/2 | 1.045 | 0.972 | +0.073 |
+| **Boom 500** | 5:5 | 1,559 | **-32.08** | 1/1 | **4.116** | 0.998 | +3.118 |
+| Boom 500 | 20:20 | 305 | -4.56 | 1/1 | 1.545 | 0.912 | +0.633 |
+| **real, 6 feeds** | 5:5 | 26,699 | +0.33 | 0/6 | **1.487** | 1.141 | +0.346 |
+| real | 10:10 | 8,726 | +0.31 | 0/6 | **1.295** | 1.109 | +0.186 |
+| real | 20:20 | 2,599 | +0.35 | 0/6 | **1.182** | 1.108 | +0.074 |
+| real | 15:5 | 10,709 | +1.40 | 2/6 | 1.365 | 1.125 | +0.239 |
+| real | 6.8:5 | 20,975 | +1.33 | 1/6 | 1.437 | 1.143 | +0.294 |
+
+**Condition 2 held**: on `Volatility 75 Index` and `Step Index` the law is exact
+at tick resolution - every `z` under 0.5, and durations at 0.99 to 1.08 of the
+closed form. That is the first validation anywhere on this project of
+`barriers.py`'s monitoring-scale claim on a tick feed rather than on bars, and it
+holds on a lattice walk as well as on a Brownian one. **Condition 3 held**: Boom
+500 fails at -32 standard errors and takes **4.1 times** as long as the law says.
+
+**And the duration result of section five reproduces**, from a different data
+source, on different symbols, at a monitoring scale 600 times finer: real feeds
+run **1.18 to 1.49** times the closed form where the controls run 0.99 to 1.08.
+Two independent measurements of the same thing, and neither was used to set the
+other.
+
+### The mechanism, measured, with a sign that flips
+
+A path whose increments are negatively autocorrelated travels less far per tick
+than its per-tick variance says, so it takes **longer** to reach a barrier placed
+in units of that variance. The correction is one line and has no free parameter:
+the variance ratio `Var(x_{t+n} - x_t) / (n Var(dx))`, evaluated at the horizon
+the geometry itself predicts, gives a predicted duration ratio of `1/VR`.
+
+It explains **29% of the excess at 5:5 and 59% at 20:20** on the real feeds, and
+essentially none of Boom's (predicted 0.91 to 1.03 against a measured 1.55 to
+4.12, which is right - Boom's excess is the jump structure and not the bounce).
+
+The part worth trusting is that **it has a sign and the sign flips**. BTCUSD is
+the one feed with *positive* tick autocorrelation, so the correction says it must
+resolve **faster** than the law rather than slower - and it is the only feed with
+a duration ratio below one, at **0.734** at 20:20. A one-parameter correction that
+predicts the exception as well as the rule is a different kind of evidence from
+one that fits the average.
+
+### Two limits, stated because they bound everything above
+
+**The tight geometries are inside the spread.** The mean bid-ask spread is 1.65
+to **9.06 tick-sigmas** on the real feeds, so a 5:5 barrier is *narrower than the
+spread* on four of six. The 5:5 and 10:10 rows are reported because excluding
+them after seeing them would be a cut, but only the 20:20 row is a measurement
+about the price process rather than about the quote.
+
+**The fitted shift is not flat, and condition 6 fired.** Inverting each geometry
+for the `B` that reproduces its measured probability - `quantising.md` section
+one's flatness test run backwards, and the thing that separates a boundary
+condition from a fitted constant - gives 0.78 and 0.80 on the control at 15:5 and
+5:15 but **2.83** at 6.8:5, and 0.92 to 1.83 on the real feeds. At these
+distances the inversion is too noisy to read, which is itself worth knowing: the
+flatness test needs the barrier far enough out that the shift is a small
+correction, and five tick-sigmas is not.
+
+A bug is recorded rather than removed: the first run printed a fitted shift of
+-5, -10 and -20 on the symmetric rows, because at `a = b` the inversion collapses
+to `-a` for **any** measured probability. The column carried no data at all on
+those rows and now returns nothing there.
+
+### And a number the desk can check against itself
+
+`barriers.ticks_from_slippage` infers the effective monitoring rate from what
+stops actually cost, and reads about **280 ticks a minute** from the desk's own
+fills. The terminal says gold quotes at a 98 ms median gap, which is **612 a
+minute**. Two unrelated routes to one constant, and they differ by a factor of
+2.2 - so the shift the desk should assume on gold is `0.5826/sqrt(612) = 0.024`
+of a one-minute sigma rather than the 0.035 its own slippage implies. The
+difference is small in absolute terms and the direction is the interesting part:
+**the desk is being filled worse than the quote rate says it should be**, which
+is slippage that is not overshoot.
+
 ## Running it
 
 ```bash
-./.secrets/lab.sh run research/harness/groundstate.py  NREP=200 WORKERS=60
+./.secrets/lab.sh run research/harness/groundstate.py   NREP=200 WORKERS=60
 ./.secrets/lab.sh run research/harness/groundbarrier.py WORKERS=40 NU=24
 ./.secrets/lab.sh run research/harness/groundslow.py    WORKERS=48 NPERM=300
+./.secrets/lab.sh run research/harness/groundtick.py    NTICK=200000
+./.secrets/lab.sh run research/harness/groundgru.py     WORKERS=12
 ```
+
+`groundtick.py` reads the terminal through `feed.py` rather than `research.db`,
+so it is the one that needs the lab's key and will not run anywhere else.
 
 `groundlib.py` is the shared estimators and is imported rather than run; its
 `check_analytic` is section one's table and needs no data at all, so
