@@ -2158,6 +2158,72 @@ def run_command(
         raise SystemExit(1)
 
 
+@main.command("project")
+@click.argument("feed")
+@click.option("--price", type=float, required=True, help="The price to project from.")
+@click.option(
+    "--horizon",
+    type=float,
+    default=3600.0,
+    show_default=True,
+    help="How far ahead, in seconds.",
+)
+@click.option("--steps", type=int, default=6, show_default=True, help="Slices of the cone.")
+@click.option(
+    "--convention",
+    type=click.Choice(["ito", "plain"]),
+    default="ito",
+    show_default=True,
+    help="Which drift convention. See projection.py - the generator's is not yet known.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the cone as JSON.")
+def project_command(
+    feed: str, price: float, horizon: float, steps: int, convention: str, as_json: bool
+) -> None:
+    """Where a synthetic can be, and with what probability.
+
+    Exact rather than fitted: the only input beyond the price is the volatility
+    printed in the instrument's own name, so this works on the Volatility and
+    Jump families and refuses everything else rather than inventing a number.
+
+        till-infinity project volatility_75_index --price 2751.36 --horizon 3600
+    """
+    from .structures.vol import projection as pj
+
+    cones = pj.path(feed, price, horizon, steps=steps, convention=convention)
+    if not cones:
+        console.print(
+            f"[yellow]{escape(feed)} publishes no volatility in its name.[/yellow] "
+            "Only the Volatility and Jump families can be projected exactly - "
+            "see structures/vol/stated.py."
+        )
+        raise SystemExit(1)
+
+    if as_json:
+        console.print_json(json.dumps([c.to_dict() for c in cones]))
+        return
+
+    table = Table(
+        title=f"{feed} from {price:g}, {convention} drift",
+        caption="bands are central intervals of the exact forward law, not an estimate",
+    )
+    table.add_column("ahead", justify="right")
+    table.add_column("median", justify="right")
+    table.add_column("50%", justify="center")
+    table.add_column("80%", justify="center")
+    table.add_column("95%", justify="center")
+    table.add_column("sigma", justify="right")
+    for cone in cones:
+        ahead = cone.seconds
+        when = f"{ahead:.0f}s" if ahead < 3600 else f"{ahead / 3600:.2g}h"
+        cells = []
+        for level in (50, 80, 95):
+            low, high = cone.bands[level]
+            cells.append(f"{low:.5g} to {high:.5g}")
+        table.add_row(when, f"{cone.median:.6g}", *cells, f"{cone.sigma * 100:.3f}%")
+    console.print(table)
+
+
 if __name__ == "__main__":  # pragma: no cover
     main()
 

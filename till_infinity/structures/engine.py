@@ -56,6 +56,7 @@ from .learning import focus, patterns, regimes
 from .learning.focus import Focus
 from .models import Shape, Signal
 from .state import Restorable
+from .vol import projection as pj
 from .vol.volatility import Book as VolBook
 from .vol.volatility import Volatility
 
@@ -1021,6 +1022,7 @@ class Engine:
         self.pip_count = pip_count
         self.intervals = intervals
         self.vol = VolBook()
+        self.projection = pj.Book()
         self.tracker = reactions.Tracker(horizon=horizon)
         #: Pivots come from completed sessions, so they need no confirmation
         #: delay and exist before price has ever turned there.
@@ -1179,6 +1181,9 @@ class Engine:
         sweep("consensus", getattr(self.consensus, "_bars", None))
         sweep("touches", getattr(self.tracker, "_open", None))
         counts["vol"] = self.vol.forget({f for f, _ in self.vol._by_key if f not in gone})
+        held = getattr(self, "projection", None)
+        if held is not None:
+            counts["projection"] = held.forget({f for f in held.feeds() if f not in gone})
         return {k: v for k, v in counts.items() if v}
 
     def series(self, feed: str, interval: str) -> Series:
@@ -1368,6 +1373,40 @@ class Engine:
             changed=fired,
             interval_seconds=lv.SECONDS.get(interval, 0.0),
         )
+
+        # The forward cone, settled against the bar that just closed.
+        #
+        # A bar's **open is the price at `t` and its close is the price at
+        # `t + interval_seconds`**, so one closed bar is a complete, already-paid-for
+        # observation of a one-bar-ahead forecast. No previous-bar bookkeeping and
+        # no new state: the two prices needed are both in hand here.
+        #
+        # What it accumulates is not a forecast score but an **identification**.
+        # `projection.py` carries both drift conventions Deriv's recursion could
+        # be using - they differ by `sigma^2 T / 2` - and scores each by the
+        # probability integral transform. Whichever calibrates is the one the
+        # generator runs, and that is a fact about the venue's architecture
+        # obtained from the outside by arithmetic the desk was doing anyway.
+        #
+        # Off unless `STRUCTURES_PROJECTION` says otherwise, like every other
+        # unmeasured member on this book.
+        if pj.ENABLED:
+            seconds = lv.SECONDS.get(interval, 0.0)
+            if seconds > 0 and open_ > 0 and close > 0:
+                self._projection().settle(feed, float(open_), seconds, float(close))
+
+    def _projection(self) -> pj.Book:
+        """The projection book, created on demand.
+
+        Asked for by name rather than assumed, for the reason `forget` gives
+        about `_changes`: an `Engine` restored from a snapshot written before
+        this field existed never ran `__init__`, and an attribute access there
+        raises inside a bar update on a live desk.
+        """
+        found = getattr(self, "projection", None)
+        if found is None:
+            found = self.projection = pj.Book()
+        return found
 
     def _learned_at(self, feed: str, interval: str) -> dict[str, float]:
         """The learned forecast for this series, for the journal.

@@ -59,11 +59,23 @@ BASE = os.environ.get("MT5_URL", "http://127.0.0.1:8000") + "/api/v1"
 #: research harness asks for, spelled the same way so results are comparable.
 TIMEFRAMES: dict[str, str] = {
     "1m": "M1",
+    "2m": "M2",
+    "3m": "M3",
+    "4m": "M4",
     "5m": "M5",
+    "6m": "M6",
+    "10m": "M10",
+    "12m": "M12",
     "15m": "M15",
+    "20m": "M20",
     "30m": "M30",
     "1h": "H1",
+    "2h": "H2",
+    "3h": "H3",
     "4h": "H4",
+    "6h": "H6",
+    "8h": "H8",
+    "12h": "H12",
     "1d": "D1",
     "1w": "W1",
 }
