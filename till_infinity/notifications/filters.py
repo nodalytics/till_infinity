@@ -142,10 +142,27 @@ class Filter:
         when = time.time() if when is None else when
         shape, feed, _venue, _event = self.key(payload)
 
-        if self.shapes and shape.lower() not in self.shapes:
-            return f"shape {shape!r} not in {sorted(self.shapes)}"
-        if self.feeds and feed and feed.lower() not in self.feeds:
-            return f"instrument {feed!r} not in {sorted(self.feeds)}"
+        # **A critical alert is not a topic preference and must not be filtered
+        # like one.** `shapes` and `feeds` say what somebody is interested in;
+        # `critical` says the system is broken. Until 2026-09-12 they were the
+        # same gate, and every trading alarm this desk has ever raised went into
+        # it: `key` falls back to the **source** when a payload carries no shape,
+        # trading publishes `{title, body, level}` with source `trading`, and the
+        # configured list says `trade`. So `AutoTrading is off` - the alarm
+        # written after nine hours of rejected orders - was itself discarded, and
+        # so was `trading is not attached`, and so was the broker-unreachable
+        # alarm added the same day.
+        #
+        # The cooldown and the hourly cap still apply. Those exist to stop a
+        # channel being flooded, which is a different job from deciding what
+        # somebody cares about, and a critical alert that repeats every heartbeat
+        # is its own kind of broken.
+        urgent = str(payload.get("level") or "").strip().lower() == "critical"
+        if not urgent:
+            if self.shapes and shape.lower() not in self.shapes:
+                return f"shape {shape!r} not in {sorted(self.shapes)}"
+            if self.feeds and feed and feed.lower() not in self.feeds:
+                return f"instrument {feed!r} not in {sorted(self.feeds)}"
         if slow := self._too_fast(payload):
             return slow
 
@@ -192,7 +209,14 @@ class Filter:
         when = time.time() if when is None else when
         why = self.rejects(payload, when)
         if why:
-            log.debug("notify: dropped %r - %s", payload.get("title"), why)
+            # **A dropped `critical` is logged loudly, because a silenced alarm
+            # is itself a fault.** At `debug` - which is where every drop used to
+            # go, and the container runs at INFO - a filter that swallows the one
+            # message somebody needed looks exactly like a quiet day.
+            speak = (
+                log.warning if str(payload.get("level") or "").lower() == "critical" else log.debug
+            )
+            speak("notify: dropped %r - %s", payload.get("title"), why)
             return False
 
         key = self.key(payload)
