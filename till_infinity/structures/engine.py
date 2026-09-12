@@ -1374,26 +1374,41 @@ class Engine:
             interval_seconds=lv.SECONDS.get(interval, 0.0),
         )
 
-        # The forward cone, settled against the bar that just closed.
-        #
-        # A bar's **open is the price at `t` and its close is the price at
-        # `t + interval_seconds`**, so one closed bar is a complete, already-paid-for
-        # observation of a one-bar-ahead forecast. No previous-bar bookkeeping and
-        # no new state: the two prices needed are both in hand here.
-        #
-        # What it accumulates is not a forecast score but an **identification**.
-        # `projection.py` carries both drift conventions Deriv's recursion could
-        # be using - they differ by `sigma^2 T / 2` - and scores each by the
-        # probability integral transform. Whichever calibrates is the one the
-        # generator runs, and that is a fact about the venue's architecture
-        # obtained from the outside by arithmetic the desk was doing anyway.
-        #
-        # Off unless `STRUCTURES_PROJECTION` says otherwise, like every other
-        # unmeasured member on this book.
-        if pj.ENABLED:
+    def _settle_projection(self, feed: str, interval: str, opened: float, close: float) -> None:
+        """Score both drift conventions against one closed bar.
+
+        **Not inside `_learn_vol`, and the move is the point.** It sat there
+        first, which put it behind `STRUCTURES_VOL_LEARNER` - a flag about a
+        different model entirely. Turning that off would have stopped this
+        accumulating with nothing to say so, and a feature that is silently
+        inert while its own flag reads `1` is the exact failure this desk hit
+        twice on 2026-09-12. It is gated by `STRUCTURES_PROJECTION` and nothing
+        else.
+
+        A bar's **open is the price at `t` and its close is the price at
+        `t + interval_seconds`**, so one closed bar is a complete, already
+        paid-for observation of a one-bar-ahead forecast: no previous-bar
+        bookkeeping, and both prices already in hand.
+
+        What accumulates is not a forecast score but an **identification**.
+        `projection.py` carries both drift conventions Deriv's recursion could
+        be running - they differ by `sigma^2 T / 2` - and scores each by the
+        probability integral transform. Whichever calibrates is the one the
+        generator uses, which is a fact about the venue obtained from
+        arithmetic the desk was doing anyway.
+
+        Swallows its own failures, like every other reading on the bar path
+        that nothing gates on: two outages this month were a fault in here
+        taking the whole structures service down.
+        """
+        if not pj.ENABLED:
+            return
+        try:
             seconds = lv.SECONDS.get(interval, 0.0)
-            if seconds > 0 and open_ > 0 and close > 0:
-                self._projection().settle(feed, float(open_), seconds, float(close))
+            if seconds > 0 and opened > 0 and close > 0:
+                self._projection().settle(feed, float(opened), seconds, close)
+        except Exception as exc:
+            log.debug("structures: no projection for %s %s: %s", feed, interval, exc)
 
     def _projection(self) -> pj.Book:
         """The projection book, created on demand.
@@ -2255,6 +2270,10 @@ class Engine:
                     )
                 except Exception as exc:
                     log.debug("structures: no learned reading for %s %s: %s", feed, interval, exc)
+            # The forward cone, settled against the bar that just closed. Its
+            # own method so that `observe_bar` stays inside the branch ceiling
+            # and so the flag it is gated by sits next to the work it gates.
+            self._settle_projection(feed, interval, opened, float(close))
         # Pivots are session structures priced at today's scale, so they use the
         # reference estimate rather than the bar interval that happened to
         # deliver them - a 4h bar completing a day does not make it a 4h level.

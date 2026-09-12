@@ -46,19 +46,49 @@ Both are standard, both are used in production systems, and they differ by
 `sigma^2 T / 2`. Nothing in this repository knows which one Deriv runs.
 
 So this module **carries both and scores both**, the way `consensus_vol` scores
-its members rather than picking one. Whichever convention calibrates is the
-convention the generator uses, and that is a fact about Deriv's architecture
-obtained from the outside, for free, by a structure that was going to run
-anyway.
+its members rather than picking one.
 
-**What it costs to answer.** At 1h on Volatility 75 the two conventions differ
-by 0.4% of one standard deviation, so a single bar cannot distinguish them and
-this module must not pretend otherwise. The separation grows as `sqrt(T)`: at
-1d it is about 2%. Against the `1/sqrt(12 N)` standard error of a mean PIT that
-needs of order **50,000 settled daily bars** pooled across the family before
-the answer means anything, which is reachable across twenty-two feeds and is
-not reachable on one. `Calibration.resolved` reports whether that bar has been
-cleared instead of reporting a winner that is noise.
+**Answered, 2026-09-12: it is `ito`.** Deriv applies the drift correction, so
+**price is the martingale and log price is not.** Measured by
+`research/harness/convention.py` over **2,997,653 closed bars** across twenty
+Volatility feeds and eight timeframes - from history rather than by live
+accumulation, because a closed bar's open and close are exactly the `(t, t+T)`
+pair this calibration settles, so every bar ever printed was an observation it
+could have had.
+
+| timeframe | bars | `ito` bias | `plain` bias | separation |
+| --- | --- | --- | --- | --- |
+| 1h | 635,437 | **+0.27** | -2.46 | 4.4 SE |
+| 4h | 190,006 | **+0.10** | -2.79 | 4.8 SE |
+| 6h | 126,677 | **-0.14** | -3.03 | 4.8 SE |
+| 8h | 94,997 | **-0.04** | -2.93 | 4.8 SE |
+| 12h | 61,032 | **-0.21** | -3.12 | 4.7 SE |
+| 1d | 28,743 | **-0.00** | -2.87 | 4.6 SE |
+
+Six independent timeframes, `ito` at zero bias on every one and `plain` two and
+a half to three standard errors low on every one. 3m and 15m report **cannot
+resolve** rather than a verdict, which is `convention.py`'s power calculation
+refusing a cell whose separation is 1.2 SE - the sample is largest there and
+the question is least answerable, because the conventions separate as
+`sigma sqrt(T) / 2` while the error does not care what `T` is. The test recovers
+a known convention from simulated paths in both directions before it is shown
+any Deriv data.
+
+**What that changes here.** `ito` was already the default and is now the
+measured one. The live calibration therefore stops being an identification and
+becomes a **monitor**: the question is no longer "which recursion is this" but
+"is it still that one", and an alarm needs `WARM`, not `RESOLVES_AT`. A mean PIT
+walking away from 0.5 on a feed whose sigma has not moved is the generator
+changing under the desk - the cheap venue check `research/generators.md` asks
+for, reached by another route.
+
+**What it would have cost to wait.** At 1h the two conventions differ by 0.4% of
+one standard deviation, so a single bar cannot distinguish them; against the
+`1/sqrt(12 N)` standard error of a mean PIT, live accumulation needed of order
+**50,000 settled bars** before the answer meant anything. `RESOLVES_AT` keeps
+that number because re-identification from live data alone is still what it
+measures, and knowing how far a claim is from being supportable is worth having
+even once the claim has arrived another way.
 
 ## The error rate is a PIT, not a hit rate
 
@@ -447,6 +477,16 @@ class Book(Restorable):
         return self.of(feed).cone(price, seconds, convention=convention)
 
     def settle(self, feed: str, price_then: float, seconds: float, price_now: float) -> None:
+        """Score a closed bar, and **create nothing for a feed that cannot be scored.**
+
+        The check is here rather than inside `Projector.settle` because `of`
+        creates on access: without it, every real instrument on the book gets a
+        permanently empty projector the first time a bar arrives, and `forget`
+        cannot reclaim them because those feeds are live. On this desk that is
+        33 of 53 entries that will never hold an observation.
+        """
+        if sigma_for(feed, seconds) is None:
+            return
         self.of(feed).settle(price_then, seconds, price_now)
 
     def forget(self, keep: set[str]) -> int:

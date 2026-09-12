@@ -532,7 +532,7 @@ generator as a single box.
 | --- | --- | --- |
 | the source | `rebuildpredict.py` attacked it three ways - k-tuple spectral tests, MT19937 untempering, truncated-LCG lattice reduction - and found nothing | cryptographic; effectively closed |
 | the inverse-normal | **never examined** | deterministic, finite precision |
-| the recursion | **never identified**; two standard conventions differ by `sigma^2 T / 2` | deterministic |
+| the recursion | **identified 2026-09-12: `ito`** - see below | deterministic |
 | the quantiser | partly read already: `frac_zero` at AUC 0.686 opened the quote-lattice question and `n_distinct` exposed first a float-precision artefact and then a real defect in the published grind specification | visible in every tick |
 
 **Everything after the source is deterministic.** That is the whole point. A
@@ -541,17 +541,54 @@ spent a study confirming it. But a deterministic, finite-precision stage is a
 different class of target, and two consequences follow that are worth stating
 plainly:
 
-**The recursion has a free convention and nobody here knows which one runs.**
+### The recursion is `ito`, and that one is answered
+
 `S * exp(-sigma^2/2 dt + sigma dW)` makes **price** a martingale and its median
 drift down; `S * exp(sigma dW)` makes **log price** a martingale and its price
 drift up. Both are standard, both ship in real systems, and the difference is
-`sigma^2 T / 2`. `till_infinity/structures/vol/projection.py` now carries both
-and scores each by the probability integral transform on every closed bar, so
-the answer accumulates from a structure the desk was going to run anyway. It is
-slow: the conventions differ by **0.4% of one standard deviation at 1h** and
-about 2% at 1d, so against the `1/sqrt(12 n)` standard error of a mean PIT it
-needs of order **50,000 settled observations**. `Calibration.resolved` reports
-whether that bar has been cleared rather than naming a winner early.
+`sigma^2 T / 2`.
+
+**Deriv runs the first one.** Measured by
+[`convention.py`](harness/convention.py) over **2,997,653 closed bars** across
+twenty Volatility feeds and eight timeframes, scoring each convention by the
+probability integral transform - a correct forward law makes the PIT uniform, so
+the mean's distance from 0.5 in standard errors is the whole test.
+
+| timeframe | bars | `ito` bias | `plain` bias | separation | verdict |
+| --- | --- | --- | --- | --- | --- |
+| 3m | 1,000,000 | +1.80 | +1.09 | 1.2 SE | cannot resolve |
+| 15m | 860,761 | +0.37 | -1.20 | 2.6 SE | cannot resolve |
+| 1h | 635,437 | **+0.27** | -2.46 | 4.4 SE | `ito` |
+| 4h | 190,006 | **+0.10** | -2.79 | 4.8 SE | `ito` |
+| 6h | 126,677 | **-0.14** | -3.03 | 4.8 SE | `ito` |
+| 8h | 94,997 | **-0.04** | -2.93 | 4.8 SE | `ito` |
+| 12h | 61,032 | **-0.21** | -3.12 | 4.7 SE | `ito` |
+| 1d | 28,743 | **-0.00** | -2.87 | 4.6 SE | `ito` |
+
+Six independent timeframes, `ito` at zero bias on every one and `plain` two and
+a half to three standard errors low on every one.
+
+**The two cells that say nothing are the point of the design.** 3m has the
+largest sample on the page and the least power, because the conventions separate
+as `sigma sqrt(T) / 2` while the standard error does not care what `T` is -
+short bars have more of them and less in each. `convention.py` computes that
+separation before it looks at any data and reports **cannot resolve** rather
+than reading a verdict off 1.2 SE. A version of this study without that
+calculation would have had eight cells and two of them would have been noise
+wearing a conclusion.
+
+**It was answered from history, not by waiting.** The live calibration in
+`projection.py` needed of order 50,000 settled bars - weeks of desk time - and
+then did not need to, because a closed bar's open and close are exactly the
+`(t, t+T)` pair the calibration settles. Every bar ever printed was an
+observation it could have had, and `seqcache.py` had 9.4M of them on disk.
+Identification was never a job for live data; **the live calibration's real job
+is the monitor**, watching whether a mean PIT walks off 0.5 on a feed whose
+sigma has not moved, which is the venue check item 4 asks for by another route.
+
+The test recovers a known convention from simulated paths in **both** directions
+before it is shown any Deriv data - a test that always answered `ito` would look
+perfect against an `ito` truth and be worth nothing.
 
 **If the inverse-normal is a lookup table or limited precision, the set of
 achievable increments is finite and enumerable.** That is the sharpest testable

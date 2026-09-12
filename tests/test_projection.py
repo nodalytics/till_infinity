@@ -276,18 +276,79 @@ def test_the_book_ignores_instruments_that_publish_no_volatility():
     assert book.standings() == []
 
 
-def test_the_engine_settles_a_closed_bar_when_enabled():
-    """The hook uses a bar's own open and close as `t` and `t + interval`.
+def _drive(engine, feed: str, bars: int = 40) -> None:
+    price = 1000.0
+    for i in range(bars):
+        price *= 1.0 + (0.001 if i % 2 else -0.0009)
+        engine.observe_bar(
+            {
+                "feed": feed,
+                "interval": "5m",
+                "venue": "DERIV",
+                "time": 1_700_000_000 + i * 300,
+                "open": price * 0.999,
+                "high": price * 1.002,
+                "low": price * 0.998,
+                "close": price,
+            }
+        )
 
-    This pins the wiring rather than the arithmetic: if the engine stops
-    calling `settle`, the calibration silently never accumulates and the
-    identification quietly never happens, which is the kind of failure that
-    looks exactly like a correct system.
+
+def test_the_engine_actually_settles_a_closed_bar(monkeypatch):
+    """Drives the engine and checks the calibration moved.
+
+    **This replaces a test that only grepped the source.** That one passed
+    while the hook sat somewhere it could never fire, which is precisely the
+    reassurance an inert feature does not deserve.
     """
-    import inspect
+    import till_infinity.structures as sx
 
-    from till_infinity.structures import engine
+    monkeypatch.setattr(projection, "ENABLED", True)
+    feed = "volatility_75_index"
+    engine = sx.Engine(intervals=("5m",), single_source=frozenset({feed}))
+    _drive(engine, feed)
 
-    source = inspect.getsource(engine)
-    assert "self._projection().settle(feed, float(open_), seconds, float(close))" in source
-    assert "if pj.ENABLED:" in source, "the hook must stay behind the flag until measured"
+    assert engine.projection.feeds() == [feed]
+    for convention in projection.CONVENTIONS:
+        assert engine.projection.of(feed)._cal[convention].n > 0
+
+
+def test_the_engine_settles_nothing_when_the_flag_is_off(monkeypatch):
+    import till_infinity.structures as sx
+
+    monkeypatch.setattr(projection, "ENABLED", False)
+    feed = "volatility_75_index"
+    engine = sx.Engine(intervals=("5m",), single_source=frozenset({feed}))
+    _drive(engine, feed)
+    assert engine.projection.feeds() == []
+
+
+def test_projection_does_not_depend_on_the_volatility_learner(monkeypatch):
+    """The regression this pins cost a deploy.
+
+    The hook first went in beside `self.vol.learn` inside `_learn_vol`, which
+    runs only when `STRUCTURES_VOL_LEARNER` is set. Projection has nothing to do
+    with that model, so turning the learner off would have silently stopped this
+    accumulating while `STRUCTURES_PROJECTION` still read `1` - a feature that is
+    inert while its own flag says otherwise, which is the failure mode this desk
+    hit twice on 2026-09-12.
+    """
+    import till_infinity.structures as sx
+
+    monkeypatch.setattr(projection, "ENABLED", True)
+    feed = "volatility_75_index"
+    engine = sx.Engine(intervals=("5m",), single_source=frozenset({feed}))
+    engine.learn_vol = False
+    _drive(engine, feed)
+    assert engine.projection.of(feed)._cal["ito"].n > 0, (
+        "projection must accumulate with the volatility learner off"
+    )
+
+
+def test_an_unnamed_feed_accumulates_nothing_through_the_engine(monkeypatch):
+    import till_infinity.structures as sx
+
+    monkeypatch.setattr(projection, "ENABLED", True)
+    engine = sx.Engine(intervals=("5m",), single_source=frozenset({"gold"}))
+    _drive(engine, "gold")
+    assert engine.projection.feeds() == []
