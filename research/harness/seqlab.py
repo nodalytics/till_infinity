@@ -459,7 +459,20 @@ def build(bars: dict[str, np.ndarray]) -> tuple[np.ndarray, tuple[str, ...]]:
         logvolume = np.log(np.maximum(v, 1.0))
         vm, vs = _roll_mean(logvolume, 22), _roll_std(logvolume, 22)
         volume_z = (logvolume - vm) / np.maximum(vs, 1e-9)
-        spread_rel = sp / np.maximum(rng / np.maximum(c, 1e-12), 1e-12)
+        # **`sp` is a count of points, not a price**, and treating it as one was
+        # a defect every arm inherited through this matrix. MetaTrader quotes the
+        # bar `spread` column in points of `10^-digits` and the route does not
+        # carry `digits`, so the raw column is out by 1e3 to 1e5 and **wrong
+        # quietly** - still small, still positive, still plausible. `rel_spread`
+        # infers the lattice and returns the spread as a fraction of price, which
+        # `research/policies.md` validated against the `(1s)` twins: Volatility 25
+        # quotes 153 points on a 0.001 grid and its 1s twin 2,898 points on a 0.01
+        # grid, and the two land on **0.666 and 0.663 bps** - a factor of 19 in
+        # the point count agreeing to half a percent.
+        #
+        # Within one symbol the old form was monotone and harmless. Across
+        # symbols it was meaningless, and arms that pooled symbols pooled it.
+        spread_rel = rel_spread(bars) / np.maximum(rng / np.maximum(c, 1e-12), 1e-12)
 
     frac_zero = _roll_mean((r0 == 0.0).astype(float), 22)
     n_distinct = np.full(n, np.nan)
