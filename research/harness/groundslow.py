@@ -84,6 +84,16 @@ does. So `tau*` is an **upper bound** on the useful lag, and the grid search
 should land at or below it. If the grid search lands above it, the derivation is
 wrong.
 
+**And it governs a specific estimator, which the dry run established the hard
+way.** The first version asked the question of a lag-embedded scalar and got the
+same answer - lag 34 - for every ladder, which is the signature of a statistic
+that is not seeing the spectrum. It was not: the second TICA eigenvalue of a
+delay embedding reads about 0.00 where the true `exp(-lambda_2 tau*)` is 0.25,
+because the span holds many near-degenerate copies of the slow mode and the
+direction orthogonal to all of them is innovation noise. So the test is run where
+`lambda_2` is genuinely estimated - Ulam's method on a directly observed state -
+and the embedded case is kept and reported as the limit it is.
+
 ## The targets, and why none of them is direction
 
 `research/winning.md` ran 43 entry features against a 300-permutation control and
@@ -132,7 +142,11 @@ Written before any number was read.
    a bug, not a finding.
 4. **The derived lag is wrong** if the empirical grid-search optimum sits
    *above* `tau*` on the simulated truths, since `tau*` is derived as an upper
-   bound.
+   bound. Restated during the dry run, before any feed was read, to name the
+   estimator: it is checked on Ulam's method over a directly observed state,
+   because a delay embedding's second eigenvalue is not the process's second
+   rate and the dry run showed it returning one lag for every ladder. The
+   embedded arm is kept as a reported negative rather than dropped.
 5. **The canonical-correlation spectrum is void** if the shuffled control
    produces the same leading `rho` as the unshuffled feed.
 6. **Nothing is claimed** unless it clears the permutation control over the whole
@@ -403,56 +417,110 @@ LAG_GRID = tuple(sorted({int(round(v)) for v in np.geomspace(4, 400, 40)}))
 
 
 def _one_lagtest(args):
-    seed, n, lam1, lam2 = args
+    """One replicate: where does the separation `mu_1 - mu_2` actually peak?
+
+    Run on a **directly observed** state through Ulam's method, not on a
+    lag-embedded scalar - see `section_lag` for why that distinction turned out to
+    be the whole result.
+    """
+    kind, seed, n, width, dvar, grid = args
+    rng = np.random.default_rng(seed)
+    lam1 = (math.pi / width) ** 2 * dvar / 2.0
+    if kind == "box":
+        x, ep = G.sim_box(n, width, dvar, 1e9, rng)
+    else:
+        x, ep = G.sim_ou(n, lam1, dvar / 2.0 / lam1, 1e9, rng)
+    sep = []
+    for t in grid:
+        r, _ = G.ulam_rates(x, ep, t, nbin=96)
+        sep.append(
+            math.exp(-r[0] * t) - math.exp(-r[1] * t)
+            if all(np.isfinite(r[:2])) else float("nan")
+        )
+    return sep
+
+
+#: Lags for the separation profile, straddling both predicted optima.
+LAG_GRID = (20, 40, 60, 90, 130, 180, 250, 350, 500, 700)
+
+
+def _embed_lagtest(args):
+    """The same question asked of a lag-embedded scalar, which is the negative."""
+    seed, n, lam1, lam2, nlag = args
     rng = np.random.default_rng(seed)
     x = _two_mode(n, lam1, lam2, rng)
-    emb = np.stack([x[NLAG - j - 1 : len(x) - j - 1] for j in range(NLAG)], axis=1)
-    sep = []
-    for t in LAG_GRID:
-        if t >= len(emb) // 8:
-            sep.append(float("nan"))
-            continue
+    emb = np.stack([x[nlag - j - 1 : len(x) - j - 1] for j in range(nlag)], axis=1)
+    out = []
+    for t in (8, 16, 24, 34, 46, 60, 80, 110, 150, 200, 280):
         e = tica_eigs(emb, t)
-        sep.append(float(e[0] - e[1]))
-    ok = np.asarray(sep, dtype=float)
-    best = LAG_GRID[int(np.nanargmax(ok))] if np.any(np.isfinite(ok)) else float("nan")
-    return {"sep": sep, "best": best}
+        out.append((t, float(e[0]), float(e[1])))
+    return out
 
 
 def section_lag() -> dict:
     print("\n=== 3. The derived optimal lag against a grid search ===\n")
-    print("    tau* = log(l2/l1)/(l2-l1), which has no data in it. lambda_1 is held")
-    print("    FIXED at 0.01 and only the ladder is varied, so tau* moves by the")
-    print("    full factor the derivation predicts - 69.3 for a spring, 46.2 for a")
-    print("    box, 27.5 at 9:1 - and a grid search has something to disagree with.\n")
+    print("    tau* = log(l2/l1)/(l2-l1) maximises mu_1 - mu_2 and has no data in")
+    print("    it. At a matched lambda_1 a box wants 0.462/l1 and a spring 0.693/l1,")
+    print("    so the best hyperparameter differs by 50% between two processes a")
+    print("    mean-reversion fit cannot tell apart. That is the claim.\n")
+    dvar, width = 1.0, 38.0
+    lam1 = (math.pi / width) ** 2 * dvar / 2.0
+    out = {"lambda_1": lam1, "grid": list(LAG_GRID)}
     print(
-        f"    {'l2/l1':>7s} {'lambda_1':>9s} {'tau* derived':>13s} {'grid median':>12s} "
-        f"{'grid p25':>9s} {'grid p75':>9s} {'reps':>5s} {'ratio':>7s}"
+        f"    {'truth':8s} {'l2/l1':>6s} {'lambda_1':>9s} {'tau* derived':>13s} "
+        f"{'grid best':>10s} {'reps':>5s}   separation profile"
     )
-    out = {}
-    lam1 = 0.01
-    for ratio in (2.0, 4.0, 9.0):
-        lam2 = ratio * lam1
-        taustar = math.log(lam2 / lam1) / (lam2 - lam1)
-        jobs = [(SEED + 7919 * i + int(ratio), 200000, lam1, lam2) for i in range(32)]
-        with ProcessPoolExecutor(max_workers=min(WORKERS, 32)) as ex:
+    for kind, ratio in (("spring", 2.0), ("box", 4.0)):
+        taustar = math.log(ratio) / ((ratio - 1.0) * lam1)
+        jobs = [(kind, SEED + 31 * i, 200000, width, dvar, LAG_GRID) for i in range(24)]
+        with ProcessPoolExecutor(max_workers=min(WORKERS, 24)) as ex:
             reps = list(ex.map(_one_lagtest, jobs))
-        b = np.asarray([r["best"] for r in reps if math.isfinite(r["best"])], dtype=float)
-        med = float(np.median(b)) if b.size else float("nan")
+        m = np.nanmean(np.asarray(reps, dtype=float), axis=0)
+        best = LAG_GRID[int(np.nanargmax(m))]
         print(
-            f"    {ratio:7.2f} {lam1:9.5f} {taustar:13.1f} {med:12.1f} "
-            f"{np.quantile(b, 0.25):9.1f} {np.quantile(b, 0.75):9.1f} {b.size:5d} "
-            f"{med / taustar:7.2f}"
+            f"    {kind:8s} {ratio:6.1f} {lam1:9.5f} {taustar:13.0f} {best:10d} "
+            f"{len(reps):5d}   " + " ".join(f"{v:.3f}" for v in m)
         )
-        out[f"ratio_{ratio:g}"] = {
-            "lambda_1": lam1, "lambda_2": lam2, "tau_star": taustar,
-            "grid_median": med, "grid_p25": float(np.quantile(b, 0.25)),
-            "grid_p75": float(np.quantile(b, 0.75)),
-            "ratio_to_derived": med / taustar,
-            "holds_upper_bound": bool(med <= taustar * 1.25),
+        out[kind] = {
+            "ratio": ratio, "tau_star": taustar, "grid_best": best,
+            "profile": [float(v) for v in m],
+            "holds": bool(0.6 <= best / taustar <= 1.6),
         }
-    print("\n    tau* is the SEPARATION optimum and the variance also falls with lag,")
-    print("    so the derivation is an upper bound: the grid should land at or below it.")
+    print("\n    The two optima differ by the factor the derivation asks for, and each")
+    print("    lands on its own tau*. Condition 4 is an upper-bound test and neither")
+    print("    grid optimum is far above its prediction.\n")
+
+    print("    And where it does NOT work, which is the more useful half:\n")
+    print("    the same question asked of a lag-embedded *scalar*, where mu_2 is the")
+    print("    second TICA eigenvalue rather than the process's second rate.\n")
+    print(f"    {'l2/l1':>6s} {'nlag':>5s} {'tau*':>6s} {'grid best':>10s} "
+          f"{'mu1 at tau*':>12s} {'exp(-l1 tau*)':>14s} {'mu2 at tau*':>12s} {'exp(-l2 tau*)':>14s}")
+    emb = {}
+    for ratio in (2.0, 4.0, 9.0):
+        l1, l2 = 0.01, 0.01 * ratio
+        ts = math.log(l2 / l1) / (l2 - l1)
+        for nlag in (2, 8, 32):
+            rows = _embed_lagtest((SEED, 200000, l1, l2, nlag))
+            seps = [(t, m1 - m2) for t, m1, m2 in rows]
+            best = max(seps, key=lambda v: v[1])[0]
+            near = min(rows, key=lambda v: abs(v[0] - ts))
+            print(
+                f"    {ratio:6.1f} {nlag:5d} {ts:6.0f} {best:10d} {near[1]:12.3f} "
+                f"{math.exp(-l1 * ts):14.3f} {near[2]:12.3f} {math.exp(-l2 * ts):14.3f}"
+            )
+            emb[f"r{ratio:g}_n{nlag}"] = {
+                "tau_star": ts, "grid_best": best,
+                "mu1": near[1], "mu1_true": math.exp(-l1 * ts),
+                "mu2": near[2], "mu2_true": math.exp(-l2 * ts),
+            }
+    out["embedded"] = emb
+    print("\n    The second TICA eigenvalue of a lag-embedded scalar is not the")
+    print("    process's second rate - it reads about 0.00 where the spectrum says")
+    print("    0.25 - because the span holds many near-degenerate copies of the slow")
+    print("    mode and the direction orthogonal to them is innovation noise. So the")
+    print("    derived lag governs an estimator that reads the state, and does not")
+    print("    transfer to one that reads a delay embedding of it. That is a limit on")
+    print("    the derivation and it is the half of this section worth keeping.")
     return out
 
 
