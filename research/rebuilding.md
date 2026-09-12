@@ -869,9 +869,11 @@ held per class:
 
 So **the `n*` of 59 ticks on `boom_300_index` published above is withdrawn.** It
 was the floating-point artefact; corrected, the same feed's k-tuple arm reads
-147,295 ticks, which is **3.5 times the sample that exists**, and three of the six
-feeds are unseparable on both arms at any sample size. The Boom and Crash
-mechanism - a compound Poisson grind against a rare spike - re-instantiates.
+147,295 ticks, which is **3.6 times the sample that exists**. The smallest `n*`
+anywhere in the twenty-four `pool` arms is 63,704 ticks against about 42,000
+held, `boom_1000_index` and `crash_500_index` are unseparable on both arms at any
+sample size, and no arm is caught. The Boom and Crash mechanism - a compound
+Poisson grind against a rare spike - re-instantiates.
 
 **And the specification does not.** `spec` is caught on all twenty-four arms, at
 724 to 3,506 ticks, while `pool` is caught on none. Kill condition 4 was written
