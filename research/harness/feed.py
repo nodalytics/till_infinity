@@ -1,10 +1,14 @@
 """Real price history from the terminal on the lab, for when `prices.db` is not there.
 
-`research.db` and the lab's copy of `prices.db` both hold real-instrument tables
-that read back **"database disk image is malformed"**, which has already cost one
-study its real leg - it ran at a twentieth of its intended sample and said so.
-The terminal container on the same box does not have that problem and serves
-more than the store did:
+**Correction, 2026-09-12: only `prices.db` is corrupt.** This file used to say
+both stores were, which was written from one study's failure and never checked
+per file - and `research/grounding.md` then downgraded its real leg to a
+twentieth of its intended sample on the strength of it. Checked properly by
+`dbcheck.py`: `research.db` is **1.55GB, `quick_check: ok`, 5,227,686 bars and
+6,950,687 ticks all readable**. `prices.db` is 21.98GB and genuinely malformed -
+invalid page numbers, both tables unreadable. Reach for `research.db` first.
+
+The terminal is still worth having beside it, and for tick work it is better:
 
 * **796 symbols**, the broker's whole book rather than the collected subset;
 * **50,000 M1 bars in one call**, and deeper on request;

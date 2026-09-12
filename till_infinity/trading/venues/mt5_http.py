@@ -140,6 +140,34 @@ class HttpBroker(Broker):
         log.warning("trading: no health route answered on %s", self.settings.url)
         return False
 
+    async def trading_allowed(self) -> bool | None:
+        """Whether the terminal will accept an order at all. None if it cannot say.
+
+        **A connected terminal with AutoTrading off rejects every order and
+        answers every health check.** On 2026-09-12 that state lasted nine hours
+        and cost **171 rejected orders** - pending and market, across the whole
+        book - while `/terminal/ping` stayed green, the container reported
+        healthy and the desk went on publishing signals and deciding to trade.
+        Not one order filled in the entire session.
+
+        It is `trade_allowed` on `/terminal/info`, and it is a **toggle in the
+        terminal's own interface**: the bridge exposes info, ping, version and
+        disconnect, and no route to set it. So this cannot fix the condition -
+        it can only make sure nobody has to notice it from a P&L of zero.
+
+        None rather than False when the field is missing, because a bridge that
+        does not publish it is a different thing from a terminal that has it off,
+        and refusing to trade on an absent field would ground the desk on every
+        bridge that spells it differently.
+        """
+        try:
+            body = await self._get("/terminal/info")
+        except Exception:
+            return None
+        if not isinstance(body, dict) or "trade_allowed" not in body:
+            return None
+        return bool(body["trade_allowed"])
+
     # ----------------------------------------------------------------- reads
 
     async def account(self) -> Account:

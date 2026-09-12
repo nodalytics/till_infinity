@@ -589,7 +589,12 @@ class Trader:
         #: rejection wick, written by `_candle_at` and read by `_park`, which
         #: runs after it. Grouped because `__init__` is at its statement
         #: ceiling and all three are per-feed working state.
-        self._recalled, self._ladder, self._rejection = False, {}, {}
+        #: `_autotrading` joins this line because `__init__` is at its statement
+        #: ceiling, which is the same reason the three beside it are grouped. It
+        #: is whether the terminal was last seen accepting orders, so the alarm
+        #: is edge-triggered - and it starts `True` rather than `None` so a desk
+        #: that comes up with AutoTrading already off says so on its first sweep.
+        self._recalled, self._ladder, self._rejection, self._autotrading = False, {}, {}, True
         #: The best price each open trade has seen, and the tickets any quote
         #: has seen at or beyond the scale-out trigger - so the bank fires on
         #: the move rather than on whichever poll follows it. Grouped because
@@ -2769,6 +2774,7 @@ class Trader:
         if not await self.broker.healthy():
             log.warning("trading: the terminal is not answering; nothing will be sent")
             return
+        await self._check_autotrading()
 
         account = await self.broker.account()
         self.equity = account.equity or self.equity
@@ -2966,6 +2972,54 @@ class Trader:
                 "" if skipped else " - every one reached `advance` and it proposed no better stop",
             )
         return moved
+
+    async def _check_autotrading(self) -> None:
+        """Say - once, loudly - when the terminal has stopped accepting orders.
+
+        **A connected terminal with AutoTrading off answers every health check
+        and rejects every order.** On 2026-09-12 that ran for nine hours and cost
+        **171 rejections** with nothing filled, while the container read healthy
+        and the log carried one WARNING per attempt and no alert. That is the
+        same failure as the outage three hours earlier: a fault that writes a
+        line rather than raising its voice.
+
+        Run from `sweep`, so it is periodic without a timer of its own.
+
+        Edge-triggered. The condition persists for as long as somebody takes to
+        click a button, and one alert per heartbeat for nine hours is a channel
+        nobody reads - which is how the *next* one gets missed. It says so again
+        when it clears, because "is it back" is the question that follows.
+        """
+        allowed = getattr(self.broker, "trading_allowed", None)
+        if allowed is None:
+            return
+        state = await allowed()
+        if state is None or state == self._autotrading:
+            return
+        self._autotrading = state
+        if state:
+            log.info("trading: the terminal is accepting orders again")
+            await self._shout_state("trading is accepting orders again", "", "info")
+            return
+        log.error("trading: AutoTrading is OFF - every order will be rejected")
+        await self._shout_state(
+            "AutoTrading is off",
+            "The terminal is connected and answering, and will reject every "
+            "order until AutoTrading is switched back on in its own interface. "
+            "The bridge has no route to set it.",
+            "error",
+        )
+
+    async def _shout_state(self, title: str, body: str, level: str) -> None:
+        """Put a line on the alerts channel. Never raises - it is the alarm."""
+        try:
+            await self.bus.publish(
+                ALERTS,
+                {"title": f"{self.settings.mode}: {title}", "body": body, "level": level},
+                source="trading",
+            )
+        except Exception:  # pragma: no cover - best effort by design
+            log.debug("trading: could not publish the autotrading alert", exc_info=True)
 
     async def _bank(self, live: Live, spec: SymbolSpec, best: float) -> bool:
         """Take part of a winner off, once. True if any came off.

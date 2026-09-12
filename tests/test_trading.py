@@ -8315,3 +8315,114 @@ async def test_the_alarm_cannot_take_the_retry_down_with_it():
 
     trader = svc.Trader(DeafBus(), settings=made, broker=PaperBroker(made))
     await svc._shout(trader, "title", "body", "error")  # must not raise
+
+
+# ------------------------------------- a terminal that answers and refuses orders
+
+
+class ShutBroker(PaperBroker):
+    """Connected, answering, and refusing every order.
+
+    The 2026-09-12 state as an object: `trade_allowed` false while
+    `/terminal/ping` stays green. It cost **171 rejected orders over nine hours**
+    with nothing filled, while the container read healthy.
+    """
+
+    def __init__(self, made, allowed: bool = False) -> None:
+        super().__init__(made)
+        self.allowed = allowed
+        self.asked = 0
+
+    async def trading_allowed(self) -> bool | None:
+        self.asked += 1
+        return self.allowed
+
+
+async def test_autotrading_off_raises_an_alert_rather_than_a_log_line():
+    """171 orders were rejected and the only trace was one WARNING per attempt.
+
+    That is the same failure as the outage three hours earlier - a fault that
+    writes a line rather than raising its voice.
+    """
+    made = settings()
+    bus = Bus()
+    alerts = bus.subscribe(ALERTS, group="test")
+    trader = Trader(bus, settings=made, broker=ShutBroker(made, allowed=False))
+    await trader.start()
+
+    await trader.sweep()
+    message = await asyncio.wait_for(alerts.next(), timeout=2.0)
+    assert message is not None
+    assert "AutoTrading is off" in message.payload["title"]
+    assert message.payload["level"] == "error"
+
+
+async def test_the_alarm_is_edge_triggered():
+    """The condition lasts as long as somebody takes to click a button, and one
+    alert a heartbeat for nine hours is a channel nobody reads - which is how
+    the next one gets missed."""
+    made = settings()
+    bus = Bus()
+    alerts = bus.subscribe(ALERTS, group="test")
+    broker = ShutBroker(made, allowed=False)
+    trader = Trader(bus, settings=made, broker=broker)
+    await trader.start()
+
+    for _ in range(4):
+        await trader.sweep()
+    assert broker.asked >= 4, "it is checked every sweep"
+
+    seen = 0
+    while True:
+        try:
+            message = await asyncio.wait_for(alerts.next(), timeout=0.2)
+        except TimeoutError:
+            break
+        if message is None:
+            break
+        if "AutoTrading" in str(message.payload.get("title", "")):
+            seen += 1
+    assert seen == 1, f"one alert for one edge, got {seen}"
+
+
+async def test_it_says_so_again_when_orders_are_accepted():
+    """ "Is it back" is the question that follows, so the recovery is announced."""
+    made = settings()
+    bus = Bus()
+    alerts = bus.subscribe(ALERTS, group="test")
+    broker = ShutBroker(made, allowed=False)
+    trader = Trader(bus, settings=made, broker=broker)
+    await trader.start()
+
+    await trader.sweep()
+    broker.allowed = True
+    await trader.sweep()
+
+    titles = []
+    while True:
+        try:
+            message = await asyncio.wait_for(alerts.next(), timeout=0.2)
+        except TimeoutError:
+            break
+        if message is None:
+            break
+        titles.append(str(message.payload.get("title", "")))
+    assert any("accepting orders again" in t for t in titles), titles
+
+
+async def test_a_broker_that_cannot_say_is_not_treated_as_refusing():
+    """None is a bridge that does not publish the field, which is different from
+    a terminal that has it off. Grounding the desk on an absent field would stop
+    it on every bridge that spells this differently."""
+    made = settings()
+    bus = Bus()
+    alerts = bus.subscribe(ALERTS, group="test")
+    trader = Trader(bus, settings=made, broker=ShutBroker(made, allowed=None))
+    await trader.start()
+    await trader.sweep()
+
+    try:
+        message = await asyncio.wait_for(alerts.next(), timeout=0.3)
+    except TimeoutError:
+        return
+    assert message is None or "AutoTrading" not in str(message.payload.get("title", ""))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import time
 
@@ -175,3 +177,38 @@ def test_health_fails_when_nothing_started(tmp_path, monkeypatch):
     result = CliRunner().invoke(main, ["health", "--file", str(target)])
     assert result.exit_code == 1
     assert "nothing running" in result.output
+
+
+async def test_the_status_is_republished_on_a_timer(tmp_path, monkeypatch):
+    """Publishing on change alone marks a *healthy* stack unhealthy.
+
+    The staleness check in `health` exists to catch a process that is up and no
+    longer doing anything - the one case a liveness probe cannot see. That only
+    works if a working stack keeps saying so. The first version of this was
+    called on change alone, and a stack where nothing changes is the healthy
+    case: nine hours after shipping, seven services running, nothing failed, and
+    the container marked unhealthy on a 33,138-second-old file.
+    """
+    target = tmp_path / "stack.json"
+    monkeypatch.setattr(st, "STATUS_FILE", target)
+    monkeypatch.setattr(st, "HEARTBEAT", 0.01)
+
+    stack = st.Stack.__new__(st.Stack)
+    stack.status = st.Status()
+    stack.status.running.append("trading")
+    stack.status.publish()
+    first = json.loads(target.read_text())["written"]
+
+    beat = asyncio.create_task(stack._beat())
+    await asyncio.sleep(0.05)
+    beat.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await beat
+
+    assert json.loads(target.read_text())["written"] > first
+
+
+def test_the_heartbeat_leaves_four_beats_of_room(tmp_path):
+    """A slow moment must not read as an outage. Sixty seconds against the
+    `health --max-age` default of 300 is four missed beats of margin."""
+    assert st.HEARTBEAT * 4 < 300.0

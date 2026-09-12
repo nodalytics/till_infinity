@@ -167,6 +167,20 @@ class Plan:
 #: surface than the question deserves.
 STATUS_FILE = Path(os.environ.get("STACK_STATUS_FILE") or ".data/stack.json")
 
+#: Seconds between status heartbeats.
+#:
+#: The staleness check in `health` exists to catch a process that is up and no
+#: longer doing anything - the one case a liveness probe can never see. That only
+#: works if a *working* stack keeps saying so, and the first version of
+#: `Status.publish` was called on change alone. A stack where nothing changes is
+#: the healthy case, so it wrote once and aged out: nine hours after shipping,
+#: seven services running, nothing failed, and the container marked unhealthy on
+#: a 33,138-second-old file.
+#:
+#: Sixty seconds against a `--max-age` of 300 leaves four missed beats before the
+#: probe complains, so a slow moment is not an outage.
+HEARTBEAT = float(os.environ.get("STACK_HEARTBEAT") or 60.0)
+
 
 @dataclass(slots=True)
 class Status:
@@ -195,6 +209,13 @@ class Status:
         Called on every change rather than once at start-up, because the case
         this exists for is a service that dies *after* the stack came up - which
         is what happened on 2026-09-11 and what `--version` could not see.
+
+        **And on a timer, which the first version of this got wrong.** Publishing
+        only on change means a stack where nothing changes - the healthy case -
+        writes once and never again, so the file ages past `health --max-age` and
+        a working container is marked unhealthy. That happened within nine hours
+        of shipping it: seven services running, `failed` empty, and the file
+        33,138 seconds old. See `HEARTBEAT`.
 
         Swallows its own errors: a status file that cannot be written is worth a
         debug line, not a stack that stops because it could not describe itself.
@@ -297,6 +318,8 @@ class Stack:
                         if name in COLLECTORS:
                             collectors.append(task)
 
+                group.create_task(self._beat(), name="stack:heartbeat")
+
                 if self.plan.once and collectors:
                     await asyncio.wait(collectors)
                     say("stack", "collection pass complete")
@@ -341,6 +364,17 @@ class Stack:
             # A thin store is a slow start, not a reason to refuse to run.
             say("backfill", f"skipped: {first_cause(exc)}")
             return 0
+
+    async def _beat(self) -> None:
+        """Republish the status on a timer for as long as the stack runs.
+
+        Cancelled with the group on shutdown, which is the point: the file stops
+        being refreshed the moment the stack stops, and `health` reads that as
+        the outage it is.
+        """
+        while True:
+            await asyncio.sleep(HEARTBEAT)
+            self.status.publish()
 
     def _start(self, group: asyncio.TaskGroup, name: str, book, say):
         """Launch one service as a supervised task. Returns it, or None."""
