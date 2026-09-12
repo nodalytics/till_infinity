@@ -293,13 +293,24 @@ class Intent:
         if not barriers.reachable(up, down):
             return {}
         rate = barriers.DEFAULT_TICKS_PER_BAR
-        needs = barriers.duration(up, down, ticks_per_bar=rate)
+        # **Which duration, and it is the difference that was being got wrong.**
+        # The Brownian form is exact on the venue's own processes and understates
+        # a real feed by 25% at 3:3 and 96% at 10:10, on 19 feeds out of 19 - so
+        # a clock set from it is set short everywhere it matters. See
+        # `barriers.SLOWER_ON_FEED`.
+        on_feed = not barriers.generated(self.feed)
+        brownian = barriers.duration(up, down, ticks_per_bar=rate)
+        needs = barriers.duration_on_feed(up, down, ticks_per_bar=rate) if on_feed else brownian
         out = {
             "barrier_p": barriers.probability(up, down, ticks_per_bar=rate),
             "barrier_bars": needs,
             "barrier_cost": barriers.overshoot_cost(up, down, ticks_per_bar=rate),
             "barrier_ticks": rate,
         }
+        # Both, when they differ, so the journal can show what the correction is
+        # worth rather than only its result.
+        if on_feed:
+            out["barrier_bars_brownian"] = brownian
         # **How much of its own geometry the clock actually allows**, as a ratio.
         # Under 1.0 the hold expires before the barriers can be expected to
         # resolve, so the trade is scored as though it finished when it was

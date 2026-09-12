@@ -106,6 +106,8 @@ a measurement.
 from __future__ import annotations
 
 import math
+import re
+from itertools import pairwise
 
 #: The Broadie-Glasserman-Kou continuity correction, `-zeta(1/2)/sqrt(2*pi)`.
 #: Also the limiting expected overshoot of a Gaussian random walk past a level,
@@ -180,6 +182,102 @@ def duration(
     up, down = abs(float(target_units)), abs(float(stop_units))
     shift = shift_for(ticks_per_bar)
     return (up + shift) * (down + shift)
+
+
+#: How much longer a real trade takes than `duration` says, measured as
+#: `(predicted bars, multiple)` on 19 real feeds by `research/grounding.md`.
+#:
+#: **Not an approximation error, and the control is what proves it.** The same
+#: table on feeds `research/deriving.md` proves Brownian reads 1.111, 1.047,
+#: 1.047, 1.053, 1.091 - **flat in geometry**, which is what the closed form's
+#: own known error looks like. The real-feed column is not flat: it grows
+#: monotonically and reaches **1.958 at ten sigmas, on 19 feeds out of 19**.
+#:
+#: The mechanism is mean reversion in volatility, and it predicts the growth.
+#: Barriers are fixed at entry in units of the *entry* volatility; a real feed's
+#: volatility half-life is 30 to 79 bars; a geometry needing 112 bars is held at
+#: a volatility that has had one and a half half-lives to revert. Expected
+#: first-passage time is **convex in 1/sigma**, so periods where volatility falls
+#: lengthen the trade by more than periods where it rises shorten it, and the
+#: mean moves up. Longer geometries have more time to revert, which is exactly
+#: the ordering measured.
+#:
+#: Keyed on **predicted bars** rather than on the geometry ratio, because the
+#: mechanism is about how long the trade is held against the half-life - so it
+#: generalises to the asymmetric geometries the table does not contain.
+SLOWER_ON_FEED: tuple[tuple[float, float], ...] = (
+    (2.505, 1.251),
+    (6.672, 1.209),
+    (12.839, 1.271),
+    (31.166, 1.417),
+    (111.991, 1.958),
+)
+
+
+#: Feeds the venue generates rather than quotes.
+#:
+#: The distinction decides which duration to use, and it is not cosmetic: the
+#: Brownian form is *exact* on the generated side - every interval covers zero on
+#: the six Volatility indices - and understates the real side by 25% to 96%. The
+#: same names drive `research/spending.md`'s split of the book.
+#:
+#: A wider pattern than `structures/vol/stated.NAMED`, which matches only the
+#: families that publish a volatility in their name. This one has to catch every
+#: feed whose process is the venue's rather than a market's.
+GENERATED = re.compile(r"^(volatility|jump|boom|crash|step|range_break)_", re.I)
+
+
+def generated(feed: object) -> bool:
+    """Whether this feed's process is the venue's own."""
+    return bool(GENERATED.match(str(feed or "").strip().lower()))
+
+
+def slowdown(bars: float) -> float:
+    """The measured multiple for a geometry predicted to take `bars`.
+
+    Log-linear between the measured points and **clamped at both ends**, because
+    this is five points and an interpolation, not a law. Extrapolating a
+    monotone empirical curve past 112 bars would invent a number; holding it at
+    1.958 says "at least this much, and the table stops here".
+    """
+    want = max(float(bars), 1e-9)
+    points = SLOWER_ON_FEED
+    if want <= points[0][0]:
+        return points[0][1]
+    if want >= points[-1][0]:
+        return points[-1][1]
+    for (low, at_low), (high, at_high) in pairwise(points):
+        if low <= want <= high:
+            span = math.log(high) - math.log(low)
+            share = (math.log(want) - math.log(low)) / span if span else 0.0
+            return at_low + share * (at_high - at_low)
+    return points[-1][1]
+
+
+def duration_on_feed(
+    target_units: float,
+    stop_units: float,
+    *,
+    ticks_per_bar: float = DEFAULT_TICKS_PER_BAR,
+) -> float:
+    """Expected bars on a **real** feed, which is not what `duration` returns.
+
+    `duration` is the driftless-Brownian answer and is exact where that holds -
+    on the six Volatility indices every interval covers zero. A real feed is not
+    driftless Brownian, and `research/grounding.md` measured the gap on 19 of 19
+    feeds: **25% longer at 3:3 and 96% longer at 10:10**. See `SLOWER_ON_FEED`.
+
+    Use this wherever a real instrument's clock is being set - a hold timeout, a
+    stale-exit horizon, `hold_covers` - and `duration` wherever the process is
+    known to be Brownian or the question is what the theory says. The difference
+    between them is the thing that was being got wrong, so calling the right one
+    is the whole point of having two.
+
+    Measured, not derived. Five points, an interpolation and a mechanism, on a
+    table that stops at 112 bars.
+    """
+    bars = duration(target_units, stop_units, ticks_per_bar=ticks_per_bar)
+    return bars * slowdown(bars)
 
 
 def overshoot_cost(

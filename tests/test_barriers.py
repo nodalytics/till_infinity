@@ -147,3 +147,87 @@ def test_degenerate_geometries_do_not_raise():
     assert barriers.expectancy(3, 0) == 0.0
     assert barriers.overshoot_cost(3, 0) == 0.0
     assert barriers.duration(0, 0) > 0.0
+
+
+# ------------------------------------------- how long a real trade actually takes
+
+
+def test_the_measured_table_is_reproduced_exactly():
+    """`research/grounding.md` measured this on 19 real feeds, 19 of 19 longer
+    than the closed form at every geometry."""
+    for up, down, want in (
+        (1, 1, 1.251),
+        (2, 2, 1.209),
+        (3, 3, 1.271),
+        (5, 5, 1.417),
+        (10, 10, 1.958),
+    ):
+        bars = barriers.duration(up, down, ticks_per_bar=1)
+        got = barriers.duration_on_feed(up, down, ticks_per_bar=1) / bars
+        assert got == pytest.approx(want, abs=5e-4), f"{up}:{down}"
+
+
+def test_the_excess_grows_with_the_geometry_and_the_control_does_not():
+    """That contrast is what makes it mean reversion rather than approximation
+    error. The closed form's own error, measured on feeds proven Brownian, is
+    flat in geometry - 1.111, 1.047, 1.047, 1.053, 1.091. The real-feed column
+    is not, because a longer geometry gives volatility more half-lives to
+    revert and first-passage time is convex in 1/sigma.
+    """
+    excess = [barriers.slowdown(barriers.duration(n, n, ticks_per_bar=1)) for n in (2, 3, 5, 10)]
+    assert excess == sorted(excess), excess
+    assert excess[-1] / excess[0] > 1.5, "and it grows substantially"
+
+
+def test_it_is_clamped_rather_than_extrapolated():
+    """Five points and an interpolation is not a law. Past 112 bars the honest
+    answer is 'at least this much, and the table stops here'."""
+    assert barriers.slowdown(1e-6) == pytest.approx(1.251)
+    assert barriers.slowdown(1e9) == pytest.approx(1.958)
+    assert barriers.slowdown(0.0) == pytest.approx(1.251)
+
+
+def test_a_generated_feed_keeps_the_brownian_answer():
+    """The correction is measured on real feeds and would be wrong on the
+    venue's own processes, where the closed form is exact - every interval
+    covers zero on the six Volatility indices."""
+    for feed in (
+        "volatility_75_index",
+        "boom_500_index",
+        "crash_1000_index",
+        "step_index",
+        "jump_25_index",
+        "range_break_100_index",
+    ):
+        assert barriers.generated(feed), feed
+    for feed in ("gold", "eurusd", "btc", "us100", "brent", ""):
+        assert not barriers.generated(feed), feed
+
+
+def test_the_intent_picks_the_duration_that_matches_its_feed():
+    """The whole point of having two: a clock set from the Brownian form on a
+    real feed is set short, everywhere it matters."""
+    from till_infinity.trading.models import Intent, Side
+
+    def geometry(feed):
+        return Intent(
+            feed=feed,
+            symbol="X",
+            side=Side.BUY,
+            volume=0.1,
+            entry=4400.0,
+            stop=4395.6,
+            target=4413.2,
+            features={"vol_bps": 10.0},
+            interval="5m",
+            hold=900.0,
+        ).geometry()
+
+    real, synthetic = geometry("gold"), geometry("volatility_75_index")
+    assert real["barrier_bars"] > synthetic["barrier_bars"]
+    # The synthetic keeps one number; the real feed carries both so the journal
+    # can show what the correction is worth.
+    assert "barrier_bars_brownian" not in synthetic
+    assert real["barrier_bars_brownian"] == pytest.approx(synthetic["barrier_bars"])
+    # And the clock covers less of the geometry than it appeared to.
+    assert real["hold_covers"] < synthetic["hold_covers"]

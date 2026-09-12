@@ -3007,7 +3007,13 @@ class Trader:
             "The terminal is connected and answering, and will reject every "
             "order until AutoTrading is switched back on in its own interface. "
             "The bridge has no route to set it.",
-            "error",
+            # `critical`, not `error`. `notifications.Level` knows info, warning
+            # and critical, and parsing anything else **raises** - which took the
+            # notifications service down the first time this alarm fired, so the
+            # alarm written to make a fault loud silenced the thing that makes
+            # faults loud. `stack.health` caught it, which is the one part of
+            # that sequence that went right.
+            "critical",
         )
 
     async def _shout_state(self, title: str, body: str, level: str) -> None:
@@ -4605,7 +4611,8 @@ async def _attach(trader: Trader) -> None:
                     "trading is not attached",
                     f"{exc}\n\nattempt {attempt}; retrying every {wait:.0f}s. "
                     "No orders can be placed until this clears.",
-                    "error",
+                    # See `_check_autotrading` - `error` is not a level.
+                    "critical",
                 )
             await asyncio.sleep(wait)
 

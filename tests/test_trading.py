@@ -8354,7 +8354,7 @@ async def test_autotrading_off_raises_an_alert_rather_than_a_log_line():
     message = await asyncio.wait_for(alerts.next(), timeout=2.0)
     assert message is not None
     assert "AutoTrading is off" in message.payload["title"]
-    assert message.payload["level"] == "error"
+    assert message.payload["level"] == "critical"
 
 
 async def test_the_alarm_is_edge_triggered():
@@ -8426,3 +8426,30 @@ async def test_a_broker_that_cannot_say_is_not_treated_as_refusing():
     except TimeoutError:
         return
     assert message is None or "AutoTrading" not in str(message.payload.get("title", ""))
+
+
+def test_every_level_trading_publishes_is_one_the_notifier_accepts():
+    """**An alarm that crashes the alarm is worse than no alarm.**
+
+    `notifications.Level` knows info, warning and critical, and `parse` raises
+    on anything else. The AutoTrading alert shipped with `level: "error"`, and
+    the first time it fired it took the notifications service down - so the
+    thing written to make a fault loud silenced the thing that makes faults
+    loud. `till-infinity health` caught it, which is the one part of that
+    sequence that worked.
+
+    Source-read rather than behavioural: the levels are string literals at
+    publish sites scattered through the service, and the failure is that one of
+    them is never parsed until the moment it matters.
+    """
+    import re
+    from pathlib import Path
+
+    from till_infinity.notifications.models import Level
+
+    source = Path(td.service.__file__).read_text()
+    levels = set(re.findall(r'"level":\s*"([a-z]+)"', source))
+    levels |= set(re.findall(r'^\s+"(info|warning|critical|error|debug)",\s*$', source, re.M))
+    assert levels, "the publish sites should be findable"
+    for level in sorted(levels):
+        Level.parse(level)  # raises if the notifier would reject it
