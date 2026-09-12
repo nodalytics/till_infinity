@@ -417,8 +417,13 @@ cycle-counting, `peering.md`'s synthetic arm, `catalysing.md`'s placebo,
 `localising.md`'s density-matched null, `rounding.md`'s positive control,
 `bjorgum.md`'s synthetic control, `states.md`'s trivial-rule baseline. In every
 case where a control was run, it did its job - several times by killing the
-page's own headline. **No page in this folder that ran a matched null had to be
-withdrawn here.**
+page's own headline.
+
+**No claim is withdrawn here because its control failed to catch something.**
+The one entry in the withdrawn table that had a permutation control -
+`winning.md`'s `spread_over_risk` - is there because the quantity it measured
+is mechanical rather than informative, which is a reading error and not a
+control failure. Everything else withdrawn ran no control at all.
 
 **What moves is the cut table with no interval on it.** `aligning.md`,
 `instruments.md`, `timeframes.md`, `choosing.md`, `signs.md`, `geometry.md` and
