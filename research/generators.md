@@ -514,6 +514,75 @@ rather than mine.
 `ticks` at 24 hours with bid and ask, which is where every spread in this
 document comes from.
 
+## Seven: the pipeline, as a hypothesis - and which stage is actually soft
+
+**This section is a hypothesis under test, not a measurement, and it is placed
+after the findings deliberately so it cannot be read as one.** It was put
+forward from the desk on 2026-09-12 and it reframes what is worth attacking.
+
+The proposal is that a Deriv synthetic is not one object but a **chain**:
+
+    CSPRNG -> uniform u -> inverse-normal Phi^-1(u) -> price recursion -> quantise to the quote grid -> publish
+
+The value of the decomposition is that it separates one hopeless target from
+three soft ones, and until it was written down this folder had been treating the
+generator as a single box.
+
+| stage | what is known | how hard |
+| --- | --- | --- |
+| the source | `rebuildpredict.py` attacked it three ways - k-tuple spectral tests, MT19937 untempering, truncated-LCG lattice reduction - and found nothing | cryptographic; effectively closed |
+| the inverse-normal | **never examined** | deterministic, finite precision |
+| the recursion | **never identified**; two standard conventions differ by `sigma^2 T / 2` | deterministic |
+| the quantiser | partly read already: `frac_zero` at AUC 0.686 opened the quote-lattice question and `n_distinct` exposed first a float-precision artefact and then a real defect in the published grind specification | visible in every tick |
+
+**Everything after the source is deterministic.** That is the whole point. A
+regulated venue's RNG is not going to fall over, and this folder has already
+spent a study confirming it. But a deterministic, finite-precision stage is a
+different class of target, and two consequences follow that are worth stating
+plainly:
+
+**The recursion has a free convention and nobody here knows which one runs.**
+`S * exp(-sigma^2/2 dt + sigma dW)` makes **price** a martingale and its median
+drift down; `S * exp(sigma dW)` makes **log price** a martingale and its price
+drift up. Both are standard, both ship in real systems, and the difference is
+`sigma^2 T / 2`. `till_infinity/structures/vol/projection.py` now carries both
+and scores each by the probability integral transform on every closed bar, so
+the answer accumulates from a structure the desk was going to run anyway. It is
+slow: the conventions differ by **0.4% of one standard deviation at 1h** and
+about 2% at 1d, so against the `1/sqrt(12 n)` standard error of a mean PIT it
+needs of order **50,000 settled observations**. `Calibration.resolved` reports
+whether that bar has been cleared rather than naming a winner early.
+
+**If the inverse-normal is a lookup table or limited precision, the set of
+achievable increments is finite and enumerable.** That is the sharpest testable
+consequence on this page and it is the one that would genuinely matter. **It is
+also the easiest place on this page to produce a spectacular false positive**,
+because quote quantisation *alone* makes observed price differences discrete -
+so the null is "discrete because the grid is discrete", not "continuous", and a
+test that does not carry that null will report a crack that is not there. The
+question has to be asked of the *implied pre-quantisation* increment, and any
+detector has to be shown to stay silent on a simulator built with a proper
+continuous inverse-normal before it is pointed at Deriv.
+
+Two further questions fall straight out of the chain and neither has been asked:
+
+* **Does quantisation error accumulate?** If the generator keeps a
+  full-precision internal price and rounds only for display, successive rounding
+  residuals are independent. If it feeds the *rounded* price back into the
+  recursion, they random-walk and the published path drifts from the ideal one.
+  The residual sequence decides it, and either answer is a fact about the
+  architecture.
+* **How many bits of the underlying uniform survive to the published quote?**
+  This is what decides whether the state-recovery attacks in `rebuildpredict.py`
+  were unsuccessful or **impossible**, and those are different sentences. If a
+  tick carries under 32 bits, the MT19937 attack cannot be run at all, and
+  saying so is worth more than another null result.
+
+The investigation lives in [pipeline.md](pipeline.md). Nothing in this section
+has been measured yet, and when it is, whatever survives its controls moves up
+into the numbered findings above and whatever does not gets written down here as
+refuted.
+
 ## What is worth doing next
 
 1. **Replace the volatility estimator with the published constant on the 72% of
@@ -530,3 +599,9 @@ document comes from.
 4. **Monitor the realised-to-nominal ratio as a venue check.** A generator whose
    realised volatility leaves the 0.995-1.005 band it has held for 60 days is
    telling us something changed, and that is a cheap alarm on 26 feeds.
+5. **Identify the middle of the pipeline** - section seven. The source is
+   closed and the quantiser is half-read, but the inverse-normal and the
+   recursion have never been looked at, and both are deterministic. The drift
+   convention is already accumulating live behind `STRUCTURES_PROJECTION`; the
+   increment-atom question needs a detector validated against a simulator with
+   known ground truth before it is worth running on real data at all.
