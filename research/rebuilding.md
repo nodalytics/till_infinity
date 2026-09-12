@@ -673,6 +673,231 @@ one.
 | Volatility, all 12 pooled | bar OHLC | +0.0144 | 23,742 | 712,271 bars | 475,255 | **1.50** |
 | Volatility, coarse band (4 feeds) | window | +0.1092 | 239 | 14,340 ticks | 55,000 | 0.26 |
 | Volatility, coarse band (4 feeds) | k-tuple | +0.0713 | 941 | 7,528 ticks | 73,568 | 0.10 |
+| Step Index | k-tuple | -0.0034 | **inf** | **inf** | 43,196 | **inf** |
+| Step Index | window | -0.0362 | **inf** | **inf** | 43,196 | **inf** |
+| Range Break 100 | k-tuple | +0.0132 | 25,351 | 202,810 ticks | 43,199 | **4.7** |
+| Range Break 100 | window | -0.0018 | **inf** | **inf** | 43,199 | **inf** |
+| Range Break 200 | k-tuple | -0.0037 | **inf** | **inf** | 43,199 | **inf** |
+| Range Break 200 | window | -0.0016 | **inf** | **inf** | 43,199 | **inf** |
+| Jump 75 | k-tuple | -0.0008 | **inf** | **inf** | 43,089 | **inf** |
+| Jump 75 | window | +0.0882 | 680 | 40,828 ticks | 43,089 | 0.95 |
+| Boom 500 | k-tuple | -0.0469 | **inf** | **inf** | 42,350 | **inf** |
+| Boom 500 | window | +0.0550 | 1,549 | 92,919 ticks | 42,350 | **2.2** |
+| Crash 500 | k-tuple | -0.1164 | **inf** | **inf** | 41,885 | **inf** |
+| Crash 500 | window | -0.0993 | **inf** | **inf** | 41,885 | **inf** |
+| Boom 300 | k-tuple | -0.0073 | **inf** | **inf** | 40,950 | **inf** |
+| Boom 300 | window | +0.0340 | 4,556 | 273,339 ticks | 40,950 | **6.7** |
+
+Read in three groups.
+
+**Where the answer is "more ticks than exist" - which is now almost all of it.**
+The Volatility family on the seven feeds whose quote grid can carry a tick
+statistic is unseparable on both arms with the test arm *below* both floors. Step
+Index, Range Break 200 and Jump 75's k-tuple arm are unseparable on both. Range
+Break 100 needs **4.7x** the stored sample on its k-tuple arm and is unseparable
+on its window arm. And every Boom and Crash arm is now at or beyond the sample
+that exists - **2.2x** on Boom 500's window arm, **6.7x** on Boom 300's, infinite
+on both arms of Crash 500 and on both k-tuple arms. Each of those is a bound
+rather than a claim of identity.
+
+**Where the answer is "a day and a half of bars".** The pooled Volatility bar arm
+would separate at 712,271 one-minute bars against the 475,255 held - **1.5x the
+store**, or about ninety more days of collection on twelve feeds. That is the one
+row on this table that says *collect more* rather than *fix the model*. Jump 75's
+window arm at 0.95x is the other borderline cell, and its k-tuple arm is
+unseparable, which is what the jump-tail finding above predicts: the defect is in
+a summary of the magnitudes rather than in the joint law.
+
+**An earlier version of this table said Boom 300 separated on 59 ticks. It was a
+bug in this harness and it is corrected above** - see *Boom and Crash: the family
+that did not replicate*. What survives of that row is the finding it pointed at:
+the *published parameters* are caught on 24 arms of 24 at 724 to 3,506 ticks
+where the *empirical marginals* are caught on none, so `deriving.md` section
+five's mechanism re-instantiates and its parameterisation does not.
+
+### Whose the missing repeated quotes are, and why the tick shortfall was never a drop
+
+The obvious reading of the two refutations above is that Deriv *moves on* its
+quote lattice rather than rounding onto it - a property nobody had written down.
+That reading is wrong, and the control that kills it is cheap.
+
+**A collector that never stores an unchanged quote produces the identical
+histogram**, and it leaves a signature: the gap to the next tick it did store is
+two publication intervals rather than one. So the share of doubled inter-tick
+gaps has to be at least the share of zero moves the rounding predicts. It is
+almost exactly equal to it, on twelve feeds of twelve:
+
+| feed | modal gap | doubled gaps | zero moves a rounded price predicts | ratio |
+| --- | --- | --- | --- | --- |
+| volatility_100_index | 2001 ms | 2.943% | 2.923% | **1.007** |
+| volatility_250_1s_index | 1001 ms | 3.201% | 3.189% | **1.004** |
+| volatility_100_1s_index | 1001 ms | 2.497% | 2.503% | **0.998** |
+| volatility_10_1s_index | 1001 ms | 2.242% | 2.278% | **0.985** |
+| volatility_25_index | 2000 ms | 0.227% | 0.230% | **0.990** |
+| volatility_10_index | 2000 ms | 0.325% | 0.331% | **0.982** |
+| volatility_50_index | 2000 ms | 0.334% | 0.344% | **0.973** |
+| volatility_75_1s_index | 1000 ms | 0.490% | 0.454% | 1.078 |
+| volatility_150_1s_index | 1016 ms | 34.154% | 28.423% | 1.202 |
+
+So **the venue may well round a continuous price onto its grid; we never see the
+repeated quote.** The lattice question is not answerable from `research.db` at
+all, and a rebuild's job is not to reproduce the venue's quantiser but to
+reproduce *the observation*, which is the venue's stream with its repeated quotes
+removed. That is the `drop` rung: round the price, build the bars from every
+tick - because the venue builds its own bars from its own complete stream - and
+delete the repeated quotes from the tick stream only.
+
+**And the same fact retires an unexplained result earlier on this page.** The
+tick-return KS section above attributes seven rejections to "how many ticks our
+own collector dropped", with a drop fraction it could not explain. The shortfall
+is not a drop. It is the repeated quote, and the two quantities agree on all
+twelve feeds:
+
+| feed | ticks missing of the published rate | zero moves a rounded price predicts | ratio |
+| --- | --- | --- | --- |
+| volatility_25_1s_index | 0.010% | 0.011% | 0.95 |
+| volatility_50_1s_index | 0.019% | 0.020% | 0.93 |
+| volatility_75_index | 0.049% | 0.045% | 1.08 |
+| volatility_25_index | 0.225% | 0.230% | 0.98 |
+| volatility_10_index | 0.322% | 0.331% | 0.97 |
+| volatility_50_index | 0.331% | 0.344% | 0.96 |
+| volatility_75_1s_index | 0.486% | 0.454% | 1.07 |
+| volatility_10_1s_index | 2.236% | 2.278% | 0.98 |
+| volatility_100_1s_index | 2.488% | 2.503% | 0.99 |
+| volatility_100_index | 2.951% | 2.923% | 1.01 |
+| volatility_250_1s_index | 3.190% | 3.189% | **1.00** |
+| volatility_150_1s_index | 34.267% | 28.423% | 1.21 |
+
+Twelve for twelve, eleven within 8%. Nothing was lost in transit. A feed whose
+quote grid is coarse relative to its own per-tick sigma simply prints fewer
+distinct quotes, and `volatility_150_1s_index` - the feed `twins.md` quarantined
+and this page called "34.3% dropped" - is the extreme of a continuum rather than
+a collection failure. The KS rejections stand, because a rebuild that emits every
+tick is being compared with an observation that does not; what changes is that
+the fix is in the rebuild rather than in the collector.
+
+**The prediction this makes, tested.** If the tick-return rejections above are
+the repeated quote, a rebuild that deletes its own repeated quotes should shrink
+them. It does, and not all the way:
+
+| feed | KS `D`, `price` rebuild | **KS `D`, `drop` rebuild** | change |
+| --- | --- | --- | --- |
+| volatility_250_1s_index | 0.0281 | **0.0151** | **-46%** |
+| volatility_100_1s_index | 0.0259 | **0.0161** | **-38%** |
+| volatility_150_1s_index | 0.3699 | **0.2893** | **-22%** |
+| volatility_100_index | 0.0263 | **0.0192** | **-27%** |
+| volatility_75_1s_index | 0.0081 | **0.0064** | -21% |
+| volatility_50_1s_index | 0.0035 | 0.0025 | -29% |
+| volatility_10_1s_index | 0.0160 | 0.0173 | +8% |
+
+Six of twelve still reject where seven did, and the distances on the four feeds
+that rejected hardest fall by **22% to 46%**. So the repeated quote is most of
+that gap and not all of it, and what is left is the same thing the band split
+names: the rebuild's price level wanders on its own path, so its lattice points
+per sigma follow a different trajectory from the feed's, and a KS test on tick
+returns is sensitive to exactly that. Every feed that passes is one with 87 or
+more points per sigma; every feed that rejects has 17 or fewer. `n*` on the KS
+statistic runs from **1.7e5 to 5.9e5** ticks on the passing feeds and **44** on
+`volatility_150_1s_index`.
+
+**`drop` rather than `resample`, on one number.** The two have the same tick law
+and different bars. Redrawing a zero increment until the quote changes raises the
+per-tick second moment by `1/(1-P(0))` - **1.5% of sigma on
+`volatility_100_index`** against a volatility band this page pre-registers at
+0.5% - because every tick that would have stood still now moves. Deleting the
+repeated quote instead leaves the bars exactly as the venue builds them and
+deletes only what our collector deletes.
+
+### Where the loop stops, and what one more term would not fix
+
+After `drop` the largest surviving feature is `absq10` - the tenth percentile of
+`|increment|` in a sixty-tick window - at +0.0122 over its floor, against
++0.1856 for the feature that started this. The loop stops there, and the reason
+is worth more than another rung.
+
+**Split the arms by quote resolution.** Lattice points per per-tick sigma runs
+from 13.2 to 3,674 across the twelve feeds, and the grid is fixed *in price*
+while the price is geometric - so a feed's effective resolution drifts as its
+level drifts, within the 24 hours of the sample and differently on every realised
+path. `volatility_250_1s_index` runs at 11.2 points per sigma in its first twelve
+hours and 13.2 in its second. Each band gets its own real-against-real floor and
+its own Monte Carlo floor - two *independent rebuilds of the identical law*:
+
+| band | feeds | arm | rebuild vs feed | floor, feed vs itself | MC floor, rebuild vs rebuild | `n*` |
+| --- | --- | --- | --- | --- | --- | --- |
+| **>= 50 points/sigma** | 7 | window | **0.5040** [0.4841, 0.5217] | 0.5105 | 0.4988 | **inf** |
+| **>= 50 points/sigma** | 7 | k-tuple | **0.4928** [0.4858, 0.4999] | 0.5019 | 0.5039 | **inf** |
+| < 50 points/sigma | 4 | window | 0.8371 | 0.7279 | 0.6897 | 239 |
+| < 50 points/sigma | 4 | k-tuple | 0.5861 | 0.5148 | 0.5346 | 941 |
+
+**On the seven feeds whose quote grid is fine enough for a tick statistic to be
+about the law at all, no arm beats its floor at any sample size.** Test, floor
+and Monte Carlo floor all sit inside 0.49-0.51, and the test arm is *below* both
+floors on both views. That is the strongest statement this battery can make and
+it is stated with its scope: seven feeds, a tick arm and a window arm, 24 hours.
+
+**It also explains the 0.6026 pooled window floor**, which was the first thing
+the loop found. The floor is 0.5105 on the fine band and 0.7279 on the coarse
+one: the feed does not match *its own other half* on the four coarsely quoted
+feeds, and pooling them raised the floor for everybody. A floor is a property of
+the data, and this one was a property of four feeds out of twelve.
+
+**On the coarse band the bulk of the separability is not about the law either.**
+Two independent rebuilds of the identical law separate at **0.6897**, and the
+feed's own halves at 0.7279, against a real-against-rebuild 0.8371. So most of
+what a classifier finds there is path-to-path drift in the effective resolution,
+which no term in a generator can remove, because it is a property of the realised
+path rather than of the law. What is left over - about +0.11 of AUC above the
+feed's own floor - is real and this page has not closed it.
+
+**The one addition that would close it is outside the parameter budget, which is
+why it is written down rather than run.** Hand the rebuild the feed's realised
+price *level* through the sample - an hourly median, say - and its lattice
+resolution would track the feed's instead of wandering independently. That would
+almost certainly collapse the coarse band, and it would do so by giving the
+rebuild 24 numbers it is not allowed to have. The honest form of the result is
+therefore: **two numbers per instrument re-instantiate a Volatility index
+wherever the quote grid is fine enough to tell, and where it is not, the
+observation is dominated by an interaction between an absolute grid and a
+geometric price that two numbers cannot carry.**
+
+**And the `1/sqrt(n)` assumption behind every `n*` below was checked rather than
+assumed.** The same arm at a quarter, a half and all of the rows: the bootstrap
+half-width shrank **2.00x over 4x the rows**, against the 2.00x that scaling
+predicts. The AUC gap grew with n as expected (+0.018, +0.044, +0.038), which is
+why every finite `n*` is an upper bound on the separating sample rather than an
+estimate of it.
+
+### `n*`, per family and per arm - the headline this page owes
+
+An AUC at the floor is not proof of identity. It is failure to reject at the
+power available, and the honest form of the result is therefore the sample size
+at which each arm *would* reject:
+
+    n*  =  n x ( 1.96 x (se_test + se_floor) / (AUC_test - AUC_floor) )^2
+
+The two intervals are bootstrap intervals on a held-out sample, so their
+half-widths shrink as `1/sqrt(n)` while the gap between the AUCs does not - and
+that shrinkage was checked rather than assumed, at **2.00x over 4x the rows**
+against a predicted 2.00x. The gap *grows* with n in practice, because a boosted
+ensemble handed more rows finds more, so every finite figure below is an **upper
+bound** on the separating sample rather than an estimate of it. `inf` means the
+arm sits at or below its own real-against-real floor: no sample separates it by
+this battery, which is not the same as identity.
+
+`have` is what one class of the arm is drawn from - half the feed, because the
+other half is the floor - so an arm has already separated when `x over` is below
+one.
+
+| family | arm | gap over floor | `n*` | in ticks or bars | have | **x over** |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Volatility, fine band (7 feeds)** | window | -0.0066 | **inf** | **inf** | 176,000 | **inf** |
+| **Volatility, fine band (7 feeds)** | k-tuple | -0.0091 | **inf** | **inf** | 215,568 | **inf** |
+| Volatility, all 12 pooled | k-tuple | +0.0188 | 15,804 | 126,429 ticks | 362,718 | 0.35 |
+| Volatility, all 12 pooled | window | +0.0377 | 3,406 | 204,384 ticks | 362,718 | 0.56 |
+| Volatility, all 12 pooled | bar OHLC | +0.0144 | 23,742 | 712,271 bars | 475,255 | **1.50** |
+| Volatility, coarse band (4 feeds) | window | +0.1092 | 239 | 14,340 ticks | 55,000 | 0.26 |
+| Volatility, coarse band (4 feeds) | k-tuple | +0.0713 | 941 | 7,528 ticks | 73,568 | 0.10 |
 | Step Index | k-tuple | +0.0110 | 44,453 | 355,626 ticks | 43,196 | **8.2** |
 | Step Index | window | -0.0057 | **inf** | **inf** | 43,196 | **inf** |
 | Range Break 100 | k-tuple | +0.0132 | 25,351 | 202,810 ticks | 43,199 | **4.7** |
