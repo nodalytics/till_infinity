@@ -250,25 +250,32 @@ the sharpest of them because 0.870 and 0.909 are not inputs anywhere. Pooled by
 tick rate the rebuild reads **0.8702** and **0.9057** against the feed's 0.8698
 and 0.9084.
 
-**On bar returns the rebuild is indistinguishable, and by a margin.**
+**On bar returns the rebuild is indistinguishable on ten of twelve.** This table
+was re-measured after the seeding defect below was fixed, and it moved - see
+*What can be re-run and what is inherited*:
 
-| feed | KS D | 5% critical | n* | D, feed's own halves |
+| feed | KS D | 5% critical | `n*` bars | D, feed's own halves |
 | --- | --- | --- | --- | --- |
-| volatility_25_index | 0.00161 | 0.00509 | **1.4e6** | 0.00477 |
-| volatility_25_1s_index | 0.00188 | 0.00509 | **1.0e6** | 0.00517 |
-| volatility_50_1s_index | 0.00203 | 0.00509 | **8.9e5** | 0.00493 |
-| volatility_100_1s_index | 0.00220 | 0.00509 | **7.6e5** | 0.00811 |
-| volatility_10_index | 0.00234 | 0.00509 | **6.7e5** | 0.00363 |
-| volatility_75_index | 0.00337 | 0.00509 | **3.3e5** | 0.00536 |
-| volatility_100_index | 0.00433 | 0.00509 | **2.0e5** | 0.00771 |
-| volatility_50_index | 0.00500 | 0.00509 | **1.5e5** | 0.00812 |
-| *volatility_150_1s_index* | *0.01954* | *0.00509* | *9.7e3* | *0.02436* |
+| volatility_75_index | 0.00152 | 0.00509 | **1.6e6** | 0.00536 |
+| volatility_25_1s_index | 0.00187 | 0.00509 | **1.1e6** | 0.00517 |
+| volatility_75_1s_index | 0.00195 | 0.00509 | **9.7e5** | 0.00608 |
+| volatility_25_index | 0.00204 | 0.00509 | **8.8e5** | 0.00477 |
+| volatility_10_index | 0.00212 | 0.00509 | **8.2e5** | 0.00363 |
+| volatility_10_1s_index | 0.00249 | 0.00509 | **6.0e5** | 0.00631 |
+| volatility_50_index | 0.00280 | 0.00509 | **4.7e5** | 0.00812 |
+| volatility_100_1s_index | 0.00286 | 0.00509 | **4.5e5** | 0.00811 |
+| volatility_50_1s_index | 0.00315 | 0.00509 | **3.7e5** | 0.00493 |
+| volatility_250_1s_index | 0.00458 | 0.00509 | **1.8e5** | 0.00370 |
+| *volatility_100_index* | *0.00788* | *0.00509* | *6.0e4* | *0.00771* |
+| *volatility_150_1s_index* | *0.14621* | *0.00509* | *173* | *0.02436* |
 
-Eleven of twelve do not reject, against a pre-registered bar of three. **On nine
-of twelve the rebuild sits closer to the feed than the feed's first thirty days
-sit to its last thirty.** So `n*` for this family is **150,000 to 1.4 million
-one-minute bars**, against the 86,410 that exist - between two and sixteen times
-the whole store.
+Ten of twelve do not reject, against a pre-registered bar of three, and the two
+that do are the coarse pair: `volatility_100_index` at 13.5 lattice points per
+per-tick sigma and `volatility_150_1s_index` at 1.1. So `n*` for the sound ten is
+**180,000 to 1.6 million one-minute bars** against the 86,410 that exist -
+between two and nineteen times the whole store - and for the coarse two it is
+**60,000 bars and 173 bars**, which is the absolute-grid-against-geometric-price
+problem this page already names and not a defect in the law.
 
 **On tick returns seven of twelve reject, and the reason is ours.** The failures
 are not scattered across the family; they are a near one-for-one function of how
