@@ -15,14 +15,17 @@ conditions is already a statement about these price processes.
 The field this borrows from is largely classical results in borrowed notation, so
 the rule here is that **every quantum construction is scored against a classical
 control doing the same job, and where the control matches, the page says the
-framing is notation**. Two of the six sections below reach exactly that verdict
-and say so, one of them by proving an identity rather than measuring one, and a
-third measures the point past which the framing stops being notation.
+framing is notation**. Two of the seven sections below reach exactly that verdict
+and say so, one of them by proving an identity rather than measuring one, a third
+measures the point past which the framing stops being notation, and the last
+takes the one result with money attached to the desk's own code and finds that
+**most of it cannot be improved at all**, for a reason that is one line long.
 
-Four harnesses: [`quantimage.py`](harness/quantimage.py),
+Five harnesses: [`quantimage.py`](harness/quantimage.py),
 [`quantspec.py`](harness/quantspec.py),
 [`quantbridge.py`](harness/quantbridge.py),
-[`quantwigner.py`](harness/quantwigner.py). Each states its kill conditions in its
+[`quantwigner.py`](harness/quantwigner.py),
+[`quantdesk.py`](harness/quantdesk.py). Each states its kill conditions in its
 docstring before any number, and each section below ends with the ledger of which
 fired.
 
@@ -917,6 +920,284 @@ spectra, all of which are classical objects in quantum notation; it does **not**
 buy anything that needs a genuinely quantum state, and the test that would have
 detected one comes back with the lattice and nothing else. **That is the bound on
 the analogy, and it is now a measurement rather than an assumption.**
+
+## Six: what the reconstruction changes in numbers this desk already trades on
+
+Section three is the only result here with money attached, and it existed as a
+harness. This is what happens when it is pointed at the quantities the book
+actually computes. `quantdesk.py`. **Most of the answer is negative**, and the
+negative half is the more useful half, so it comes first.
+
+### The bound, which removes most of the claim before any measurement
+
+**`H` and `L` are the maximum and the minimum over the bar, exactly.** Any
+statistic that is a pure function of the extremes over a window whose ends are
+bar boundaries is therefore **already exact from bars** and cannot be improved by
+any reconstruction whatever. Checked rather than asserted: the largest difference
+between a coarse bar's extreme and the extreme of the fine bars inside it is
+**0.000e+00 over 34,542 bars**.
+
+That covers more of this desk than is comfortable:
+
+* **`levels.observe_wick` takes `done.extreme`**, the extreme price of a touch.
+  Over a whole number of bars that is `max(highs)` and is exact. The wick
+  statistics that `manage.advance` widens the trail with **need no change and
+  cannot be improved.**
+* **`shared/replay.py` tests `low <= stop` and `high >= target`.** A
+  single-barrier hit test over a bar is settled by `H` and `L`. **Barrier
+  crossing counts in the sense of "did it cross" are already exact.**
+* **`Ranges.parkinson`, `garman_klass` and `rogers_satchell`** are functions of
+  `(O, H, L, C)` and see everything there is of the extremes.
+
+What is left is the part of the path that is *not* an extreme: how far price
+moved, in what order it visited the extremes, and how many times it crossed a
+level. Three sections, and **one of the three pays**.
+
+### The prediction that made two of them fail, written before the run
+
+The bridge returns a **conditional mean**. A conditional mean is the right object
+for "where was price" and the **wrong** object for "how far did price move",
+because `Var(E[X])` is not `E[Var(X)]` - a posterior mean is smoother than its
+posterior. So it should win on ordering, where the question is about the order of
+events rather than their size, and **understate** realised volatility and
+crossing counts. That was pre-registered. Both halves happened.
+
+### Volatility: the reconstruction loses to a tool the desk already ships
+
+The control here is not linear interpolation - that would be meaningless - but
+the desk's **own range family** in `structures/vol/ranges.py`, which exists for
+exactly this job. Mean `log(estimate/truth)` against the fine bar's realised
+volatility, zero being unbiased:
+
+| book | Parkinson | **Garman-Klass** | Rogers-Satchell | close-to-close | linear | bridge | bridge+attain |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| volatility_75 | -0.091 | **-0.082** | -0.110 | -0.594 | -1.948 | -1.894 | -0.684 |
+| volatility_100 | -0.091 | **-0.082** | -0.108 | -0.606 | -1.960 | -1.915 | -0.682 |
+| step_index | -0.073 | **-0.059** | -0.083 | -0.580 | -1.934 | -1.900 | -0.659 |
+| range_break_100 | -0.337 | **-0.333** | -0.367 | -0.893 | -2.247 | -2.200 | -0.919 |
+| boom_500 | **+0.000** | -0.149 | -0.276 | -0.248 | -1.602 | -1.538 | -0.652 |
+| jump_75 | -0.111 | **-0.111** | -0.148 | -0.580 | -1.934 | -1.888 | -0.713 |
+| gold (real) | -0.049 | **-0.047** | -0.084 | -0.567 | -1.921 | -1.865 | -0.654 |
+| eurusd (real) | -0.056 | **-0.045** | -0.071 | -0.451 | -1.805 | -1.838 | -0.649 |
+
+**Kill condition 2 fired on every book.** Garman-Klass is within 5-8% of
+unbiased on the Gaussian feeds and on FX; the bridge understates by a factor of
+two and the containment bridge by a factor of seven. The reason is the
+pre-registered one and not a bug - a conditional mean is smooth, and smoothing is
+exactly what a volatility estimate must not do.
+
+**One detail worth keeping, because it is the only thing that would rescue it.**
+The attainment bridge's *dispersion* is competitive - sd of the log ratio 0.24 to
+0.41 against Garman-Klass's 0.24 to 0.30. It is **biased, not noisy**, and the
+bias is stable across the FX feeds (-0.628 to -0.681). A per-series debias
+constant would therefore work. It is still not worth doing, because Garman-Klass
+needs no constant and is already in the package.
+
+**Verdict: do not change `volatility.py`. The answer to "estimate fine-scale
+volatility from a coarse bar" is Garman-Klass, and the desk already has it.**
+
+### `mad_to_sigma`: the reconstruction makes it worse, and my prediction was wrong
+
+`volatility.py` measures `sqrt(E[r^2])/E[|r|]` per series rather than using the
+Gaussian `sqrt(pi/2)`, because [cascading.md](cascading.md) found the constant 23%
+low at 1m. Can a desk holding only coarse bars recover the fine constant?
+
+| book | **truth (fine)** | linear | bridge | bridge+attain | Gaussian |
+| --- | --- | --- | --- | --- | --- |
+| volatility_75 | 1.2529 | **1.2537** | 1.2543 | 1.0896 | 1.2533 |
+| step_index | 1.2581 | **1.2547** | 1.2557 | 1.0880 | 1.2533 |
+| range_break_100 | 2.3110 | **1.8416** | 1.8407 | 1.3370 | 1.2533 |
+| boom_500 | 1.9507 | 1.2485 | 1.2485 | 1.1291 | 1.2533 |
+| btc (real) | 1.6888 | **1.5403** | 1.5419 | 1.3439 | 1.2533 |
+| gold (real) | 1.4053 | **1.3669** | 1.3668 | 1.1973 | 1.2533 |
+| us100 (real) | 1.4875 | **1.5119** | 1.5131 | 1.2366 | 1.2533 |
+
+**Kill condition 3 fired.** Attainment pulls the ratio *toward* the Gaussian
+value and away from the truth on every book, because forcing a path to touch both
+extremes makes its sub-returns more uniform in size, which is the opposite of a
+fat tail.
+
+**And the pre-registration was wrong in an instructive way.** It predicted linear
+interpolation would return exactly 1.0, because a straight line has identical
+sub-returns and the desk clamps the ratio at 1.0. It returns 1.25 to 1.84. The
+error was mine: the ratio is pooled **across** bars, so linear interpolation
+measures the *coarse* bar's own ratio rescaled, not a degenerate within-bar one.
+A wrong prediction caught by the measurement is the system working, and it is
+recorded rather than quietly amended.
+
+Two things worth taking from that table anyway. The Gaussian synthetics' true
+ratio **is** the Gaussian constant, 1.2529 to 1.2581 against 1.2533 - which is
+[cascading.md](cascading.md)'s "72% of this book is genuinely Gaussian" confirmed
+from a third direction, and means there is nothing to correct there. And no
+method recovers Range Break's 2.311 or Boom's 1.951 from a coarse bar, so **a
+confined or jumping feed's ratio has to be measured at the resolution it will be
+used at.**
+
+### Ordering: this is the one that pays, and it is worth more than it looks
+
+`shared/replay.py` carries the comment **"Rule 3: the stop is checked first, so a
+bar touching both is a stop."** That is a convention, not a measurement, and it is
+the one question on this page that `(O, H, L, C)` genuinely cannot answer.
+Resolving it needs a **five-state** forward-backward rather than
+`quantbridge.py`'s four - that harness collapses both routes into one
+"both touched" state because all it needs is a conditional mean, and telling
+"reached the high first" from "reached the low first" needs them kept apart.
+
+**First, when it does not matter.** `replay.py` defaults `target_mult` to **6.0**,
+so a fresh entry's target is six times further than its stop and a bar must span
+seven stop widths to be ambiguous. Measured share of such bars: **0.00%, on every
+feed.** Rule 3 costs a fresh entry nothing, and that is the honest first sentence.
+
+**It matters once the stop has moved.** The same file raises the stop to
+break-even at `protect_r` and then trails it behind the running best, and
+`manage.advance` does the same thing live - so every winning position ends up
+carrying a stop a fraction of a bar range from price. That is the `mult = 1` and
+`mult = 2` regime, and there Rule 3 binds hard:
+
+| book | stop x mult | ambiguous | n | P(target first) | **bridge** | Rule 3 | gain |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| volatility_75 | 0.25x1 | 41.9% | 2412 | 0.518 | **0.834** | 0.482 | +0.352 |
+| volatility_100 | 0.25x1 | 42.3% | 2437 | 0.502 | **0.817** | 0.498 | +0.319 |
+| step_index | 0.25x1 | 42.9% | 2469 | 0.498 | **0.823** | 0.502 | +0.321 |
+| range_break_100 | 0.25x1 | 39.2% | 2253 | 0.502 | **0.682** | 0.498 | +0.184 |
+| boom_500 | 0.25x1 | 28.2% | 1046 | 0.393 | **0.909** | 0.607 | +0.302 |
+| jump_75 | 0.25x1 | 40.1% | 2298 | 0.500 | **0.830** | 0.500 | +0.330 |
+| btc (real) | 0.25x1 | 32.4% | 147 | 0.565 | **0.796** | 0.435 | +0.361 |
+| gold (real) | 0.25x1 | 40.6% | 106 | 0.472 | **0.802** | 0.528 | +0.274 |
+| eurusd (real) | 0.25x1 | 45.0% | 104 | 0.490 | **0.846** | 0.510 | +0.337 |
+| us100 (real) | 0.25x1 | 38.8% | 87 | 0.437 | **0.851** | 0.563 | +0.287 |
+
+**Rule 3 is a coin flip.** Its accuracy is 0.47 to 0.68 across 18 synthetic cells
+and 0.42 to 0.57 on the real ones - and on btc it is **worse than a coin**, 0.415
+at `0.35x1`, because that feed's ambiguous bars reach their high first more often
+than not. The reconstruction calls it right **66% to 93%** of the time.
+
+**Why the weakest cell is the interesting one.** `range_break_100` is the only
+feed where the bridge struggles - 0.66 to 0.68 against 0.82 elsewhere - and the
+reason is section two of this page: a confined process's interior is **not** a
+Brownian bridge, and section two measured exactly how it is not. Two independent
+routes to the same statement about the same instrument.
+
+### What Rule 3 costs, in points of risk, against `calibrating.md`'s floor
+
+The stop is `-1R` and the target `+multR`, so calling the wrong one costs
+`(1 + mult)` R. What matters is not the error rate but **whether the errors
+cancel**: Rule 3 always says "stop", so its error is a **one-sided bias on every
+backtest that uses it**, while the reconstruction's errors go both ways and
+largely cancel. [calibrating.md](calibrating.md)'s rule - a 95% interval on
+return-on-risk over `n` closes is about `330/sqrt(n)` points - says what `n` each
+is visible at:
+
+| book | stop x mult | ambiguous share of *resolving* bars | **Rule 3 bias** | bridge bias | detectable at |
+| --- | --- | --- | --- | --- | --- |
+| volatility_75 | 0.25x1 | 41.9% | **-43.4** | -1.0 | n ~ 58 |
+| volatility_100 | 0.25x1 | 42.3% | **-42.5** | +0.1 | n ~ 60 |
+| step_index | 0.25x1 | 42.9% | **-42.7** | +0.8 | n ~ 60 |
+| range_break_100 | 0.25x1 | 39.1% | **-39.3** | +2.3 | n ~ 71 |
+| jump_75 | 0.25x1 | 39.9% | **-39.9** | -0.2 | n ~ 68 |
+| boom_500 | 0.25x1 | 18.2% | **-14.3** | +1.6 | n ~ 534 |
+| eurusd (real) | 0.25x1 | 45.0% | **-44.2** | +1.7 | n ~ 56 |
+| gbpusd (real) | 0.25x1 | 44.6% | **-44.2** | -4.8 | n ~ 56 |
+| us100 (real) | 0.25x2 | 20.5% | **-17.4** | -4.0 | n ~ 359 |
+
+**Rule 3 biases a backtest by 9 to 44 points of risk per resolved trade, and
+`calibrating.md` says that is visible at 56 to 1,400 closes.** The desk has
+thousands. The bridge cuts it to **-9.6 to +6.9 points**, five to seventeen times
+smaller.
+
+The comparison that makes this matter: [calibrating.md](calibrating.md) reports
+that **no strategy-level claim smaller than 59 points means anything at n=29**,
+and that **the largest claim on `spending.md`'s strategy table is 34 points.**
+**Rule 3's bias is the same size as the effects the desk is trying to measure,
+and it points the same way every time.** A convention chosen for conservatism is
+contributing a systematic pessimism as large as the findings.
+
+### Crossings: the reconstruction is worse than the bar it came from
+
+A level crossing count is a local time, not an extreme, so `(O, H, L, C)` cannot
+see it. Mean crossings of the bar's mid-price per bar:
+
+| book | **truth** | a bar implies | linear | bridge |
+| --- | --- | --- | --- | --- |
+| volatility_75 | 2.944 | 1.000 | 0.699 | 0.699 |
+| step_index | 3.072 | 1.000 | 0.729 | 0.705 |
+| range_break_100 | 3.316 | 1.000 | 0.713 | 0.668 |
+| boom_500 | 1.802 | 1.000 | 0.736 | 0.736 |
+| eurusd (real) | 2.840 | 1.000 | 0.740 | 0.714 |
+
+The true path crosses its own mid **2.7 to 3.3 times a bar**; the bar implies
+one; the reconstruction says 0.67 to 0.74 and is therefore **worse than the bar's
+own implication**. The conditional mean is smooth and smooth paths do not
+oscillate. **Do not count level touches from a reconstructed interior.** A replay
+that counts them from bars is already undercounting by a factor of three, and
+this does not fix it.
+
+### What it costs to run, which decides research tool against package change
+
+4,096 bars, batched, on the lab:
+
+| | ms per bar |
+| --- | --- |
+| linear interpolation | 0.00008 |
+| bridge, containment | 0.046 |
+| **ordering, five-state** | **0.079** |
+| bridge, attainment | 0.206 |
+
+**It is a package change, not a research tool**, and by a wide margin - the
+ordering recursion is 79 microseconds a bar against a 60-second bar. One caveat
+and it is load-bearing: these are matrix recursions over a **shared price grid**
+bucketed by `sigma / (H - L)`, so the per-bar cost is a batched cost. A caller
+that reconstructs one bar at a time pays the bucket setup on every call and
+should not be written. In a replay that is free, because a replay has every bar
+in hand; live, it means accumulating bars and reconstructing a window rather than
+calling per tick.
+
+### The spec, which is the point of the section
+
+1. **Change `shared/replay.py`'s Rule 3.** Where a bar touches both barriers,
+   replace "the stop is checked first" with the five-state ordering probability,
+   and take the target when `P(target first) > 0.5`. It costs 0.079 ms a bar on
+   the ambiguous bars only - 0% of them at the shipping `target_mult = 6.0` and
+   10-43% once the stop has trailed up - and it removes a systematic -9 to -44
+   point bias per resolved trade.
+2. **Leave `structures/vol/volatility.py` alone.** Use `Ranges.garman_klass`,
+   which is already in the package, already unbiased to 5-8%, and beats every
+   reconstruction tried.
+3. **Leave the wick statistics alone.** `levels.observe_wick` reads an extreme
+   and extremes are exact from bars. There is nothing to improve.
+4. **Do not reconstruct interiors to count level touches.** It makes the
+   undercount worse.
+5. **Measure `mad_to_sigma` at the resolution it will be used at.** No
+   reconstruction recovers Range Break's 2.311 or Boom's 1.951 from a coarse bar,
+   and on the Gaussian feeds - 72% of the book - the true ratio is the Gaussian
+   constant and there was never anything to correct.
+
+**Ledger: two of eight fired, and both were predicted before the run.** Condition
+2 fired on volatility and condition 3 on `mad_to_sigma`, which is the conditional
+mean behaving as a conditional mean. The bound held at exactly zero, Rule 3's
+ambiguity cleared the 1% floor by a factor of forty, the ordering call beat the
+convention on all 18 cells, the effect cleared `calibrating.md`'s detection floor,
+the cost cleared a millisecond by a factor of five, and no two estimators agreed.
+
+### What this section does not say
+
+* **It measures an ingredient, not an end-to-end backtest.** Nothing here ran
+  `replay.py` with the correction in. The bias figures are what the misordering
+  is worth per resolved trade under a stated barrier geometry; the effect on any
+  particular published number needs the replay re-run.
+* **The ambiguous share depends on a geometry I chose.** Barriers are placed off
+  the open at a fraction of the bar's own range. A real trade's stop comes from
+  `push_vol` and its trail from `_trail_step`, neither of which is measured here,
+  so the 10-43% is illustrative of the regime and not a census of the book. The
+  *accuracy* comparison does not depend on it, because it conditions on
+  ambiguity.
+* **The real-instrument leg is small.** 224 to 454 coarse bars a feed and 46 to
+  147 ambiguous ones, because the lab's copy of `prices.db` reads back "database
+  disk image is malformed" on every real-instrument table and the leg had to run
+  against the local store. The synthetics carry the sample size - 5,757 coarse
+  bars and 1,046 to 2,469 ambiguous ones a feed - and the two agree on every
+  sign and roughly on every magnitude. **That corruption should be looked at
+  separately; it is not this page's finding but it is this page's obstacle.**
 
 ## Two questions that are closed, and one that is now answered
 
