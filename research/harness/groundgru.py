@@ -38,24 +38,57 @@ learned models here is that they are only worth anything when there is something
 to check them against, and a simulated generator is the one place in this
 folder where "is the learned object right" is a measurement.
 
-### Arm B: Boom 500, which is the family still separating
+### Arm B: does sequence ORDER carry anything the window features miss?
 
-`research/rebuilding.md`'s discriminator loop drove the largest univariate
-feature down from 0.186 over floor to 0.012 on the Volatility family, and stopped
-there. **Boom and Crash did not close**: `n_distinct` reads AUC 0.601 on
-`boom_500_index` and 0.308 on `crash_500_index` - a feature separating in *both*
-directions, which is not one defect - and `n* = 120` on the Boom 500 k-tuple arm,
-which is 960 ticks.
+**The reference path is not built from the published specification, and that is a
+correction to this harness's first design.** `research/rebuilding.md` established
+three defects in the Boom/Crash table tonight: the published `lambda`, `E[g]` and
+`E[J]` miss their own closure by 6-12% on all six feeds, so a compound Poisson
+built from them **is not even a martingale**; the grind is not the gamma its two
+published moments imply; and the spread is a second process nobody specified. A
+simulator built from that table is a hypothesis already falsified three ways, not
+a ground truth, and scoring a classifier against it would be measuring the
+specification's defects rather than the model's reach.
 
-Boom is also the family where **order** matters most, and order is exactly what
-the boosted arms cannot see: they are fed engineered windows, which are summary
-statistics that average order away. Grind and jump interleave; the grind is a
-gamma the published two moments do not pin; the spread is a second process nobody
-specified. A sequence model is the right shape for that and a window is not.
+So the reference is built from **the feed's own increments, resampled
+independently** - `rebuilding.md`'s `pool` arm, which is caught 0 of 24 where the
+`spec` arm is caught 24 of 24. That matches the marginal *exactly*, by
+construction, and destroys nothing but the order. Which makes the question
+sharper than the original one:
 
-So arm B asks one question: **does a GRU over the raw increment sequence beat a
-boosted window arm at telling a real Boom 500 from a rebuilt one?** If it does
-not, the window features already capture what is there, which is a clean result.
+> **Is there anything in the order of Boom 500's ticks that a model reading the
+> raw sequence can see and a model reading the marginal cannot?**
+
+Any AUC above the floor here is order and nothing else, because every other
+moment is identical by construction. And it is the question a recurrent net is
+actually for: `research/rebuilding.md`'s boosted arms are fed engineered windows,
+which are summary statistics that average order away.
+
+### Which ground truth, and where there is none
+
+The three tiers are not interchangeable and this harness is placed against them
+deliberately.
+
+**Tier 1 - the Volatility family and Step Index.** Parameters published rather
+than inferred and verified independently: realised volatility equal to the name
+on 12 of 12 within 0.49%, H = 0.50, kurtosis 3.00, and Step Index a fair coin to
+`p = 0.499734 +- 0.000220` over 5.2M flips. Ground truth means what it says here.
+It is still failure-to-reject rather than proof - `rebuilding.md`'s `n*` is
+infinite, which is "indistinguishable at the power we have" - so structure found
+on a Volatility feed is first a bug in the finder and second a discriminator
+floor that was not powerful enough, and the second is worth chasing.
+
+**Tier 2 - Boom and Crash.** No ground truth; the published spec is wrong three
+ways. Hence the pooled reference above.
+
+**Tier 3 - Range Break and Jump.** Incomplete, and two routes still disagree -
+`research/grounding.md` section two is one of the two. An open question being
+contributed to, not a truth to check against.
+
+**Arm A sits below all three**, because its processes are generated here with
+spectra known by construction rather than by publication. That is the one place
+in this folder where "is the learned object right" needs no caveat at all, which
+is why the method validation is put there and not on a feed.
 
 ## The floors, which are the part that decides whether any of it is readable
 
@@ -334,15 +367,26 @@ def gradient_check() -> dict:
 # --------------------------------------------------------------------------
 
 
-def windows(x: np.ndarray, seq: int, nrow: int, rng) -> tuple[np.ndarray, np.ndarray]:
-    starts = rng.choice(len(x) - seq - 1, size=min(nrow, len(x) - seq - 1), replace=False)
+def windows(x: np.ndarray, seq: int, nrow: int, rng, hstep: int = 1):
+    """Sequences and a target `hstep` ahead of their end.
+
+    `hstep` is the knob that decides whether the loss needs the slow mode at all.
+    At one step the best predictor of these processes is very nearly `x_t`
+    itself - `exp(-1/tau_1)` is 0.99 at `tau_1 = 100` - so a recurrent net can
+    read the answer off its last input and leave the hidden state unconstrained.
+    Pushing the target out to a fraction of the relaxation time is what puts the
+    slow mode in the gradient.
+    """
+    hi = len(x) - seq - hstep - 1
+    starts = rng.choice(hi, size=min(nrow, hi), replace=False)
     xs = np.stack([x[s : s + seq] for s in starts])[:, :, None]
-    ys = np.array([x[s + seq] for s in starts])
+    ys = np.array([x[s + seq + hstep - 1] for s in starts])
     return xs, ys
 
 
 def _one_arm_a(args) -> dict:
-    kind, tau1, seed, seq = args
+    kind, tau1, seed, seq, hfrac = args
+    hstep = max(1, int(round(hfrac * tau1)))
     rng = np.random.default_rng(seed)
     lam1 = 1.0 / tau1
     dvar = 1.0
@@ -357,7 +401,7 @@ def _one_arm_a(args) -> dict:
     xs = (x - x.mean()) / x.std()
     ur, _ = G.ulam_rates(xs, ep, max(2, int(round(0.5 * tau1))), nbin=96)
     net = GRU(1, HID, 1, rng)
-    xw, yw = windows(xs, seq, NROW, rng)
+    xw, yw = windows(xs, seq, NROW, rng, hstep)
     adam_fit(net, xw, yw, task="predict", rng=rng)
     _, _, hstates = net.forward(xw[:512])
     h0 = hstates.mean(axis=0, keepdims=True)
@@ -367,7 +411,7 @@ def _one_arm_a(args) -> dict:
     rates = -np.log(ev[:3]) if ev.size else np.array([np.nan])
     sv = np.linalg.svd(hstates - hstates.mean(axis=0), compute_uv=False)
     return {
-        "kind": kind, "tau1": tau1, "seq": seq,
+        "kind": kind, "tau1": tau1, "seq": seq, "hstep": hstep, "hfrac": hfrac,
         "true_l1": lam1, "ulam_l1": float(ur[0]), "gru_l1": float(rates[0]),
         "gru_tau1": 1.0 / float(rates[0]) if rates[0] > 0 else float("inf"),
         "gru_ladder": float(rates[1] / rates[0]) if rates.size > 1 and rates[0] > 0 else float("nan"),
@@ -403,35 +447,114 @@ def arm_a() -> dict:
     print("    Both estimate one object - the relaxation spectrum - and they share no")
     print(f"    arithmetic. Training window is {SEQ} steps throughout; the process's")
     print("    relaxation time is scanned across it.\n")
-    jobs = [(k, t, SEED + 17 * i, SEQ) for i, t in enumerate(TAUS) for k in ("spring", "box")]
+    jobs = [
+        (k, t, SEED + 17 * i, SEQ, hf)
+        for i, t in enumerate(TAUS)
+        for k in ("spring", "box")
+        for hf in (0.0, 0.25)
+    ]
     with ProcessPoolExecutor(max_workers=min(WORKERS, len(jobs))) as ex:
         rows = list(ex.map(_one_arm_a, jobs))
     print(
-        f"    {'truth':7s} {'true tau1':>10s} {'tau1/SEQ':>9s} {'Ulam tau1':>10s} "
+        f"    {'truth':7s} {'target':>7s} {'true tau1':>10s} {'tau1/SEQ':>9s} {'Ulam tau1':>10s} "
         f"{'GRU tau1':>9s} {'Ulam/true':>10s} {'GRU/true':>9s} {'GRU l2/l1':>10s} "
         f"{'true':>5s} {'rank':>5s}"
     )
-    for r in sorted(rows, key=lambda v: (v["kind"], v["tau1"])):
+    for r in sorted(rows, key=lambda v: (v["hfrac"], v["kind"], v["tau1"])):
         ut = 1.0 / r["ulam_l1"] if r["ulam_l1"] > 0 else float("inf")
         print(
-            f"    {r['kind']:7s} {r['tau1']:10.0f} {r['tau1'] / r['seq']:9.2f} {ut:10.1f} "
+            f"    {r['kind']:7s} {('t+' + str(r['hstep'])):>7s} {r['tau1']:10.0f} "
+            f"{r['tau1'] / r['seq']:9.2f} {ut:10.1f} "
             f"{r['gru_tau1']:9.1f} {ut / r['tau1']:10.3f} {r['gru_tau1'] / r['tau1']:9.3f} "
             f"{r['gru_ladder']:10.3f} {r['true_ladder']:5.1f} {r['effective_rank']:5.2f}"
         )
     fired = {}
     for r in rows:
-        key = f"{r['kind']}_tau{r['tau1']:g}"
+        key = f"{r['kind']}_tau{r['tau1']:g}_h{r['hstep']}"
         ratio = r["gru_tau1"] / r["tau1"]
         c2 = not (0.5 <= ratio <= 2.0)
         c3 = abs(math.log(max(ratio, 1e-12))) >= abs(
             math.log(max((1.0 / r["ulam_l1"]) / r["tau1"], 1e-12))
         )
         fired[key] = {**r, "cond2_fired": bool(c2), "cond3_fired": bool(c3)}
-    n2 = sum(v["cond2_fired"] for v in fired.values())
-    n3 = sum(v["cond3_fired"] for v in fired.values())
-    print(f"\n    condition 2 (GRU misses the truth by over 2x): fired {n2}/{len(fired)}")
-    print(f"    condition 3 (GRU no closer than Ulam):          fired {n3}/{len(fired)}")
+    for hf in (0.0, 0.25):
+        sel = [v for v in fired.values() if v["hfrac"] == hf]
+        n2 = sum(v["cond2_fired"] for v in sel)
+        n3 = sum(v["cond3_fired"] for v in sel)
+        tag = "one step ahead" if hf == 0.0 else f"{hf:g} of a relaxation time ahead"
+        print(f"\n    target {tag}:")
+        print(f"      condition 2 (GRU misses the truth by over 2x): fired {n2}/{len(sel)}")
+        print(f"      condition 3 (GRU no closer than Ulam):          fired {n3}/{len(sel)}")
     return fired
+
+
+def arm_b() -> dict:
+    """Does a GRU see order in Boom 500 that a marginal-matched resample lacks?"""
+    print("\n=== Arm B: order in Boom 500, against a marginal-matched reference ===\n")
+    try:
+        import feed
+    except ImportError:
+        print("    feed.py not importable - skipped.")
+        return {}
+    if not feed.healthy():
+        print("    terminal not answering - skipped, not silently empty.")
+        return {}
+    rows = feed.ticks("Boom 500 Index", 200_000, hours_back=72.0)
+    if len(rows) < 40000:
+        print(f"    only {len(rows)} ticks - condition 4, not scored.")
+        return {}
+    mid = np.array([r["mid"] for r in rows])
+    d = np.diff(mid)
+    d = (d - d.mean()) / d.std()
+    rng = np.random.default_rng(SEED)
+    half = d.size // 2
+    print(f"    {len(rows)} ticks; the reference is an iid resample of the SAME")
+    print("    increments, so the marginal is identical by construction and the")
+    print("    only thing left to find is order.\n")
+    arms = {
+        "real vs shuffled": (d[:half], rng.permutation(d[:half].copy())),
+        "FLOOR real vs real": (d[:half], d[half:]),
+        "FLOOR shuffled vs shuffled": (
+            rng.permutation(d[:half].copy()),
+            rng.permutation(d[half:].copy()),
+        ),
+    }
+    out = {}
+    print(f"    {'arm':30s} {'rows/class':>10s} {'GRU auc':>9s} {'logistic':>9s} {'n*':>12s}")
+    for name, (a, b) in arms.items():
+        nrow = min(NROW, (min(a.size, b.size) - SEQ - 2) // 1)
+        xa, _ = windows(a, SEQ, nrow, np.random.default_rng(1))
+        xb, _ = windows(b, SEQ, nrow, np.random.default_rng(2))
+        n = min(len(xa), len(xb))
+        x = np.concatenate([xa[:n], xb[:n]])
+        y = np.concatenate([np.ones(n), np.zeros(n)])
+        idx = rng.permutation(len(x))
+        x, y = x[idx], y[idx]
+        cut = len(x) // 2
+        net = GRU(1, HID, 1, np.random.default_rng(3))
+        adam_fit(net, x[:cut], y[:cut], task="classify", rng=np.random.default_rng(4))
+        sc, _, _ = net.forward(x[cut:])
+        a_gru = auc(sc[:, 0], y[cut:])
+        # The linear control on the identical rows: logistic regression on the
+        # raw sequence, which is the baseline models.md found beating trees,
+        # forests, cosine similarity and an MLP on this project's other problem.
+        flat = x.reshape(len(x), -1)
+        flat = np.hstack([np.ones((len(flat), 1)), flat])
+        w = np.zeros(flat.shape[1])
+        for _ in range(300):
+            pr = _sig(flat[:cut] @ w)
+            w -= 0.5 * (flat[:cut].T @ (pr - y[:cut]) / cut + 1e-3 * w)
+        a_lin = auc(flat[cut:] @ w, y[cut:])
+        st = nstar(a_gru, 0.5, len(x) - cut)
+        out[name] = {"n_rows": int(n), "gru_auc": a_gru, "logistic_auc": a_lin, "nstar": st}
+        print(
+            f"    {name:30s} {n:10d} {a_gru:9.4f} {a_lin:9.4f} "
+            f"{('inf' if not math.isfinite(st) else f'{st:.0f}'):>12s}"
+        )
+    print("\n    Condition 4 (the real-vs-real floor is not within 0.02 of 0.5):")
+    fl = out.get("FLOOR real vs real", {}).get("gru_auc", float("nan"))
+    print(f"      floor {fl:.4f}, fired: {abs(fl - 0.5) > 0.02}")
+    return out
 
 
 def main() -> None:
@@ -449,6 +572,7 @@ def main() -> None:
             json.dump(res, fh, indent=1, default=float)
         return
     res["arm_a"] = arm_a()
+    res["arm_b"] = arm_b()
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as fh:
         json.dump(res, fh, indent=1, default=float)

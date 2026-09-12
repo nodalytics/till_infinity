@@ -6,9 +6,9 @@ boundary conditions and spectra. This page asks the next question: **if these
 processes are quantum systems, can a learning algorithm be derived from the
 mechanics rather than borrowed from the literature and dressed in it?**
 
-Five constructions are derived here. Four turn out to be classical results in
-different notation or to lose to their own classical control, and the page says
-which and by how much; one is new, cheap, and answers a question
+Six constructions are derived here. Five turn out to be classical results in
+different notation or to lose outright to their own classical control, and the
+page says which and by how much; one is new, cheap, and answers a question
 `quantising.md` could not. Along the way the derivation gets
 pointed at `till_infinity/trading/barriers.py`, which landed this week and prices
 a stop-and-target geometry under an explicitly unvalidated Brownian assumption,
@@ -16,21 +16,55 @@ and **the largest number on this page is that `barriers.duration` understates ho
 long a real trade takes by 25% at tight geometries and by 96% at ten sigmas, on
 19 of 19 real feeds.**
 
-Four harnesses: [`groundlib.py`](harness/groundlib.py) (the shared estimators, no
+Six harnesses: [`groundlib.py`](harness/groundlib.py) (the shared estimators, no
 claims), [`groundstate.py`](harness/groundstate.py),
 [`groundbarrier.py`](harness/groundbarrier.py),
-[`groundslow.py`](harness/groundslow.py). Each states its kill conditions in its
+[`groundslow.py`](harness/groundslow.py),
+[`groundtick.py`](harness/groundtick.py),
+[`groundgru.py`](harness/groundgru.py). Each states its kill conditions in its
 docstring before any number, and each section ends with the ledger of which
 fired.
 
 **Scope.** The derivations are exact and need no data. The measurements are on
 `research.db` - 60 days of one-minute bars and a 24-hour tick snapshot across 53
-feeds, of which 19 are real markets and the rest are the Deriv synthetics whose
-generators [deriving.md](deriving.md) and [rebuilding.md](rebuilding.md) have
-pinned. Nothing here is a trading rule, and [deriving.md](deriving.md)'s theorem
-says nothing here can be: `E[net] = -(c/2) x turnover` for every predictable
-position on a martingale. What is on offer is a **better conditional estimate**,
-which is what [spending.md](spending.md) says the desk's weakness actually is.
+feeds, of which 19 are real markets - and, for section seven, on 200,000 ticks a
+symbol pulled live through [`feed.py`](harness/feed.py). Nothing here is a
+trading rule, and [deriving.md](deriving.md)'s theorem says nothing here can be:
+`E[net] = -(c/2) x turnover` for every predictable position on a martingale. What
+is on offer is a **better conditional estimate**, which is what
+[spending.md](spending.md) says the desk's weakness actually is.
+
+**Which ground truth, because there are three tiers of it and they are not
+interchangeable.** Every control on this page is placed against them
+deliberately.
+
+* **Tier 1 - the Volatility family and Step Index.** Parameters published rather
+  than inferred and verified independently: realised volatility equal to the name
+  on 12 of 12 within 0.49%, H = 0.50, kurtosis 3.00, Step Index a fair coin to
+  `p = 0.499734 +- 0.000220` over 5.2M flips. **Every positive control on this
+  page is from this tier** - sections five and seven both lean on it, and section
+  four uses it as the null for volatility persistence. It is still
+  failure-to-reject rather than proof: [rebuilding.md](rebuilding.md)'s `n*` is
+  infinite, which means indistinguishable *at the power we have*.
+* **Tier 2 - Boom and Crash.** No ground truth. The published `lambda`, `E[g]` and
+  `E[J]` miss their own closure by 6-12% on all six feeds, so a compound Poisson
+  built from them is not even a martingale; the grind is not the gamma its two
+  moments imply; the spread is a second process nobody specified. **This page
+  never scores anything against a Boom simulator.** It uses the Boom *feed* as a
+  negative control - the closed form fails on the data, which needs no
+  specification to be true - and where section eight needs a reference path it
+  builds one from the feed's own increments rather than from the table.
+* **Tier 3 - Range Break and Jump.** Incomplete, and two routes disagree.
+  **Section two of this page is one of the two routes**, so it is written as a
+  contribution to an open question and not as a check against a known answer.
+
+The awkward shape of that, stated plainly because it governs what any of this can
+be worth: **ground truth is solid exactly where [deriving.md](deriving.md)'s
+theorem says no method can profit, and absent or moving exactly where the
+specification is still being repaired.** So method validation belongs on tier 1,
+identification is worth more than prediction on tiers 2 and 3, and the one place
+with no caveat at all is section eight's arm A, whose processes are generated in
+this harness with spectra known by construction rather than by publication.
 
 ## One: the box and the spring are one formula, not two facts
 
@@ -758,6 +792,109 @@ difference is small in absolute terms and the direction is the interesting part:
 **the desk is being filled worse than the quote rate says it should be**, which
 is slippage that is not overshoot.
 
+## Eight: a recurrent net as an identification instrument, and the operator that beats it
+
+A recurrent net's hidden state **is** a learned latent state-space model, and the
+eigenvalues of its recurrent Jacobian `dh_{t+1}/dh_t` are its relaxation modes -
+the same object sections one to three estimate, approached from the other side.
+One is a nonparametric bin count on an observed state; the other is a
+gradient-trained latent. They share no arithmetic. So they can be run **against**
+each other rather than beside each other, and [`groundgru.py`](harness/groundgru.py)
+does, on processes generated in the harness whose spectra are known by
+construction - the one place on this page needing no caveat about whose ground
+truth it is.
+
+There is no torch on the lab, so the GRU is one layer of numpy with hand-written
+backpropagation through time, which is the same reason `rebuildgen.py` carries a
+hand-written gradient booster. **Condition 1 gradient-checks it before any data
+is loaded**, and it fired on the first run at a relative error of 1.15e-05
+against a threshold of 1e-6. The cause was the check: the error *falls* as the
+finite-difference step grows - 1.15e-05 at 1e-6, 6.6e-07 at 1e-5, 8.2e-07 at
+1e-4 - which is float64 cancellation in the loss difference and not a wrong
+derivative. At the worst coordinate the two agree to seven parts in 1e11. The
+step was moved to 1e-5 and the threshold left where it was.
+
+### Arm A: the net does not find the spectrum, and the operator does
+
+Training window 64 steps throughout; the process's relaxation time scanned from a
+sixteenth of it to six times it; and the target run two ways - one step ahead,
+and a quarter of a relaxation time ahead, which puts the slow mode squarely in
+the loss.
+
+| truth | true `tau_1` | Ulam `tau_1` | Ulam / true | GRU `tau_1`, t+1 | GRU / true | GRU `tau_1`, t+h | GRU / true |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| box | 4 | 4.0 | 0.995 | 3.3 | 0.834 | 3.3 | 0.834 |
+| box | 10 | 9.9 | 0.990 | 2.6 | 0.259 | 2.9 | 0.289 |
+| box | 25 | 25.3 | 1.010 | 2.5 | 0.099 | 2.6 | 0.102 |
+| box | 60 | 58.4 | 0.973 | 1.6 | 0.027 | 3.0 | 0.050 |
+| box | 150 | 142.8 | 0.952 | 1.5 | 0.010 | 5.1 | 0.034 |
+| box | 400 | 423.4 | 1.059 | 15.2 | 0.038 | 1.8 | 0.004 |
+| spring | 25 | 25.7 | 1.029 | 2.1 | 0.083 | 2.0 | 0.082 |
+| spring | 150 | 145.5 | 0.970 | 2.1 | 0.014 | 2.4 | 0.016 |
+| spring | 400 | 359.1 | 0.898 | 4.7 | 0.012 | 10.6 | 0.026 |
+
+**Ulam recovers the truth at every timescale from 4 to 400 steps and on both
+truths: 0.898 to 1.059 of it, twelve cells out of twelve.** The GRU's implied
+relaxation time sits between **1.5 and 15 steps whatever the truth is** - it is
+very nearly a constant, and it is a property of the architecture rather than of
+the process. Condition 2 fired on 10 of 10 cells at one step ahead and 10 of 12
+at the longer horizon; **condition 3 - the net lands no closer to the truth than
+Ulam does - fired on 22 of 22.**
+
+The obvious objection was tested before the result was written down. At one step
+ahead the best predictor of these processes is very nearly `x_t` itself, because
+`exp(-1/tau_1)` is 0.99 at `tau_1 = 100`, so the loss never asks the hidden state
+for anything and the Jacobian is free to be whatever initialisation left it.
+Pushing the target to a quarter of a relaxation time removes that excuse and
+**changes nothing**: 0.050, 0.034, 0.004 on the box at 60, 150 and 400 steps. The
+hidden state's effective rank falls from 4.1 to 1.7 as the timescale grows, which
+is the same thing seen from the other side - the net uses *less* of its state as
+the process gets slower, not more.
+
+So the verdict is unambiguous and it is the one the section was built to be able
+to reach: **the transfer operator is the better instrument, by two orders of
+magnitude, on the one question where both are estimating the same object.** A
+GRU's recurrent Jacobian is not a spectrum estimator. This is the third time on
+this page that a learned object has lost to a cheaper classical one, and the
+third different route to the same bound.
+
+### Arm B: the floor fired, and that is the result
+
+`research/rebuilding.md`'s discriminator loop closed the Volatility family and
+**did not close Boom and Crash**, where `n_distinct` separates in both directions
+at AUC 0.601 and 0.308. Boom is also where order should matter most - grind and
+jumps interleave - and order is exactly what a boosted window arm averages away.
+
+The reference path is **not** built from the published table, because that table
+is falsified three ways (the tiering above). It is the feed's own increments
+resampled independently, which matches every moment exactly and destroys nothing
+but the order. So the question becomes as sharp as it can be: **is there anything
+in the order of Boom 500's ticks that the marginal does not already contain?**
+
+| arm | rows/class | GRU AUC | logistic AUC | `n*` |
+| --- | --- | --- | --- | --- |
+| real against marginal-matched shuffle | 8,000 | **0.4978** | 0.5002 | 2,513,759 |
+| **FLOOR: real against real** | 8,000 | **0.5210** | 0.5048 | 27,846 |
+| FLOOR: shuffle against shuffle | 8,000 | 0.4908 | 0.5227 | 143,755 |
+
+**Condition 4 fired.** The real-against-real floor is 0.5210, not within 0.02 of
+0.5 - so two disjoint halves of the same feed separate *further* than the test
+arm does. The honest report is not "the GRU found no order"; it is that **this
+harness cannot answer the question at this sample**, because its own floor is
+wider than any effect it could have detected. The test arm's `n*` is 2.5 million
+rows against the 8,000 it has.
+
+The floor's failure is itself a small finding and it points where
+`rebuilding.md` already pointed. Two halves of 200,000 Boom 500 ticks span
+different sessions over 72 hours, and something drifts between them - which is
+consistent with the spread being a second process nobody has specified. It is
+named rather than chased, because condition 7 forbids reading a claim off a
+classifier without then measuring the thing it points at, and that measurement is
+not in this page.
+
+The linear control matches the net everywhere - 0.5002 against 0.4978 on the test
+arm - so there is no architecture advantage to report either way.
+
 ## Running it
 
 ```bash
@@ -829,12 +966,26 @@ has to be accounted for.
   hyperparameter really is readable off a spectrum. It then fails to transfer to
   a delay embedding, whose second eigenvalue is 0.00 where the spectrum says
   0.25, and that failure is the more transportable half.
-* **The bound, again.** Three learned objects were built here and every one is
-  beaten by something simpler: a Kramers-Moyal generator beats the derived ladder
-  on which-confinement, the feed's own return histogram beats the learned
-  volatility operator on barrier probability, and PCA and a 20-bar average both
-  beat TICA on volatility. That is a measurement of how far the framing goes, and
-  it goes about as far as `quantising.md` said it would.
+* **That the duration excess has a mechanism with a sign.** Real feeds carry tick
+  autocorrelation of -0.28 to -0.05 where the two synthetics carry -0.001 and
+  +0.001, the variance ratio explains 29% to 59% of the excess, and **BTCUSD -
+  the one feed with positive tick autocorrelation - is the one feed that resolves
+  faster than the law**, at 0.734. A one-parameter correction that predicts the
+  exception as well as the rule.
+* **That a GRU's recurrent Jacobian is not a spectrum estimator.** Nobody had
+  checked, the check is cheap, and the answer is decisive: Ulam recovers a known
+  relaxation time to within 10% at every scale from 4 to 400 steps while the net
+  reads 1.5 to 15 steps whatever the truth is, on both a one-step and a
+  quarter-relaxation-time loss. That is a negative result about a fashionable
+  object, measured against ground truth that was generated rather than published.
+* **The bound, four times over.** Four learned objects were built here and every
+  one is beaten by something cheaper and classical: a Kramers-Moyal generator
+  beats the derived ladder on which-confinement, the feed's own return histogram
+  beats the learned volatility operator on barrier probability, PCA and a 20-bar
+  average both beat TICA on volatility, and Ulam's method beats a recurrent net
+  on its own latent spectrum by two orders of magnitude. That is a measurement of
+  how far the framing goes, and it goes about as far as `quantising.md` said it
+  would.
 
 ## What this does not say
 
@@ -850,11 +1001,14 @@ has to be accounted for.
   power gate and is not reported. The density and the dynamics disagree on RB100
   by 2.9 replicate standard deviations and this page does not resolve which is
   right - it says the disagreement is itself informative and leaves it there.
-* **The barrier legs are bar-monitored.** `barriers.py`'s own headline correction
-  is that a real stop is hit on a tick and the shift falls as `B/sqrt(n)`. Every
-  number in section five is the close-monitored case, which is the regime where
-  `B = 0.5826` is validated; the tick-monitored case is section five's obvious
-  next run and is not done here.
+* **Section five is bar-monitored and section seven is tick-monitored, and both
+  are on the mid.** A stop fills at the bid, and on the real feeds the spread runs
+  1.65 to 9.06 tick-sigmas, so the tight tick geometries sit *inside the quote*
+  and only the 20:20 row there is a statement about a price process.
+* **Section eight's arm B is void by its own floor**, and the GRU result in arm A
+  is one architecture, one layer, sixteen hidden units and two losses. It is
+  evidence that this object does not recover a spectrum, not that no recurrent
+  architecture could.
 * **The duration excess is measured on 60 days.** It is tight across nineteen
   instruments, which is the argument for transporting it, and it has not been
   tested across eras.
@@ -878,10 +1032,12 @@ has to be accounted for.
 3. **Do not build the volatility-regime operator into anything.** Its persistence
    is worth nothing - the shuffled control matches it - and on the one quantity
    where it might have helped, the duration, it is worse than the closed form.
-4. **Run the barrier legs on ticks.** `feed.py` now reaches 200,000 ticks a
-   symbol at a 146ms mean gap, and `barriers.py`'s whole monitoring-rate
-   correction is untested on real feeds. That is the measurement this page most
-   obviously lacks.
+4. ~~**Run the barrier legs on ticks.**~~ **Done, in section seven, and it
+   agrees.** The law is exact on the two tier-1 synthetics at tick resolution -
+   every `z` under 0.5 and durations at 0.99 to 1.08 - and the real feeds'
+   duration excess reproduces at 1.18 to 1.49 from a different data source at a
+   600 times finer monitoring scale. What is still missing is the *bid* replay: a
+   stop fills at the bid and every number here is on the mid.
 5. **Use the static ladder, not the transition matrix, when episodes are short.**
    At Range Break's sample size it separates box from spring at a single-cut
    error of 0.003 against 0.025, and it costs one histogram.
@@ -896,3 +1052,10 @@ has to be accounted for.
    feed.** It costs one SVD, it has a shuffled floor that is honest, and a feed
    whose `rho_1` sits on that floor cannot support a linear model of any order.
    It would have said in advance that section six was not worth running.
+9. **Do not read a spectrum off a recurrent net.** Its Jacobian reports its
+   architecture, not the process, and the estimator it is being compared against
+   is two orders of magnitude better and costs a histogram.
+10. **Fix arm B's floor before re-running it.** Two halves of 200,000 Boom 500
+    ticks separate at AUC 0.521, which is wider than any effect that arm could
+    detect, so the question of whether tick *order* carries anything on Boom is
+    still open. A within-session split is the obvious repair and it is one line.
