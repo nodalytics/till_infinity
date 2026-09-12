@@ -62,14 +62,45 @@ below the one the research page gives - a seventh of the hit rate.
 and `research/twins.md` establish as geometric Brownian motion with a published
 sigma, H = 0.50 and kurtosis 3.00. There the assumption is not an assumption.
 
-**On real markets it is a better prior than the continuous form and is not
-validated.** Gold and the majors have fat tails, volatility clustering and drift,
-and `research/cascading.md` measures FX running 27% above the Gaussian
-`MAD_TO_SIGMA` at one minute. What carries across is the *direction and rough
-size* of the correction - a near barrier is crossed by an overshoot that matters
-more the nearer it is - not the third decimal. Treat a figure from here on a real
-feed as a sharp prior to be journalled against outcomes, which is why
-`expectancy` is published on the intent rather than wired into a refusal.
+**On real markets it is a better prior than the continuous form and was not
+validated when this module was written.** It has been since - see below - and the
+prior was right about its own limits.
+
+## Measured, 2026-09-12, four arms on 19 feeds out of sample
+
+`research/grounding.md` tested the law against the closed form, an exact
+propagation of the same Gaussian law, the feed's own return histogram, and a
+learned volatility-regime operator. Then again at **tick** resolution on
+`feed.py`'s millisecond stamps, which is the scale this module's headline
+correction is actually about and which a bar replay cannot reach.
+
+* **Where the assumption holds, the law is exact.** On the six Volatility
+  indices every interval covers zero; on Volatility 75 and Step Index at tick
+  resolution every `z` is under 0.5 and durations land at **0.99 to 1.08**.
+* **Where it does not, it fails loudly and correctly.** Boom 500 is off by
+  **-32 standard errors** at tick resolution and 55 on bars. That is a compound
+  Poisson refusing to be a diffusion, which is the right answer.
+* **On real feeds the probability is nearly right and the duration is not.**
+  A 3:1 target measures **0.3147** against the form's 0.3064 - understating by
+  **0.83 points, [0.52, 1.13]** - and it is mirror-antisymmetric, so symmetric
+  geometries are unbiased. Trades resolve **1.18x to 1.49x slower** than
+  `duration` says.
+
+**The mechanism is measured and its sign flips**, which is what makes it a cause
+rather than a correlation: real feeds carry tick autocorrelation of **-0.28 to
+-0.05** where the synthetics carry -0.001, the variance ratio explains **29% to
+59%** of the duration excess, and BTCUSD - the one feed with *positive*
+autocorrelation - is the one feed that resolves **faster** than the law.
+
+So on a real feed, read `duration` as a floor: mean reversion at tick scale makes
+a barrier take longer to reach than a driftless walk would. That matters most for
+`hold_covers`, which compares the clock against exactly this number - a geometry
+reading 87% covered is closer to 60% once the excess is applied.
+
+Treat a figure from here on a real feed as a sharp prior journalled against
+outcomes, which is why `expectancy` is published on the intent rather than wired
+into a refusal. The journal is what turned the paragraph above from a caveat into
+a measurement.
 """
 
 from __future__ import annotations

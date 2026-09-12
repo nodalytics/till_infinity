@@ -78,6 +78,50 @@ rather than believed.
 | [auditing.md](auditing.md) | **the corpus, audited** - forty-six pages judged against `calibrating.md`'s measured false-positive rates, with every cut the closes export can reproduce re-run under the correction rather than argued from. **Five withdrawals**: `spending.md`'s `snap` row; `instruments.md`'s instrument ranking (55 rows, 13 testable, **71.6%** family-wise, none survives); `aligning.md`'s alignment gate **at 3m**, which is **z = +1.78, p = 0.074** on that page's own counts and carries a live recommendation; five of the seven survivors in `exiting.md`'s twenty-one-dimension cut, controlled against three random buckets; and `spread_over_risk`. The sharpest case is **`confluence-scalp`, turned on and off within a day** on a 10-close row and a 30-close row whose bootstrap endpoints are **-0.04** and **-0.018** - a t interval covers zero on both, and the two constructions differ by 7.70% against 4.40% at these sizes. `fade-to-value` is the one row that survives correction and is the one that was left running. The folder's own discipline mostly holds: **no claim is withdrawn here because its control failed to catch something**, and `twins.md` (bar set in code before 916,248 comparisons), `cascading.md` (five control arms before any instrument was read) and `convexity.md` (counts its own comparison budget) are better than what this audit recommends. What moves is the cut table with no interval on it |
 | [inert.md](inert.md) | **the catalogue** - eighteen features that shipped, configured, logged correctly and did nothing. The most common defect in this repository, and the one a result is most likely to be built on top of: `tests/test_published.py` is the gate that now fails when a published feature is constant |
 
+## "We know the generator" is true of one tier and not the others
+
+This claim is load-bearing across [deriving.md](deriving.md),
+[rebuilding.md](rebuilding.md), [quantising.md](quantising.md) and
+[grounding.md](grounding.md), and it gets stated too broadly - including by me,
+on 2026-09-12, to an agent that was about to score a learned object against
+"ground truth". It holds in three tiers and only the first deserves the phrase.
+
+**Tier 1 - the Volatility family and Step Index. Ground truth is real.** The
+parameters are published rather than inferred, and verified independently:
+realised volatility equals the name on 12 of 12 within **0.49%**, all twelve
+within two standard errors over **916,248** comparisons, exactly Brownian at
+H = 0.50 and kurtosis 3.00, Step Index a fair coin to **p = 0.499734 ±
+0.000220** over 5.2M flips, and closed form, Monte Carlo and data agreeing to
+**0.1-0.4%**.
+
+**But even here it is failure-to-reject, not proof.** `rebuilding.md`'s `n*`
+infinite means indistinguishable *at the power we have*, and its discriminator
+floors at 0.48 rather than establishing identity. A method that finds structure
+on a Volatility feed is a bug first and a discovery second - but it is allowed to
+be the second, and saying so is the difference between a bound and a belief.
+
+**Tier 2 - Boom and Crash. There is no ground truth; the published spec is
+wrong.** Three defects, all measured: the published `lambda`, `E[g]` and `E[J]`
+miss their own closure by **6-12% on all six feeds**, so a compound Poisson built
+from them is not even a martingale; the grind **is not a gamma**, its published
+two moments implying a density that is zero at the origin where the feed's is
+flat; and the spread is a **second process that is not specified at all**. A
+simulator built from that table is a falsified hypothesis, not a reference.
+Build from the feed's own marginals - `rebuilding.md`'s `pool` arm is caught 0 of
+24 where `spec` is caught 24 of 24 - and say that is what was done.
+
+**Tier 3 - Range Break and Jump. Incomplete, and two routes disagree.** The
+shared-60 width is withdrawn, RB200 does not converge, and the ladder excludes
+the hard box at 3.4-4.2 sd while landing *below* the spring. An open question to
+contribute to, not a truth to check against.
+
+The shape of it, which is awkward and worth saying plainly: **ground truth is
+solid exactly where no method can profit, and absent or moving exactly where the
+specification is still being repaired.** So method *validation* belongs on tier
+1, and the identification work is worth more than the prediction work on tiers 2
+and 3.
+
+
 Designs nobody has built and measurements nobody has taken live in
 [planned/](planned/) - the one thing that must not sit beside documentation of
 things that exist, because that is where a reader cannot tell the difference.
