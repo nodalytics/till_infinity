@@ -196,3 +196,112 @@ def test_the_characterisation_fixture_still_says_what_it_said():
     #
     #   exit 101.5 - 0.025 = 101.475, and (101.475 - 100.025) / 1.0 = 1.45
     assert r == pytest.approx(1.45, abs=0.001)
+
+
+# ---------------------------------------------------- rule 3, and declining it
+
+
+#: A bar that touches both barriers. The trade is a long at 100 with a 1.0 stop,
+#: so the stop rests at 99; `target_mult` 1.0 on a 1.0v push puts the target at
+#: 101. This bar opens at 100 and reaches both.
+BOTH = (100.0, 101.5, 98.5, 100.0)
+TIGHT = {"target_mult": 1.0}
+
+
+def test_rule_three_still_says_stop_by_default():
+    """The convention is kept as the default so an existing result reproduces.
+
+    Changing it silently would restate every conclusion this kernel has already
+    produced without saying which moved.
+    """
+    got = walk(bars(BOTH), 0, trade(), cost=0.0, hold=5, policy=TIGHT)
+    assert got is not None
+    assert got[1] == "stop"
+    assert got[0] == pytest.approx(-1.0)
+
+
+def test_an_ambiguous_bar_can_return_the_expected_r_instead_of_a_guess():
+    """`always stop` is 0.47-0.68 accurate and 0.415 on btc - worse than a coin.
+
+    Because it always says the same thing its error is a one-sided bias rather
+    than noise, worth -9 to -44 points of risk per resolved trade, against a
+    largest strategy-table claim of 34 points. The weighted value is not a
+    better guess at which barrier came first; it is a refusal to guess, and over
+    many trades it is unbiased where a guess is not.
+    """
+    got = walk(bars(BOTH), 0, trade(), cost=0.0, hold=5, policy=TIGHT, ambiguous="expected")
+    assert got is not None
+    assert got[1] == "both", "the exit kind says the bar was ambiguous"
+    # Strictly between the two outcomes it is refusing to choose between.
+    assert -1.0 < got[0] < 1.0
+
+
+def test_a_bar_opening_midway_between_the_barriers_is_a_coin():
+    """The property that makes this a refusal rather than a different guess: it
+    cannot manufacture a direction the bar does not contain."""
+    from till_infinity.shared.replay import _first_target
+
+    assert _first_target(100.0, 99.0, 101.0, 101.5, 98.5) == pytest.approx(0.5)
+    # And an open sitting on one barrier leans towards it.
+    assert _first_target(99.1, 99.0, 101.0, 101.5, 98.5) < 0.5
+    assert _first_target(100.9, 99.0, 101.0, 101.5, 98.5) > 0.5
+
+
+def test_the_weighting_leans_towards_the_nearer_barrier():
+    """An open next to the stop should resolve mostly as a stop, and the
+    expected R should sit near -1 rather than in the middle."""
+    near_stop = walk(
+        bars((99.1, 101.5, 98.5, 99.1)),
+        0,
+        trade(),
+        cost=0.0,
+        hold=5,
+        policy=TIGHT,
+        ambiguous="expected",
+    )
+    near_target = walk(
+        bars((100.9, 101.5, 98.5, 100.9)),
+        0,
+        trade(),
+        cost=0.0,
+        hold=5,
+        policy=TIGHT,
+        ambiguous="expected",
+    )
+    assert near_stop is not None
+    assert near_target is not None
+    assert near_stop[0] < near_target[0]
+
+
+def test_a_fresh_entry_is_never_ambiguous_at_the_default_target():
+    """Rule 3 costs a fresh entry nothing - measured at 0.00% of bars on every
+    feed at `target_mult` 6.0, which is this module's own default. It binds once
+    the stop has trailed up near price, which is where every winner ends up."""
+    rows = bars((100.0, 101.5, 98.5, 100.0), *[(100.0, 100.0, 100.0, 100.0)] * 5)
+    default = walk(rows, 0, trade(), cost=0.0, hold=6, policy={})
+    weighted = walk(rows, 0, trade(), cost=0.0, hold=6, policy={}, ambiguous="expected")
+    assert default == weighted, "no bar is ambiguous, so the setting cannot matter"
+
+
+def test_the_shift_here_is_the_one_trading_derives():
+    """`shared` sits under `trading` and must not import upwards, so the constant
+    is duplicated. This is what stops the copies drifting apart."""
+    from till_infinity.shared import replay as shared_replay
+    from till_infinity.trading import barriers
+
+    assert shared_replay.SHIFT == barriers.SHIFT
+
+
+def test_close_only_replays_are_never_ambiguous():
+    """A close-only walk sees one price a bar, so no bar can touch both."""
+    got = walk(
+        bars(BOTH),
+        0,
+        trade(),
+        cost=0.0,
+        hold=5,
+        policy={**TIGHT, "close_only": True},
+        ambiguous="expected",
+    )
+    assert got is not None
+    assert got[1] != "both"

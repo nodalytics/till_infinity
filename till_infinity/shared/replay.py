@@ -34,7 +34,20 @@ So the walk lives here, linted and tested, and the harnesses import it.
    inside a bar is not knowable from OHLC.
 2. **A bar that opens through a level fills at the open.** Filling at the level
    pays the trade a price the market never offered.
-3. **A stop and a target both touched in one bar resolve as the stop.**
+3. **A stop and a target both touched in one bar resolve as the stop** - which
+   is a convention, not a rule, and `ambiguous="expected"` is the alternative.
+   Measured on 2026-09-12 against a five-state forward-backward reconstruction
+   over 18 synthetic cells, "always stop" is **0.47 to 0.68 accurate** and on
+   btc **0.415 - worse than a coin.** Because it always says the same thing its
+   error is a one-sided bias rather than noise, worth **-9 to -44 points of risk
+   per resolved trade**, and `research/calibrating.md` puts the largest claim on
+   `research/spending.md`'s strategy table at 34 points. **The bias is the size
+   of the findings and it points the same way every time.**
+
+   It costs a *fresh* entry nothing: at `target_mult` 6.0, this module's own
+   default, **0.00% of bars are ambiguous** on every feed tested. It binds once
+   the stop has trailed up near price, which is where `manage.advance` puts
+   every winner - 10% to 43% of resolving bars.
 4. **The spread is charged on both legs**, so a round trip pays one spread.
 5. **A stop that cannot fire does not move.** Rule 1, restated for the case that
    broke it.
@@ -75,6 +88,37 @@ Trade = Mapping[str, Any]
 def _number(source: Mapping[str, Any], key: str, default: float = 0.0) -> float:
     got = source.get(key)
     return float(got) if isinstance(got, int | float) else default
+
+
+#: The Broadie-Glasserman-Kou continuity correction, in units of the bar's own
+#: range. Duplicated from `trading/barriers.SHIFT` rather than imported: `shared`
+#: sits **under** `trading` and a module here reaching up into it would invert
+#: the layering for one constant. The tests assert the two agree, so a change to
+#: either fails rather than drifts.
+SHIFT = 0.5826
+
+
+def _first_target(opened: float, stop: float, target: float, high: float, low: float) -> float:
+    """P(the target was reached first), given a bar that touched both.
+
+    The first-passage form `trading/barriers.probability` derives, with the
+    distances measured **from the bar's open** and expressed in units of the
+    bar's own range - which is the only volatility scale a single bar carries.
+
+    Nearer barrier first, in proportion, with the overshoot pushing both walls
+    out equally so an open exactly between them is a coin. That last property is
+    what makes this a refusal to guess rather than a different guess: it cannot
+    manufacture a direction the bar does not contain.
+    """
+    span = max(high - low, 0.0)
+    if span <= 0:
+        return 0.5
+    to_stop = abs(opened - stop) / span
+    to_target = abs(opened - target) / span
+    total = to_stop + to_target + 2.0 * SHIFT
+    if total <= 0:
+        return 0.5
+    return (to_stop + SHIFT) / total
 
 
 def _risk_price(trade: Trade, policy: Mapping[str, Any], unit: float) -> float | None:
@@ -122,6 +166,7 @@ def walk(
     cost: float,
     hold: int,
     policy: Mapping[str, Any],
+    ambiguous: str = "stop",
 ) -> tuple[float, str] | None:
     """R and how the trade ended - "stop", "target" or "hold" - or None.
 
@@ -132,6 +177,20 @@ def walk(
 
     The exit kind matters as much as the R. A policy that lifts mean R while
     being stopped just as often has bought something other than what was asked.
+
+    `ambiguous` decides a bar that touched both barriers - see rule 3.
+
+    * `"stop"` keeps the historical convention and its one-sided bias, so an
+      existing result is reproducible rather than silently restated.
+    * `"expected"` returns the **probability-weighted R** and the exit kind
+      `"both"`. Not a better guess at which happened - a refusal to guess. Over
+      many trades the weighted value is unbiased where a guess is not, and the
+      bias is the whole problem: it is worth more than the findings it feeds.
+
+    The weight is the first-passage probability from the bar's open, with the
+    discrete-monitoring shift that `trading/barriers.py` derives. Implemented
+    here rather than imported because `shared` sits under `trading` and must not
+    reach up into it; the two are checked against each other in the tests.
     """
     up, unit = trade["up"], trade["unit"]
     if unit <= 0 or trade["push_vol"] <= 0:
@@ -165,13 +224,25 @@ def walk(
         # bar's own extreme is allowed to move them.
         if not resting:
             low_seen, high_seen = (close, close) if close_only else (low, high)
-            if (low_seen <= stop) if up else (high_seen >= stop):
+            hit_stop = (low_seen <= stop) if up else (high_seen >= stop)
+            hit_target = (high >= target) if up else (low <= target)
+            if hit_stop and hit_target and ambiguous == "expected" and not close_only:
+                # Rule 3, declined. Both barriers were touched and the order is
+                # not knowable from OHLC, so this returns the expected R rather
+                # than asserting the worse one.
+                reached = _first_target(opened, stop, target, high, low)
+                on_stop = out_of(opened if (opened <= stop if up else opened >= stop) else stop)[0]
+                on_target = out_of(
+                    opened if (opened >= target if up else opened <= target) else target
+                )[0]
+                return reached * on_target + (1.0 - reached) * on_stop, "both"
+            if hit_stop:
                 # Rule 2. `close_only` exits on the close by construction.
                 through = (opened <= stop) if up else (opened >= stop)
                 price = close if close_only else (opened if through else stop)
                 return out_of(price)[0], "stop"
             # Rule 3: the stop is checked first, so a bar touching both is a stop.
-            if (high >= target) if up else (low <= target):
+            if hit_target:
                 through = (opened >= target) if up else (opened <= target)
                 return out_of(opened if through else target)[0], "target"
 
