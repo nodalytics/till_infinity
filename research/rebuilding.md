@@ -233,6 +233,38 @@ existed.
 It is one command, [`rebuildall.py`](harness/rebuildall.py), and about two hours
 of one core.
 
+### What can be re-run and what is inherited
+
+`simulate_vol` seeded each feed with `abs(hash(feed))`, and **Python salts string
+hashing per process**, so two runs of the same harness on the same data with the
+same `SEED` drew different Monte Carlo samples. It is fixed - `crc32`, in one
+helper, used by `rebuildvol`, `rebuildpaper` and `rebuildspike` - but a reader
+cannot tell which figures on this page predate the fix, so:
+
+**Re-run after the fix, on 2026-09-12, and reproducible by the command above:**
+the Volatility family's bar and tick tables and its whole battery
+(`rebuildvol`); every discriminator arm, the `n*` table, the randomness battery
+and the bit stream (`rebuildjudge`); the four-rung lattice ladder, its floors,
+its resolution-band split and its `1/sqrt(n)` check (`rebuildladder`); the
+Boom/Crash grind study (`rebuildgrind`); the width recovery (`rebuildwidth`); and
+the five-rung prediction ladder (`rebuildpredict`).
+
+**Inherited from before the fix, and carrying an unstated seed-to-seed wobble:**
+the 103 published-number comparisons (`rebuildpaper`), the Range Break scans in
+*Range Break: the range rule* and *The twenty-minute residual, chased*
+(`rebuildstep`), and Boom/Crash's stop-slippage figures (`rebuildspike`).
+
+**How large the wobble is, measured rather than assumed.** On the discriminator's
+window arm two runs differed by **0.03 of AUC**, which is larger than several of
+the gaps this page turns on. On the Volatility bar KS it moved
+`volatility_75_index` from `D` = 0.00337 to 0.00152 and `volatility_150_1s_index`
+from 0.01954 to 0.14621 - the latter not seed noise but the coarse feed's
+sensitivity to where its own path wandered, which is the same effect the
+resolution-band split names. Every inherited figure should be read as carrying at
+least that much, and the numbers most exposed are the ones quoted to three
+decimals against a coarse feed.
+
+
 ### The Volatility family, against the feed
 
 Two numbers per instrument - the volatility in the name and the publication rate
