@@ -359,6 +359,36 @@ distribution with a formula rather than a backtest.
 The same detector on `volatility_75_index` and `step_index` finds **zero**
 spikes, which is the control.
 
+> **Three amendments to this table, from [rebuilding.md](rebuilding.md), which
+> tried to re-instantiate it.** The mechanism survives - a rebuild from the
+> feed's own empirical marginals is indistinguishable from all six feeds on
+> twenty-four discriminator arms of twenty-four. The five numbers per feed do
+> not: the same arms catch a rebuild built from them on **24 of 24**, at 724 to
+> 3,506 ticks.
+>
+> 1. **`E[J]` and `lambda * E[g]` above disagree by 6-12% on all six feeds**, so
+>    a compound Poisson built from both as published is not a martingale. Impose
+>    `E[J] := lambda * E[g]` and every feed comes back inside 2.4 standard
+>    errors.
+> 2. **`E[J]` and `median J` do not pin the jump.** A lognormal on those two
+>    gives `P(J > D)` of 1.000, 0.999, 0.919 and 0.607 against measured 0.963,
+>    0.888, 0.763 and 0.531 - and `P(J > D)` is the quantity section five's
+>    sizing arithmetic turns on. **Publish the quantiles of `J`.**
+> 3. **`E[g]` and `CV[g]` do not pin the grind.** Those two moments imply a gamma
+>    of shape `1/CV^2` - 2.19 to 2.46 here - whose density is **zero at the
+>    origin**, and the real grind's density is **flat** there: on
+>    `crash_300_index` the gamma puts 0.82% of grind ticks in the smallest bin
+>    where the feed puts 3.26%, and on `boom_1000_index` the feed's first nine
+>    bins read 3.78 3.77 3.76 3.91 3.76 3.87 3.71 3.80 3.79 where the gamma
+>    climbs 1.10 2.20 3.12 3.82 4.34 4.68 4.87 4.95 4.94. **Publish the quantiles
+>    of `g`.**
+>
+> And one thing this table does not mention that a rebuild needs: the grind moves
+> on a lattice of **0.001**, not the 0.0005 that the greatest common divisor of
+> the *mid's* moves reports. The mid is `(bid+ask)/2` and it takes a half-grid
+> step whenever the spread changes, which is 33% to 64% of ticks here - and not
+> one odd half-grid move in six feeds happens without one.
+
 ### The derived P&L law reproduces the empirical one across the whole ladder
 
 `P&L(N) = N*g - sum_{k=1..K} J_k` with `K ~ Binomial(N, p)`. Drawing `K` from
