@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import collections
 import json
+import math
 import random
 import re
 import statistics
@@ -77,18 +78,75 @@ def on_risk(pairs: list[tuple[float, float]]) -> float:
     return sum(p for p, _ in pairs) / risk if risk else 0.0
 
 
+def _standard_error(pairs: list[tuple[float, float]]) -> float:
+    """Delta-method standard error of `on_risk`, which is a ratio of sums.
+
+    Linearised about the ratio: with `u_i = p_i - R*r_i` the numerator's error
+    and the denominator's move together, `sum(u) = 0` by construction, and
+    `Var(R) ~ n*var(u)/Q^2`. Cheap enough to evaluate inside every bootstrap
+    resample, which is what the studentised interval needs.
+    """
+    risk = sum(r for _, r in pairs)
+    if risk <= 0 or len(pairs) < 2:
+        return 0.0
+    ratio = sum(p for p, _ in pairs) / risk
+    spread = statistics.pvariance([p - ratio * r for p, r in pairs])
+    return math.sqrt(len(pairs) * spread) / risk
+
+
 def interval(pairs: list[tuple[float, float]], *, seed: int = 1) -> tuple[float, float] | None:
-    """A 95% bootstrap interval on `on_risk`, or None when there is too little.
+    """A 95% **studentised** bootstrap interval on `on_risk`, or None if too few.
 
     Resampled as pairs rather than as ratios: the denominator varies between
     closes, and resampling a ratio throws away the fact that a close risking
     three times as much carries three times the weight in the pooled figure.
+
+    **Studentised rather than percentile, and that choice decided three of this
+    folder's findings.** `research/calibrating.md` measured the percentile
+    endpoints over-rejecting on this book - **7.05%** at n=29 and **10.55%** at
+    n=8 against a nominal 5% - because the statistic is a ratio of sums over a
+    skewed, heavy-tailed distribution and the percentile method assumes away
+    exactly the asymmetry that produces. Dividing each resample by its own
+    standard error removes the scale the skew rides on, and restores **4.75%**
+    at n=29.
+
+    `research/auditing.md` then found what that cost. `spending.md`'s `snap` row
+    went from `[-64.7%, -1.4%]` to `[-65.2%, +8.2%]` on this change alone,
+    before any multiplicity correction - so it never needed the twelve-row
+    argument to fall. The 2:1 band and `confluence-scalp`'s roster decision
+    turn on endpoints inside the same gap.
+
+    Falls back to the percentile endpoints when a resample's error is
+    degenerate, which happens when every close in it carries the same outcome.
+    Reported that way rather than silently: a fallback that cannot be seen is
+    how a method ends up trusted at a coverage it does not have.
     """
     if len(pairs) < 8:
         return None
+    point = on_risk(pairs)
+    error = _standard_error(pairs)
+    if error <= 0:
+        return None
     rand = random.Random(seed)
-    draws = sorted(on_risk(rand.choices(pairs, k=len(pairs))) for _ in range(DRAWS))
-    return draws[int(DRAWS * 0.025)], draws[int(DRAWS * 0.975)]
+    scores: list[float] = []
+    plain: list[float] = []
+    for _ in range(DRAWS):
+        drawn = rand.choices(pairs, k=len(pairs))
+        got = on_risk(drawn)
+        plain.append(got)
+        spread = _standard_error(drawn)
+        if spread > 0:
+            scores.append((got - point) / spread)
+    if len(scores) < DRAWS // 2:  # too many degenerate resamples to studentise
+        plain.sort()
+        return plain[int(DRAWS * 0.025)], plain[int(DRAWS * 0.975)]
+    scores.sort()
+    low = scores[int(len(scores) * 0.975)]
+    high = scores[int(len(scores) * 0.025)]
+    # The t quantiles enter with their signs reversed: a resample landing high
+    # implies the truth sits low. Getting this backwards is the classic way to
+    # publish a studentised interval that is the percentile one mirrored.
+    return point - low * error, point - high * error
 
 
 def band(pairs: list[tuple[float, float]]) -> str:

@@ -48,7 +48,7 @@ today a result has turned out to be a property of a selection.
 
 The real-market half does not flip. It loses on the restricted set (−673), on
 the complement (−736) and on everything (−1,409), in roughly the proportion the
-counts predict. **−22.2% of risk deployed, 95% bootstrap [−36.7%, −7.5%]**, and
+counts predict. **−22.2% of risk deployed, 95% studentised bootstrap [−36.4%, −6.6%]**, and
 the interval excludes zero.
 
 It is not five closes either. The five worst lost 172.90 between them; drop all
@@ -120,9 +120,9 @@ Split the same 133 real-market closes by the reward-to-risk each trade was
 
 | planned | n | hit rate | on risk | 95% |
 | --- | ---: | ---: | ---: | --- |
-| below 1:1 | 50 | 62.0% | **−2.1%** | [−18.3%, +13.8%] |
-| 1:1 to 2:1 | 53 | 30.2% | −21.9% | [−47.8%, +4.7%] |
-| 2:1 and above | 30 | 23.3% | **−53.3%** | **[−84.6%, −19.0%]** |
+| below 1:1 | 50 | 62.0% | **−2.1%** | [−19.5%, +14.3%] |
+| 1:1 to 2:1 | 53 | 30.2% | −21.9% | [−47.0%, +8.3%] |
+| 2:1 and above | 30 | 23.3% | **−53.3%** | **[−83.2%, −3.7%]** |
 
 **This is the reverse of the obvious reading, and the obvious reading was
 about to be shipped as a gate.** A trade whose target sits closer than its stop
@@ -194,15 +194,24 @@ two independent tables - the payoff one and the exit one - and because the
 
 | strategy | n | on risk | 95% |
 | --- | ---: | ---: | --- |
-| snap | 29 | **−34.3%** | **[−65.2%, −2.0%]** |
-| thesis-only | 28 | −1.0% | [−22.4%, +19.7%] |
-| sweep-aware | 23 | −25.1% | [−68.1%, +23.0%] |
-| runner | 17 | −5.6% | [−36.9%, +21.7%] |
-| fade-to-value | 16 | −38.7% | [−78.7%, +5.0%] |
+| snap | 29 | −34.3% | **[−64.7%, +6.9%]** |
+| thesis-only | 28 | −1.0% | [−25.4%, +22.0%] |
+| sweep-aware | 23 | −25.1% | [−67.7%, +41.0%] |
+| runner | 17 | −5.6% | [−39.6%, +28.5%] |
+| fade-to-value | 16 | −38.7% | [−82.2%, +15.3%] |
 | inverse | 6 | −72.4% | too few |
 | approach-scalp | 3 | −83.4% | too few |
 
-**`snap` is the only one whose interval excludes zero.** −34.3% over 29 closes,
+**`snap`'s interval no longer excludes zero, and that is a retraction.** The
+rows above are **studentised**; they were percentile when this page was first
+written, and `research/calibrating.md` measured those endpoints over-rejecting
+at **7.05%** against a nominal 5% at exactly this n. On the corrected interval
+`snap` reads **[−64.7%, +6.9%]** and no strategy row separates from zero.
+`research/auditing.md` makes the same correction independently and adds that it
+never needed the twelve-row multiplicity argument to fall - the interval
+construction alone was enough.
+
+What stands is the arithmetic, not the interval: −34.3% over 29 closes,
 27.6% hit rate against the 52.2% its own payoff needs, median hold **114
 seconds**, on gold, us30, silver, ger40, us100 and btc. Its shape is
 `stop=1.0, target=1.0, hold=120s` - a 1:1 with two minutes to find it, which
@@ -223,17 +232,20 @@ Written into `spending.py` before the numbers were read:
 | the real half's sign moves under the risk-figure restriction | **survived** - −673, −736, −1,409, all the same sign |
 | the loss is five closes | **survived** - −17.2% with the five worst removed |
 | one strategy carries it | **partly fired** - `snap` is a third of it and is named separately |
-| the bootstrap interval includes zero | **survived** - [−36.7%, −7.5%] |
+| the bootstrap interval includes zero | **survived** - [−36.4%, −6.6%] |
 
 And one that fired against the other half: the generated result did move under
 the restriction, so it is withdrawn rather than reported.
 
 ## What follows
 
-1. **Turn `snap` off on real markets.** It is the one strategy measured
-   negative with an interval that excludes zero, the mechanism is understood - a
-   1:1 payoff over 114 seconds cannot clear two crossings of the spread - and it
-   is a third of the real-market loss.
+1. **Turn `snap` off on its mechanism, not on this table.** Its interval does
+   not exclude zero once studentised, so this page is not evidence against it.
+   The mechanism is, and `trading/barriers.py` now prices it: a symmetric pair is
+   a coin however finely watched, discrete monitoring costs it 0.053R in
+   overshoot foregone on the wins, and the spread is charged twice - a drag
+   needing a **57.7% to 67.7%** hit rate from the signal alone, against the 27.6%
+   observed. That argument does not depend on 29 closes.
 2. **The exits are the problem, not the entries.** A 40.6% hit rate is 1.7
    points off break-even at the payoff the book plans and 18.4 points off at the
    payoff it realises. Every further point of hit rate is worth about a fifth of
