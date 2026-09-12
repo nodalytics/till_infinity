@@ -38,15 +38,24 @@ whose quote grid is fine enough for a tick statistic to be about the law at all,
 **no arm beats its own real-against-real floor at any sample size** - the test
 arm sits *below* the floor on both views and `n*` is infinite. That took four
 attempts at one term of the specification, three of which are refuted and are
-published as such. The other families' `n*` runs from **8.2x the stored sample**
-(Step Index) to **59 ticks** (Boom 300, where the rebuild is simply wrong).
+published as such. Every other family is now at or beyond the sample that exists
+too: Step Index, Range Break 200 and Crash 500 are unseparable on both arms,
+Range Break 100 needs **4.7x** the store on one arm, and Boom 300 needs **6.7x**.
 
-**Two corrections came out of the loop rather than out of the plan.** The tick
+**Three corrections came out of the loop rather than out of the plan.** The tick
 shortfall this page called a collection failure is not one - it is the repeated
-quote, and the two quantities agree on twelve feeds of twelve. And the shared
-Range Break width of 60 is **withdrawn**: given a simulated truth, the estimator
-that measures the range directly returns the width it was given to within 12%,
-and it says 39.
+quote, and the two quantities agree on twelve feeds of twelve. The shared Range
+Break width of 60 is **withdrawn**: given a simulated truth, the estimator that
+measures the range directly returns the width it was given to within 12%, and it
+says 39. And Boom and Crash, the one family that did not replicate, **does** -
+the separation at 59 ticks was floating-point representation in this harness, and
+corrected, the feed's own marginals are indistinguishable from the rebuild on
+twenty-four arms of twenty-four.
+
+**What does not replicate is the published parameterisation of Boom and Crash**,
+which is caught on all twenty-four of the same arms at 724 to 3,506 ticks. That
+gives this page a third one-line amendment to `deriving.md`, beside
+`E[J] := lambda * E[g]` and the quantiles of `J`: **the quantiles of `g`**.
 
 ## The parameter budget, which is the whole experiment
 
@@ -1655,6 +1664,13 @@ none of them was a thing I would have liked to happen.
   through the inverse normal; Box-Muller or a ziggurat breaks that map and the
   rung then says nothing. Rung 2 is arithmetically impossible on a quantised
   quote and is untested rather than passed.
+* **Both sides of a discriminator have to be quantised the same way.** A stored
+  quote and a rebuilt one are different roundings of the same lattice, and their
+  differences then carry different floating-point error - which separated
+  `crash_500_index` from its own rebuild at AUC 0.024 on a feature that reads
+  0.502 once both sides are snapped to the lattice. Every non-Volatility arm on
+  this page now goes through `G.lattice_increments`; anything comparing two price
+  series by their raw differences should assume the same defect until it checks.
 * **The width recovery is a Monte Carlo on one mechanism.** `rebuildwidth.py`
   tests both estimators against an edge-anchored *hard box*, which is the model
   `quantising.md`'s eigenvalue ladder refutes. It is enough to show that the

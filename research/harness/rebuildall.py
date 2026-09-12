@@ -6,9 +6,10 @@ launches and five waits. This is the one launch:
     ./.secrets/lab.sh run research/harness/rebuildall.py
 
 It runs `rebuildvol`, `rebuildstep`, `rebuildspike`, `rebuildjudge`,
-`rebuildpower`, `rebuildladder`, `rebuildwidth` and `rebuildpredict` in that
+`rebuildpower`, `rebuildladder`, `rebuildwidth`, `rebuildgrind` and
+`rebuildpredict` in that
 order, in one process, and keeps going when one of them raises - a broken study
-should cost its own results and not the other seven. Each
+should cost its own results and not the other eight. Each
 study writes its own JSON exactly as it does when run alone; this adds one more,
 `rebuildall.json`, holding the pooled failure ledger and the wall time of each.
 
@@ -50,7 +51,7 @@ OUT = os.environ.get("OUT", os.path.expanduser("~/till_infinity/logs/rebuildall.
 ONLY = [s for s in os.environ.get("ONLY", "").split(",") if s]
 
 STUDIES = ("rebuildvol", "rebuildstep", "rebuildspike", "rebuildjudge", "rebuildpower",
-           "rebuildladder", "rebuildwidth", "rebuildpredict")
+           "rebuildladder", "rebuildwidth", "rebuildgrind", "rebuildpredict")
 
 
 def main() -> None:
