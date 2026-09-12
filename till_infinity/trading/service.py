@@ -173,6 +173,12 @@ ATTACH_BACKOFF, ATTACH_BACKOFF_MAX = 5.0, 60.0
 #: first would let a long one look like it had been handled.
 ATTACH_SHOUT_EVERY = 10
 
+#: Consecutive unanswered sweeps before the desk says it has lost its terminal.
+#: The heartbeat is 60s by default, so this is about five minutes - long enough
+#: that a redeploy or a blip does not page anyone, short enough that the two-hour
+#: silence of 2026-09-12 could not happen again.
+UNREACHABLE_AFTER = 5
+
 
 @dataclass(slots=True)
 class Live:
@@ -594,7 +600,13 @@ class Trader:
         #: is whether the terminal was last seen accepting orders, so the alarm
         #: is edge-triggered - and it starts `True` rather than `None` so a desk
         #: that comes up with AutoTrading already off says so on its first sweep.
-        self._recalled, self._ladder, self._rejection, self._autotrading = False, {}, {}, True
+        self._recalled, self._ladder, self._rejection, self._autotrading, self._unreachable = (
+            False,
+            {},
+            {},
+            True,
+            0,
+        )
         #: The best price each open trade has seen, and the tickets any quote
         #: has seen at or beyond the scale-out trigger - so the bank fires on
         #: the move rather than on whichever poll follows it. Grouped because
@@ -2773,7 +2785,9 @@ class Trader:
         """The heartbeat: roll the day, reconcile, and time out stale scalps."""
         if not await self.broker.healthy():
             log.warning("trading: the terminal is not answering; nothing will be sent")
+            await self._watch_reachable(False)
             return
+        await self._watch_reachable(True)
         await self._check_autotrading()
 
         account = await self.broker.account()
@@ -2972,6 +2986,58 @@ class Trader:
                 "" if skipped else " - every one reached `advance` and it proposed no better stop",
             )
         return moved
+
+    async def _watch_reachable(self, reachable: bool) -> None:
+        """Say - once, loudly - when the desk has lost its terminal entirely.
+
+        **This is the gap `_check_autotrading` could not cover, and it cost two
+        hours on 2026-09-12.** `sweep` returns before that check when the broker
+        does not answer, so an unreachable terminal wrote one WARNING per
+        heartbeat and raised nothing:
+
+            WARNING broker could not select BROKER:Boom 1000 Index: All connection attempts failed
+            WARNING trading: could not quote SOLUSD: All connection attempts failed
+
+        The container read `healthy` and `till-infinity health` read seven
+        services running throughout, both correctly: nothing in this process was
+        wrong. The terminal lives on another host and that host left the network.
+        **"I am fine" and "the desk can trade" are different claims**, and until
+        now only the first had a voice.
+
+        Not wired into the healthcheck, deliberately. An unhealthy container gets
+        restarted, and restarting this process cannot reach a machine that is
+        gone - it would be a restart loop through an outage it cannot fix, losing
+        the in-memory book each time. A healthcheck answers "should this be
+        restarted"; this answers "should somebody look". They are different
+        questions and conflating them makes the outage worse.
+
+        Edge-triggered on the `UNREACHABLE_AFTER`-th consecutive miss, for the
+        reason `_check_autotrading` gives: one alert per heartbeat for two hours
+        is a channel nobody reads, which is how the next one gets missed.
+        """
+        if reachable:
+            if self._unreachable >= UNREACHABLE_AFTER:
+                log.info("trading: the terminal is answering again")
+                await self._shout_state("the terminal is reachable again", "", "info")
+            self._unreachable = 0
+            return
+
+        self._unreachable += 1
+        if self._unreachable != UNREACHABLE_AFTER:
+            return
+        log.error("trading: the terminal has not answered %d sweeps", self._unreachable)
+        await self._shout_state(
+            "the desk cannot reach its terminal",
+            "Every quote and every order is failing with a connection error. "
+            "Nothing in this container is wrong and it will keep reporting "
+            "healthy: the terminal runs on another host, and that host is not "
+            "answering. Open positions are untouched and unmanaged until it "
+            "returns.",
+            # `critical`, not `error`. See `_check_autotrading` - `Level` knows
+            # info, warning and critical and *raises* on anything else, which is
+            # how an alarm once took the alarm system down.
+            "critical",
+        )
 
     async def _check_autotrading(self) -> None:
         """Say - once, loudly - when the terminal has stopped accepting orders.

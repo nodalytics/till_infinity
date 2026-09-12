@@ -219,7 +219,49 @@ def test_resolved_is_false_until_the_sample_can_actually_decide():
         cal.record(cone, actual)
     assert cal.warm
     assert not cal.resolved
-    assert cal.n < projection.RESOLVES_AT
+    assert cal.information < projection.RESOLVES_AT
+
+
+def test_more_bars_over_the_same_span_buy_no_resolution():
+    """The defect this pins cost a wrong flag in production.
+
+    `resolved` was a bar count, `n >= 50_000`. But the information about a drift
+    is **calendar span, not sample size**: the log returns telescope to
+    `log(S_end / S_start)`, so a year of hourly bars says no more about it than
+    a year of daily ones. Counting rows raised the flag at about a fifth of the
+    separation it promised at hourly spacing - `research/pipeline.md` measured
+    it. Here the hourly series has **24x the rows and the same information**.
+    """
+    feed = "volatility_75_index"
+    day = projection.SECONDS_PER_YEAR / 365.0
+    hour = day / 24.0
+
+    daily = projection.Calibration(convention="ito")
+    cone_d = projection.project(feed, 1.0, day, convention="ito")
+    for actual in _simulate(feed, day, "ito", 365, seed=4):
+        daily.record(cone_d, actual / 1000.0)
+
+    hourly = projection.Calibration(convention="ito")
+    cone_h = projection.project(feed, 1.0, hour, convention="ito")
+    for actual in _simulate(feed, hour, "ito", 365 * 24, seed=5):
+        hourly.record(cone_h, actual / 1000.0)
+
+    assert hourly.n == 24 * daily.n
+    assert hourly.information == pytest.approx(daily.information, rel=1e-9)
+    assert hourly.separation == pytest.approx(daily.separation, rel=1e-9)
+
+
+def test_separation_is_the_square_root_of_the_information():
+    """`sqrt(sum sigma^2 T) / 2` is the whole criterion; pin it to the form."""
+    feed = "volatility_100_index"
+    seconds = projection.SECONDS_PER_YEAR
+    cal = projection.Calibration(convention="ito")
+    cone = projection.project(feed, 1.0, seconds, convention="ito")
+    for actual in _simulate(feed, seconds, "ito", 40, seed=6):
+        cal.record(cone, actual / 1000.0)
+    assert cal.information == pytest.approx(40 * cone.sigma**2)
+    assert cal.separation == pytest.approx(math.sqrt(cal.information) / 2.0)
+    assert cal.resolved is (cal.information >= projection.RESOLVES_AT)
 
 
 def test_touch_defers_to_barriers():

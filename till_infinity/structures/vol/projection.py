@@ -159,9 +159,25 @@ BANDS: dict[int, float] = {
 #: this the mean of a uniform is mostly its own standard error.
 WARM = 200
 
-#: Pooled observations needed before the two conventions can be told apart at
-#: daily spacing - see the docstring's arithmetic. Reported, never enforced.
-RESOLVES_AT = 50_000
+#: Accumulated `sigma^2 T` needed before the two conventions can be told apart.
+#:
+#: **Not a bar count, and the difference is a defect this carried until
+#: 2026-09-12.** It was `50_000` observations, which is wrong because the
+#: information about a drift is **calendar span, not sample size**: the sum of
+#: the log returns telescopes to `log(S_end / S_start)`, so a year of 1m bars and
+#: a year of 1d bars carry identically much. Separation between the conventions
+#: goes as `sqrt(sum sigma^2 T) / 2`, and `research/pipeline.md` validated the
+#: estimator unbiased and correct on 38-39 of 40 simulated venues at 56.
+#:
+#: At daily spacing the two criteria happen to agree, which is why the error was
+#: invisible in `convention.py`'s headline. At **hourly** spacing a bar count
+#: raises the flag at about **a fifth** of the separation it promises.
+RESOLVES_AT = 37.7
+
+#: Kept only so a stored `Calibration` written before the fix still restores.
+#: `Restorable` defaults a missing field; it cannot undo a field that meant
+#: something else.
+LEGACY_RESOLVES_AT_COUNT = 50_000
 
 
 def _cdf(z: float) -> float:
@@ -321,6 +337,8 @@ class Calibration(Restorable):
     n: int = 0
     _sum: float = 0.0
     _sumsq: float = 0.0
+    #: Accumulated `sigma^2 T`, which is what actually decides the convention.
+    _info: float = 0.0
     _inside: dict[int, int] = field(default_factory=dict)
 
     def record(self, cone: Cone, actual: float) -> None:
@@ -330,6 +348,9 @@ class Calibration(Restorable):
         self.n += 1
         self._sum += u
         self._sumsq += u * u
+        # `cone.sigma` is already `sigma * sqrt(T)`, so its square is the
+        # `sigma^2 T` this observation contributes. See `RESOLVES_AT`.
+        self._info += cone.sigma * cone.sigma
         for level in BANDS:
             if cone.contains(actual, level):
                 self._inside[level] = self._inside.get(level, 0) + 1
@@ -340,14 +361,31 @@ class Calibration(Restorable):
 
     @property
     def resolved(self) -> bool:
-        """Whether there is enough sample to tell the two conventions apart.
+        """Whether there is enough **information** to tell the two conventions apart.
+
+        Accumulated `sigma^2 T`, not a count of bars. A drift is a statement
+        about calendar span: the log returns telescope, so a million one-minute
+        bars say no more about it than the same span of daily ones. Counting
+        rows instead raises this flag at a fifth of the separation it promises
+        at hourly spacing - see `RESOLVES_AT`, and `research/pipeline.md` for
+        the estimator that measured it.
 
         Reported rather than enforced, because a caller is entitled to read an
         unresolved number as long as it is labelled as one. The alternative -
         returning a winner at `n = 300` - is how a convention gets adopted on
         noise and stays adopted.
         """
-        return self.n >= RESOLVES_AT
+        return self._info >= RESOLVES_AT
+
+    @property
+    def information(self) -> float:
+        """Accumulated `sigma^2 T`. `sqrt(information) / 2` is the separation."""
+        return self._info
+
+    @property
+    def separation(self) -> float:
+        """How far apart the two conventions are here, in standard deviations."""
+        return math.sqrt(max(self._info, 0.0)) / 2.0
 
     @property
     def mean(self) -> float:
@@ -391,6 +429,8 @@ class Calibration(Restorable):
             "n": self.n,
             "warm": self.warm,
             "resolved": self.resolved,
+            "information": round(self._info, 4),
+            "separation": round(self.separation, 4),
             "pit_mean": round(self.mean, 6) if self.n else None,
             "pit_var": round(self.variance, 6) if self.n > 1 else None,
             "dispersion": round(self.dispersion, 4) if self.n > 1 else None,
