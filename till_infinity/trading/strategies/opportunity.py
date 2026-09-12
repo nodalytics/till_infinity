@@ -233,6 +233,25 @@ PRESETS: dict[str, Shape] = {
     # 1.758R a trade over ten closes doing it. Now carries `ride`'s exit too,
     # so the only thing separating it from `sweep-aware` here is that stop.
     "confluence-scalp": Shape(stop=1.5, target=6.0, trail=0.5, protect=1.0, hold=0.0, pullback=0.0),
+    # **A 1:1 with two minutes to find it cannot clear two spread crossings.**
+    #
+    # Not an opinion any more. `trading/barriers.py` prices the geometry: a
+    # symmetric pair is a coin however finely it is watched, discrete monitoring
+    # costs it **0.053R** in foregone overshoot on the wins, and the spread is
+    # charged on entry and exit. At a spread of 0.1 to 0.3 volatility units that
+    # is a drag of **-0.15R to -0.35R**, so the trade needs a **57.7% to 67.7%**
+    # hit rate from the directional call alone before it breaks even.
+    #
+    # `research/spending.md` measured it at **27.6% over 29 real-market closes**,
+    # for -34.3% of the risk deployed. Read that number with care - the same
+    # page's interval does not survive `research/calibrating.md`, which shows a
+    # twelve-row cut of a uniformly losing book producing a row that bad **71%**
+    # of the time. The interval is an artefact; the arithmetic above is not, and
+    # it is why this shape is not in the deployed strategy list.
+    #
+    # Kept rather than deleted because the slot is load-bearing - see
+    # `config.MAGIC_ORDER`, where removing a name orphans the attribution of
+    # every position it ever opened.
     "snap": Shape(stop=1.0, target=1.0, trail=0.75, protect=0.5, hold=120.0, pullback=0.0),
     "fade-to-value": Shape(
         stop=1.0, target=1.0, trail=0.0, protect=0.0, hold=14400.0, pullback=0.0

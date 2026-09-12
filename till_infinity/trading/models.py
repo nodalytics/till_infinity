@@ -259,6 +259,66 @@ class Intent:
     def title(self) -> str:
         return f"{self.side} {self.volume:g} {self.symbol} @ {self.entry:.5g}"
 
+    def geometry(self) -> dict[str, float]:
+        """What this stop and target are worth, before the signal is consulted.
+
+        **Nothing in this package asked this until 2026-09-12.** `min_probability`
+        gates on the kNN's *directional* call and `min_reward_to_risk` on a ratio
+        with no probability attached, so the one question that decides whether a
+        geometry is worth taking - P(target before stop, given these barriers) -
+        was never computed. See `trading/barriers.py`.
+
+        Recorded, not gated. That is this repository's convention for a number
+        that moves money, and it matters more than usual here: the forms are
+        derived and confirmed on the Volatility indices, where the process is
+        known to be Brownian, and on a real feed they are a sharp prior rather
+        than a measurement. The journal is where that gets tested.
+
+        `barrier_ticks` is carried alongside because the answer depends on it and
+        the desk does not yet measure it per feed - so a later reading can
+        recompute these from the same rows rather than guess what was assumed.
+        `barriers.ticks_from_slippage` already suggests the default is far too
+        coarse for a liquid feed: the desk's own stops imply about 280 looks a
+        bar, not thirty.
+
+        Empty rather than zeroed when the geometry cannot carry it, so an absent
+        reading is distinguishable from a real one - `research/inert.md` is a
+        catalogue of the alternative.
+        """
+        from . import barriers
+
+        vol_bps = float(self.features.get("vol_bps") or 0.0)
+        up = barriers.units_for(self.reward, self.entry, vol_bps)
+        down = barriers.units_for(self.risk, self.entry, vol_bps)
+        if not barriers.reachable(up, down):
+            return {}
+        rate = barriers.DEFAULT_TICKS_PER_BAR
+        needs = barriers.duration(up, down, ticks_per_bar=rate)
+        out = {
+            "barrier_p": barriers.probability(up, down, ticks_per_bar=rate),
+            "barrier_bars": needs,
+            "barrier_cost": barriers.overshoot_cost(up, down, ticks_per_bar=rate),
+            "barrier_ticks": rate,
+        }
+        # **How much of its own geometry the clock actually allows**, as a ratio.
+        # Under 1.0 the hold expires before the barriers can be expected to
+        # resolve, so the trade is scored as though it finished when it was
+        # interrupted. `research/spending.md` found that on **50 of 133**
+        # real-market closes, exiting at 5% of the planned target - the largest
+        # exit category on the book, and the one nobody could see was a timeout
+        # rather than an outcome.
+        #
+        # Recorded, not enforced. Lengthening a hold or shortening a target both
+        # move money, and the band evidence behind the far-target reading is
+        # weakened by `research/calibrating.md` - the monotone ordering arises in
+        # 15.4% of null books - so this earns its place in the journal first.
+        from ..structures.levels import SECONDS
+
+        span = SECONDS.get(self.interval, 0.0)
+        if span > 0 and needs > 0 and self.hold > 0:
+            out["hold_covers"] = self.hold / (needs * span)
+        return out
+
     def to_context(self) -> dict[str, Any]:
         """The numbers as they read at the moment of deciding."""
         return {
@@ -279,6 +339,10 @@ class Intent:
             # whole ledger is grouped on it.
             "level_id": self.level_id,
             **{k: round(v, 6) for k, v in self.features.items()},
+            # After the features, so a geometry reading cannot be shadowed by a
+            # signal field of the same name. These are derived here and nowhere
+            # else, so there is no upstream key to collide with anyway.
+            **{k: round(v, 6) for k, v in self.geometry().items()},
         }
 
 
