@@ -809,6 +809,33 @@ def exactly_null(value: float, null: float, places: int = 6) -> bool:
     return (not math.isnan(value)) and round(value, places) == round(null, places)
 
 
+def lattice_increments(px, grid: float, scale: float = 1.0) -> np.ndarray:
+    """Tick increments in exact lattice units, then scaled.
+
+    **Both sides of a discriminator must be quantised the same way or the
+    classifier reads floating point.** A stored quote arrives as `(bid+ask)/2`
+    and a rebuilt one as `round(path/grid)*grid`; those are different roundings
+    of the same lattice, so their *differences* carry different representation
+    error - at a price of 3,009 and a grid of 0.001 the error is about 1e-12 and
+    every difference lands on its own float.
+
+    That is not a small effect. `n_distinct` - the count of distinct increment
+    magnitudes in a sixty-tick window, rounded to twelve decimals - then counts
+    float noise on one side and a clean lattice on the other, and it separated
+    `crash_500_index` from its own rebuild at **AUC 0.0242**. Snapped to the
+    lattice the same feature reads **0.5017**. `frac_zero` goes the same way,
+    because two equal stored quotes differ by a denormal rather than by zero.
+
+    The Volatility family is unaffected and was checked: both sides there come
+    from `round(px/grid)*grid`, so the roundings already match and
+    `volatility_75_index` reads 0.529 before and 0.536 after.
+    """
+    d = np.diff(np.asarray(px, dtype=float))
+    if not grid:
+        return d / scale
+    return np.round(d / grid) * (grid / scale)
+
+
 def feed_seed(name: str) -> int:
     """A stable per-feed seed offset.
 

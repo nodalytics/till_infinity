@@ -759,10 +759,11 @@ def main() -> None:
     sb, st = G.real_bars("step_index"), G.real_ticks("step_index")
     if sb.get("n") and st.get("n"):
         step = 0.1
-        ri = np.diff(st["mid"]) / step
+        # exact lattice units on both sides - see `G.lattice_increments`
+        ri = G.lattice_increments(st["mid"], step)
         bb = S.sim_step(max(sb["n"], ri.size // 60 + 10), 0.5, SEED,
                         float(sb["close"][0]))
-        si = np.diff(bb["ticks"]) / step
+        si = G.lattice_increments(bb["ticks"], step)
         others.append(("step_index", ri, si))
 
     # Range Break, both feeds, at the edge rule
@@ -779,7 +780,8 @@ def main() -> None:
                                      SEED)
         sim = S.sim_rb(max(rb["n"], rt["n"] // 60 + 10), band, mbt, brk["_jump"], SEED,
                        float(rb["close"][0]), stp, "edge")
-        others.append((feed, d / stp, np.diff(sim["ticks"]) / stp))
+        others.append((feed, G.lattice_increments(rt["mid"], stp),
+                       G.lattice_increments(sim["ticks"], stp)))
 
     # Boom / Crash, the pool build
     for feed in ("boom_500_index", "crash_500_index", "boom_300_index"):
@@ -794,7 +796,8 @@ def main() -> None:
         sim = K.build(f, grid, float(rb["close"][0]),
                       max(rb["n"], rt["n"] // 60 + 10), SEED, True)
         sc = f["g_mean"]
-        others.append((feed, np.diff(rt["mid"]) / sc, np.diff(sim["ticks"]) / sc))
+        others.append((feed, G.lattice_increments(rt["mid"], grid, sc),
+                       G.lattice_increments(sim["ticks"], grid, sc)))
 
     # Jump
     jb, jt = G.real_bars("jump_75_index"), G.real_ticks("jump_75_index")

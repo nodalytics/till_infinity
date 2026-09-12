@@ -88,7 +88,7 @@ def series(feed: str) -> dict | None:
 
 
 def grind_hist(px: np.ndarray, grid: float) -> dict:
-    d = np.diff(px)
+    d = G.lattice_increments(px, grid)
     nz = np.abs(d[d != 0])
     if not nz.size:
         return {}
@@ -203,7 +203,7 @@ def main() -> None:  # noqa: PLR0915
             if not fit.get("n_ticks"):
                 continue
             sc = fit["g_mean"]
-            ri = np.diff(s["px"]) / sc
+            ri = G.lattice_increments(s["px"], s["grid"], sc)
             h = ri.size // 2
             caps = {"ktuple": min(h // KTUP, MAXROW), "tick": min(h // W_TICK, MAXROW)}
             floors = {k: arm(f"{f}/{sname} FLOOR {k}", ri[:h], ri[h: 2 * h], k,
@@ -216,7 +216,7 @@ def main() -> None:  # noqa: PLR0915
             for build, pool in (("spec", False), ("pool", True)):
                 sim = K.build(fit, s["grid"], s["p0"],
                               max(d["n_bars"], ri.size // K.TPB + 10), SEED, pool)
-                si = np.diff(sim["ticks"]) / sc
+                si = G.lattice_increments(sim["ticks"], s["grid"], sc)
                 for k in ("ktuple", "tick"):
                     fl = floors[k]
                     r = arm(f"{f}/{sname}/{build} {k}", ri[:h], si[:h], k, SEED + 2,
