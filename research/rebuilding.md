@@ -710,6 +710,135 @@ finding this page already recorded for `P(J > D)` and is now quantified: **the
 Boom/Crash rebuild is separable from its feed in under a minute of ticks**, and
 the quantiles of both `g` and `J` need publishing.
 
+### Boom and Crash: the family that did not replicate, and why it does now
+
+Every other family came back indistinguishable. Boom and Crash separated from
+their rebuilds at **59 to 960 ticks**, which is not a near miss, and
+`rebuildjudge.py`'s map said where: the largest univariate feature was
+`n_distinct`, the count of distinct increment magnitudes in a sixty-tick window -
+firing at AUC **0.601** on `boom_500_index` and **0.308** on `crash_500_index`.
+A feature that separates in *both* directions across one family is not one
+defect, and that is what made it worth chasing.
+[`rebuildgrind.py`](harness/rebuildgrind.py) chases it, and the answer has three
+parts: one of them is a bug in this harness, one is a property of the observation
+nobody had written down, and one is the third amendment this page owes
+`deriving.md`.
+
+**First, the bug, because the discipline that caught the lattice error runs
+before the blame and not after it.** A stored quote arrives as `(bid+ask)/2` and
+a rebuilt one as `round(path/grid)*grid`. Those are different roundings of the
+same lattice, so their *differences* carry different floating-point
+representation error - at `crash_500_index`'s price of 3,009 and grid of 0.001
+the error is about `1e-12` and **every difference lands on its own float**.
+`n_distinct` rounds to twelve decimals and then counts them, so it was counting
+float noise on one side and a clean lattice on the other:
+
+| feed | `n_distinct` AUC, raw | **snapped to the lattice** | `frac_zero` AUC, raw | **snapped** |
+| --- | --- | --- | --- | --- |
+| crash_500_index | **0.0242** | **0.5017** | 0.5586 | 0.4966 |
+| boom_500_index | **0.3070** | **0.5053** | 0.5173 | 0.4981 |
+| volatility_75_index *(control)* | 0.5291 | 0.5361 | 0.4993 | 0.4993 |
+
+`G.lattice_increments` now puts both sides on exact lattice units before any
+feature is computed. The Volatility family is unaffected and was checked as the
+control - both sides there already come from `round(px/grid)*grid`, so the
+roundings match and the feature does not move. **This is the third time asking
+what an observation artefact would look like has retracted a headline on this
+page**, and it is the first time the artefact was mine rather than the
+collector's.
+
+**Second, the mid is two processes and only one of them is the generator.**
+`research.db` stores a bid and an ask, and every rebuild here compared the mid,
+which moves on *half* the quote grid whenever the spread changes. It is not a
+subtle contamination:
+
+| feed | `quote_grid(mid)` | `quote_grid(bid)` | distinct spreads | spread changes | odd half-grid moves | **P(odd \| spread unchanged)** |
+| --- | --- | --- | --- | --- | --- | --- |
+| boom_300_index | 0.0005 | **0.001** | 6 | 64.4% | 35.3% | **0.0000** |
+| boom_500_index | 0.0005 | **0.001** | 6 | 33.5% | 28.3% | **0.0000** |
+| boom_1000_index | 0.0005 | **0.001** | 8 | 64.4% | 37.8% | **0.0000** |
+| crash_300_index | 0.0005 | **0.001** | 23 | 59.4% | 33.1% | **0.0000** |
+| crash_500_index | 0.0005 | **0.001** | 6 | 55.4% | 33.1% | **0.0000** |
+| crash_1000_index | 0.0005 | **0.001** | 4 | 55.3% | 38.3% | **0.0000** |
+
+Not one odd half-grid move in the whole of six feeds happens without the spread
+changing. **The grind lives on a grid of 0.001 and `quote_grid` reports 0.0005**,
+because the greatest common divisor of the *mid's* moves is half the instrument's
+own tick - so every Boom and Crash rebuilt on this page has been quantised on a
+grid twice too fine. A third of ticks carry a spread change, on four to
+twenty-three distinct spread values, and nothing in `deriving.md` section five
+mentions a spread process at all.
+
+**Third, the grind is not a gamma, and that is the part that is about the
+venue.** `deriving.md` publishes `E[g]` and `CV[g]`, which pin a gamma of shape
+`1/CV^2` - between 2.19 and 2.46 on these six feeds. **A gamma of shape above one
+has density zero at the origin. The feed's grind is flat there.** In units of the
+bid's own grid:
+
+| feed | shape implied | smallest bin, feed | smallest bin, gamma | **ratio** |
+| --- | --- | --- | --- | --- |
+| crash_300_index | 2.19 | 3.26% | 0.82% | **4.00** |
+| boom_1000_index | 2.22 | 3.78% | 1.10% | **3.45** |
+| boom_500_index | 2.28 | 5.92% | 2.46% | **2.41** |
+| crash_500_index | 2.32 | 9.81% | 5.80% | 1.69 |
+| crash_1000_index | 2.31 | 10.06% | 6.16% | 1.63 |
+| boom_300_index | 2.46 | 16.73% | 13.84% | 1.21 |
+
+and the shape of the whole small end, on `boom_1000_index`, says it better than
+the ratio does - the feed is **dead flat** where the gamma climbs:
+
+| bin | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **feed** | 3.78 | 3.77 | 3.76 | 3.91 | 3.76 | 3.87 | 3.71 | 3.80 | 3.79 |
+| gamma from the published two moments | 1.10 | 2.20 | 3.12 | 3.82 | 4.34 | 4.68 | 4.87 | 4.95 | 4.94 |
+
+**The verdict, which is a clean split.** Four builds a feed - the published five
+numbers (`spec`) and the feed's own empirical marginals (`pool`), on the mid and
+on the bid - each against a floor measured on its own series at the same rows per
+class and the same feature set:
+
+| build | arms caught, of 24 | `n*` range |
+| --- | --- | --- |
+| `spec`, the five published numbers | **24 of 24** | **724 to 3,506 ticks** |
+| `pool`, the feed's own marginals | **0 of 24** | **63,704 ticks to infinite** |
+
+Per feed, on the bid with the empirical marginal, against roughly 42,000 ticks
+held per class:
+
+| feed | k-tuple AUC | floor | window AUC | floor | `n*` k-tuple | `n*` window |
+| --- | --- | --- | --- | --- | --- | --- |
+| boom_300_index | 0.4980 | 0.4823 | 0.5108 | 0.5026 | 147,295 | 5,002,148 |
+| boom_500_index | 0.5262 | 0.5158 | 0.5228 | 0.5300 | 386,485 | **inf** |
+| boom_1000_index | 0.4823 | 0.5117 | 0.5053 | 0.5243 | **inf** | **inf** |
+| crash_300_index | 0.5205 | 0.5216 | 0.5416 | 0.5473 | **inf** | **inf** |
+| crash_500_index | 0.5119 | 0.5255 | 0.5606 | 0.6020 | **inf** | **inf** |
+| crash_1000_index | 0.5147 | 0.5062 | 0.5039 | 0.4876 | 555,823 | 1,124,470 |
+
+So **the `n*` of 59 ticks on `boom_300_index` published above is withdrawn.** It
+was the floating-point artefact; corrected, the same feed's k-tuple arm reads
+147,295 ticks, which is **3.5 times the sample that exists**, and three of the six
+feeds are unseparable on both arms at any sample size. The Boom and Crash
+mechanism - a compound Poisson grind against a rare spike - re-instantiates.
+
+**And the specification does not.** `spec` is caught on all twenty-four arms, at
+724 to 3,506 ticks, while `pool` is caught on none. Kill condition 4 was written
+to catch the opposite outcome - "if matching the marginal exactly does not help,
+the defect is not in the marginal" - and matching the marginal helps completely.
+The defect *is* the marginal, and it is the same defect this page already found
+in the jump:
+
+> **`deriving.md` section five needs the quantiles of `g` as well as of `J`.** A
+> gamma matched to the published `E[g]` and `CV[g]` puts **0.82%** of
+> `crash_300_index`'s grind ticks in the smallest bin where the feed puts
+> **3.26%**, because the real grind's density is flat at the origin and a gamma
+> of shape 2.19 has its mode away from it. Two moments do not pin a grind any
+> better than two moments pinned a jump.
+
+That is the third one-line amendment this page owes the specification, beside
+`E[J] := lambda * E[g]` and the quantiles of `J`. All three are of the same kind:
+the *mechanism* in `deriving.md` section five is right and the *parameterisation*
+is too thin to re-instantiate it.
+
 ### The randomness battery is calibrated, and two of its tests were retired
 
 | stream | acf out of 50 | grid2 p | grid3 p | grid4 p | gap p | perm p | lattice 2-tuple | **lattice 3-tuple** |
