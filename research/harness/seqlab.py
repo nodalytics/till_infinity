@@ -607,7 +607,26 @@ def targets(bars: dict[str, np.ndarray], horizon: int = 1) -> dict[str, np.ndarr
 
 
 def usable(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    """Rows where every feature and the target are finite. The warm-up dies here."""
+    """Rows where every feature and the target are finite. The warm-up dies here.
+
+    **If your cell count suddenly halved, read this.** The `.all(axis=1)` means
+    *one* feature that is non-finite for the whole series drops *every* row of
+    that series, and the caller sees an empty block rather than an error - which
+    surfaces as `Thin`, or as a quietly smaller table, and never as a traceback.
+
+    That has happened once and it cost every control in the sequence study. On
+    2026-09-13 `spread_rel` began flowing from `tick_size`, which returns `nan`
+    when no decimal quote grid fits the closes - true, correctly, of every
+    *simulated* path, because a simulator emits full-precision floats. Both
+    `gbm_bars` and `surrogate_bars` therefore produced zero usable rows on every
+    symbol, and `seqnets.py`'s grid lost exactly half its cells - the half that
+    was the null. `build` now guards that one column; the general hazard is
+    unchanged, so **a new feature that can be non-finite for an entire series is
+    a feature that can silently delete a whole arm.**
+
+    The cheap defence, and the one that caught it: count the control cells in
+    the output and compare with what the job enumerated.
+    """
     return np.isfinite(x).all(axis=1) & np.isfinite(y)
 
 
