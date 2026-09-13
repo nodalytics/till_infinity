@@ -506,6 +506,30 @@ def build(bars: dict[str, np.ndarray]) -> tuple[np.ndarray, tuple[str, ...]]:
         # symbols it was meaningless, and arms that pooled symbols pooled it.
         spread_rel = rel_spread(bars) / np.maximum(rng / np.maximum(c, 1e-12), 1e-12)
 
+    # **A simulated path has no quote lattice, and that used to delete the whole
+    # study.** `tick_size` infers the grid by finding the coarsest decimal every
+    # close lies on; a simulator emits full-precision floats, no decimal grid
+    # fits, and it correctly returns `nan`. That `nan` then propagated through
+    # `rel_spread` into `spread_rel`, and because `usable()` requires *every*
+    # feature to be finite, **every row of every simulated series was dropped** -
+    # `gbm` and `surrogate` are exactly half of `seqnets.py`'s grid and exactly
+    # half of it failed, silently, as `Thin`.
+    #
+    # The repair is here and **not** in `tick_size`, deliberately. That function's
+    # `nan` is load-bearing: its own docstring says the failure mode it exists to
+    # prevent is a cost model that "looks plausible and charges nothing", so
+    # handing a cost-aware arm a finite fallback would reintroduce exactly the
+    # bug it was written to kill. A *feature* can say "there is no quote grid
+    # here"; a *cost* must not.
+    #
+    # Zero is the honest value. `spread_rel` is a dimensionless measure of the
+    # quoted spread against the bar's own range, and on a continuous simulated
+    # path the quoted spread is a construction of the simulator rather than a
+    # property of a market. A constant column carries no information, which is
+    # what a control's spread feature should carry.
+    if not np.isfinite(spread_rel).any():
+        spread_rel = np.zeros(n)
+
     frac_zero = _roll_mean((r0 == 0.0).astype(float), 22)
     n_distinct = np.full(n, np.nan)
     for i in range(21, n):

@@ -14,6 +14,11 @@ mirror of the one symbol on the page that produced a positive result.
 > *before* the `gbm_bars` correction below; a corrected re-run is in flight and
 > is a confirmation rather than a fix, for the reason given in
 > [the defect section](#a-defect-in-the-null-itself-found-while-validating-the-new-control).
+> That re-run also caught a **regression in the shared floor that silently
+> deleted every control in the study** - `gbm` and `surrogate` were returning
+> zero usable rows on every symbol - which is fixed and has
+> [its own section](#the-regression-that-deleted-every-control-in-the-study).
+> The numbers reported here predate it and have their controls intact.
 >
 > The session lost about six hours to the lab refusing SSH. The diagnosis is not
 > the one this page first recorded: the machine was healthy throughout and
@@ -431,7 +436,14 @@ permutation, and `seqlab.check_causality` is CLEAN on the surrogate bars. That
 is exactly the contract the control is supposed to honour, and it is checked
 rather than asserted.
 
-**And one correction rather than an addition: `gbm_bars`' extrema.** It is the
+**And two corrections rather than additions.** `gbm_bars`' extrema, below, and
+a guard in `build` so that an unknown tick size cannot delete every row of every
+simulated series - see
+[the regression](#the-regression-that-deleted-every-control-in-the-study). Both
+are in the shared floor rather than in this arm, and both were found by running
+a control against a process whose answer was known.
+
+**`gbm_bars`' extrema.** It is the
 section above and it is the most consequential change of the three, because it
 is in the null every arm scores against rather than in a control only this arm
 uses. No arm's existing numbers are invalidated by it on their face - the wick
@@ -845,6 +857,52 @@ detects direction structure on markets that have some and returns 0.5015 on a
 family that does not. A null result from a classifier that cannot find
 bid-ask bounce would have been a statement about the classifier.
 
+## The regression that deleted every control in the study
+
+Caught on the confirmation re-run, not on the run this page reports, and it is
+the most consequential thing on the page for the other five arms.
+
+Between the grid run and the re-run, `seqlab.build` was changed - correctly, and
+for a good reason - to compute `spread_rel` through a new `rel_spread`, which
+multiplies MetaTrader's integer point count by an inferred `tick_size` instead of
+treating it as a price. The old form was meaningless across symbols and the new
+one is validated against the `(1s)` twins to half a percent. Nothing about that
+is wrong.
+
+`tick_size` infers the quote grid by finding the coarsest decimal grid every
+close lies on, and **returns `nan` when no grid fits.** A simulated path emits
+full-precision floats, so no decimal grid fits, so it returns `nan` - correctly.
+That `nan` then flows into `rel_spread`, into `spread_rel`, and into
+`seqlab.usable`, which requires **every** feature to be finite.
+
+> **Every row of every simulated series was dropped.** `gbm` and `surrogate` are
+> exactly half of this arm's 2,464 cells, and exactly half of them failed -
+> 522 of the first 1,037, as `Thin`, with no error and no traceback.
+
+The symptom is worth stating plainly because it is what the next person will
+see: the run does not crash, the log does not complain, and the controls simply
+stop existing. An arm that reports its headline numbers without checking its
+control count would publish an uncontrolled result and never know.
+
+**The repair is in `build` and deliberately not in `tick_size`.** That function's
+`nan` is load-bearing: its own docstring says the failure it exists to prevent is
+a cost model that "looks plausible and charges nothing", so handing a cost-aware
+arm a finite fallback would reintroduce exactly the bug it was written to kill.
+A *feature* is allowed to say "there is no quote grid here"; a *cost* is not. So
+`build` substitutes a constant zero column when - and only when - the entire
+`spread_rel` column is non-finite, which cannot happen on a real feed because
+real closes are quantised by construction.
+
+**The numbers on this page are not affected.** The grid and the positive control
+ran before this change, on the older `spread_rel`, and their control counts are
+462 / 154 / 154 / 462 with zero failures - which is how the regression was
+visible at all: a re-run of the same command produced half the cells. The
+confirmation run now in flight carries both the corrected `gbm_bars` and the
+corrected `build`, and it also carries the *new* `spread_rel` definition, so if
+its real-variant cells move materially from the ones reported here, that
+movement is a measurement of what the old spread feature was worth and belongs
+on this page rather than in a footnote.
+
 ## What fell over
 
 Recorded because this folder keeps its failures.
@@ -869,7 +927,10 @@ Recorded because this folder keeps its failures.
    borne entirely by a shared resource, which is the kind of defect a result
    table never shows. `warm` now returns the dead pairs and the caller drops
    them: the second attempt enumerated **2,464** cells instead of 2,816.
-5. **The research host refused SSH for about six hours**, in the middle of the
+5. **A change to the shared floor silently deleted every control in the study**,
+   and the only reason it was caught is that the same command was run twice and
+   the second run produced half the cells. It has its own section above.
+6. **The research host refused SSH for about six hours**, in the middle of the
    grid and its positive control, and **this page's first diagnosis of it was
    wrong.** `Connection refused` rather than a timeout was read here as "the
    machine answers and `sshd` does not", i.e. a dead daemon. It was not: the lab
