@@ -4,65 +4,58 @@ The recurrent arm of the sequence study. Three architectures - LSTM, GRU and a
 vanilla tanh RNN - on `seqlab`'s 28 causal features, across the Volatility
 family and 8 timeframes, against two targets: **direction**, which is a
 calibration, and **`logvol`**, which is the question. Twenty-two symbols were
-commissioned; **twenty-one can be pulled** and the missing one is the more
-interesting half of the pair that matters.
+commissioned; **twenty-one can be pulled**, and the one that cannot is the
+mirror of the one symbol on the page that produced a positive result.
 
-> **Partial, 2026-09-12.** What is written up here is complete and final: the
-> three harness checks, the 384-cell architecture sweep at five folds, the
-> family-wise number on its 192 direction cells, the parameter-versus-sample
-> decomposition, the correction to `seqlab.gbm_bars`, the validation of the new
-> `surrogate_bars` control, and the positive control on the **scoring layer**.
+> **Complete, 2026-09-13**, with one confirmation running. Every stage has run:
+> the harness checks, the 384-cell architecture sweep, the **2,464-cell grid**
+> and the **480-cell positive control on real markets**. The `gbm` control cells
+> in the grid and the positive control were scored against the null as it stood
+> *before* the `gbm_bars` correction below; a corrected re-run is in flight and
+> is a confirmation rather than a fix, for the reason given in
+> [the defect section](#a-defect-in-the-null-itself-found-while-validating-the-new-control).
 >
-> The 2,464-cell grid and the real-market positive control **ran to completion
-> in 68.9 minutes** and their `grid.json` and `real.json` are sitting in
-> `data/seqnets/` on the research host. They are not written up here because
-> **the host has been unreachable for most of the session** - `sshd` refusing
-> connections for two hours from 16:51, back briefly, gone again - with six
-> agents on it and a load average that peaked at 52. The machine itself never
-> rebooted (`up 22:23` when it returned), which is the only reason the detached
-> run survived.
->
-> **Both will need re-running rather than just fetching**, and that is a
-> scientific point rather than an operational one: the `gbm_bars` correction
-> below landed *after* that run started, so every `gbm` control cell in those
-> two files was scored against the uncorrected null - the one where one bar in
-> nine has a high a traded bar could not produce. The command is in
-> [Reproducing this page](#reproducing-this-page) and costs about 70 minutes.
->
-> Nothing below is provisional and nothing is claimed here about the grid.
+> The session lost about six hours to the lab refusing SSH. The diagnosis is not
+> the one this page first recorded: the machine was healthy throughout and
+> serving the live desk - **one egress address was banned, almost certainly by
+> fail2ban, after seven agents hammered it for hours.** `lab.sh` now falls back
+> to a jump route, which is how the corrected run was launched.
 
-**What the sweep already settles.**
+**The findings.**
 
-* **Direction calibrates.** Over the sweep's 192 direction cells the mean test
-  AUC is **0.50251** with a standard deviation of 0.0077, against a momentum
-  baseline at 0.50309 on the same rows. Nine cells of 192 clear 0.52 and none
-  clears 0.55, which is what a few hundred fair coins do. This is the result the
-  arm was built to produce; `research/deriving.md` already proved no other one
-  was available. The best cell in the family - **0.5310**, at 1d on 2,325 test
-  rows - sits **below the median of the family's own best-of-192 null** (0.5262),
-  and `seqlab.max_of_k` over 200,000 replicates puts the family-wise p at
-  **0.2047**.
-* **Magnitude closes against the net.** Of 48 configurations - 3 architectures x
-  4 hidden sizes x 4 sequence lengths - **three have a positive mean test R^2 on
-  `logvol` and the largest is +0.0022**. Restricted to cells with fewer
-  parameters than training windows, **0 of 52 beat the unconditional mean** and
-  the largest R^2 is **-0.00013** across **2,028,292 scored test rows**. On
-  those same cells and rows, **HAR on `rv1`/`rv5`/`rv22` beats the net** - srel
-  0.7074 against 0.7090, and HAR clears the mean on 4 cells where the net clears
-  it on none - and the unconditional mean beats both.
-* **The generator-identification statistic reproduces.** `seqlab.main()`
-  reported naive srel 0.8802 against the unconditional mean's 0.6691 on
-  `Volatility 75 Index` 1h; this harness, on walk-forward test rows with a
-  training-block mean, gets **0.8819** and **0.6692** over 41,649 test rows.
-  The naive forecaster being *worse than a constant* is not a forecasting
-  failure - it is the measurement that sigma is constant, and
-  [the section below](#r2_naive-is-not-a-score-it-is-an-autocorrelation-and-that-is-the-whole-finding)
-  shows it is exactly a lag-1 autocorrelation of **0.0111**.
-* **The scoring layer finds clustering when it is there.** The same code on four
-  GARCH(1,1) processes of rising persistence returns `R2_har` of -0.0002,
-  +0.0019, +0.0590, +0.1443, and recovers the lag-1 autocorrelation of `log|r|`
-  from `R2_naive` to three decimals in all four. A layer that returns zero here
-  returns something else on a process that has something.
+* **Direction calibrates.** Over 462 real cells and **7,728,858 test rows** the
+  mean AUC is **0.50150**. The phase-surrogate control - a series built to have
+  no nonlinear structure at all - scores **higher**, at 0.50183. The best cell in
+  the family, 0.5801, is on **361 test rows** and lands on the **95th percentile**
+  of the best-of-462 null; family-wise **p = 0.0511**, and the best control cell
+  in the same sample band is 0.5572. Banded by test-set size, the controls win
+  three bands of five. `research/deriving.md` predicted this and it is what came
+  back.
+* **Magnitude closes against the net.** The net scores **R^2 -0.3139** on the
+  feed, **worse than on a permuted target** (-0.2823) and worse than on a
+  simulated GBM at the published sigma (-0.2139). It beats the unconditional
+  mean on 17 of 462 cells against the shuffled control's 5 of 154. **A HAR
+  regression on `rv1`/`rv5`/`rv22` beats it** - srel 0.7094 against 0.7462 - and
+  the unconditional mean beats both.
+* **There is no volatility clustering in the family to forecast.** Measured as
+  `rho = (1 + R2_naive) / 2`, **all twenty-one symbols lie inside [-0.013,
+  +0.015]** and eight of them are negative, on blocks of 13,000 to 24,000 rows
+  where the standard error of a correlation is 0.007. The family-wide figure is
+  **-0.0014**.
+* **The positive control passes, twice.** Run through identical code, real
+  markets give `rho` of **0.086 to 0.155**, HAR R^2 positive at all eight
+  timeframes, and **41 of 46** under-parameterised cells beating the mean against
+  **8 of 107** on the synthetics. On direction the net reads **0.51527** on real
+  markets (family-wise p = 0.0, best cell BTCUSD 1h at 0.5502 on 41,649 rows)
+  against 0.50150 on the synthetics - and the momentum baseline shows why: it is
+  **below 0.5 on all five real symbols**, which is bid-ask bounce, not an edge.
+* **`Spot Up - Volatility Up Index` is the one symbol whose name comes true.**
+  It is the only one of twenty-one with a positive mean HAR R^2, its `rho` runs
+  0.039 / 0.019 / 0.023 at 3m / 15m / 1h against its own simulated null's 0.001 /
+  -0.004 / 0.005, and all three of its other controls sit at zero. The effect is
+  **one percent of variance**, and at 15m the recurrent net scores **-0.1646**
+  where HAR scores **+0.0079**. There is a little structure; a straight line
+  finds it; the net does not.
 * **And a defect in the null every arm scores against.** `seqlab.gbm_bars`
   produced **11.28% of bars with a high below `max(open, close)`** - impossible
   on a traded bar - giving negative wick features where the feed's are bounded
@@ -283,11 +276,9 @@ dismissed as a capacity artefact in either direction - the nets that are too
 small to reproduce a constant are excluded, and every net that produced a
 positive number had more parameters than samples.
 
-## How the grid is set up
+## How the grid was run
 
-The sweep chose the configuration; the grid was to run it everywhere. This is
-what it will do when it runs - the harness is written, the cells are enumerated
-and the first 122 of them completed before the host went away.
+The sweep chose the configuration; the grid ran it everywhere.
 
 * **Symbols**: `seqlab.VOLATILITY` (20) plus `seqlab.SPOT_UP` (2), of which
   **21 can be pulled** - see [the availability finding](#an-availability-finding-recorded-because-it-changes-what-22-symbols-means).
@@ -402,7 +393,19 @@ What `seqlab.build` does with that:
 one bar in nine, for free - and every model reading candle shape was reading a
 differently-supported variable on the control than on the feed. Fixed in
 `seqlab.gbm_bars` and `seqlab.surrogate_bars` by taking the extrema over the
-open as well as the sub-path, which is what a traded bar does.
+open as well as the sub-path, which is what a traded bar does. (A third
+simulator added to `seqlab` by another arm takes `open` as the first point of
+its own sub-path, so it never had the defect.)
+
+**Why the re-run is a confirmation and not a correction.** The grid and the
+positive control were scored before the fix, so their `gbm` cells used the
+uncorrected bars - and the numbers those cells returned are what a *correct* null
+returns: direction AUC **0.49999** over 462 cells, `R2_naive` **-0.9981**, `rho`
+**+0.0007**. The defect changes the support of three shape features on simulated
+bars; it does not give a volatility forecaster anything to forecast or a
+direction classifier anything to classify, and the control did not behave as if
+it had. The re-run is running to show that rather than to assert it, and if it
+disagrees the disagreement is the finding.
 
 ### The surrogate, validated against a process with known clustering
 
@@ -523,33 +526,324 @@ Three things are established by it.
 net, and "an LSTM cannot find clustering on gold" would still be a fact about
 this harness that nothing above would catch.
 
-## The grid - run, not yet readable
+## The grid
 
-21 symbols x 8 timeframes x 3 architectures x 4 variants x 2 targets x 5 folds,
-**2,464 cells** after the unavailable and too-thin pairs are dropped, at hidden
-32 and sequence length 16. It **completed in 68.9 minutes** and wrote
-`data/seqnets/grid.json` on the research host, which has been unreachable since.
-Even once it is fetched it will be re-run: the `gbm_bars` correction landed after
-it started, so its `gbm` cells were scored against the uncorrected null. The
-command is in [Reproducing this page](#reproducing-this-page) and the harness
-needs no changes to run it.
+**2,464 cells, 0 failed, 57.8 minutes.** 21 symbols x 8 timeframes x 3
+architectures x 4 variants x 2 targets x 5 walk-forward folds, at hidden 32 and
+sequence length 16. Every headline below carries its three controls on the same
+line, which is the point of the table.
 
-What it is for, given the sweep has already answered the central question on
-four anchors: **breadth and the controls.** The sweep ran the `real` variant
-only. `shuffle`, `surrogate` and `gbm` have never been run against a net on this
-family, so the strongest sentence this page can currently make about the
-magnitude result is "no configuration beats a constant", not "no configuration
-beats a constant by more than its own simulated null does". Those are different
-claims and only the first is supported here.
+### Direction: the null calibration, and it calibrates
 
-## The positive control on real markets - run, not yet readable
+| variant | cells | test rows | mean AUC | sd | min | max | cells above 0.52 | momentum baseline |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **real** | 462 | 7,728,858 | **0.50150** | 0.01091 | 0.4465 | 0.5801 | 21 | 0.49940 |
+| `shuffle` | 154 | 2,576,286 | 0.49939 | 0.01145 | 0.4370 | 0.5439 | 4 | 0.50010 |
+| `surrogate` | 154 | 2,576,142 | **0.50183** | 0.01081 | 0.4662 | 0.5572 | 9 | 0.49842 |
+| `gbm` | 462 | 7,728,858 | 0.49999 | 0.00926 | 0.4310 | 0.5525 | 19 | 0.50645 |
 
-`seqlab.REAL` - XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD - through identical
-folds, identical features and identical architectures, all 40 (symbol,
-timeframe) pairs already in the cache. It ran in the same 68.9 minutes and wrote
-`data/seqnets/real.json`. The scoring layer is controlled by the
-section above; **the net is not**, and until it is, "a recurrent net finds
-nothing on the Volatility family" is a sentence with one leg missing.
+**The phase surrogate scores higher than the feed.** 0.50183 against 0.50150,
+on a series built to have no nonlinear structure in it at all. So does the
+`gbm` control's momentum baseline (0.50645) against the feed's (0.49940). The
+four rows are one row.
+
+The family-wise number, over all 462 real cells with each cell's null standard
+error computed from its own class counts and `seqlab.max_of_k` given 20,000
+draws of the best-of-462:
+
+| | |
+| --- | --- |
+| best observed AUC | 0.5801 - `Volatility 90 Index` 8h, GRU, **361 test rows**, overparameterised |
+| that cell's own null SE | 0.0304 |
+| best-of-462 under the null: median | 0.5547 |
+| best-of-462 under the null: 95th percentile | **0.5803** |
+| **family-wise p** | **0.0511** |
+| best control cell | 0.5572 - `Volatility 30 Index` 8h, GRU, `surrogate`, 360 test rows |
+
+**The best cell in 462 lands on the 95th percentile of what 462 nulls produce,
+and the control family's best is 0.5572 on a cell of almost exactly the same
+size.** That is not an edge, it is what searching 462 cells costs.
+
+The cleanest way to see it is to stop pooling and look at AUC against sample
+size. `Volatility 90 Index` is one of the three members listed about 211 days
+ago, so it runs from 50,000 bars at 3m to 633 at 8h - the same symbol, the same
+generator, the same code:
+
+| timeframe | bars | test rows | AUC, the three architectures |
+| --- | --- | --- | --- |
+| 3m | 50,000 | 41,649 | 0.5043, 0.5042, 0.5037 |
+| 15m | 20,271 | 16,875 | 0.4934, 0.4983, 0.5037 |
+| 1h | 5,067 | 4,205 | 0.5018, 0.5045, 0.5114 |
+| 4h | 1,267 | 995 | 0.4797, 0.4973, 0.5494 |
+| 6h | 845 | 573 | 0.5277, 0.5023, 0.4937 |
+| 8h | 633 | 361 | 0.5606, 0.5097, **0.5801** |
+
+**The AUC is a function of how little data the cell has and of nothing else.**
+Banding the whole grid by test-set size and comparing the best real cell with
+the best control cell in the same band says the same thing five times:
+
+| test rows | real cells | best real AUC | control cells | best control AUC | control 99th pct |
+| --- | --- | --- | --- | --- | --- |
+| under 600 | 27 | 0.5801 | 45 | 0.5572 | 0.5514 |
+| 600 - 1,500 | 51 | 0.5508 | 85 | **0.5525** | 0.5525 |
+| 1,500 - 5,000 | 108 | 0.5345 | 180 | 0.5315 | 0.5244 |
+| 5,000 - 20,000 | 123 | 0.5147 | 205 | **0.5174** | 0.5122 |
+| 20,000 and up | 153 | 0.5073 | 255 | **0.5080** | 0.5056 |
+
+The controls win three of the five bands. **The direction arm is a null and it
+came back a null**, which is the result `research/deriving.md` predicted and the
+only one this arm was built to be able to report.
+
+### Magnitude: the net loses to the mean, to HAR, and to its own nulls
+
+| variant | cells | test rows | R^2 net | R^2 HAR | R^2 naive | srel net | srel HAR | srel exp(mean logvol) | srel mean realised | srel naive | cells beating the mean |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **real** | 462 | 7,728,858 | **-0.3139** | -0.0031 | -1.0029 | 0.7462 | 0.7094 | 0.7084 | 0.6696 | 0.8844 | **17 / 462** |
+| `shuffle` | 154 | 2,576,286 | -0.2823 | -0.0032 | -1.0149 | 0.7485 | 0.7090 | 0.7082 | 0.6693 | 0.8830 | 5 / 154 |
+| `surrogate` | 154 | 2,576,142 | -0.1790 | -0.0036 | -0.9942 | 0.7315 | 0.7106 | 0.7096 | 0.6709 | 0.8844 | 6 / 154 |
+| `gbm` | 462 | 7,728,858 | -0.2139 | -0.0034 | -0.9981 | 0.7440 | 0.7146 | 0.7138 | 0.6782 | 0.8998 | 11 / 462 |
+
+Read the `real` row against the `shuffle` row. **The net does worse on the feed
+(-0.3139) than on a target that has been permuted (-0.2823)**, and worse than on
+a simulated GBM at the symbol's own published sigma (-0.2139). It beats the
+unconditional mean on 3.7% of real cells against 3.2% of shuffled ones and 2.4%
+of simulated ones. Those are the same number.
+
+`R2_naive` is **-1.0029** on the feed - the value the identity above gives for
+`rho = 0` is exactly -1. Measured across 462 cells and 7.7 million test rows,
+the lag-1 autocorrelation of log realised volatility on the Volatility family is
+**-0.0014**.
+
+By architecture, on the real variant:
+
+| architecture | parameters | direction AUC | `logvol` R^2 | overparameterised cells |
+| --- | --- | --- | --- | --- |
+| GRU | 5,985 | 0.50306 | -0.28973 | 108 / 154 |
+| LSTM | 7,969 | 0.50088 | -0.25138 | 154 / 154 |
+| vanilla RNN | 2,017 | 0.50056 | -0.40072 | 93 / 154 |
+
+The vanilla RNN is the worst forecaster and has the fewest parameters; the LSTM
+is the best and is overparameterised in every cell it ran. Neither ordering
+means anything, because all three are below zero.
+
+### Restricted to cells with fewer parameters than training windows
+
+The comparison kill condition 6 exists to make possible, on the two universes,
+with identical code:
+
+| universe | cells | test rows | net R^2 mean | median | max | beats mean | HAR R^2 mean | HAR beats mean | net beats HAR |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Volatility family | 107 | 4,103,133 | **-0.03732** | -0.00510 | +0.04217 | **8 / 107** | -0.00006 | 9 / 107 | 17 / 107 |
+| real markets | 46 | 1,592,233 | **+0.05756** | +0.07133 | +0.15602 | **41 / 46** | +0.06433 | 45 / 46 | 33 / 46 |
+
+and on direction, same cells:
+
+| universe | net AUC | its `gbm` control | momentum baseline |
+| --- | --- | --- | --- |
+| Volatility family | 0.50045 | 0.49618 | 0.49983 |
+| real markets | **0.51876** | 0.49648 | **0.48094** |
+
+### Every symbol's volatility autocorrelation, measured
+
+`rho = (1 + R2_naive) / 2`, pooled over timeframes and architectures on the real
+variant. This is the table the magnitude question reduces to:
+
+| symbol | rho | net R^2 | HAR R^2 | mean usable rows |
+| --- | --- | --- | --- | --- |
+| `Volatility 15 Index` | +0.0141 | -1.0827 | -0.0157 | 12,991 |
+| `Spot Up - Volatility Up Index` | +0.0111 | -0.6686 | **+0.0005** | 14,162 |
+| `Volatility 250 (1s) Index` | +0.0107 | -0.4686 | -0.0024 | 19,283 |
+| `Volatility 75 (1s) Index` | +0.0035 | -0.0209 | -0.0022 | 23,312 |
+| `Volatility 25 Index` | +0.0019 | -0.0218 | -0.0010 | 24,350 |
+| `Volatility 50 Index` | +0.0017 | -0.0098 | -0.0023 | 24,350 |
+| `Volatility 50 (1s) Index` | +0.0014 | -0.0061 | -0.0020 | 23,312 |
+| `Volatility 5 Index` | +0.0006 | -1.5431 | -0.0088 | 14,077 |
+| `Volatility 15 (1s) Index` | -0.0019 | -0.3225 | -0.0035 | 17,545 |
+| `Volatility 100 (1s) Index` | -0.0023 | -0.0504 | -0.0014 | 23,818 |
+| `Volatility 30 (1s) Index` | -0.0023 | -0.2062 | -0.0047 | 17,545 |
+| `Volatility 10 Index` | -0.0027 | -0.0219 | -0.0013 | 24,350 |
+| `Volatility 100 Index` | -0.0027 | -0.0332 | -0.0020 | 24,350 |
+| `Volatility 75 Index` | -0.0029 | -0.0163 | -0.0007 | 24,350 |
+| `Volatility 25 (1s) Index` | -0.0034 | -0.0138 | -0.0021 | 23,312 |
+| `Volatility 5 (1s) Index` | -0.0075 | -1.5534 | -0.0094 | 14,077 |
+| `Volatility 10 (1s) Index` | -0.0078 | -0.1294 | -0.0007 | 23,818 |
+| `Volatility 150 (1s) Index` | -0.0079 | -0.4264 | -0.0003 | 19,283 |
+| `Volatility 90 Index` | -0.0101 | -0.1539 | -0.0041 | 12,991 |
+| `Volatility 30 Index` | -0.0128 | -0.6431 | -0.0064 | 12,991 |
+| `Volatility 90 (1s) Index` | -0.0129 | -0.0515 | -0.0025 | 17,545 |
+
+**Every one of the twenty-one is inside [-0.013, +0.015].** On blocks of 13,000
+to 24,000 rows the standard error of a correlation is about 0.007, so the whole
+column is two standard errors wide and centred on zero. Eight of the twenty-one
+are *negative*. There is no volatility clustering in this family to forecast,
+and that is the answer to the question this arm was commissioned to ask.
+
+**One column is worth reading on its own.** `Spot Up - Volatility Up Index` is
+the **only symbol of twenty-one with a positive mean HAR R^2**. It is also the
+only one in the study whose name says the variance moves. The effect is
+**+0.0005** of variance explained, and the section below takes it seriously
+anyway because a pre-registered prediction that comes true at the fourth decimal
+is still a prediction that came true.
+
+### The two cells that separate from their controls at scale
+
+Banding the `logvol` grid by test-set size the way the direction grid was banded:
+
+| test rows | real cells | best real R^2 | control cells | best control R^2 | control 99th pct |
+| --- | --- | --- | --- | --- | --- |
+| under 5,000 | 186 | **-0.00057** | 248 | +0.00390 | +0.00082 |
+| 5,000 - 20,000 | 123 | +0.01183 | 164 | +0.00075 | +0.00043 |
+| 20,000 and up | 153 | **+0.04217** | 204 | +0.00018 | -0.00007 |
+
+At the thin end the best real cell is *negative* and the controls win. At the
+thick end - where an R^2 means something - two symbols separate from everything
+the controls can do, and both are worth naming.
+
+**`Spot Up - Volatility Up Index`**, the one member whose name promises moving
+variance:
+
+| timeframe | variant | test rows | R^2 net | R^2 HAR | rho | srel net | srel exp(mean logvol) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 3m | **real** | 41,649 | +0.0045 | **+0.0105** | **+0.0387** | **0.7274** | 0.7658 |
+| 3m | `gbm` | 41,649 | -0.0018 | -0.0001 | +0.0007 | 0.7078 | 0.7102 |
+| 3m | `surrogate` | 41,648 | -0.0043 | -0.0000 | -0.0034 | 0.7092 | 0.7084 |
+| 3m | `shuffle` | 41,649 | -0.0049 | -0.0003 | -0.0000 | 0.7132 | 0.7147 |
+| 1h | **real** | 7,285 | +0.0065 | **+0.0075** | **+0.0231** | 0.7143 | 0.7143 |
+| 1h | `gbm` | 7,285 | -0.0071 | -0.0004 | +0.0049 | 0.7217 | 0.7204 |
+| 1h | `surrogate` | 7,284 | -0.0031 | -0.0002 | -0.0037 | 0.7148 | 0.7137 |
+| 1h | `shuffle` | 7,285 | -0.0115 | -0.0015 | -0.0230 | 0.7244 | 0.7230 |
+
+**HAR is positive at all four timeframes on this symbol** (+0.0105, +0.0079,
++0.0075, +0.0042) and at none of them on `Volatility 75 Index` (-0.0002, -0.0002,
+-0.0001, -0.0003), while every control on the Spot Up cells sits at zero. Its
+`rho` runs 0.039 / 0.019 / 0.023 against its own `gbm` null's 0.001 / -0.004 /
+0.005.
+
+**So the name is telling the truth and the effect is one percent of variance.**
+That is the honest summary: the variance does move, measurably, on the one
+member advertised as having a moving variance - and at 15m the recurrent net
+scores **-0.1646** where HAR scores **+0.0079**, which is this page's headline in
+miniature. There is a little structure, a straight line finds it, and the net
+does not.
+
+**`Volatility 250 (1s) Index` at 15m**, the largest `logvol` score in the whole
+grid, and **the first hypothesis is a defect in the feed**:
+
+| timeframe | variant | test rows | R^2 net (GRU / LSTM / RNN) | rho | srel exp(mean logvol) |
+| --- | --- | --- | --- | --- | --- |
+| 3m | real | 41,649 | -0.0004 pooled | +0.0057 | 0.7128 |
+| **15m** | **real** | 41,649 | **+0.0208 / +0.0143 / +0.0422** | **+0.0657** | **0.8006** |
+| 15m | `gbm` | 41,649 | -0.0014 / -0.0014 / -0.0058 | +0.0007 | 0.7102 |
+| 15m | `surrogate` | 41,648 | -0.0014 | +0.0029 | 0.7081 |
+| 15m | `shuffle` | 41,649 | **-0.0157** | **-0.0390** | **0.7831** |
+| 1h | real | 27,205 | -0.6057 pooled | +0.0009 | 0.7065 |
+
+All three architectures agree and all three controls are at zero, which is what
+a real effect looks like. **Two things say it is not one.**
+
+First, `srel exp(mean logvol)` at this cell is **0.8006** where every other cell
+in the 462 is near 0.708 - the target's *marginal* is anomalous, not just its
+time structure. Second, and decisively, **the `shuffle` control reproduces the
+anomaly**: it reads 0.7831 on the same axis and a `rho` of **-0.0390** where a
+permuted target must give zero. A control that cannot return zero is telling you
+its error bar is not 0.005 but something closer to 0.04 - which is the size of
+the effect. The same symbol posts net R^2 of -0.61 and -0.62 at 1h and 4h with
+`shuffle` at -1.71 and -1.20, which is the behaviour of a heavy-tailed target,
+not of a forecastable one.
+
+The mechanism that would produce all of it is a stretch of repeated quotes:
+`rv1` of exactly zero sends `log(rv1)` to the `1e-12` floor, the floor values
+cluster in time, and both the autocorrelation and the fat tail follow.
+`research/rebuilding.md` found `frac_zero` at AUC 0.686 opening the quote-lattice
+question on this same family. **Pre-registered check, not a claim:** count the
+zero-return bars on `Volatility 250 (1s) Index` at 15m. If they are a
+concentrated run, this cell is a data defect and comes off the table. It is
+recorded here rather than dropped because `research/grounding.md`'s rule on this
+project is that a learned model has only ever paid as a pointer at a defect.
+
+## The positive control on real markets, and it is the strongest table here
+
+**480 cells, 0 failed.** `seqlab.REAL` - XAUUSD, EURUSD, GBPUSD, USDJPY, BTCUSD -
+through identical features, identical folds, identical architectures and
+identical scoring, each against a `gbm` control built at its own
+`seqlab.measured_sigma`. This is the stage that decides whether everything above
+is a statement about the synthetics or a statement about the harness.
+
+### Magnitude
+
+| variant | cells | test rows | R^2 net | R^2 HAR | R^2 naive | srel net | srel HAR | srel exp(mean logvol) | srel naive | cells beating the mean |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **real markets** | 120 | 3,145,854 | -0.0154 | **+0.0556** | **-0.7734** | 0.7948 | 0.8196 | 0.8257 | 0.9422 | **96 / 120** |
+| their `gbm` control | 120 | 3,316,380 | -0.0034 | -0.0002 | -0.9967 | 0.7116 | 0.7122 | 0.7124 | 0.8909 | 4 / 120 |
+
+by timeframe, real markets only:
+
+| timeframe | usable | test rows | rho | R^2 net | R^2 HAR |
+| --- | --- | --- | --- | --- | --- |
+| 3m | 39,285 | 32,738 | **0.1325** | +0.0541 | +0.0741 |
+| 15m | 49,978 | 41,649 | **0.1294** | +0.0916 | +0.0823 |
+| 1h | 49,978 | 41,649 | **0.1550** | +0.0988 | +0.0816 |
+| 4h | 36,434 | 30,362 | 0.1183 | +0.0182 | +0.0548 |
+| 6h | 27,724 | 23,104 | 0.0990 | +0.0054 | +0.0477 |
+| 8h | 21,914 | 18,262 | 0.0949 | -0.0703 | +0.0420 |
+| 12h | 16,088 | 13,407 | 0.0860 | -0.1973 | +0.0337 |
+| 1d | 10,259 | 8,550 | 0.0913 | -0.1240 | +0.0287 |
+
+**`rho` is 0.086 to 0.155 on real markets against -0.013 to +0.015 across the
+whole Volatility family** - an order of magnitude, measured by the same line of
+code. HAR is positive at all eight timeframes and the net at five of eight. The
+`gbm` control built at these symbols' own measured sigmas returns `R2_naive` of
+**-0.9967**, i.e. `rho = 0.0017`, which is the Volatility family's number.
+
+Restricted to cells with fewer parameters than training windows, the contrast is
+the one already given above: **41 of 46 real-market cells beat the unconditional
+mean at a mean R^2 of +0.058, against 8 of 107 at -0.037 on the synthetics.**
+
+The best cells are real forecasts rather than thin-sample noise:
+
+| cell | R^2 net | R^2 HAR | test rows | overparameterised |
+| --- | --- | --- | --- | --- |
+| BTCUSD 1h LSTM | +0.1648 | +0.1843 | 41,649 | yes |
+| BTCUSD 1h GRU | +0.1560 | +0.1843 | 41,649 | **no** |
+| XAUUSD 15m RNN | +0.1530 | +0.1261 | 41,649 | **no** |
+| XAUUSD 15m LSTM | +0.1520 | +0.1261 | 41,649 | yes |
+
+**And HAR still beats the net on BTCUSD** (+0.1843 against +0.1648) while the net
+beats HAR on XAUUSD. Over all 120 cells the net beats HAR on 81. So the
+recurrent net is a real forecaster on real data - it just is not reliably a
+better one than three lagged magnitudes and an intercept.
+
+### Direction, and the second positive control nobody asked for
+
+| variant | cells | test rows | mean AUC | sd | max | cells above 0.52 | momentum baseline |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **real markets** | 120 | 3,145,854 | **0.51527** | 0.01204 | 0.5502 | **34** | **0.48154** |
+| their `gbm` control | 120 | 3,316,380 | 0.49740 | 0.00451 | 0.5173 | **0** | 0.50513 |
+
+Family-wise over the 120 real-market cells: best **0.5502** (BTCUSD 1h, GRU,
+**41,649 test rows, not overparameterised**, `nstar` 25,391) against a
+best-of-120 null whose median is 0.5135 and whose 95th percentile is 0.5213.
+**Family-wise p = 0.0.**
+
+The mechanism is visible in the baseline column and it is not an edge:
+
+| symbol | momentum AUC | net AUC | its `gbm` control |
+| --- | --- | --- | --- |
+| BTCUSD | **0.4681** | 0.5268 | 0.4974 |
+| GBPUSD | 0.4866 | 0.5166 | 0.4962 |
+| USDJPY | 0.4833 | 0.5144 | 0.4977 |
+| EURUSD | 0.4854 | 0.5104 | 0.4972 |
+| XAUUSD | 0.4843 | 0.5080 | 0.4985 |
+
+**Momentum is below 0.5 on all five**, which is short-horizon *reversal* - the
+bid-ask bounce, a microstructure fact about traded markets and not a trade at
+this size. The net finds it; on the synthetics the same baseline reads 0.49983
+and the same net reads 0.50045.
+
+**So the direction arm has a positive control too, and it passes.** The harness
+detects direction structure on markets that have some and returns 0.5015 on a
+family that does not. A null result from a classifier that cannot find
+bid-ask bounce would have been a statement about the classifier.
 
 ## What fell over
 
@@ -575,23 +869,47 @@ Recorded because this folder keeps its failures.
    borne entirely by a shared resource, which is the kind of defect a result
    table never shows. `warm` now returns the dead pairs and the caller drops
    them: the second attempt enumerated **2,464** cells instead of 2,816.
-5. **The research host stopped accepting SSH at 16:51** with six agents on it
-   and a load average of **52**, in the middle of the grid and its positive
-   control. `Connection refused` rather than a timeout, so the machine answers
-   and `sshd` does not. `research/starving.md` is about research load degrading
-   the *production* box; this is the same lesson one machine over, and the
-   detached-with-`nohup` discipline that page established is the only reason the
-   run may still be alive.
+5. **The research host refused SSH for about six hours**, in the middle of the
+   grid and its positive control, and **this page's first diagnosis of it was
+   wrong.** `Connection refused` rather than a timeout was read here as "the
+   machine answers and `sshd` does not", i.e. a dead daemon. It was not: the lab
+   was healthy throughout and serving the live desk's MT5 tunnel the whole time,
+   and **one egress address is filtered at the edge - and it is not
+   fail2ban.** That attribution stood here for an hour and is withdrawn: the
+   address appears nowhere in `/var/log/fail2ban.log` (470 ban entries, the last
+   at 13:08), the only enabled jail has the Debian default **10-minute** bantime,
+   which cannot produce a six-hour block, and the machine **rebooted at
+   22:04:59** - which clears ephemeral bans - after which the refusal continued
+   unchanged. Whatever filters it sits above fail2ban and could not be read
+   because `sudo` wants a password. **Twice this outage was explained
+   confidently and wrongly**, which is the argument for the jump route rather
+   than for a third explanation: it works without anyone being right about the
+   cause. The evidence that settles it is
+   that port 22 stayed open *from another host*. `lab.sh` now probes direct
+   first and falls back to a jump route, which is how the corrected run was
+   launched.
+
+   `research/starving.md` is about research load degrading the *production* box.
+   This is the same lesson one machine over with a different mechanism - not
+   memory, but a rate limiter - and the detached-with-`nohup` discipline that
+   page established is the only reason the 68.9-minute run survived an outage
+   that outlasted it. **The wrong diagnosis is kept because it was load-bearing
+   for an hour**: it is what made the grid look lost when it had already
+   finished.
 
 ## What would change this answer
 
 Written so the next person does not have to guess what this page would accept
 as a refutation.
 
-1. **A cell where the net beats `exp(mean logvol)` with `params < n_train`, on a
-   constant-sigma member, that the `gbm` control at the same sigma does not
-   match.** There are none here. One would mean the feed is not the GBM its name
-   claims, which is a finding about the generator and outranks the forecast.
+1. **The `Volatility 250 (1s) Index` 15m cell resolving the other way.** It is
+   the largest `logvol` score in the grid, all three architectures agree on it,
+   all three controls sit at zero - and its own `shuffle` control returns a
+   `rho` of -0.0390 where a permuted target must return zero, which says the
+   error bar there is 0.04 and not 0.005. **Count the zero-return bars on that
+   symbol at that timeframe.** If they are a concentrated run, the cell is a
+   quote-lattice artefact and comes off the table; if they are not, this page
+   owes an explanation it does not currently have.
 2. **A direction AUC that clears the best control cell across the family.** Not
    a cell above 0.52 - the best of a few hundred fair coins does that routinely,
    which is what `max_of_k` is for - but one above what the same grid's own
@@ -603,12 +921,18 @@ as a refutation.
    constant-sigma process there is nothing for a longer horizon to find either,
    but **that is an argument, not a measurement**, and this page has not made it.
    `seqlab.targets` already takes a `horizon`; the grid does not sweep it.
-4. **A different sigma regime.** These are the constant-sigma members plus one
-   of the two whose name says otherwise, and `Spot Up - Volatility Down Index`
-   could not be pulled at all. The other families - Boom, Crash, Jump, Step,
+4. **`Spot Up - Volatility Down Index`.** The one symbol in the study that could
+   not be pulled is the mirror of the one symbol that produced a positive
+   result. If the Down member reproduces the Up member's `rho` of 0.02 to 0.04
+   and its positive HAR R^2, the effect is a property of the Spot Up pair rather
+   than of one feed, and that is worth having. If it does not, the Up member's
+   one percent needs re-examining. **This is the single cheapest open item on
+   the page**, and it is blocked on a route that 404s.
+5. **A different sigma regime.** These are the constant-sigma members plus one
+   of the two whose name says otherwise. The other families - Boom, Crash, Jump, Step,
    Range Break, Drift Switch, DEX - are a different arm and a different page;
    `seqlab.SYNTHETIC` holds them and none of them is geometric Brownian motion.
-5. **The `1s` twins at their own resolution.** Everything here is bar data from
+6. **The `1s` twins at their own resolution.** Everything here is bar data from
    3m up. `research/twins.md` established that a twin pair carries identical
    volatility per second with per-tick variance differing by exactly sqrt(2), so
    the place a sequence model could still have something to see on this family is

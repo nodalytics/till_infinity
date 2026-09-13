@@ -90,6 +90,41 @@ that number because re-identification from live data alone is still what it
 measures, and knowing how far a claim is from being supportable is worth having
 even once the claim has arrived another way.
 
+## How accurate is it, measured
+
+**Within 0.4% at every timeframe, and two attempts to improve on that made it
+worse.** `research/harness/calibproj.py` scores three parameterisations on
+identical rows - 1,498,858 bars across twenty feeds and eight timeframes, every
+fit on the first half and every score on the second:
+
+| | dispersion (1.0000 is correct) | bias |
+| --- | --- | --- |
+| **`calendar`** - this module | **0.9994 to 1.0036** | 0.06 to 0.32 SE |
+| `ticks` - variance per published draw | 0.9906 to 0.9959 | 0.10 to 0.30 SE |
+| `measured` - sigma fitted out of sample | 0.9987 to 1.0051 | - |
+
+Fitting sigma wins **53 of 147 cells against 50**, which is a coin flip, and
+`named sigma / fitted sigma` has median **1.0020** with an interquartile range of
+0.9963 to 1.0063. Five years of data recovers the number printed on the
+instrument to two parts in a thousand, so **the published constant is not the
+limiting factor and there is nothing to gain by estimating it.**
+
+**Why scaling by tick count loses, which is the part worth keeping.**
+`research/pipeline.md` measured `dt` at exactly 2000 ms with 122 missing
+publications in 302,421 slots, so a bar does not always carry the draws its span
+implies and variance accrues per draw. Conditioning on the bar's own tick count
+is therefore right in expectation and wrong in practice, by **Jensen's
+inequality**: `E[sqrt(n)] < sqrt(E[n])`, so `sigma * sqrt(n/N)` understates the
+band systematically. Dispersion sits below 1 at **all eight** timeframes, which
+is exactly that signature. The missing publications are real; the square root's
+own noise costs more than they buy.
+
+What remains is not in the parameterisation. It is the conditional information
+that exists on the two feeds whose name says the variance moves, and on Range
+Break's position-in-band structure - see `research/families.md`. Everywhere else
+the process is constant-sigma geometric Brownian motion and a constant band is
+the correct answer rather than a lazy one.
+
 ## The error rate is a PIT, not a hit rate
 
 The obvious way to score a band is to count how often price landed inside it.
@@ -249,8 +284,20 @@ class Cone(Restorable):
         return self.price * math.exp(self.drift + self.sigma * (lo + hi) / 2.0)
 
     def contains(self, actual: float, level: int = 95) -> bool:
-        low, high = self.bands[level]
-        return low <= actual <= high
+        """Whether `actual` landed inside the band. Says so clearly if unbuilt.
+
+        A `Cone` constructed by hand has no bands - the field defaults empty -
+        and the failure otherwise surfaces as `KeyError: 50` from inside
+        `Calibration.record`, which names a band rather than the mistake, on
+        whichever row of a long run happened to reach it first.
+        """
+        found = self.bands.get(level)
+        if found is None:
+            raise ValueError(
+                f"this cone has no {level}% band - build it with `project` or "
+                "`cone_at` rather than constructing `Cone` directly"
+            )
+        return found[0] <= actual <= found[1]
 
     def pit(self, actual: float) -> float:
         """Where `actual` fell in this forecast's own CDF. Uniform if the forecast is right."""
@@ -286,6 +333,40 @@ def project(feed: str, price: float, seconds: float, *, convention: str = "ito")
     )
     for level, z in BANDS.items():
         centre = price * math.exp(drift)
+        cone.bands[level] = (centre * math.exp(-z * sigma), centre * math.exp(z * sigma))
+    return cone
+
+
+def cone_at(
+    feed: str,
+    price: float,
+    seconds: float,
+    sigma: float,
+    drift: float,
+    *,
+    convention: str = "ito",
+) -> Cone:
+    """A cone at an **explicitly supplied** sigma, with its bands filled.
+
+    `project` reads sigma off the instrument's name, which is the point of this
+    module. A calibration study needs the other thing: the same geometry at a
+    sigma the name does not give - fitted out of sample, or scaled by a bar's own
+    tick count - so two parameterisations can be scored on identical rows.
+
+    It exists because building a `Cone` by hand is a trap: `bands` defaults empty
+    and nothing fills it, so a hand-built cone fails several frames below the
+    caller on whichever row of a long run reaches it first.
+    """
+    cone = Cone(
+        feed=feed,
+        seconds=seconds,
+        price=price,
+        sigma=sigma,
+        drift=drift,
+        convention=convention,
+    )
+    centre = price * math.exp(drift)
+    for level, z in BANDS.items():
         cone.bands[level] = (centre * math.exp(-z * sigma), centre * math.exp(z * sigma))
     return cone
 

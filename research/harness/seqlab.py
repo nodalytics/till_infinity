@@ -213,6 +213,15 @@ class Thin(RuntimeError):
     """The symbol did not return enough history to study."""
 
 
+class Gone(RuntimeError):
+    """The terminal has never served this symbol at this timeframe.
+
+    Distinct from `Thin` - which is a symbol with some history and not enough -
+    and distinct from a transient failure. Raised from the negative cache so a
+    caller can tell "not available" from "not available right now".
+    """
+
+
 # --------------------------------------------------------------------------
 # Cache
 # --------------------------------------------------------------------------
@@ -231,6 +240,20 @@ def fetch(symbol: str, interval: str, count: int = DEPTH, *, tries: int = 4) -> 
     supported" would silently drop 4h from the study, which is one of the three
     timeframes it was commissioned to cover.
     """
+    # **A symbol the terminal does not have is remembered, not re-discovered.**
+    # `Spot Up - Volatility Down Index` 404s on all eight timeframes, every time,
+    # and the retry-with-backoff below turns each of those into four attempts.
+    # Across a fan-out that is ~500 pointless requests against the terminal the
+    # **live desk trades through**, and about fifteen minutes of warm-up before
+    # any compute starts. `research/starving.md`'s rule is that research which
+    # degrades production is not research that got a result faster.
+    #
+    # A marker file rather than an in-process set, because the arms are separate
+    # processes and each one was paying the cost independently.
+    missing = CACHE / "missing" / f"{_slug(symbol, interval)}.gone"
+    if missing.exists():
+        raise Gone(f"{symbol} {interval}: the terminal has never served this")
+
     last = None
     for attempt in range(tries):
         try:
@@ -241,6 +264,13 @@ def fetch(symbol: str, interval: str, count: int = DEPTH, *, tries: int = 4) -> 
         except Exception as exc:  # noqa: BLE001 - retried, then re-raised
             last = exc
         time.sleep(1.5 * (attempt + 1))
+    # Only a 404 is remembered. A timeout or a connection error is the terminal
+    # being busy or gone, which is exactly the state that must *not* be recorded
+    # as "this symbol does not exist" - that would poison the cache during an
+    # outage and hide the symbol forever afterwards.
+    if "404" in str(last):
+        missing.parent.mkdir(parents=True, exist_ok=True)
+        missing.write_text(f"{time.time():.0f} {last}\n")
     raise RuntimeError(f"{symbol} {interval}: {last}")
 
 
@@ -319,8 +349,10 @@ def align(
         depths = {s: len(b["close"]) for s, b in kept.items()}
         floor = min_share * float(np.median(list(depths.values())))
         for symbol in [s for s, d in depths.items() if d < floor]:
-            dropped[symbol] = (f"short: {depths[symbol]:,} bars < {min_share:g} x median "
-                               f"{float(np.median(list(depths.values()))):,.0f}")
+            dropped[symbol] = (
+                f"short: {depths[symbol]:,} bars < {min_share:g} x median "
+                f"{float(np.median(list(depths.values()))):,.0f}"
+            )
             kept.pop(symbol)
         if not kept:
             return np.array([], dtype=np.int64), {}, dropped
@@ -1047,8 +1079,9 @@ def tick_window(symbol: str, hours_back: float, count: int) -> list[dict[str, fl
         feed.TIMEOUT = was
 
 
-def tick_cache(symbol: str, want: int = 250_000, *, refresh: bool = False,
-               rate: float = 1.0) -> dict[str, np.ndarray]:
+def tick_cache(
+    symbol: str, want: int = 250_000, *, refresh: bool = False, rate: float = 1.0
+) -> dict[str, np.ndarray]:
     """`want` ticks for `symbol`, pulled in backward chunks and kept on disk.
 
     **Why chunks.** The route answers `date_from` plus a count, so one call
@@ -1097,8 +1130,7 @@ def tick_cache(symbol: str, want: int = 250_000, *, refresh: bool = False,
         back = max(0.05, (time.time() - newest) / 3600.0)
     rows.sort(key=lambda r: r["time"])
     rows = rows[-want:] if len(rows) > want else rows
-    cols = {k: np.asarray([r[k] for r in rows], dtype=float)
-            for k in ("time", "bid", "ask", "mid")}
+    cols = {k: np.asarray([r[k] for r in rows], dtype=float) for k in ("time", "bid", "ask", "mid")}
     if len(rows):
         np.savez_compressed(path, **cols)
     return cols
@@ -1117,10 +1149,18 @@ def spikes(moves: np.ndarray, mult: float = 10.0) -> dict:
     med = float(np.median(np.abs(m))) if len(m) else float("nan")
     cut = mult * med
     hit = np.abs(m) > cut
-    return {"mult": mult, "median_abs": med, "cut": cut, "is_spike": hit,
-            "idx": np.flatnonzero(hit), "n_spikes": int(hit.sum()),
-            "n_moves": len(m), "spike": m[hit], "grind": m[~hit],
-            "per_spike": float(len(m) / hit.sum()) if hit.sum() else float("inf")}
+    return {
+        "mult": mult,
+        "median_abs": med,
+        "cut": cut,
+        "is_spike": hit,
+        "idx": np.flatnonzero(hit),
+        "n_spikes": int(hit.sum()),
+        "n_moves": len(m),
+        "spike": m[hit],
+        "grind": m[~hit],
+        "per_spike": float(len(m) / hit.sum()) if hit.sum() else float("inf"),
+    }
 
 
 def _geom_cdf(k: np.ndarray, p: float) -> np.ndarray:
@@ -1164,10 +1204,19 @@ def hazard(gaps: np.ndarray, *, bins: int = 6) -> dict:
     g = np.asarray(gaps, float)
     g = g[np.isfinite(g) & (g > 0)]
     n = len(g)
-    out = {"n_gaps": n, "mean": float("nan"), "cv": float("nan"),
-           "ks": float("nan"), "fano": float("nan"), "acf1": float("nan"),
-           "hz_ratio": float("nan"), "hz_slope": float("nan"),
-           "min_gap": float("nan"), "hz": [], "hz_edges": []}
+    out = {
+        "n_gaps": n,
+        "mean": float("nan"),
+        "cv": float("nan"),
+        "ks": float("nan"),
+        "fano": float("nan"),
+        "acf1": float("nan"),
+        "hz_ratio": float("nan"),
+        "hz_slope": float("nan"),
+        "min_gap": float("nan"),
+        "hz": [],
+        "hz_edges": [],
+    }
     if n < 8:
         return out
     mu, sd = float(g.mean()), float(g.std(ddof=1))
@@ -1216,12 +1265,11 @@ def hazard(gaps: np.ndarray, *, bins: int = 6) -> dict:
     hz: list[float] = []
     for i in range(len(qs) - 1):
         lo, hi = qs[i], qs[i + 1]
-        at_risk = float((g >= lo).sum())       # survived to the start of the bin
+        at_risk = float((g >= lo).sum())  # survived to the start of the bin
         failed = float(((g >= lo) & (g < hi)).sum())
         frac = failed / max(at_risk, 1.0)
         width_i = max(hi - lo, 1.0)
-        hz.append(-math.log(max(1.0 - frac, 1e-12)) / width_i if at_risk >= 20
-                  else float("nan"))
+        hz.append(-math.log(max(1.0 - frac, 1e-12)) / width_i if at_risk >= 20 else float("nan"))
     out["hz"], out["hz_edges"] = [float(v) for v in hz], [float(v) for v in qs]
     good = [v for v in hz if np.isfinite(v) and v > 0]
     if len(good) >= 2:
@@ -1229,17 +1277,24 @@ def hazard(gaps: np.ndarray, *, bins: int = 6) -> dict:
         # A single slope over the whole curve, which uses every bin rather than
         # only the two ends: the sign is the direction of the trend and the
         # magnitude is per mean-wait.
-        xs = np.array([(qs[i] + qs[i + 1]) / 2.0 for i, v in enumerate(hz)
-                       if np.isfinite(v) and v > 0], float)
+        xs = np.array(
+            [(qs[i] + qs[i + 1]) / 2.0 for i, v in enumerate(hz) if np.isfinite(v) and v > 0], float
+        )
         ys = np.log(np.array(good, float))
         if len(xs) >= 3 and xs.std() > 0:
             out["hz_slope"] = float(np.polyfit(xs / max(mu, 1e-9), ys, 1)[0])
     return out
 
 
-def compound_poisson_ticks(grind: np.ndarray, jump: np.ndarray, p: float,
-                           n: int, rng: np.random.Generator,
-                           *, start: float = 1000.0) -> np.ndarray:
+def compound_poisson_ticks(
+    grind: np.ndarray,
+    jump: np.ndarray,
+    p: float,
+    n: int,
+    rng: np.random.Generator,
+    *,
+    start: float = 1000.0,
+) -> np.ndarray:
     """A memoryless spike process with the feed's own marginals. The right null.
 
     A spike fires with constant probability `p` every tick, independent of
@@ -1262,8 +1317,9 @@ def compound_poisson_ticks(grind: np.ndarray, jump: np.ndarray, p: float,
     return start + np.cumsum(out)
 
 
-def step_ticks(up: float, down: float, p_up: float, n: int,
-               rng: np.random.Generator, *, start: float = 1000.0) -> np.ndarray:
+def step_ticks(
+    up: float, down: float, p_up: float, n: int, rng: np.random.Generator, *, start: float = 1000.0
+) -> np.ndarray:
     """A lattice walk with the measured up size, down size and up probability.
 
     The Step family's null is not a Brownian motion and not a fair coin either -
@@ -1276,8 +1332,15 @@ def step_ticks(up: float, down: float, p_up: float, n: int,
     return start + np.cumsum(s)
 
 
-def switch_bars(mu: np.ndarray, sigma: np.ndarray, trans: np.ndarray, n: int,
-                rng: np.random.Generator, *, start: float = 1000.0) -> dict:
+def switch_bars(
+    mu: np.ndarray,
+    sigma: np.ndarray,
+    trans: np.ndarray,
+    n: int,
+    rng: np.random.Generator,
+    *,
+    start: float = 1000.0,
+) -> dict:
     """A Markov-modulated drift - the null for Drift Switch, and its positive control.
 
     Returned with the true state path, which is the whole point: on this
@@ -1314,13 +1377,16 @@ def bars_from_ticks(t: np.ndarray, price: np.ndarray, per: int) -> dict[str, np.
     """
     n = len(price) // max(per, 1)
     if n < 2:
-        return {k: np.zeros(0) for k in
-                ("time", "open", "high", "low", "close", "volume", "spread")}
+        return {
+            k: np.zeros(0) for k in ("time", "open", "high", "low", "close", "volume", "spread")
+        }
     grid = price[: n * per].reshape(n, per)
     stamp = t[: n * per].reshape(n, per)
     return {
         "time": stamp[:, -1],
-        "open": grid[:, 0], "high": grid.max(axis=1), "low": grid.min(axis=1),
+        "open": grid[:, 0],
+        "high": grid.max(axis=1),
+        "low": grid.min(axis=1),
         "close": grid[:, -1],
         "volume": np.full(n, float(per)),
         "spread": np.zeros(n),
