@@ -108,8 +108,13 @@ before any score:
 | cached decoder context against `tokenizer.decode` | 1.19e-06 | 4.89 |
 | `_cond_s2` against `Kronos.decode_s2` | 7.63e-06 | - |
 
-Total spend: about six hours of wall clock on eight threads for 201 zero-shot
-cells and twenty fine-tuning runs, on a machine with no GPU.
+Total spend, on a machine with no GPU: the zero-shot grid ran to completion in
+**99.5 minutes** on 8 threads - 201 cells, 337,297 scored rows, three timeframes,
+three arms - with the fine-tuning arm running concurrently on 6, finishing in
+**113.5 minutes** for twenty fits and 375 scored (symbol, fold, arm) rows. The
+24 cells absent from 25 x 3 x 3 are not failures: they are the eight Volatility
+members that return under 600 bars at 1d, which `seqlab.load` refuses as `Thin`,
+times three arms.
 
 ## Two: the tokenizer look-ahead, and how it was closed
 
@@ -158,11 +163,58 @@ through byte-for-byte the same code path. Kronos beats the unconditional mean on
 13 of 15 real cells and **0 of 15 surrogate cells**. A leak cannot tell those
 apart; volatility clustering can.
 
-`research/harness/kronosleak.py` was written to price the mistake directly - the
-same model on the same rows with the normalisation window deliberately shifted
-one bar into the future, and again with global statistics fitted before the
-split. **It has not been run**; the lab went off the network before it could
-start, and section ten says so.
+### And the mistake was priced, not just avoided
+
+`research/harness/kronosleak.py` runs the same model on the same rows with the
+normalisation deliberately contaminated, two ways. **`future`** takes the mean
+and standard deviation over `[t-ctx+1 .. t+1]` instead of `[t-ctx+1 .. t]` - the
+model still sees only bars up to `t`, but the constants that scale them carry
+the bar being predicted. That is the classic off-by-one: it survives a code
+review, and it survives a feature-level causality assertion that only inspects
+features. **`global`** fits mean and standard deviation over the whole series
+before the split, which is what "fit the scaler, then split" does.
+
+Four cells at 1h, 1,485 scored rows each, bootstrap standard error ~0.0147:
+
+| symbol | normalisation | AUC | srel vol | entropy |
+| --- | --- | ---: | ---: | ---: |
+| Volatility 75 Index | causal | 0.5193 | 0.7118 | 3.587 |
+| Volatility 75 Index | future | 0.5249 | 0.7121 | 3.594 |
+| Volatility 75 Index | global | 0.5028 | **0.9255** | **1.623** |
+| Volatility 100 Index | causal | 0.5029 | 0.6902 | 3.763 |
+| Volatility 100 Index | future | 0.5015 | 0.6874 | 3.771 |
+| Volatility 100 Index | global | 0.4679 | **0.8725** | **2.452** |
+| XAUUSD | causal | 0.4902 | 0.7229 | 3.444 |
+| XAUUSD | future | 0.4960 | 0.7215 | 3.456 |
+| XAUUSD | global | 0.5181 | 0.7518 | **2.563** |
+| EURUSD | causal | 0.5198 | 0.7230 | 3.344 |
+| EURUSD | future | 0.5184 | 0.7247 | 3.356 |
+| EURUSD | global | 0.4906 | 0.7644 | **2.440** |
+
+**The off-by-one buys nothing.** `future` moves the AUC by +0.0056, −0.0014,
++0.0058 and −0.0014 on the four cells, every one of them inside half a standard
+error, and the volatility score by +0.0003, −0.0028, −0.0014 and +0.0017. On a
+128-bar window one extra bar barely moves a mean or a standard deviation, and
+the return readout is referenced to the model's own reconstruction, so the
+contamination has almost nothing to act through.
+
+**This is reported against interest.** The causal discipline in section two was
+insurance and not a rescue: on *this* geometry the leak it guards against does
+not manufacture an edge, and had the study been sloppy the headline would have
+come out the same. The insurance is still worth carrying - the margin shrinks
+with the context, and at ctx=8 rather than 128 one contaminated bar is an eighth
+of the normalising statistic rather than a hundred-and-twenty-eighth - but this
+page cannot claim its result survived a leak it turns out not to have been
+exposed to.
+
+**And `global` is not a leak that helps, it is an input that breaks.** Fitting
+the scaler across the split costs 0.21 and 0.18 srel on the two synthetics and
+collapses the predictive entropy from 3.59 to 1.62 nats: a z-score against a
+five-year mean puts a 128-bar window far from zero and hard against the `clip`
+of 5, and the model answers a question about a nearly flat line. The classic
+mistake degrades this model rather than flattering it, which is worth knowing
+because it means a global scaler would have been caught by a *worse* score and
+not by a suspiciously good one.
 
 ## Three: what was scored, and against what
 
@@ -232,6 +284,14 @@ cells. **The feed is not further from the null than a series generated in this
 harness at a known sigma.** The phase surrogate returns 0.4920 / 0.4955 /
 0.4922 / 0.4979 / 0.4855 / 0.5086.
 
+*(Every `gbm` figure on this page comes from `seqlab.gbm_bars` as it stood before
+a defect in its candle construction was fixed - section ten. For direction the
+defect is harmless by construction, since a malformed high is informative about
+the sign of its own bar and the target is the next one, and on a GBM those are
+independent. The cells are being re-run regardless. Nothing in the feed or
+surrogate arms is affected, and the headline is a feed-against-surrogate
+comparison.)*
+
 With sixty-seven cells the best of sixty-seven fair coins clears 0.53 routinely,
 so every deviation is reported against the family it was drawn from. The largest
 deviation on each feed arm, in its own standard errors:
@@ -275,6 +335,11 @@ This is the half that had an open answer.
 | 1d | **Real** | **feed** | 0.8079 | 0.7969 | 0.8005 | 0.8041 | 0.9797 | 0.8124 | 3/5 |
 | 1d | Real | surrogate | 0.7088 | 0.6965 | 0.7150 | 0.6651 | 0.8912 | 0.6661 | **0/5** |
 | 1d | Real | gbm | 0.6997 | 0.6945 | 0.6817 | 0.6686 | 0.8869 | 0.6694 | 0/5 |
+
+The `gbm` rows carry the caveat above; the `feed` and `surrogate` rows, which are
+what the conclusions rest on, do not. A malformed candle can only *cost* Kronos
+accuracy on the `gbm` arm, and its score there is already the losing one, so the
+defect cannot be what put those zeros in the last column.
 
 Four things, in order of how much they matter.
 
@@ -380,6 +445,15 @@ amplitude spectrum survives to 6.4e-11 relative**; the autocorrelation of `|r|`
 - which *is* volatility clustering - goes to zero at every lag, and the
 kurtosis falls from 5.13 to Gaussian. The control does what the control claims.
 
+**This arm uses its own surrogate construction, not `seqlab`'s.**
+`kronoslib.surrogate_bars` predates `seqlab.surrogate_bars`, which was added to
+the shared floor later, and the two rebuild the candle differently: this one
+draws dimensionless wick geometry i.i.d. from the real bars' own pool, the
+shared one splits each surrogate return into a 24-step Brownian bridge. Both
+preserve the return spectrum exactly and destroy the `|r|` autocorrelation, and
+both produce well-formed bars, but they are not the same object and a comparison
+of surrogate scores *across* arms of this study should not assume they are.
+
 ### The shuffle control, on the synthetics
 
 `seqlab.shuffle_target` permutes the target inside the test block, so a model
@@ -411,14 +485,16 @@ against the simulated GBM built at that symbol's own sigma:
 | 1d | Volatility | 3.385 | 3.891 | +0.506 |
 | 1d | Real | 3.716 | 3.887 | +0.171 |
 
-The model is measurably **more confident on a traded feed than on a geometric
-Brownian motion simulated at the same sigma**, on all six cells, including on
-the synthetics where it has no predictive edge at all. That is a real difference
-between the feed and its own null, and the most likely cause is not
-predictability: a traded feed is quantised to a quote lattice while
-`seqlab.gbm_bars` is continuous, and `research/quantising.md` is an entire page
-about what that lattice does to estimators. **A foundation model can tell these
-two processes apart and still cannot predict the direction of either.**
+**This table is suspended pending a re-run and should not be cited.** The `gbm`
+column was generated by `seqlab.gbm_bars` before a defect in it was fixed: 11.45%
+of its simulated bars carried a high below `max(open, close)`, which is
+impossible on a traded bar and out-of-distribution for a model pretrained on
+traded markets. The entropy gap above may therefore be measuring malformed
+candles rather than the quote lattice, and section ten sets out exactly why this
+is the only claim on the page the defect can reach. The reading it *would*
+support - that the model can tell a traded feed from its own null while
+predicting the direction of neither - is interesting enough to be worth
+re-measuring properly rather than defending now.
 
 ## Six: what the context budget bought
 
@@ -596,18 +672,68 @@ Written into `research/harness/kronos.py` before any number was read.
 
 ## Ten: what is not here, and why
 
-The research lab dropped off the network for roughly five hours mid-run - SSH
-refused, host unreachable by ICMP. The jobs themselves did not die: they were
-detached with `nohup` and kept running without a client attached, which is why
-the grid and the fine-tuning arm are complete above. What did not survive the
-outage:
+The research lab stopped answering SSH from this machine for roughly six hours
+mid-run. **One egress address is filtered at the edge and the cause is
+unidentified** - the box stayed healthy throughout, answering on port 22 from
+the Mumbai instance the whole time, so `lab.sh` now tries direct and falls back
+to a jump through it. No cause is named here because none has been established;
+an earlier attribution to `fail2ban` was withdrawn when the address turned out
+to appear nowhere in its log and the refusal survived a reboot.
+
+The jobs themselves did not die: they were detached with `nohup` and kept
+running without a client attached, which is why the grid and the fine-tuning arm
+are complete above. What the outage did cost:
 
 | deliverable | state |
 | --- | --- |
-| `kronosleak`, the price of the look-ahead | **written, never run.** It scores the same model on the same rows with the normalisation window shifted one bar into the future, and again with global statistics fitted before the split. Section two argues from architecture and from the surrogate arm instead; this would have priced the mistake directly. |
+| `kronosleak`, the price of the look-ahead | **run after the box came back** - section two carries it |
 | zero-shot at 3m / 15m / 6h / 8h / 12h | not started - the lowest priority of `seqlab.GRID` |
 | fine-tuning at 4h | not run; 1h is the transfer number and 1d is reported only as the overfitting demonstration |
 | `Kronos-base` / `Kronos-large` | not run |
+
+### A defect in the shared simulator, and which of these numbers it touched
+
+`seqlab.gbm_bars` took each simulated bar's high as the maximum of its 24
+intra-bar sub-points, and its open as the *previous* bar's close - which is not
+one of them. Re-measured here on 200,000 simulated bars rather than taken on
+report: **11.45% of them had a high below `max(open, close)`** and 11.50% a low
+above `min(open, close)`, which is impossible on a traded bar, and `seqlab.build`
+turns those into an `upper` down to −1.19, a `lower` down to −1.14 and a `body`
+up to 2.07, against a feed whose three are confined to [0, 1] by construction.
+
+It was found by `seqnets.py` and fixed in `seqlab` at 04:26 on 2026-09-13; this
+study's grid ran between 15:40 and 17:20 on 2026-09-12, so **the `gbm` arm of
+the original grid ran on the defective version** and Kronos was fed roughly one
+impossible candle in nine on it. Those 67 cells were archived as
+`kronos_zero_gbmdefect.jsonl` and re-run on the corrected simulator.
+
+Stated before the re-run rather than after, this is what it can and cannot have
+touched:
+
+* **The `feed` arm is untouched.** Those are the broker's own bars.
+* **The `surrogate` arm is untouched.** It is built by `kronoslib.surrogate_bars`,
+  which is this arm's own construction and clamps `high` to at least
+  `max(open, close)` and `low` to at most `min(open, close)`;
+  `kronoslib.check_surrogate` asserts `bars_well_formed` and it passes.
+* **The baselines on the `gbm` arm are untouched.** `mean`, `naive` and `HAR` are
+  all built from `rv1/rv5/rv22`, which are close-to-close only and never read a
+  high or a low.
+* **The headline does not rest on the `gbm` arm.** "Kronos beats the
+  unconditional mean on 13 of 15 real cells and 0 of 15 of their phase
+  surrogates" is a `feed`-against-`surrogate` comparison, and both are
+  well-formed.
+* **What could be affected is the entropy comparison.** An impossible candle is
+  out-of-distribution for a model pretrained on traded markets, so "the model is
+  more confident on a traded feed than on a simulated GBM" could be reading
+  malformed candles rather than the quote lattice. That claim is the one thing
+  on this page the defect can reach. **The 67 `gbm` cells are being re-run on the
+  corrected simulator and the entropy claim is suspended until they land**; the
+  defective cells are archived as `kronos_zero_gbmdefect.jsonl` so the two can be
+  differenced rather than merely replaced.
+* **The direction null on the `gbm` arm is safe by construction.** A high below
+  the open is informative about the sign of *that* bar's return, and the target
+  is the *next* bar's; on a GBM those are independent, so the defect cannot
+  manufacture a predictive AUC.
 
 ### What would change the answer, in the order worth trying
 
