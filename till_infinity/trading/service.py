@@ -39,6 +39,7 @@ from .. import trading
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
+from ..shared import effects
 from ..structures.codec import pack, registry, unpack
 from ..structures.context.cusum import Cusum, Ensemble, adaptive_threshold
 from ..structures.context.holds import Book as HoldBook
@@ -178,6 +179,10 @@ ATTACH_SHOUT_EVERY = 10
 #: that a redeploy or a blip does not page anyone, short enough that the two-hour
 #: silence of 2026-09-12 could not happen again.
 UNREACHABLE_AFTER = 5
+
+#: Always on - this is not behind a flag, and a desk whose reachability check
+#: never runs is the 2026-09-12 outage repeating.
+effects.declare("trading.reachable_check", enabled=True)
 
 
 @dataclass(slots=True)
@@ -3015,6 +3020,7 @@ class Trader:
         reason `_check_autotrading` gives: one alert per heartbeat for two hours
         is a channel nobody reads, which is how the next one gets missed.
         """
+        effects.fired("trading.reachable_check")
         if reachable:
             if self._unreachable >= UNREACHABLE_AFTER:
                 log.info("trading: the terminal is answering again")

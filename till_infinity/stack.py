@@ -53,6 +53,7 @@ from . import structures as sx
 from . import trading as td
 from .bus import Bus
 from .logging import get_logger
+from .shared import effects
 
 log = get_logger(__name__)
 
@@ -226,6 +227,11 @@ class Status:
                 json.dumps(
                     {
                         "running": sorted(self.running),
+                        # **What is switched on and has never run.** Six
+                        # defects in one week were features that were enabled,
+                        # correct and reached by nothing, and every one of them
+                        # passed its own tests - see `shared/effects.py`.
+                        "inert": effects.inert(),
                         "failed": dict(self.failed),
                         "skipped": dict(self.skipped),
                         "started": self.started,

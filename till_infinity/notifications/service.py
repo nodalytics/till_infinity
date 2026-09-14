@@ -23,12 +23,17 @@ from tenacity import (
 
 from ..bus import ALERTS, Bus
 from ..logging import get_logger
+from ..shared import effects
 from .config import DEFAULT_TARGETS, Settings
 from .discord import DiscordNotifier
 from .filters import Filter
 from .models import Channel, Delivery, Level, Notification
 from .notifier import NotConfiguredError, Notifier, PermanentError, TransientError
 from .telegram import TelegramNotifier
+
+#: Always on. Every trading alarm this desk raised was dropped before this line
+#: for weeks, and nothing said so.
+effects.declare("notifications.delivered", enabled=True)
 
 log = get_logger(__name__)
 
@@ -172,6 +177,7 @@ async def listen(
             continue
         if not notification.source:
             notification = replace(notification, source=message.source)
+        effects.fired("notifications.delivered")
         deliveries = await notify(notification, settings=settings, targets=targets)
         failed = [d for d in deliveries if not d.ok]
         # The first body line comes along, because the title alone cannot be

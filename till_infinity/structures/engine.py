@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from ..logging import get_logger
+from ..shared import effects
 from . import levels as lv
 from . import reactions
 from .config import DEFAULT_FORMATION
@@ -59,6 +60,11 @@ from .state import Restorable
 from .vol import projection as pj
 from .vol.volatility import Book as VolBook
 from .vol.volatility import Volatility
+
+# Declared at import, where the flag is read, so a feature that is on and never
+# reached still has a record. Declaring at the call site would make an unreached
+# feature an undeclared one, which is exactly the blind spot.
+effects.declare("structures.projection", enabled=pj.ENABLED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1414,6 +1420,7 @@ class Engine:
         if not pj.ENABLED:
             return
         try:
+            effects.fired("structures.projection")
             seconds = lv.SECONDS.get(interval, 0.0)
             if seconds > 0 and opened > 0 and close > 0:
                 self._projection().settle(feed, float(opened), seconds, close)

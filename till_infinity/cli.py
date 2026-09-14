@@ -135,6 +135,18 @@ def health(path: Path | None, max_age: float) -> None:
         raise SystemExit(1)
     console.print(f"[green]{len(running)} running[/]: {', '.join(running)} · {age:,.0f}s ago")
 
+    # **Reported, never fatal.** A feature that is switched on and has never run
+    # is a reason for somebody to look, not a reason to restart a container:
+    # restarting cannot reach a flag that was wired to the wrong gate, and a
+    # restart loop through the problem makes it worse. `_watch_reachable` draws
+    # the same line for the same reason.
+    #
+    # It is here at all because six defects in one week were exactly this, and
+    # each passed its own tests - see `shared/effects.py`.
+    quiet = got.get("inert") or []
+    if quiet:
+        console.print(f"[yellow]enabled and never fired[/]: {', '.join(escape(q) for q in quiet)}")
+
 
 @main.group()
 def prices() -> None:

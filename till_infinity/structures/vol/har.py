@@ -68,8 +68,13 @@ from dataclasses import dataclass, field
 
 from river import linear_model, optim, preprocessing
 
+from ...shared import effects
 from ..state import Restorable
 from . import stated
+
+#: On when the flag is, and it shipped once while reaching nothing - see
+#: `Book.of`'s note about the restore path.
+effects.declare("structures.stated_forecast", enabled=stated.ENABLED)
 
 #: Bars in each horizon, keeping roughly the 1 : 5 : 22 spacing of the
 #: published daily/weekly/monthly form. Expressed in bars because the same
@@ -243,7 +248,10 @@ class Har(Restorable):
         """
         if not self.feed or self.interval_seconds <= 0 or not stated.ENABLED:
             return None
-        return stated.bps_for(self.feed, self.interval_seconds)
+        got = stated.bps_for(self.feed, self.interval_seconds)
+        if got is not None:
+            effects.fired("structures.stated_forecast")
+        return got
 
     def predict(self) -> float:
         """Expected realised volatility for the next bar, in basis points.
