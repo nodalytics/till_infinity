@@ -962,14 +962,20 @@ class CycleScalp(LevelStrategy):
                 stop_distance = max(stop_distance, abs(level - pullback) + unit * 0.25)
             trend = _number(features, "origin_high") or _number(features, "zone_high")
             if trend and trend > entry:
-                target_distance = min(max(target_distance, abs(trend - entry) * 0.85), abs(trend - entry))
+                target_distance = min(
+                    max(target_distance, abs(trend - entry) * 0.85),
+                    abs(trend - entry),
+                )
         else:
             pullback = _number(features, "sweep_high") or _number(features, "zone_high")
             if pullback and pullback > level:
                 stop_distance = max(stop_distance, abs(pullback - level) + unit * 0.25)
             trend = _number(features, "origin_low") or _number(features, "zone_low")
             if trend and trend < entry:
-                target_distance = min(max(target_distance, abs(entry - trend) * 0.85), abs(entry - trend))
+                target_distance = min(
+                    max(target_distance, abs(entry - trend) * 0.85),
+                    abs(entry - trend),
+                )
         return stop_distance, target_distance
 
 
