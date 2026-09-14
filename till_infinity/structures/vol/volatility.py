@@ -648,6 +648,19 @@ class Book(Restorable):
                 # `consensus_vol` is still the reason.
                 _ensemble=Ensemble(weighted=self.votes_implied(feed, interval)),
             )
+        # **Set on every call, not only on creation, because production
+        # restores.** `Restorable.__setstate__` defaults a field the snapshot
+        # predates, so every `Har` loaded from the 116MB state file came back
+        # with `feed=""` and `published()` returned `None` for ever - the
+        # deferral was live, correct, and reached by nothing. The construction
+        # path above is the one a fresh process and every test take, which is
+        # exactly why it verified clean.
+        #
+        # Idempotent and cheap: two attribute writes on a dataclass, on a call
+        # that already does a dict lookup.
+        if found._har.feed != feed or not found._har.interval_seconds:
+            found._har.feed = feed
+            found._har.interval_seconds = SECONDS.get(interval, 0.0)
         return found
 
     def stated_bps(self, feed: str, interval: str) -> float | None:

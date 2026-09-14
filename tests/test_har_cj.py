@@ -163,3 +163,48 @@ def test_a_published_feed_ignores_the_horizon(stated_on):
     be the model inventing a term the generator does not have."""
     model = Har(feed="volatility_75_index", interval_seconds=3600.0)
     assert model.predict_over(50) == pytest.approx(model.predict(), rel=1e-12)
+
+
+# ------------------------------------------------- the restore path, which is
+# ------------------------------------------------- the one production takes
+
+
+def test_a_restored_forecaster_is_repaired_on_the_next_lookup(stated_on):
+    """**The deferral shipped live and reached nothing, for one afternoon.**
+
+    `Book.of` set `feed` and `interval_seconds` only in the branch that
+    *creates* a `Volatility`. Production restores from a 116MB snapshot written
+    before those fields existed, `Restorable.__setstate__` correctly defaults
+    them, and every `Har` came back with `feed = ""` - so `published()` returned
+    `None` for ever and the twenty feeds that state a volatility went on fitting
+    three horizons to a constant.
+
+    It verified clean everywhere it was checked, because a fresh `Book` and every
+    test take the construction path. Only production takes the other one.
+    """
+    from till_infinity.structures.vol.volatility import Book
+
+    book = Book()
+    first = book.of("volatility_100_index", "5m")
+    assert first._har.published() is not None, "the construction path"
+
+    # What a restore leaves behind: the object is in the book, its new fields
+    # hold their defaults.
+    first._har.feed = ""
+    first._har.interval_seconds = 0.0
+    assert first._har.published() is None
+
+    again = book.of("volatility_100_index", "5m")
+    assert again is first, "the same object, not a replacement"
+    want = 1.00 * math.sqrt(300.0 / (365 * 24 * 3600)) * 10_000.0
+    assert again._har.published() == pytest.approx(want, rel=1e-9)
+
+
+def test_repair_does_not_disturb_an_unnamed_feed(stated_on):
+    from till_infinity.structures.vol.volatility import Book
+
+    book = Book()
+    gold = book.of("gold", "1h")
+    assert gold._har.feed == "gold"
+    assert gold._har.published() is None
+    assert book.of("gold", "1h") is gold
