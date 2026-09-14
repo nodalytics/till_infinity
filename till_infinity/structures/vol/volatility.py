@@ -619,6 +619,11 @@ class Book(Restorable):
         return seeded
 
     def of(self, feed: str, interval: str = "") -> Volatility:
+        # Local, because `levels` imports this module: asking for it at import
+        # time is a cycle. The same reason `service.single_source_feeds` reaches
+        # for `prices.config` inside its function body.
+        from ..levels import SECONDS
+
         key = (feed, interval)
         found = self._by_key.get(key)
         if found is None:
@@ -626,7 +631,15 @@ class Book(Restorable):
                 half_life=self.half_life,
                 _garch=Garch(half_life=self.half_life),
                 _ranges=Ranges(),
-                _har=Har(),
+                # **The forecaster is told which instrument it is on.** It is
+                # the one member that can answer "the name already states this"
+                # and stop fitting three horizons to a published constant - see
+                # `har.published`. Everything else here is deliberately
+                # instrument-blind; this is the exception and it is measured.
+                _har=Har(
+                    feed=feed,
+                    interval_seconds=SECONDS.get(interval, 0.0),
+                ),
                 # **Weighting only where VIX votes.** `Ensemble` is per
                 # `(feed, interval)`, so a fifth member that should carry most
                 # of the vote can earn it without changing how the other 49

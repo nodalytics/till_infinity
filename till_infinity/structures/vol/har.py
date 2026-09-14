@@ -62,12 +62,14 @@ and the number every threshold divides by does not change on an argument.
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from dataclasses import dataclass, field
 
 from river import linear_model, optim, preprocessing
 
 from ..state import Restorable
+from . import stated
 
 #: Bars in each horizon, keeping roughly the 1 : 5 : 22 spacing of the
 #: published daily/weekly/monthly form. Expressed in bars because the same
@@ -92,7 +94,28 @@ def _model():
 
 
 #: Ceiling on `Har.ratio`. Median 1.12 in the record, p99 629, max 1.3e11.
+#:
+#: **That tail was the symptom of fitting a right-skewed variable in levels**,
+#: and `LOG_TARGET` is the cause being removed rather than clipped. The cap
+#: stays because a clip is still the right last line against a cold model, but
+#: it should now almost never bind.
 RATIO_CAP = 10.0
+
+#: Fit `log(realised)` rather than `realised`. Realised volatility is
+#: right-skewed and strictly positive, so a squared-error fit in levels is
+#: dominated by the largest bars and its residuals are not symmetric - which is
+#: what produced a p99 of 629 against a median of 1.12. In logs the errors are
+#: roughly symmetric, a negative prediction is impossible by construction, and
+#: the model that `research/controls.md` and `research/foundation.md` both scored
+#: positively on real markets was **log**-HAR.
+LOG_TARGET = True
+
+#: Floor under the log, so a zero-volatility bar cannot produce `-inf`.
+MIN_BPS = 1e-6
+
+#: `pi/2`, the bipower scaling that makes `sqrt(x_t * x_{t-1})` an estimator of
+#: the continuous part. See `_split`.
+BIPOWER = math.pi / 2.0
 
 
 @dataclass(slots=True)
@@ -112,20 +135,76 @@ class Har(Restorable):
     long: int = LONG
     warmup: int = WARMUP
 
+    #: The instrument, when the caller knows it. Only used to ask `stated.py`
+    #: whether this feed publishes its own volatility - see `predict`.
+    feed: str = ""
+    #: This series' bar length. `stated.bps_for` needs it to scale an annual
+    #: figure onto one bar, and zero means "do not ask".
+    interval_seconds: float = 0.0
+
     _seen: int = 0
     _history: deque[float] = field(default_factory=lambda: deque(maxlen=LONG))
     _model: object = field(default_factory=_model)
     _last_features: dict[str, float] | None = None
 
+    @staticmethod
+    def _split(values: list[float]) -> tuple[list[float], list[float]]:
+        """Separate the continuous part of each bar from its jump part.
+
+        **A jump and a busy hour are not the same thing and do not persist the
+        same way.** Realised volatility pools them, so a model fitted on the
+        pooled series learns one memory for two processes - and the jump part
+        has almost none, which drags the diffusive coefficients down after any
+        violent bar.
+
+        The separation is Andersen-Bollerslev-Diebold's bipower idea at bar
+        resolution: `sqrt(x_t * x_{t-1})` multiplies *adjacent* bars, so a
+        single large bar inflates only one of the two factors and the product
+        stays near the continuous level. The excess of the bar over that is the
+        jump.
+
+        Scaled by `pi/2`, which is the constant that makes the product an
+        unbiased estimator of the continuous scale for a Gaussian diffusion -
+        the same `E|X| = sigma sqrt(2/pi)` that `consensus_vol` converts with,
+        appearing here as its reciprocal squared.
+        """
+        cont: list[float] = []
+        jump: list[float] = []
+        for i, x in enumerate(values):
+            previous = values[i - 1] if i else x
+            bipower = BIPOWER * math.sqrt(max(x, 0.0) * max(previous, 0.0))
+            # A jump cannot be negative: a bar quieter than its neighbour is a
+            # quiet bar, not a negative jump.
+            this_jump = max(x - bipower, 0.0)
+            jump.append(this_jump)
+            cont.append(max(x - this_jump, 0.0))
+        return cont, jump
+
     def _features(self) -> dict[str, float] | None:
-        """Means over the three horizons, or None until the longest is full."""
+        """Means over the three horizons, split into continuous and jump parts.
+
+        Six regressors where the published form has three. The three horizons
+        are unchanged and are what makes this HAR; the split is what makes it
+        HAR-CJ, and it is there because the two components have genuinely
+        different memories - see `_split`.
+        """
         if len(self._history) < self.long:
             return None
         values = list(self._history)
+        cont, jump = self._split(values)
+
+        def mean(seq: list[float], window: int) -> float:
+            take = seq[-window:] if window else seq
+            return sum(take) / max(len(take), 1)
+
         return {
-            "short": sum(values[-self.short :]) / self.short,
-            "medium": sum(values[-self.medium :]) / self.medium,
-            "long": sum(values) / len(values),
+            "short": mean(values, self.short),
+            "medium": mean(values, self.medium),
+            "long": mean(values, 0),
+            "cont_short": mean(cont, self.short),
+            "cont_long": mean(cont, 0),
+            "jump_short": mean(jump, self.short),
+            "jump_long": mean(jump, 0),
         }
 
     def observe(self, realised_bps: float) -> None:
@@ -139,24 +218,101 @@ class Har(Restorable):
         if realised_bps <= 0:
             return
         if self._last_features is not None:
-            self._model.learn_one(self._last_features, realised_bps)
+            target = realised_bps
+            if LOG_TARGET:
+                target = math.log(max(realised_bps, MIN_BPS))
+            self._model.learn_one(self._last_features, target)
             self._seen += 1
         self._history.append(realised_bps)
         self._last_features = self._features()
 
+    def published(self) -> float | None:
+        """The volatility this instrument's own name states, for one bar.
+
+        **On the generated half of this book there is nothing for a rolling
+        model to track and it should not pretend otherwise.** Those feeds have
+        no volatility clustering at all - largest `|acf|` of the absolute 1m
+        return is 0.017 against 0.219 to 0.453 on real controls - so the three
+        horizons this model averages are three windows onto the same constant,
+        and every study run against them this week put a fitted forecast at
+        *negative* out-of-sample R-squared where the published number is right
+        to a median 1.0020 of itself.
+
+        `None` for every instrument whose name claims nothing, which is every
+        real market and the Boom, Crash, Step and Range Break families.
+        """
+        if not self.feed or self.interval_seconds <= 0 or not stated.ENABLED:
+            return None
+        return stated.bps_for(self.feed, self.interval_seconds)
+
     def predict(self) -> float:
         """Expected realised volatility for the next bar, in basis points.
 
-        Falls back to the most recent realised value while cold, which is the
-        naive forecast this has to beat.
+        **The published constant wins outright where there is one.** See
+        `published`: on a constant-sigma feed the correct forecast is the
+        constant, and it needs no warm-up, cannot misread a regime that does
+        not exist, and does not decay when the model has been fed a violent bar.
+
+        Otherwise the fitted value, and the most recent realised reading while
+        cold - which is the naive forecast this has to beat.
+
+        **Worth knowing before relying on this at one bar.**
+        `research/forecasting.md` measured naive beating HAR in 11 of 12 cells
+        at a one-bar horizon while HAR wins at 5, 10 and 20 bars, so this method
+        is being asked for a number at the single horizon where the form is
+        weakest. `predict_over` is the one to use when the consumer's horizon is
+        longer than a bar - which for anything sizing a stop, it is.
         """
+        told = self.published()
+        if told is not None and told > 0:
+            return told
         latest = self._history[-1] if self._history else 0.0
         if not self.warm or self._last_features is None:
             return latest
         got = float(self._model.predict_one(self._last_features) or 0.0)
+        if LOG_TARGET:
+            # `exp` of a cold or wild fit can overflow; an absurd forecast is
+            # the model having nothing, which is what `latest` already means.
+            try:
+                got = math.exp(got)
+            except OverflowError:
+                return latest
         # A forecast of zero or a negative volatility is the regression saying
         # it has nothing, not a prediction of stillness.
         return got if got > 0 else latest
+
+    def predict_over(self, bars: int) -> float:
+        """Expected realised volatility **per bar** over the next `bars`.
+
+        A stop sized for the next half hour wants the volatility expected over
+        that half hour, not over the next bar, and those are different numbers
+        whenever the model has a view at all.
+
+        Scaled by the square root of time, which is exact for the diffusive
+        part and the reason this returns a per-bar figure rather than a total:
+        every threshold in this package is expressed per bar, and handing them a
+        total would silently multiply every distance by `sqrt(bars)`.
+
+        The forecast itself does not change with the horizon - a one-step linear
+        model has one view - so what this expresses is the **mean reversion**:
+        over more bars the expectation pulls toward the long-horizon term, which
+        is exactly what the three-horizon form is for.
+        """
+        if bars <= 1:
+            return self.predict()
+        told = self.published()
+        if told is not None and told > 0:
+            return told  # constant sigma: the horizon changes nothing
+        near = self.predict()
+        if not self.warm or self._last_features is None:
+            return near
+        far = float(self._last_features.get("long", near))
+        if far <= 0:
+            return near
+        # Weight toward the long-horizon mean as the horizon lengthens, capped
+        # at the longest window the model actually holds.
+        share = min(bars / float(self.long), 1.0)
+        return (1.0 - share) * near + share * far
 
     @property
     def warm(self) -> bool:
