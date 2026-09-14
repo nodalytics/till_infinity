@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from ..state import Restorable
@@ -50,6 +50,15 @@ class Swing(StrEnum):
     LOW = "low"
     #: An endpoint, or a point on a straight run. Carries no level information.
     EDGE = "edge"
+
+
+class Structure(StrEnum):
+    """Relative position of a swing against the previous swing of the same kind."""
+
+    HIGHER_HIGH = "HH"
+    LOWER_HIGH = "LH"
+    HIGHER_LOW = "HL"
+    LOWER_LOW = "LL"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +81,9 @@ class Point(Restorable):
     #: precisely the ones that have not earned it yet. Every look-ahead bug in
     #: this file would live in that clamp.
     confirmed: float
+    #: Relative to the previous swing of the same kind. Wired in by
+    #: `structure()`, and left empty for the first high/low in a sequence.
+    structure: Structure | None = None
 
     @property
     def is_turn(self) -> bool:
@@ -227,3 +239,37 @@ def as_of(found: Sequence[Point], when: float) -> list[Point]:
 def turns(found: Sequence[Point]) -> list[Point]:
     """Just the highs and lows - the points a level can be drawn at."""
     return [point for point in found if point.is_turn]
+
+
+def structure(turns: Sequence[Point]) -> list[tuple[Point, Structure | None]]:
+    """Label consecutive swing highs and lows as HH, LH, HL or LL.
+
+    A swing high is compared with the previous swing high, and a swing low with
+    the previous swing low. The first high or low in a sequence has no prior
+    comparison and is returned with `None`.
+
+    The returned point is a shallow copy with its `structure` field set, so the
+    structure is part of the turn sequence once it is wired into the pipeline.
+    """
+    found: list[tuple[Point, Structure | None]] = []
+    last_high: Point | None = None
+    last_low: Point | None = None
+    for point in turns:
+        label: Structure | None
+        if point.swing is Swing.HIGH:
+            if last_high is None:
+                label = None
+            else:
+                label = Structure.HIGHER_HIGH if point.price > last_high.price else Structure.LOWER_HIGH
+            last_high = point
+        elif point.swing is Swing.LOW:
+            if last_low is None:
+                label = None
+            else:
+                label = Structure.HIGHER_LOW if point.price > last_low.price else Structure.LOWER_LOW
+            last_low = point
+        else:
+            label = None
+        updated = replace(point, structure=label)
+        found.append((updated, label))
+    return found

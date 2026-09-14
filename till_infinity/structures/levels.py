@@ -50,7 +50,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from .drawing.pips import Point
+from .drawing.pips import Point, Swing, structure as pips_structure
 from .state import Restorable
 from .vol.volatility import Volatility
 
@@ -585,6 +585,11 @@ class Level(Restorable):
     #: level in a day, on an instrument with 288 five-minute bars in one, and
     #: swamped the beta-binomial prior badly enough to report p=100%.
     waiting: bool = False
+    #: The most recent swing classification at the end of the cluster that formed
+    #: the level, as a HH/LH/HL/LL label. These are stored on the level because
+    #: the published signal is a float dict and a string would be invalid there.
+    high_structure: str = ""
+    low_structure: str = ""
 
     @property
     def price(self) -> float:
@@ -839,6 +844,8 @@ class Level(Restorable):
             "swings": self.swings,
             "created": self.created,
             "last_touch": self.last_touch,
+            "high_structure": self.high_structure,
+            "low_structure": self.low_structure,
             "sides": {str(side): stats.to_dict() for side, stats in self.sides.items()},
         }
         if vol is not None:
@@ -857,6 +864,19 @@ class Level(Restorable):
 
 def seed_price(point: Point) -> float:
     return point.price
+
+
+def _last_structure(cluster: Sequence[Point]) -> tuple[str, str]:
+    """Latest HH/LH/HL/LL labels for the high and low swing series in a cluster."""
+    labelled = pips_structure(cluster)
+    prev_high = ""
+    prev_low = ""
+    for point, structure in labelled:
+        if point.swing is Swing.HIGH:
+            prev_high = structure
+        elif point.swing is Swing.LOW:
+            prev_low = structure
+    return prev_high, prev_low
 
 
 def form(
@@ -910,6 +930,7 @@ def form(
         spread = _variance(prices, centre)
         floor = vol.price_units(centre, MIN_ZONE_VOL / ZONE_SIGMA) ** 2
         newest = max(point.confirmed for point in cluster)
+        high_structure, low_structure = _last_structure(cluster)
         levels.append(
             Level(
                 feed=feed,
@@ -918,6 +939,8 @@ def form(
                 origin=origin,
                 created=newest,
                 swings=len(cluster),
+                high_structure=high_structure,
+                low_structure=low_structure,
             )
         )
     return levels
@@ -967,6 +990,10 @@ def merge(existing: Sequence[Level], found: Sequence[Level], vol: Volatility) ->
             )
             near.swings += candidate.swings
             near.origin = agree(near.origin, candidate.origin)
+            if not near.high_structure and candidate.high_structure:
+                near.high_structure = candidate.high_structure
+            if not near.low_structure and candidate.low_structure:
+                near.low_structure = candidate.low_structure
         else:
             kept.append(candidate)
     return dedupe(kept, vol)

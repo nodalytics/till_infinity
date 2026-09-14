@@ -740,6 +740,14 @@ class Call(Restorable):
             f"vs {self.inference.base_rate:.0%} base, "
             f"push {self.inference.expected_push:+.2f}v"
         )
+        structure_code = {
+            "HH": 1.0,
+            "LH": 2.0,
+            "HL": 3.0,
+            "LL": 4.0,
+        }
+        high_structure = structure_code.get(str(self.level.high_structure or "").upper(), 0.0)
+        low_structure = structure_code.get(str(self.level.low_structure or "").upper(), 0.0)
         return Signal(
             shape=Shape.LEVEL,
             feed=self.feed,
@@ -757,6 +765,8 @@ class Call(Restorable):
             level_id=self.level.id,
             features={
                 "level": self.level.price,
+                "last_high_structure": high_structure,
+                "last_low_structure": low_structure,
                 "probability_up": self.inference.probability_up,
                 "probability": self.inference.probability,
                 "expected_push_vol": self.inference.expected_push,
@@ -1842,7 +1852,7 @@ class Engine:
             return lv.form(
                 series.feed,
                 series.interval,
-                pips.turns(visible),
+                [point for point, _ in pips.structure(pips.turns(visible))],
                 vol,
                 origin=self.passes[0],
                 min_swings=FORMATION_MIN_SWINGS.get(self.passes[0], lv.MIN_SWINGS),
@@ -1852,7 +1862,12 @@ class Engine:
             found = lv.form(
                 series.feed,
                 series.interval,
-                pips.turns(pips.as_of(self._points(name, series, vol), self._now)),
+                [
+                    point
+                    for point, _ in pips.structure(
+                        pips.turns(pips.as_of(self._points(name, series, vol), self._now))
+                    )
+                ],
                 vol,
                 origin=name,
                 min_swings=FORMATION_MIN_SWINGS.get(name, lv.MIN_SWINGS),
@@ -2014,7 +2029,7 @@ class Engine:
         swings: a shape whose last point has not settled is a shape nobody
         could have recognised yet.
         """
-        turns = pips.turns(visible)
+        turns = [point for point, _ in pips.structure(pips.turns(visible))]
         if len(turns) < patterns.SHAPE_POINTS:
             return
         shape = patterns.Shape.of(turns[-patterns.SHAPE_POINTS :], series.feed, series.interval)
@@ -2033,7 +2048,9 @@ class Engine:
         if series is None or not series.ready:
             return None
         found = pips.points(list(series.times), list(series.closes), self.pip_count)
-        turns = pips.turns(pips.as_of(found, self._now))
+        turns = [
+            point for point, _ in pips.structure(pips.turns(pips.as_of(found, self._now)))
+        ]
         if len(turns) < patterns.SHAPE_POINTS:
             return None
         shape = patterns.Shape.of(turns[-patterns.SHAPE_POINTS :], feed, interval)
