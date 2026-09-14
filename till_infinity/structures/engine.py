@@ -2048,9 +2048,7 @@ class Engine:
         if series is None or not series.ready:
             return None
         found = pips.points(list(series.times), list(series.closes), self.pip_count)
-        turns = [
-            point for point, _ in pips.structure(pips.turns(pips.as_of(found, self._now)))
-        ]
+        turns = [point for point, _ in pips.structure(pips.turns(pips.as_of(found, self._now)))]
         if len(turns) < patterns.SHAPE_POINTS:
             return None
         shape = patterns.Shape.of(turns[-patterns.SHAPE_POINTS :], feed, interval)

@@ -310,11 +310,11 @@ MAGIC_ORDER: tuple[str, ...] = (
     # 2026-09-03. `opportunity` with the target moved out of reach so the trail
     # decides - the measured best exit policy of six tested. See `Ride`.
     "ride",
-   # 2026-09-14. Unified scalp thesis: trend context from 4h/1h and the
-   # fast pullback entry from 15m/1m, with sweep-aware geometry guarding the
-   # stop. Appended to preserve the strategy attribution table's append-only
-   # contract.
-   "cycle-scalp",
+    # 2026-09-14. Unified scalp thesis: trend context from 4h/1h and the
+    # fast pullback entry from 15m/1m, with sweep-aware geometry guarding the
+    # stop. Appended to preserve the strategy attribution table's append-only
+    # contract.
+    "cycle-scalp",
 )
 
 
