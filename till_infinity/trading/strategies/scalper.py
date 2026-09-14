@@ -82,6 +82,10 @@ class LevelStrategy(Strategy):
     """
 
     shape: ClassVar[str] = "level"
+    #: Whether this strategy is allowed to flip to the better side of a
+    #: pullback when the opposite geometry is materially cleaner. Default off:
+    #: the plain level trade is not a direction-flip strategy.
+    reverse_if_better: ClassVar[bool] = False
     #: Multiplied into the stop distance. A subclass that wants more room says
     #: so here rather than reimplementing the placement.
     stop_multiple: ClassVar[float] = 1.0
@@ -175,6 +179,104 @@ class LevelStrategy(Strategy):
         configuration, as though it ran all of them.
         """
         return side
+
+    def _reward_to_risk(
+        self,
+        payload: dict[str, Any],
+        features: dict[str, float],
+        side: Side,
+        interval: str,
+        spec: SymbolSpec,
+        tick: Tick,
+    ) -> float:
+        """The trade's reward-to-risk on the side we are actually judging.
+
+        Every strategy here is allowed to be more selective than the model, but
+        it is not allowed to ignore the model's own geometry. This is the
+        comparison the opposite-side optimization uses before it reverses a
+        setup, and it is intentionally based on the same stop and target maths
+        the order itself would use.
+        """
+        if not features:
+            return 0.0
+        level = _number(features, "level")
+        vol_bps = _number(features, "vol_bps")
+        risk_vol = abs(_number(features, "risk_vol"))
+        push_vol = abs(_number(features, "expected_push_vol"))
+        if level <= 0 or vol_bps <= 0 or risk_vol <= 0 or push_vol <= 0:
+            return 0.0
+
+        entry = tick.entry(side)
+        risk_distance, push_distance = self.distances(
+            level,
+            entry,
+            vol_bps,
+            risk_vol,
+            push_vol,
+            interval,
+            features=features,
+            side=side,
+        )
+        unit = price_distance(level, vol_bps, 1.0)
+        stop = self._anchored_stop(spec, features, side, level, risk_distance, unit)
+        aimed = self.target(
+            Aim(
+                payload=payload,
+                features=features,
+                spec=spec,
+                side=side,
+                level=level,
+                entry=entry,
+                vol_bps=vol_bps,
+                push=push_distance,
+            )
+        )
+        if isinstance(aimed, Refusal):
+            return 0.0
+        target = self._short_of(aimed, entry, side, unit, spec)
+        risk = abs(entry - stop)
+        reward = abs(target - entry)
+        if risk <= 0:
+            return 0.0
+        return reward / risk
+
+    def _better_side(
+        self,
+        payload: dict[str, Any],
+        features: dict[str, float],
+        side: Side,
+        interval: str,
+        spec: SymbolSpec,
+        tick: Tick,
+    ) -> Side:
+        """Flip only when the opposite side is structurally cleaner.
+
+        The cycle scalp thesis is specifically about entering on a pullback and
+        taking the move into the next structural extreme. If the signal's own
+        stop is already wider than the move it expects, the higher-probability
+        answer is often the mirrored trade: the same level, the same structure,
+        but the stop and target are placed on the opposite side of the pullback.
+        """
+        if not features:
+            return side
+        current = self._reward_to_risk(payload, features, side, interval, spec, tick)
+        if current <= 0:
+            return side
+
+        opposite = side.opposite
+        # The mirror has to clear the same gates as the original trade. If the
+        # opposite side is not usable, do not invent a better one.
+        quality = self.quality(str(payload.get("feed") or ""), features, opposite, interval)
+        if quality is not None:
+            return side
+
+        mirror = self._reward_to_risk(payload, features, opposite, interval, spec, tick)
+        if mirror <= current:
+            return side
+        # Require a material improvement, not a one-tick rounding change.
+        if mirror < current * 1.15:
+            return side
+        return opposite
 
     def quality(
         self, feed: str, features: dict[str, float], side: Side, interval: str = ""
@@ -611,6 +713,8 @@ class LevelStrategy(Strategy):
         # signals and stop being a comparison. Everything downstream reads
         # `side`, so the trade this builds is a correct one on the other side.
         side = self.orient(side)
+        if self.reverse_if_better:
+            side = self._better_side(payload, features, side, interval, spec, tick)
 
         # Both, and the second half is the guard: a strategy that names no
         # context timeframes cannot be unanchored, and asking would refuse
@@ -800,17 +904,73 @@ class CycleScalp(LevelStrategy):
 
     name: ClassVar[str] = "cycle-scalp"
     refines: ClassVar[str] = "level-scalp"
+    reverse_if_better: ClassVar[bool] = True
     description: ClassVar[str] = (
         "Cycle scalp: higher-timeframe trend, lower-timeframe pullback, and a "
         "liquidity-aware stop. The unified scalp strategy for the 4h=>1h=>15m "
-        "cycle."
+        "cycle. Uses a slightly wider stop and target to let the cycle breathe "
+        "without turning into a swing."
     )
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m")
-    context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m")
+    context: ClassVar[tuple[str, ...]] = ("30m", "1h", "4h")
+    #: Give the cycle room to pull back before an invalidation, without
+    #: abandoning the scalp horizon. The wider target matches the wider stop so
+    #: the trade still earns the full expected push from the trend cycle instead
+    #: of being cut off by a shallow pullback.
+    stop_multiple: ClassVar[float] = 1.25
+    target_multiple: ClassVar[float] = 1.25
 
     def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
         """Keep the unified scalp thesis lean: same level call, but refuse clogging liquidity."""
         return sweep_gate(self, payload, features)
+
+    def distances(
+        self,
+        level: float,
+        entry: float,
+        vol_bps: float,
+        risk_vol: float,
+        push_vol: float,
+        interval: str = "",
+        features: dict[str, float] | None = None,
+        side: Side | None = None,
+    ) -> tuple[float, float]:
+        """Cycle scalp wants a pullback stop and a trend-side target.
+
+        The stop sits beyond the most recent pullback extreme, not just beyond
+        the level itself. The target sits near the next structural extreme on
+        the trend side. Both are still capped by whichever geometry the level
+        model already says is the trade's own risk and push.
+        """
+        stop_distance, target_distance = super().distances(
+            level,
+            entry,
+            vol_bps,
+            risk_vol,
+            push_vol,
+            interval,
+            features=features,
+            side=side,
+        )
+        if not features or side is None:
+            return stop_distance, target_distance
+
+        unit = price_distance(level, vol_bps, 1.0)
+        if side is Side.BUY:
+            pullback = _number(features, "sweep_low") or _number(features, "zone_low")
+            if pullback and pullback < level:
+                stop_distance = max(stop_distance, abs(level - pullback) + unit * 0.25)
+            trend = _number(features, "origin_high") or _number(features, "zone_high")
+            if trend and trend > entry:
+                target_distance = min(max(target_distance, abs(trend - entry) * 0.85), abs(trend - entry))
+        else:
+            pullback = _number(features, "sweep_high") or _number(features, "zone_high")
+            if pullback and pullback > level:
+                stop_distance = max(stop_distance, abs(pullback - level) + unit * 0.25)
+            trend = _number(features, "origin_low") or _number(features, "zone_low")
+            if trend and trend < entry:
+                target_distance = min(max(target_distance, abs(entry - trend) * 0.85), abs(entry - trend))
+        return stop_distance, target_distance
 
 
 @register

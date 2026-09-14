@@ -453,6 +453,39 @@ def test_the_sweep_gate_judges_each_strategy_own_stop():
     assert refused.gate == "in_front"
 
 
+def test_cycle_scalp_flips_to_the_clearer_side_when_the_pullback_extremes_are_worse():
+    """The side with the cleaner pullback stop and trend-side target wins,
+    even when the original signal called the other way."""
+    engine = strategy("cycle-scalp")
+    payload = signal(
+        direction="up",
+        features={
+            "level": 4400.0,
+            "zone_low": 4385.0,
+            "zone_high": 4402.0,
+            "origin_high": 4408.0,
+            "origin_low": 4380.0,
+            "risk_vol": 1.0,
+            "expected_push_vol": 1.4,
+            "vol_bps": 10.0,
+            "probability": 0.72,
+            "edge": 0.25,
+            "base_rate_up": 0.47,
+        },
+    )
+    got = engine.consider(
+        payload,
+        spec=GOLD,
+        tick=Tick("XAUUSD", bid=4399.5, ask=4400.5),
+        equity=10_000.0,
+    )
+    assert isinstance(got, Intent)
+    assert got.side is Side.SELL
+    assert got.stop == pytest.approx(4405.5)
+    assert got.target == pytest.approx(4382.93)
+    assert got.entry == pytest.approx(4399.5)
+
+
 # ------------------------------------------------------------ three speeds
 
 
