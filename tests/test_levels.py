@@ -65,6 +65,24 @@ def test_highs_and_lows_are_told_apart():
     assert found[25] is pips.Swing.LOW
 
 
+def test_consecutive_swings_are_labelled_as_higher_or_lower():
+    turns = [
+        pips.Point(index=0, time=0, price=100.0, swing=pips.Swing.HIGH, prominence_bps=10.0, confirmed=0),
+        pips.Point(index=2, time=2, price=115.0, swing=pips.Swing.HIGH, prominence_bps=10.0, confirmed=2),
+        pips.Point(index=4, time=4, price=108.0, swing=pips.Swing.HIGH, prominence_bps=10.0, confirmed=4),
+        pips.Point(index=6, time=6, price=90.0, swing=pips.Swing.LOW, prominence_bps=10.0, confirmed=6),
+        pips.Point(index=8, time=8, price=93.0, swing=pips.Swing.LOW, prominence_bps=10.0, confirmed=8),
+        pips.Point(index=10, time=10, price=86.0, swing=pips.Swing.LOW, prominence_bps=10.0, confirmed=10),
+    ]
+    labels = pips.structure(turns)
+    assert labels[0][1] is None
+    assert labels[1][1] is pips.Structure.HIGHER_HIGH
+    assert labels[2][1] is pips.Structure.LOWER_HIGH
+    assert labels[3][1] is None
+    assert labels[4][1] is pips.Structure.HIGHER_LOW
+    assert labels[5][1] is pips.Structure.LOWER_LOW
+
+
 def test_a_series_too_short_to_have_a_shape_yields_nothing():
     assert pips.points([1, 2], [100.0, 101.0], count=5) == []
 
