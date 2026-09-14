@@ -67,12 +67,54 @@ def test_highs_and_lows_are_told_apart():
 
 def test_consecutive_swings_are_labelled_as_higher_or_lower():
     turns = [
-        pips.Point(index=0, time=0, price=100.0, swing=pips.Swing.HIGH, prominence_bps=10.0, confirmed=0),
-        pips.Point(index=2, time=2, price=115.0, swing=pips.Swing.HIGH, prominence_bps=10.0, confirmed=2),
-        pips.Point(index=4, time=4, price=108.0, swing=pips.Swing.HIGH, prominence_bps=10.0, confirmed=4),
-        pips.Point(index=6, time=6, price=90.0, swing=pips.Swing.LOW, prominence_bps=10.0, confirmed=6),
-        pips.Point(index=8, time=8, price=93.0, swing=pips.Swing.LOW, prominence_bps=10.0, confirmed=8),
-        pips.Point(index=10, time=10, price=86.0, swing=pips.Swing.LOW, prominence_bps=10.0, confirmed=10),
+        pips.Point(
+            index=0,
+            time=0,
+            price=100.0,
+            swing=pips.Swing.HIGH,
+            prominence_bps=10.0,
+            confirmed=0,
+        ),
+        pips.Point(
+            index=2,
+            time=2,
+            price=115.0,
+            swing=pips.Swing.HIGH,
+            prominence_bps=10.0,
+            confirmed=2,
+        ),
+        pips.Point(
+            index=4,
+            time=4,
+            price=108.0,
+            swing=pips.Swing.HIGH,
+            prominence_bps=10.0,
+            confirmed=4,
+        ),
+        pips.Point(
+            index=6,
+            time=6,
+            price=90.0,
+            swing=pips.Swing.LOW,
+            prominence_bps=10.0,
+            confirmed=6,
+        ),
+        pips.Point(
+            index=8,
+            time=8,
+            price=93.0,
+            swing=pips.Swing.LOW,
+            prominence_bps=10.0,
+            confirmed=8,
+        ),
+        pips.Point(
+            index=10,
+            time=10,
+            price=86.0,
+            swing=pips.Swing.LOW,
+            prominence_bps=10.0,
+            confirmed=10,
+        ),
     ]
     labels = pips.structure(turns)
     assert labels[0][1] is None

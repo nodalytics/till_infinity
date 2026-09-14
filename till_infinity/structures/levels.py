@@ -50,7 +50,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from .drawing.pips import Point, Swing, structure as pips_structure
+from .drawing.pips import Point, Swing
+from .drawing.pips import structure as pips_structure
 from .state import Restorable
 from .vol.volatility import Volatility
 

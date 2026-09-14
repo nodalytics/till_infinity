@@ -787,6 +787,33 @@ class LevelStrategy(Strategy):
 
 
 @register
+class CycleScalp(LevelStrategy):
+    """The unified scalping thesis: the cycle is higher-timeframe trend, lower-timeframe pullback.
+
+    The market is read in layers: 4h sets the bias, 1h confirms the structure,
+    and 15m/1m waits for the pullback into the level. The trade is only taken
+    when the level still agrees with the cycle and the stop is not sitting in
+    front of obvious liquidity. This collapses the older scalp variants into a
+    single strategy that follows the same idea without splitting it into
+    separate names for minor execution differences.
+    """
+
+    name: ClassVar[str] = "cycle-scalp"
+    refines: ClassVar[str] = "level-scalp"
+    description: ClassVar[str] = (
+        "Cycle scalp: higher-timeframe trend, lower-timeframe pullback, and a "
+        "liquidity-aware stop. The unified scalp strategy for the 4h=>1h=>15m "
+        "cycle."
+    )
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m")
+    context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+
+    def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
+        """Keep the unified scalp thesis lean: same level call, but refuse clogging liquidity."""
+        return sweep_gate(self, payload, features)
+
+
+@register
 class LevelScalp(LevelStrategy):
     """The plain reading: take the call as published."""
 

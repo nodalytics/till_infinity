@@ -260,13 +260,21 @@ def structure(turns: Sequence[Point]) -> list[tuple[Point, Structure | None]]:
             if last_high is None:
                 label = None
             else:
-                label = Structure.HIGHER_HIGH if point.price > last_high.price else Structure.LOWER_HIGH
+                label = (
+                    Structure.HIGHER_HIGH
+                    if point.price > last_high.price
+                    else Structure.LOWER_HIGH
+                )
             last_high = point
         elif point.swing is Swing.LOW:
             if last_low is None:
                 label = None
             else:
-                label = Structure.HIGHER_LOW if point.price > last_low.price else Structure.LOWER_LOW
+                label = (
+                    Structure.HIGHER_LOW
+                    if point.price > last_low.price
+                    else Structure.LOWER_LOW
+                )
             last_low = point
         else:
             label = None
