@@ -380,3 +380,104 @@ class TestAttention:
             weights = zm.Zma(temperature=temperature)._attention(self.window(0.0002, 0.004))
             assert sum(weights) == pytest.approx(1.0)
             assert all(w >= 0 for w in weights)
+
+
+class TestTheAlertCard:
+    """Published into `features` is not the same as shown to a person.
+
+    `zma_*` and `cycle_*` were in the features dict from the moment they were
+    wired, so the journal had them all along - and the card renders a
+    hand-picked list of fields they were never added to. The reading was
+    recorded, scored, gated on, and **invisible to the reader the alert exists
+    for**: publishing a number and showing it are two jobs.
+
+    And shown in **words**, not in z-scores. The underlying number is a z, and
+    printing it that way makes the block unreadable to anybody who has not read
+    the source. An alert is for a person deciding in seconds.
+    """
+
+    def lines(self, got: dict) -> list[str]:
+        from till_infinity.structures.service import _cycle_lines
+
+        return _cycle_lines(got)
+
+    def test_a_cold_feed_adds_nothing(self):
+        """Absent rather than a placeholder. A line reading "cycle neutral" on
+        every alert of a feed that never warms trains the reader to skip it."""
+        assert self.lines({}) == []
+        assert self.lines({"zma_z": -2.0}) == [], "no threshold is no reading"
+
+    def test_no_jargon_reaches_the_card(self):
+        """The whole point of the rewrite: a reader should not need the source."""
+        got = " ".join(
+            self.lines(
+                {
+                    "zma_z": -2.14,
+                    "zma_strong": 1.62,
+                    "zma_agrees": 1.0,
+                    "zma_edge_calls": 412.0,
+                    "zma_edge_right": 240.0,
+                    "cycle_alignment": 0.41,
+                    "turn_price": 2751.36,
+                }
+            )
+        ).lower()
+        for word in ("z-score", "zma", "sigma", "z ", "stretch_", "percentile"):
+            assert word not in got, f"{word!r} leaked onto the card"
+
+    def test_it_says_which_way_and_whether_it_is_turning(self):
+        low = " ".join(self.lines({"zma_z": -2.0, "zma_strong": 1.5, "zma_agrees": 1.0}))
+        high = " ".join(self.lines({"zma_z": 2.0, "zma_strong": 1.5, "zma_agrees": 0.0}))
+        assert "stretched low" in low
+        assert "turning back" in low
+        assert "stretched high" in high
+        assert "not turning yet" in high
+
+    def test_the_stretch_is_a_multiple_of_this_feed_s_own_usual(self):
+        """Not a count of standard deviations - the threshold is already a
+        percentile of this instrument's own history."""
+        got = " ".join(self.lines({"zma_z": -3.0, "zma_strong": 1.5}))
+        assert "2.0x its usual" in got
+
+    def test_the_record_is_shown_with_its_denominator(self):
+        """A hit rate without a count is not a claim."""
+        got = " ".join(
+            self.lines(
+                {
+                    "zma_z": -2.0,
+                    "zma_strong": 1.5,
+                    "zma_edge_calls": 412.0,
+                    "zma_edge_right": 240.0,
+                }
+            )
+        )
+        assert "58%" in got
+        assert "412" in got
+
+    def test_a_thin_record_is_not_shown_at_all(self):
+        got = " ".join(
+            self.lines(
+                {
+                    "zma_z": -2.0,
+                    "zma_strong": 1.5,
+                    "zma_edge_calls": 12.0,
+                    "zma_edge_right": 7.0,
+                }
+            )
+        )
+        assert "times on this feed" not in got
+
+    def test_mid_range_cycles_above_say_nothing(self):
+        """Neutral is not agreement and not opposition, and printing either
+        would be a coin dressed as a reading."""
+        got = " ".join(self.lines({"zma_z": -2.0, "zma_strong": 1.5, "cycle_alignment": 0.05}))
+        assert "bigger cycles" not in got
+
+    def test_the_turn_is_shown_when_the_model_has_one(self):
+        got = " ".join(self.lines({"zma_z": -2.0, "zma_strong": 1.5, "turn_price": 2751.36}))
+        assert "2751" in got
+        assert "next turn expected" in got
+
+    def test_a_silent_turn_model_adds_no_turn_line(self):
+        got = " ".join(self.lines({"zma_z": -2.0, "zma_strong": 1.5}))
+        assert "next turn" not in got

@@ -261,6 +261,55 @@ def _price(value: float) -> str:
     return out.rstrip("0").rstrip(".") if "." in out else out
 
 
+def _cycle_lines(got: dict) -> list[str]:
+    """The cycle reading, in words a reader does not need the source for.
+
+    **No z-scores on the card.** The underlying number is a z - how far price
+    sits from its own recent mean, in standard deviations - and printing it
+    that way makes the block unreadable to anybody who has not read
+    `structures/zma.py`. An alert is for a person deciding in a few seconds,
+    so the reading is given as a **multiple of this instrument's own usual
+    stretch**, which is the same information without the vocabulary.
+
+    Absent rather than a placeholder when cold, which is the rule the features
+    dict itself follows: a line reading "cycle neutral" on every alert of a
+    feed that never warms trains the reader to skip the block.
+    """
+    z = got.get("zma_z")
+    threshold = got.get("zma_strong", 0.0)
+    if z is None or threshold <= 0:
+        return []
+
+    # How far past its own usual extreme, rather than how many sigma. The
+    # threshold is already a percentile of this feed's own history, so the
+    # ratio says "unusual for this instrument" without naming a distribution.
+    stretch = abs(z) / threshold
+    way = "low" if z < 0 else "high"
+    out = ["", f"🔄 cycle stretched {way}, {stretch:.1f}x its usual"]
+
+    agrees = got.get("zma_agrees", 0.0)
+    if agrees:
+        out[-1] += " — and turning back"
+    else:
+        out[-1] += " — but not turning yet"
+
+    # The scored record on this feed, which is what decides whether any of this
+    # is ever allowed to act. A rate without its denominator is not a claim.
+    calls = got.get("zma_edge_calls", 0.0)
+    if calls >= 30:
+        rate = got.get("zma_edge_right", 0.0) / calls
+        out.append(f"   right {rate:.0%} of {calls:.0f} times on this feed")
+
+    align = got.get("cycle_alignment")
+    if align is not None and abs(align) >= 0.25:
+        out.append(f"   bigger cycles {'agree' if align > 0 else 'disagree'}")
+
+    turn = got.get("turn_price")
+    if turn:
+        out.append(f"   next turn expected near {turn:.5g}")
+    return out
+
+
 def _stamp(signal: Signal) -> str:
     """The signal's own time, not the moment the alert was built.
 
@@ -389,6 +438,21 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     breaking = got.get("break_probability")
     if breaking is not None:
         body.append(f"💥 break risk {breaking:.0%} · from arrival speed and depth")
+
+    # **The cycle reading, on the card rather than only in the journal.**
+    #
+    # `zma_*` and `cycle_*` have been published into `features` since they were
+    # wired, so the journal has had them all along - and the card renders a
+    # hand-picked set of fields, which these were never added to. The reading
+    # was therefore recorded, scored, gated on, and **invisible to the person
+    # the alert is for**. Publishing a feature and showing it are two jobs and
+    # only one of them was done.
+    #
+    # Read to a person and acted on by almost nothing, the same standing as the
+    # break risk above: `TRADING_ZMA_GATE` can veto on it once a feed's record
+    # earns that, and nothing else uses it. It is here so the number can be
+    # disagreed with against what the chart then did.
+    body.extend(_cycle_lines(got))
 
     # The range this level sits in, and which wall the model expects first.
     #
