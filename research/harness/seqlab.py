@@ -165,7 +165,39 @@ SYNTHETIC = {
 
 #: The positive control. Real markets, where volatility clustering is a fact and
 #: any harness that misses it is broken.
-REAL = ("XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD")
+#:
+#: **Twenty rather than five, and the reason is arithmetic.** A sign test across
+#: symbols has a ceiling set by how many there are: at five cells the strongest
+#: possible result is `z = 2.24`, which is `p = 1/32` and cannot separate a real
+#: effect from a lucky one once more than one hypothesis is tested. That is
+#: exactly where `research/refining.md`'s residual came to rest. At twenty the
+#: ceiling is **4.47**, which decides it.
+#:
+#: These are the twenty the terminal actually carries of the desk's real book -
+#: the index and energy feeds are quoted under names this broker does not use,
+#: and inventing them would put empty cells in every study that iterates this.
+REAL = (
+    "XAUUSD",
+    "XAGUSD",
+    "BTCUSD",
+    "ETHUSD",
+    "SOLUSD",
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
+    "USDCAD",
+    "USDCHF",
+    "NZDUSD",
+    "USDCNH",
+    "EURGBP",
+    "EURJPY",
+    "GBPJPY",
+    "EURCHF",
+    "AUDJPY",
+    "CHFJPY",
+    "EURAUD",
+)
 
 #: Bars per year, for annualising a realised volatility onto the same scale the
 #: instrument names are quoted in. These indices trade continuously - no weekend,

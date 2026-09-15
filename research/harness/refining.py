@@ -5,6 +5,29 @@ precise extreme on a lower one, and price rejects the refined level more often
 than the coarse one. Measured on a deep panel it improved the rejection rate on
 **15 of 15 cells**; measured on an independent later panel it did nothing.
 
+**Answered, 2026-09-15, and the answer is a third of the claim.** Against each
+symbol's own matched Brownian null, on twenty real feeds:
+
+| pair | lift | null lift | excess | above | sign z | cells p<=.05 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `4h<-1h` | +0.0459 | +0.0287 | **+0.0184** | 15/20 | 2.24 | 8 |
+| `1h<-15m` | +0.0494 | +0.0309 | **+0.0194** | 18/20 | 3.58 | 11 |
+
+About **62% of the headline is the procedure** and the remaining **+0.019 is
+real** - consistent across both timeframe pairs, with 8 and 11 of 20 cells
+individually clearing `p <= 0.05` against 1.0 expected. That last column is the
+reading to weight, because it does not depend on the sign test's ceiling.
+
+**An earlier version of this page said the residual did not survive, and it was
+wrong for a reason worth keeping.** At five symbols `4h<-1h` returned an excess
+of -0.0015 on 2 of 5 and `1h<-15m` returned 5 of 5 - and the inconsistency
+between adjacent timeframes was the main argument for calling the whole thing an
+artefact. At twenty they agree. The five-symbol sample was noise in **both**
+hands: it under-called one pair and over-trusted the other, which happened to be
+right for the wrong reason. `seqlab.REAL` was widened from five to twenty in
+consequence, which raises the sign test's ceiling from 2.24 to 4.47 and improves
+every study that uses it as a positive control.
+
 Both of those can be true, and only two things make them so.
 
 | | signature |
