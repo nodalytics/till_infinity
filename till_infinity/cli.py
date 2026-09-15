@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
+import math
 import os
 import sqlite3
 import time
@@ -28,9 +30,11 @@ from . import structures as sx
 from . import trading as td
 from .bus import Bus
 from .logging import console, get_logger, setup_logging
+from .prices.config import BROKER
 from .structures import cycles as cyc
 from .structures import zma as zm
 from .structures.drawing import confluence as cf
+from .structures.vol import stated
 from .trading import plans as tp
 from .trading import report as tr
 
@@ -2706,10 +2710,19 @@ def trading_symbols(symbols, backend):
 @click.option("--backend", type=click.Choice(td.BACKENDS), help="Force a backend.")
 @click.option("--equity", type=float, help="Override the account equity, for a what-if.")
 @click.option(
-    "--dir", "state_dir", type=click.Path(path_type=Path), help="Where structures persists."
+    "--from-state",
+    "state_dir",
+    type=click.Path(path_type=Path),
+    is_flag=False,
+    flag_value="",
+    default=None,
+    help="Read volatility from the structures state at this path. Heavy - see below.",
+)
+@click.option(
+    "--db", "prices_db", type=click.Path(path_type=Path), help="Bar store for volatility."
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit the verdicts as JSON.")
-def trading_affordable(symbols, plan, backend, equity, state_dir, as_json):
+def trading_affordable(symbols, plan, backend, equity, state_dir, prices_db, as_json):
     """Which instruments this account cannot afford, before one is signalled.
 
     `sizing.lots` already refuses a trade whose minimum lot breaches the risk
@@ -2757,7 +2770,14 @@ def trading_affordable(symbols, plan, backend, equity, state_dir, as_json):
         )
         raise SystemExit(1)
 
-    vols = _volatility_units(state_dir, resolution.found)
+    if prices_db is None:
+        prices_db = px.Settings.from_env().database
+    got = _volatility_units(
+        None if state_dir is None else (Path(state_dir) if str(state_dir) else None),
+        resolution.found,
+        prices_db=prices_db,
+    )
+    vols, vol_sources = got["bps"], got["sources"]
     plan_now = tp.get(settings.risk_plan)
     verdicts = td.survey(
         resolution.found,
@@ -2791,7 +2811,16 @@ def trading_affordable(symbols, plan, backend, equity, state_dir, as_json):
         f"risking {plan_now.risk_fraction:.2%} a trade",
         caption="worst first: the share of the account one minimum lot puts at risk",
     )
-    for column in ("instrument", "stop", "min-lot risk", "share", "volume", "verdict", "why"):
+    for column in (
+        "instrument",
+        "vol",
+        "stop",
+        "min-lot risk",
+        "share",
+        "volume",
+        "verdict",
+        "why",
+    ):
         table.add_column(
             column, justify="left" if column in ("instrument", "verdict", "why") else "right"
         )
@@ -2800,6 +2829,7 @@ def trading_affordable(symbols, plan, backend, equity, state_dir, as_json):
         colour = colours.get(v.verdict, "dim")
         table.add_row(
             v.feed,
+            vol_sources.get(v.feed, "-"),
             f"{v.stop_units:g}v",
             f"{v.min_lot_risk:,.2f}",
             f"[{colour}]{v.share_of_equity:.2%}[/]",
@@ -2808,6 +2838,8 @@ def trading_affordable(symbols, plan, backend, equity, state_dir, as_json):
             escape(v.reason[:60]),
         )
     console.print(table)
+
+    _report_skipped(resolution.found, prices, vols, verdicts)
 
     gone = td.unaffordable(verdicts)
     if gone:
@@ -2828,31 +2860,169 @@ def trading_affordable(symbols, plan, backend, equity, state_dir, as_json):
     )
 
 
-def _volatility_units(state_dir, specs) -> dict[str, float]:
-    """`vol_bps` per feed, from whatever the structures state has learned.
+def _report_skipped(found, prices, vols, verdicts) -> None:
+    """Name what was left out, and why - **always, not only when nothing was judged.**
 
-    Read from the saved engine rather than recomputed, so the number a verdict
-    is built on is the number the desk would actually size with. A feed the
-    engine has never seen has no entry, and `survey` skips it rather than
-    inventing one - an assumed volatility is how an instrument gets called
+    Forty-five instruments resolved and twenty were judged on the first live
+    run, and nothing said so. A report that silently drops half its subject is
+    worse than one that returns nothing, because it looks complete. The two
+    reasons are different and are printed differently: no quote is a broker
+    problem, no volatility reading is a data problem with a named fix.
+    """
+    judged = {v.feed for v in verdicts}
+    unquoted = sorted(f for f in found if f not in prices)
+    unpriced = sorted(f for f in found if f in prices and f not in vols)
+    if unpriced:
+        console.print(
+            f"\n[yellow]no volatility reading, so not judged[/] ({len(unpriced)}): "
+            f"{escape(', '.join(unpriced))}"
+        )
+        console.print(
+            "[dim]the name prices only the Volatility and Jump families; everything else "
+            "needs bars the broker itself published, or --from-state.[/]"
+        )
+    if unquoted:
+        console.print(
+            f"\n[yellow]no quote from the broker, so not judged[/] ({len(unquoted)}): "
+            f"{escape(', '.join(unquoted))}"
+        )
+    console.print(f"[dim]{len(judged)} of {len(found)} resolved instrument(s) judged.[/]")
+
+
+def _volatility_units(state_dir, specs, *, prices_db=None, seconds: float = 3600.0) -> dict:
+    """`vol_bps` per feed, from the cheapest source that actually knows.
+
+    **Three sources, tried in order, and the order is about cost.** This runs on
+    a two-core production box beside a desk that sits near 100% CPU, so the
+    obvious implementation - load the structures state and read `vol.of(feed)` -
+    is the one thing it must not do by default: that state is 145MB on disk and
+    `research/starving.md` measured a 206MB one costing 0.394GB of transient
+    memory to load. A second process doing that is how the desk gets starved.
+
+    1. **The published constant.** The Volatility and Jump families state their
+       annualised volatility in their own names, verified to within 0.49% on 12
+       of 12 instruments. It is exact and it costs nothing - no state, no
+       query, no terminal.
+    2. **The bar store.** A standard deviation of recent log returns, one
+       indexed query per feed. Cheap, and it is the only source for the real
+       instruments and for Boom, Crash and Step, which have documented
+       mechanics but no published volatility.
+    3. **The engine state**, only when `--from-state` asks for it. It is the
+       number the desk actually sizes with, which is why it is offered at all,
+       but it is not worth starving the desk to read.
+
+    A feed none of the three can price is left out. `survey` then skips it,
+    which is correct: an assumed volatility is how an instrument gets called
     affordable that is not.
     """
-    engine = _load_engine(state_dir) if state_dir is not None else None
-    if engine is None:
-        settings = sx.Settings.from_env()
-        state = sx.load(settings.state_dir)
-        engine = (state or {}).get("engine")
-    if engine is None:
-        return {}
     out: dict[str, float] = {}
+    sources: dict[str, str] = {}
+
     for feed in specs:
-        try:
-            got = engine.vol.of(feed)
-        except Exception:
-            continue
-        bps = float(getattr(got, "bps", 0.0) or 0.0)
-        if bps > 0:
-            out[feed] = bps
+        got = stated.bps_for(feed, seconds)
+        if got and got > 0:
+            out[feed] = float(got)
+            sources[feed] = "name"
+
+    missing = [f for f in specs if f not in out]
+    if missing and prices_db:
+        out.update(_vol_from_bars(prices_db, specs, missing, sources))
+
+    if state_dir is not None:
+        engine = _load_engine(state_dir)
+        if engine is not None:
+            for feed in specs:
+                try:
+                    reading = engine.vol.of(feed)
+                except Exception:
+                    continue
+                bps = float(getattr(reading, "bps", 0.0) or 0.0)
+                if bps > 0:
+                    out[feed] = bps
+                    sources[feed] = "state"
+
+    _vol_sources = sources
+    return {"bps": out, "sources": _vol_sources}
+
+
+def _series_keys(feed: str, spec) -> list[tuple[str, str, str]]:
+    """`(source, venue, ticker)` candidates for a feed, deepest-first by habit.
+
+    **Every one is a full index prefix**, which is the point. `bars` is indexed
+    on `(source, venue, ticker, interval, ts)` and nothing else, so addressing a
+    series by `feed` scans a 22GB table - and the catalogue already holds the
+    mapping, for free, so there is no reason to.
+
+    The broker's own series comes first where it exists: it is the instrument
+    the order will be placed on, at the venue it will be placed at. Production
+    publishes broker bars for the synthetics only, so everything else falls
+    through to the configured consensus venues - **one at a time, pinned**,
+    never a query across them, because interleaving two venues' quotes of one
+    asset produces a violently reverting series that has silently corrupted two
+    earlier measurements here.
+    """
+    out: list[tuple[str, str, str]] = []
+    if spec is not None:
+        out.append((BROKER, BROKER.upper(), spec.symbol))
+    catalogued = px.FEEDS.get(feed)
+    if catalogued is not None:
+        for source in px.bar_source_names():
+            out.extend(
+                (source, symbol.venue, symbol.ticker) for symbol in catalogued.for_source(source)
+            )
+    return out
+
+
+def _closes_for(conn, feed: str, spec, interval: str = "1h", want: int = 400) -> list[float]:
+    """Recent closes for one feed, from the first candidate series deep enough."""
+    for source, venue, ticker in _series_keys(feed, spec):
+        closes = [
+            float(r[0])
+            for r in conn.execute(
+                "SELECT close FROM bars WHERE source=? AND venue=? AND ticker=?"
+                " AND interval=? AND close>0 ORDER BY ts DESC LIMIT ?",
+                (source, venue, ticker, interval, want),
+            )
+        ]
+        if len(closes) >= 60:
+            return closes
+    return []
+
+
+def _vol_from_bars(path, specs, feeds, sources: dict[str, str]) -> dict[str, float]:
+    """Standard deviation of recent log returns, in bps, from the broker's own bars.
+
+    **Addressed through the index, not by feed.** `bars` is indexed on
+    `(source, venue, ticker, interval, ts)` and nothing else, so a query
+    filtering on `feed` cannot use it: SQLite reports `SCAN bars USING INDEX`
+    plus a temp B-tree for the sort, which on production's **22GB** table is a
+    full scan. The first version of this did exactly that and hung the command
+    for minutes while the desk sat at 99.99% CPU beside it - the same defect
+    already found and fixed once in `prices/spreads.py` this session, and
+    reintroduced here from the same habit.
+
+    The broker's own series is also the *right* one to size against: it is the
+    instrument the order will actually be placed on, at the venue it will be
+    placed at, rather than a consensus of places the desk cannot trade.
+    """
+    out: dict[str, float] = {}
+    try:
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
+            for feed in feeds:
+                closes = _closes_for(conn, feed, specs.get(feed))
+                if len(closes) < 60:
+                    continue
+                rets = [math.log(a / b) for a, b in itertools.pairwise(closes) if b > 0]
+                if len(rets) < 60:
+                    continue
+                mean = sum(rets) / len(rets)
+                var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+                bps = math.sqrt(var) * 10_000.0
+                if bps > 0:
+                    out[feed] = bps
+                    sources[feed] = "bars"
+    except sqlite3.Error:
+        return out
     return out
 
 
