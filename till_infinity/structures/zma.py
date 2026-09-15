@@ -55,9 +55,12 @@ from __future__ import annotations
 
 import math
 import os
+import pickle
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from ..logging import get_logger
 from ..shared import effects
 from .state import Restorable
 
@@ -116,6 +119,23 @@ COLD_STRONG, COLD_WEAK = 1.5, 1.0
 
 #: Calls before `accuracy` is worth reading.
 WARM = 200
+
+#: Where the scored record lives, **outside the engine state**.
+#:
+#: The book used to live only inside the pickled engine, and
+#: `structures/store.py` hashes the shape of every persisted dataclass and
+#: invalidates the whole file when any of them changes. So the record was lost
+#: on any deploy that touched any persisted class, not merely a zma one - and
+#: `TRADING_ZMA_GATE` needs **200 settled calls per feed** before it may act.
+#: On 2026-09-15 the desk deployed eleven times and the book was back at zero
+#: series each time, which meant a gate that could not accumulate the evidence
+#: it was waiting for however long it ran.
+#:
+#: `cycles.Book` already had its own file for exactly this reason; this is the
+#: same fix applied to the book that needed it more.
+WEIGHTS = Path(os.environ.get("STRUCTURES_ZMA_RECORD", ".data/structures/zma.pkl"))
+
+log = get_logger(__name__)
 
 effects.declare("structures.zma", enabled=ENABLED)
 
@@ -427,6 +447,8 @@ class Book(Restorable):
     """One `Zma` per feed and timeframe, keyed as `volatility.Book` keys its own."""
 
     _by_key: dict[tuple[str, str], Zma] = field(default_factory=dict)
+    #: Series whose record came back from the file rather than from bars.
+    loaded: int = 0
 
     def of(self, feed: str, interval: str = "") -> Zma:
         key = (feed, interval)
@@ -460,10 +482,66 @@ class Book(Restorable):
         ]
         return sorted(rows, key=lambda r: r[1])
 
+    # ------------------------------------------------------------ persistence
+
+    def save(self, path: Path | None = None) -> int:
+        """Write the scored record to its own file. Returns series written.
+
+        **Only the record, not the stream.** The prices, z-scores and dynamic
+        thresholds rebuild themselves from a few hundred bars, and a restored
+        window pasted beside counts earned on a different stretch of history is
+        a mismatch nobody would notice. What cannot be rebuilt is how often
+        this reading has been right on this feed, which is the only number that
+        decides whether it is ever allowed to act.
+
+        Written to a temporary file and renamed, so an interrupted save leaves
+        the previous record rather than a truncated one.
+        """
+        target = Path(path or WEIGHTS)
+        try:
+            payload = {
+                f"{feed}\u0000{interval}": (z.calls, z.right, z.edge_calls, z.edge_right)
+                for (feed, interval), z in self._by_key.items()
+                if z.calls or z.edge_calls
+            }
+            if not payload:
+                return 0
+            target.parent.mkdir(parents=True, exist_ok=True)
+            spare = target.with_suffix(target.suffix + ".tmp")
+            with spare.open("wb") as handle:
+                pickle.dump({"version": 1, "record": payload}, handle)
+            spare.replace(target)
+            return len(payload)
+        except Exception as exc:
+            log.warning("zma: could not save the record to %s: %s", target, exc)
+            return 0
+
+    def load(self, path: Path | None = None) -> int:
+        """Read the record back onto the series that own it. Returns series loaded."""
+        target = Path(path or WEIGHTS)
+        if not target.exists():
+            return 0
+        try:
+            with target.open("rb") as handle:
+                got = pickle.load(handle)
+            if not isinstance(got, dict) or got.get("version") != 1:
+                log.warning("zma: %s is not a record file this build reads", target)
+                return 0
+            for key, counts in got["record"].items():
+                feed, _, interval = str(key).partition("\u0000")
+                z = self.of(feed, interval)
+                z.calls, z.right, z.edge_calls, z.edge_right = (int(c) for c in counts)
+            self.loaded = len(got["record"])
+            return self.loaded
+        except Exception as exc:
+            log.warning("zma: could not load the record from %s: %s", target, exc)
+            return 0
+
     def to_dict(self) -> dict:
         return {
             "enabled": ENABLED,
             "acts": ZMA_ACTS,
+            "loaded": self.loaded,
             "series": len(self._by_key),
             "warm": sum(1 for z in self._by_key.values() if z.warm),
             "standings": [[k, round(a, 4), n] for k, a, n in self.standings()[:10]],

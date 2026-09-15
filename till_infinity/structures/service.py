@@ -786,6 +786,17 @@ class Watcher:
                 log.info("structures: restored cycle weights for %d feed(s)", got)
         except Exception as exc:
             log.warning("structures: could not restore cycle weights: %s", exc)
+        try:
+            # The z-score's scored record, from its own file for the same
+            # reason and with more at stake: `TRADING_ZMA_GATE` and
+            # `cycle-turn` both need two hundred settled calls a feed before
+            # they may act, and eleven deploys on 2026-09-15 left the book at
+            # zero series every time because it lived only in the engine state.
+            got = self.engine.zma.load()
+            if got:
+                log.info("structures: restored the z-score record for %d series", got)
+        except Exception as exc:
+            log.warning("structures: could not restore the z-score record: %s", exc)
         self.engine.draw_with(self.settings.formation)
         self.engine.charge_spread = self.settings.charge_spread
         self.engine.consensus.single_source = single_source_feeds()
@@ -1069,6 +1080,10 @@ class Watcher:
             self.engine.cycles.save()
         except Exception as exc:
             log.warning("structures: could not save cycle weights: %s", exc)
+        try:
+            self.engine.zma.save()
+        except Exception as exc:
+            log.warning("structures: could not save the z-score record: %s", exc)
         self._saved = time.monotonic()
 
     # -------------------------------------------------------------- sending

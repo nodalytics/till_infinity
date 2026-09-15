@@ -481,3 +481,109 @@ class TestTheAlertCard:
     def test_a_silent_turn_model_adds_no_turn_line(self):
         got = " ".join(self.lines({"zma_z": -2.0, "zma_strong": 1.5}))
         assert "next turn" not in got
+
+
+class TestTheRecordSurvivesADeploy:
+    """The record lived only inside the engine state, and that made the gate
+    structurally unable to earn its keep.
+
+    `structures/store.py` hashes the shape of every persisted dataclass and
+    invalidates the whole file when any of them changes - so the book was lost
+    on any deploy touching any persisted class, not merely a zma one. Both
+    `TRADING_ZMA_GATE` and `cycle-turn` need **200 settled calls a feed**
+    before they may act. On 2026-09-15 the desk deployed eleven times and the
+    book was back at zero series every time, so the evidence they were waiting
+    for could never accumulate however long they ran.
+
+    `cycles.Book` already had its own file for exactly this reason. This is the
+    same fix applied to the book that needed it more.
+    """
+
+    def stocked(self) -> zm.Book:
+        book = zm.Book()
+        for feed, calls, right, edge_calls, edge_right in (
+            ("v75", 400, 230, 512, 300),
+            ("boom_1000_index", 350, 40, 401, 48),
+        ):
+            z = book.of(feed, "1m")
+            z.calls, z.right = calls, right
+            z.edge_calls, z.edge_right = edge_calls, edge_right
+        return book
+
+    def test_the_record_round_trips(self, tmp_path):
+        path = tmp_path / "zma.pkl"
+        assert self.stocked().save(path) == 2
+        fresh = zm.Book()
+        assert fresh.load(path) == 2
+        good = fresh.of("v75", "1m")
+        bad = fresh.of("boom_1000_index", "1m")
+        assert good.edge_accuracy == pytest.approx(300 / 512)
+        assert bad.edge_accuracy == pytest.approx(48 / 401)
+
+    def test_an_anti_signal_feed_stays_an_anti_signal_across_a_restart(self, tmp_path):
+        """The whole point: a feed that has proven itself wrong must not get a
+        clean slate every deploy and start being trusted again."""
+        path = tmp_path / "zma.pkl"
+        self.stocked().save(path)
+        fresh = zm.Book()
+        fresh.load(path)
+        assert fresh.of("boom_1000_index", "1m").edge_accuracy < 0.2
+
+    def test_only_the_record_is_saved_not_the_window(self, tmp_path):
+        """Prices and thresholds rebuild from a few hundred bars. A restored
+        window pasted beside counts earned on a different stretch of history is
+        a mismatch nobody would notice."""
+        path = tmp_path / "zma.pkl"
+        book = self.stocked()
+        live = book.of("v75", "1m")
+        for i in range(120):
+            live.observe(100.0 + i * 0.01)
+        # Read *after* the bars, because observing settles calls and moves the
+        # record - comparing against the pre-observation number would be
+        # asserting that the book does not work.
+        expected = live.edge_calls
+        assert live.seen == 120
+        book.save(path)
+
+        fresh = zm.Book()
+        fresh.load(path)
+        back = fresh.of("v75", "1m")
+        assert back.seen == 0, "the stream is not restored"
+        assert back.edge_calls == expected, "the record is"
+
+    def test_a_missing_file_is_a_cold_start_not_an_error(self, tmp_path):
+        assert zm.Book().load(tmp_path / "nothing.pkl") == 0
+
+    def test_a_file_from_another_build_is_refused(self, tmp_path):
+        import pickle
+
+        path = tmp_path / "zma.pkl"
+        path.write_bytes(pickle.dumps({"version": 99, "record": {}}))
+        assert zm.Book().load(path) == 0
+
+    def test_a_corrupt_file_does_not_take_the_desk_down(self, tmp_path):
+        path = tmp_path / "zma.pkl"
+        path.write_bytes(b"not a pickle at all")
+        assert zm.Book().load(path) == 0
+
+    def test_a_book_with_no_record_writes_nothing(self, tmp_path):
+        """A series that has never settled a call has nothing worth keeping,
+        and an empty file would only be something to load later and believe."""
+        path = tmp_path / "zma.pkl"
+        book = zm.Book()
+        book.of("cold", "1m")
+        assert book.save(path) == 0
+        assert not path.exists()
+
+    def test_a_feed_with_a_separator_in_its_name_still_round_trips(self, tmp_path):
+        """Keys are joined with a NUL, which no feed slug can contain - a
+        separator that appears in a name would silently merge two series'
+        records."""
+        path = tmp_path / "zma.pkl"
+        book = zm.Book()
+        z = book.of("btc_binance_coinbase", "15m")
+        z.edge_calls, z.edge_right = 300, 200
+        book.save(path)
+        fresh = zm.Book()
+        fresh.load(path)
+        assert fresh.of("btc_binance_coinbase", "15m").edge_calls == 300
