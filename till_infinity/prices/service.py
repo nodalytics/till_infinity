@@ -430,7 +430,11 @@ async def collect(
     """Poll for new bars forever (or `cycles` times), pacing each pass."""
     window = bars or settings.live_bars
     cycle = 0
-    spreads = spread_catalogue(settings)
+    # In a thread, because every actor on this box shares one event loop and
+    # this reads the store. Discovery is a census of every stored series and
+    # costs a full pass over a 23GB table; run inline, that pass held the loop
+    # and the desk wrote no quotes while it ran.
+    spreads = await asyncio.to_thread(spread_catalogue, settings)
     while cycles is None or cycle < cycles:
         started = time.monotonic()
         summary = await sweep(

@@ -219,13 +219,21 @@ class Built:
 
 
 def _cells(conn: sqlite3.Connection) -> list[tuple[str, str, str, str, str, int]]:
-    """`(feed, venue, source, ticker, interval, n)` for every stored series."""
-    return list(
-        conn.execute(
-            "SELECT feed, venue, source, ticker, interval, COUNT(*) n FROM bars"
-            " GROUP BY feed, venue, source, ticker, interval"
+    """`(feed, venue, source, ticker, interval, n)` for every stored series.
+
+    A full pass over the table whatever it is asked, so it is for discovery and
+    not for a lookup - `_leg_key` answers "where does this one leg live" with
+    seeks. Grouped in primary-key order and selected in another, because the
+    key is `(source, feed, venue, ticker, interval, ts)` and grouping in that
+    order lets the scan stream instead of sorting every row it reads.
+    """
+    return [
+        (feed, venue, source, ticker, interval, n)
+        for source, feed, venue, ticker, interval, n in conn.execute(
+            "SELECT source, feed, venue, ticker, interval, COUNT(*) n FROM bars"
+            " GROUP BY source, feed, venue, ticker, interval"
         )
-    )
+    ]
 
 
 def venue_pairs(
@@ -512,25 +520,80 @@ def definition(feed: str) -> Spread | None:
     return _CONSTRUCTED.get(feed)
 
 
+#: Distinct values of a leading key column, walked rather than scanned: seek to
+#: the smallest, then repeatedly seek to the smallest above it. A handful of
+#: index seeks against a table whose census costs a full pass.
+_SOURCES = """
+WITH RECURSIVE s(x) AS (
+    SELECT min(source) FROM bars
+    UNION ALL
+    SELECT (SELECT min(source) FROM bars WHERE source > s.x) FROM s WHERE s.x IS NOT NULL
+) SELECT x FROM s WHERE x IS NOT NULL
+"""
+
+_TICKERS = """
+WITH RECURSIVE t(x) AS (
+    SELECT min(ticker) FROM bars WHERE source = ?1 AND feed = ?2 AND venue = ?3
+    UNION ALL
+    SELECT (SELECT min(ticker) FROM bars
+             WHERE source = ?1 AND feed = ?2 AND venue = ?3 AND ticker > t.x)
+      FROM t WHERE t.x IS NOT NULL
+) SELECT x FROM t WHERE x IS NOT NULL
+"""
+
+#: Both bounds of one series, which the primary key answers with two seeks.
+_SPAN = """
+SELECT min(ts), max(ts) FROM bars
+ WHERE source = ? AND feed = ? AND venue = ? AND ticker = ? AND interval = ?
+"""
+
+
+def _leg_key(
+    conn: sqlite3.Connection, feed: str, venue: str, interval: str
+) -> tuple[str, str] | None:
+    """The `(source, ticker)` carrying this feed at this venue, deepest first.
+
+    One venue can carry one feed under two tickers, and two legs of the same
+    asset at the same venue is not a spread - so the candidates are ranked and
+    the longest-running one wins. **Ranked by the span its bars cover rather
+    than by how many there are**: at a fixed interval the two say the same
+    thing, and the span is two index seeks where the count is a scan.
+    """
+    best: tuple[int, int, str, str] | None = None
+    for (source,) in conn.execute(_SOURCES):
+        for (ticker,) in conn.execute(_TICKERS, (source, feed, venue)):
+            first, last = conn.execute(_SPAN, (source, feed, venue, ticker, interval)).fetchone()
+            if first is None:
+                continue
+            cand = (last - first, last, source, ticker)
+            if best is None or cand > best:
+                best = cand
+    return (best[2], best[3]) if best else None
+
+
 def _fill_keys(conn: sqlite3.Connection, spreads: list[Spread], interval: str) -> list[Spread]:
     """Attach each leg's `(source, ticker)` so its reads use the store's index.
 
     A named pair carries only feed and venue; without the other two the leg
     query cannot use `bars_series_ts` and scans the table instead - which on
-    production is 22GB. Looked up once here rather than per read.
+    production is 23GB. Looked up once here rather than per read.
+
+    **Looked up leg by leg, not from a census.** Asking what every stored series
+    is costs a full pass over that table, and on 2026-09-15 that pass - taken at
+    the top of the collector, before its first `await` - stopped the desk: no
+    quotes were written for as long as it ran, because one synchronous query
+    holds the loop every actor shares. Four named pairs need five legs, and five
+    legs are ten index seeks.
     """
-    have: dict[tuple[str, str], tuple[str, str, int]] = {}
-    for feed, venue, source, ticker, got_interval, n in _cells(conn):
-        if got_interval != interval:
-            continue
-        held = have.get((feed, venue))
-        if held is None or n > held[2]:
-            have[(feed, venue)] = (source, ticker, n)
+    have: dict[tuple[str, str], tuple[str, str] | None] = {}
     out: list[Spread] = []
     for spread in spreads:
         legs = []
         for leg in spread.legs:
-            found = have.get((leg.feed, leg.venue))
+            cell = (leg.feed, leg.venue)
+            if cell not in have:
+                have[cell] = _leg_key(conn, leg.feed, leg.venue, interval)
+            found = have[cell]
             if found is None:
                 legs = []
                 break

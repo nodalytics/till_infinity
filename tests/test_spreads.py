@@ -52,6 +52,15 @@ def store(rows):
     return conn
 
 
+def _counter(steps):
+    """A progress handler that tallies engine steps and never aborts."""
+
+    def tick():
+        steps[0] += 1
+
+    return tick
+
+
 def series(feed, venue, prices, *, source="tradingview", interval="1m", step=60, start=0):
     """One leg, one bar per price, open and close both at that price."""
     return [
@@ -304,3 +313,44 @@ class TestNamedPairs:
     def test_a_pair_naming_a_venue_with_no_bars_builds_nothing(self):
         conn = store(series("btc", "BINANCE", [100.0] * 5))
         assert sp.catalogue(conn, pairs="x=btc@BINANCE-btc@NOWHERE", min_shared=1) == []
+
+    def test_resolving_named_legs_does_not_depend_on_how_much_is_stored(self):
+        """The cost of "where does this leg live" must not scale with the store.
+
+        Answering it from a census of every stored series is a full pass over
+        `bars`, which is 23GB on production. Taken at the top of the collector,
+        before its first `await`, that pass held the event loop every actor
+        shares and the desk wrote no quotes for as long as it ran.
+        """
+        spec = "x=btc@BINANCE-btc@KRAKEN"
+        rows = series("btc", "BINANCE", [100.0] * 5) + series("btc", "KRAKEN", [100.0] * 5)
+        done = []
+        for decoys in (2, 60):
+            noise = []
+            for i in range(decoys):
+                noise += series(f"junk{i}", "DERIV", [1.0] * 40)
+            conn = store(rows + noise)
+            # Steps of the query engine itself, which is what a scan spends and
+            # a seek does not - counting statements would not tell them apart.
+            steps = [0]
+            conn.set_progress_handler(_counter(steps), 10)
+            assert [s.name for s in sp.catalogue(conn, pairs=spec, min_shared=1)] == ["x"]
+            conn.set_progress_handler(None, 0)
+            done.append(steps[0])
+        assert done[1] <= done[0] * 1.2, f"the lookup read the whole store: {done}"
+
+    def test_the_longest_running_ticker_wins_when_a_venue_carries_two(self):
+        """Two legs of the same asset at the same venue is not a spread, so one
+        of the tickers has to win - and the one with history is the one worth
+        building from."""
+        deep = [
+            ("tradingview", "btc", "BINANCE", "BTCUSDT", "1m", i * 60, 100.0, 100.0, 100.0, 100.0)
+            for i in range(50)
+        ]
+        shallow = [
+            ("tradingview", "btc", "BINANCE", "BTCUSD", "1m", i * 60, 100.0, 100.0, 100.0, 100.0)
+            for i in range(3)
+        ]
+        conn = store(deep + shallow + series("btc", "KRAKEN", [100.0] * 50))
+        got = sp.catalogue(conn, pairs="x=btc@BINANCE-btc@KRAKEN", min_shared=1)
+        assert [leg.ticker for leg in got[0].legs] == ["BTCUSDT", "BTC"]
