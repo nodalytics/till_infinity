@@ -230,6 +230,12 @@ class Slope(Restorable):
     kk: float = 0.0
     seen: int = 0
     value: float = 0.0
+    #: The second derivative, as the smoothed change in the first. A reversal is
+    #: a first derivative crossing zero *and* a second derivative confirming
+    #: which kind of turning point it is - a maximum or a minimum - which is
+    #: what a sign change alone cannot say.
+    previous: float = 0.0
+    curve: Ewma | None = None
 
     def push(self, price: float) -> float:
         lam = self.lam
@@ -249,8 +255,17 @@ class Slope(Restorable):
         var_k = max(self.kk / self.w - mean_k * mean_k, 1e-12)
         # Negative because `k` counts backwards: a positive covariance between
         # lag and price means price was higher in the past.
+        was = self.value
         self.value = -cov / var_k / max(abs(price), 1e-12)
+        if self.curve is None:
+            self.curve = Ewma(self.lam)
+        self.curve.push(self.value - was)
+        self.previous = was
         return self.value
+
+    @property
+    def curvature(self) -> float:
+        return self.curve.mean if self.curve is not None else 0.0
 
 
 @dataclass(slots=True)
@@ -358,6 +373,8 @@ class Cycles(Restorable):
     streams: tuple[Stream, ...] = ()
     residual: Stream | None = None
     anchor: Ewma | None = None
+    #: The long-run volatility the fast stream's own is compared against.
+    slow_sigma: Ewma | None = None
     seen: int = 0
 
     def __post_init__(self) -> None:
@@ -367,6 +384,8 @@ class Cycles(Restorable):
             self.residual = Stream(attention=self.attention)
         if self.anchor is None:
             self.anchor = Ewma(1.0 - 1.0 / (PERIOD * 16))
+        if self.slow_sigma is None:
+            self.slow_sigma = Ewma(1.0 - 1.0 / (PERIOD * 40))
 
     def observe(self, interval: str, price: float) -> None:
         """One **closed** bar of one timeframe.
@@ -385,6 +404,8 @@ class Cycles(Restorable):
             level = self.anchor.push(price)
             if level > 0:
                 self.residual.push(100.0 * price / level)
+            if self.fast.sigma.mean > 0:
+                self.slow_sigma.push(self.fast.sigma.mean)
             self.seen += 1
             effects.fired("structures.cycles")
 
@@ -431,16 +452,45 @@ class Cycles(Restorable):
         return total / weight if weight > 1e-9 else 0.0
 
     def features(self) -> dict[str, float]:
-        """What the heads read, and what the journal records."""
+        """What the heads read, and what the journal records.
+
+        Four families, and they are the four things a reversal is described by
+        wherever it is described:
+
+        * **the extreme** - how stretched, and how far the leg has already run;
+        * **the derivatives** - the slope and its own rate of change, because a
+          first derivative crossing zero says a turning point and only the
+          second says which kind;
+        * **the extremes behind** - the pivots the current structure is built
+          on, whose loss is the change of character;
+        * **volatility** - the unit everything else is measured in, and how far
+          it sits from its own normal.
+        """
         fast = self.fast
         return {
             "stretch": max(-4.0, min(4.0, fast.stretch)),
             "slope": max(-4.0, min(4.0, fast.trend)),
+            # The second derivative, scaled by the first's own typical size so
+            # the two are on one footing.
+            "curve": max(-4.0, min(4.0, fast.slope.curvature / (fast.slope_scale.mean + 1e-15))),
             "alignment": self.alignment,
             "with_trend": self.with_trend,
             "mother": max(-4.0, min(4.0, self.mother.stretch)),
             "residual": max(-4.0, min(4.0, self.residual.stretch)),
+            # How unusual this instrument's volatility is right now, against its
+            # own long run. Everything above is measured in volatility units, so
+            # without this the model cannot tell a 2-unit move in a quiet regime
+            # from one in a violent regime.
+            "vol_stretch": max(-4.0, min(4.0, self.vol_stretch)),
         }
+
+    @property
+    def vol_stretch(self) -> float:
+        """The fast timeframe's volatility against its own long-run level."""
+        fast = self.fast
+        if self.slow_sigma is None or self.slow_sigma.mean <= 0:
+            return 0.0
+        return math.log(max(fast.sigma.mean, 1e-15) / self.slow_sigma.mean)
 
 
 # ------------------------------------------------------- turns, and the heads
@@ -454,6 +504,13 @@ class Leg(Restorable):
     started: int = 0
     extreme: float = 0.0
     extreme_at: int = 0
+    #: The two extremes behind this leg, most recent first. The level an uptrend
+    #: is made of is the previous higher low, and price taking it out is the
+    #: change of character - which cannot be expressed from the current leg
+    #: alone. `research/delivering.md` measured that the *last* confirmed pivot
+    #: is unbreakable before the next one confirms, so it is the one behind it
+    #: that carries the claim.
+    behind: tuple[float, float] = (0.0, 0.0)
 
 
 @dataclass(slots=True)
@@ -515,14 +572,33 @@ class Turns(Restorable):
             retrace = math.log(price / max(self.leg.extreme, 1e-12)) / sigma
 
         if retrace >= self.sigmas:
+            extreme_now = self.leg.extreme
             self._settle(sigma)
             self.turns += 1
-            self.leg = Leg(-self.leg.direction, index, price, index)
+            self.leg = Leg(
+                -self.leg.direction,
+                index,
+                price,
+                index,
+                behind=(extreme_now, self.leg.behind[0]),
+            )
             return
 
+        self.pending.append((self._features(cycles, index, price, sigma), index, price))
+
+    def _features(self, cycles: Cycles, index: int, price: float, sigma: float) -> dict:
+        """The cycle reading, plus what only the leg knows."""
         x = dict(cycles.features())
         x["age"] = math.log1p(max(index - self.leg.started, 0)) / 5.0
-        self.pending.append((x, index, price))
+        # How far the leg has already travelled, and how far the pivots behind
+        # it are. Both in volatility units so they mean the same on any feed.
+        x["travelled"] = min(
+            abs(math.log(max(price, 1e-12) / max(self.leg.extreme, 1e-12))) / sigma, 8.0
+        )
+        for i, level in enumerate(self.leg.behind):
+            gap = abs(math.log(max(price, 1e-12) / level)) / sigma if level > 0 else 0.0
+            x[f"behind_{i}"] = min(gap, 8.0)
+        return x
 
     def _settle(self, sigma: float) -> None:
         extreme, at = self.leg.extreme, self.leg.extreme_at
@@ -555,8 +631,7 @@ class Turns(Restorable):
         """Where the next turn is, as far as this has learned. Empty until warm."""
         if self.settled < WARM or self.leg.direction == 0:
             return {}
-        x = dict(cycles.features())
-        x["age"] = math.log1p(max(index - self.leg.started, 0)) / 5.0
+        x = self._features(cycles, index, cycles.fast.price, max(cycles.fast.sigma.mean, 1e-9))
         depth = float(self.depth.predict_one(x) or 0.0)
         bars = math.expm1(max(float(self.when.predict_one(x) or 0.0), 0.0))
         sigma = max(cycles.fast.sigma.mean, 1e-9)
