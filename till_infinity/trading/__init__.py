@@ -111,6 +111,7 @@ from .strategies.swing import (
     Runner,
     SwingLevel,
 )
+from .turning import TurnExit, TurnOutcome, TurnTally
 from .valuation import Priced, Valuation, price_it
 from .venues.broker import (
     Broker,
@@ -192,6 +193,9 @@ __all__ = [
     "Trade",
     "Trader",
     "TransientError",
+    "TurnExit",
+    "TurnOutcome",
+    "TurnTally",
     "Valuation",
     "Verdict",
     "Voice",
