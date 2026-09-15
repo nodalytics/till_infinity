@@ -246,3 +246,61 @@ class TestRegistration:
 
     def test_an_ordinary_feed_has_no_definition(self):
         assert sp.definition("gold") is None
+
+
+class TestNamedPairs:
+    """Discovery is right for "what could be built" and wrong for "build these".
+
+    `btc` alone yields ten venue pairs from five venues and the whole book
+    yields hundreds; adding those to the store and to whatever `structures` is
+    admitting is a decision rather than a side effect. A spec names what is
+    wanted.
+
+    **The syntax is the one `STRUCTURES_SPREAD_QUOTES` takes**, deliberately,
+    so one spread's bar series and quote series are configured alike - the
+    comparison between them is the whole reason both exist, and it would be
+    undermined by having to check whether two configs mean the same pair.
+    """
+
+    SPEC = "a=btc@BINANCE-btc@COINBASE,b=btc@COINBASE-btc@KRAKEN"
+
+    def test_it_parses_what_it_is_given(self):
+        got = sp.named(self.SPEC)
+        assert [s.name for s in got] == ["a", "b"]
+        assert [(leg.feed, leg.venue) for leg in got[0].legs] == [
+            ("btc", "BINANCE"),
+            ("btc", "COINBASE"),
+        ]
+
+    def test_the_weights_make_it_a_difference(self):
+        got = sp.named("a=btc@X-btc@Y")[0]
+        assert [leg.weight for leg in got.legs] == [1.0, -1.0]
+
+    def test_a_malformed_entry_is_skipped_not_raised(self):
+        """A typo in one pair should not stop a collector starting."""
+        assert [s.name for s in sp.named("good=btc@X-btc@Y,rubbish,half=btc@X")] == ["good"]
+
+    def test_nothing_named_is_nothing_built(self):
+        assert sp.named("") == []
+
+    def test_a_named_pair_wins_over_discovery(self):
+        conn = store(
+            series("btc", "BINANCE", [100.0] * 5)
+            + series("btc", "KRAKEN", [100.0] * 5)
+            + series("eurusd", "DERIV", [1.08] * 5)
+            + series("gbpusd", "DERIV", [1.27] * 5)
+        )
+        # Discovery would find the eurgbp cross; the spec asks for something else.
+        got = sp.catalogue(conn, pairs="x=btc@BINANCE-btc@KRAKEN", min_shared=1)
+        assert [s.name for s in got] == ["x"]
+
+    def test_a_named_leg_is_addressed_through_the_index(self):
+        """Without `(source, ticker)` the leg query cannot use `bars_series_ts`
+        and scans a table that is 22GB on production."""
+        conn = store(series("btc", "BINANCE", [100.0] * 5) + series("btc", "KRAKEN", [100.0] * 5))
+        got = sp.catalogue(conn, pairs="x=btc@BINANCE-btc@KRAKEN", min_shared=1)
+        assert all(leg.indexed for leg in got[0].legs)
+
+    def test_a_pair_naming_a_venue_with_no_bars_builds_nothing(self):
+        conn = store(series("btc", "BINANCE", [100.0] * 5))
+        assert sp.catalogue(conn, pairs="x=btc@BINANCE-btc@NOWHERE", min_shared=1) == []

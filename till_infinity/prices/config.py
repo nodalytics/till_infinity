@@ -977,6 +977,16 @@ class Settings:
     spread_base: str = "1m"
     #: Stored bars each leg needs before a pair is constructed at all.
     spread_min_shared: int = 1_000
+    #: Exactly which spreads to build, as `name=feed@VENUE-feed@VENUE`, comma
+    #: separated - **the same syntax `STRUCTURES_SPREAD_QUOTES` takes**, so one
+    #: spread's bar series and quote series are configured alike and can be
+    #: compared without checking whether two configs mean the same pair.
+    #:
+    #: When set it wins outright over discovery, which is the point: `btc`
+    #: alone yields ten venue pairs from five venues and the whole book yields
+    #: hundreds, and adding those to the store and to whatever `structures` is
+    #: admitting is a decision rather than a side effect.
+    spread_pairs: str = ""
     #: Allow legs from two different providers. Off, because a TradingView leg
     #: and a Yahoo leg are two clocks and the spread would carry the skew
     #: between them as if it were price.
@@ -1066,6 +1076,7 @@ class Settings:
             spread_base=(_env("PRICES_SPREAD_BASE") or "1m").strip(),
             spread_min_shared=_env_int(1_000, "PRICES_SPREAD_MIN_SHARED"),
             spread_cross_source=_env_flag("PRICES_SPREAD_CROSS_SOURCE", False),
+            spread_pairs=(_env("PRICES_SPREAD_PAIRS") or "").strip(),
             tv_concurrency=_env_int(6, "PRICES_TV_CONCURRENCY"),
             tv_ws_url=_env("PRICES_TV_WS_URL") or DEFAULT_TV_WS_URL,
             tv_origin=_env("PRICES_TV_ORIGIN") or DEFAULT_TV_ORIGIN,

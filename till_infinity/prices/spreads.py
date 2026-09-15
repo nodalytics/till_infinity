@@ -512,6 +512,81 @@ def definition(feed: str) -> Spread | None:
     return _CONSTRUCTED.get(feed)
 
 
+def _fill_keys(conn: sqlite3.Connection, spreads: list[Spread], interval: str) -> list[Spread]:
+    """Attach each leg's `(source, ticker)` so its reads use the store's index.
+
+    A named pair carries only feed and venue; without the other two the leg
+    query cannot use `bars_series_ts` and scans the table instead - which on
+    production is 22GB. Looked up once here rather than per read.
+    """
+    have: dict[tuple[str, str], tuple[str, str, int]] = {}
+    for feed, venue, source, ticker, got_interval, n in _cells(conn):
+        if got_interval != interval:
+            continue
+        held = have.get((feed, venue))
+        if held is None or n > held[2]:
+            have[(feed, venue)] = (source, ticker, n)
+    out: list[Spread] = []
+    for spread in spreads:
+        legs = []
+        for leg in spread.legs:
+            found = have.get((leg.feed, leg.venue))
+            if found is None:
+                legs = []
+                break
+            legs.append(Leg(leg.feed, leg.venue, leg.weight, found[0], found[1]))
+        if legs:
+            out.append(Spread(spread.name, tuple(legs), kind=spread.kind, note=spread.note))
+        else:
+            log.warning("prices: %s has a leg with no stored bars", spread.name)
+    return out
+
+
+def named(spec: str) -> list[Spread]:
+    """Exactly the spreads a spec names, rather than everything discoverable.
+
+    `name=feed@VENUE-feed@VENUE`, comma separated - **the same syntax
+    `STRUCTURES_SPREAD_QUOTES` takes**, deliberately, so the bar series and the
+    quote series of one spread are configured the same way and can be compared
+    without anybody checking whether two configs mean the same pair.
+
+    Discovery is the right default when the question is "what could be built",
+    and the wrong one when the answer is eighty series nobody asked for: `btc`
+    alone yields ten venue pairs from five venues, and the whole book yields
+    hundreds. A spec names what is wanted.
+
+    Malformed entries are skipped with a warning rather than raised. A typo in
+    one pair should not stop a collector starting.
+    """
+    out: list[Spread] = []
+    for raw in spec.split(","):
+        chunk = raw.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        name, _, legs = chunk.partition("=")
+        first, _, second = legs.partition("-")
+        if "@" not in first or "@" not in second:
+            log.warning("prices: cannot read spread pair %r", chunk)
+            continue
+        feed_a, _, venue_a = first.partition("@")
+        feed_b, _, venue_b = second.partition("@")
+        if not all((name, feed_a, venue_a, feed_b, venue_b)):
+            log.warning("prices: incomplete spread pair %r", chunk)
+            continue
+        out.append(
+            Spread(
+                name=name.strip(),
+                legs=(
+                    Leg(feed_a.strip(), venue_a.strip(), 1.0),
+                    Leg(feed_b.strip(), venue_b.strip(), -1.0),
+                ),
+                kind="venue",
+                note=f"{feed_a.strip()} at {venue_a.strip()} against {venue_b.strip()}",
+            )
+        )
+    return out
+
+
 def catalogue(
     conn: sqlite3.Connection,
     *,
@@ -521,6 +596,7 @@ def catalogue(
     cross_source: bool = False,
     feeds: Iterable[str] | None = None,
     venues: Iterable[str] | None = None,
+    pairs: str = "",
 ) -> list[Spread]:
     """Every spread of the requested kinds that this store can actually build.
 
@@ -528,6 +604,12 @@ def catalogue(
     gets listed cannot drift apart - which is how a feed ends up being watched
     by one half of the desk and unknown to the other.
     """
+    if pairs:
+        # Named pairs win outright. The legs are looked up in the store the
+        # same way a discovered one is, so a pair naming a venue with no bars
+        # simply builds nothing rather than failing silently later.
+        return _fill_keys(conn, named(pairs), interval)
+
     wanted = {k.strip().lower() for k in kinds if k.strip()}
     out: list[Spread] = []
     if "cross" in wanted:

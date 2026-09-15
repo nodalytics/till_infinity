@@ -399,6 +399,7 @@ def spread_catalogue(settings: Settings) -> list[Spread]:
                 interval=settings.spread_base,
                 min_shared=settings.spread_min_shared,
                 cross_source=settings.spread_cross_source,
+                pairs=settings.spread_pairs,
             )
     except sqlite3.Error as exc:
         log.warning("prices: could not read the store to list spreads: %s", exc)
