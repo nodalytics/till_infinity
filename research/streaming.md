@@ -217,7 +217,39 @@ and invalidates the whole state file when any of them changes, so a deploy that
 adds one field to one unrelated class would otherwise throw away every turn this
 has settled.
 
-Recorded and scored, acting on nothing: `STRUCTURES_CYCLES_ACT` is off, and two
-of the three things this adds were measured at nothing above.
+## What the switch gates, now that it gates something
+
+`STRUCTURES_CYCLES_ACT` was declared and read by nothing for a day, which is the
+defect this folder catalogues rather than a state to leave it in. It now gates
+**exactly one thing, and only the thing that was measured to work**: the depth
+head may pull a published `expected_push_vol` in front of the turn it expects.
+
+Everything measured at nothing above acts at no setting. Nested-timeframe
+agreement and the attention weighting are published for the journal and gate
+nothing, because a switch that turned on a reading measured at 0.005 would be
+this page's own conclusion ignored.
+
+Three conditions, and the last two are what make it defensible:
+
+* **It can only ever shrink a claim.** `Series.capped_push` returns the push
+  unchanged or lowered to `TURN_MARGIN` times the predicted remaining depth,
+  never raised. A model that could enlarge a target would be a model placing
+  trades; one that can only decline to claim a push *through* a turn it expects
+  is the conservative half of a forecast, and the only half worth acting on
+  before the record is long.
+* **Only where that feed has earned it.** `MIN_SKILL` of measured skill against
+  the running mean, on this feed, or the cap does nothing - the same deferral
+  `zma_gate` makes. A family where the head is useless never clears it, and
+  nobody maintains a list of which families those are.
+* **A margin, because the turn is a forecast with error.** Pulling a target to
+  exactly the predicted turn would refuse every push the forecast happens to
+  undershoot, so the cap binds only on a claim materially past it.
+
+The raw push travels beside the capped one **only when the cap moved it**, and
+`cycle_acts` is published **only when the cap is live**. Both were briefly
+written as constant zeros and `tests/test_published.py` caught them in that
+state before they shipped - which is the same rule `_zma_context` already
+follows: a missing key is a missing reading, where a constant zero is a
+published feature that does nothing.
 
     till-infinity structures cycles

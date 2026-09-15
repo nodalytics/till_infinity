@@ -775,6 +775,13 @@ class Call(Restorable):
             else (0.0, 0)
         )
 
+        push_vol, capped_why = self.inference.expected_push, ""
+        if cycles is not None:
+            try:
+                push_vol, capped_why = cycles.capped_push(self.inference.expected_push)
+            except Exception:  # a reading nothing gates on must not raise
+                push_vol, capped_why = self.inference.expected_push, ""
+
         zone_low, zone_high = self.level.zone(vol)
         zone_low, zone_high = _widen_to_origin(zone_low, zone_high, self.origin)
         # The wider band a stop has to clear. See `Level.sweep_zone`: the touch
@@ -838,7 +845,20 @@ class Call(Restorable):
                 "last_low_structure": low_structure,
                 "probability_up": self.inference.probability_up,
                 "probability": self.inference.probability,
-                "expected_push_vol": self.inference.expected_push,
+                # **Possibly pulled in front of a predicted turn.** Unchanged
+                # unless `STRUCTURES_CYCLES_ACT` is on, the feed's own depth
+                # head is warm and beating the running mean, and the claim
+                # reaches past where that head expects this leg to end. It can
+                # only ever shrink - see `cycles.Series.capped_push`.
+                "expected_push_vol": push_vol,
+                # The raw figure, and only when the cap actually moved it.
+                # **Absent rather than zero**, which is the rule the rest of
+                # this dict follows: a missing key is a missing reading
+                # downstream, where a constant zero is a published feature that
+                # does nothing - and `tests/test_published.py` is the gate that
+                # says so. Two fields here were caught by it in exactly this
+                # state before they shipped.
+                **({"expected_push_raw": self.inference.expected_push} if capped_why else {}),
                 "base_rate_up": self.inference.base_rate_up,
                 "edge": self.inference.edge,
                 "own_touches": float(self.inference.own_touches),

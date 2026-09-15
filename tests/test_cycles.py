@@ -276,3 +276,97 @@ class TestBook:
             turns.settled = cy.WARM + 1
             turns.depth_error, turns.depth_base_error = error, 100.0
         assert [n for n, _, _ in book.standings()] == ["bad", "good"]
+
+
+class TestActing:
+    """`STRUCTURES_CYCLES_ACT` gates exactly one thing, and only the thing measured.
+
+    `research/streaming.md` found the depth head beating the running mean on 8
+    of 8 constructed spreads and none of the simulated arms, while nested
+    timeframe agreement and the attention weighting both measured at nothing. So
+    the switch lets the depth head cap a push it expects the leg to end before -
+    and nothing else acts at any setting.
+
+    It can only ever **shrink** a claim. A model that could enlarge a target
+    would be a model placing trades.
+    """
+
+    def taught(self, *, skill: float, warm: bool = True, depth: float = 1.0):
+        book = cy.Book()
+        series = book.of("v75")
+        for i, p in enumerate(reverting(4000)):
+            series.observe("1m", p)
+            if i % 15 == 0:
+                series.observe("15m", p)
+            if i % 60 == 0:
+                series.observe("1h", p)
+        turns = series.turns
+        turns.settled = cy.WARM + 1 if warm else 10
+        # Skill is 1 - model/baseline, so these two set it exactly.
+        turns.depth_base_error = 100.0
+        turns.depth_error = 100.0 * (1.0 - skill)
+        turns.depth.predict_one = lambda _x: depth
+        turns.when.predict_one = lambda _x: 0.0
+        return series
+
+    def test_off_by_default(self, monkeypatch):
+        monkeypatch.setattr(cy, "CYCLES_ACT", False)
+        series = self.taught(skill=0.9, depth=0.1)
+        assert series.capped_push(9.0) == (9.0, "")
+
+    def test_on_it_pulls_a_claim_in_front_of_the_turn(self, monkeypatch):
+        monkeypatch.setattr(cy, "CYCLES_ACT", True)
+        series = self.taught(skill=0.9, depth=1.0)
+        push, why = series.capped_push(9.0)
+        assert push == pytest.approx(1.0 * cy.TURN_MARGIN)
+        assert "turn expected" in why
+
+    def test_it_never_raises_a_claim(self, monkeypatch):
+        """The conservative half of a forecast is the only half worth acting on."""
+        monkeypatch.setattr(cy, "CYCLES_ACT", True)
+        series = self.taught(skill=0.9, depth=40.0)
+        assert series.capped_push(0.5) == (0.5, "")
+
+    def test_a_claim_already_inside_the_turn_is_untouched(self, monkeypatch):
+        monkeypatch.setattr(cy, "CYCLES_ACT", True)
+        series = self.taught(skill=0.9, depth=4.0)
+        assert series.capped_push(2.0) == (2.0, "")
+
+    def test_a_cold_head_does_not_act(self, monkeypatch):
+        monkeypatch.setattr(cy, "CYCLES_ACT", True)
+        series = self.taught(skill=0.9, warm=False, depth=0.1)
+        assert series.capped_push(9.0) == (9.0, "")
+
+    def test_a_feed_whose_head_is_no_better_than_the_mean_does_not_act(self, monkeypatch):
+        """The same deferral `zma_gate` makes: a family where the model is
+        useless never clears the bar, and nobody maintains a list of which."""
+        monkeypatch.setattr(cy, "CYCLES_ACT", True)
+        series = self.taught(skill=0.0, depth=0.1)
+        assert series.capped_push(9.0) == (9.0, "")
+
+    def test_a_head_worse_than_the_mean_does_not_act(self, monkeypatch):
+        monkeypatch.setattr(cy, "CYCLES_ACT", True)
+        series = self.taught(skill=-0.5, depth=0.1)
+        assert series.capped_push(9.0) == (9.0, "")
+
+    def test_no_push_to_cap_is_left_alone(self, monkeypatch):
+        monkeypatch.setattr(cy, "CYCLES_ACT", True)
+        series = self.taught(skill=0.9, depth=0.1)
+        assert series.capped_push(0.0) == (0.0, "")
+
+    def test_the_reading_says_whether_the_cap_is_live(self, monkeypatch):
+        """Recorded whether or not it is switched on, so the journal can answer
+        'what would the cap have done' from before it was."""
+        monkeypatch.setattr(cy, "CYCLES_ACT", True)
+        series = self.taught(skill=0.9, depth=1.0)
+        assert series.reading()["cycle_acts"] == 1.0
+        monkeypatch.setattr(cy, "CYCLES_ACT", False)
+        # Absent, not zero. A constant-zero published feature is the defect
+        # `test_published.py` refuses, and it caught this field in that state.
+        assert "cycle_acts" not in series.reading()
+
+    def test_disabled_entirely_never_acts(self, monkeypatch):
+        monkeypatch.setattr(cy, "ENABLED", False)
+        monkeypatch.setattr(cy, "CYCLES_ACT", True)
+        series = self.taught(skill=0.9, depth=0.1)
+        assert series.capped_push(9.0) == (9.0, "")

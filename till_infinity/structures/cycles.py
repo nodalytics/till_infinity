@@ -83,9 +83,39 @@ log = get_logger(__name__)
 #: Recorded and surfaced. Like `zma.ENABLED` this costs a few floats a bar.
 ENABLED = os.environ.get("STRUCTURES_CYCLES", "1") not in ("0", "false", "no")
 
-#: **Whether any of it may influence a decision.** Off, and the module note says
-#: why: two of the three things this adds were measured at nothing.
+#: **Whether the turn model may cap the published expected push.** Off.
+#:
+#: It gates exactly one thing, and only the thing that was measured to work.
+#: `research/streaming.md` found the depth head - how much further price runs
+#: before turning - beating the running mean on 8 of 8 constructed spreads and
+#: on none of the simulated arms, while nested-timeframe agreement and the
+#: attention weighting both measured at nothing. So alignment and attention
+#: influence no decision at any setting; this switch lets the depth head do the
+#: one thing a depth forecast can honestly do.
+#:
+#: **It can only ever shrink a claim.** `Series.capped_push` returns the
+#: published `expected_push_vol` unchanged, or lowered to where the model
+#: expects this leg to end - never raised. A model that could enlarge a target
+#: would be a model placing trades; one that can only pull a target in front of
+#: a predicted turn is refusing to claim a push through it.
+#:
+#: **And only where that feed has earned it**, the same way `zma_gate` defers:
+#: `MIN_SKILL` settled turns of record beating the running mean on this feed,
+#: or the cap does nothing. A family where the head is useless never clears it
+#: and nobody maintains a list of which families those are.
 CYCLES_ACT = os.environ.get("STRUCTURES_CYCLES_ACT", "0") not in ("0", "false", "no")
+
+#: Skill against the running mean a feed's depth head needs before the cap may
+#: act. Zero is "no better than predicting the mean", so this is a margin above
+#: useless rather than a bar for excellence - the cap only ever reduces a claim,
+#: so the cost of acting on a mediocre model is bounded by the claim it reduces.
+MIN_SKILL = 0.05
+
+#: How far inside the predicted turn a push may still be claimed. The turn is a
+#: forecast with error, so pulling a target to exactly it would refuse every
+#: push that the forecast happens to undershoot; a margin of 1.25 means the cap
+#: binds only on a claim materially past where the leg is expected to end.
+TURN_MARGIN = 1.25
 
 #: Attention weighting. On, now that `zma.TEMPERATURE` makes it a real knob
 #: rather than an exponent that could not do anything - and harmless at the
@@ -695,6 +725,32 @@ class Series(Restorable):
             self.bars += 1
             self.turns.observe(self.cycles, self.bars)
 
+    def capped_push(self, push_vol: float) -> tuple[float, str]:
+        """The expected push, possibly pulled in front of the predicted turn.
+
+        Returns `(push, why)`. `why` is empty when nothing was changed, which is
+        the overwhelming majority of calls: the switch is off, the head is cold,
+        the feed has not earned it, or the claim already sits inside the turn.
+
+        **Never raises the push.** A model that could enlarge a target would be
+        a model placing trades. This one can only decline to claim a push
+        through a turn it expects, which is the conservative half of a forecast
+        and the only half worth acting on before the record is long.
+        """
+        if not (ENABLED and CYCLES_ACT) or push_vol <= 0:
+            return push_vol, ""
+        turns = self.turns
+        if not turns.warm or not (turns.depth_skill > MIN_SKILL):
+            return push_vol, ""
+        got = turns.predict(self.cycles, self.bars)
+        depth = float(got.get("turn_depth_vol", 0.0) or 0.0)
+        if depth <= 0:
+            return push_vol, ""
+        room = depth * TURN_MARGIN
+        if push_vol <= room:
+            return push_vol, ""
+        return room, f"turn expected {depth:.2f}v out, skill {turns.depth_skill:+.2f}"
+
     def reading(self) -> dict[str, float]:
         """What this publishes onto a call. Numeric, because `features` is.
 
@@ -715,6 +771,12 @@ class Series(Restorable):
             "cycle_residual_z": round(self.cycles.residual.z.z_score, 4),
         }
         out.update(self.turns.predict(self.cycles, self.bars))
+        # Only when it is actually live. **Absent rather than zero**: a field
+        # that is a constant zero under the default configuration is an inert
+        # published feature, which is the defect `research/inert.md` catalogues
+        # and `tests/test_published.py` refuses - it caught this one.
+        if CYCLES_ACT and self.turns.warm and self.turns.depth_skill > MIN_SKILL:
+            out["cycle_acts"] = 1.0
         return out
 
 
