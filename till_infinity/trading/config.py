@@ -315,6 +315,15 @@ MAGIC_ORDER: tuple[str, ...] = (
     # stop. Appended to preserve the strategy attribution table's append-only
     # contract.
     "cycle-scalp",
+    # 2026-09-15. The cycle reading as an entry rather than a veto, gated on
+    # that feed's own scored record - see `strategies/turning.py`. Appended,
+    # never inserted: a magic that has been on a live order has to keep
+    # resolving to the name that placed it.
+    #
+    # It shipped for one commit without this line, and the test below caught
+    # it. Two earlier strategies did not get caught and ran live for an hour
+    # each; their trades are unattributable in the record for ever.
+    "cycle-turn",
 )
 
 
