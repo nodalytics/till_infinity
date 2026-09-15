@@ -123,6 +123,24 @@ signals at 91% is 345 expected hits against 671 from 802 at 84%, so the gate is
 worth its sample only if each trade carries a cost worth avoiding. That is the
 same AUC-versus-money gap `research/asking.md` lists as outstanding.
 
+## Followed up in `adapting.md`
+
+Three of the loose ends here were taken further in
+[adapting.md](adapting.md), which converts this into an online learner:
+
+* **The firing rate is a property of the rule, not the detector.** A mixture
+  that includes an expert saying nothing puts 0.092 of its weight there where
+  reversion is strong and 0.856 to 0.998 on every family this desk trades. The
+  fixed rule cannot represent "nothing here"; the mixture reports it as a
+  number.
+* **The threshold costs more than it filters.** At an identical bet count the
+  continuous z beats the `agrees` flag on all three OU controls - 0.562 to
+  0.504, 0.603 to 0.578, 0.724 to 0.646.
+* **"Reliably wrong on Boom and Crash" now has a mechanism.** The slow drift
+  leaves the z-score stretched and the spike is what finally turns the slope, so
+  the agreement condition fires on the bar after the one counter-move and calls
+  for more of it as the drift resumes. Measured there at hit 0.119 and 0.164.
+
 ## Where it would pay
 
 Where `theta` is large. The OU arms say the detector is fine and the dial it

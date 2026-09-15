@@ -682,6 +682,15 @@ def _zma_context(zma) -> dict:
             "zma_strong": round(zma.strong, 4),
             "zma_agrees": float(zma.agrees),
             "zma_rising": float(zma.rising),
+            # The scored record travels with the reading, as counts rather than
+            # a rate: a rate has to be `nan` before there are any calls, and a
+            # `nan` in a published feature is a number that every comparison
+            # downstream silently answers False to. A consumer that wants the
+            # rate can divide, and can see the denominator while it does.
+            "zma_calls": float(zma.calls),
+            "zma_right": float(zma.right),
+            "zma_edge_calls": float(zma.edge_calls),
+            "zma_edge_right": float(zma.edge_right),
         }
     except Exception:  # a reading nothing gates on must not raise
         return {}

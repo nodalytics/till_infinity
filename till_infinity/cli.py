@@ -1731,12 +1731,21 @@ def structures_zma(state_dir, min_calls, as_json):
     `TRADING_ZMA_GATE` lets `cycle-scalp` refuse a call it leans against. Both
     are off, and the standings here are what would justify turning either on.
 
-    A call is `agrees` - oversold with the slope already rising, or overbought
-    with it already falling - and it is settled against the very next bar. So
-    0.50 is a coin. `research/zma.md` measured 0.376 to 0.461 on Boom and
-    Crash, which is reliably *wrong* and therefore worth a veto in the other
-    direction; the synthetics and real outrights came in at 0.485 to 0.515,
-    which is nothing at all. Sorted worst first for that reason.
+    **Two records, because there are two calls.** `flag` is `agrees` - oversold
+    with the slope already rising, or overbought with it already falling. `z` is
+    the displacement alone, past the same threshold, without waiting for
+    momentum. Both are settled against the very next bar, so 0.50 is a coin in
+    each column. `research/adapting.md` measured the number beating the flag at
+    an identical bet count on three controls - 0.504 against 0.562, 0.578
+    against 0.603, 0.646 against 0.724 - and `TRADING_ZMA_GATE` reads the `z`
+    column, not the `flag` one.
+
+    `research/zma.md` measured 0.376 to 0.461 on Boom and Crash, and
+    `adapting.md` 0.119 and 0.164 with a mechanism for it: those series drift
+    one way and spike the other, so the drift leaves the z-score stretched and
+    the spike is what turns it back. Sorted worst first for that reason - the
+    instruments where the reading is an anti-signal are the ones that would cost
+    money first.
 
         till-infinity structures zma --min-calls 200
     """
@@ -1757,16 +1766,27 @@ def structures_zma(state_dir, min_calls, as_json):
         for (feed, interval), z in sorted(book._by_key.items())
         if z.calls >= min_calls
     ]
-    rows.sort(key=lambda r: (r[1].accuracy if r[1].calls else 1.0, -r[1].calls))
+    rows.sort(key=lambda r: (r[1].edge_accuracy if r[1].edge_calls else 1.0, -r[1].edge_calls))
     if as_json:
         console.print_json(json.dumps({name: z.to_dict() for name, z in rows}))
         return
     if not rows:
-        console.print(
-            f"[yellow]no series with {min_calls} settled calls[/] - the "
-            "agreement condition is strict, so a series makes one every 40-50 "
-            "bars rather than every bar"
-        )
+        # Two different sentences, deliberately. "Nothing passed the filter" and
+        # "the book is empty" are the same empty table and mean opposite things:
+        # one says the record is young, the other says nothing is being
+        # recorded at all - which would be a fault in the bar path.
+        if not book._by_key:
+            console.print(
+                "[yellow]the book holds no series[/] - either STRUCTURES_ZMA is "
+                "off, or `structures watch` has not closed a bar since this "
+                "state was written"
+            )
+        else:
+            console.print(
+                f"[yellow]none of {len(book._by_key)} series has {min_calls} "
+                "settled calls[/] - the agreement condition is strict, so a "
+                "series makes one every 40-50 bars rather than every bar"
+            )
         return
 
     warm = sum(1 for _, z in rows if z.warm)
@@ -1775,24 +1795,29 @@ def structures_zma(state_dir, min_calls, as_json):
         caption="0.50 is a coin; below it the call is information pointing the wrong way",
     )
     table.add_column("series")
-    table.add_column("calls", justify="right")
-    table.add_column("right", justify="right")
-    table.add_column("accuracy", justify="right")
+    table.add_column("flag calls", justify="right")
+    table.add_column("flag", justify="right")
+    table.add_column("z calls", justify="right")
     table.add_column("z", justify="right")
+    table.add_column("now", justify="right")
     table.add_column("state")
+
+    def rate(right: int, calls: int) -> str:
+        if not calls:
+            return "[dim]-[/]"
+        got = right / calls
+        if calls < zm.WARM:
+            return f"[dim]{got:.3f}[/]"
+        colour = "green" if got > 0.55 else "red" if got < 0.45 else "yellow"
+        return f"[{colour}]{got:.3f}[/]"
+
     for name, z in rows:
-        if not z.calls:
-            accuracy = "[dim]-[/]"
-        elif not z.warm:
-            accuracy = f"[dim]{z.accuracy:.3f}[/]"
-        else:
-            colour = "green" if z.accuracy > 0.55 else "red" if z.accuracy < 0.45 else "yellow"
-            accuracy = f"[{colour}]{z.accuracy:.3f}[/]"
         table.add_row(
             name,
             f"{z.calls:,}",
-            f"{z.right:,}",
-            accuracy,
+            rate(z.right, z.calls),
+            f"{z.edge_calls:,}",
+            rate(z.edge_right, z.edge_calls),
             f"{z.z_score:+.2f}",
             z.state,
         )

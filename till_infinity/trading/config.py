@@ -985,6 +985,15 @@ class Settings:
     #: the package boundary here is that `trading` reads signals off the bus and
     #: never touches the level engine.
     zma_gate: bool = False
+    #: Scored continuous calls a feed needs before the gate believes its record
+    #: at all. `structures.zma.WARM` is 200 and this matches it: the agreement
+    #: condition is strict enough that a series makes one call every forty-odd
+    #: bars, so 200 is months on a slow timeframe and hours on a fast one.
+    zma_min_calls: float = 200.0
+    #: And how far above a coin that record has to be. At 0.50 the gate would
+    #: fire on feeds where the reading is worthless; the margin is what keeps a
+    #: hundred coin flips from reading as evidence.
+    zma_min_accuracy: float = 0.52
 
     # ------------------------------------------------ pricing the distance
     #: Decisive interactions a level needs before `fade-to-value` will treat it
@@ -1659,6 +1668,8 @@ class Settings:
             sweep_min_history=_float("TRADING_SWEEP_MIN_HISTORY", 6.0),
             sweep_max_exposure=_float("TRADING_SWEEP_MAX_EXPOSURE", 0.8),
             zma_gate=_flag("TRADING_ZMA_GATE", False),
+            zma_min_calls=_float("TRADING_ZMA_MIN_CALLS", 200.0),
+            zma_min_accuracy=_float("TRADING_ZMA_MIN_ACCURACY", 0.52),
             fade_min_touches=_float("TRADING_FADE_MIN_TOUCHES", 4.0),
             fade_max_distance_vol=_float("TRADING_FADE_MAX_DISTANCE_VOL", 8.0),
             fade_min_distance_vol=_float("TRADING_FADE_MIN_DISTANCE_VOL", 1.5),

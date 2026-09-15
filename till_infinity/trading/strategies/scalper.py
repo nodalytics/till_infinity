@@ -1359,51 +1359,77 @@ class Inverse(LevelStrategy):
 
 
 def zma_gate(strategy: Any, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
-    """Refuse a call the z-score is actively leaning against. **Off by default.**
+    """Refuse a call the z-score is leaning against, **if that feed's record earns it.**
 
-    `structures/zma.py` publishes `zma_agrees` on every level call: +1 when the
-    series is oversold *and* its slope has already turned up, -1 when it is
-    overbought and turning down, 0 - which is most bars - when displacement and
-    momentum do not point the same way. The thresholds are percentiles of the
-    series' own history, so something is always extreme and only the agreement
-    is a claim.
+    Two conditions, and the second is what makes this defensible.
 
-    **Only disagreement is acted on, and only when the flag is set.** The
-    measured record (`research/zma.md`) is AUC 0.493 to 0.504 on this desk's
-    synthetics and 0.485 to 0.515 on real outrights - no information - and
-    *worse* than a coin on Boom and Crash at a 37.6% to 46.1% hit rate. A
-    signal like that must not be allowed to *add* trades, which is why
-    agreement buys nothing here; it is carried in `features` for the journal
-    and that is all. The one thing a coin-flip detector can still do cheaply is
-    veto, and whether even that pays is what `TRADING_ZMA_GATE` exists to
-    settle.
+    **It reads the number, not the state.** `structures/zma.py` publishes both:
+    `zma_agrees` is the flag - oversold *and* momentum already turning - and
+    `zma_z` against `zma_strong` is the displacement it was thresholded out of.
+    `research/adapting.md` put the two against each other at an identical bet
+    count on three OU controls and the continuous reading won every time, by
+    0.504 against 0.562, 0.578 against 0.603, and 0.646 against 0.724. **The
+    percentile threshold is a loss, not a filter.** The flag is still carried in
+    `features` for the alert and the journal; the decision uses the number.
+
+    **And it defers to what that feed's z-score has actually done.** The book
+    scores every continuous call against the next bar, per feed and timeframe,
+    and the counts ride along on the signal. Below `ZMA_MIN_CALLS` there is no
+    record and this does nothing; at or below a coin it does nothing either.
+
+    That second condition is not caution for its own sake - it is the only
+    thing standing between this gate and the Boom and Crash families, where the
+    reading is an **anti-signal with a mechanism**. Those series drift slowly
+    one way and spike the other, so the long drift leaves the z-score
+    persistently stretched and the spike is what finally turns it back; a
+    reading taken then calls for continuation at the moment the drift resumes.
+    `adapting.md` measured the flag at a 0.119 and 0.164 hit rate there and
+    `zma.md` at 0.376 to 0.461 independently. A veto driven by that would
+    refuse the *correct* side, and it would do it most confidently on the
+    instruments where one loss is largest.
+
+    Deferring to the per-feed record handles it without anybody maintaining a
+    list of which families spike, which is the same reason `consensus_vol`
+    settles estimators by their record instead of by argument.
 
     Read off the call's stated direction rather than the traded side, the same
     way `quality` is: the gates deliberately run before `orient` and
-    `_better_side`, so that a strategy which trades against the call still
-    selects from the calls the model liked best.
+    `_better_side`, so a strategy that trades against the call still selects
+    from the calls the model liked best.
     """
-    if not strategy.settings.zma_gate:
+    settings = strategy.settings
+    if not settings.zma_gate:
         return None
-    agrees = _number(features, "zma_agrees")
-    if not agrees:
+
+    z = _number(features, "zma_z")
+    strong = _number(features, "zma_strong")
+    if strong <= 0 or abs(z) <= strong:
+        return None  # inside its own band, which is most bars
+
+    calls = _number(features, "zma_edge_calls")
+    if calls < settings.zma_min_calls:
         return None
+    if _number(features, "zma_edge_right") / max(calls, 1.0) <= settings.zma_min_accuracy:
+        return None
+
     side = Side.from_direction(str(payload.get("direction") or ""))
     if side is None:
         return None
-    wants_up = side is Side.BUY
-    if (agrees > 0) == wants_up:
+    # Stretched down expects a rise, so it leans with a buy and against a sell.
+    expects_up = z < 0
+    if expects_up == (side is Side.BUY):
         return None
+
     feed = str(payload.get("feed") or "")
-    # Named here rather than published as a string: `features` is numeric and
-    # `Signal.to_dict` rounds it, so the word is rendered from the two numbers
-    # that define it.
-    z = _number(features, "zma_z")
+    # The word is rendered from the two numbers that define it: `features` is
+    # `dict[str, float]` and `Signal.to_dict` rounds it, so a published string
+    # raises at publication rather than here.
     state = "overbought" if z > 0 else "oversold"
     return Refusal(
         "zma_against",
-        f"the z-score is {state} at {z:+.2f} against a "
-        f"{_number(features, 'zma_strong'):.2f} threshold, and turning the other way",
+        f"the z-score is {state} at {z:+.2f} against a {strong:.2f} threshold, "
+        f"and has been right {_number(features, 'zma_edge_right') / max(calls, 1.0):.0%} "
+        f"of {calls:.0f} calls on this feed",
         feed,
     )
 

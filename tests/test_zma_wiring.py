@@ -16,6 +16,8 @@ Three joins, each of which was broken or absent when this was written:
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from till_infinity.structures import zma as zm
@@ -74,6 +76,21 @@ class TestContext:
         assert _zma_context(wound(zm.Zma(), agrees=1)) == {}
 
 
+UP = {"direction": "up", "feed": "v75"}
+DOWN = {"direction": "down", "feed": "v75"}
+
+
+def reading(z: float, *, calls: float = 400.0, hit: float = 0.60) -> dict:
+    """A published z-score with a stated record behind it."""
+    return {
+        "zma_z": z,
+        "zma_strong": 1.0,
+        "zma_agrees": -1.0 if z > 0 else 1.0,
+        "zma_edge_calls": calls,
+        "zma_edge_right": calls * hit,
+    }
+
+
 class TestGate:
     @pytest.fixture
     def strategy(self):
@@ -87,45 +104,70 @@ class TestGate:
         """The flag, not the reading, is what decides whether this runs at all."""
         assert Settings().zma_gate is False
         plain = CycleScalp(settings=Settings())
-        against = {"zma_agrees": -1.0, "zma_z": 2.0, "zma_strong": 1.0}
-        assert zma_gate(plain, {"direction": "up", "feed": "v75"}, against) is None
+        assert zma_gate(plain, UP, reading(2.0)) is None
 
     def test_refuses_a_call_the_z_score_leans_against(self, strategy):
-        refusal = zma_gate(
-            strategy,
-            {"direction": "up", "feed": "v75"},
-            {"zma_agrees": -1.0, "zma_z": 2.0, "zma_strong": 1.0},
-        )
+        refusal = zma_gate(strategy, UP, reading(2.0))
         assert refusal is not None
         assert refusal.gate == "zma_against"
         assert "overbought" in refusal.detail
 
     def test_agreement_does_not_add_a_trade(self, strategy):
         """It returns None either way - the difference is only ever a refusal."""
-        agreeing = zma_gate(
-            strategy,
-            {"direction": "up", "feed": "v75"},
-            {"zma_agrees": 1.0, "zma_z": -2.0, "zma_strong": 1.0},
-        )
-        silent = zma_gate(
-            strategy,
-            {"direction": "up", "feed": "v75"},
-            {"zma_agrees": 0.0, "zma_z": -2.0, "zma_strong": 1.0},
-        )
-        assert agreeing is None
-        assert silent is None
+        assert zma_gate(strategy, UP, reading(-2.0)) is None
+        assert zma_gate(strategy, UP, reading(0.5)) is None
 
     def test_both_sides(self, strategy):
-        down = {"direction": "down", "feed": "v75"}
-        assert zma_gate(strategy, down, {"zma_agrees": 1.0, "zma_z": -2.0}) is not None
-        assert zma_gate(strategy, down, {"zma_agrees": -1.0, "zma_z": 2.0}) is None
+        assert zma_gate(strategy, DOWN, reading(-2.0)) is not None
+        assert zma_gate(strategy, DOWN, reading(2.0)) is None
+
+    def test_inside_its_own_band_is_most_bars_and_is_not_a_lean(self, strategy):
+        assert zma_gate(strategy, UP, reading(0.99)) is None
 
     def test_a_call_with_no_direction_is_not_this_gate_s_refusal(self, strategy):
         """`direction` is refused upstream, and two refusals for one fault is worse."""
-        assert zma_gate(strategy, {"feed": "v75"}, {"zma_agrees": -1.0}) is None
+        assert zma_gate(strategy, {"feed": "v75"}, reading(2.0)) is None
 
-    def test_a_cold_call_carries_no_agreement_and_passes(self, strategy):
-        assert zma_gate(strategy, {"direction": "up", "feed": "v75"}, {}) is None
+    def test_a_cold_call_carries_no_reading_and_passes(self, strategy):
+        assert zma_gate(strategy, UP, {}) is None
+
+
+class TestTheRecordDecides:
+    """The condition that keeps this gate off Boom and Crash without a family list.
+
+    Those series drift one way and spike the other, so the drift leaves the
+    z-score persistently stretched and the spike is what turns it back - a
+    reading taken then calls for continuation as the drift resumes.
+    `research/adapting.md` measured the flag at a 0.119 and 0.164 hit rate
+    there. A veto driven by that would refuse the correct side, most
+    confidently on the instruments where one loss is largest.
+    """
+
+    @pytest.fixture
+    def strategy(self):
+        settings = Settings()
+        settings.zma_gate = True
+        return CycleScalp(settings=settings)
+
+    def test_a_feed_with_no_record_is_not_vetoed(self, strategy):
+        assert zma_gate(strategy, UP, reading(2.0, calls=10.0)) is None
+
+    def test_a_feed_whose_z_score_is_a_coin_is_not_vetoed(self, strategy):
+        assert zma_gate(strategy, UP, reading(2.0, hit=0.50)) is None
+
+    def test_a_feed_whose_z_score_is_an_anti_signal_is_not_vetoed(self, strategy):
+        """0.119 is what Boom measured. The gate must be silent there, not inverted."""
+        assert zma_gate(strategy, UP, reading(2.0, hit=0.119)) is None
+
+    def test_a_feed_that_has_earned_it_is_vetoed(self, strategy):
+        refusal = zma_gate(strategy, UP, reading(2.0, calls=400.0, hit=0.60))
+        assert refusal is not None
+        assert "60% of 400 calls" in refusal.detail
+
+    def test_the_margin_over_a_coin_is_what_moves_the_line(self, strategy):
+        just_under = reading(2.0, hit=strategy.settings.zma_min_accuracy)
+        assert zma_gate(strategy, UP, just_under) is None
+        assert zma_gate(strategy, UP, reading(2.0, hit=0.60)) is not None
 
 
 class TestBook:
@@ -149,3 +191,105 @@ class TestBook:
         z = book.of("young", "1m")
         z.calls, z.right = zm.WARM - 1, 0
         assert book.standings() == []
+
+
+class TestWindow:
+    """`period` and `lookback` were decorative, and silently so.
+
+    A `default_factory` is evaluated with no access to the instance, so
+    `deque(maxlen=PERIOD)` captured the module constant: `Zma(period=200)`
+    built, reported `period == 200`, and kept fifty prices like everything
+    else. Production only ever builds the default, so nothing shipped was
+    wrong - but `research/harness/zmaonline.py`'s mixture over four periods
+    produced four experts with identical predictions, which is not a result a
+    mixture can reach by accident.
+    """
+
+    @pytest.mark.parametrize("period", [10, 50, 200])
+    def test_the_window_is_the_one_asked_for(self, period):
+        assert zm.Zma(period=period)._prices.maxlen == period
+
+    @pytest.mark.parametrize("lookback", [20, 200, 1000])
+    def test_the_threshold_history_is_the_one_asked_for(self, lookback):
+        z = zm.Zma(lookback=lookback)
+        assert z._zs.maxlen == lookback
+        assert z._slopes.maxlen == lookback
+
+    def test_two_periods_read_the_same_bars_differently(self):
+        """The property the mixture needed, stated as behaviour rather than maxlen."""
+        prices = [100.0 + i * 0.1 + (3.0 if i % 7 else -3.0) for i in range(400)]
+        short, long = zm.Zma(period=10), zm.Zma(period=200)
+        for p in prices:
+            short.observe(p)
+            long.observe(p)
+        assert short.z_score != pytest.approx(long.z_score)
+
+    def test_the_window_survives_a_restore(self):
+        import pickle
+
+        z = zm.Zma(period=20)
+        for i in range(300):
+            z.observe(100.0 + i * 0.01)
+        back = pickle.loads(pickle.dumps(z))
+        assert back._prices.maxlen == 20
+        assert back.z_score == pytest.approx(z.z_score)
+
+
+class TestScoredBothWays:
+    """The flag and the number are scored apart, because they are not the same call.
+
+    `research/adapting.md` put the two against each other at an identical bet
+    count on three OU controls and the continuous reading won every time - 0.504
+    against 0.562, 0.578 against 0.603, 0.646 against 0.724. A veto has to be
+    justified by the record of the reading it actually uses, so the book keeps
+    both records rather than letting one stand in for the other.
+    """
+
+    def stretched(self, z: zm.Zma, *, down: bool) -> zm.Zma:
+        z.seen = 50
+        z.strong = 1.0
+        z.z_score = -2.0 if down else 2.0
+        z.slope = -1.0  # falling, so `agrees` is silent on the oversold side
+        return z
+
+    def test_the_continuous_call_is_scored_where_the_flag_is_silent(self):
+        z = self.stretched(zm.Zma(), down=True)
+        assert z.agrees == 0
+        assert z.stretched == 1
+        z._open_call, z._open_edge, z._open_price = z.agrees, z.stretched, 100.0
+        z._settle(101.0)
+        assert z.calls == 0, "the flag made no call and must not be scored for one"
+        assert (z.edge_calls, z.edge_right) == (1, 1)
+
+    def test_a_flat_bar_settles_nothing(self):
+        """A Step index prints flat bars; counting one as a loss scores the tick size."""
+        z = self.stretched(zm.Zma(), down=True)
+        z._open_call, z._open_edge, z._open_price = 1, 1, 100.0
+        z._settle(100.0)
+        assert (z.calls, z.edge_calls) == (0, 0)
+
+    def test_both_records_survive_a_real_pass_over_bars(self):
+        z = zm.Zma()
+        prices = [100.0 + 5.0 * math.sin(i / 9.0) for i in range(1200)]
+        for p in prices:
+            z.observe(p)
+        assert z.edge_calls > z.calls > 0, "the number fires more often than the flag"
+        assert 0.0 <= z.edge_accuracy <= 1.0
+
+    def test_accuracy_is_nan_before_there_is_a_record(self):
+        z = zm.Zma()
+        assert math.isnan(z.accuracy)
+        assert math.isnan(z.edge_accuracy)
+
+
+class TestPublished:
+    def test_the_record_rides_along_as_counts(self):
+        """Counts, not a rate: a rate is `nan` before the first call, and every
+        comparison downstream answers False to a `nan` without saying so."""
+        z = wound(zm.Zma(), agrees=1)
+        z.edge_calls, z.edge_right = 400, 240
+        published = _zma_context(z)
+        assert published["zma_edge_calls"] == 400.0
+        assert published["zma_edge_right"] == 240.0
+        for value in published.values():
+            assert isinstance(value, float)

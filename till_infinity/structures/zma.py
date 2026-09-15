@@ -126,6 +126,40 @@ class Zma(Restorable):
     calls: int = 0
     right: int = 0
 
+    #: The **continuous** call open on the same bar, scored separately: bet
+    #: against the displacement whenever it is past the threshold, without
+    #: waiting for momentum to turn. `research/adapting.md` measured this
+    #: winning by 2.5 to 7.8 points over `agrees` at an identical bet count on
+    #: three OU controls, so the two are kept apart rather than one standing in
+    #: for the other - a veto has to be justified by the record of the reading
+    #: it actually uses.
+    _open_edge: int = 0
+    edge_calls: int = 0
+    edge_right: int = 0
+
+    def __post_init__(self) -> None:
+        """Make `period` and `lookback` mean something.
+
+        A `default_factory` is evaluated with no access to the instance, so
+        `deque(maxlen=PERIOD)` captures the *module* constant and every `Zma`
+        kept fifty prices and two hundred z-scores however it was constructed.
+        The two fields were decorative, and silently so: `Zma(period=200)`
+        built, reported `period == 200`, and behaved exactly like the default.
+
+        Found by `research/harness/zmaonline.py`, whose mixture over periods
+        20/50/100/200 produced four experts with identical predictions and
+        therefore an exactly uniform weight vector - which is not a result a
+        mixture can produce by accident.
+
+        Production only ever builds the default, so nothing shipped was wrong;
+        a study of whether some other period is better could not have been run.
+        """
+        if self._prices.maxlen != self.period:
+            self._prices = deque(self._prices, maxlen=self.period)
+        if self._zs.maxlen != self.lookback:
+            self._zs = deque(self._zs, maxlen=self.lookback)
+            self._slopes = deque(self._slopes, maxlen=self.lookback)
+
     # ------------------------------------------------------------------ state
 
     @property
@@ -166,6 +200,22 @@ class Zma(Restorable):
         return 0
 
     @property
+    def stretched(self) -> int:
+        """Displacement alone: +1 expects a rise, -1 a fall, 0 inside the band.
+
+        The agreement condition without the momentum half. Weaker as an
+        argument and **stronger as a measurement**, which is the finding in
+        `research/adapting.md`: a flag fires on a handful of bars and throws
+        away the ordering on the rest, and thresholding the z-score turned out
+        to be a loss rather than a filter.
+        """
+        if self.oversold:
+            return 1
+        if self.overbought:
+            return -1
+        return 0
+
+    @property
     def state(self) -> str:
         if self.oversold:
             return "oversold"
@@ -191,6 +241,11 @@ class Zma(Restorable):
         the side.
         """
         return self.right / self.calls if self.calls else float("nan")
+
+    @property
+    def edge_accuracy(self) -> float:
+        """The same, for the continuous call. `nan` until there is one."""
+        return self.edge_right / self.edge_calls if self.edge_calls else float("nan")
 
     # ----------------------------------------------------------------- update
 
@@ -236,10 +291,12 @@ class Zma(Restorable):
         else:
             self.strong, self.weak = COLD_STRONG, COLD_WEAK
 
-        call = self.agrees
-        if call:
-            self._open_call, self._open_price = call, float(price)
-            effects.fired("structures.zma")
+        call, edge = self.agrees, self.stretched
+        if call or edge:
+            self._open_call, self._open_edge = call, edge
+            self._open_price = float(price)
+            if call:
+                effects.fired("structures.zma")
 
     def _settle(self, price: float) -> None:
         """Score the call the previous bar made, before this bar changes anything.
@@ -248,14 +305,22 @@ class Zma(Restorable):
         the only outcome available without keeping a schedule, and because a
         signal that cannot survive one bar will not survive twenty.
         """
-        if not self._open_call or self._open_price <= 0:
+        if self._open_price <= 0:
             return
         moved = price - self._open_price
+        # A bar that did not move settles nothing. Counting it as a loss would
+        # score the tick size on a Step index, where a flat bar is common.
         if moved != 0.0:
-            self.calls += 1
-            if (moved > 0) == (self._open_call > 0):
-                self.right += 1
-        self._open_call, self._open_price = 0, 0.0
+            if self._open_call:
+                self.calls += 1
+                if (moved > 0) == (self._open_call > 0):
+                    self.right += 1
+            if self._open_edge:
+                self.edge_calls += 1
+                if (moved > 0) == (self._open_edge > 0):
+                    self.edge_right += 1
+        self._open_call = self._open_edge = 0
+        self._open_price = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -267,6 +332,8 @@ class Zma(Restorable):
             "strong": round(self.strong, 4),
             "calls": self.calls,
             "accuracy": round(self.accuracy, 4) if self.warm else None,
+            "edge_calls": self.edge_calls,
+            "edge_accuracy": (round(self.edge_accuracy, 4) if self.edge_calls >= WARM else None),
             "acts": ZMA_ACTS,
         }
 
