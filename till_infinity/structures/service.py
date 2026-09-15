@@ -38,9 +38,11 @@ from pathlib import Path
 from ..bus import ALERTS, BARS, MACRO, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
+from ..prices import config as prices_config
 from ..shared import liveness
 from . import engine, store
 from . import spreadquotes as sq
+from . import zma as zm
 from .config import DRIFT_INTERVALS, Settings
 from .context.activity import Book as ActivityBook
 from .context.macro import Macro, since_default, stored
@@ -687,6 +689,71 @@ class Watcher:
             return ()
         return tuple(sorted(stored - seen))
 
+    #: Intervals the z-score is warmed on. The strategies that read it enter on
+    #: 15m to 1h and the book is keyed per timeframe, so these are the ones a
+    #: gate will actually consult; warming every interval structures publishes
+    #: would triple the work to fill series nothing asks about.
+    ZMA_WARM_INTERVALS: tuple[str, ...] = ("1m", "5m", "15m", "30m", "1h", "4h")
+
+    #: Closes per series. Enough to clear the two hundred settled calls the
+    #: gates wait on - a run of this length produced 446 in a replay - without
+    #: pulling a year of history for fifty feeds on a two-core box.
+    ZMA_WARM_BARS: int = 3_000
+
+    def _warm_zma(self) -> int:
+        """Fill the z-score's book from stored bars, where it has no record.
+
+        **Nothing else does this on a restore.** `Engine.seed` feeds the book
+        through `observe_bar`, but `warm_new` only replays feeds the engine has
+        no series for, and a restored engine has series for everything. So on
+        any restart that keeps its levels the book starts empty and counts from
+        the next live bar - weeks to reach the two hundred settled calls
+        `TRADING_ZMA_GATE` and `cycle-turn` both wait on. Measured on the live
+        desk: zero series against 261,192 restored level closes.
+
+        **Every read is a full index prefix.** `bars` is indexed on
+        `(source, venue, ticker, interval, ts)` and nothing else, so a query
+        naming the feed scans a table that is 22GB on production - which hung a
+        CLI command for minutes earlier today. The feed catalogue already holds
+        the triples, so this seeks.
+
+        **One venue per series, pinned.** A query across venues returns their
+        rows interleaved by timestamp, and the alternation between two quotes
+        of one asset is itself a violently reverting series - it has silently
+        corrupted two measurements in this repository.
+        """
+        path = Path(self.settings.prices_db)
+        if not path.exists() or not zm.ENABLED:
+            return 0
+        feeds = tuple(self.settings.feeds) or ()
+        if not feeds:
+            return 0
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
+            return self.engine.zma.warm(self._stored_closes(conn, feeds))
+
+    def _stored_closes(self, conn, feeds: Sequence[str]):
+        """`(feed, interval, closes)` oldest-first, one pinned venue per series."""
+        for feed in feeds:
+            catalogued = prices_config.FEEDS.get(feed)
+            if catalogued is None:
+                continue
+            keys = [
+                (source, symbol.venue, symbol.ticker)
+                for source in prices_config.bar_source_names()
+                for symbol in catalogued.for_source(source)
+            ]
+            keys.insert(0, (prices_config.BROKER, prices_config.BROKER.upper(), feed))
+            for interval in self.ZMA_WARM_INTERVALS:
+                for source, venue, ticker in keys:
+                    rows = conn.execute(
+                        "SELECT close FROM bars WHERE source=? AND venue=? AND ticker=?"
+                        " AND interval=? AND close>0 ORDER BY ts DESC LIMIT ?",
+                        (source, venue, ticker, interval, self.ZMA_WARM_BARS),
+                    ).fetchall()
+                    if len(rows) >= zm.WARM:
+                        yield feed, interval, [float(r[0]) for r in reversed(rows)]
+                        break
+
     def warm_new(self, on_progress: Callable[[int, int], None] | None = None) -> int:
         """Replay the store for feeds the engine has no history of.
 
@@ -806,6 +873,13 @@ class Watcher:
                 log.info("structures: restored the z-score record for %d series", got)
         except Exception as exc:
             log.warning("structures: could not restore the z-score record: %s", exc)
+        # The z-score's book, filled from stored bars where it is empty.
+        try:
+            got = self._warm_zma()
+            if got:
+                log.info("structures: warmed the z-score on %d series from stored bars", got)
+        except Exception as exc:
+            log.warning("structures: could not warm the z-score: %s", exc)
         # The quote-fed spread watcher, rebuilt rather than restored. Its cache
         # holds quotes that were true before the process stopped, and pairing
         # one of those against a live quote is the manufactured move

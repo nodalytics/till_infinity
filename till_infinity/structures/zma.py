@@ -482,6 +482,40 @@ class Book(Restorable):
         ]
         return sorted(rows, key=lambda r: r[1])
 
+    def warm(self, series) -> int:
+        """Replay stored closes into the book. Returns series warmed.
+
+        **Because nothing else fills it on a restore.** `Engine.seed` feeds
+        this through `observe_bar`, but `warm_new` only replays feeds the
+        engine has *no series* for - and a restored engine has series for
+        everything, so on any restart that keeps its levels the book stays
+        empty and starts counting from the next live bar. That is weeks to
+        reach the two hundred settled calls `TRADING_ZMA_GATE` and `cycle-turn`
+        both wait on, and it was measured at zero series against 261,192
+        restored level closes on the live desk.
+
+        `series` yields `(feed, interval, closes)` oldest-first. Kept free of
+        where the bars came from: this module has no business knowing about the
+        price store, and a caller that hands it the wrong closes - several
+        venues interleaved by timestamp, say - would be handing it a violently
+        reverting series that is an artefact of the query.
+
+        A series that already has a record is skipped rather than replayed on
+        top of it. Doubling counts would be worse than not warming at all,
+        because the gate reads the count as evidence.
+        """
+        warmed = 0
+        for feed, interval, closes in series:
+            if len(closes) < WARM:
+                continue
+            found = self.of(feed, interval)
+            if found.calls or found.edge_calls:
+                continue
+            for close in closes:
+                found.observe(float(close))
+            warmed += 1
+        return warmed
+
     # ------------------------------------------------------------ persistence
 
     def save(self, path: Path | None = None) -> int:

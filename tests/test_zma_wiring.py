@@ -600,3 +600,71 @@ class TestTheRecordSurvivesADeploy:
         fresh = zm.Book()
         fresh.load(path)
         assert fresh.of("btc_binance_coinbase", "15m").edge_calls == 300
+
+
+class TestBackfill:
+    """Nothing filled the book on a restore, so the gates could never warm.
+
+    `Engine.seed` feeds the book through `observe_bar`, but `warm_new` only
+    replays feeds the engine has **no series** for - and a restored engine has
+    series for everything. So on any restart that kept its levels the book
+    started empty and counted from the next live bar, which is weeks to reach
+    the two hundred settled calls `TRADING_ZMA_GATE` and `cycle-turn` both wait
+    on. Measured on the live desk: **zero series against 261,192 restored level
+    closes**, which is what a book nothing backfills looks like.
+    """
+
+    def reverting(self, n: int, seed: int = 2) -> list[float]:
+        rng = random.Random(seed)
+        x, out = 100.0, []
+        for _ in range(n):
+            x += 0.15 * (100.0 - x) + rng.gauss(0, 0.5)
+            out.append(x)
+        return out
+
+    def test_a_replay_clears_the_bar_the_gates_wait_on(self):
+        book = zm.Book()
+        assert book.warm([("v75", "1m", self.reverting(3000))]) == 1
+        got = book.of("v75", "1m")
+        assert got.edge_calls >= zm.WARM
+        assert 0.0 <= got.edge_accuracy <= 1.0
+
+    def test_a_series_too_short_to_mean_anything_is_skipped(self):
+        book = zm.Book()
+        assert book.warm([("gold", "15m", self.reverting(50))]) == 0
+        assert ("gold", "15m") not in book._by_key, "and leaves no empty entry behind"
+
+    def test_a_series_that_already_has_a_record_is_not_replayed_over(self):
+        """Doubling counts is worse than not warming, because the gate reads
+        the count as evidence."""
+        book = zm.Book()
+        book.warm([("v75", "1m", self.reverting(3000))])
+        before = book.of("v75", "1m").edge_calls
+        assert book.warm([("v75", "1m", self.reverting(3000))]) == 0
+        assert book.of("v75", "1m").edge_calls == before
+
+    def test_a_restored_record_is_respected_rather_than_rebuilt(self, tmp_path):
+        """The record file and the backfill must not fight: a book that came
+        back from disk already has its evidence and replaying bars on top would
+        count the same history twice."""
+        path = tmp_path / "zma.pkl"
+        seeded = zm.Book()
+        z = seeded.of("v75", "1m")
+        z.edge_calls, z.edge_right = 400, 240
+        seeded.save(path)
+
+        fresh = zm.Book()
+        fresh.load(path)
+        assert fresh.warm([("v75", "1m", self.reverting(3000))]) == 0
+        assert fresh.of("v75", "1m").edge_calls == 400
+
+    def test_each_timeframe_warms_separately(self):
+        book = zm.Book()
+        warmed = book.warm(
+            [
+                ("v75", "1m", self.reverting(3000, seed=1)),
+                ("v75", "1h", self.reverting(3000, seed=2)),
+            ]
+        )
+        assert warmed == 2
+        assert book.of("v75", "1m").edge_accuracy != book.of("v75", "1h").edge_accuracy
