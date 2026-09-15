@@ -711,6 +711,17 @@ class Watcher:
         #
         # What is learned is kept - the levels, their touch history, the
         # filters. What was *chosen* comes from this deployment.
+        # **Weights come from their own file, after the engine is restored.**
+        # `store._schema` invalidates the whole state file when any persisted
+        # dataclass changes shape, so a deploy touching one unrelated field
+        # would otherwise throw away every turn this has settled. See
+        # `structures/cycles.py`.
+        try:
+            got = self.engine.cycles.load()
+            if got:
+                log.info("structures: restored cycle weights for %d feed(s)", got)
+        except Exception as exc:
+            log.warning("structures: could not restore cycle weights: %s", exc)
         self.engine.draw_with(self.settings.formation)
         self.engine.charge_spread = self.settings.charge_spread
         self.engine.consensus.single_source = single_source_feeds()
@@ -990,6 +1001,10 @@ class Watcher:
             )
         except Exception as exc:  # losing a save must not stop the watch
             log.warning("structures: could not save state: %s", exc)
+        try:
+            self.engine.cycles.save()
+        except Exception as exc:
+            log.warning("structures: could not save cycle weights: %s", exc)
         self._saved = time.monotonic()
 
     # -------------------------------------------------------------- sending
@@ -1523,6 +1538,7 @@ class Watcher:
             signal = call.to_signal(
                 vol,
                 self.engine.zma.of(call.feed, call.interval),
+                self.engine.cycles.of(call.feed),
                 self.clock,
                 self.engine.levels(call.feed, call.interval),
                 busy,

@@ -35,6 +35,7 @@ from typing import Any, ClassVar
 
 from ..logging import get_logger
 from ..shared import effects
+from . import cycles as cy
 from . import levels as lv
 from . import reactions
 from . import zma as zm
@@ -652,6 +653,21 @@ class Series(Restorable):
         return self.since_reform >= REFORM_EVERY
 
 
+def _cycle_context(series) -> dict:
+    """The nested-timeframe reading, for the journal and an alert's context.
+
+    Handed in for the same reason `_zma_context` is: `to_signal` is a method on
+    the call and has no engine to ask. Everything it returns is a float, because
+    `Signal.to_dict` rounds the whole features dict.
+    """
+    if series is None or not cy.ENABLED:
+        return {}
+    try:
+        return series.reading()
+    except Exception:  # a reading nothing gates on must not raise
+        return {}
+
+
 def _zma_context(zma) -> dict:
     """The z reading for the journal and for an alert's context.
 
@@ -741,6 +757,7 @@ class Call(Restorable):
         self,
         vol,
         zma=None,
+        cycles=None,
         clock=None,
         peers=None,
         busy: float = 1.0,
@@ -868,6 +885,7 @@ class Call(Restorable):
                 # displacement and momentum pointing the same way - and is the
                 # only one worth cutting by.
                 **_zma_context(zma),
+                **_cycle_context(cycles),
                 # All four on one scale, combined equally. Recorded so the
                 # journal can say whether the combination beat the estimate
                 # already in use - see `consensus_vol.py`.
@@ -1094,6 +1112,11 @@ class Engine:
         #: measured at 0.50 on this desk's instruments and worse than that on
         #: Boom and Crash, so it keeps a record until the record says otherwise.
         self.zma = zm.Book()
+        #: The streaming z-score across nested timeframes, with a turn model.
+        #: Recorded and scored like `zma`, and for the same reason - see
+        #: `structures/cycles.py`, which is explicit that two of the three
+        #: things it adds were measured at nothing.
+        self.cycles = cy.Book()
         self.tracker = reactions.Tracker(horizon=horizon)
         #: Pivots come from completed sessions, so they need no confirmation
         #: delay and exist before price has ever turned there.
@@ -1261,6 +1284,9 @@ class Engine:
         zbook = getattr(self, "zma", None)
         if zbook is not None:
             counts["zma"] = zbook.forget({f for f, _ in zbook._by_key if f not in gone})
+        cbook = getattr(self, "cycles", None)
+        if cbook is not None:
+            counts["cycles"] = cbook.forget({f for f in cbook._by_feed if f not in gone})
         return {k: v for k, v in counts.items() if v}
 
     def series(self, feed: str, interval: str) -> Series:
@@ -1450,6 +1476,26 @@ class Engine:
             changed=fired,
             interval_seconds=lv.SECONDS.get(interval, 0.0),
         )
+
+    def _observe_cycles(self, feed: str, interval: str, close: float) -> None:
+        """One closed bar into the nested-timeframe book.
+
+        **Closed, which is why it is on this path and not the tick path.** A
+        higher-timeframe bar that has not finished carries the close of a candle
+        containing the current fast bar, and a z-score built on it knows where
+        the fast bars inside it ended up. `Cycles.observe` ignores an interval
+        it does not track, so every bar can be offered to it.
+
+        Swallows its own failures like every other reading here that nothing
+        gates on: two outages this month were a fault on this path taking the
+        whole structures service down.
+        """
+        if not cy.ENABLED:
+            return
+        try:
+            self.cycles.observe(feed, interval, close)
+        except Exception as exc:
+            log.debug("structures: no cycle reading for %s %s: %s", feed, interval, exc)
 
     def _observe_zma(self, feed: str, interval: str, close: float) -> None:
         """Feed the z-score one closed bar, and let it score its own last call.
@@ -2372,6 +2418,7 @@ class Engine:
             # and so the flag it is gated by sits next to the work it gates.
             self._settle_projection(feed, interval, opened, float(close))
             self._observe_zma(feed, interval, float(close))
+            self._observe_cycles(feed, interval, float(close))
         # Pivots are session structures priced at today's scale, so they use the
         # reference estimate rather than the bar interval that happened to
         # deliver them - a 4h bar completing a day does not make it a 4h level.

@@ -28,6 +28,7 @@ from . import structures as sx
 from . import trading as td
 from .bus import Bus
 from .logging import console, get_logger, setup_logging
+from .structures import cycles as cyc
 from .structures import zma as zm
 from .structures.drawing import confluence as cf
 from .trading import plans as tp
@@ -1940,6 +1941,83 @@ def structures_zma(state_dir, min_calls, as_json):
     console.print(
         f"[dim]acting: structures {'on' if zm.ZMA_ACTS else 'off'}, "
         f"cycle-scalp gate {'on' if td.Settings.from_env().zma_gate else 'off'}[/]"
+    )
+
+
+@structures.command("cycles")
+@click.option("--dir", "state_dir", type=click.Path(path_type=Path), help="Where models persist.")
+@click.option("--json", "as_json", is_flag=True, help="Emit the standings as JSON.")
+def structures_cycles(state_dir, as_json):
+    """The streaming z-score across nested timeframes, and its turn model.
+
+    `depth` is how well the head predicting **how much further** price runs
+    before turning beats simply predicting the running mean of that quantity:
+    0 is no better, negative is worse. `when` is the same for **how long**, and
+    `research/streaming.md` measured it positive on the nulls too - so a
+    positive number there is a property of the metric and not of the series.
+
+    Sorted worst first. Weights live in their own file so they survive a
+    schema change that invalidates the engine's state - `drift` counts how
+    often ADWIN said the model had stopped fitting.
+
+        till-infinity structures cycles
+    """
+    setup_logging()
+    engine = _load_engine(state_dir)
+    if engine is None:
+        return
+    book = getattr(engine, "cycles", None)
+    if book is None:
+        console.print(
+            "[yellow]this engine state predates the cycle book[/] - it is "
+            "written on the next save, after STRUCTURES_CYCLES has seen bars"
+        )
+        return
+    if as_json:
+        console.print_json(json.dumps(book.to_dict()))
+        return
+    if not book._by_feed:
+        console.print(
+            "[yellow]the book holds no series[/] - either STRUCTURES_CYCLES is "
+            "off, or no closed bar has reached it since this state was written"
+        )
+        return
+
+    table = Table(
+        title=f"nested-timeframe z-score: {'/'.join(book.intervals)}",
+        caption="skill is against predicting the running mean; 0 is no better than it",
+    )
+    for column in ("feed", "bars", "turns", "settled", "depth", "when", "drift", "align"):
+        table.add_column(column, justify="left" if column == "feed" else "right")
+    rows = sorted(
+        book._by_feed.items(),
+        key=lambda kv: kv[1].turns.depth_skill if kv[1].turns.warm else 1.0,
+    )
+    for feed, series in rows:
+        turns = series.turns
+        if turns.warm:
+            colour = "green" if turns.depth_skill > 0.05 else "red" if turns.depth_skill < 0 else ""
+            depth = (
+                f"[{colour}]{turns.depth_skill:+.3f}[/]" if colour else f"{turns.depth_skill:+.3f}"
+            )
+            when = f"{turns.when_skill:+.3f}"
+        else:
+            depth = when = "[dim]-[/]"
+        table.add_row(
+            feed,
+            f"{series.bars:,}",
+            f"{turns.turns:,}",
+            f"{turns.settled:,}",
+            depth,
+            when,
+            str(turns.drifted),
+            f"{series.cycles.alignment:+.2f}",
+        )
+    console.print(table)
+    console.print(
+        f"[dim]weights: {cyc.WEIGHTS}, {book.loaded} feed(s) restored; "
+        f"acting {'on' if cyc.CYCLES_ACT else 'off'}, "
+        f"attention {'on' if cyc.ATTENTION else 'off'}[/]"
     )
 
 
