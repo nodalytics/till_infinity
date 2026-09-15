@@ -149,6 +149,39 @@ that has earned its weight, not on one that was argued into place.
 
 ---
 
+## Outstanding, as of 2026-09-15
+
+Carried here rather than in a head, because three of these are one command each
+and the reason they are not done is infrastructure rather than thought.
+
+**Blocked on the lab's `sshd`** - the box is up and its MT5 terminal is still
+serving the live desk through its tunnel, but SSH refuses from every source, so
+the filesystem is unreachable:
+
+1. **Which feature carries the reversal edge.** `reversing.py`'s drop-one
+   harness is written and has run; the log could not be read. The question that
+   matters is whether it is `band_pos`, which would make
+   [families.md](families.md)'s Range Break result - AUC 0.6627, conditional on
+   position in a band - reappear on real markets and be a much larger finding
+   than 3.5 points of AUC.
+2. **Detector agreement.** [agreeing2.py](harness/agreeing2.py) is written and
+   unrun.
+3. **The ESN arm.** `seqesn.py` and a 299-line `reservoirs.md` are on disk from
+   an agent that died on a rate limit mid-write and never reported. Uncommitted,
+   because nothing has vouched for them.
+
+**Not blocked, and more important than any of the above:**
+
+4. **Does the reversal edge clear the spread?** An AUC is not money.
+   [policies.md](policies.md) priced that distinction on this book: a 0.619
+   filter cleared **0.103 to 0.692** of the quoted spread and lost money in every
+   cell. This needs replay, not the lab.
+5. **Is the `+0.019` refinement residual worth anything after costs?** Same
+   question, same reason, and it is now established rather than suspected.
+6. **`inert: []` is ambiguous** between "everything fired" and "nothing was
+   declared" - opposite states that read identically. `shared/effects.py` should
+   report the declared count beside the list. Two lines.
+
 ## The order, and why
 
 **1, then 3, then 4, then 2, then 5.**
