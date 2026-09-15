@@ -76,6 +76,7 @@ from river import drift, linear_model, optim, preprocessing, stats
 from ..logging import get_logger
 from ..shared import effects
 from .state import Restorable
+from .zma import CAP, TEMPERATURE
 
 log = get_logger(__name__)
 
@@ -86,10 +87,12 @@ ENABLED = os.environ.get("STRUCTURES_CYCLES", "1") not in ("0", "false", "no")
 #: why: two of the three things this adds were measured at nothing.
 CYCLES_ACT = os.environ.get("STRUCTURES_CYCLES_ACT", "0") not in ("0", "false", "no")
 
-#: Attention weighting, off by default. It is inert as shipped in `zma.py` and
-#: worth nothing when repaired - see the module note. The switch exists so the
-#: measurement can be reproduced rather than re-argued.
-ATTENTION = os.environ.get("STRUCTURES_CYCLES_ATTENTION", "0") not in ("0", "false", "no")
+#: Attention weighting. On, now that `zma.TEMPERATURE` makes it a real knob
+#: rather than an exponent that could not do anything - and harmless at the
+#: temperature that was measured, where the effective sample size is 47.99 of 50
+#: and every arm is inside 0.002 of a flat weighting. Sharper is worse: see
+#: `zma.TEMPERATURE` for the sweep.
+ATTENTION = os.environ.get("STRUCTURES_CYCLES_ATTENTION", "1") not in ("0", "false", "no")
 
 #: Bars in the fast window, and the decay that puts a geometric window's centre
 #: of mass where a rectangle of `PERIOD` bars puts its own.
@@ -179,13 +182,17 @@ class AttentionZ(Restorable):
             typical = self.scale.push(ret)
             if self.attention:
                 # **The temperature is the whole thing.** A softmax over raw
-                # returns is a softmax over numbers near 1e-4, and `exp` of
-                # those is 1.0000 for every one of them - which is what `zma.py`
-                # does and why its attention is inert. Dividing by the running
+                # returns is a softmax over numbers near 1e-4 and `exp` of those
+                # is 1.0000 for every one of them, which is what `zma.py` did
+                # for the whole life of the indicator. Dividing by the running
                 # mean absolute return puts the exponent at O(1) and makes the
-                # weighting scale-free at the same time. Capped so that one
-                # burst cannot own the whole mean.
-                w = math.exp(min(ret / (typical + 1e-12), 6.0))
+                # weighting scale-free at the same time.
+                #
+                # `zma.TEMPERATURE` rather than a number of its own: a streaming
+                # reading that sharpened differently from the batch one would be
+                # a second indicator wearing the same name, and the sweep behind
+                # that constant is the only measurement either has.
+                w = math.exp(min(ret / (TEMPERATURE * typical + 1e-12), CAP))
         self.last = price
         self.seen += 1
         self.sw = self.lam * self.sw + w

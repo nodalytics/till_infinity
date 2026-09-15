@@ -17,6 +17,7 @@ Three joins, each of which was broken or absent when this was written:
 from __future__ import annotations
 
 import math
+import random
 
 import pytest
 
@@ -293,3 +294,89 @@ class TestPublished:
         assert published["zma_edge_right"] == 240.0
         for value in published.values():
             assert isinstance(value, float)
+
+
+class TestAttention:
+    """The softmax had no temperature, so it could not weight anything.
+
+    `exp(|r| - max|r|)` over absolute returns near 1e-4 gives every bar a weight
+    of 1.0000: Kish's effective sample size was 49.00 of 50 on real bars, where
+    a uniform weighting over this window is exactly 50. The subtraction of the
+    maximum - which exists to stop `exp` overflowing and cancels in the
+    normalisation - was the entire computation.
+    """
+
+    def window(self, quiet: float, loud: float, n: int = 40) -> list[float]:
+        """A window of small moves with one large one in the middle."""
+        prices = [100.0]
+        for i in range(n):
+            step = loud if i == n // 2 else quiet
+            prices.append(prices[-1] * (1.0 + step))
+        return prices
+
+    def effective(self, weights: list[float]) -> float:
+        """Kish's effective sample size. Uniform over k weights is exactly k."""
+        return 1.0 / sum(w * w for w in weights)
+
+    def test_the_loud_bar_is_weighted_above_the_quiet_ones(self):
+        z = zm.Zma()
+        weights = z._attention(self.window(0.0001, 0.01))
+        assert max(weights) > 5 * min(weights), "a softmax that cannot separate 100x"
+
+    def test_a_lower_temperature_always_sharpens(self):
+        """Monotone, which it was not while the cap was applied to the scaled
+        return rather than to the gap below the largest bar."""
+        prices = self.window(0.0001, 0.005)
+        sizes = [
+            self.effective(zm.Zma(temperature=t)._attention(prices))
+            for t in (16.0, 8.0, 4.0, 2.0, 1.0)
+        ]
+        assert sizes == sorted(sizes, reverse=True), sizes
+
+    def test_the_shipped_temperature_barely_moves_a_realistic_window(self):
+        """Set high on purpose: sharper was measured as worse on every
+        instrument where the detector has signal. See `zma.TEMPERATURE`.
+
+        Measured on a **realistic** spread of return magnitudes, not on the
+        one-huge-bar window above. That window is 39 identical moves and one
+        fifty times larger, so its mean absolute return is mostly the outlier
+        and the weighting concentrates however mild the temperature; real
+        returns have a spread of sizes and the effective sample size at this
+        temperature is 47.99 of 50 on stored BTC bars.
+        """
+        rng = random.Random(12)
+        prices = [100.0]
+        for _ in range(60):
+            prices.append(prices[-1] * (1.0 + rng.gauss(0.0, 0.0004)))
+        got = self.effective(zm.Zma()._attention(prices))
+        assert got > 0.9 * len(prices[1:]), got
+
+    def test_a_pathological_window_concentrates_even_when_mild(self):
+        """One bar fifty times the rest takes most of the weight at any
+        temperature, which is the weighting working rather than failing."""
+        got = self.effective(zm.Zma()._attention(self.window(0.0001, 0.005)))
+        assert got < 0.5 * 40, got
+
+    def test_the_weighting_is_scale_free(self):
+        """Gold at 4,400 and a volatility index at 1.0 weight their moves alike.
+        The raw form was not scale-free either: the same shape at a different
+        price level produced different weights."""
+        small = zm.Zma()._attention(self.window(0.0001, 0.005))
+        big = zm.Zma()._attention([p * 4_400.0 for p in self.window(0.0001, 0.005)])
+        for a, b in zip(small, big, strict=True):
+            assert a == pytest.approx(b, rel=1e-9)
+
+    def test_one_enormous_bar_cannot_own_the_whole_mean(self):
+        z = zm.Zma(temperature=0.5)
+        weights = z._attention(self.window(0.0001, 10.0))
+        assert max(weights) < 0.999, "that is a lookup, not an attention weighting"
+
+    def test_a_window_that_never_moved_weights_every_bar_alike(self):
+        weights = zm.Zma()._attention([100.0] * 20)
+        assert weights == pytest.approx([1.0 / 19] * 19)
+
+    def test_the_weights_are_a_distribution(self):
+        for temperature in (0.5, 1.0, 8.0):
+            weights = zm.Zma(temperature=temperature)._attention(self.window(0.0002, 0.004))
+            assert sum(weights) == pytest.approx(1.0)
+            assert all(w >= 0 for w in weights)

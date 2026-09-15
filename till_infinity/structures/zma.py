@@ -69,6 +69,41 @@ ENABLED = os.environ.get("STRUCTURES_ZMA", "1") not in ("0", "false", "no")
 #: note. Recording is free; acting is not.
 ZMA_ACTS = os.environ.get("STRUCTURES_ZMA_ACTS", "0") not in ("0", "false", "no")
 
+#: **The softmax temperature**, as a multiple of the window's own mean absolute
+#: return. Lower sharpens onto the bars that moved; higher flattens toward a
+#: plain rolling mean. There was no temperature at all until
+#: `research/streaming.md` measured the attention as inert - every weight came
+#: out at 1.0000 because the exponent was a raw return near 1e-4 - which is why
+#: this constant exists rather than being buried inside an `exp`.
+#:
+#: **Set high, because sharper was measured as worse.** On the instruments where
+#: this detector has any signal, AUC falls monotonically as the weighting
+#: sharpens:
+#:
+#: | temperature | 99 (flat) | 8 | 4 | 2 | 1 | 0.5 |
+#: | --- | --- | --- | --- | --- | --- | --- |
+#: | btc BINANCE-COINBASE spread | 0.7221 | 0.7220 | 0.7218 | 0.7197 | 0.7049 | 0.6655 |
+#: | btc BINANCE-DERIV spread | 0.7141 | 0.7141 | 0.7136 | 0.7085 | 0.6827 | 0.6434 |
+#: | OU theta=0.05 control | 0.5498 | 0.5498 | 0.5497 | 0.5497 | 0.5493 | 0.5458 |
+#:
+#: At 8 the effective sample size is 47.99 of 50 and every column is inside
+#: 0.002 of the flat weighting, so nothing already recorded is disturbed. The
+#: sharper settings do lift the feeds sitting at 0.50 - btc 0.4995 to 0.5152 -
+#: but a 1.5-point move inside noise is not evidence and picking the argmax of a
+#: six-by-six table is what `calibrating.md` exists to warn about.
+#:
+#: The value of the fix is therefore not the number: it is that the weighting
+#: **works** now and can be argued about from a measurement, where before it was
+#: an exponent that could not do anything whatever anyone set.
+TEMPERATURE = 8.0
+
+#: How far below the largest bar a weight may fall, in the exponent. A single
+#: print a hundred times the typical move would otherwise drive every other
+#: weight to underflow and leave a mean that is one bar, which is not attention
+#: - it is a lookup. Applied to the gap rather than to the scaled return, so
+#: that lowering the temperature always sharpens.
+CAP = 6.0
+
 #: Bars in the z window, and how much history the dynamic thresholds see.
 PERIOD = 50
 LOOKBACK = 200
@@ -107,6 +142,13 @@ class Zma(Restorable):
 
     period: int = PERIOD
     lookback: int = LOOKBACK
+    #: Carried as a field, not only read from the module, for two reasons. It
+    #: makes the sharpness settable per series, and - because `store._schema`
+    #: hashes the shape of every persisted dataclass - adding it invalidates
+    #: saved state, which is **correct** here: the z-scores this now produces
+    #: are not the ones the stored `calls` and `right` were scored against, so
+    #: carrying that record forward would be comparing two indicators.
+    temperature: float = TEMPERATURE
 
     _prices: deque[float] = field(default_factory=lambda: deque(maxlen=PERIOD))
     _zs: deque[float] = field(default_factory=lambda: deque(maxlen=LOOKBACK))
@@ -260,13 +302,7 @@ class Zma(Restorable):
             return
 
         arr = list(self._prices)
-        # Attention weights: a softmax over absolute returns, so the bars that
-        # moved carry the mean rather than the quiet ones smoothing it away.
-        rets = [(arr[i + 1] - arr[i]) / (arr[i] + 1e-12) for i in range(len(arr) - 1)]
-        biggest = max((abs(r) for r in rets), default=0.0)
-        exp_w = [math.exp(abs(r) - biggest) for r in rets]
-        total = sum(exp_w) + 1e-12
-        weights = [w / total for w in exp_w]
+        weights = self._attention(arr)
         prices = arr[1:]
         mean = sum(w * p for w, p in zip(weights, prices, strict=True))
         var = sum(w * (p - mean) ** 2 for w, p in zip(weights, prices, strict=True))
@@ -297,6 +333,54 @@ class Zma(Restorable):
             self._open_price = float(price)
             if call:
                 effects.fired("structures.zma")
+
+    def _attention(self, arr: list[float]) -> list[float]:
+        """A softmax over absolute returns - with the temperature it needs.
+
+        **This was inert for the whole life of the indicator.** The weights were
+        `exp(|r| - max|r|)` over raw returns, and a softmax only has an opinion
+        when its inputs differ by O(1). Absolute one-minute returns differ by
+        about 1e-4, so every weight came out at 1.0000 and the
+        "attention-weighted" mean was the plain one. `research/streaming.md`
+        measured Kish's effective sample size at **49.00 of 50** on real BTC
+        bars, on a deliberately spiky series and on an Ornstein-Uhlenbeck
+        process - a uniform weighting over this window is exactly 50.
+
+        The fix is a **temperature**: divide by the window's own mean absolute
+        return before exponentiating. That puts the exponent at O(1), where a
+        softmax discriminates, and makes the weighting scale-free at the same
+        time - gold at 4,400 and a volatility index at 1.0 weight their moves
+        alike, which the raw form never did either.
+
+        Subtracting the maximum is kept and is now doing its actual job. It
+        cancels in the normalisation and exists only to stop `exp` overflowing;
+        applied to *unscaled* inputs, as before, it was the entire computation.
+
+        `CAP` bounds how far one bar can get above the rest. Without it a single
+        print a hundred times the typical move drives every other weight to
+        underflow and the mean is that one bar, which is not attention - it is
+        a lookup.
+        """
+        rets = [abs((arr[i + 1] - arr[i]) / (arr[i] + 1e-12)) for i in range(len(arr) - 1)]
+        typical = sum(rets) / len(rets) if rets else 0.0
+        scale = self.temperature * typical
+        if scale <= 0:
+            # A window that never moved. Every bar is equally uninformative and
+            # saying so explicitly beats dividing by an epsilon.
+            return [1.0 / len(rets)] * len(rets) if rets else []
+        scaled = [r / scale for r in rets]
+        biggest = max(scaled)
+        # **The cap goes here, on the gap below the largest bar - not on the
+        # scaled return itself.** Capping before this flattens every bar that
+        # clears the cap into one value, so lowering the temperature makes the
+        # weighting *less* discriminating past a point: effective sample size
+        # went 28.99, 6.90, 7.67, 17.14 as the temperature fell 2.0, 1.0, 0.5,
+        # 0.25, which is not a knob anybody can reason about. Bounding the gap
+        # instead floors the smallest weight at `exp(-CAP)` of the largest and
+        # leaves the ordering alone, so the temperature is monotone.
+        exp_w = [math.exp(max(v - biggest, -CAP)) for v in scaled]
+        total = sum(exp_w) + 1e-12
+        return [w / total for w in exp_w]
 
     def _settle(self, price: float) -> None:
         """Score the call the previous bar made, before this bar changes anything.

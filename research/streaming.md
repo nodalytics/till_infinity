@@ -43,7 +43,49 @@ same everything else:
 | attention on | 0.654 | -0.018 | 0.592 |
 
 So the **A** in ZMA is not carrying the indicator, it never was, and it would
-not if it worked. That is worth knowing before anybody tunes it.
+not if it worked.
+
+### Fixed anyway, and then measured properly
+
+The mechanism is now real: `zma.TEMPERATURE` divides the exponent by the
+window's own mean absolute return, and `zma.CAP` bounds how far below the
+largest bar a weight may fall. Effective sample size on real BTC bars, by
+temperature:
+
+| temperature | 8 | 4 | 2 | 1 | 0.5 | 0.25 |
+| --- | --- | --- | --- | --- | --- | --- |
+| effective n of 50 | 47.99 | 44.62 | 28.99 | 6.90 | 2.25 | 1.37 |
+
+**And sharper is worse, monotonically, wherever the detector has signal.** AUC
+of `-z` against the next bar:
+
+| arm | flat | 8 | 4 | 2 | 1 | 0.5 |
+| --- | --- | --- | --- | --- | --- | --- |
+| btc BINANCE-COINBASE spread | **0.7221** | 0.7220 | 0.7218 | 0.7197 | 0.7049 | 0.6655 |
+| btc BINANCE-DERIV spread | **0.7141** | 0.7141 | 0.7136 | 0.7085 | 0.6827 | 0.6434 |
+| btc BITSTAMP-KRAKEN spread | 0.6881 | 0.6897 | **0.6906** | 0.6859 | 0.6630 | 0.6237 |
+| OU theta=0.05 control | **0.5498** | 0.5498 | 0.5497 | 0.5497 | 0.5493 | 0.5458 |
+| btc @ BINANCE | 0.4995 | 0.5016 | 0.5033 | 0.5111 | 0.5152 | 0.5135 |
+| gold @ OANDA | 0.5121 | 0.5123 | 0.5125 | 0.5125 | 0.5145 | 0.5129 |
+
+Hit rate falls the same way - 0.8444 to 0.7428 on the first row. The two feeds
+that *improve* with sharper attention are the two sitting at 0.50, where a
+1.5-point move is noise, and taking the argmax of a six-by-six table is what
+[`calibrating.md`](calibrating.md) exists to warn about.
+
+So the shipped temperature is **8.0**: effective n 47.99, every column within
+0.002 of the flat weighting, nothing already recorded disturbed. The value of
+the fix is not the number. It is that the weighting **works** now and can be
+argued about from a measurement, where before it was an exponent that could not
+do anything whatever anyone set it to.
+
+The cap moved as part of this. Applied to the scaled return, as it first was, it
+flattens every bar that clears it into one value, so lowering the temperature
+made the weighting *less* discriminating past a point - effective n went 28.99,
+6.90, 7.67, 17.14 as the temperature fell 2.0, 1.0, 0.5, 0.25, which is not a
+knob anybody can reason about. Applied to the gap below the largest bar it
+floors the smallest weight at `exp(-CAP)` of the largest, leaves the ordering
+alone, and the temperature is monotone.
 
 ## Nested timeframes: three ways, and none of them adds anything
 
