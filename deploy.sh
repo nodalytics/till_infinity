@@ -108,8 +108,21 @@ if docker inspect "$NAME" >/dev/null 2>&1; then
   fi
 fi
 
+# **Only removes the new container when there is genuinely something to put
+# back.** The first version removed it first and then discovered there was no
+# `-prev` to restore, which left the desk with no container at all - exactly
+# the outcome the rollback exists to prevent, reached by the rollback itself.
+# There is no previous container whenever another deploy has just replaced it,
+# which on this box is a normal race rather than an unusual one.
+#
+# A container that started and looks unhealthy is worth keeping if the
+# alternative is nothing: it may recover, its logs can be read, and it can be
+# replaced deliberately. Nothing recovers from nothing.
 restore_previous() {
-  [[ -z "$ROLLBACK_FROM" ]] && return 1
+  if [[ -z "$ROLLBACK_FROM" ]] || ! docker inspect "$PREV" >/dev/null 2>&1; then
+    echo "nothing to roll back to - leaving the new container in place" >&2
+    return 1
+  fi
   echo "restoring ${ROLLBACK_FROM##*:}" >&2
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   docker rename "$PREV" "$NAME" >/dev/null 2>&1 && docker start "$NAME" >/dev/null 2>&1
@@ -158,15 +171,37 @@ docker run -d \
 # `.State.Running` reads true for the instants it is up - so a crash-looper
 # passes a naive check and the rollback gets deleted underneath it. A restart
 # count above zero this soon is a container that has already died once.
-sleep 20
-UP="$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null || echo false)"
-RESTARTS="$(docker inspect -f '{{.RestartCount}}' "$NAME" 2>/dev/null || echo 1)"
-if [[ "$UP" != "true" || "$RESTARTS" != "0" ]]; then
-  echo "new container is unhealthy (running=$UP restarts=$RESTARTS)" >&2
-  restore_previous && exit 1
-  echo "ROLLBACK FAILED - there is no container. Look now." >&2
+# **Given time to settle, and asked twice.** Twenty seconds was not enough: a
+# healthy container failed this check on 2026-09-15 and was deleted for it. The
+# desk loads a 145MB state file at start, so a single sample taken while that
+# is happening says nothing. `tr -d` because a stray newline in the captured
+# value made the failure message unreadable and the comparison meaningless.
+alive() {
+  local up restarts
+  up="$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null | tr -d '[:space:]')"
+  restarts="$(docker inspect -f '{{.RestartCount}}' "$NAME" 2>/dev/null | tr -d '[:space:]')"
+  echo "${up:-false}/${restarts:-0}"
+}
+
+sleep 45
+STATE="$(alive)"
+if [[ "${STATE%%/*}" != "true" ]]; then
+  sleep 30
+  STATE="$(alive)"
+fi
+# Running is what matters. A restart count above zero on a container that is
+# *currently up* means it stumbled and recovered, which is not a reason to
+# throw away a deploy - a crash-looper is caught because it is not running when
+# sampled twice, thirty seconds apart.
+if [[ "${STATE%%/*}" != "true" ]]; then
+  echo "new container is not running (state $STATE)" >&2
+  if restore_previous; then
+    exit 1
+  fi
+  echo "left the new container in place - no previous version to restore" >&2
   exit 2
 fi
+echo "up on ${TAG:0:7} (state $STATE)"
 docker rm -f "$PREV" >/dev/null 2>&1 || true
 
 # The old image is only unreferenced once the new container is up, so a second
