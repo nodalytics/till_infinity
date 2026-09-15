@@ -38,7 +38,15 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from ..shared import effects
 from .models import Side
+
+#: **A close that actually carried a comparison.** Always on, because this is a
+#: shadow and costs nothing - so if it never fires, either the depth head is
+#: never warm on a traded feed or `turn_price` is not reaching `Intent.features`,
+#: and those are both silent failures that leave the report permanently empty
+#: while every part of it passes its own tests.
+effects.declare("trading.turn_exit", enabled=True)
 
 #: How far past the entry a suggestion has to sit before it is worth scoring.
 #: A turn predicted behind the entry is not an exit, it is the model saying the
@@ -176,6 +184,7 @@ def score(ride: TurnExit, *, best_r: float, took_r: float) -> TurnOutcome:
             reason=why,
         )
     reached = best_r >= ride.ahead
+    effects.fired("trading.turn_exit")
     return TurnOutcome(
         ticket=ride.ticket,
         feed=ride.feed,

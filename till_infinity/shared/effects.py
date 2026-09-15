@@ -27,6 +27,19 @@ The last one is the clearest statement of the problem: it was deployed, checked,
 and inert for an afternoon, and what eventually caught it was somebody reading a
 number the desk had emitted.
 
+**It recurred three times in one day after this module was written**, which is
+the more useful fact. `trading/affordable.py` shipped with no export and no
+caller; `STRUCTURES_CYCLES_ACT` shipped read by nothing but its own `to_dict`;
+`trading/turning.py` shipped tested and never called from the close path. All
+three passed their own suites throughout, and none of them declared an effect -
+so this module, which exists precisely to catch them, could not. Writing the
+detector is not the same as using it, which is the same mistake one level up.
+
+They declare now: `structures.cycles_cap`, `trading.turn_exit` and
+`trading.unaffordable_refusal`. And `tests/test_effects.py` asserts that each
+**firing path actually reaches its declaration**, because a declaration nothing
+fires is this defect wearing a badge that says it is not.
+
 ## What this asks, and how it differs from `liveness.py`
 
 `liveness.py` asks whether a **published field varies** - whether a column that

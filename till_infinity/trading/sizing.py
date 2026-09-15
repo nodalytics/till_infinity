@@ -30,7 +30,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..shared import effects
 from .models import Side, SymbolSpec
+
+#: **A trade refused because the minimum lot breaches the budget.** The runtime
+#: counterpart of `affordable.py`: that module is a catalogue of instruments
+#: this account cannot trade, and this is the refusal actually happening. If it
+#: never fires, the catalogue is describing a problem the desk does not have;
+#: if it fires constantly, instruments need dropping rather than re-refusing one
+#: signal at a time, for ever, which is the situation the catalogue was written
+#: to make visible.
+effects.declare("trading.unaffordable_refusal", enabled=True)
 
 
 def price_distance(price: float, vol_bps: float, multiple: float) -> float:
@@ -151,6 +161,7 @@ def lots(
 
     volume = spec.round_volume(budget / loss_per_lot)
     if volume < spec.volume_min:
+        effects.fired("trading.unaffordable_refusal")
         at_min = spec.volume_min * loss_per_lot
         return Sizing(
             loss_per_lot=loss_per_lot,

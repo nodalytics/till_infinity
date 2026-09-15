@@ -161,3 +161,106 @@ def test_an_unnamed_feed_does_not_fire_the_deferral(monkeypatch):
     effects.reset()
     assert har_mod.Har(feed="gold", interval_seconds=3600.0).published() is None
     assert "structures.stated_forecast" not in effects.report()
+
+
+class TestTheThreeThatWereReachedByNothing:
+    """Each of these shipped correct, tested, and connected to nothing.
+
+    `affordable.py` had no export and no CLI; `STRUCTURES_CYCLES_ACT` was read
+    only by its own `to_dict`; `turning.py` was never called from the close
+    path. All three passed their own suites the whole time, which is the exact
+    shape this module exists for - a test proves the code computes the right
+    answer and nothing proves it ran.
+
+    So each now declares an effect, and these tests prove the **firing path**
+    reaches it. A declaration nothing fires is the same defect one layer up.
+    """
+
+    def test_the_cycles_cap_fires_when_it_caps(self, clean, monkeypatch):
+        import random
+
+        from till_infinity.structures import cycles as cy
+
+        monkeypatch.setattr(cy, "CYCLES_ACT", True)
+        book = cy.Book()
+        series = book.of("v75")
+        random.seed(5)
+        x = 100.0
+        for i in range(4000):
+            x += 0.15 * (100.0 - x) + random.gauss(0, 0.5)
+            series.observe("1m", x)
+            if i % 15 == 0:
+                series.observe("15m", x)
+            if i % 60 == 0:
+                series.observe("1h", x)
+        series.turns.settled = cy.WARM + 1
+        series.turns.depth_base_error, series.turns.depth_error = 100.0, 20.0
+        series.turns.depth.predict_one = lambda _x: 1.0
+
+        effects.declare("structures.cycles_cap", enabled=True)
+        assert "structures.cycles_cap" in effects.inert(grace=0.0)
+        push, why = series.capped_push(9.0)
+        assert why
+        assert push < 9.0
+        assert "structures.cycles_cap" not in effects.inert(grace=0.0)
+
+    def test_the_turn_exit_fires_when_a_close_is_scored(self, clean):
+        from till_infinity.trading import turning as tn
+        from till_infinity.trading.models import Side
+
+        effects.declare("trading.turn_exit", enabled=True)
+        assert "trading.turn_exit" in effects.inert(grace=0.0)
+        ride = tn.TurnExit(feed="v75", side=Side.BUY, entry=100.0, risk=2.0, suggested=103.0)
+        tn.score(ride, best_r=1.75, took_r=0.4)
+        assert "trading.turn_exit" not in effects.inert(grace=0.0)
+
+    def test_an_unscorable_row_does_not_claim_the_effect_fired(self, clean):
+        """A suggestion behind the entry is the model declining, not a
+        comparison - counting it would report the feature as working on rows it
+        never scored."""
+        from till_infinity.trading import turning as tn
+        from till_infinity.trading.models import Side
+
+        effects.declare("trading.turn_exit", enabled=True)
+        ride = tn.TurnExit(feed="v75", side=Side.BUY, entry=100.0, risk=2.0, suggested=99.0)
+        tn.score(ride, best_r=2.0, took_r=0.4)
+        assert "trading.turn_exit" in effects.inert(grace=0.0)
+
+    def test_the_unaffordable_refusal_fires_when_sizing_refuses(self, clean):
+        from till_infinity.trading.models import SymbolSpec
+        from till_infinity.trading.sizing import lots
+
+        spec = SymbolSpec(
+            symbol="Boom 1000 Index",
+            digits=2,
+            point=0.01,
+            tick_size=0.01,
+            tick_value=1.0,
+            volume_min=5.0,
+            volume_max=100.0,
+            volume_step=0.1,
+        )
+        effects.declare("trading.unaffordable_refusal", enabled=True)
+        assert "trading.unaffordable_refusal" in effects.inert(grace=0.0)
+        got = lots(spec, equity=200.0, risk_fraction=0.0025, stop_distance=50.0)
+        assert not got.ok
+        assert "trading.unaffordable_refusal" not in effects.inert(grace=0.0)
+
+    def test_an_affordable_trade_does_not_fire_the_refusal(self, clean):
+        from till_infinity.trading.models import SymbolSpec
+        from till_infinity.trading.sizing import lots
+
+        spec = SymbolSpec(
+            symbol="EURUSD",
+            digits=5,
+            point=0.00001,
+            tick_size=0.00001,
+            tick_value=0.1,
+            volume_min=0.01,
+            volume_max=100.0,
+            volume_step=0.01,
+        )
+        effects.declare("trading.unaffordable_refusal", enabled=True)
+        got = lots(spec, equity=10_000.0, risk_fraction=0.0025, stop_distance=0.0017)
+        assert got.ok
+        assert "trading.unaffordable_refusal" in effects.inert(grace=0.0)

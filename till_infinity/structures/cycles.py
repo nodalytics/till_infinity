@@ -156,6 +156,14 @@ WEIGHTS = Path(os.environ.get("STRUCTURES_CYCLES_WEIGHTS", ".data/structures/cyc
 
 effects.declare("structures.cycles", enabled=ENABLED)
 
+#: **The cap acting**, declared apart from the book recording. The two fail
+#: separately and for different reasons: the book can be full of readings while
+#: the cap never binds because no feed has cleared `MIN_SKILL`, and that is the
+#: state this switch will sit in for weeks after being turned on. Declared only
+#: when it is actually switched on, so a desk running with it off says nothing
+#: rather than reporting a feature it was never asked to run.
+effects.declare("structures.cycles_cap", enabled=ENABLED and CYCLES_ACT)
+
 
 def _head():
     return preprocessing.StandardScaler() | linear_model.LinearRegression(
@@ -749,6 +757,7 @@ class Series(Restorable):
         room = depth * TURN_MARGIN
         if push_vol <= room:
             return push_vol, ""
+        effects.fired("structures.cycles_cap")
         return room, f"turn expected {depth:.2f}v out, skill {turns.depth_skill:+.2f}"
 
     def reading(self) -> dict[str, float]:

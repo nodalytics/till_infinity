@@ -46,6 +46,17 @@ watching:
 the desk is for, and an account that grows makes an unaffordable instrument
 affordable again without anything changing about the instrument. This reports;
 somebody decides.
+
+## Its runtime counterpart
+
+This is a catalogue, produced on demand by `till-infinity trading affordable`.
+The refusal it predicts happens in `sizing.lots`, which declares
+`trading.unaffordable_refusal` - so `shared/effects.py` answers the other half
+of the question without anybody running a report. **If that effect never fires,
+this catalogue is describing a problem the desk does not have.** If it fires
+constantly, instruments need dropping rather than being re-refused one signal at
+a time, for ever, which is the situation this module was written to make
+visible.
 """
 
 from __future__ import annotations
