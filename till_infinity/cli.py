@@ -2700,6 +2700,162 @@ def trading_symbols(symbols, backend):
         console.print(f"account suffix: [cyan]{escape(resolution.suffix)}[/]")
 
 
+@trading.command("affordable")
+@_symbol_option
+@_plan_option
+@click.option("--backend", type=click.Choice(td.BACKENDS), help="Force a backend.")
+@click.option("--equity", type=float, help="Override the account equity, for a what-if.")
+@click.option(
+    "--dir", "state_dir", type=click.Path(path_type=Path), help="Where structures persists."
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the verdicts as JSON.")
+def trading_affordable(symbols, plan, backend, equity, state_dir, as_json):
+    """Which instruments this account cannot afford, before one is signalled.
+
+    `sizing.lots` already refuses a trade whose minimum lot breaches the risk
+    budget, and it refuses **rather than rounding up** - which is the right
+    call, because placing `volume_min` anyway is how a 0.25% budget quietly
+    becomes 3%. What was missing is the **catalogue**: that refusal arrives one
+    signal at a time, so an instrument nobody can afford stays watched,
+    modelled, signalled and refused, for ever, with nothing anywhere saying
+    "this feed is not tradeable at this equity".
+
+    Three things multiply and only the first is obvious: the broker's minimum
+    lot, the narrowest stop it will accept (`stops_level`, which on a quiet
+    instrument can be wide), and what a stop actually costs - `sizing.lots`
+    inflates by the measured 0.087 slippage, two thirds of it the exit, because
+    a broker stop is a market order once triggered.
+
+    **It reports; somebody decides.** Dropping a feed is a decision about what
+    the desk is for, and an account that grows makes an unaffordable instrument
+    affordable again without anything changing about the instrument.
+
+        till-infinity trading affordable
+        till-infinity trading affordable --equity 500
+    """
+    setup_logging()
+    settings = _trading_settings(symbols, plan, (), backend, live=False)
+
+    async def go():
+        broker = td.build(settings)
+        async with broker:
+            resolution = await td.resolve(broker, settings.symbols, settings)
+            account = await broker.account()
+            prices = {}
+            for feed, spec in resolution.found.items():
+                tick = await broker.quote(spec.symbol)
+                if tick is not None and tick.mid > 0:
+                    prices[feed] = tick.mid
+            return resolution, account, prices
+
+    resolution, account, prices = run(go())
+    budget = equity if equity is not None else (account.equity or settings.account_equity)
+    if budget <= 0:
+        console.print(
+            "[yellow]no equity to size against[/] - the broker reported none and "
+            "TRADING_ACCOUNT_EQUITY is unset. Pass --equity to ask the question anyway."
+        )
+        raise SystemExit(1)
+
+    vols = _volatility_units(state_dir, resolution.found)
+    plan_now = tp.get(settings.risk_plan)
+    verdicts = td.survey(
+        resolution.found,
+        equity=budget,
+        risk_fraction=plan_now.risk_fraction,
+        prices=prices,
+        vols=vols,
+        slippage=settings.stop_slippage,
+    )
+    if as_json:
+        console.print_json(json.dumps([v.to_dict() for v in verdicts]))
+        return
+    if not verdicts:
+        # Three different silences, and they mean different things.
+        missing = [f for f in resolution.found if f not in prices]
+        cold = [f for f in resolution.found if f not in vols]
+        console.print(
+            f"[yellow]nothing could be judged[/] - {len(resolution.found)} instrument(s) "
+            f"resolved, {len(missing)} with no quote, {len(cold)} with no volatility "
+            "reading. A verdict needs both."
+        )
+        if cold:
+            console.print(
+                "[dim]volatility comes from the structures state; run "
+                "`structures watch` first, or point --dir at it.[/]"
+            )
+        return
+
+    table = Table(
+        title=f"affordability at {budget:,.2f} {account.currency or 'USD'}, "
+        f"risking {plan_now.risk_fraction:.2%} a trade",
+        caption="worst first: the share of the account one minimum lot puts at risk",
+    )
+    for column in ("instrument", "stop", "min-lot risk", "share", "volume", "verdict", "why"):
+        table.add_column(
+            column, justify="left" if column in ("instrument", "verdict", "why") else "right"
+        )
+    colours = {"affordable": "green", "minimum only": "yellow", "unaffordable": "red"}
+    for v in verdicts:
+        colour = colours.get(v.verdict, "dim")
+        table.add_row(
+            v.feed,
+            f"{v.stop_units:g}v",
+            f"{v.min_lot_risk:,.2f}",
+            f"[{colour}]{v.share_of_equity:.2%}[/]",
+            f"{v.volume:g}",
+            f"[{colour}]{v.verdict}[/]",
+            escape(v.reason[:60]),
+        )
+    console.print(table)
+
+    gone = td.unaffordable(verdicts)
+    if gone:
+        console.print(
+            f"\n[red]unaffordable at every stop width tested[/] "
+            f"({', '.join(f'{s:g}v' for s in td.STOPS)}): {escape(', '.join(gone))}"
+        )
+        console.print(
+            "[dim]These produce signals the desk will refuse one at a time, for ever. "
+            "Dropping them is a decision, not an automatic consequence - this only "
+            "reports it.[/]"
+        )
+    else:
+        console.print("\n[green]every instrument is affordable at some tested stop width.[/]")
+    console.print(
+        f"[dim]catastrophic threshold: one minimum lot above {td.CATASTROPHIC:.0%} of "
+        "equity is called unaffordable even where the budget permits it.[/]"
+    )
+
+
+def _volatility_units(state_dir, specs) -> dict[str, float]:
+    """`vol_bps` per feed, from whatever the structures state has learned.
+
+    Read from the saved engine rather than recomputed, so the number a verdict
+    is built on is the number the desk would actually size with. A feed the
+    engine has never seen has no entry, and `survey` skips it rather than
+    inventing one - an assumed volatility is how an instrument gets called
+    affordable that is not.
+    """
+    engine = _load_engine(state_dir) if state_dir is not None else None
+    if engine is None:
+        settings = sx.Settings.from_env()
+        state = sx.load(settings.state_dir)
+        engine = (state or {}).get("engine")
+    if engine is None:
+        return {}
+    out: dict[str, float] = {}
+    for feed in specs:
+        try:
+            got = engine.vol.of(feed)
+        except Exception:
+            continue
+        bps = float(getattr(got, "bps", 0.0) or 0.0)
+        if bps > 0:
+            out[feed] = bps
+    return out
+
+
 @trading.command("run")
 @_symbol_option
 @_plan_option

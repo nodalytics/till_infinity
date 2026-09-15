@@ -44,6 +44,14 @@ The pieces, in dependency order:
 from __future__ import annotations
 
 from . import exposure, report, strategies, venues
+from .affordable import (
+    CATASTROPHIC,
+    STOPS,
+    Affordability,
+    judge,
+    survey,
+    unaffordable,
+)
 from .book import Book, Seen
 from .config import (
     BACKENDS,
@@ -119,6 +127,7 @@ from .venues.symbols import Resolution, resolve
 
 __all__ = [
     "BACKENDS",
+    "CATASTROPHIC",
     "DEFAULT_MAGIC",
     "DEFAULT_SYMBOLS",
     "HTTP",
@@ -131,9 +140,11 @@ __all__ = [
     "PLANS",
     "PRESETS",
     "RPYC",
+    "STOPS",
     "STRATEGIES",
     "SUFFIXES",
     "Account",
+    "Affordability",
     "ApproachScalp",
     "Book",
     "Broker",
@@ -191,6 +202,7 @@ __all__ = [
     "choose",
     "exposure",
     "feed_for",
+    "judge",
     "listen",
     "lots",
     "magic_for",
@@ -202,5 +214,7 @@ __all__ = [
     "resolve_symbols",
     "strategies",
     "strategy_for",
+    "survey",
+    "unaffordable",
     "venues",
 ]
