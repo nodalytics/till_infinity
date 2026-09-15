@@ -285,6 +285,14 @@ def _cycle_lines(got: dict) -> list[str]:
     # threshold is already a percentile of this feed's own history, so the
     # ratio says "unusual for this instrument" without naming a distribution.
     stretch = abs(z) / threshold
+    # **Below its own threshold is not stretched, and saying so was wrong.**
+    # The first version printed "cycle stretched low, 0.7x its usual" - which
+    # is a reading *inside* the band described as being outside it, on the
+    # majority of alerts, since by construction about 85% of bars sit there.
+    # A block that appears on every card and says nothing trains the reader to
+    # skip it, and then it is not there on the one card where it matters.
+    if stretch < 1.0:
+        return []
     way = "low" if z < 0 else "high"
     out = ["", f"🔄 cycle stretched {way}, {stretch:.1f}x its usual"]
 

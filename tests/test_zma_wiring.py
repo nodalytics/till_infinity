@@ -407,6 +407,19 @@ class TestTheAlertCard:
         assert self.lines({}) == []
         assert self.lines({"zma_z": -2.0}) == [], "no threshold is no reading"
 
+    def test_a_reading_inside_the_band_is_not_called_stretched(self):
+        """A live card read "cycle stretched low, 0.7x its usual" - a reading
+        *inside* the threshold described as being outside it. By construction
+        about 85% of bars sit there, so that block appeared on nearly every
+        alert saying nothing, which is how a reader learns to skip the one card
+        where it matters."""
+        assert self.lines({"zma_z": -1.12, "zma_strong": 1.6}) == []
+        assert self.lines({"zma_z": 0.2, "zma_strong": 1.6}) == []
+
+    def test_a_reading_at_or_past_the_threshold_is_shown(self):
+        assert self.lines({"zma_z": -1.6, "zma_strong": 1.6})
+        assert self.lines({"zma_z": -2.4, "zma_strong": 1.6})
+
     def test_no_jargon_reaches_the_card(self):
         """The whole point of the rewrite: a reader should not need the source."""
         got = " ".join(
