@@ -921,8 +921,16 @@ class CycleScalp(LevelStrategy):
     target_multiple: ClassVar[float] = 1.25
 
     def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
-        """Keep the unified scalp thesis lean: same level call, but refuse clogging liquidity."""
-        return sweep_gate(self, payload, features)
+        """Keep the unified scalp thesis lean: refuse clogging liquidity, then a z-score against.
+
+        The z gate is inert unless `TRADING_ZMA_GATE` is set, and even then it
+        can only ever remove a trade - see `zma_gate` for why a detector
+        measuring 0.50 on this book is not allowed to add one.
+        """
+        clogged = sweep_gate(self, payload, features)
+        if clogged is not None:
+            return clogged
+        return zma_gate(self, payload, features)
 
     def distances(
         self,
@@ -1348,6 +1356,56 @@ class Inverse(LevelStrategy):
     def orient(self, side: Side) -> Side:
         """The other one. This is the whole strategy."""
         return side.opposite
+
+
+def zma_gate(strategy: Any, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
+    """Refuse a call the z-score is actively leaning against. **Off by default.**
+
+    `structures/zma.py` publishes `zma_agrees` on every level call: +1 when the
+    series is oversold *and* its slope has already turned up, -1 when it is
+    overbought and turning down, 0 - which is most bars - when displacement and
+    momentum do not point the same way. The thresholds are percentiles of the
+    series' own history, so something is always extreme and only the agreement
+    is a claim.
+
+    **Only disagreement is acted on, and only when the flag is set.** The
+    measured record (`research/zma.md`) is AUC 0.493 to 0.504 on this desk's
+    synthetics and 0.485 to 0.515 on real outrights - no information - and
+    *worse* than a coin on Boom and Crash at a 37.6% to 46.1% hit rate. A
+    signal like that must not be allowed to *add* trades, which is why
+    agreement buys nothing here; it is carried in `features` for the journal
+    and that is all. The one thing a coin-flip detector can still do cheaply is
+    veto, and whether even that pays is what `TRADING_ZMA_GATE` exists to
+    settle.
+
+    Read off the call's stated direction rather than the traded side, the same
+    way `quality` is: the gates deliberately run before `orient` and
+    `_better_side`, so that a strategy which trades against the call still
+    selects from the calls the model liked best.
+    """
+    if not strategy.settings.zma_gate:
+        return None
+    agrees = _number(features, "zma_agrees")
+    if not agrees:
+        return None
+    side = Side.from_direction(str(payload.get("direction") or ""))
+    if side is None:
+        return None
+    wants_up = side is Side.BUY
+    if (agrees > 0) == wants_up:
+        return None
+    feed = str(payload.get("feed") or "")
+    # Named here rather than published as a string: `features` is numeric and
+    # `Signal.to_dict` rounds it, so the word is rendered from the two numbers
+    # that define it.
+    z = _number(features, "zma_z")
+    state = "overbought" if z > 0 else "oversold"
+    return Refusal(
+        "zma_against",
+        f"the z-score is {state} at {z:+.2f} against a "
+        f"{_number(features, 'zma_strong'):.2f} threshold, and turning the other way",
+        feed,
+    )
 
 
 def sweep_gate(

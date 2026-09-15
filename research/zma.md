@@ -125,8 +125,6 @@ same AUC-versus-money gap `research/asking.md` lists as outstanding.
 
 ## Where it would pay
 
-## Where it would pay
-
 Where `theta` is large. The OU arms say the detector is fine and the dial it
 responds to is reversion speed, so the instruments to point it at are the ones
 that genuinely revert: **a pairs residual, a calendar spread, an index against

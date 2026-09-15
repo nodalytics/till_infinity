@@ -1522,6 +1522,7 @@ class Watcher:
             )
             signal = call.to_signal(
                 vol,
+                self.engine.zma.of(call.feed, call.interval),
                 self.clock,
                 self.engine.levels(call.feed, call.interval),
                 busy,

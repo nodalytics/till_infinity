@@ -27,6 +27,7 @@ from . import structures as sx
 from . import trading as td
 from .bus import Bus
 from .logging import console, get_logger, setup_logging
+from .structures import zma as zm
 from .structures.drawing import confluence as cf
 from .trading import plans as tp
 from .trading import report as tr
@@ -1711,6 +1712,97 @@ def _judge_at(engine, feed: str | None, price: float) -> None:
             )
 
 
+@structures.command("zma")
+@click.option("--dir", "state_dir", type=click.Path(path_type=Path), help="Where models persist.")
+@click.option(
+    "--min-calls",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Hide series with fewer settled calls than this. 0 shows every series, warm or not.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the standings as JSON.")
+def structures_zma(state_dir, min_calls, as_json):
+    """Whether the z-score's directional call has been right, per instrument.
+
+    **This is the number that decides whether it is ever allowed to vote.** The
+    indicator records and scores on every closed bar and influences nothing:
+    `STRUCTURES_ZMA_ACTS` gives it a vote inside `structures`, and
+    `TRADING_ZMA_GATE` lets `cycle-scalp` refuse a call it leans against. Both
+    are off, and the standings here are what would justify turning either on.
+
+    A call is `agrees` - oversold with the slope already rising, or overbought
+    with it already falling - and it is settled against the very next bar. So
+    0.50 is a coin. `research/zma.md` measured 0.376 to 0.461 on Boom and
+    Crash, which is reliably *wrong* and therefore worth a veto in the other
+    direction; the synthetics and real outrights came in at 0.485 to 0.515,
+    which is nothing at all. Sorted worst first for that reason.
+
+        till-infinity structures zma --min-calls 200
+    """
+    setup_logging()
+    engine = _load_engine(state_dir)
+    if engine is None:
+        return
+    book = getattr(engine, "zma", None)
+    if book is None:
+        console.print(
+            "[yellow]this engine state predates the z-score book[/] - it is "
+            "written on the next save, after STRUCTURES_ZMA has seen some bars"
+        )
+        return
+
+    rows = [
+        (f"{feed} {interval}".strip(), z)
+        for (feed, interval), z in sorted(book._by_key.items())
+        if z.calls >= min_calls
+    ]
+    rows.sort(key=lambda r: (r[1].accuracy if r[1].calls else 1.0, -r[1].calls))
+    if as_json:
+        console.print_json(json.dumps({name: z.to_dict() for name, z in rows}))
+        return
+    if not rows:
+        console.print(
+            f"[yellow]no series with {min_calls} settled calls[/] - the "
+            "agreement condition is strict, so a series makes one every 40-50 "
+            "bars rather than every bar"
+        )
+        return
+
+    warm = sum(1 for _, z in rows if z.warm)
+    table = Table(
+        title=f"z-score agreement: {len(rows)} series, {warm} past {zm.WARM} calls",
+        caption="0.50 is a coin; below it the call is information pointing the wrong way",
+    )
+    table.add_column("series")
+    table.add_column("calls", justify="right")
+    table.add_column("right", justify="right")
+    table.add_column("accuracy", justify="right")
+    table.add_column("z", justify="right")
+    table.add_column("state")
+    for name, z in rows:
+        if not z.calls:
+            accuracy = "[dim]-[/]"
+        elif not z.warm:
+            accuracy = f"[dim]{z.accuracy:.3f}[/]"
+        else:
+            colour = "green" if z.accuracy > 0.55 else "red" if z.accuracy < 0.45 else "yellow"
+            accuracy = f"[{colour}]{z.accuracy:.3f}[/]"
+        table.add_row(
+            name,
+            f"{z.calls:,}",
+            f"{z.right:,}",
+            accuracy,
+            f"{z.z_score:+.2f}",
+            z.state,
+        )
+    console.print(table)
+    console.print(
+        f"[dim]acting: structures {'on' if zm.ZMA_ACTS else 'off'}, "
+        f"cycle-scalp gate {'on' if td.Settings.from_env().zma_gate else 'off'}[/]"
+    )
+
+
 @structures.command("fit")
 @click.option("--db", type=click.Path(path_type=Path), help="Journal SQLite file.")
 @click.option("--factors", type=int, default=4, show_default=True, help="Latent dimensions.")
@@ -2236,10 +2328,6 @@ def project_command(
     console.print(table)
 
 
-if __name__ == "__main__":  # pragma: no cover
-    main()
-
-
 @main.group()
 def trading() -> None:
     """Scalp level calls on MT5, or on paper. Paper unless TRADING_LIVE=1."""
@@ -2524,3 +2612,11 @@ def _decline_table(report) -> None:
     for gate, count in sorted(report.declines.items(), key=lambda kv: -kv[1]):
         table.add_row(gate, str(count))
     console.print(table)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    # Last in the file on purpose. Every `@main.command` below a guard that
+    # calls `main()` is registered *after* the dispatch that was supposed to
+    # find it, so running this module as a script silently loses them - the
+    # whole `trading` group, 287 lines of it, was invisible this way.
+    main()

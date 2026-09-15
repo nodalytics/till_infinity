@@ -975,6 +975,17 @@ class Settings:
     #: default keeps it well short of one.
     sweep_max_exposure: float = 0.8
 
+    # ------------------------------------------------ the z-score's directional veto
+    #: Whether `cycle-scalp` may refuse a call the attention-weighted z-score is
+    #: leaning against. Off, and it should stay off until the scored record in
+    #: `structures.zma.Book.standings` says the agreement call beats a coin on
+    #: the instruments this desk actually trades. It is the trading-side twin of
+    #: `STRUCTURES_ZMA_ACTS` and deliberately a separate switch: `structures`
+    #: recording a signal and `trading` obeying one are different decisions, and
+    #: the package boundary here is that `trading` reads signals off the bus and
+    #: never touches the level engine.
+    zma_gate: bool = False
+
     # ------------------------------------------------ pricing the distance
     #: Decisive interactions a level needs before `fade-to-value` will treat it
     #: as an estimate of fair value rather than a place price once went.
@@ -1647,6 +1658,7 @@ class Settings:
             sweep_max_rate=_float("TRADING_SWEEP_MAX_RATE", 0.35),
             sweep_min_history=_float("TRADING_SWEEP_MIN_HISTORY", 6.0),
             sweep_max_exposure=_float("TRADING_SWEEP_MAX_EXPOSURE", 0.8),
+            zma_gate=_flag("TRADING_ZMA_GATE", False),
             fade_min_touches=_float("TRADING_FADE_MIN_TOUCHES", 4.0),
             fade_max_distance_vol=_float("TRADING_FADE_MAX_DISTANCE_VOL", 8.0),
             fade_min_distance_vol=_float("TRADING_FADE_MIN_DISTANCE_VOL", 1.5),

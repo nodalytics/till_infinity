@@ -37,6 +37,7 @@ from ..logging import get_logger
 from ..shared import effects
 from . import levels as lv
 from . import reactions
+from . import zma as zm
 from .config import DEFAULT_FORMATION
 from .context import sessions
 from .drawing import (
@@ -651,6 +652,41 @@ class Series(Restorable):
         return self.since_reform >= REFORM_EVERY
 
 
+def _zma_context(zma) -> dict:
+    """The z reading for the journal and for an alert's context.
+
+    **Handed the reading rather than fetching it.** `to_signal` is a method on
+    the call, which has no engine to ask - and giving it one would turn a
+    reading that is deliberately recorded-and-scored into a dependency of the
+    thing that decides, which is the opposite of what `structures/zma.py` says
+    this signal has earned.
+
+    Absent rather than zero when it is cold, which is the rule
+    `LevelRange.features` follows: a missing key is a missing reading
+    downstream, where a zero would be read as a measurement of stillness.
+    """
+    if zma is None or not zm.ENABLED:
+        return {}
+    try:
+        if zma.seen < 3:
+            return {}
+        return {
+            "zma_z": round(zma.z_score, 4),
+            # The threshold rather than the word for it. `features` is
+            # `dict[str, float]` and `Signal.to_dict` rounds every value, so a
+            # string here raises on publication - which is what
+            # `test_no_published_feature_is_constant` caught. Carrying the
+            # threshold is strictly more information than the label anyway:
+            # `state` is a comparison of these two, and a consumer that wants
+            # "how far past" can only get it this way.
+            "zma_strong": round(zma.strong, 4),
+            "zma_agrees": float(zma.agrees),
+            "zma_rising": float(zma.rising),
+        }
+    except Exception:  # a reading nothing gates on must not raise
+        return {}
+
+
 @dataclass(slots=True)
 class Call(Restorable):
     """A directional call at a level, with everything behind it."""
@@ -695,6 +731,7 @@ class Call(Restorable):
     def to_signal(
         self,
         vol,
+        zma=None,
         clock=None,
         peers=None,
         busy: float = 1.0,
@@ -817,6 +854,11 @@ class Call(Restorable):
                 "range_bps": vol.range_bps,
                 "forecast_bps": vol.forecast_bps,
                 "forecast_ratio": vol.forecast_ratio,
+                # Recorded so the directional question can be settled from the
+                # journal rather than argued. `zma_agrees` is the strict form -
+                # displacement and momentum pointing the same way - and is the
+                # only one worth cutting by.
+                **_zma_context(zma),
                 # All four on one scale, combined equally. Recorded so the
                 # journal can say whether the combination beat the estimate
                 # already in use - see `consensus_vol.py`.
@@ -1039,6 +1081,10 @@ class Engine:
         self.intervals = intervals
         self.vol = VolBook()
         self.projection = pj.Book()
+        #: Recorded and scored, not voting - see `structures/zma.py`. It is
+        #: measured at 0.50 on this desk's instruments and worse than that on
+        #: Boom and Crash, so it keeps a record until the record says otherwise.
+        self.zma = zm.Book()
         self.tracker = reactions.Tracker(horizon=horizon)
         #: Pivots come from completed sessions, so they need no confirmation
         #: delay and exist before price has ever turned there.
@@ -1200,6 +1246,12 @@ class Engine:
         held = getattr(self, "projection", None)
         if held is not None:
             counts["projection"] = held.forget({f for f in held.feeds() if f not in gone})
+        # `getattr` for the same reason as `projection`: a restored engine
+        # pickled before this book existed has no attribute to sweep, and the
+        # schema hash only invalidates state it can see.
+        zbook = getattr(self, "zma", None)
+        if zbook is not None:
+            counts["zma"] = zbook.forget({f for f, _ in zbook._by_key if f not in gone})
         return {k: v for k, v in counts.items() if v}
 
     def series(self, feed: str, interval: str) -> Series:
@@ -1389,6 +1441,20 @@ class Engine:
             changed=fired,
             interval_seconds=lv.SECONDS.get(interval, 0.0),
         )
+
+    def _observe_zma(self, feed: str, interval: str, close: float) -> None:
+        """Feed the z-score one closed bar, and let it score its own last call.
+
+        Swallows its own failures like every other reading on this path that
+        nothing gates on: two outages this month were a fault in here taking the
+        whole structures service down.
+        """
+        if not zm.ENABLED:
+            return
+        try:
+            self.zma.observe(feed, interval, close)
+        except Exception as exc:
+            log.debug("structures: no zma reading for %s %s: %s", feed, interval, exc)
 
     def _settle_projection(self, feed: str, interval: str, opened: float, close: float) -> None:
         """Score both drift conventions against one closed bar.
@@ -2296,6 +2362,7 @@ class Engine:
             # own method so that `observe_bar` stays inside the branch ceiling
             # and so the flag it is gated by sits next to the work it gates.
             self._settle_projection(feed, interval, opened, float(close))
+            self._observe_zma(feed, interval, float(close))
         # Pivots are session structures priced at today's scale, so they use the
         # reference estimate rather than the bar interval that happened to
         # deliver them - a 4h bar completing a day does not make it a 4h level.
