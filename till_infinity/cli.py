@@ -8,6 +8,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Coroutine
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
@@ -628,6 +629,120 @@ class _Ticker:
                 mark, colour = "▼", "red"
             parts.append(f"{feed} [{colour}]{_price(best.mid)} {mark}[/]")
         return "   ".join(parts)
+
+
+@prices.command("spreads")
+@click.option("--db", type=click.Path(path_type=Path), help="Bar database. Default: PRICES_DB.")
+@click.option(
+    "--data-dir",
+    type=click.Path(path_type=Path),
+    help="Where data lives. Default: PRICES_DATA_DIR.",
+)
+@click.option(
+    "--kind",
+    multiple=True,
+    type=click.Choice(["cross", "venue"]),
+    help="Which kinds to list. Default: PRICES_SPREAD_KINDS.",
+)
+@click.option(
+    "--base", help="Interval the spread is computed at. Default: PRICES_SPREAD_BASE (1m)."
+)
+@click.option("--min-shared", type=int, help="Stored bars each leg needs. Default: 1000.")
+@click.option("--cross-source", is_flag=True, help="Allow legs from two different providers.")
+@click.option(
+    "--build",
+    "build_intervals",
+    multiple=True,
+    help="Build and store these intervals rather than only listing. Repeatable.",
+)
+@click.option("--bars", type=int, default=0, help="Cap bars per series when building. 0 is all.")
+@click.option("--verbose", "-v", is_flag=True)
+def prices_spreads(
+    db, data_dir, kind, base, min_shared, cross_source, build_intervals, bars, verbose
+):
+    """Constructed spread series: what can be built, and build it.
+
+    Two kinds. **`cross`** is two USD pairs at one broker, which is an implied
+    FX cross exactly - `ln(EURUSD) - ln(GBPUSD)` is `ln(EURGBP)` with no
+    residual and no fitted ratio - and it is **tradeable**, as two orders on one
+    account. **`venue`** is the same asset at two venues, which reverts by
+    arbitrage and is the kind `research/zma.md` measured AUC 0.67 to 0.73 on;
+    this desk cannot hold it, because that means a position at each venue.
+
+        till-infinity prices spreads
+        till-infinity prices spreads --kind venue --build 1m --build 15m
+    """
+    setup_logging(verbose=verbose)
+    settings = _settings(db, data_dir, False)
+    if settings.database is None:
+        console.print("[yellow]no bar database configured[/] - set PRICES_DB or pass --db")
+        raise SystemExit(1)
+    kinds = tuple(kind) or settings.spread_kinds
+    at = (base or settings.spread_base).strip()
+
+    with closing(sqlite3.connect(f"file:{settings.database}?mode=ro", uri=True)) as conn:
+        found = px.catalogue(
+            conn,
+            kinds=kinds,
+            interval=at,
+            min_shared=min_shared if min_shared is not None else settings.spread_min_shared,
+            cross_source=cross_source or settings.spread_cross_source,
+        )
+    if not found:
+        console.print(
+            f"[yellow]nothing to construct at {escape(at)}[/] - no two legs of the "
+            f"requested kind{'s' if len(kinds) > 1 else ''} "
+            f"({', '.join(kinds)}) share that interval in the store"
+        )
+        return
+
+    table = Table(
+        title=f"constructed spreads at {at}: {len(found)}, "
+        f"{sum(1 for f in found if f.tradeable)} tradeable",
+        caption="tradeable means one account can hold every leg - see prices/spreads.py",
+    )
+    for column in ("feed", "kind", "legs", "hold?"):
+        table.add_column(column)
+    for spread in found:
+        table.add_row(
+            spread.name,
+            spread.kind,
+            " ".join(str(leg) for leg in spread.legs),
+            "[green]yes[/]" if spread.tradeable else "[dim]no[/]",
+        )
+    console.print(table)
+
+    if not build_intervals:
+        console.print(
+            "[dim]listing only. --build <interval> writes them to the store, where "
+            "structures picks them up like any other feed.[/]"
+        )
+        return
+
+    intervals = px.resolve_intervals(build_intervals)
+    px.register(found)
+
+    async def go() -> None:
+        store = px.open_store("sqlite", database=settings.database, data_dir=settings.data_dir)
+        async with store:
+            summary = await px.derive(
+                settings=settings,
+                store=store,
+                spreads=found,
+                intervals=intervals,
+                base=at,
+                bars=bars,
+            )
+        console.print(f"[green]{summary}[/]")
+        if summary.thin:
+            # A pair that drops more buckets than it keeps is two series rarely
+            # collected together, not an instrument. Named rather than hidden.
+            console.print(
+                f"[yellow]thin[/] - more buckets dropped than kept: "
+                f"{escape(', '.join(summary.thin[:8]))}"
+            )
+
+    asyncio.run(go())
 
 
 @prices.command("collect")

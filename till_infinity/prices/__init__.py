@@ -60,13 +60,36 @@ from .quotes import (
     poll_once,
     stream,
 )
-from .service import SOURCES, JobResult, Summary, backfill, build_sources, collect, sweep
+from .service import (
+    SOURCES,
+    DeriveSummary,
+    JobResult,
+    Summary,
+    backfill,
+    build_sources,
+    collect,
+    derive,
+    spread_catalogue,
+    sweep,
+)
 from .source import Job, PermanentError, Source, SourceError, TransientError
+from .spreads import (
+    CROSSES,
+    Leg,
+    Spread,
+    catalogue,
+    constructed,
+    crosses,
+    definition,
+    register,
+    venue_pairs,
+)
 from .store import JsonlStore, MultiStore, SqliteStore, Store, iter_bars, open_store
 from .tradingview import TradingViewSource
 from .yahoo import YahooSource
 
 __all__ = [
+    "CROSSES",
     "DEFAULT_INTERVALS",
     "DEFAULT_QUOTE_SOURCES",
     "DEFAULT_RETAIN_BARS",
@@ -82,12 +105,14 @@ __all__ = [
     "Bar",
     "Board",
     "CcxtSource",
+    "DeriveSummary",
     "Feed",
     "Filters",
     "Interval",
     "Job",
     "JobResult",
     "JsonlStore",
+    "Leg",
     "MultiStore",
     "PermanentError",
     "PruneResult",
@@ -101,6 +126,7 @@ __all__ = [
     "Settings",
     "Source",
     "SourceError",
+    "Spread",
     "SqliteStore",
     "Store",
     "Summary",
@@ -117,8 +143,13 @@ __all__ = [
     "broker_feed_names",
     "build_quote_sources",
     "build_sources",
+    "catalogue",
     "ccxt_feed_names",
     "collect",
+    "constructed",
+    "crosses",
+    "definition",
+    "derive",
     "discover_ccxt",
     "filters_from",
     "iter_bars",
@@ -126,11 +157,14 @@ __all__ = [
     "pairs_for",
     "poll_once",
     "quote_source_names",
+    "register",
     "register_broker_feeds",
     "register_ccxt_feeds",
     "resolve_feeds",
     "resolve_intervals",
     "resolve_symbols",
+    "spread_catalogue",
     "stream",
     "sweep",
+    "venue_pairs",
 ]

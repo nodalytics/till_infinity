@@ -960,6 +960,28 @@ class Settings:
     cycle_seconds: float = 60.0
     include_partial: bool = False
 
+    # ------------------------------------------------- constructed spreads
+    #: Whether each collection cycle also builds the constructed spread series
+    #: - see `spreads.py`. Off by default: it adds up to a few hundred derived
+    #: feeds to the store and to whatever `structures` is admitting, and that
+    #: is a decision about what the desk follows rather than a collection
+    #: detail.
+    spreads: bool = False
+    #: Which kinds to build. `cross` is the tradeable kind - two legs at one
+    #: broker, an implied FX cross exactly - and `venue` is the reverting kind
+    #: this desk cannot hold, kept because it is the one `research/zma.md`
+    #: measured an edge on and the one worth confirming on stored bars.
+    spread_kinds: tuple[str, ...] = ("cross",)
+    #: The interval the spread is computed at before being bucketed up. Its
+    #: high and low are only real extremes because of this - see `spreads.py`.
+    spread_base: str = "1m"
+    #: Stored bars each leg needs before a pair is constructed at all.
+    spread_min_shared: int = 1_000
+    #: Allow legs from two different providers. Off, because a TradingView leg
+    #: and a Yahoo leg are two clocks and the spread would carry the skew
+    #: between them as if it were price.
+    spread_cross_source: bool = False
+
     # TradingView socket
     tv_concurrency: int = 6
     tv_ws_url: str = DEFAULT_TV_WS_URL
@@ -1035,6 +1057,15 @@ class Settings:
             backfill_bars=_env_int(5_000, "PRICES_BACKFILL_BARS"),
             live_bars=_env_int(300, "PRICES_LIVE_BARS"),
             cycle_seconds=_env_float(60.0, "PRICES_CYCLE_S"),
+            spreads=_env_flag("PRICES_SPREADS", False),
+            spread_kinds=tuple(
+                part.strip().lower()
+                for part in (os.environ.get("PRICES_SPREAD_KINDS") or "cross").split(",")
+                if part.strip()
+            ),
+            spread_base=(_env("PRICES_SPREAD_BASE") or "1m").strip(),
+            spread_min_shared=_env_int(1_000, "PRICES_SPREAD_MIN_SHARED"),
+            spread_cross_source=_env_flag("PRICES_SPREAD_CROSS_SOURCE", False),
             tv_concurrency=_env_int(6, "PRICES_TV_CONCURRENCY"),
             tv_ws_url=_env("PRICES_TV_WS_URL") or DEFAULT_TV_WS_URL,
             tv_origin=_env("PRICES_TV_ORIGIN") or DEFAULT_TV_ORIGIN,
