@@ -123,6 +123,14 @@ def settings(**over):
     # that *are* about it set it explicitly, and one of them asserts the
     # shipped default is what it claims.
     made.max_spread_risk_fraction = 0.0
+    # **Pinned, not inherited from the shipped default.** These tests are about
+    # the mechanics - does a signal become an order, does the order carry the
+    # right magic, is a stop reconciled - and `level-scalp` is the plainest
+    # strategy to ask that of. Four of them broke the day the default set
+    # changed to `cycle-scalp, cycle-turn`, asserting against whichever
+    # strategy happened to be first. A test that silently changes what it is
+    # testing when a default moves is testing the default.
+    made.strategies = ("level-scalp",)
     made.state_dir = Path(tempfile.mkdtemp(prefix="till-trading-test-"))
     for key, value in over.items():
         setattr(made, key, value)

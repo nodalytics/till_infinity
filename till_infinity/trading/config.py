@@ -473,7 +473,17 @@ class Settings:
     #: Strategies to run, by registered name. Several may run together; the
     #: per-instrument position limit is what stops two of them doubling a
     #: position rather than any coordination between them.
-    strategies: tuple[str, ...] = ("level-scalp",)
+    #: The two the desk actually runs. `cycle-scalp` is the unified scalp
+    #: thesis - 4h bias, 1h structure, fast pullback entry - and `cycle-turn`
+    #: is the slower reversion trade that both the 1h and 4h cycles have to
+    #: agree with, on a feed whose own scored record earns a say.
+    #:
+    #: They do not overlap: `cycle-scalp` enters on 1m to 15m and `cycle-turn`
+    #: on 15m to 1h, so only 15m is shared, and there the two want opposite
+    #: things - one a continuation of the cycle, one a turn against it. The
+    #: journal tells them apart by magic, which is why every strategy needs a
+    #: slot in `MAGIC_ORDER`.
+    strategies: tuple[str, ...] = ("cycle-scalp", "cycle-turn")
     #: The named risk plan. Individual limits set in the environment win over
     #: it - see `plans`.
     risk_plan: str = "standard"
@@ -673,6 +683,21 @@ class Settings:
     #: its market shuts - which on a 48-hour hold is most of the FX and index
     #: book. See research/barriers.md.
     max_hold_swing: float = 21_600.0
+
+    #: The longest a **position** may be held, in seconds. Four days.
+    #:
+    #: A third ceiling, because two did not cover the thesis `cycle-turn`
+    #: trades. Its entry is 15m to 1h and its context is 4h and 1d, so the move
+    #: it is betting on takes days rather than hours - and capped by the swing
+    #: ceiling it would have been closed by the clock at six hours, which
+    #: `research/spending.md` already measured as how `snap` loses: ended by
+    #: the timer rather than by being right or wrong, which teaches the journal
+    #: nothing.
+    #:
+    #: Four days rather than three so a Friday entry can survive a weekend gap
+    #: on instruments that have one; the strategy asks for 72 hours and this is
+    #: the ceiling over it.
+    max_hold_position: float = 4 * 24 * 3_600.0
 
     min_hold: float = 0.0
 
@@ -1642,6 +1667,7 @@ class Settings:
             max_hold=_float("TRADING_MAX_HOLD_S", 1_800.0),
             min_hold=_float("TRADING_MIN_HOLD_S", 0.0),
             max_hold_swing=_float("TRADING_MAX_HOLD_SWING_S", 21_600.0),
+            max_hold_position=_float("TRADING_MAX_HOLD_POSITION_S", 4 * 24 * 3_600.0),
             crowding_share=_float("TRADING_CROWDING_SHARE", 0.0),
             volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),
             regime_band=_float("TRADING_REGIME_BAND", 0.0),

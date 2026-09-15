@@ -295,6 +295,8 @@ class Strategy(ABC):
         body.
         """
         settings = self.settings
+        if self.style == "position":
+            return settings.max_hold_position or settings.max_hold_swing or settings.max_hold
         if self.style == "swing":
             return settings.max_hold_swing or settings.max_hold
         return settings.max_hold

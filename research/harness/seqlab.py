@@ -173,10 +173,16 @@ SYNTHETIC = {
 #: exactly where `research/refining.md`'s residual came to rest. At twenty the
 #: ceiling is **4.47**, which decides it.
 #:
-#: These are the twenty the terminal actually carries of the desk's real book -
-#: the index and energy feeds are quoted under names this broker does not use,
-#: and inventing them would put empty cells in every study that iterates this.
+#: **Thirty, and the last ten were missed by searching for the wrong names.**
+#: An earlier probe looked for `US30`, `GER40`, `SPX500` and reported the index
+#: book absent. This broker quotes them as `Wall Street 30`, `Germany 40` and
+#: `US SP 500`, so ten instruments the desk already trades were excluded from
+#: every positive control here - and one of them was in the open position list
+#: at the time. A symbol that is not found is not a symbol that is not there:
+#: the probe should have listed what the venue carries rather than asked
+#: whether a guess was in it.
 REAL = (
+    # FX, metals, crypto
     "XAUUSD",
     "XAGUSD",
     "BTCUSD",
@@ -197,7 +203,22 @@ REAL = (
     "AUDJPY",
     "CHFJPY",
     "EURAUD",
+    # Index CFDs, under the names this venue actually uses.
+    "Wall Street 30",
+    "US Tech 100",
+    "US SP 500",
+    "Germany 40",
+    "UK 100",
+    "Japan 225",
+    "France 40",
+    "Europe 50",
+    "Australia 200",
+    "Hong Kong 50",
 )
+
+#: The Dow index CFD, spelled the way this broker spells it. Named because it is
+#: asked for by its common name and `US30` finds nothing here.
+DJ30 = "Wall Street 30"
 
 #: Bars per year, for annualising a realised volatility onto the same scale the
 #: instrument names are quoted in. These indices trade continuously - no weekend,
