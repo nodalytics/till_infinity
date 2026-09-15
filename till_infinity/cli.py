@@ -1571,6 +1571,7 @@ def structures_watch(
             if book is not None:
                 await book.open()
             restored = watcher.load()
+            watcher.arm()
             # `cold` rather than `restored`: a state file saved before any
             # history existed restores an empty engine perfectly happily, and
             # keying the warm-up off the load made that emptiness permanent.

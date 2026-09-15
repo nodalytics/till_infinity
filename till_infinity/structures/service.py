@@ -754,6 +754,55 @@ class Watcher:
                         yield feed, interval, [float(r[0]) for r in reversed(rows)]
                         break
 
+    def arm(self) -> None:
+        """Everything that must happen whether or not a state came back.
+
+        **These used to live inside `load`, after its `if not state: return
+        False`.** Which meant that on a cold start - exactly when the books are
+        empty and the backfill matters most - none of them ran. A schema change
+        invalidates the state file, so the deploy that *adds* a persisted class
+        is the deploy where this is skipped, which is the worst possible time
+        for it.
+
+        Idempotent and cheap on a warm start: the record load is a small file,
+        the backfill skips every series that already has a record, and the
+        watcher is rebuilt from the environment either way.
+        """
+        try:
+            got = self.engine.cycles.load()
+            if got:
+                log.info("structures: restored cycle weights for %d feed(s)", got)
+        except Exception as exc:
+            log.warning("structures: could not restore cycle weights: %s", exc)
+        try:
+            # The z-score's scored record, from its own file for the same
+            # reason and with more at stake: `TRADING_ZMA_GATE` and
+            # `cycle-turn` both need two hundred settled calls a feed before
+            # they may act, and eleven deploys on 2026-09-15 left the book at
+            # zero series every time because it lived only in the engine state.
+            got = self.engine.zma.load()
+            if got:
+                log.info("structures: restored the z-score record for %d series", got)
+        except Exception as exc:
+            log.warning("structures: could not restore the z-score record: %s", exc)
+        # The z-score's book, filled from stored bars where it is empty.
+        try:
+            got = self._warm_zma()
+            if got:
+                log.info("structures: warmed the z-score on %d series from stored bars", got)
+        except Exception as exc:
+            log.warning("structures: could not warm the z-score: %s", exc)
+        # The quote-fed spread watcher, rebuilt rather than restored. Its cache
+        # holds quotes that were true before the process stopped, and pairing
+        # one of those against a live quote is the manufactured move
+        # `spreadquotes.py` exists to refuse.
+        try:
+            got = sq.rearm(self.engine)
+            if got:
+                log.info("structures: watching %d constructed spread(s) on quotes", got)
+        except Exception as exc:
+            log.warning("structures: could not arm the spread quote watcher: %s", exc)
+
     def warm_new(self, on_progress: Callable[[int, int], None] | None = None) -> int:
         """Replay the store for feeds the engine has no history of.
 
@@ -856,40 +905,6 @@ class Watcher:
         # dataclass changes shape, so a deploy touching one unrelated field
         # would otherwise throw away every turn this has settled. See
         # `structures/cycles.py`.
-        try:
-            got = self.engine.cycles.load()
-            if got:
-                log.info("structures: restored cycle weights for %d feed(s)", got)
-        except Exception as exc:
-            log.warning("structures: could not restore cycle weights: %s", exc)
-        try:
-            # The z-score's scored record, from its own file for the same
-            # reason and with more at stake: `TRADING_ZMA_GATE` and
-            # `cycle-turn` both need two hundred settled calls a feed before
-            # they may act, and eleven deploys on 2026-09-15 left the book at
-            # zero series every time because it lived only in the engine state.
-            got = self.engine.zma.load()
-            if got:
-                log.info("structures: restored the z-score record for %d series", got)
-        except Exception as exc:
-            log.warning("structures: could not restore the z-score record: %s", exc)
-        # The z-score's book, filled from stored bars where it is empty.
-        try:
-            got = self._warm_zma()
-            if got:
-                log.info("structures: warmed the z-score on %d series from stored bars", got)
-        except Exception as exc:
-            log.warning("structures: could not warm the z-score: %s", exc)
-        # The quote-fed spread watcher, rebuilt rather than restored. Its cache
-        # holds quotes that were true before the process stopped, and pairing
-        # one of those against a live quote is the manufactured move
-        # `spreadquotes.py` exists to refuse.
-        try:
-            got = sq.rearm(self.engine)
-            if got:
-                log.info("structures: watching %d constructed spread(s) on quotes", got)
-        except Exception as exc:
-            log.warning("structures: could not arm the spread quote watcher: %s", exc)
         self.engine.draw_with(self.settings.formation)
         self.engine.charge_spread = self.settings.charge_spread
         self.engine.consensus.single_source = single_source_feeds()
@@ -1964,6 +1979,7 @@ async def watch(
     # Warming over a populated engine would count every stored bar twice;
     # skipping it because a restore succeeded leaves an empty engine empty.
     watcher.load()
+    watcher.arm()
     if watcher.cold:
         watcher.warm()
     else:

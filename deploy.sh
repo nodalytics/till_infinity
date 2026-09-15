@@ -15,6 +15,19 @@
 # so the same script is correct on either.
 set -euo pipefail
 
+# **One deploy at a time.** This box deploys on every push and can also be
+# driven by hand, so two runs overlapping is normal rather than exotic. Racing
+# them wastes a pull and produces confusing output - on 2026-09-15 a hand
+# deploy and an automatic one interleaved, and the loser reported "could not
+# rename the running container" while the winner was quietly succeeding. The
+# outcome was correct because the rename is guarded, but nobody reading the
+# output could tell that.
+exec 9>/home/ubuntu/.deploy.lock
+if ! flock -w 600 9; then
+  echo "another deploy has held the lock for ten minutes - not starting" >&2
+  exit 1
+fi
+
 IMAGE="${IMAGE:?set IMAGE}"
 TAG="${TAG:-latest}"
 NAME="till-infinity"

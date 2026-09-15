@@ -429,6 +429,7 @@ class Stack:
         # after the fix shipped. Warming is decided by whether there are levels,
         # not by whether the restore worked.
         watcher.load()
+        watcher.arm()
         if watcher.cold:
             log.info("stack: structures restored no levels, warming from the store")
             watcher.warm()

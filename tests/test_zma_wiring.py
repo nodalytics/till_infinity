@@ -668,3 +668,39 @@ class TestBackfill:
         )
         assert warmed == 2
         assert book.of("v75", "1m").edge_accuracy != book.of("v75", "1h").edge_accuracy
+
+
+class TestArmRunsOnAColdStart:
+    """The backfill lived behind `load`'s `if not state: return False`.
+
+    Which meant it was skipped on a cold start - exactly when the books are
+    empty and it matters most. And a schema change is what *causes* a cold
+    start, so the deploy that adds a persisted class is the deploy where the
+    backfill does not run. That happened: `spreadquotes.Pair` and `Watcher`
+    changed the schema hash, the state was invalidated, and none of the restore
+    work ran on the deploy that shipped it.
+    """
+
+    def test_arm_carries_the_work_and_load_does_not(self):
+        import inspect
+
+        from till_infinity.structures.service import Watcher
+
+        armed = inspect.getsource(Watcher.arm)
+        for piece in ("cycles.load", "zma.load", "_warm_zma", "sq.rearm"):
+            assert piece in armed, f"arm() should do {piece}"
+
+        restored = inspect.getsource(Watcher.load)
+        for piece in ("_warm_zma", "sq.rearm"):
+            assert piece not in restored, f"{piece} must not be restore-only"
+
+    def test_every_entry_point_arms(self):
+        """Three places load a watcher and all three have to arm it, or the
+        thing that skips the backfill is just a different caller."""
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "till_infinity"
+        for name in ("stack.py", "cli.py", "structures/service.py"):
+            text = (root / name).read_text()
+            if "watcher.load()" in text:
+                assert "watcher.arm()" in text, name
