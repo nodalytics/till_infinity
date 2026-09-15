@@ -84,9 +84,36 @@ for attempt in 1 2 3; do
   sleep 5
 done
 
-# Stop the old one *after* the pull succeeds, so a registry problem leaves the
-# previous version running rather than nothing at all.
-docker rm -f "$NAME" 2>/dev/null || true
+# **Renamed, not removed** - the old container is the rollback.
+#
+# Removing it here leaves a window with no container, and two things can go
+# wrong in that window. The new one may fail to start, and then the desk is
+# down with nothing to put back. Or another deploy can land inside it, in which
+# case `docker run` below fails on a name conflict and this script exits
+# reporting success over somebody else's container. Both were reached in
+# practice on 2026-09-15.
+#
+# Stopped first, because two containers both holding broker sessions would both
+# place orders. The rename costs nothing and buys an undo.
+PREV="${NAME}-prev"
+docker rm -f "$PREV" 2>/dev/null || true
+ROLLBACK_FROM=""
+if docker inspect "$NAME" >/dev/null 2>&1; then
+  ROLLBACK_FROM="$(docker inspect "$NAME" --format '{{.Config.Image}}' 2>/dev/null)"
+  docker stop -t 30 "$NAME" >/dev/null 2>&1 || true
+  if ! docker rename "$NAME" "$PREV" 2>/dev/null; then
+    echo "could not rename the running container - leaving it alone" >&2
+    docker start "$NAME" >/dev/null 2>&1 || true
+    exit 1
+  fi
+fi
+
+restore_previous() {
+  [[ -z "$ROLLBACK_FROM" ]] && return 1
+  echo "restoring ${ROLLBACK_FROM##*:}" >&2
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker rename "$PREV" "$NAME" >/dev/null 2>&1 && docker start "$NAME" >/dev/null 2>&1
+}
 
 # Sized from the host rather than pinned, because the pin was wrong on both
 # boxes it ever ran on. 640m was chosen for a 908MB instance - about 70%, which
@@ -119,7 +146,28 @@ docker run -d \
   --add-host=host.docker.internal:host-gateway \
   -v "$DATA:/app/.data" \
   --log-opt max-size=10m --log-opt max-file=3 \
-  "$IMAGE:$TAG" run
+  "$IMAGE:$TAG" run || {
+    echo "the new container would not start" >&2
+    restore_previous && exit 1
+    echo "ROLLBACK FAILED - there is no container. Look now." >&2
+    exit 2
+  }
+
+# **Running is not enough.** With `--restart unless-stopped` a container that
+# exits immediately spends most of its life in restart backoff, and
+# `.State.Running` reads true for the instants it is up - so a crash-looper
+# passes a naive check and the rollback gets deleted underneath it. A restart
+# count above zero this soon is a container that has already died once.
+sleep 20
+UP="$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null || echo false)"
+RESTARTS="$(docker inspect -f '{{.RestartCount}}' "$NAME" 2>/dev/null || echo 1)"
+if [[ "$UP" != "true" || "$RESTARTS" != "0" ]]; then
+  echo "new container is unhealthy (running=$UP restarts=$RESTARTS)" >&2
+  restore_previous && exit 1
+  echo "ROLLBACK FAILED - there is no container. Look now." >&2
+  exit 2
+fi
+docker rm -f "$PREV" >/dev/null 2>&1 || true
 
 # The old image is only unreferenced once the new container is up, so a second
 # sweep here collects it. The one above is what guarantees room to pull; this
