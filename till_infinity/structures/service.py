@@ -40,6 +40,7 @@ from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
 from ..shared import liveness
 from . import engine, store
+from . import spreadquotes as sq
 from .config import DRIFT_INTERVALS, Settings
 from .context.activity import Book as ActivityBook
 from .context.macro import Macro, since_default, stored
@@ -797,6 +798,16 @@ class Watcher:
                 log.info("structures: restored the z-score record for %d series", got)
         except Exception as exc:
             log.warning("structures: could not restore the z-score record: %s", exc)
+        # The quote-fed spread watcher, rebuilt rather than restored. Its cache
+        # holds quotes that were true before the process stopped, and pairing
+        # one of those against a live quote is the manufactured move
+        # `spreadquotes.py` exists to refuse.
+        try:
+            got = sq.rearm(self.engine)
+            if got:
+                log.info("structures: watching %d constructed spread(s) on quotes", got)
+        except Exception as exc:
+            log.warning("structures: could not arm the spread quote watcher: %s", exc)
         self.engine.draw_with(self.settings.formation)
         self.engine.charge_spread = self.settings.charge_spread
         self.engine.consensus.single_source = single_source_feeds()

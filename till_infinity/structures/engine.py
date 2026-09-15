@@ -38,6 +38,7 @@ from ..shared import effects
 from . import cycles as cy
 from . import levels as lv
 from . import reactions
+from . import spreadquotes as sq
 from . import zma as zm
 from .config import DEFAULT_FORMATION
 from .context import sessions
@@ -1137,6 +1138,10 @@ class Engine:
         #: `structures/cycles.py`, which is explicit that two of the three
         #: things it adds were measured at nothing.
         self.cycles = cy.Book()
+        #: Constructed spreads read from live quotes rather than from bars.
+        #: Empty unless `STRUCTURES_SPREAD_QUOTES` names pairs - see
+        #: `structures/spreadquotes.py`.
+        self.spread_quotes = sq.from_env()
         self.tracker = reactions.Tracker(horizon=horizon)
         #: Pivots come from completed sessions, so they need no confirmation
         #: delay and exist before price has ever turned there.
@@ -2509,6 +2514,15 @@ class Engine:
         mid = payload.get("mid")
         if not feed or not isinstance(mid, int | float) or not mid:
             return []
+        # The constructed spreads, priced from this quote and its partner's.
+        # Before anything else in this method, because it concerns a different
+        # instrument entirely - a failure here must not cost the level path its
+        # quote.
+        try:
+            for name, price in self.spread_quotes.observe(payload):
+                self.zma.observe(name, sq.INTERVAL, price)
+        except Exception as exc:
+            log.debug("structures: no spread quote reading: %s", exc)
         when = float(payload.get("time") or time.time())
         spread = payload.get("spread_bps")
         if isinstance(spread, int | float) and spread > 0:
