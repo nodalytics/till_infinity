@@ -64,17 +64,20 @@ class TurnExit:
 
     feed: str
     side: Side
+    #: **The fill, not the quote the trade was sized from.** `_reach` measures
+    #: the path from `position.price_open`, so measuring the suggestion from
+    #: `intent.entry` instead would compare two numbers that differ by the
+    #: entry slippage - small, real, and silent.
     entry: float
-    stop: float
-    target: float
+    #: The risk the trade was **sized** for, supplied rather than derived, for
+    #: the same reason: it has to be the identical denominator `_reach` divides
+    #: by, and that one is `abs(intent.entry - intent.stop)` regardless of where
+    #: the fill landed.
+    risk: float
     #: Where the turn model expected this leg to end, from the opening signal.
     suggested: float
     ticket: int = 0
     by: str = ""
-
-    @property
-    def risk(self) -> float:
-        return abs(self.entry - self.stop)
 
     @property
     def ahead(self) -> float:
@@ -148,14 +151,18 @@ def suggestion_from(features: dict, side: Side) -> float:
     return float(price)
 
 
-def score(ride: TurnExit, *, best: float, took_r: float) -> TurnOutcome:
+def score(ride: TurnExit, *, best_r: float, took_r: float) -> TurnOutcome:
     """What the suggested exit would have made on the path the trade actually saw.
 
-    `best` is the most favourable price the trade reached - the high for a long,
-    the low for a short - which the service already tracks for `best_r`. If the
-    suggestion sat inside that, a resting order there would have filled and the
-    trade would have banked `ahead` R; if it did not, the suggestion never
-    triggered and the trade would have ended however it actually ended.
+    **Both arguments are in R, and that is deliberate.** `best_r` is what the
+    service already computes for the journal - how far in front the trade got,
+    in units of the risk it was sized for - and `ahead` is built on the same
+    denominator, so "was the suggestion reached" is one comparison with no
+    prices, no signs and no conversion to get backwards.
+
+    If the suggestion sat inside the path, a resting order there would have
+    filled and the trade would have banked `ahead` R; if it did not, the
+    suggestion never triggered and the trade ended however it actually ended.
     """
     if not ride.scorable:
         why = "no risk" if ride.risk <= 0 else f"suggestion {ride.ahead:+.2f}R from entry"
@@ -168,7 +175,7 @@ def score(ride: TurnExit, *, best: float, took_r: float) -> TurnOutcome:
             ahead=ride.ahead,
             reason=why,
         )
-    reached = (best - ride.suggested) * ride.side.sign >= 0
+    reached = best_r >= ride.ahead
     return TurnOutcome(
         ticket=ride.ticket,
         feed=ride.feed,

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import statistics
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,18 @@ class Trade:
     exit_source: str
     reward_to_risk: float
     opened: float
+    #: What the turn model's exit would have made on this same path, and what
+    #: the trade actually made, both in R. Zero-and-zero means there was no
+    #: comparison - the head was silent, which is most closes. See
+    #: `trading/turning.py`.
+    turn_suggested_r: float = 0.0
+    turn_took_r: float = 0.0
+    turn_scored: bool = False
+
+    @property
+    def turn_gained(self) -> float:
+        """What riding the model's exit instead would have added, in R."""
+        return self.turn_suggested_r - self.turn_took_r
 
     @property
     def r(self) -> float:
@@ -134,6 +147,55 @@ class Group:
 
 
 @dataclass(slots=True)
+class TurnComparison:
+    """What riding the turn model's exit instead would have done, from the journal.
+
+    Read from closed trades rather than from a running tally, so the answer
+    survives a restart and can be asked of any window. The in-process tally on
+    the service is a convenience; this is the record.
+
+    **Every row is an upper bound.** A resting order at the suggested level
+    would have filled there or not at all, so the comparison is fair for a
+    take-profit and optimistic for anything needing a chase. See
+    `trading/turning.py`.
+    """
+
+    scored: int = 0
+    reached: int = 0
+    took_r: float = 0.0
+    suggested_r: float = 0.0
+
+    @property
+    def gained_r(self) -> float:
+        """R a trade the model's exit would have added. Negative means worse."""
+        if not self.scored:
+            return float("nan")
+        return (self.suggested_r - self.took_r) / self.scored
+
+    def summary(self) -> str:
+        if self.scored < ENOUGH:
+            return f"turn exit: {self.scored} scored - too few to read (need {ENOUGH})"
+        return (
+            f"turn exit: {self.scored} scored, {self.reached / self.scored:.0%} reached, "
+            f"{self.gained_r:+.3f}R a trade against what the trades took "
+            f"(upper bound)"
+        )
+
+
+def compare_turn_exits(found: Sequence[Trade]) -> TurnComparison:
+    """Aggregate the per-close comparison the service wrote."""
+    out = TurnComparison()
+    for trade in found:
+        if not trade.turn_scored:
+            continue
+        out.scored += 1
+        out.took_r += trade.turn_took_r
+        out.suggested_r += trade.turn_suggested_r
+        out.reached += int(trade.turn_gained > 0 or trade.turn_suggested_r != trade.turn_took_r)
+    return out
+
+
+@dataclass(slots=True)
 class Report:
     """Everything the journal can say about the trader so far."""
 
@@ -146,6 +208,12 @@ class Report:
     declines: dict[str, int] = field(default_factory=dict)
     #: Resolutions seen for instruments we trade, whether or not we traded them.
     open_trades: int = 0
+    #: The turn model's exit against the one each trade actually took, over the
+    #: closes where the model had anything to say. **The whole question is
+    #: `gained_r`**, and it is `nan` until something has been scored - which it
+    #: will be for a while, because the depth head stays silent until it has
+    #: settled two hundred turns on a feed.
+    turn_exit: TurnComparison | None = None
 
     @property
     def enough(self) -> bool:
@@ -193,8 +261,14 @@ def trades(path: Path | str = DEFAULT_DB, *, limit: int = 100_000) -> list[Trade
         risk = _number(context, "risk_money")
         if risk <= 0:
             continue
+        # Present only when the depth head was warm enough to suggest one, so
+        # its absence is the common case rather than a fault.
+        scored = "turn_suggested_r" in context and not _text(context, "turn_reason")
         found.append(
             Trade(
+                turn_suggested_r=_number(context, "turn_suggested_r"),
+                turn_took_r=_number(context, "turn_took_r"),
+                turn_scored=scored,
                 strategy=_text(context, "strategy") or "unknown",
                 feed=_text(context, "feed"),
                 side=_text(context, "side"),
@@ -242,7 +316,7 @@ def build(
     if strategy:
         found = [t for t in found if t.strategy == strategy]
 
-    report = Report(overall=Group("overall", found))
+    report = Report(overall=Group("overall", found), turn_exit=compare_turn_exits(found))
     for trade in found:
         report.by_strategy.setdefault(trade.strategy, Group(trade.strategy)).trades.append(trade)
         report.by_feed.setdefault(trade.feed, Group(trade.feed)).trades.append(trade)

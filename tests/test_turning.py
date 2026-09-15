@@ -17,24 +17,22 @@ from till_infinity.trading import turning as tn
 from till_infinity.trading.models import Side
 
 
-def ride(*, side=Side.BUY, entry=100.0, stop=98.0, target=104.0, suggested=103.0, **kw):
-    return tn.TurnExit(
-        feed="v75",
-        side=side,
-        entry=entry,
-        stop=stop,
-        target=target,
-        suggested=suggested,
-        **kw,
-    )
+def ride(*, side=Side.BUY, entry=100.0, risk=2.0, suggested=103.0, **kw):
+    """`entry` is the fill and `risk` is what the trade was sized for.
+
+    The same two the service supplies, so the fixture cannot drift from the
+    caller - and both `ahead` and `best_r` end up on one denominator, which is
+    the whole reason the comparison is done in R rather than in prices.
+    """
+    return tn.TurnExit(feed="v75", side=side, entry=entry, risk=risk, suggested=suggested, **kw)
 
 
 class TestGeometry:
     def test_ahead_is_measured_in_the_trade_s_own_risk(self):
-        assert ride(entry=100.0, stop=98.0, suggested=103.0).ahead == pytest.approx(1.5)
+        assert ride(entry=100.0, risk=2.0, suggested=103.0).ahead == pytest.approx(1.5)
 
     def test_a_short_measures_the_other_way(self):
-        got = ride(side=Side.SELL, entry=100.0, stop=102.0, suggested=97.0)
+        got = ride(side=Side.SELL, entry=100.0, risk=2.0, suggested=97.0)
         assert got.ahead == pytest.approx(1.5)
 
     def test_a_suggestion_behind_the_entry_is_negative_and_not_scorable(self):
@@ -51,7 +49,7 @@ class TestGeometry:
         assert not ride(suggested=100.0 + 2.0 * (tn.MAX_R + 5)).scorable
 
     def test_no_risk_is_not_scorable(self):
-        assert not ride(entry=100.0, stop=100.0).scorable
+        assert not ride(risk=0.0).scorable
 
 
 class TestReading:
@@ -81,7 +79,7 @@ class TestReading:
 
 class TestScoring:
     def test_a_suggestion_the_path_reached_would_have_banked_it(self):
-        got = tn.score(ride(suggested=103.0), best=103.5, took_r=0.4)
+        got = tn.score(ride(suggested=103.0), best_r=1.75, took_r=0.4)
         assert got.reached
         assert got.suggested_r == pytest.approx(1.5)
         assert got.gained == pytest.approx(1.1)
@@ -89,42 +87,42 @@ class TestScoring:
     def test_a_suggestion_the_path_never_reached_changes_nothing(self):
         """Not reached means the order never triggered, so the trade ended
         however it actually ended - not at a level it never saw."""
-        got = tn.score(ride(suggested=103.0), best=101.0, took_r=-1.0)
+        got = tn.score(ride(suggested=103.0), best_r=0.5, took_r=-1.0)
         assert not got.reached
         assert got.suggested_r == pytest.approx(-1.0)
         assert got.gained == pytest.approx(0.0)
 
     def test_it_can_be_worse_than_what_the_trade_took(self):
         """Exiting early at the suggestion gives up the rest of a winner."""
-        got = tn.score(ride(suggested=101.0), best=105.0, took_r=2.5)
+        got = tn.score(ride(suggested=101.0), best_r=2.5, took_r=2.5)
         assert got.reached
         assert got.gained < 0
 
     def test_a_short_scores_the_same_way(self):
         got = tn.score(
-            ride(side=Side.SELL, entry=100.0, stop=102.0, suggested=97.0),
-            best=96.5,
+            ride(side=Side.SELL, entry=100.0, risk=2.0, suggested=97.0),
+            best_r=1.75,
             took_r=0.2,
         )
         assert got.reached
         assert got.suggested_r == pytest.approx(1.5)
 
     def test_an_unscorable_ride_is_neutral_and_says_why(self):
-        got = tn.score(ride(suggested=99.0), best=105.0, took_r=2.0)
+        got = tn.score(ride(suggested=99.0), best_r=2.5, took_r=2.0)
         assert got.suggested_r == got.took
         assert got.reason
         assert not got.reached
 
     def test_every_row_admits_it_is_an_upper_bound(self):
-        assert tn.score(ride(), best=104.0, took_r=1.0).optimistic
-        assert tn.score(ride(), best=104.0, took_r=1.0).to_dict()["optimistic"] is True
+        assert tn.score(ride(), best_r=2.0, took_r=1.0).optimistic
+        assert tn.score(ride(), best_r=2.0, took_r=1.0).to_dict()["optimistic"] is True
 
 
 class TestTally:
     def test_the_headline_is_r_a_trade(self):
         tally = tn.TurnTally()
-        tally.add(tn.score(ride(suggested=103.0), best=103.5, took_r=0.5))
-        tally.add(tn.score(ride(suggested=103.0), best=103.5, took_r=-1.0))
+        tally.add(tn.score(ride(suggested=103.0), best_r=1.75, took_r=0.5))
+        tally.add(tn.score(ride(suggested=103.0), best_r=1.75, took_r=-1.0))
         assert tally.scored == 2
         assert tally.reached == 2
         # 1.5 against 0.5 and 1.5 against -1.0: +1.0 and +2.5, so +1.75 a trade.
@@ -132,7 +130,7 @@ class TestTally:
 
     def test_unscorable_rides_are_counted_but_not_averaged(self):
         tally = tn.TurnTally()
-        tally.add(tn.score(ride(suggested=99.0), best=105.0, took_r=2.0))
+        tally.add(tn.score(ride(suggested=99.0), best_r=2.5, took_r=2.0))
         assert tally.rides == 1
         assert tally.scored == 0
         assert math.isnan(tally.gained_per_trade)
@@ -141,3 +139,72 @@ class TestTally:
         got = tn.TurnTally().to_dict()
         assert got["gained_r_per_trade"] is None
         assert got["scored"] == 0
+
+
+class TestReportAggregation:
+    """The durable answer lives in the journal, not in a running tally.
+
+    A per-process tally is reset by every restart and by every deploy, and this
+    desk deploys several times a day. The report reads the per-close comparison
+    back out of closed trades, so the question can be asked of any window and
+    survives the thing that answers it being restarted.
+    """
+
+    def trade(self, *, suggested, took, scored=True):
+        from till_infinity.trading.report import Trade
+
+        return Trade(
+            strategy="cycle-scalp",
+            feed="v75",
+            side="BUY",
+            mode="paper",
+            profit=0.0,
+            risk_money=100.0,
+            seconds=60.0,
+            reason="target",
+            exit_source="broker",
+            reward_to_risk=1.0,
+            opened=0.0,
+            turn_suggested_r=suggested,
+            turn_took_r=took,
+            turn_scored=scored,
+        )
+
+    def test_it_averages_only_the_scored_rows(self):
+        from till_infinity.trading.report import compare_turn_exits
+
+        got = compare_turn_exits(
+            [
+                self.trade(suggested=1.5, took=0.5),
+                self.trade(suggested=1.5, took=-1.0),
+                self.trade(suggested=0.0, took=0.0, scored=False),
+            ]
+        )
+        assert got.scored == 2
+        assert got.gained_r == pytest.approx(1.75)
+
+    def test_a_worse_suggestion_shows_negative(self):
+        from till_infinity.trading.report import compare_turn_exits
+
+        got = compare_turn_exits([self.trade(suggested=0.5, took=2.5)])
+        assert got.gained_r == pytest.approx(-2.0)
+
+    def test_nothing_scored_is_nan_rather_than_zero(self):
+        from till_infinity.trading.report import compare_turn_exits
+
+        got = compare_turn_exits([self.trade(suggested=0.0, took=0.0, scored=False)])
+        assert got.scored == 0
+        assert math.isnan(got.gained_r)
+
+    def test_the_summary_refuses_to_read_a_thin_sample(self):
+        from till_infinity.trading.report import ENOUGH, compare_turn_exits
+
+        got = compare_turn_exits([self.trade(suggested=1.5, took=0.5)])
+        assert "too few" in got.summary()
+        assert str(ENOUGH) in got.summary()
+
+    def test_the_summary_says_it_is_an_upper_bound(self):
+        from till_infinity.trading.report import ENOUGH, compare_turn_exits
+
+        got = compare_turn_exits([self.trade(suggested=1.5, took=0.5) for _ in range(ENOUGH)])
+        assert "upper bound" in got.summary()

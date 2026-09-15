@@ -3132,6 +3132,20 @@ def trading_report(db, mode, strategy):
             f"{group.total_r:+.1f}",
         )
     console.print(instruments)
+    if report.turn_exit is not None and report.turn_exit.scored:
+        # The turn model's exit against the one each trade took. Recorded on
+        # every close where the depth head had anything to say, and acting on
+        # nothing - see `trading/turning.py`. Printed only when there is
+        # something to print, because "0 scored" on every report for weeks is
+        # noise rather than a finding.
+        got = report.turn_exit
+        colour = "green" if got.gained_r > 0 else "red" if got.gained_r < 0 else "dim"
+        console.print(f"\n[{colour}]{escape(got.summary())}[/]")
+        console.print(
+            "[dim]shadow only - nothing exits on this. Upper bound: a resting order "
+            "at the suggested level fills there or not at all.[/]"
+        )
+
     _decline_table(report)
 
     if not report.enough:

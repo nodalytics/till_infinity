@@ -47,7 +47,7 @@ from ..structures.context.reach import Reaches
 from ..structures.context.trend import Trend
 from ..structures.learning.focus import Focus
 from ..structures.levels import SECONDS
-from . import manage, plans
+from . import manage, plans, turning
 from .candles import confirms, rejection_wick
 from .config import Settings, magic_for, strategy_for
 from .context import Context
@@ -618,7 +618,10 @@ class Trader:
         #: `__init__` is at its statement ceiling and both are per-ticket
         #: working state written by `_mark_best`. 19.6% of closes reached 1.0R
         #: and not one scale-out ever did.
-        self._best, self._bank_due = {}, set()
+        #: `_turns` is the turn model's exit against the real one, accumulated
+        #: across closes. Its headline is `gained_r_per_trade`, which is the
+        #: whole question and stays `nan` until something has been scored.
+        self._best, self._bank_due, self._turns = {}, set(), turning.TurnTally()
         #: feed -> how many quotes `_quote` has resolved a symbol for. Only
         #: read by the `_manage` skip diagnostic, which cannot otherwise
         #: distinguish "no quote ever arrived for this feed" from "quotes
@@ -3506,6 +3509,54 @@ class Trader:
             with contextlib.suppress(Exception):
                 await self.on_signal(payload, observe=False)
 
+    def _turn_exit(self, live: Live, price: float) -> dict:
+        """The turn model's exit, scored against the one this trade took.
+
+        Empty whenever there is nothing to compare - which is most closes, and
+        deliberately so. The depth head stays silent until it has settled two
+        hundred turns on that feed, and a made-up exit scored against a real one
+        is worse than no comparison at all.
+
+        Swallows its own failures. A shadow comparison must never be able to
+        break the record of a real trade, which is the same rule the stopped
+        trade `Shadow` already follows two hundred lines up.
+        """
+        try:
+            suggested = turning.suggestion_from(live.intent.features, live.intent.side)
+            if not suggested:
+                return {}
+            risk = abs(live.intent.entry - live.intent.stop)
+            ride = turning.TurnExit(
+                feed=live.intent.feed,
+                side=live.intent.side,
+                # The fill, and the risk the trade was *sized* for - the same
+                # denominator `_reach` divides by. See `TurnExit`.
+                entry=live.position.price_open,
+                risk=risk,
+                suggested=suggested,
+                ticket=live.position.ticket,
+                by=live.by,
+            )
+            outcome = turning.score(
+                ride,
+                best_r=self._reach(live),
+                took_r=_r_multiple(live.intent, price),
+            )
+            self._turns.add(outcome)
+            # **Every key prefixed.** `TurnOutcome` has its own `reason` - why
+            # a row was not scorable - and the close record already has one,
+            # meaning why the trade ended. Merged unprefixed, the shadow would
+            # have silently overwritten the exit reason on every close where
+            # the model spoke: a corrupted record rather than a missing one.
+            return {
+                f"turn_{k}": v
+                for k, v in outcome.to_dict().items()
+                if k not in ("shape", "feed", "ticket")
+            }
+        except Exception as exc:
+            log.debug("trading: no turn-exit comparison for %s: %s", live.intent.feed, exc)
+            return {}
+
     def _reach(self, live: Live) -> float:
         """Furthest this trade got in front, in units of its own risk."""
         best = self._best.get(live.position.ticket)
@@ -4034,6 +4085,13 @@ class Trader:
             "target": round(live.intent.target, 8) if live.intent.target else 0.0,
             "r_multiple": _r_multiple(live.intent, price),
             "best_r": round(self._reach(live), 3),
+            # What the turn model's exit would have made on this same path,
+            # beside what the trade actually made. Acts on nothing - see
+            # `trading/turning.py` for why this counterfactual is honest where
+            # most are not: the level is fixed on the signal before the
+            # position opens, and whether it was reached comes from the path
+            # already tracked for `best_r`.
+            **self._turn_exit(live, price),
             "adverse_r": round(self._heat(live), 3),
             "entry_wanted": round(live.intent.entry, 8),
             "entry_filled": round(position.price_open, 8),
