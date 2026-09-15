@@ -32,6 +32,7 @@ The pieces, in dependency order:
 | `risk` | may this account take another trade right now |
 | `strategy` | the port a strategy implements, and the register |
 | `scalper` | the four arithmetic level strategies |
+| `turning` | the cycle reading as an entry, gated on its own record |
 | `council` | agents that reason their own way to a trade, and discuss it |
 | `valuation` | asking an analyst what a thing is worth, rather than which way it goes |
 | `speeds` | three EWMAs and their agreement, for `momentum-scalp` |
@@ -111,6 +112,7 @@ from .strategies.swing import (
     Runner,
     SwingLevel,
 )
+from .strategies.turning import CycleTurn
 from .turning import TurnExit, TurnOutcome, TurnTally
 from .valuation import Priced, Valuation, price_it
 from .venues.broker import (
@@ -154,6 +156,7 @@ __all__ = [
     "Context",
     "Council",
     "CouncilStrategy",
+    "CycleTurn",
     "Exposure",
     "FadeToValue",
     "Guard",
