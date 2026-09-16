@@ -92,6 +92,11 @@ class QuoteTick:
     quotes: dict[QuoteKey, Quote] = field(default_factory=dict)
     written: WriteResult = field(default_factory=WriteResult)
     pushed: WriteResult = field(default_factory=WriteResult)
+    #: Per source, because the totals cannot answer "has *this* transport gone
+    #: quiet". One source still producing made every poll look productive
+    #: while the rest of the book was dark - which is why the stall watchdog
+    #: reported nothing through a thirteen-minute outage on 2026-09-16.
+    by_source: dict[str, WriteResult] = field(default_factory=dict)
     missing: int = 0
     elapsed: float = 0.0
 
@@ -785,6 +790,7 @@ async def poll_once(
         # *before* suspending, so concurrent tasks lose each other's writes.
         written = await sink(key, quote)
         tick.written += written
+        tick.by_source[source.name] = tick.by_source.get(source.name, WriteResult()) + written
 
     async with asyncio.TaskGroup() as group:
         for source in sources:
@@ -792,7 +798,9 @@ async def poll_once(
                 group.create_task(one(source, key))
 
     for source in sources:
-        tick.pushed += source.drain_pushed()
+        got = source.drain_pushed()
+        tick.pushed += got
+        tick.by_source[source.name] = tick.by_source.get(source.name, WriteResult()) + got
 
     tick.elapsed = time.monotonic() - started
     return tick
@@ -814,7 +822,7 @@ async def _watch_polls(
     live: Sequence[QuoteSource],
     settings: Settings,
     finished: list[float],
-    wrote: list[float],
+    wrote: dict[str, float],
 ) -> None:
     """Say when the quote poll stops producing, and which kind of stop it is.
 
@@ -828,19 +836,32 @@ async def _watch_polls(
     buries the cause - `_note_drop` learned that when 132,807 identical
     warnings rotated the real error out of the logs.
     """
+    patience = max(180.0, settings.quote_poll_seconds * 6)
+    # **Said out loud, because a watchdog that died at birth is indis-
+    # tinguishable from a quiet one.** `_read` taught that: a bare task held on
+    # an attribute is never collected, so asyncio never reports the exception
+    # that ended it either.
+    log.info(
+        "prices: quote watchdog armed - %.0fs patience over %s",
+        patience,
+        ", ".join(source.name for source in live) or "no sources",
+    )
     told = ""
     while True:
         await asyncio.sleep(30.0)
-        patience = max(180.0, settings.quote_poll_seconds * 6)
-        idle = time.monotonic() - finished[0]
-        dry = time.monotonic() - wrote[0]
-        kind = "hung" if idle >= patience else ("dry" if dry >= patience else "")
+        now = time.monotonic()
+        idle = now - finished[0]
+        quiet = sorted(
+            (name for name, when in wrote.items() if now - when >= patience),
+            key=lambda name: wrote[name],
+        )
+        kind = "hung" if idle >= patience else ("dry" if quiet else "")
         if not kind:
             told = ""
             continue
-        if told == kind:
+        if told == kind + ",".join(quiet):
             continue
-        told = kind
+        told = kind + ",".join(quiet)
         if kind == "hung":
             log.warning("prices: no quote poll has finished for %.0fs - dumping every task", idle)
             for task in asyncio.all_tasks():
@@ -848,7 +869,12 @@ async def _watch_polls(
                 where = " <- ".join(f"{f.f_code.co_name}:{f.f_lineno}" for f in reversed(frames))
                 log.warning("prices: stuck task %s | %s", task.get_name(), where or "no stack")
         else:
-            log.warning("prices: polls are finishing but nothing has been written for %.0fs", dry)
+            log.warning(
+                "prices: polls are finishing but %s %s written nothing for %.0fs",
+                " and ".join(quiet),
+                "has" if len(quiet) == 1 else "have",
+                now - min(wrote[name] for name in quiet),
+            )
         for source in live:
             log.warning("prices: quote source %s", source.diagnose())
 
@@ -889,7 +915,7 @@ async def stream(
         # actor reads as running - so each fix has been a guess at which await
         # never returned. This makes the process answer the question itself.
         finished = [time.monotonic()]
-        wrote = [time.monotonic()]
+        wrote = {source.name: time.monotonic() for source in live}
         keeper = asyncio.create_task(
             _watch_polls(live, settings, finished, wrote), name="quote-watchdog"
         )
@@ -903,8 +929,9 @@ async def stream(
                 # `.touched`, not the results themselves: a `WriteResult` is
                 # always truthy, so testing the objects would mark every poll
                 # productive and the dry branch would never fire.
-                if tick.written.touched or tick.pushed.touched:
-                    wrote[0] = time.monotonic()
+                for name, got in tick.by_source.items():
+                    if got.touched:
+                        wrote[name] = time.monotonic()
                 count += 1
                 if on_tick is not None:
                     on_tick(count, tick)

@@ -429,9 +429,77 @@ async def test_polls_that_finish_but_write_nothing_are_reported_too(tmp_path, ca
             await runner
 
     said = [r.getMessage() for r in caplog.records]
-    assert any("nothing has been written" in m for m in said), said[-3:]
+    assert any("written nothing for" in m for m in said), said[-3:]
+    assert any("mute" in m and "written nothing" in m for m in said), (
+        "and it must name the source that went quiet, not the poll as a whole - a book where "
+        "one source still produces makes every poll look productive"
+    )
     assert any("mute says why it is quiet" in m for m in said), "and each source explains itself"
     assert not any("stuck task" in m for m in said), "a turning loop is not a hung one"
+
+
+@pytest.mark.asyncio
+async def test_one_busy_source_does_not_hide_a_dark_one(tmp_path, caplog):
+    """**Why the totals cannot answer this.**
+
+    `tick.written` sums every source, so one transport still producing makes
+    every poll look productive while the rest of the book is dark. That is not
+    hypothetical: on 2026-09-16 the watchdog stayed silent through a
+    thirteen-minute outage in which both named transports wrote nothing.
+    """
+    import logging
+
+    from till_infinity.prices import quotes as q
+
+    clock = [0.0]
+    ticking = type("Clock", (), {"monotonic": staticmethod(lambda: clock[0])})
+
+    class Busy(QuoteSource):
+        name = "busy"
+        feed_key = "busy"
+
+    class Dark(QuoteSource):
+        name = "dark"
+        feed_key = "dark"
+
+        def diagnose(self):
+            return "dark explains itself"
+
+    real_sleep = asyncio.sleep
+
+    async def jump(delay, *a, **k):
+        clock[0] += delay
+        await real_sleep(0)
+
+    from till_infinity.prices import WriteResult
+
+    async def busy_only(*a, **k):
+        tick = QuoteTick()
+        tick.by_source["busy"] = WriteResult(inserted=1)
+        tick.by_source["dark"] = WriteResult()
+        tick.written = WriteResult(inserted=1)
+        return tick
+
+    settings = Settings(data_dir=tmp_path)
+    with (
+        patch.object(q, "poll_once", busy_only),
+        patch.object(q, "build_quote_sources", lambda *a, **k: [Busy(settings), Dark(settings)]),
+        patch.object(q, "time", ticking),
+        patch.object(q.asyncio, "sleep", jump),
+        caplog.at_level(logging.WARNING, logger=q.log.name),
+    ):
+        runner = asyncio.create_task(q.stream(settings=settings, feeds=[], sink=None))
+        for _ in range(300):
+            await real_sleep(0)
+            if any("written nothing" in r.getMessage() for r in caplog.records):
+                break
+        runner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await runner
+
+    said = [r.getMessage() for r in caplog.records]
+    assert any("dark" in m and "written nothing" in m for m in said), said[-3:]
+    assert not any("busy has written nothing" in m for m in said), "the busy one is fine"
 
 
 @pytest.mark.asyncio
