@@ -271,6 +271,33 @@ def check(plan: Plan) -> dict[str, str]:
     return reasons
 
 
+def _watch_end(task: asyncio.Task[None]) -> asyncio.Task[None]:
+    """Say when a task that should run forever stops running.
+
+    **A child of a task group that returns takes nothing with it.** The group
+    only reacts to an exception, so a collector that simply *ends* leaves its
+    siblings running, the actor marked healthy, and nothing at all in the log.
+    That is the shape the quote feed kept failing in on 2026-09-16: quotes
+    stopped, bars carried on, every actor read as running, and the task was
+    absent from a dump with no explanation anywhere for where it had gone.
+
+    Named tasks for the same reason - `Task-532` in a dump of 248 says nothing
+    about which collector went quiet.
+    """
+
+    def ended(done: asyncio.Task[None]) -> None:
+        if done.cancelled():
+            return
+        exc = done.exception()
+        if exc is not None:
+            log.error("stack: %s ended: %r", done.get_name(), exc)
+        else:
+            log.error("stack: %s returned on its own - it should run forever", done.get_name())
+
+    task.add_done_callback(ended)
+    return task
+
+
 def _arm_task_dump() -> None:
     """`kill -USR1` the process and it says what every task is doing.
 
@@ -527,32 +554,38 @@ class Stack:
         intervals = px.resolve_intervals(self.plan.intervals or None)
         store = px.open_store("sqlite", database=settings.database, data_dir=settings.data_dir)
         async with store, asyncio.TaskGroup() as group:
-            group.create_task(
-                px.collect(
-                    settings=settings,
-                    store=store,
-                    feeds=feeds,
-                    intervals=intervals,
-                    # Chosen rather than defaulted, for the reason the quote
-                    # list is: a broker-only feed has no other candle source,
-                    # and quotes without bars build no level at all.
-                    sources=px.bar_source_names(),
-                    cycles=1 if self.plan.once else None,
-                    bus=self.bus,
+            _watch_end(
+                group.create_task(
+                    px.collect(
+                        settings=settings,
+                        store=store,
+                        feeds=feeds,
+                        intervals=intervals,
+                        # Chosen rather than defaulted, for the reason the quote
+                        # list is: a broker-only feed has no other candle source,
+                        # and quotes without bars build no level at all.
+                        sources=px.bar_source_names(),
+                        cycles=1 if self.plan.once else None,
+                        bus=self.bus,
+                    ),
+                    name="prices:bars",
                 )
             )
-            group.create_task(
-                px.stream(
-                    settings=settings,
-                    feeds=feeds,
-                    # Chosen rather than defaulted, so a broker-only feed is
-                    # actually polled. Registering a synthetic and leaving the
-                    # transport at its default would give a feed that exists,
-                    # is asked for, and never quotes.
-                    sources=px.quote_source_names(),
-                    sink=store.write_quote,
-                    ticks=1 if self.plan.once else None,
-                    bus=self.bus,
+            _watch_end(
+                group.create_task(
+                    px.stream(
+                        settings=settings,
+                        feeds=feeds,
+                        # Chosen rather than defaulted, so a broker-only feed is
+                        # actually polled. Registering a synthetic and leaving the
+                        # transport at its default would give a feed that exists,
+                        # is asked for, and never quotes.
+                        sources=px.quote_source_names(),
+                        sink=store.write_quote,
+                        ticks=1 if self.plan.once else None,
+                        bus=self.bus,
+                    ),
+                    name="prices:quotes",
                 )
             )
 

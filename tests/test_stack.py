@@ -242,3 +242,48 @@ async def test_sigusr1_dumps_every_task(caplog):
     said = [r.getMessage() for r in caplog.records]
     assert any("dumping on request" in m for m in said), said
     assert any("a-task-to-find" in m for m in said), "and it must name the tasks it found"
+
+
+@pytest.mark.asyncio
+async def test_a_forever_task_that_returns_says_so(caplog):
+    """**A child of a task group that returns takes nothing with it.**
+
+    The group only reacts to an exception, so a collector that simply ends
+    leaves its siblings running, the actor marked healthy, and nothing in the
+    log. That is the shape the quote feed failed in repeatedly on 2026-09-16:
+    quotes stopped, bars carried on, every actor read as running, and the task
+    was absent from a dump of 248 with no explanation anywhere.
+    """
+    import asyncio
+    import logging
+
+    from till_infinity import stack as st
+
+    async def finishes() -> None:
+        return
+
+    with caplog.at_level(logging.ERROR, logger=st.log.name):
+        async with asyncio.TaskGroup() as group:
+            st._watch_end(group.create_task(finishes(), name="prices:quotes"))
+
+    said = [r.getMessage() for r in caplog.records]
+    assert any("prices:quotes returned on its own" in m for m in said), said
+
+
+@pytest.mark.asyncio
+async def test_a_forever_task_that_raises_says_what_of(caplog):
+    import asyncio
+    import contextlib
+    import logging
+
+    from till_infinity import stack as st
+
+    async def breaks() -> None:
+        raise RuntimeError("the socket went")
+
+    with caplog.at_level(logging.ERROR, logger=st.log.name), contextlib.suppress(BaseException):
+        async with asyncio.TaskGroup() as group:
+            st._watch_end(group.create_task(breaks(), name="prices:quotes"))
+
+    said = [r.getMessage() for r in caplog.records]
+    assert any("the socket went" in m for m in said), said
