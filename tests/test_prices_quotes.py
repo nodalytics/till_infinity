@@ -1,4 +1,6 @@
 import asyncio
+import time
+from dataclasses import replace
 
 import pytest
 
@@ -319,6 +321,66 @@ async def test_a_dead_reader_is_noticed_on_a_prepared_symbol(tmp_path):
     source._ensure_live = reconnect
     await source.quote(KEY.symbol)
     assert tried, "a prepared symbol must still check that something is filling the cache"
+
+
+@pytest.mark.asyncio
+async def test_a_hanging_reconnect_does_not_stop_the_poll(tmp_path):
+    """**A reconnect on the polling path must not be able to stop polling.**
+
+    `poll_once` runs one task group over every source, so an unbounded connect
+    here does not merely delay tradingview - it holds the group open and the
+    broker half of the book stops quoting too. That happened at 08:58 on
+    2026-09-16, fifteen minutes after the liveness check first shipped: the
+    socket dropped, the reconnect hung, both transports went dark, and
+    `collect` carried on writing bars as if nothing were wrong.
+    """
+    source = socket_source(tmp_path)
+    source.settings = replace(source.settings, tv_connect_timeout=0.05)
+    name = KEY.symbol.full
+    source._keys[name] = KEY
+    source._fields[name] = {"bid": 1.0, "ask": 2.0}
+    source._touched[name] = time.time()
+
+    async def died():
+        raise RuntimeError("socket closed")
+
+    source._reader = asyncio.create_task(died())
+    await asyncio.sleep(0)
+
+    async def never():
+        await asyncio.sleep(3600)
+
+    source._ensure_live = never
+
+    started = time.monotonic()
+    got = await asyncio.wait_for(source.quote(KEY.symbol), timeout=2)
+    assert time.monotonic() - started < 1, "the poll waited on a connect that never returns"
+    assert got is not None, "and it answers from the cache rather than blocking or raising"
+
+
+@pytest.mark.asyncio
+async def test_a_second_symbol_does_not_queue_behind_the_first_reconnect(tmp_path):
+    """One poll asks this of every symbol at once and waits for all of them
+    together. Queueing on the lock puts the whole book behind one connect."""
+    source = socket_source(tmp_path)
+    name = KEY.symbol.full
+    source._keys[name] = KEY
+    source._fields[name] = {"bid": 1.0, "ask": 2.0}
+    source._touched[name] = time.time()
+
+    async def died():
+        raise RuntimeError("socket closed")
+
+    source._reader = asyncio.create_task(died())
+    await asyncio.sleep(0)
+
+    await source._lock.acquire()  # somebody else is already reconnecting
+    try:
+        got = await asyncio.wait_for(source.quote(KEY.symbol), timeout=2)
+        assert got is not None
+        assert got.bid == 1.0
+    finally:
+        source._lock.release()
 
 
 @pytest.mark.asyncio

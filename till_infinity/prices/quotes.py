@@ -383,6 +383,31 @@ class TradingViewQuotes(QuoteSource):
 
     # -- reading the cache --------------------------------------------------
 
+    async def _revive(self) -> None:
+        """Reconnect, bounded, and never raise into the poll.
+
+        **A reconnect on the polling path must not be able to stop the
+        polling.** `poll_once` runs one task group over *every* source, so an
+        unbounded connect here does not merely delay tradingview - it holds
+        the group open and the broker half of the book stops quoting too. That
+        is what happened at 08:58 on 2026-09-16, fifteen minutes after this
+        check was first shipped: the socket dropped, the reconnect hung, and
+        both transports went dark while `collect` carried on writing bars.
+
+        Failing leaves the cache in place, which is safe now that a cached
+        quote is dated when it moved: stale is visible rather than disguised,
+        and the next poll tries again.
+        """
+        try:
+            await asyncio.wait_for(self._ensure_live(), self.settings.tv_connect_timeout)
+        except TimeoutError:
+            log.warning(
+                "tradingview quote socket would not reconnect within %.0fs; serving the cache",
+                self.settings.tv_connect_timeout,
+            )
+        except Exception as exc:
+            log.warning("tradingview quote socket would not reconnect: %r", exc)
+
     async def quote(self, symbol: Symbol) -> Quote | None:
         """Read the cache - and check first that something is still filling it.
 
@@ -397,25 +422,38 @@ class TradingViewQuotes(QuoteSource):
         name = symbol.full
         fresh = name not in self._keys
         if fresh or (self._reader is not None and self._reader.done()):
+            # **Never queue behind a reconnect already in flight.** One poll
+            # asks this of every symbol at once and `poll_once` waits for all
+            # of them together, so waiting on the lock would put the whole
+            # book - broker symbols included - behind one network connect.
+            # Whoever holds it is already doing the work.
+            if self._lock.locked():
+                return None if fresh else self._cached(name)
             async with self._lock:
-                await self._ensure_live()
+                await self._revive()
                 if name not in self._keys:
                     self._keys[name] = QuoteKey(self.feed_key, "", symbol)
-                    await self._subscribe([name])
+                    with suppress(Exception):
+                        await self._subscribe([name])
             if fresh:
                 await self._await_first([name], timeout=self.settings.quote_timeout)
 
         if name in self._failed:
             self._note_unavailable(symbol, "quote_error")
             return None
+        return self._cached(name)
+
+    def _cached(self, name: str) -> Quote | None:
+        """The last fields seen, dated **when they moved** rather than now.
+
+        Reading a cache and stamping it with the present makes a stale price
+        indistinguishable from a live one - to the store, to liveness checks,
+        and to anything deciding on it. A quote that has not changed is a
+        repeat, and the store already drops those.
+        """
         fields = self._fields.get(name)
         if not fields:
             return None
-        # **Stamped with when the fields moved, not with now.** Reading a cache
-        # and dating it to the present makes a stale price indistinguishable
-        # from a live one - to the store, to liveness checks, and to anything
-        # deciding on it. A quote that has not changed is a repeat, and the
-        # store already drops those.
         return parse_quote(fields, now=self._touched.get(name, time.time()))
 
     def drain_pushed(self) -> WriteResult:
