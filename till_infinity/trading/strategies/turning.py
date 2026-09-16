@@ -54,6 +54,7 @@ from typing import Any, ClassVar
 
 from ...structures import zma as zm
 from ..models import Refusal, Side
+from ..sizing import price_distance
 from .scalper import LevelStrategy, _number
 from .strategy import register
 
@@ -111,8 +112,11 @@ class CycleTurn(LevelStrategy):
     then was not, so price returning to it is the moment worth taking: support
     that broke is tested as resistance, and the move through it took out
     whoever was leaning on it. `structures/breaks.py` finds that line; this
-    refuses when there is none, and refuses when it points the other way from
-    the cycle.
+    refuses when there is none, when it points the other way from the cycle,
+    and when price is not near enough to it for the line to be an entry at all.
+    That last one is not a formality: measured on the desk, the median call
+    sits twelve volatility units from its broken line, which is structure
+    rather than a setup.
 
     **Then `ride`'s exit.** A trail half a volatility unit behind the best
     price, which `research/exiting.md` measured as the best of six policies
@@ -174,6 +178,12 @@ class CycleTurn(LevelStrategy):
     #: itself the entry: a timeframe cannot confirm itself, and `anchored`
     #: already excludes the call's own interval.
     SUPPORTING: ClassVar[tuple[str, ...]] = ("1h", "1d")
+
+    #: How close the call has to sit to the broken line for that line to be an
+    #: entry rather than a fact about the past. In volatility units of the
+    #: entry bar, because the same gap is a different thing on gold and on a
+    #: crypto pair - the unit every distance in this strategy is measured in.
+    MAX_BREAK_GAP_VOL: ClassVar[float] = 2.0
 
     #: The horizons the stop and the target belong to, in seconds.
     STOP_HORIZON: ClassVar[float] = 3_600.0
@@ -310,8 +320,33 @@ class CycleTurn(LevelStrategy):
                 f"and the cycle expects {'a rise' if agrees > 0 else 'a fall'}",
                 feed,
             )
-        if not _number(features, "break_price"):
+        line = _number(features, "break_price")
+        if not line:
             return Refusal("break_priceless", "the break carries no line to enter at", feed)
+
+        # **The line has to be within reach, or it is a fact about the past
+        # rather than an entry.** The trade is taken *at* the broken level -
+        # support that failed being tested as resistance - so a call twelve
+        # volatility units away from it is not that trade, however correct the
+        # break and the cycle both are. Measured on the desk over three hours:
+        # the median call sat 12.3 units from its line and only 11 of 73 were
+        # inside two, which is the shape of a condition that is meant to be
+        # rare.
+        level = _number(features, "level")
+        vol_bps = _number(features, "vol_bps")
+        if not level or not vol_bps:
+            # The absence of the number is the absence of the evidence - the
+            # same rule the record gate follows. Without a volatility there is
+            # no saying whether the line is near, and "near" is the condition.
+            return Refusal("break_unmeasured", "no volatility to measure the line against", feed)
+        gap = abs(level - line) / price_distance(level, vol_bps, 1.0)
+        if gap > self.MAX_BREAK_GAP_VOL:
+            return Refusal(
+                "break_far",
+                f"the broken line is {gap:.1f} volatility units away, "
+                f"past the {self.MAX_BREAK_GAP_VOL:.0f} this enters within",
+                feed,
+            )
         return None
 
     def _unconfirmed(self, payload: dict[str, Any]) -> tuple[str, ...]:

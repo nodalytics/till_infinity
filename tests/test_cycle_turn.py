@@ -50,6 +50,11 @@ def reading(
         found = {"break_side": float(broke), "break_price": break_price, "break_age": 600.0}
     return {
         **found,
+        # A call sitting on the broken line, which is where this trade is taken.
+        # `vol_bps` at 100 makes one volatility unit 1% of price, so a level of
+        # 100.0 against a line at 99.0 is one unit away.
+        "level": 100.0,
+        "vol_bps": 100.0,
         "zma_agrees": agrees,
         "zma_edge_calls": entry_calls,
         "zma_edge_right": entry_calls * entry_hit,
@@ -164,6 +169,8 @@ class TestTheRecordDecides:
             "zma_strong": 1.0,
             "break_side": 1.0,
             "break_price": 99.0,
+            "level": 100.0,
+            "vol_bps": 100.0,
         }
         assert strategy.accept(UP, bare).gate == "cycle_unproven"
 
@@ -195,6 +202,39 @@ class TestTheBreakComesFirst:
         nowhere to put the entry."""
         got = strategy.accept(UP, reading(break_price=0.0))
         assert got.gate == "break_priceless"
+
+
+class TestTheLineHasToBeWithinReach:
+    """The trade is taken *at* the broken level - support that failed being
+    tested as resistance. A call far from that line is not that trade, however
+    correct the break and the cycle both are."""
+
+    def test_a_call_sitting_on_the_line_is_taken(self, strategy):
+        assert strategy.accept(UP, reading(break_price=99.0)) is None
+
+    def test_a_call_far_from_the_line_is_refused(self, strategy):
+        """Measured on the desk: the median call sat 12.3 volatility units from
+        its line, so without this the rule is satisfied by structure from a day
+        and a half ago that price is nowhere near."""
+        got = strategy.accept(UP, reading(break_price=50.0))
+        assert got.gate == "break_far"
+        assert "volatility units away" in got.detail
+
+    def test_the_gap_is_measured_in_volatility_not_price(self, strategy):
+        """The same gap is a different thing on gold and on a crypto pair. At
+        twice the volatility the same distance is half as many units, and a
+        line that was out of reach comes into it."""
+        far = reading(break_price=90.0)
+        assert strategy.accept(UP, far).gate == "break_far"
+        calmer = {**far, "vol_bps": 1000.0}
+        assert strategy.accept(UP, calmer) is None
+
+    def test_without_a_volatility_it_refuses_rather_than_guesses(self, strategy):
+        """The absence of the number is the absence of the evidence - the same
+        rule the record gate follows. "Near" is the condition, and there is no
+        saying whether a line is near without a unit to say it in."""
+        blind = {k: v for k, v in reading().items() if k != "vol_bps"}
+        assert strategy.accept(UP, blind).gate == "break_unmeasured"
 
 
 class TestGeometry:
