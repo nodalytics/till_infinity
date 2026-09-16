@@ -1959,13 +1959,26 @@ class Trader:
         own = getattr(engine, "pullback_fraction", 0.0) if engine is not None else 0.0
         fraction = own or self.settings.pullback_fraction
 
-        # The small, ordinary improvement, tried before the deep one. Resting a
-        # fraction of a unit nearer the level is a different bet from waiting
-        # for the sweep edge: 189 signals of 813 reached that wait and none of
-        # them parked, because by then the fill was already past it.
-        edge = await self._edge_entry(payload, intent, tick, by)
-        if edge is not None:
-            return edge
+        # **A strategy that trades one particular price is asked first.** The
+        # wick and fraction rules below improve a fill that was going to happen
+        # anyway; this is different in kind - a broken structure being retested
+        # is not the same trade a unit away from the line, so there is nothing
+        # for the general rules to improve on.
+        #
+        # Then the small, ordinary improvement, tried before the deep one:
+        # resting a fraction of a unit nearer the level is a different bet from
+        # waiting for the sweep edge - 189 signals of 813 reached that wait and
+        # none of them parked, because by then the fill was already past it.
+        #
+        # Callables rather than coroutines, so the second is never created when
+        # the first answers: an un-awaited coroutine is a warning and a leak.
+        for attempt in (
+            lambda: self._rest_at_named_price(payload, intent, tick, by, engine),
+            lambda: self._edge_entry(payload, intent, tick, by),
+        ):
+            rested = await attempt()
+            if rested is not None:
+                return rested
 
         features = intent.features or {}
         edge = features.get("sweep_low" if intent.side is Side.BUY else "sweep_high") or 0.0
@@ -2186,6 +2199,64 @@ class Trader:
                     },
                 )
             )
+
+    async def _rest_at_named_price(
+        self,
+        payload: dict[str, Any],
+        intent: Intent,
+        tick: Tick,
+        by: str,
+        engine: Strategy | None,
+    ) -> Refusal | None:
+        """Wait at the price the strategy says the trade is about.
+
+        `Strategy.resting_price` names it; almost every strategy names nothing
+        and this does not fire. `cycle-turn` names the line a structure broke
+        at, because support that failed is tested as resistance when price
+        comes back to it and the coming back *is* the trade - taken a unit
+        away, it is a different bet with the same name.
+
+        **Only when the line is still on the far side of the quote.** If price
+        has already traded through it there is nothing to wait for, and resting
+        behind the market would turn "enter at the line" into "enter after the
+        move": the trade is taken at market instead, which is what the gates
+        already approved.
+
+        Held on this side rather than sent as a pending order, for the reason
+        `_edge_entry` gives: the bridge's `POST /orders/pending` would leave the
+        stop and target on the terminal between placement and fill.
+        """
+        wanted = engine.resting_price(intent.features or {}) if engine is not None else 0.0
+        sign = intent.side.sign
+        # Better for this side means lower to buy, higher to sell - and price
+        # having already traded through the line leaves nothing to wait for.
+        reached = (intent.entry - wanted) * sign <= 0 or (
+            tick.entry(intent.side) - wanted
+        ) * sign <= 0
+        if wanted <= 0 or reached:
+            return None
+        bars = SECONDS.get(intent.interval, 0.0)
+        window = (
+            bars * self.settings.pullback_bars if bars else (intent.hold or self.settings.max_hold)
+        )
+        self._waiting[intent.feed] = Waiting(
+            payload=payload,
+            feed=intent.feed,
+            trigger=wanted,
+            side=intent.side,
+            until=tick.time + window,
+        )
+        self._was_parked[intent.feed] = True
+        log.info(
+            "trading: %s %s resting at %.5g - the line %s broke, against the %.5g on offer",
+            intent.side,
+            intent.feed,
+            wanted,
+            by or "a structure",
+            intent.entry,
+        )
+        await self._leave_with_broker(intent, by, wanted, tick.time + window)
+        return Refusal("waiting", f"holding out for the broken line at {wanted:.5g}", intent.feed)
 
     async def _edge_entry(
         self, payload: dict[str, Any], intent: Intent, tick: Tick, by: str = ""

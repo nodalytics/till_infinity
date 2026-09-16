@@ -293,6 +293,22 @@ class CycleTurn(LevelStrategy):
             )
         return None
 
+    def resting_price(self, features: dict[str, float]) -> float:
+        """**The broken line, because that is the trade.**
+
+        Support that failed is tested as resistance when price comes back to
+        it, and the coming back is the event - so this waits there rather than
+        paying the spread to enter wherever price happens to be when the call
+        lands. `accept` has already refused anything further than
+        `MAX_BREAK_GAP_VOL` from the line, so the wait is short by construction
+        and the fill is the price the thesis is about.
+
+        `_park` re-asks this strategy when price arrives, so a setup that
+        stopped being worth taking while it waited is refused on arrival like
+        any other.
+        """
+        return _number(features, "break_price")
+
     def _without_a_break(
         self, feed: str, features: dict[str, float], agrees: float
     ) -> Refusal | None:

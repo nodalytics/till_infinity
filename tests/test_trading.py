@@ -3094,6 +3094,57 @@ async def test_a_signal_is_parked_rather_than_chased():
     assert "gold" in trader._waiting
 
 
+async def test_a_strategy_that_names_a_price_waits_at_it():
+    """**A broken structure being retested is not the same trade a unit away.**
+
+    Support that failed is tested as resistance when price comes back to it,
+    and the coming back is the event - so the trade rests at that line rather
+    than paying the spread to enter wherever price happens to be when the call
+    lands. The general pullback rules improve a fill that was going to happen
+    anyway; this one is different in kind, so it is asked first.
+    """
+    bus = Bus()
+    made = settings(live=True)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+
+    for engine in trader.strategies:
+        engine.resting_price = lambda features: 4390.0
+
+    got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    assert isinstance(got, Refusal)
+    assert got.gate == "waiting"
+    assert "4390" in got.detail
+    assert venue.sent == [], "nothing should have been sent yet"
+    assert trader._waiting["gold"].trigger == 4390.0
+
+
+async def test_a_named_price_already_passed_is_taken_at_market():
+    """Resting behind the market would turn "enter at the line" into "enter
+    after the move". If price has already traded through it there is nothing to
+    wait for, and the gates have already approved the trade."""
+    bus = Bus()
+    made = settings(live=True)
+    venue = RecordingBroker(made)
+    trader = Trader(bus, settings=made, broker=venue)
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+
+    # A buy, with the line *above* the quote: price is already past it.
+    for engine in trader.strategies:
+        engine.resting_price = lambda features: 4500.0
+
+    got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    assert "gold" not in trader._waiting
+    assert not (isinstance(got, Refusal) and got.gate == "waiting")
+
+
 async def test_a_parked_signal_fires_when_price_comes_to_it():
     bus = Bus()
     made = settings(live=True, pullback_fraction=1.0)

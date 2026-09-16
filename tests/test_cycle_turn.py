@@ -237,6 +237,18 @@ class TestTheLineHasToBeWithinReach:
         assert strategy.accept(UP, blind).gate == "break_unmeasured"
 
 
+class TestItWaitsAtTheLine:
+    def test_the_resting_price_is_the_broken_line(self, strategy):
+        """The trade is the retest, so the fill has to be the line - not
+        wherever price was when the call landed."""
+        assert strategy.resting_price(reading(break_price=99.0)) == 99.0
+
+    def test_no_break_means_nothing_to_wait_for(self, strategy):
+        """Zero is "take what is on offer". `accept` refuses these anyway; the
+        two must not disagree about what a missing break means."""
+        assert strategy.resting_price(reading(broke=0)) == 0.0
+
+
 class TestGeometry:
     def test_it_enters_anywhere_from_a_minute_to_an_hour(self, strategy):
         """The entry timeframe decides when the trade is noticed, not what it

@@ -503,6 +503,21 @@ class Strategy(ABC):
         interval = str(payload.get("interval") or "")
         return tuple(str(t) for t in raw if str(t) in wanted and str(t) != interval)
 
+    def resting_price(self, features: dict[str, float]) -> float:  # noqa: ARG002
+        """A price this strategy insists its entry sits at, or 0 for at market.
+
+        Almost every strategy takes what is on offer: the call is about a level
+        and the fill is wherever price happens to be. A strategy whose thesis
+        is about *a particular price* - a broken structure being retested, say -
+        is not the same trade at a different one, and says so here rather than
+        hoping the fill lands nearby.
+
+        The desk already knows how to wait: `_park` turns this into a resting
+        order held on this side, re-asking the strategy when price arrives so
+        every gate is re-run against the tick that actually fills it.
+        """
+        return 0.0
+
     def wants(self, payload: dict[str, Any]) -> bool:
         """A cheap pre-filter, so a firehose of signals costs almost nothing."""
         return str(payload.get("shape") or "") == self.shape
