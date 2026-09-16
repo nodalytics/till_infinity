@@ -128,6 +128,8 @@ class Bus:
         #: `_note_drop`: the count is the reading, and the per-message warning
         #: it replaces was actively harmful.
         self._drops: dict[tuple[str, str], int] = {}
+        #: Messages published to a topic with no subscriber, by topic.
+        self._unheard: dict[str, int] = {}
         self._closed = False
 
     @property
@@ -171,7 +173,37 @@ class Bus:
                 self._note_drop(topic, group)
             except Exception as exc:  # a dead subscriber is not the publisher's problem
                 log.warning("bus: publish to %s/%s failed: %s", topic, group, exc)
+        if not sent:
+            self._note_unheard(topic)
         return sent
+
+    def _note_unheard(self, topic: str) -> None:
+        """Count a message nobody was listening for, and say so occasionally.
+
+        **Publishing into a void is silent and looks exactly like working.**
+        The publisher's own counters go up, its journal fills, its logs read
+        normally, and the consumer sits in its pump with nothing arriving - so
+        the failure presents as a desk that has simply gone quiet. On
+        2026-09-16 structures published 18,565 signals in twenty-five minutes
+        while trading recorded none, and nothing anywhere said the two were not
+        connected.
+
+        Throttled on the same widening schedule as `_note_drop`, and for the
+        same reason: a line per message would bury the cause under the symptom.
+        """
+        seen = self._unheard.get(topic, 0) + 1
+        self._unheard[topic] = seen
+        if seen < 1000:
+            if seen not in (1, 10, 100):
+                return
+        elif seen % 1000:
+            return
+        log.warning(
+            "bus: %d message(s) published to %s with nobody subscribed - "
+            "whatever should be consuming this is not",
+            seen,
+            topic,
+        )
 
     def _note_drop(self, topic: str, group: str) -> None:
         """Count a dropped message and say so **occasionally**.

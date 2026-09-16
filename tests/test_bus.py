@@ -2,6 +2,32 @@
 
 from __future__ import annotations
 
+import contextlib
+import logging as _logging
+
+
+@contextlib.contextmanager
+def caplog_at(level, name):
+    """Collect records from one logger, without depending on caplog's
+    propagation rules."""
+    found = []
+
+    class Grab(_logging.Handler):
+        def emit(self, record):
+            found.append(record)
+
+    logger = _logging.getLogger(name)
+    handler = Grab(level)
+    logger.addHandler(handler)
+    was = logger.level
+    logger.setLevel(level)
+    try:
+        yield found
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(was)
+
+
 import asyncio
 
 import pytest
@@ -266,3 +292,41 @@ def test_a_single_new_bar_still_announces_once():
 
     bar = Bar(time=1_700_000_000, open=10.0, high=11.0, low=9.0, close=10.5, volume=3)
     assert len(notices(KEY, [bar], WriteResult(inserted=1))) == 1
+
+
+@pytest.mark.asyncio
+async def test_publishing_with_nobody_subscribed_says_so():
+    """**Publishing into a void is silent and looks exactly like working.**
+
+    The publisher's counters go up, its journal fills, its logs read normally,
+    and the consumer sits in its pump with nothing arriving - so the failure
+    presents as a desk that has simply gone quiet. On 2026-09-16 structures
+    published 18,565 signals in twenty-five minutes while trading recorded
+    none, and nothing anywhere said the two were not connected.
+    """
+    import logging
+
+    from till_infinity import bus as b
+
+    line = b.Bus()
+    with caplog_at(logging.WARNING, b.log.name) as records:
+        sent = await line.publish("nobody.listens", {"a": 1})
+        assert sent == 0
+    assert any("nobody subscribed" in r.getMessage() for r in records), [
+        r.getMessage() for r in records
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_topic_with_a_subscriber_says_nothing():
+    """It has to stay quiet in the ordinary case, or it is noise that gets
+    filtered and then misses the one time it matters."""
+    import logging
+
+    from till_infinity import bus as b
+
+    line = b.Bus()
+    line.subscribe("somebody.listens", "a-group")
+    with caplog_at(logging.WARNING, b.log.name) as records:
+        assert await line.publish("somebody.listens", {"a": 1}) == 1
+    assert not [r for r in records if "nobody subscribed" in r.getMessage()]
