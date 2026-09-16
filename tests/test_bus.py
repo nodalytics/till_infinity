@@ -2,8 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging as _logging
+
+import pytest
+
+from till_infinity import bus as topics
+from till_infinity.bus import Bus, Message
+from till_infinity.news.models import Article, Event
+from till_infinity.news.models import WriteResult as NewsWrite
+from till_infinity.news.service import Announcer
+from till_infinity.notifications.service import from_message
+from till_infinity.prices.models import Bar, Quote, QuoteKey, SeriesKey, Symbol, WriteResult
+from till_infinity.prices.quotes import announce_quote, publishing
+from till_infinity.prices.service import announce_bars
 
 
 @contextlib.contextmanager
@@ -27,20 +40,6 @@ def caplog_at(level, name):
         logger.removeHandler(handler)
         logger.setLevel(was)
 
-
-import asyncio
-
-import pytest
-
-from till_infinity import bus as topics
-from till_infinity.bus import Bus, Message
-from till_infinity.news.models import Article, Event
-from till_infinity.news.models import WriteResult as NewsWrite
-from till_infinity.news.service import Announcer
-from till_infinity.notifications.service import from_message
-from till_infinity.prices.models import Bar, Quote, QuoteKey, SeriesKey, Symbol, WriteResult
-from till_infinity.prices.quotes import announce_quote, publishing
-from till_infinity.prices.service import announce_bars
 
 KEY = SeriesKey("tradingview", "gold", Symbol("OANDA", "XAUUSD"), "1h")
 QKEY = QuoteKey("tradingview", "gold", Symbol("PEPPERSTONE", "XAUUSD"))
