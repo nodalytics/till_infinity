@@ -215,6 +215,10 @@ class TradingViewQuotes(QuoteSource):
         self._sink: QuoteSink | None = None
         self._keys: dict[str, QuoteKey] = {}
         self._fields: dict[str, dict[str, Any]] = {}
+        #: When each symbol's fields last *moved*. The cache answers polls, so
+        #: without this a quote read out of it is stamped with the current
+        #: clock and a dead socket produces prices that look live.
+        self._touched: dict[str, float] = {}
         self._ready: dict[str, asyncio.Event] = {}
         self._failed: set[str] = set()
         self._pushed = WriteResult()
@@ -274,10 +278,22 @@ class TradingViewQuotes(QuoteSource):
                 await stack.aclose()
 
     async def _ensure_live(self) -> None:
-        """Reconnect and resubscribe if the reader died."""
+        """Reconnect and resubscribe if the reader died.
+
+        **Nothing retrieves the reader's exception, so this is the only place
+        the cause is ever seen.** `_read` is a bare task held on `self`, which
+        means it is never garbage collected and asyncio's "task exception was
+        never retrieved" warning never fires either: the socket closes, the
+        task ends, and the process carries on with no trace at all.
+        """
         if self._reader is not None and not self._reader.done():
             return
-        log.warning("tradingview quote socket dropped; reconnecting")
+        why = ""
+        if self._reader is not None:
+            with suppress(Exception):
+                exc = self._reader.exception()
+                why = f": {exc!r}" if exc is not None else " (ended without raising)"
+        log.warning("tradingview quote socket dropped; reconnecting%s", why)
         await self._disconnect()
         self._ready.clear()
         await self._connect()
@@ -350,8 +366,10 @@ class TradingViewQuotes(QuoteSource):
         if not any(field in values for field in ("bid", "ask", "lp")):
             return
         self._wake(name)
+        now = time.time()
+        self._touched[name] = now
 
-        quote = parse_quote(merged, now=time.time())
+        quote = parse_quote(merged, now=now)
         key = self._keys.get(name)
         if quote is None or key is None or self._sink is None:
             return
@@ -366,15 +384,26 @@ class TradingViewQuotes(QuoteSource):
     # -- reading the cache --------------------------------------------------
 
     async def quote(self, symbol: Symbol) -> Quote | None:
+        """Read the cache - and check first that something is still filling it.
+
+        **The reconnect used to be unreachable from here for any symbol that
+        had been prepared**, which is every symbol the desk follows. So a
+        dropped socket was permanent: the reader task ended, no poll ever
+        looked at it again, and this went on answering out of a field map
+        nothing was updating. Twice on 2026-09-16 the desk wrote no quote for
+        hours - once for 2h34m and once until it was restarted - with no error
+        logged, every other actor healthy, and bars still arriving.
+        """
         name = symbol.full
-        if name not in self._keys:
-            # A symbol nobody prepared - subscribe now and wait for the first tick.
+        fresh = name not in self._keys
+        if fresh or (self._reader is not None and self._reader.done()):
             async with self._lock:
                 await self._ensure_live()
                 if name not in self._keys:
                     self._keys[name] = QuoteKey(self.feed_key, "", symbol)
                     await self._subscribe([name])
-            await self._await_first([name], timeout=self.settings.quote_timeout)
+            if fresh:
+                await self._await_first([name], timeout=self.settings.quote_timeout)
 
         if name in self._failed:
             self._note_unavailable(symbol, "quote_error")
@@ -382,7 +411,12 @@ class TradingViewQuotes(QuoteSource):
         fields = self._fields.get(name)
         if not fields:
             return None
-        return parse_quote(fields, now=time.time())
+        # **Stamped with when the fields moved, not with now.** Reading a cache
+        # and dating it to the present makes a stale price indistinguishable
+        # from a live one - to the store, to liveness checks, and to anything
+        # deciding on it. A quote that has not changed is a repeat, and the
+        # store already drops those.
+        return parse_quote(fields, now=self._touched.get(name, time.time()))
 
     def drain_pushed(self) -> WriteResult:
         out, self._pushed = self._pushed, WriteResult()

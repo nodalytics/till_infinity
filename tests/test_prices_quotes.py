@@ -287,6 +287,83 @@ async def test_socket_marks_an_error_symbol_unavailable(tmp_path):
     assert await source.quote(KEY.symbol) is None
 
 
+@pytest.mark.asyncio
+async def test_a_dead_reader_is_noticed_on_a_prepared_symbol(tmp_path):
+    """**The reconnect was unreachable for every symbol the desk follows.**
+
+    `quote()` only checked the socket for a symbol nobody had prepared, and
+    every symbol on the desk is prepared at start-up. So a dropped reader was
+    permanent: the task ended, no poll looked at it again, and the cache went
+    on answering. Twice on 2026-09-16 the desk wrote no quote for hours - once
+    for 2h34m - with nothing logged, every other actor healthy, and bars still
+    arriving. That is the failure this test exists for, and the symbol being
+    already known is the whole point of it.
+    """
+    source = socket_source(tmp_path)
+    name = KEY.symbol.full
+    source._keys[name] = KEY
+    source._fields[name] = {"bid": 1.0, "ask": 2.0}
+
+    async def died():
+        raise RuntimeError("socket closed")
+
+    source._reader = asyncio.create_task(died())
+    await asyncio.sleep(0)
+
+    tried = []
+
+    async def reconnect():
+        tried.append(True)
+        source._reader = None
+
+    source._ensure_live = reconnect
+    await source.quote(KEY.symbol)
+    assert tried, "a prepared symbol must still check that something is filling the cache"
+
+
+@pytest.mark.asyncio
+async def test_a_live_reader_is_not_reconnected_for_every_poll(tmp_path):
+    """The check is on the hot path - every symbol, every tick - so it has to
+    be exactly the reader's state and nothing more expensive."""
+    source = socket_source(tmp_path)
+    name = KEY.symbol.full
+    source._keys[name] = KEY
+    source._fields[name] = {"bid": 1.0, "ask": 2.0}
+    source._reader = asyncio.create_task(asyncio.sleep(5))
+
+    tried = []
+    source._ensure_live = lambda: tried.append(True)
+    try:
+        assert await source.quote(KEY.symbol) is not None
+        assert not tried
+    finally:
+        source._reader.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_cached_quote_is_dated_when_it_moved_not_when_it_was_read(tmp_path):
+    """**A stale price must not be able to look like a live one.** The cache
+    answers polls, so dating it to the present makes a dead socket produce
+    prices that every consumer - the store, liveness checks, anything deciding
+    on them - reads as current."""
+    source = socket_source(tmp_path)
+    name = KEY.symbol.full
+    source._keys[name] = KEY
+    source._ready[name] = asyncio.Event()
+    source._reader = asyncio.create_task(asyncio.sleep(5))
+
+    try:
+        await source._on_update(["qs", {"n": name, "v": {"bid": 1.0, "ask": 2.0}}])
+        moved = source._touched[name]
+        await asyncio.sleep(0.05)
+
+        got = await source.quote(KEY.symbol)
+        assert got is not None
+        assert got.time == moved, "read time is not quote time"
+    finally:
+        source._reader.cancel()
+
+
 class FakeStreaming(QuoteSource):
     name = "tradingview"
     feed_key = "tradingview"
