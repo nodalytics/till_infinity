@@ -212,6 +212,7 @@ class TradingViewQuotes(QuoteSource):
         self._ws: Any = None
         self._session = ""
         self._reader: asyncio.Task[None] | None = None
+        self._repair: asyncio.Task[None] | None = None
         self._sink: QuoteSink | None = None
         self._keys: dict[str, QuoteKey] = {}
         self._fields: dict[str, dict[str, Any]] = {}
@@ -231,6 +232,10 @@ class TradingViewQuotes(QuoteSource):
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
+        repair, self._repair = self._repair, None
+        if repair is not None and not repair.done():
+            repair.cancel()
+            await asyncio.wait({repair}, timeout=self.settings.quote_timeout)
         await self._disconnect()
 
     async def _connect(self) -> None:
@@ -269,8 +274,13 @@ class TradingViewQuotes(QuoteSource):
         reader, self._reader = self._reader, None
         if reader is not None:
             reader.cancel()
-            with suppress(asyncio.CancelledError, Exception):
-                await reader
+            # **`asyncio.wait`, not `await reader` under `suppress`.** Catching
+            # `CancelledError` there swallowed *our own* cancellation, so a
+            # reconnect wrapped in `wait_for` could not be interrupted and the
+            # timeout meant nothing. `wait` returns rather than raising, honours
+            # its own deadline, and leaves a real cancellation of this coroutine
+            # free to propagate.
+            await asyncio.wait({reader}, timeout=self.settings.quote_timeout)
         stack, self._stack = self._stack, None
         self._ws = None
         if stack is not None:
@@ -383,6 +393,26 @@ class TradingViewQuotes(QuoteSource):
 
     # -- reading the cache --------------------------------------------------
 
+    def _dead(self) -> bool:
+        """Whether anything is still filling the cache.
+
+        `None` counts as dead, and that is not a detail: a reconnect that fails
+        leaves it `None`, so a check written as "not None and done" stops
+        asking after the first failure and the source never comes back.
+        """
+        return self._reader is None or self._reader.done()
+
+    def _schedule_repair(self) -> None:
+        """Reconnect in its own task, so the poll that noticed does not wait."""
+        if self._repair is not None and not self._repair.done():
+            return
+        self._repair = asyncio.create_task(self._repair_now(), name="tv-quotes-repair")
+
+    async def _repair_now(self) -> None:
+        async with self._lock:
+            if self._dead():
+                await self._revive()
+
     async def _revive(self) -> None:
         """Reconnect, bounded, and never raise into the poll.
 
@@ -420,23 +450,28 @@ class TradingViewQuotes(QuoteSource):
         logged, every other actor healthy, and bars still arriving.
         """
         name = symbol.full
-        fresh = name not in self._keys
-        if fresh or (self._reader is not None and self._reader.done()):
-            # **Never queue behind a reconnect already in flight.** One poll
-            # asks this of every symbol at once and `poll_once` waits for all
-            # of them together, so waiting on the lock would put the whole
-            # book - broker symbols included - behind one network connect.
-            # Whoever holds it is already doing the work.
-            if self._lock.locked():
-                return None if fresh else self._cached(name)
-            async with self._lock:
-                await self._revive()
-                if name not in self._keys:
-                    self._keys[name] = QuoteKey(self.feed_key, "", symbol)
-                    with suppress(Exception):
-                        await self._subscribe([name])
-            if fresh:
-                await self._await_first([name], timeout=self.settings.quote_timeout)
+        if name in self._keys:
+            # **The hot path awaits nothing on the network. It is a cache read
+            # and a flag.** Repairing here - even bounded, even without
+            # queueing - was wrong twice in one morning: `poll_once` runs one
+            # task group across every source and waits for all of it, so any
+            # task that does not return stops the broker half of the book too.
+            # That is both outages: 08:58 and 09:47, quotes from both
+            # transports ending on the same minute as a socket drop while
+            # `collect` carried on writing bars.
+            if self._dead():
+                self._schedule_repair()
+            return self._cached(name)
+
+        # A symbol nobody prepared. Not the hot path - it happens once - so it
+        # may wait, and every wait in it is bounded.
+        async with self._lock:
+            await self._revive()
+            if name not in self._keys:
+                self._keys[name] = QuoteKey(self.feed_key, "", symbol)
+                with suppress(Exception):
+                    await self._subscribe([name])
+        await self._await_first([name], timeout=self.settings.quote_timeout)
 
         if name in self._failed:
             self._note_unavailable(symbol, "quote_error")

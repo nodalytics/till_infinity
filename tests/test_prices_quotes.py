@@ -316,11 +316,101 @@ async def test_a_dead_reader_is_noticed_on_a_prepared_symbol(tmp_path):
 
     async def reconnect():
         tried.append(True)
-        source._reader = None
 
     source._ensure_live = reconnect
-    await source.quote(KEY.symbol)
-    assert tried, "a prepared symbol must still check that something is filling the cache"
+    assert await source.quote(KEY.symbol) is not None, "and answers from the cache meanwhile"
+    assert source._repair is not None, "a prepared symbol must still ask for the socket back"
+    await source._repair
+    assert tried, "and the repair must actually run"
+
+
+@pytest.mark.asyncio
+async def test_the_poll_path_awaits_nothing_that_can_hang(tmp_path):
+    """**The strongest form of the rule, because the weaker ones both failed.**
+
+    Bounding the reconnect was not enough (the bound could not bind), and not
+    queueing on the lock was not enough either. `poll_once` runs one task group
+    across every source and waits for all of it, so a single task that does not
+    return stops the broker half of the book as well - which is exactly what
+    both 2026-09-16 outages looked like: quotes from both transports ending on
+    the same minute as a tradingview socket drop, with `collect` still writing
+    bars beside them.
+
+    So for a symbol already prepared, `quote()` must reach no network at all.
+    Here the reconnect never returns and the repair task never completes, and
+    the poll still finishes immediately.
+    """
+    source = socket_source(tmp_path)
+    name = KEY.symbol.full
+    source._keys[name] = KEY
+    source._fields[name] = {"bid": 1.0, "ask": 2.0}
+    source._touched[name] = time.time()
+
+    async def died():
+        raise RuntimeError("socket closed")
+
+    source._reader = asyncio.create_task(died())
+    await asyncio.sleep(0)
+
+    async def never():
+        await asyncio.sleep(3600)
+
+    source._ensure_live = never
+    try:
+        started = time.monotonic()
+        got = await asyncio.wait_for(source.quote(KEY.symbol), timeout=1)
+        assert time.monotonic() - started < 0.2, "the poll waited on the network"
+        assert got is not None
+        assert got.bid == 1.0
+        assert source._repair is not None
+        assert not source._repair.done(), "the repair is still running; the poll did not wait"
+    finally:
+        if source._repair is not None:
+            source._repair.cancel()
+
+
+@pytest.mark.asyncio
+async def test_one_repair_at_a_time(tmp_path):
+    """Every symbol in the book notices the same dead socket in the same poll.
+    One reconnect, not fifty."""
+    source = socket_source(tmp_path)
+    book = [Symbol("OANDA", t) for t in ("XAUUSD", "EURUSD", "GBPUSD")]
+    for sym in book:
+        source._keys[sym.full] = QuoteKey("tradingview", "x", sym)
+        source._fields[sym.full] = {"bid": 1.0, "ask": 2.0}
+
+    async def died():
+        raise RuntimeError("socket closed")
+
+    source._reader = asyncio.create_task(died())
+    await asyncio.sleep(0)
+
+    runs = []
+
+    async def slow():
+        runs.append(True)
+        await asyncio.sleep(3600)
+
+    source._ensure_live = slow
+    try:
+        for sym in book:
+            await source.quote(sym)
+        await asyncio.sleep(0)
+        assert len(runs) <= 1, f"{len(runs)} reconnects for one dropped socket"
+    finally:
+        if source._repair is not None:
+            source._repair.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_reconnect_is_still_dead(tmp_path):
+    """A reconnect that fails leaves no reader at all. Written as "not None and
+    done", the check stops asking after the first failure and the source never
+    comes back - the outage becomes permanent on the first thing that goes
+    wrong with fixing it."""
+    source = socket_source(tmp_path)
+    source._reader = None
+    assert source._dead()
 
 
 @pytest.mark.asyncio
