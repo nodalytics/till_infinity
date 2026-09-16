@@ -59,20 +59,34 @@ from .strategy import register
 
 @register
 class CycleTurn(LevelStrategy):
-    """A 15m-to-1h entry that the 1h and 4h cycles both have to agree with.
+    """A 1m-to-1h entry that the 1h and 4h cycles both have to agree with.
 
     ## The shape
 
-    **Entry on 15m, 30m or 1h.** Fast enough that a stop means something, slow
-    enough that the cycle reading on it is not one bar of noise.
+    **Entry anywhere from 1m to 1h.** The entry timeframe decides when the
+    trade is taken, not what it is: every one of them is stopped on the 1h
+    horizon and targeted on the 4h, so a 1m entry and a 1h entry aim at the
+    same two distances and differ only in how promptly they notice. What keeps
+    a fast entry from being one bar of noise is not the bar - it is the
+    requirement below that the 1h and 4h cycles both already agree.
 
-    **Confirmed by 1h and 4h, with 1d optional.** Both required anchors have to
-    appear in the call's own confluence - `structures` has already grouped the
-    price into a zone across timeframes, so this reads that rather than asking
-    a second, differently-wrong version of the same question. A 1d agreement is
-    recorded as `fully_aligned` and does not gate: making it mandatory would
-    refuse most of the trades the 1h/4h pair already qualifies, and nothing has
-    measured that it should.
+    **Anchored on 1h, 4h and 1d, and they are not worth the same.** The 4h is
+    the mother cycle: without its agreement there is no agreement at all, and
+    a 1h and a 1d that agree with each other while it does not are two
+    timeframes agreeing about something the cycle they sit inside has already
+    turned away from. So 4h is necessary - and not sufficient, because one
+    reading is not an agreement however senior the timeframe. At least one of
+    the other two has to agree with it.
+
+    The anchors are read out of the call's own confluence: `structures` has
+    already grouped the price into a zone across timeframes, so this reads that
+    rather than asking a second, differently-wrong version of the same
+    question. The call's own interval never counts - a timeframe cannot confirm
+    itself - so a 1h entry is anchored on the 4h and the 1d.
+
+    All three agreeing is recorded as `fully_aligned` and does not gate, which
+    keeps the difference between "the mother and one" and "everything" in the
+    record where a later comparison can use it.
 
     **Stop sized for the 1h horizon, target for the 4h**, which is the part
     worth being precise about. The signal publishes no per-timeframe structure
@@ -82,7 +96,8 @@ class CycleTurn(LevelStrategy):
     diffusive move over `T` scales as the square root of `T`, so a 15m call's
     stop is widened by `sqrt(3600/900) = 2` and its target by
     `sqrt(14400/900) = 4`. On a 1h entry the stop is unscaled and only the
-    target stretches.
+    target stretches; on a 1m entry both stretch hard, by 7.7 and 15.5, which
+    is the same pair of absolute distances arrived at from a smaller bar.
 
     That is a real implementation of the intent rather than a relabelling, and
     it is stated here because the alternative reading - that this finds the
@@ -112,29 +127,45 @@ class CycleTurn(LevelStrategy):
     name: ClassVar[str] = "cycle-turn"
     refines: ClassVar[str] = "level-scalp"
     description: ClassVar[str] = (
-        "A 15m-to-1h reversion entry that the 1h and 4h cycles must both agree "
+        "A 1m-to-1h reversion entry that the 1h and 4h cycles must both agree "
         "with, stopped on the 1h horizon and targeted on the 4h, trailed like "
         "`ride`. Only on feeds whose own scored record beats a coin."
     )
-    entries: ClassVar[tuple[str, ...]] = ("15m", "30m", "1h")
-    #: 1d is listed so `anchored` reports it; only `REQUIRED` gates.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m", "1h")
+    #: Every anchor this reads. What each one is worth is below.
     context: ClassVar[tuple[str, ...]] = ("1h", "4h", "1d")
     needs_context: ClassVar[bool] = True
 
-    #: Both have to agree. `1h` drops out of the requirement when it is itself
-    #: the entry - a timeframe cannot confirm itself, and `anchored` already
-    #: excludes the call's own interval.
-    REQUIRED: ClassVar[tuple[str, ...]] = ("1h", "4h")
-    #: Recorded when it also agrees, never required. See the class note.
-    OPTIONAL: ClassVar[str] = "1d"
+    #: **The mother cycle.** Without its agreement there is no anchor
+    #: agreement at all: the others are read as confirmation of *it*, so a 1h
+    #: and a 1d that agree with each other while 4h does not are two
+    #: timeframes agreeing about something the cycle they sit inside has
+    #: already turned away from. Refused outright rather than scored down.
+    MOTHER: ClassVar[str] = "4h"
+    #: The rest of the anchors. **4h is not allowed to agree alone** - at least
+    #: one of these has to agree with it, which is what makes the agreement an
+    #: agreement rather than one reading repeated. `1h` drops out when it is
+    #: itself the entry: a timeframe cannot confirm itself, and `anchored`
+    #: already excludes the call's own interval.
+    SUPPORTING: ClassVar[tuple[str, ...]] = ("1h", "1d")
 
     #: The horizons the stop and the target belong to, in seconds.
     STOP_HORIZON: ClassVar[float] = 3_600.0
     TARGET_HORIZON: ClassVar[float] = 14_400.0
-    #: How far the scaling may stretch either distance. Without it a 15m entry
-    #: aiming at a 1d horizon would ask for a target 9.8 units out, which the
-    #: reward-to-risk gate would pass and no market would reach.
-    MAX_SCALE: ClassVar[float] = 4.0
+    #: How far the scaling may stretch either distance. It exists because a
+    #: horizon far enough past the entry asks for a target no market will
+    #: reach: a 15m entry aiming at a **1d** horizon wants 9.8 units out, which
+    #: the reward-to-risk gate would happily pass.
+    #:
+    #: **Sized so that no declared entry is capped at the declared horizons.**
+    #: At 4.0 it was not, and the damage was silent: a 1m entry wants 7.7 and
+    #: 15.5, and capping both at 4 does not tighten a trade evenly - it flattens
+    #: the *ratio* between them, so the fast entries alone would have carried
+    #: half the reward-to-risk of the slow ones while claiming the same design.
+    #: The fastest entry against the 4h target needs `sqrt(14400/60) = 15.5`.
+    #: `test_no_declared_entry_is_capped` fails if a faster entry or a longer
+    #: horizon is added without revisiting this.
+    MAX_SCALE: ClassVar[float] = 16.0
 
     #: **A position, not a scalp.** Its entry is 15m to 1h and its context is
     #: 4h and 1d, so the move it bets on takes days. Capped by the scalp
@@ -173,11 +204,19 @@ class CycleTurn(LevelStrategy):
             )
 
         missing = self._unconfirmed(payload)
+        if missing == (self.MOTHER,):
+            return Refusal(
+                "cycle_no_mother",
+                f"the {self.MOTHER} cycle does not agree with this "
+                f"{payload.get('interval') or '?'} call, which ends it whatever "
+                f"the others say",
+                feed,
+            )
         if missing:
             return Refusal(
-                "cycle_unaligned",
-                f"{'/'.join(missing)} does not agree with this "
-                f"{payload.get('interval') or '?'} call",
+                "cycle_alone",
+                f"only the {self.MOTHER} agrees - {'/'.join(missing)} would have "
+                f"to as well for this to be an agreement",
                 feed,
             )
 
@@ -202,18 +241,31 @@ class CycleTurn(LevelStrategy):
         return None
 
     def _unconfirmed(self, payload: dict[str, Any]) -> tuple[str, ...]:
-        """Required anchors that do not agree with this call.
+        """What is missing from the anchor agreement, mother cycle first.
 
-        The call's own interval is excluded - a timeframe cannot confirm
-        itself, which is why a 1h entry needs only 4h.
+        Two different failures, and they are not the same size. `4h` missing
+        is the whole agreement gone - see `MOTHER`. `4h` present with nothing
+        beside it is one reading, not an agreement, and the caller turns that
+        into its own refusal.
+
+        The call's own interval is excluded throughout: a timeframe cannot
+        confirm itself, which is why a 1h entry is anchored on 4h and 1d.
         """
         interval = str(payload.get("interval") or "")
         agreeing = set(self.anchored(payload))
-        return tuple(t for t in self.REQUIRED if t != interval and t not in agreeing)
+        if interval != self.MOTHER and self.MOTHER not in agreeing:
+            return (self.MOTHER,)
+        support = [t for t in self.SUPPORTING if t != interval]
+        if support and not any(t in agreeing for t in support):
+            return tuple(support)
+        return ()
 
     def fully_aligned(self, payload: dict[str, Any]) -> bool:
-        """Whether the daily agrees too. Recorded, never required."""
-        return self.OPTIONAL in set(self.anchored(payload))
+        """Whether every anchor agrees, not just the two that gate. Recorded."""
+        interval = str(payload.get("interval") or "")
+        agreeing = set(self.anchored(payload))
+        wanted = [t for t in (self.MOTHER, *self.SUPPORTING) if t != interval]
+        return bool(wanted) and all(t in agreeing for t in wanted)
 
     def _horizon_scale(self, interval: str, horizon: float) -> float:
         """How much wider a distance is over `horizon` than over one bar of `interval`.

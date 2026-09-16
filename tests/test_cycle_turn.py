@@ -15,6 +15,8 @@ it, with nobody maintaining a list of which families those are.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from till_infinity.trading import Settings
@@ -43,10 +45,11 @@ def strategy():
 
 class TestItRunsBesideThePlainTrade:
     def test_it_runs_beside_cycle_scalp_by_default(self):
-        """The two the desk runs, and they do not overlap: `cycle-scalp` enters
-        on 1m to 15m and this on 15m to 1h, so only 15m is shared - and there
-        the two want opposite things, one a continuation and one a turn against
-        it. The journal tells them apart by magic."""
+        """The two the desk runs. **They overlap on every fast timeframe**, and
+        they want opposite things there - one a continuation, one a turn
+        against it - so which of them trades a shared call is decided by the
+        order in `TRADING_STRATEGIES`, where the first taker wins. The journal
+        tells their trades apart by magic."""
         got = Settings().strategies
         assert "cycle-turn" in got
         assert "cycle-scalp" in got
@@ -115,10 +118,45 @@ class TestTheRecordDecides:
 
 
 class TestGeometry:
-    def test_it_enters_on_the_middle_timeframes(self, strategy):
-        """Fast enough that a stop means something, slow enough that the cycle
-        reading on it is not one bar of noise."""
-        assert strategy.entries == ("15m", "30m", "1h")
+    def test_it_enters_anywhere_from_a_minute_to_an_hour(self, strategy):
+        """The entry timeframe decides when the trade is noticed, not what it
+        is: all of them are stopped on the 1h horizon and targeted on the 4h.
+        What keeps a fast entry from being one bar of noise is the 1h/4h
+        agreement it still has to carry, not the size of the bar."""
+        assert strategy.entries == ("1m", "3m", "5m", "15m", "30m", "1h")
+
+    def test_no_declared_entry_is_capped(self, strategy):
+        """**The cap must not bind on a timeframe this actually trades.**
+
+        `MAX_SCALE` is there for a horizon far enough past the entry that no
+        market reaches it. When it binds inside the declared range the damage
+        is silent and uneven: at 4.0 a 1m entry wanted 7.7 and 15.5 and got 4
+        and 4, which does not tighten the trade - it flattens the ratio between
+        stop and target, so the fast entries alone carry half the
+        reward-to-risk of the slow ones while claiming the same design.
+
+        Fails if a faster entry or a longer horizon is added without revisiting
+        the cap, which is the only reason it is written this way.
+        """
+        from till_infinity.structures.levels import SECONDS
+
+        for interval in strategy.entries:
+            for horizon in (strategy.STOP_HORIZON, strategy.TARGET_HORIZON):
+                want = math.sqrt(horizon / SECONDS[interval])
+                got = strategy._horizon_scale(interval, horizon)
+                assert got == pytest.approx(max(want, 1.0)), (
+                    f"{interval} at {horizon:.0f}s wanted {want:.2f} and was capped to {got:.2f}"
+                )
+
+    def test_every_entry_aims_at_the_same_two_distances(self, strategy):
+        """Stop on the 1h horizon and target on the 4h means the target is
+        twice the stop *whatever* bar the call arrived on - `sqrt(4)`. If that
+        ratio moves with the entry timeframe the timeframes are not comparable
+        and neither are their records."""
+        for interval in strategy.entries:
+            stop = strategy._horizon_scale(interval, strategy.STOP_HORIZON)
+            target = strategy._horizon_scale(interval, strategy.TARGET_HORIZON)
+            assert target / stop == pytest.approx(2.0)
 
     def test_its_stop_is_wider_than_the_plain_level_trade(self, strategy):
         """Because it belongs to the 1h horizon rather than to the entry bar.
@@ -141,33 +179,49 @@ class TestAlignment:
             "confluence": list(confluence),
         }
 
-    def test_it_needs_both_the_hour_and_the_four_hour(self, strategy):
-        assert strategy.accept(self.aligned(), reading()) is None
+    def test_the_mother_and_one_other_is_the_agreement(self, strategy):
+        assert strategy.accept(self.aligned(confluence=("1h", "4h")), reading()) is None
 
-    def test_one_of_the_two_is_not_enough(self, strategy):
-        got = strategy.accept(self.aligned(confluence=("1h",)), reading())
-        assert got.gate == "cycle_unaligned"
+    def test_the_daily_can_be_the_other_one(self, strategy):
+        """1d is an anchor now, not a note in the margin: it stands in for the
+        1h when the 1h has nothing to say."""
+        assert strategy.accept(self.aligned(confluence=("4h", "1d")), reading()) is None
+
+    def test_without_the_mother_nothing_else_counts(self, strategy):
+        """**The one that ends it.** A 1h and a 1d agreeing with each other
+        while the 4h does not are two timeframes agreeing about something the
+        cycle they sit inside has already turned away from."""
+        got = strategy.accept(self.aligned(confluence=("1h", "1d")), reading())
+        assert got.gate == "cycle_no_mother"
         assert "4h" in got.detail
 
-    def test_neither_is_refused(self, strategy):
+    def test_the_mother_may_not_agree_alone(self, strategy):
+        """One reading is not an agreement, however senior the timeframe."""
+        got = strategy.accept(self.aligned(confluence=("4h",)), reading())
+        assert got.gate == "cycle_alone"
+
+    def test_nothing_agreeing_is_refused_as_a_missing_mother(self, strategy):
         got = strategy.accept(self.aligned(confluence=()), reading())
-        assert got.gate == "cycle_unaligned"
+        assert got.gate == "cycle_no_mother"
 
     def test_a_timeframe_cannot_confirm_itself(self, strategy):
-        """A 1h entry needs only the 4h, because `anchored` excludes the call's
-        own interval and a timeframe agreeing with itself says nothing."""
-        got = strategy.accept(self.aligned(interval="1h", confluence=("4h",)), reading())
-        assert got is None
+        """`anchored` excludes the call's own interval, so a 1h entry is
+        anchored on the 4h and the 1d - the 1h agreeing with itself says
+        nothing, and cannot be the one other anchor the 4h needs."""
+        alone = strategy.accept(self.aligned(interval="1h", confluence=("4h",)), reading())
+        assert alone.gate == "cycle_alone"
+        anchored = self.aligned(interval="1h", confluence=("4h", "1d"))
+        assert strategy.accept(anchored, reading()) is None
 
-    def test_the_daily_is_recorded_and_never_required(self, strategy):
-        """Making it mandatory would refuse most of what the 1h/4h pair already
-        qualifies, and nothing has measured that it should."""
-        without = self.aligned(confluence=("1h", "4h"))
-        with_daily = self.aligned(confluence=("1h", "4h", "1d"))
-        assert strategy.accept(without, reading()) is None
-        assert strategy.accept(with_daily, reading()) is None
-        assert not strategy.fully_aligned(without)
-        assert strategy.fully_aligned(with_daily)
+    def test_fully_aligned_means_every_anchor(self, strategy):
+        """Gating takes the mother plus one; the record keeps the difference
+        between that and all three, which is what a later comparison needs."""
+        part = self.aligned(confluence=("1h", "4h"))
+        whole = self.aligned(confluence=("1h", "4h", "1d"))
+        assert strategy.accept(part, reading()) is None
+        assert strategy.accept(whole, reading()) is None
+        assert not strategy.fully_aligned(part)
+        assert strategy.fully_aligned(whole)
 
 
 class TestHorizons:
