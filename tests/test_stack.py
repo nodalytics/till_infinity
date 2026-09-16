@@ -212,3 +212,33 @@ def test_the_heartbeat_leaves_four_beats_of_room(tmp_path):
     """A slow moment must not read as an outage. Sixty seconds against the
     `health --max-age` default of 300 is four missed beats of margin."""
     assert st.HEARTBEAT * 4 < 300.0
+
+
+@pytest.mark.asyncio
+async def test_sigusr1_dumps_every_task(caplog):
+    """**Because inference has a poor record here.**
+
+    The quote feed went dark roughly every forty minutes on 2026-09-16 and
+    five deploys were aimed at whichever await seemed likeliest, because the
+    process could not be asked what it was standing on. A watchdog answers
+    that only after its patience expires and only for the condition it was
+    written to notice; this answers it now, for whatever is actually
+    happening.
+    """
+    import asyncio
+    import logging
+    import os
+    import signal
+
+    from till_infinity import stack as st
+
+    with caplog.at_level(logging.WARNING, logger=st.log.name):
+        st._arm_task_dump()
+        async with asyncio.TaskGroup() as group:
+            waiting = group.create_task(asyncio.sleep(0.2), name="a-task-to-find")
+            os.kill(os.getpid(), signal.SIGUSR1)
+            await waiting
+
+    said = [r.getMessage() for r in caplog.records]
+    assert any("dumping on request" in m for m in said), said
+    assert any("a-task-to-find" in m for m in said), "and it must name the tasks it found"

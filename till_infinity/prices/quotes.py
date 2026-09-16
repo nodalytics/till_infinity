@@ -818,6 +818,16 @@ def _task_state(task: asyncio.Task[Any] | None) -> str:
     return "done"
 
 
+def _keeper_ended(task: asyncio.Task[None]) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.error("prices: the quote watchdog died - nothing is watching the poll: %r", exc)
+    else:
+        log.warning("prices: the quote watchdog ended on its own - nothing is watching the poll")
+
+
 async def _watch_polls(
     live: Sequence[QuoteSource],
     settings: Settings,
@@ -847,10 +857,25 @@ async def _watch_polls(
         ", ".join(source.name for source in live) or "no sources",
     )
     told = ""
+    beat = time.monotonic()
     while True:
         await asyncio.sleep(30.0)
         now = time.monotonic()
         idle = now - finished[0]
+        # **A heartbeat, because silence has meant two different things all
+        # day.** Without it, a watcher that has died and a watcher that is
+        # content look identical - and on 2026-09-16 the desk sat dark for
+        # nine minutes against three minutes of patience while this said
+        # nothing, which could have been either. The line is cheap and it
+        # makes the next such silence mean exactly one thing.
+        if now - beat >= 300.0:
+            beat = now
+            log.info(
+                "prices: quote poll alive - last finished %.0fs ago, %s",
+                idle,
+                ", ".join(f"{name} wrote {now - when:.0f}s ago" for name, when in wrote.items())
+                or "no sources",
+            )
         quiet = sorted(
             (name for name, when in wrote.items() if now - when >= patience),
             key=lambda name: wrote[name],
@@ -919,6 +944,12 @@ async def stream(
         keeper = asyncio.create_task(
             _watch_polls(live, settings, finished, wrote), name="quote-watchdog"
         )
+        # **Nothing else would ever retrieve this.** A bare task held on a
+        # local is collected eventually and asyncio's "exception was never
+        # retrieved" arrives late or not at all - which is precisely how the
+        # quote reader has been failing silently all day. A watchdog that dies
+        # quietly is worse than no watchdog, because its silence reads as calm.
+        keeper.add_done_callback(_keeper_ended)
         try:
             while ticks is None or count < ticks:
                 started = time.monotonic()

@@ -39,6 +39,7 @@ import asyncio
 import contextlib
 import json
 import os
+import signal
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -270,6 +271,38 @@ def check(plan: Plan) -> dict[str, str]:
     return reasons
 
 
+def _arm_task_dump() -> None:
+    """`kill -USR1` the process and it says what every task is doing.
+
+    **Because inference has a poor record here.** On 2026-09-16 the quote feed
+    went dark roughly every forty minutes; five deploys were aimed at whichever
+    await seemed likeliest, and the process could not be asked which one it was
+    actually standing on. A watchdog answers that after its patience expires
+    and only for the condition it was written to notice. This answers it now,
+    for whatever is actually happening, without a deploy in between.
+
+    Scheduled on the loop rather than run in the handler, so it sees the loop's
+    own view of its tasks - and so a loop that is genuinely wedged is diagnosed
+    by the *absence* of this output, which is itself the answer.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - only outside a loop
+        return
+
+    def dump() -> None:
+        tasks = asyncio.all_tasks(loop)
+        log.warning("stack: %d task(s) running - dumping on request", len(tasks))
+        for task in sorted(tasks, key=lambda t: t.get_name()):
+            frames = task.get_stack(limit=8)
+            where = " <- ".join(f"{f.f_code.co_name}:{f.f_lineno}" for f in reversed(frames))
+            log.warning("stack: task %s | %s", task.get_name(), where or "no stack (not started)")
+
+    with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
+        loop.add_signal_handler(signal.SIGUSR1, dump)
+        log.info("stack: SIGUSR1 will dump every task")
+
+
 class Stack:
     """Every service, one bus, one process."""
 
@@ -313,6 +346,7 @@ class Stack:
             if self.plan.journal:
                 book = await self._stack.enter_async_context(jr.Journal(_journal_db()))
 
+            _arm_task_dump()
             async with asyncio.TaskGroup() as group:
                 collectors: list[asyncio.Task[None]] = []
                 for name in runnable:
