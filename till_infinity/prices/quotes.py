@@ -860,10 +860,25 @@ async def poll_once(
             tick.failed += 1
             log.debug("quote %s %s failed: %r", source.name, key.symbol.full, exc)
 
-    async with asyncio.TaskGroup() as group:
-        for source in sources:
-            for key in source.keys(feeds):
-                group.create_task(one(source, key))
+    # **`gather`, not a task group, and this is load-bearing.** A task group
+    # cancels the task it is running in whenever a child ends badly, and that
+    # task is the quote poll - the collector that must never stop. Containing
+    # what the children do was not enough: the cancellation arrives through the
+    # group's own `__aexit__`, which is the mechanism rather than the symptom,
+    # and on 2026-09-16 it stopped the desk roughly twice an hour.
+    #
+    # The blast radius is what makes this worth being careful about. Losing the
+    # poll does not merely stale the quotes it writes: the broker half of the
+    # book is what `trading` deals on, so a stale broker tick makes every
+    # signal undealable - silently, on a path that increments no counter and
+    # journals nothing. The desk goes quiet and every gauge reads healthy.
+    #
+    # `return_exceptions=True` so nothing a symbol does can reach this frame,
+    # while a genuine cancellation of the poll still propagates.
+    await asyncio.gather(
+        *(one(source, key) for source in sources for key in source.keys(feeds)),
+        return_exceptions=True,
+    )
 
     for source in sources:
         got = source.drain_pushed()

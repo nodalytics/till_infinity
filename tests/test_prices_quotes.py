@@ -456,6 +456,56 @@ async def test_a_broken_symbol_is_counted_apart_from_a_missing_one(tmp_path):
     assert tick.missing >= 1
 
 
+def test_the_poll_does_not_gather_its_symbols_in_a_task_group():
+    """**Pinned by mechanism, because the mechanism is the fault.**
+
+    A task group cancels the task it is running in whenever a child ends badly,
+    and that task is the collector that must never stop. Containing what the
+    children do was not enough - the cancellation arrives through the group's
+    own `__aexit__`. Three fixes were spent on the children before the group
+    itself was the answer.
+
+    The blast radius is why this is pinned rather than trusted: losing the poll
+    stales the broker tick, a stale broker tick makes every signal undealable,
+    and that happens on a path that increments no counter and journals nothing.
+    The desk stops trading and every gauge reads healthy.
+    """
+    from till_infinity.prices import quotes as q
+
+    assert "TaskGroup" not in q.poll_once.__code__.co_names, (
+        "poll_once must not run its symbols in a task group - the group cancels "
+        "the poll when a child ends badly"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_symbol_cannot_reach_the_poll(tmp_path):
+    """The last shape this took: a child ending *cancelled* rather than
+    raising, which a task group propagates just the same."""
+    from till_infinity.prices import quotes as q
+
+    class Vanishes(QuoteSource):
+        name = "vanishes"
+        feed_key = "tradingview"
+
+        async def quote(self, symbol):
+            here = asyncio.current_task()
+            if here is not None:
+                here.cancel()  # a real request against this child, not a leak
+            await asyncio.sleep(0)
+
+    settings = Settings(data_dir=tmp_path)
+
+    async def poll() -> str:
+        await q.poll_once([Vanishes(settings)], [FEEDS["gold"]], concurrency=2, sink=None)
+        await asyncio.sleep(0)
+        return "alive"
+
+    task = asyncio.create_task(poll())
+    assert await task == "alive", "a cancelled symbol took the poll with it"
+    assert not task.cancelled()
+
+
 def test_nothing_on_the_quote_task_bounds_a_wait_by_cancelling_it():
     """**Pinned by mechanism, because the mechanism is the fault.**
 
