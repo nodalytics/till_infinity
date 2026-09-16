@@ -105,6 +105,7 @@ from .strategies.scalper import (
     SweepAware,
 )
 from .strategies.strategy import STRATEGIES, Strategy, catalogue
+from .strategies.stretching import CycleTurnScalp
 from .strategies.swing import (
     ApproachScalp,
     FadeToValue,
@@ -157,6 +158,7 @@ __all__ = [
     "Council",
     "CouncilStrategy",
     "CycleTurn",
+    "CycleTurnScalp",
     "Exposure",
     "FadeToValue",
     "Guard",

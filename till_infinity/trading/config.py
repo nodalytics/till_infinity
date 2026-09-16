@@ -324,6 +324,13 @@ MAGIC_ORDER: tuple[str, ...] = (
     # it. Two earlier strategies did not get caught and ran live for an hour
     # each; their trades are unattributable in the record for ever.
     "cycle-turn",
+    # 2026-09-16. `cycle-turn` one tier down and one condition looser: a 1h
+    # mother cycle over 15m/30m, entries from 1m to 15m, gated on the
+    # z-score's *displacement* rather than on displacement-plus-momentum -
+    # which fires on 1.5% of calls and is why `cycle-turn` has never traded.
+    # Agreement sizes the trade instead of gating it. See
+    # `strategies/stretching.py`. Appended, never inserted.
+    "cycle-turn-scalp",
 )
 
 
@@ -490,7 +497,7 @@ class Settings:
     #:
     #: The journal tells their trades apart by magic, which is why every
     #: strategy needs a slot in `MAGIC_ORDER`.
-    strategies: tuple[str, ...] = ("cycle-turn", "cycle-scalp")
+    strategies: tuple[str, ...] = ("cycle-turn", "cycle-turn-scalp", "cycle-scalp")
     #: The named risk plan. Individual limits set in the environment win over
     #: it - see `plans`.
     risk_plan: str = "standard"

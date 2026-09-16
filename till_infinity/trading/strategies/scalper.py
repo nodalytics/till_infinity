@@ -154,6 +154,21 @@ class LevelStrategy(Strategy):
         with_trade = float(pressure) if side is Side.BUY else -float(pressure)
         return 1.0 if with_trade > 0 else share
 
+    def conviction_scale(self, features: dict[str, float], side: Side) -> float:
+        """Size multiplier from how well supported this particular call is.
+
+        `1.0` for every strategy that does not override it. A strategy with a
+        stricter reading of its own signal - one that would have gated on it and
+        chose to size on it instead - says so here.
+
+        **It may only shrink.** Applied to `risk_fraction` beside the others, so
+        every cap downstream still binds; a multiplier that enlarged would be a
+        way past `max_risk_money` through a setting nobody reads as a risk
+        setting. See `scaling.py` for the rule and `cycle-turn-scalp` for the
+        one caller.
+        """
+        return 1.0
+
     def trend_scale(self, features: dict[str, float]) -> float:
         """Size multiplier from the trend context. 1.0 when off or unknown.
 
@@ -844,6 +859,10 @@ class LevelStrategy(Strategy):
                 settings.risk_fraction
                 * self.trend_scale(features)
                 * self.momentum_scale(features, side)
+                # How well supported this call is by the strategy's own
+                # stricter reading of it. 1.0 unless a strategy overrides it,
+                # and never above 1.0 - see `conviction_scale`.
+                * self.conviction_scale(features, side)
                 # Crowding, volatility, measured edge and drawdown. All four
                 # off unless set, and none can enlarge - see `scaling.py`.
                 * self.risk_scale(feed, features, positions, equity, peak, interval, side)

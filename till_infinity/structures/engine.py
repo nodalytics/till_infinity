@@ -699,6 +699,15 @@ def _zma_context(zma) -> dict:
             # "how far past" can only get it this way.
             "zma_strong": round(zma.strong, 4),
             "zma_agrees": float(zma.agrees),
+            # **Displacement alone, published beside the agreement.** The two
+            # are different calls with different records: `agrees` waits for
+            # momentum to have turned as well and fires on about 1.5% of the
+            # signals this desk publishes, while `stretched` is the continuous
+            # call `edge_calls`/`edge_right` actually score - and the one
+            # `research/adapting.md` measured winning by 2.5 to 7.8 points at an
+            # identical bet count. A consumer should be able to choose, and to
+            # size on the difference between them.
+            "zma_stretched": float(zma.stretched),
             "zma_rising": float(zma.rising),
             # The scored record travels with the reading, as counts rather than
             # a rate: a rate has to be `nan` before there are any calls, and a
