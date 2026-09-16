@@ -808,14 +808,50 @@ async def stream(
         for source in live:
             await source.prepare(source.keys(feeds), sink)
 
-        while ticks is None or count < ticks:
-            started = time.monotonic()
-            tick = await poll_once(live, feeds, concurrency=settings.quote_concurrency, sink=sink)
-            count += 1
-            if on_tick is not None:
-                on_tick(count, tick)
-            if ticks is not None and count >= ticks:
-                return
-            await asyncio.sleep(
-                max(0.0, settings.quote_poll_seconds - (time.monotonic() - started))
-            )
+        # **The desk cannot currently say where it is stuck, and that is why
+        # the same outage has been diagnosed wrongly three times.** Quotes stop
+        # while bars keep arriving, nothing raises, nothing logs, and every
+        # actor reads as running - so each fix has been a guess at which await
+        # never returned. This makes the process answer the question itself.
+        finished = [time.monotonic()]
+
+        async def watchdog() -> None:
+            told = False
+            while True:
+                await asyncio.sleep(30.0)
+                stuck = time.monotonic() - finished[0]
+                if stuck < max(180.0, settings.quote_poll_seconds * 6):
+                    told = False
+                    continue
+                if told:
+                    continue
+                told = True
+                log.warning(
+                    "prices: no quote poll has finished for %.0fs - dumping every task", stuck
+                )
+                for task in asyncio.all_tasks():
+                    frames = task.get_stack(limit=6)
+                    where = " <- ".join(
+                        f"{f.f_code.co_name}:{f.f_lineno}" for f in reversed(frames)
+                    )
+                    log.warning("prices: stuck task %s | %s", task.get_name(), where or "no stack")
+
+        keeper = asyncio.create_task(watchdog(), name="quote-watchdog")
+        try:
+            while ticks is None or count < ticks:
+                started = time.monotonic()
+                tick = await poll_once(
+                    live, feeds, concurrency=settings.quote_concurrency, sink=sink
+                )
+                finished[0] = time.monotonic()
+                count += 1
+                if on_tick is not None:
+                    on_tick(count, tick)
+                if ticks is not None and count >= ticks:
+                    return
+                await asyncio.sleep(
+                    max(0.0, settings.quote_poll_seconds - (time.monotonic() - started))
+                )
+        finally:
+            keeper.cancel()
+            await asyncio.wait({keeper}, timeout=5.0)

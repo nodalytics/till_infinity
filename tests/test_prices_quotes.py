@@ -1,6 +1,8 @@
 import asyncio
+import contextlib
 import time
 from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 
@@ -322,6 +324,58 @@ async def test_a_dead_reader_is_noticed_on_a_prepared_symbol(tmp_path):
     assert source._repair is not None, "a prepared symbol must still ask for the socket back"
     await source._repair
     assert tried, "and the repair must actually run"
+
+
+@pytest.mark.asyncio
+async def test_a_poll_that_never_finishes_says_so_and_names_the_tasks(tmp_path, caplog):
+    """**The desk has to be able to say where it is stuck.**
+
+    Four times on 2026-09-16 quotes stopped while bars kept arriving, nothing
+    raised, nothing logged, and every actor read as running. Three fixes were
+    aimed at whichever await seemed likeliest, and all three were wrong,
+    because there was no way to ask. A stalled poll now dumps every task and
+    where it is standing.
+    """
+    import logging
+
+    from till_infinity.prices import quotes as q
+
+    clock = [0.0]
+    ticking = type("Clock", (), {"monotonic": staticmethod(lambda: clock[0])})
+
+    started = asyncio.Event()
+
+    async def never(*a, **k):
+        started.set()
+        await asyncio.Event().wait()
+
+    real_sleep = asyncio.sleep
+
+    async def jump(delay, *a, **k):
+        clock[0] += delay
+        await real_sleep(0)
+
+    settings = Settings(data_dir=tmp_path)
+    with (
+        patch.object(q, "poll_once", never),
+        patch.object(q, "build_quote_sources", lambda *a, **k: []),
+        patch.object(q, "time", ticking),
+        patch.object(q.asyncio, "sleep", jump),
+        caplog.at_level(logging.WARNING, logger=q.log.name),
+    ):
+        runner = asyncio.create_task(q.stream(settings=settings, feeds=[], sink=None))
+        await asyncio.wait_for(started.wait(), timeout=2)
+        for _ in range(200):
+            await real_sleep(0)
+            if any("no quote poll has finished" in r.getMessage() for r in caplog.records):
+                break
+        runner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await runner
+
+    said = [r.getMessage() for r in caplog.records]
+    assert any("no quote poll has finished" in m for m in said), said[-3:]
+    assert any("stuck task" in m for m in said), "and it must name the tasks, not only complain"
 
 
 @pytest.mark.asyncio
