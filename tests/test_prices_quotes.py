@@ -322,6 +322,79 @@ async def test_waiting_for_a_first_tick_never_cancels_the_caller(tmp_path):
     assert task.uncancel() == 0 if hasattr(task, "uncancel") else True
 
 
+@pytest.mark.asyncio
+async def test_one_broken_symbol_does_not_take_down_the_poll(tmp_path):
+    """**The cancellation, finally named.**
+
+    `poll_once` runs its symbols in a task group, and a task group cancels the
+    task it is running in to unwind it when a child fails. That task is the
+    quote poll, so a single symbol throwing ended the whole collector -
+    cancelled, with no exception recorded anywhere, while the bar collector
+    beside it carried on and every actor read as healthy. Caught at 17:01 on
+    2026-09-16 by the traceback this behaviour now produces:
+
+        stream:986      tick = await poll_once(...)
+        poll_once:825   async with asyncio.TaskGroup() as group:
+    """
+    from till_infinity.prices import quotes as q
+
+    class Broken(QuoteSource):
+        name = "broken"
+        feed_key = "tradingview"
+
+        async def quote(self, symbol):
+            raise RuntimeError("the provider fell over")
+
+    class Fine(QuoteSource):
+        name = "fine"
+        feed_key = "tradingview"
+
+        async def quote(self, symbol):
+            return Quote(time=1.0, bid=1.0, ask=2.0)
+
+    settings = Settings(data_dir=tmp_path)
+    feeds = [FEEDS["gold"]]
+    sink = Recorder()
+
+    async def poll() -> str:
+        await q.poll_once([Broken(settings), Fine(settings)], feeds, concurrency=4, sink=sink)
+        await asyncio.sleep(0)
+        return "alive"
+
+    task = asyncio.create_task(poll())
+    assert await task == "alive", "one bad symbol ended the whole poll"
+    assert not task.cancelled()
+    assert sink.calls, "and the symbols that did work still got written"
+
+
+@pytest.mark.asyncio
+async def test_a_broken_symbol_is_counted_apart_from_a_missing_one(tmp_path):
+    """A provider saying "no quote" and a provider breaking are different
+    facts, and only one of them is a fault."""
+    from till_infinity.prices import quotes as q
+
+    class Broken(QuoteSource):
+        name = "broken"
+        feed_key = "tradingview"
+
+        async def quote(self, symbol):
+            raise RuntimeError("fell over")
+
+    class Empty(QuoteSource):
+        name = "empty"
+        feed_key = "tradingview"
+
+        async def quote(self, symbol):
+            return None
+
+    settings = Settings(data_dir=tmp_path)
+    tick = await q.poll_once(
+        [Broken(settings), Empty(settings)], [FEEDS["gold"]], concurrency=4, sink=None
+    )
+    assert tick.failed >= 1
+    assert tick.missing >= 1
+
+
 def test_nothing_on_the_quote_task_bounds_a_wait_by_cancelling_it():
     """**Pinned by mechanism, because the mechanism is the fault.**
 

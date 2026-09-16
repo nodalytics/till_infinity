@@ -98,6 +98,10 @@ class QuoteTick:
     #: reported nothing through a thirteen-minute outage on 2026-09-16.
     by_source: dict[str, WriteResult] = field(default_factory=dict)
     missing: int = 0
+    #: Symbols whose read threw rather than came back empty. Counted apart from
+    #: `missing`, because a provider saying "no quote" and a provider breaking
+    #: are different facts and only one of them is a fault.
+    failed: int = 0
     elapsed: float = 0.0
 
     @property
@@ -808,19 +812,38 @@ async def poll_once(
     limit = asyncio.Semaphore(max(1, concurrency))
 
     async def one(source: QuoteSource, key: QuoteKey) -> None:
-        async with limit:
-            quote = await source.quote(key.symbol)
-        if quote is None:
-            tick.missing += 1
-            return
-        tick.quotes[key] = quote
-        if sink is None or source.streaming:
-            return
-        # Bind the result before accumulating: `x += await f()` loads x
-        # *before* suspending, so concurrent tasks lose each other's writes.
-        written = await sink(key, quote)
-        tick.written += written
-        tick.by_source[source.name] = tick.by_source.get(source.name, WriteResult()) + written
+        """One symbol, and **it may not raise**.
+
+        A task group cancels the task it is running in to unwind it when a
+        child fails, so a single symbol throwing does not merely lose that
+        symbol - it takes down the whole quote poll, and the cancellation is
+        what the poll's caller sees. That is how the desk lost quotes roughly
+        twice an hour on 2026-09-16: `prices:quotes` ended cancelled, with no
+        exception recorded anywhere, while the bar collector beside it carried
+        on and every actor still read as healthy.
+
+        One bad symbol is one bad symbol. It is counted and the book continues.
+        """
+        try:
+            async with limit:
+                quote = await source.quote(key.symbol)
+            if quote is None:
+                tick.missing += 1
+                return
+            tick.quotes[key] = quote
+            if sink is None or source.streaming:
+                return
+            # Bind the result before accumulating: `x += await f()` loads x
+            # *before* suspending, so concurrent tasks lose each other's writes.
+            written = await sink(key, quote)
+            tick.written += written
+            tick.by_source[source.name] = tick.by_source.get(source.name, WriteResult()) + written
+        except asyncio.CancelledError:
+            # A real shutdown still stops here. Only a *failure* is contained.
+            raise
+        except Exception as exc:
+            tick.failed += 1
+            log.debug("quote %s %s failed: %r", source.name, key.symbol.full, exc)
 
     async with asyncio.TaskGroup() as group:
         for source in sources:
