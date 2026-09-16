@@ -345,11 +345,34 @@ class TradingViewQuotes(QuoteSource):
         await self._ws.send_text(message("quote_add_symbols", [self._session, *names]))
 
     async def _await_first(self, names: Sequence[str], timeout: float) -> None:
-        waits = [self._ready[n].wait() for n in names if n in self._ready]
-        if not waits:
+        """Wait for a first tick on each name, or give up.
+
+        **`asyncio.wait`, never `wait_for`, and this is the reason the quote
+        feed kept dying.** `wait_for` implements its timeout by cancelling the
+        *enclosing task* and converting the `CancelledError` back into a
+        `TimeoutError` through `uncancel`. The enclosing task here is the whole
+        quote poll, and when that conversion does not balance - a cancellation
+        arriving from elsewhere in the same moment, an inner frame swallowing
+        the first one - the task is left cancelled and simply disappears. No
+        exception is recorded, its siblings keep running, and the actor still
+        reads as healthy.
+
+        That is precisely what the desk did on 2026-09-16, roughly twice an
+        hour, timed to socket drops: a dropped socket means these events never
+        fire, which means this waits its full timeout, which is when `wait_for`
+        reaches for the cancel. `asyncio.wait` takes a deadline and touches
+        nobody's cancellation state.
+        """
+        waiters = [
+            asyncio.ensure_future(self._ready[name].wait()) for name in names if name in self._ready
+        ]
+        if not waiters:
             return
-        with suppress(TimeoutError):
-            await asyncio.wait_for(asyncio.gather(*waits), timeout)
+        try:
+            await asyncio.wait(waiters, timeout=timeout)
+        finally:
+            for waiter in waiters:
+                waiter.cancel()
 
     # -- reading ------------------------------------------------------------
 
@@ -443,15 +466,22 @@ class TradingViewQuotes(QuoteSource):
         quote is dated when it moved: stale is visible rather than disguised,
         and the next poll tries again.
         """
-        try:
-            await asyncio.wait_for(self._ensure_live(), self.settings.tv_connect_timeout)
-        except TimeoutError:
+        # `asyncio.wait` for the same reason `_await_first` uses it: `wait_for`
+        # would bound this by cancelling whichever task is running it, and one
+        # of the callers is the quote poll itself.
+        job = asyncio.ensure_future(self._ensure_live())
+        done, _ = await asyncio.wait({job}, timeout=self.settings.tv_connect_timeout)
+        if not done:
+            job.cancel()
             log.warning(
                 "tradingview quote socket would not reconnect within %.0fs; serving the cache",
                 self.settings.tv_connect_timeout,
             )
-        except Exception as exc:
-            log.warning("tradingview quote socket would not reconnect: %r", exc)
+            return
+        with suppress(asyncio.CancelledError):
+            exc = job.exception()
+            if exc is not None:
+                log.warning("tradingview quote socket would not reconnect: %r", exc)
 
     async def quote(self, symbol: Symbol) -> Quote | None:
         """Read the cache - and check first that something is still filling it.

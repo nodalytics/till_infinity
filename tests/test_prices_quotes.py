@@ -292,6 +292,96 @@ async def test_socket_marks_an_error_symbol_unavailable(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_waiting_for_a_first_tick_never_cancels_the_caller(tmp_path):
+    """**The bug that took the quote feed down roughly twice an hour.**
+
+    `asyncio.wait_for` bounds a wait by cancelling the *enclosing task* and
+    converting the `CancelledError` back into `TimeoutError`. The enclosing
+    task here is the whole quote poll, and when that conversion does not
+    balance the task is left cancelled and simply disappears: no exception
+    recorded, siblings still running, the actor still healthy. It is timed to
+    socket drops because a dropped socket is exactly when these events never
+    fire and the wait runs its full timeout.
+
+    So the caller must come out of this with its cancellation state untouched,
+    whether the tick arrives or not.
+    """
+    source = socket_source(tmp_path)
+    name = KEY.symbol.full
+    source._ready[name] = asyncio.Event()  # never set - the socket is gone
+
+    async def caller() -> str:
+        await source._await_first([name], timeout=0.05)
+        # Reached only if the wait did not take the task down with it.
+        await asyncio.sleep(0)
+        return "alive"
+
+    task = asyncio.create_task(caller())
+    assert await task == "alive"
+    assert not task.cancelled()
+    assert task.uncancel() == 0 if hasattr(task, "uncancel") else True
+
+
+def test_nothing_on_the_quote_task_bounds_a_wait_by_cancelling_it():
+    """**Pinned by mechanism, because the mechanism is the fault.**
+
+    The invariant tests above pass against the broken version too: `wait_for`
+    usually converts its own cancellation correctly, and the failure needs a
+    race to show itself. What can be checked without the race is the thing that
+    made the race possible - `wait_for` reaching for the enclosing task's
+    cancel at all, on a path the forever-running quote poll executes.
+
+    `asyncio.wait` takes a deadline and touches nobody's cancellation state.
+    Anything here that needs a timeout uses it.
+    """
+    from till_infinity.prices.quotes import TradingViewQuotes
+
+    # The compiled names rather than the source text: the prose above these
+    # methods says "wait_for" a great deal, and a check that reads the comments
+    # would pass or fail on how the reason was written down.
+    for method in (TradingViewQuotes._await_first, TradingViewQuotes._revive):
+        assert "wait_for" not in method.__code__.co_names, (
+            f"{method.__name__} bounds a wait by cancelling whoever is running it, "
+            "and one of its callers is the quote poll"
+        )
+
+
+@pytest.mark.asyncio
+async def test_waiting_for_a_first_tick_leaves_no_waiters_behind(tmp_path):
+    """The waits are futures now, so giving up has to tidy them - otherwise
+    every timed-out symbol leaks one for the life of the process."""
+    source = socket_source(tmp_path)
+    name = KEY.symbol.full
+    event = asyncio.Event()
+    source._ready[name] = event
+
+    await source._await_first([name], timeout=0.05)
+    await asyncio.sleep(0)
+    assert not event._waiters, "a waiter was left attached to the event"
+
+
+@pytest.mark.asyncio
+async def test_a_reconnect_that_never_returns_does_not_cancel_the_caller(tmp_path):
+    """Same rule for the repair: one of its callers is the quote poll."""
+    source = socket_source(tmp_path)
+    source.settings = replace(source.settings, tv_connect_timeout=0.05)
+
+    async def never():
+        await asyncio.sleep(3600)
+
+    source._ensure_live = never
+
+    async def caller() -> str:
+        await source._revive()
+        await asyncio.sleep(0)
+        return "alive"
+
+    task = asyncio.create_task(caller())
+    assert await task == "alive"
+    assert not task.cancelled()
+
+
+@pytest.mark.asyncio
 async def test_a_dead_reader_is_noticed_on_a_prepared_symbol(tmp_path):
     """**The reconnect was unreachable for every symbol the desk follows.**
 
