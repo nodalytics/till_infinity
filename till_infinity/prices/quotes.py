@@ -839,8 +839,23 @@ async def poll_once(
             tick.written += written
             tick.by_source[source.name] = tick.by_source.get(source.name, WriteResult()) + written
         except asyncio.CancelledError:
-            # A real shutdown still stops here. Only a *failure* is contained.
-            raise
+            # **A cancellation nobody asked for is a failure wearing a
+            # different exception.** Containing ordinary exceptions was not
+            # enough: the poll was still being cancelled through `poll_once`'s
+            # task group, because a child that *ends cancelled* cancels the
+            # parent just as a child that raises does - and an httpx timeout
+            # unwinding through an anyio cancel scope can leak one without
+            # anybody having cancelled this task.
+            #
+            # `cancelling()` tells the two apart. It counts cancellation
+            # requests made against *this* task, so zero means the error came
+            # out of the call rather than from a shutdown, and containing it is
+            # correct. A real shutdown has asked, and still stops here.
+            mine = asyncio.current_task()
+            if mine is not None and mine.cancelling() > 0:
+                raise
+            tick.failed += 1
+            log.debug("quote %s %s cancelled itself", source.name, key.symbol.full)
         except Exception as exc:
             tick.failed += 1
             log.debug("quote %s %s failed: %r", source.name, key.symbol.full, exc)

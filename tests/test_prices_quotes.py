@@ -368,6 +368,67 @@ async def test_one_broken_symbol_does_not_take_down_the_poll(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_symbol_that_leaks_a_cancellation_does_not_end_the_poll(tmp_path):
+    """**Containing exceptions was not enough.**
+
+    A task-group child that *ends cancelled* cancels the parent just as one
+    that raises does, and an httpx timeout unwinding through an anyio cancel
+    scope can leak a `CancelledError` without anybody having cancelled this
+    task. So the poll kept dying after the exception fix, through the same
+    frames: `poll_once`'s task group, reaching `stream`.
+
+    `Task.cancelling()` tells a leak from a shutdown: it counts requests made
+    against this task, so zero means the error came out of the call.
+    """
+    from till_infinity.prices import quotes as q
+
+    class Leaky(QuoteSource):
+        name = "leaky"
+        feed_key = "tradingview"
+
+        async def quote(self, symbol):
+            raise asyncio.CancelledError  # nobody asked; it escaped a library
+
+    settings = Settings(data_dir=tmp_path)
+
+    async def poll() -> str:
+        tick = await q.poll_once([Leaky(settings)], [FEEDS["gold"]], concurrency=2, sink=None)
+        assert tick.failed >= 1
+        return "alive"
+
+    task = asyncio.create_task(poll())
+    assert await task == "alive", "a leaked cancellation ended the whole poll"
+    assert not task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_a_real_shutdown_still_stops_the_poll(tmp_path):
+    """The discrimination has to work both ways: a cancellation that *was*
+    asked for must still stop everything, or the desk cannot be shut down."""
+    from till_infinity.prices import quotes as q
+
+    started = asyncio.Event()
+
+    class Slow(QuoteSource):
+        name = "slow"
+        feed_key = "tradingview"
+
+        async def quote(self, symbol):
+            started.set()
+            await asyncio.sleep(3600)
+
+    settings = Settings(data_dir=tmp_path)
+    task = asyncio.create_task(
+        q.poll_once([Slow(settings)], [FEEDS["gold"]], concurrency=2, sink=None)
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
 async def test_a_broken_symbol_is_counted_apart_from_a_missing_one(tmp_path):
     """A provider saying "no quote" and a provider breaking are different
     facts, and only one of them is a fault."""
