@@ -1755,6 +1755,9 @@ class Watcher:
                 # bar it arrived on: what licenses a trade is the record of the
                 # horizon the trade belongs to. See `zma.ANCHOR`.
                 anchor=self.engine.zma.of(call.feed, zm.ANCHOR),
+                # The last change of character on this series, and the price it
+                # happened at. See `structures/breaks.py`.
+                broke=self.engine.break_of(call.feed, call.interval),
             )
             # How many formations agree on this price, as a number.
             #

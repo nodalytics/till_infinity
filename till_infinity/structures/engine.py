@@ -35,6 +35,7 @@ from typing import Any, ClassVar
 
 from ..logging import get_logger
 from ..shared import effects
+from . import breaks as bk
 from . import cycles as cy
 from . import levels as lv
 from . import reactions
@@ -713,6 +714,35 @@ def _zma_context(zma) -> dict:
         return {}
 
 
+def _break_context(found, when: float) -> dict:
+    """The last change of character on this series, for the journal and a gate.
+
+    **The broken line travels as a price, because that is what it is for.** A
+    level that failed as support is tested as resistance when price returns to
+    it, and the return is the tradeable moment - so a consumer needs the price
+    itself, not a flag saying a break happened.
+
+    Absent rather than zero when there has been no break: a market that has
+    simply been trending has not changed its mind, and a zero price would be
+    read downstream as a level at zero. See `structures/breaks.py`.
+    """
+    if found is None:
+        return {}
+    try:
+        return {
+            "break_price": round(float(found.price), 8),
+            "break_side": float(found.side),
+            # Both ages, because they answer different questions: how long the
+            # line stood before it failed says how much agreement it carried,
+            # and how long ago it failed says whether this is still the market
+            # the break happened in.
+            "break_held": float(found.held_for),
+            "break_age": max(0.0, float(when) - float(found.broke)),
+        }
+    except Exception:  # a reading nothing gates on must not raise
+        return {}
+
+
 def _anchor_context(zma) -> dict:
     """The **mother cycle's** scored record, whatever bar this call arrived on.
 
@@ -790,6 +820,7 @@ class Call(Restorable):
         market: str = "",
         venue: str = "consensus",
         anchor=None,
+        broke=None,
     ) -> Signal:
         # `probability`, not `probability_up`: quoting P(up) beside a *down*
         # call reads as the confidence in down when it is the confidence
@@ -933,6 +964,7 @@ class Call(Restorable):
                 # only one worth cutting by.
                 **_zma_context(zma),
                 **_anchor_context(anchor),
+                **_break_context(broke, self.time),
                 **_cycle_context(cycles),
                 # All four on one scale, combined equally. Recorded so the
                 # journal can say whether the combination beat the estimate
@@ -1202,6 +1234,12 @@ class Engine:
         #: again after a restart is correct.
         self._declined: set[tuple[str, str]] = set()
         self._levels: dict[tuple[str, str], list[lv.Level]] = {}
+        #: The latest change of character per series. **Derived and not
+        #: persisted**, deliberately: it is recomputed from confirmed swings
+        #: every time levels reform, and a break restored from before a restart
+        #: would be a claim about structure that the swings behind it no longer
+        #: support. See `structures/breaks.py`.
+        self._breaks: dict[tuple[str, str], bk.Break] = {}
         #: feed and interval -> the origins found there, kept rather than
         #: recomputed. See `_remember_origins`: this dict is the place a
         #: refined band can live, and it is worth +0.23R a trade to have one.
@@ -2007,6 +2045,10 @@ class Engine:
             for level in found
         ]
 
+    def break_of(self, feed: str, interval: str) -> bk.Break | None:
+        """The latest change of character on this series, if there was one."""
+        return self._breaks.get((feed, interval))
+
     def swings(self, series: Series, vol: Volatility) -> list[pips.Point]:
         """The turning points levels are drawn at - by whichever formation.
 
@@ -2210,12 +2252,24 @@ class Engine:
         could have recognised yet.
         """
         turns = [point for point, _ in pips.structure(pips.turns(visible))]
+        key = (series.feed, series.interval)
+        # **Before the shape returns early.** The break is a different question
+        # from the shape and answering it must not depend on there being enough
+        # points for one - the early return below is about `Shape`, and a
+        # sequence too short to name a pattern can still have changed
+        # character.
+        found = bk.last_break(turns)
+        if found is not None:
+            self._breaks[key] = found
+        elif key in self._breaks:
+            # Swings that no longer contain the flip mean the structure was
+            # redrawn under it. Silence is the honest answer then.
+            del self._breaks[key]
         if len(turns) < patterns.SHAPE_POINTS:
             return
         shape = patterns.Shape.of(turns[-patterns.SHAPE_POINTS :], series.feed, series.interval)
         if shape is None or shape.flat:
             return
-        key = (series.feed, series.interval)
         if key in self._pending:
             return  # one open shape per series; overlapping ones are the same episode
         handle = self.shapes.add(shape)

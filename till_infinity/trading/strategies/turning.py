@@ -104,6 +104,16 @@ class CycleTurn(LevelStrategy):
     it is stated here because the alternative reading - that this finds the
     actual 1h swing low - is the one somebody will assume.
 
+    **A break has to have happened first, and its line is the entry.** A change
+    point with no broken structure behind it is a turn with nothing under it.
+    The order is the claim: a run of higher lows fails, and *then* the cycle
+    rolls over. The price that failed - the last higher low - was defended and
+    then was not, so price returning to it is the moment worth taking: support
+    that broke is tested as resistance, and the move through it took out
+    whoever was leaning on it. `structures/breaks.py` finds that line; this
+    refuses when there is none, and refuses when it points the other way from
+    the cycle.
+
     **Then `ride`'s exit.** A trail half a volatility unit behind the best
     price, which `research/exiting.md` measured as the best of six policies
     over 31,820 replayed touches, with a break-even once the trade is in front.
@@ -219,6 +229,10 @@ class CycleTurn(LevelStrategy):
                 feed,
             )
 
+        refused = self._without_a_break(feed, features, agrees)
+        if refused is not None:
+            return refused
+
         missing = self._unconfirmed(payload)
         if missing == (self.MOTHER,):
             return Refusal(
@@ -267,6 +281,37 @@ class CycleTurn(LevelStrategy):
                 f"which is not past {self.settings.zma_min_accuracy:.0%}",
                 feed,
             )
+        return None
+
+    def _without_a_break(
+        self, feed: str, features: dict[str, float], agrees: float
+    ) -> Refusal | None:
+        """**The break comes first, and its line is what the entry is drawn at.**
+
+        A change point that no break preceded is a turn with nothing behind it.
+        The sequence that matters is a run of higher lows failing and *then* the
+        cycle rolling over - the line that failed is a price that was defended
+        and then was not, which is why price returning to it is the moment worth
+        taking: support that broke is tested as resistance, and the move through
+        it took out whoever was leaning on it.
+
+        Refused rather than taken at the level, because a turn with no broken
+        structure behind it is a different trade from the one this is gated to.
+        """
+        broke = _number(features, "break_side")
+        if not broke:
+            return Refusal(
+                "no_break", "nothing broke before this turn - there is no line to enter at", feed
+            )
+        if (broke > 0) != (agrees > 0):
+            return Refusal(
+                "break_against",
+                f"the last break turned {'up' if broke > 0 else 'down'} "
+                f"and the cycle expects {'a rise' if agrees > 0 else 'a fall'}",
+                feed,
+            )
+        if not _number(features, "break_price"):
+            return Refusal("break_priceless", "the break carries no line to enter at", feed)
         return None
 
     def _unconfirmed(self, payload: dict[str, Any]) -> tuple[str, ...]:

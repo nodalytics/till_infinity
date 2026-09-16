@@ -28,11 +28,28 @@ UP = {"direction": "up", "feed": "v75", "interval": "15m", "confluence": ["1h", 
 DOWN = {"direction": "down", "feed": "v75", "interval": "15m", "confluence": ["1h", "4h"]}
 
 
-def reading(*, agrees=1.0, calls=400.0, hit=0.60, entry_calls=400.0, entry_hit=0.60):
+def reading(
+    *,
+    agrees=1.0,
+    calls=400.0,
+    hit=0.60,
+    entry_calls=400.0,
+    entry_hit=0.60,
+    broke=None,
+    break_price=99.0,
+):
     """A published reading. `calls`/`hit` are the **4h** record, which is what
     licenses the trade; `entry_calls`/`entry_hit` are the entry bar's own, which
-    deliberately does not."""
+    deliberately does not. `broke` is the side the last change of character
+    turned, defaulting to agreeing with the cycle - the ordinary case, so each
+    test below exercises the one condition it is about."""
+    found = {}
+    if broke is None:
+        broke = agrees or 1.0
+    if broke:
+        found = {"break_side": float(broke), "break_price": break_price, "break_age": 600.0}
     return {
+        **found,
         "zma_agrees": agrees,
         "zma_edge_calls": entry_calls,
         "zma_edge_right": entry_calls * entry_hit,
@@ -141,8 +158,43 @@ class TestTheRecordDecides:
         """The absence of the number is the absence of the evidence. A 4h
         series that has not scored anything yet trades nothing, which is what
         every feed looks like on the day this ships."""
-        bare = {"zma_agrees": 1.0, "zma_z": -2.0, "zma_strong": 1.0}
+        bare = {
+            "zma_agrees": 1.0,
+            "zma_z": -2.0,
+            "zma_strong": 1.0,
+            "break_side": 1.0,
+            "break_price": 99.0,
+        }
         assert strategy.accept(UP, bare).gate == "cycle_unproven"
+
+
+class TestTheBreakComesFirst:
+    """A change point with no broken structure behind it is a turn with nothing
+    under it. The order is the claim: a run of higher lows fails, and *then* the
+    cycle rolls over."""
+
+    def test_a_turn_with_nothing_broken_is_refused(self):
+        strategy = STRATEGIES["cycle-turn"](settings=Settings())
+        got = strategy.accept(UP, reading(broke=0))
+        assert got.gate == "no_break"
+
+    def test_a_break_the_other_way_is_refused(self, strategy):
+        """A market that just broke *up* is not the one to sell a stretched
+        reading into - the structure and the cycle are telling opposite
+        stories, and this trades the one where they agree."""
+        got = strategy.accept(DOWN, reading(agrees=-1.0, broke=1.0))
+        assert got.gate == "break_against"
+        assert "up" in got.detail
+
+    def test_the_agreeing_break_is_taken(self, strategy):
+        assert strategy.accept(DOWN, reading(agrees=-1.0, broke=-1.0)) is None
+
+    def test_a_break_with_no_line_cannot_be_entered(self, strategy):
+        """The line is the whole point of it: support that failed is tested as
+        resistance when price comes back, and without the price there is
+        nowhere to put the entry."""
+        got = strategy.accept(UP, reading(break_price=0.0))
+        assert got.gate == "break_priceless"
 
 
 class TestGeometry:
