@@ -287,3 +287,37 @@ async def test_a_forever_task_that_raises_says_what_of(caplog):
 
     said = [r.getMessage() for r in caplog.records]
     assert any("the socket went" in m for m in said), said
+
+
+@pytest.mark.asyncio
+async def test_a_forever_task_that_is_cancelled_says_so(caplog):
+    """**The case that actually happened, and the one the first version
+    skipped.**
+
+    Returning early on a cancelled task sounds reasonable - a cancellation is
+    usually somebody shutting things down on purpose. For a collector that
+    should run forever it is not, and on 2026-09-16 it was the only thing that
+    ever occurred: `prices:quotes` vanished from a task dump with no log line
+    anywhere, because the one callback watching for it treated that case as
+    uninteresting.
+    """
+    import asyncio
+    import contextlib
+    import logging
+
+    from till_infinity import stack as st
+
+    async def forever() -> None:
+        await asyncio.Event().wait()
+
+    with caplog.at_level(logging.ERROR, logger=st.log.name):
+        task = asyncio.create_task(forever(), name="prices:quotes")
+        st._watch_end(task)
+        await asyncio.sleep(0)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+
+    said = [r.getMessage() for r in caplog.records]
+    assert any("prices:quotes was cancelled" in m for m in said), said

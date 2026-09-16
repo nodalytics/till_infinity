@@ -286,7 +286,16 @@ def _watch_end(task: asyncio.Task[None]) -> asyncio.Task[None]:
     """
 
     def ended(done: asyncio.Task[None]) -> None:
+        # **Cancellation is reported, not skipped, and that omission cost a
+        # day.** The first version of this returned early on a cancelled task,
+        # on the reasonable-sounding grounds that a cancellation is somebody
+        # shutting things down deliberately. For a collector that should run
+        # forever it is nothing of the sort, and it is what was actually
+        # happening: on 2026-09-16 `prices:quotes` vanished from a task dump
+        # with no log line anywhere, because the one callback watching for it
+        # treated the single case that occurred as the uninteresting one.
         if done.cancelled():
+            log.error("stack: %s was cancelled - it should run forever", done.get_name())
             return
         exc = done.exception()
         if exc is not None:

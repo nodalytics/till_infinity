@@ -971,6 +971,14 @@ async def stream(
                 await asyncio.sleep(
                     max(0.0, settings.quote_poll_seconds - (time.monotonic() - started))
                 )
+        except asyncio.CancelledError:
+            # **Says which await was interrupted.** Nothing in this process has
+            # any business cancelling the quote poll, and on 2026-09-16 it was
+            # being cancelled roughly twice an hour by something none of the
+            # code here can name. The traceback points at the suspension point,
+            # which is the half of the question the task dump cannot answer.
+            log.error("prices: the quote poll was cancelled", exc_info=True, stack_info=True)
+            raise
         finally:
             keeper.cancel()
             await asyncio.wait({keeper}, timeout=5.0)
