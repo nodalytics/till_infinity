@@ -810,6 +810,14 @@ async def poll_once(
     started = time.monotonic()
     tick = QuoteTick()
     limit = asyncio.Semaphore(max(1, concurrency))
+    # **The poll's own task, so a child can tell a shutdown from a library.**
+    # `gather` runs each symbol in its own task, and anyio's cancel scopes -
+    # which is how httpx implements every timeout - cancel the task they are
+    # *hosted in*. Under `gather` that host is the child, so the child's own
+    # `cancelling()` reads as a real request when it is nothing of the sort.
+    # Asking the poll instead gives the honest answer: only a cancellation of
+    # the poll means the poll should stop.
+    poll = asyncio.current_task()
 
     async def one(source: QuoteSource, key: QuoteKey) -> None:
         """One symbol, and **it may not raise**.
@@ -847,15 +855,22 @@ async def poll_once(
             # unwinding through an anyio cancel scope can leak one without
             # anybody having cancelled this task.
             #
-            # `cancelling()` tells the two apart. It counts cancellation
-            # requests made against *this* task, so zero means the error came
-            # out of the call rather than from a shutdown, and containing it is
-            # correct. A real shutdown has asked, and still stops here.
-            mine = asyncio.current_task()
-            if mine is not None and mine.cancelling() > 0:
+            # **The poll is asked, not this task.** `cancelling()` counts
+            # requests made against whichever task it is called on, and under
+            # `gather` that is this one symbol's task - which anyio cancels on
+            # every httpx timeout. Reading it here called a library timeout a
+            # shutdown and re-raised, and `gather` then carried it up and
+            # killed the collector. Only a cancellation of the *poll* means the
+            # poll should stop.
+            if poll is not None and poll.cancelling() > 0:
                 raise
+            mine = asyncio.current_task()
+            if mine is not None:
+                # Balance the request anyio made, or this task stays flagged
+                # and the next await inside it raises again.
+                mine.uncancel()
             tick.failed += 1
-            log.debug("quote %s %s cancelled itself", source.name, key.symbol.full)
+            log.debug("quote %s %s was cancelled under it", source.name, key.symbol.full)
         except Exception as exc:
             tick.failed += 1
             log.debug("quote %s %s failed: %r", source.name, key.symbol.full, exc)

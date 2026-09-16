@@ -456,6 +456,33 @@ async def test_a_broken_symbol_is_counted_apart_from_a_missing_one(tmp_path):
     assert tick.missing >= 1
 
 
+@pytest.mark.asyncio
+async def test_shutting_the_poll_down_still_works(tmp_path):
+    """The discrimination has to hold both ways. A library cancelling one
+    symbol must not stop the book; the desk cancelling the poll must."""
+    from till_infinity.prices import quotes as q
+
+    started = asyncio.Event()
+
+    class Slow(QuoteSource):
+        name = "slow"
+        feed_key = "tradingview"
+
+        async def quote(self, symbol):
+            started.set()
+            await asyncio.sleep(3600)
+
+    settings = Settings(data_dir=tmp_path)
+    task = asyncio.create_task(
+        q.poll_once([Slow(settings)], [FEEDS["gold"]], concurrency=2, sink=None)
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert task.cancelled(), "a cancelled poll must actually stop"
+
+
 def test_the_poll_does_not_gather_its_symbols_in_a_task_group():
     """**Pinned by mechanism, because the mechanism is the fault.**
 
@@ -489,9 +516,12 @@ async def test_a_cancelled_symbol_cannot_reach_the_poll(tmp_path):
         feed_key = "tradingview"
 
         async def quote(self, symbol):
+            # Exactly what an anyio cancel scope does on an httpx timeout: it
+            # cancels the task it is hosted in, which under `gather` is this
+            # symbol's task rather than the poll's.
             here = asyncio.current_task()
             if here is not None:
-                here.cancel()  # a real request against this child, not a leak
+                here.cancel()
             await asyncio.sleep(0)
 
     settings = Settings(data_dir=tmp_path)
