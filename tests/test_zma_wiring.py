@@ -295,6 +295,29 @@ class TestPublished:
         for value in published.values():
             assert isinstance(value, float)
 
+    def test_the_mother_cycle_s_record_rides_along_too(self):
+        """Published beside the entry bar's own and never instead of it, so a
+        consumer can ask about the horizon it is actually trading. A scalp is
+        right to read the entry bar; a trade stopped on the hour is not."""
+        from till_infinity.structures.engine import _anchor_context
+
+        anchor = wound(zm.Zma(), agrees=1)
+        anchor.edge_calls, anchor.edge_right = 210, 118
+        published = _anchor_context(anchor)
+        assert published["zma_anchor_edge_calls"] == 210.0
+        assert published["zma_anchor_edge_right"] == 118.0
+        assert set(published) & set(_zma_context(anchor)) == set(), (
+            "the two records must not share a key, or one would overwrite the other"
+        )
+
+    def test_no_anchor_reading_publishes_nothing_rather_than_zero(self):
+        """A missing reading is a missing key downstream, where a zero would be
+        read as a measurement. The strategy refuses on the absence either way,
+        but only one of them is honest about why."""
+        from till_infinity.structures.engine import _anchor_context
+
+        assert _anchor_context(None) == {}
+
 
 class TestAttention:
     """The softmax had no temperature, so it could not weight anything.
@@ -561,8 +584,12 @@ class TestTheRecordSurvivesADeploy:
         fresh = zm.Book()
         fresh.load(path)
         back = fresh.of("v75", "1m")
-        assert back.seen == 0, "the stream is not restored"
+        assert list(back._prices) == [], "the stream is not restored"
         assert back.edge_calls == expected, "the record is"
+        assert back.seen == 120, (
+            "and how much history it read comes back too - not the bars, the count of them, "
+            "which is what says whether a deeper store has anything left to teach it"
+        )
 
     def test_a_missing_file_is_a_cold_start_not_an_error(self, tmp_path):
         assert zm.Book().load(tmp_path / "nothing.pkl") == 0
@@ -624,14 +651,14 @@ class TestBackfill:
 
     def test_a_replay_clears_the_bar_the_gates_wait_on(self):
         book = zm.Book()
-        assert book.warm([("v75", "1m", self.reverting(3000))]) == 1
+        assert book.warm([("v75", "1m", self.reverting(3000))]) == (1, 0)
         got = book.of("v75", "1m")
         assert got.edge_calls >= zm.WARM
         assert 0.0 <= got.edge_accuracy <= 1.0
 
     def test_a_series_too_short_to_mean_anything_is_skipped(self):
         book = zm.Book()
-        assert book.warm([("gold", "15m", self.reverting(50))]) == 0
+        assert book.warm([("gold", "15m", self.reverting(50))]) == (0, 0)
         assert ("gold", "15m") not in book._by_key, "and leaves no empty entry behind"
 
     def test_a_series_that_already_has_a_record_is_not_replayed_over(self):
@@ -640,23 +667,40 @@ class TestBackfill:
         book = zm.Book()
         book.warm([("v75", "1m", self.reverting(3000))])
         before = book.of("v75", "1m").edge_calls
-        assert book.warm([("v75", "1m", self.reverting(3000))]) == 0
+        assert book.warm([("v75", "1m", self.reverting(3000))]) == (0, 0)
         assert book.of("v75", "1m").edge_calls == before
 
     def test_a_restored_record_is_respected_rather_than_rebuilt(self, tmp_path):
         """The record file and the backfill must not fight: a book that came
-        back from disk already has its evidence and replaying bars on top would
-        count the same history twice."""
+        back from disk already has its evidence, and replaying the same history
+        on top would count it twice."""
         path = tmp_path / "zma.pkl"
         seeded = zm.Book()
         z = seeded.of("v75", "1m")
-        z.edge_calls, z.edge_right = 400, 240
+        z.edge_calls, z.edge_right, z.seen = 400, 240, 3000
         seeded.save(path)
 
         fresh = zm.Book()
         fresh.load(path)
-        assert fresh.warm([("v75", "1m", self.reverting(3000))]) == 0
+        assert fresh.warm([("v75", "1m", self.reverting(3000))]) == (0, 0)
         assert fresh.of("v75", "1m").edge_calls == 400
+
+    def test_a_record_from_before_the_watermark_is_rebuilt_once(self, tmp_path):
+        """An older file carries counts and no `seen`. That is *unknown*, not
+        zero-with-confidence, and the honest answer to not knowing what a
+        series has read is to read the store into a fresh one - once, after
+        which the watermark it writes settles it."""
+        import pickle
+
+        path = tmp_path / "zma.pkl"
+        with path.open("wb") as handle:
+            pickle.dump({"version": 1, "record": {"v75\u00001m": (10, 6, 400, 240)}}, handle)
+
+        book = zm.Book()
+        assert book.load(path) == 1
+        assert book.of("v75", "1m").edge_calls == 400
+        assert book.warm([("v75", "1m", self.reverting(3000))]) == (0, 1)
+        assert book.of("v75", "1m").seen == 3000
 
     def test_each_timeframe_warms_separately(self):
         book = zm.Book()
@@ -666,8 +710,53 @@ class TestBackfill:
                 ("v75", "1h", self.reverting(3000, seed=2)),
             ]
         )
-        assert warmed == 2
+        assert warmed == (2, 0)
         assert book.of("v75", "1m").edge_accuracy != book.of("v75", "1h").edge_accuracy
+
+    def test_a_deeper_store_reaches_a_series_that_already_has_a_record(self):
+        """**The reason this is not simply "skip anything with a record".**
+
+        A record earned against a shallow store outlives the store growing, and
+        fetching more bars is the first thing anybody does when a gate is short
+        of evidence. Skipped forever, those bars would be written and read by
+        nothing.
+
+        Rebuilt rather than extended: an online model is sequential, and
+        replaying older bars into a state that has already seen newer ones is
+        not a record of anything.
+        """
+        book = zm.Book()
+        assert book.warm([("v75", "4h", self.reverting(1200))]) == (1, 0)
+        shallow = book.of("v75", "4h").edge_calls
+
+        assert book.warm([("v75", "4h", self.reverting(4000))]) == (0, 1)
+        deep = book.of("v75", "4h")
+        assert deep.seen == 4000
+        assert deep.edge_calls > shallow * 2
+
+    def test_a_store_that_has_barely_moved_is_left_alone(self):
+        """`seen + WARM` as the bar, so a restart does not rebuild every series
+        for the sake of the handful of bars collected since the last one."""
+        book = zm.Book()
+        book.warm([("v75", "4h", self.reverting(1200))])
+        before = book.of("v75", "4h").edge_calls
+        assert book.warm([("v75", "4h", self.reverting(1260))]) == (0, 0)
+        assert book.of("v75", "4h").edge_calls == before
+
+    def test_how_much_history_a_series_read_survives_a_restart(self, tmp_path):
+        """Otherwise the only watermark is the call count, and the scored call
+        fires on about 15% of bars - so "has it read the store" and "has it
+        scored a lot" would have to be asked with one number, and a correctly
+        warmed series would be rebuilt on every restart forever."""
+        path = tmp_path / "zma.pkl"
+        book = zm.Book()
+        book.warm([("v75", "4h", self.reverting(1200))])
+        book.save(path)
+
+        back = zm.Book()
+        back.load(path)
+        assert back.of("v75", "4h").seen == 1200
+        assert back.warm([("v75", "4h", self.reverting(1200))]) == (0, 0)
 
 
 class TestArmRunsOnAColdStart:

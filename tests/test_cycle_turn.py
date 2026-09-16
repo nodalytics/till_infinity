@@ -28,11 +28,16 @@ UP = {"direction": "up", "feed": "v75", "interval": "15m", "confluence": ["1h", 
 DOWN = {"direction": "down", "feed": "v75", "interval": "15m", "confluence": ["1h", "4h"]}
 
 
-def reading(*, agrees=1.0, calls=400.0, hit=0.60):
+def reading(*, agrees=1.0, calls=400.0, hit=0.60, entry_calls=400.0, entry_hit=0.60):
+    """A published reading. `calls`/`hit` are the **4h** record, which is what
+    licenses the trade; `entry_calls`/`entry_hit` are the entry bar's own, which
+    deliberately does not."""
     return {
         "zma_agrees": agrees,
-        "zma_edge_calls": calls,
-        "zma_edge_right": calls * hit,
+        "zma_edge_calls": entry_calls,
+        "zma_edge_right": entry_calls * entry_hit,
+        "zma_anchor_edge_calls": calls,
+        "zma_anchor_edge_right": calls * hit,
         "zma_z": -2.0 if agrees > 0 else 2.0,
         "zma_strong": 1.0,
     }
@@ -91,7 +96,7 @@ class TestTheRecordDecides:
     def test_an_unproven_feed_is_refused(self, strategy):
         got = strategy.accept(UP, reading(calls=10.0))
         assert got.gate == "cycle_unproven"
-        assert "10 scored calls" in got.detail
+        assert "10 scored 4h calls" in got.detail
 
     def test_a_feed_where_the_reading_is_a_coin_is_refused(self, strategy):
         got = strategy.accept(UP, reading(hit=0.50))
@@ -107,14 +112,37 @@ class TestTheRecordDecides:
     def test_a_feed_that_has_earned_it_is_taken(self, strategy):
         assert strategy.accept(UP, reading(calls=400.0, hit=0.60)) is None
 
-    def test_the_bar_is_the_same_one_the_veto_uses(self, strategy):
-        """Two places deferring to one record, so they cannot disagree about
-        whether a feed has earned a say."""
+    def test_the_bar_is_the_one_configuration_sets(self, strategy):
+        """The same two settings the veto reads, so nobody has to maintain two
+        ideas of what "earned a say" means - applied to the record of this
+        trade's own horizon rather than to the veto's."""
         settings = strategy.settings
         assert settings.zma_min_calls > 0
         assert settings.zma_min_accuracy > 0.5
         just_under = reading(hit=settings.zma_min_accuracy)
         assert strategy.accept(UP, just_under).gate == "cycle_poor"
+
+    def test_the_entry_bar_s_record_does_not_license_the_trade(self, strategy):
+        """**A minute of evidence cannot license a three-day position.**
+
+        `zma_edge_calls` on a 1m series counts one-minute-ahead calls, and the
+        1m series are where the record looks best - 0.83 on usdcnh, 0.82 on
+        eurgbp. This trade is stopped on the hour and targeted at four hours,
+        so that record is not evidence about it however much it reads like
+        permission. The faster the entry the louder the mistake, which is why
+        it is refused here rather than sized down.
+        """
+        perfect_minute = reading(calls=0.0, entry_calls=4000.0, entry_hit=0.83)
+        got = strategy.accept(UP, perfect_minute)
+        assert got.gate == "cycle_unproven"
+        assert "4h" in got.detail
+
+    def test_a_feed_with_no_anchor_record_at_all_is_refused(self, strategy):
+        """The absence of the number is the absence of the evidence. A 4h
+        series that has not scored anything yet trades nothing, which is what
+        every feed looks like on the day this ships."""
+        bare = {"zma_agrees": 1.0, "zma_z": -2.0, "zma_strong": 1.0}
+        assert strategy.accept(UP, bare).gate == "cycle_unproven"
 
 
 class TestGeometry:

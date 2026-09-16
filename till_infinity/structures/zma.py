@@ -120,6 +120,14 @@ COLD_STRONG, COLD_WEAK = 1.5, 1.0
 #: Calls before `accuracy` is worth reading.
 WARM = 200
 
+#: The timeframe whose record licenses a trade, whatever bar the call arrived
+#: on. A reading's scored record is a record of *its own* horizon: `edge_calls`
+#: on a 1m series counts one-minute-ahead calls, and a strategy that stops on
+#: the hour and targets four is not trading that. The anchor is published
+#: beside the entry bar's own record so a consumer can ask the question that
+#: matches the trade it is about to place.
+ANCHOR = "4h"
+
 #: Where the scored record lives, **outside the engine state**.
 #:
 #: The book used to live only inside the pickled engine, and
@@ -482,8 +490,8 @@ class Book(Restorable):
         ]
         return sorted(rows, key=lambda r: r[1])
 
-    def warm(self, series) -> int:
-        """Replay stored closes into the book. Returns series warmed.
+    def warm(self, series) -> tuple[int, int]:
+        """Replay stored closes into the book. Returns `(warmed, rebuilt)`.
 
         **Because nothing else fills it on a restore.** `Engine.seed` feeds
         this through `observe_bar`, but `warm_new` only replays feeds the
@@ -500,21 +508,44 @@ class Book(Restorable):
         venues interleaved by timestamp, say - would be handing it a violently
         reverting series that is an artefact of the query.
 
-        A series that already has a record is skipped rather than replayed on
-        top of it. Doubling counts would be worse than not warming at all,
-        because the gate reads the count as evidence.
+        A series that already has a record is never replayed *on top of* it -
+        doubling counts would be worse than not warming at all, because the gate
+        reads the count as evidence.
+
+        **But it is rebuilt when the store holds a great deal more history than
+        the series has seen.** Not a hypothetical: a record earned against a
+        shallow store outlives the store growing, and the first thing anybody
+        does when a gate is short of evidence is fetch more bars. Without this
+        those bars are written, and read by nothing, because the series they
+        belong to already has a record and was therefore skipped forever.
+
+        Rebuilding means a *fresh* series over the whole stored run, not an
+        extension of the old one: an online model is sequential, and replaying
+        older bars into a state that has already seen newer ones is not a
+        record of anything. The rebuilt pass is prequential exactly as the live
+        one is - each call scored on the bar after it - so what it produces is
+        the same measurement over more of the same series.
+
+        `seen + WARM` as the bar, so this does not churn: after a rebuild the
+        series has seen the whole store, and the next restart finds nothing new
+        enough to be worth another pass.
         """
-        warmed = 0
+        warmed = rebuilt = 0
         for feed, interval, closes in series:
             if len(closes) < WARM:
                 continue
             found = self.of(feed, interval)
-            if found.calls or found.edge_calls:
+            scored = found.calls or found.edge_calls
+            if scored and len(closes) < found.seen + WARM:
                 continue
+            if scored:
+                found = self._by_key[feed, interval] = Zma()
+                rebuilt += 1
+            else:
+                warmed += 1
             for close in closes:
                 found.observe(float(close))
-            warmed += 1
-        return warmed
+        return warmed, rebuilt
 
     # ------------------------------------------------------------ persistence
 
@@ -533,8 +564,14 @@ class Book(Restorable):
         """
         target = Path(path or WEIGHTS)
         try:
+            # `seen` travels with the counts and is not one of them: it is how
+            # much history this series has absorbed, which is what says whether
+            # a later, deeper store has anything left to teach it. Without it
+            # the only watermark is the call count, and the call count is ~15%
+            # of bars - so "has it read the store" and "has it scored a lot"
+            # are not the same question and cannot be asked with one number.
             payload = {
-                f"{feed}\u0000{interval}": (z.calls, z.right, z.edge_calls, z.edge_right)
+                f"{feed}\u0000{interval}": (z.calls, z.right, z.edge_calls, z.edge_right, z.seen)
                 for (feed, interval), z in self._by_key.items()
                 if z.calls or z.edge_calls
             }
@@ -564,7 +601,13 @@ class Book(Restorable):
             for key, counts in got["record"].items():
                 feed, _, interval = str(key).partition("\u0000")
                 z = self.of(feed, interval)
-                z.calls, z.right, z.edge_calls, z.edge_right = (int(c) for c in counts)
+                # Four fields before `seen` was carried. Read as "unknown", not
+                # as zero-with-confidence: the first warm after an upgrade
+                # rebuilds such a series from the store, which is the right
+                # answer when nothing recorded what it had already read.
+                calls, right, edge_calls, edge_right, *rest = (int(c) for c in counts)
+                z.calls, z.right, z.edge_calls, z.edge_right = calls, right, edge_calls, edge_right
+                z.seen = rest[0] if rest else 0
             self.loaded = len(got["record"])
             return self.loaded
         except Exception as exc:

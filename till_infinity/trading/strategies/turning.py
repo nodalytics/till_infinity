@@ -52,6 +52,7 @@ from __future__ import annotations
 import math
 from typing import Any, ClassVar
 
+from ...structures import zma as zm
 from ..models import Refusal, Side
 from .scalper import LevelStrategy, _number
 from .strategy import register
@@ -118,10 +119,25 @@ class CycleTurn(LevelStrategy):
 
     So the condition is not a threshold on the reading, it is a threshold on
     the reading's **record on that feed**: `zma_min_calls` settled calls at
-    `zma_min_accuracy`, the same bar `zma_gate` defers to, so the entry and the
-    veto cannot disagree about whether a feed has earned a say. On a family
-    where the reading is an anti-signal that record never clears and this never
-    trades there, with nobody maintaining a list of which families those are.
+    `zma_min_accuracy` - the same two settings `zma_gate` reads, so nobody has
+    to maintain two ideas of what earning a say means. On a family where the
+    reading is an anti-signal that record never clears and this never trades
+    there, with nobody maintaining a list of which families those are.
+
+    **The record of the 4h series, not of the bar the call arrived on.** A
+    record is a record of its own horizon: `edge_calls` on a 1m series counts
+    one-minute-ahead calls, and the 1m series are exactly where the record
+    looks best - 0.83 on usdcnh, 0.82 on eurgbp, against a median 0.56 at 4h.
+    Reading the entry bar's record here would let a minute of evidence license
+    a three-day position, and since the entry may be as fast as 1m the mistake
+    would get louder the faster the trade. `zma_gate` still reads the entry
+    bar's, because a scalp's horizon *is* the entry bar - the two now differ on
+    purpose, each asking about the horizon it trades.
+
+    The cost is that a feed with no 4h record trades nothing, which on the day
+    this ships is every feed: the deepest 4h records on the desk are 168 to 184
+    scored calls against the 200 the gate wants, six of them, and they arrive
+    at six calls a day.
     """
 
     name: ClassVar[str] = "cycle-turn"
@@ -222,19 +238,32 @@ class CycleTurn(LevelStrategy):
 
         # **The record, not the reading.** Everything above is true on a feed
         # where this has never worked; only this knows the difference.
-        calls = _number(features, "zma_edge_calls")
+        #
+        # **And the mother cycle's record, not the entry bar's.** A record is a
+        # record of its own horizon: `zma_edge_calls` on a 1m series counts
+        # one-minute-ahead calls, and this trade is stopped on the hour and
+        # targeted at four - so a 1m series right 83% of the time says nothing
+        # about it, however much it looks like permission. Reading the entry
+        # bar's record here would let a minute of evidence license a three-day
+        # position, and the faster the entry the louder that mistake gets.
+        #
+        # A feed whose 4h series has no record yet therefore trades nothing,
+        # which is the right default: the absence of the number is the absence
+        # of the evidence, and `_number` returning 0 falls through to the first
+        # refusal below rather than to a trade.
+        calls = _number(features, "zma_anchor_edge_calls")
         if calls < self.settings.zma_min_calls:
             return Refusal(
                 "cycle_unproven",
-                f"{calls:.0f} scored calls on this feed, "
+                f"{calls:.0f} scored {zm.ANCHOR} calls on this feed, "
                 f"{self.settings.zma_min_calls:.0f} needed before this trades it",
                 feed,
             )
-        rate = _number(features, "zma_edge_right") / max(calls, 1.0)
+        rate = _number(features, "zma_anchor_edge_right") / max(calls, 1.0)
         if rate <= self.settings.zma_min_accuracy:
             return Refusal(
                 "cycle_poor",
-                f"the reading is right {rate:.0%} of {calls:.0f} times here, "
+                f"the {zm.ANCHOR} reading is right {rate:.0%} of {calls:.0f} times here, "
                 f"which is not past {self.settings.zma_min_accuracy:.0%}",
                 feed,
             )

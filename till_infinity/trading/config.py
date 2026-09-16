@@ -475,15 +475,22 @@ class Settings:
     #: position rather than any coordination between them.
     #: The two the desk actually runs. `cycle-scalp` is the unified scalp
     #: thesis - 4h bias, 1h structure, fast pullback entry - and `cycle-turn`
-    #: is the slower reversion trade that both the 1h and 4h cycles have to
-    #: agree with, on a feed whose own scored record earns a say.
+    #: is the slower reversion trade that the 4h cycle has to agree with, on a
+    #: feed whose 4h record earns a say.
     #:
-    #: They do not overlap: `cycle-scalp` enters on 1m to 15m and `cycle-turn`
-    #: on 15m to 1h, so only 15m is shared, and there the two want opposite
-    #: things - one a continuation of the cycle, one a turn against it. The
-    #: journal tells them apart by magic, which is why every strategy needs a
-    #: slot in `MAGIC_ORDER`.
-    strategies: tuple[str, ...] = ("cycle-scalp", "cycle-turn")
+    #: **This is a priority list, and `cycle-turn` is first on purpose.** The
+    #: two now overlap on every timeframe from 1m to 15m, and where they
+    #: overlap they want opposite things - one a continuation of the cycle,
+    #: one a turn against it. The first taker wins, so the order is the
+    #: decision about which reading of a shared call the desk acts on, and the
+    #: turn is both the rarer and the better-gated of the two: it needs an
+    #: agreeing 4h cycle, a second anchor, and 200 scored 4h calls beating 52%
+    #: on that feed, where the scalp needs none of those. Listed second it
+    #: would see only what the scalp had already declined.
+    #:
+    #: The journal tells their trades apart by magic, which is why every
+    #: strategy needs a slot in `MAGIC_ORDER`.
+    strategies: tuple[str, ...] = ("cycle-turn", "cycle-scalp")
     #: The named risk plan. Individual limits set in the environment win over
     #: it - see `plans`.
     risk_plan: str = "standard"

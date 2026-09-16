@@ -713,6 +713,31 @@ def _zma_context(zma) -> dict:
         return {}
 
 
+def _anchor_context(zma) -> dict:
+    """The **mother cycle's** scored record, whatever bar this call arrived on.
+
+    A reading's record is a record of its own horizon: `zma_edge_calls` on a 1m
+    series counts one-minute-ahead calls, and a trade stopped on the hour and
+    targeted at four hours is not that bet however good those minutes were. The
+    two travel together so a consumer can ask the question that matches the
+    trade it is about to place rather than the one the entry bar happens to
+    answer.
+
+    The record only, not the reading: whether the mother cycle *agrees* is
+    already settled upstream by the confluence the call carries, and a second
+    answer to it here would be a differently-wrong one. See `zma.ANCHOR`.
+    """
+    if zma is None or not zm.ENABLED:
+        return {}
+    try:
+        return {
+            "zma_anchor_edge_calls": float(zma.edge_calls),
+            "zma_anchor_edge_right": float(zma.edge_right),
+        }
+    except Exception:  # a reading nothing gates on must not raise
+        return {}
+
+
 @dataclass(slots=True)
 class Call(Restorable):
     """A directional call at a level, with everything behind it."""
@@ -764,6 +789,7 @@ class Call(Restorable):
         busy: float = 1.0,
         market: str = "",
         venue: str = "consensus",
+        anchor=None,
     ) -> Signal:
         # `probability`, not `probability_up`: quoting P(up) beside a *down*
         # call reads as the confidence in down when it is the confidence
@@ -906,6 +932,7 @@ class Call(Restorable):
                 # displacement and momentum pointing the same way - and is the
                 # only one worth cutting by.
                 **_zma_context(zma),
+                **_anchor_context(anchor),
                 **_cycle_context(cycles),
                 # All four on one scale, combined equally. Recorded so the
                 # journal can say whether the combination beat the estimate

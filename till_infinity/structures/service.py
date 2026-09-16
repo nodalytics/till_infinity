@@ -693,15 +693,30 @@ class Watcher:
     #: 15m to 1h and the book is keyed per timeframe, so these are the ones a
     #: gate will actually consult; warming every interval structures publishes
     #: would triple the work to fill series nothing asks about.
-    ZMA_WARM_INTERVALS: tuple[str, ...] = ("1m", "5m", "15m", "30m", "1h", "4h")
+    #: **`1d` is here because of how slowly it earns anything.** The scored
+    #: call fires on about 15% of bars, so a daily series accumulates roughly
+    #: one call every seven days: the two hundred the gates wait on are
+    #: **three and a half years** of live accumulation, and a 4h series is
+    #: still most of a year. Reading them out of the store is not a
+    #: convenience on those timeframes, it is the only way they are ever
+    #: evidence - and `cycle-turn` anchors on 4h and 1d.
+    ZMA_WARM_INTERVALS: tuple[str, ...] = ("1m", "5m", "15m", "30m", "1h", "4h", "1d")
 
     #: Closes per series. Enough to clear the two hundred settled calls the
     #: gates wait on - a run of this length produced 446 in a replay - without
     #: pulling a year of history for fifty feeds on a two-core box.
+    #:
+    #: It does not bind on the slow timeframes today and that is not an
+    #: accident of the number: the store holds about 1,200 4h bars and 330
+    #: daily ones per feed, so those series already read everything there is.
+    #: What they are short of is **bars in the store**, not permission to read
+    #: them - which makes a deeper 4h backfill the lever, and `Book.warm`
+    #: rebuilding a series when the store outgrows it the reason a deeper
+    #: backfill would reach the records that already exist.
     ZMA_WARM_BARS: int = 3_000
 
-    def _warm_zma(self) -> int:
-        """Fill the z-score's book from stored bars, where it has no record.
+    def _warm_zma(self) -> tuple[int, int]:
+        """Fill the z-score's book from stored bars. Returns `(warmed, rebuilt)`.
 
         **Nothing else does this on a restore.** `Engine.seed` feeds the book
         through `observe_bar`, but `warm_new` only replays feeds the engine has
@@ -724,10 +739,10 @@ class Watcher:
         """
         path = Path(self.settings.prices_db)
         if not path.exists() or not zm.ENABLED:
-            return 0
+            return 0, 0
         feeds = tuple(self.settings.feeds) or ()
         if not feeds:
-            return 0
+            return 0, 0
         with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
             return self.engine.zma.warm(self._stored_closes(conn, feeds))
 
@@ -787,9 +802,14 @@ class Watcher:
             log.warning("structures: could not restore the z-score record: %s", exc)
         # The z-score's book, filled from stored bars where it is empty.
         try:
-            got = self._warm_zma()
-            if got:
-                log.info("structures: warmed the z-score on %d series from stored bars", got)
+            fresh, rebuilt = self._warm_zma()
+            if fresh or rebuilt:
+                log.info(
+                    "structures: warmed the z-score on %d series from stored bars, "
+                    "rebuilt %d that had seen far less than the store holds",
+                    fresh,
+                    rebuilt,
+                )
         except Exception as exc:
             log.warning("structures: could not warm the z-score: %s", exc)
         # The quote-fed spread watcher, rebuilt rather than restored. Its cache
@@ -1731,6 +1751,10 @@ class Watcher:
                 busy,
                 market,
                 venue=sole_source(call.feed),
+                # The mother cycle's record travels with every call, whatever
+                # bar it arrived on: what licenses a trade is the record of the
+                # horizon the trade belongs to. See `zma.ANCHOR`.
+                anchor=self.engine.zma.of(call.feed, zm.ANCHOR),
             )
             # How many formations agree on this price, as a number.
             #
