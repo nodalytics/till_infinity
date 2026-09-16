@@ -2347,6 +2347,24 @@ def test_both_entry_points_warm_the_new_feeds():
     assert "warm_new()" in inspect.getsource(stack.Stack._run_structures)
 
 
+def test_the_stack_prepares_structures_off_the_event_loop():
+    """**Every actor on this box shares one loop and none of the start-up is
+    async.** The restore reads a 150MB state file and the warm replays a few
+    hundred thousand bars; run inline they hold the loop for minutes with
+    `prices` behind them collecting nothing. The same shape - one synchronous
+    query at the top of the collector - stopped the desk for twenty minutes on
+    2026-09-16."""
+    import inspect
+
+    from till_infinity import stack
+
+    source = inspect.getsource(stack.Stack._run_structures)
+    assert "asyncio.to_thread" in source, "structures start-up must not run on the shared loop"
+    threaded = source.partition("asyncio.to_thread")[0]
+    for step in ("watcher.load()", "watcher.arm()", "watcher.warm()", "watcher.warm_new()"):
+        assert step in threaded, f"{step} must be inside the threaded prepare, not after it"
+
+
 def test_a_thin_series_counts_as_unwarmed(tmp_path):
     """ "Has a series" is not "has enough of one". The eleven new synthetics had
     about twenty bars each, collected live since they were added, so the first

@@ -424,22 +424,37 @@ class Stack:
 
     async def _run_structures(self, book) -> None:
         watcher = sx.Watcher(self.bus, journal=book)
+
         # One line, in one place - `structures.watch` had the same two lines and
         # only one of them was fixed, so production kept the bug for a deploy
         # after the fix shipped. Warming is decided by whether there are levels,
         # not by whether the restore worked.
-        watcher.load()
-        watcher.arm()
-        if watcher.cold:
-            log.info("stack: structures restored no levels, warming from the store")
-            watcher.warm()
-        else:
-            # And the feeds added since the last cold start, which `cold`
-            # cannot see - it asks whether the engine holds *any* levels, and
-            # with 2,018 restored it does. Eleven instruments added to a
-            # running deployment had 2,700 stored bars each and seven levels
-            # between them, because nothing replayed their history.
-            watcher.warm_new()
+        # **In a thread, all of it.** Every actor on this box shares one event
+        # loop, and none of this is async: the restore reads a 150MB state file
+        # and the warm replays a few hundred thousand bars, which together held
+        # the loop for minutes while `prices` sat behind them with nothing
+        # collected. Measured on 2026-09-16: the same shape - one synchronous
+        # query at the top of the collector - stopped the desk for twenty
+        # minutes and wrote no quotes for the whole of it.
+        #
+        # Safe in a thread precisely because it is start-up: the watcher has
+        # not subscribed to the bus yet, so nothing else can be touching the
+        # engine while this runs. It is the last moment where that is true.
+        def prepare() -> None:
+            watcher.load()
+            watcher.arm()
+            if watcher.cold:
+                log.info("stack: structures restored no levels, warming from the store")
+                watcher.warm()
+            else:
+                # And the feeds added since the last cold start, which `cold`
+                # cannot see - it asks whether the engine holds *any* levels,
+                # and with 2,018 restored it does. Eleven instruments added to
+                # a running deployment had 2,700 stored bars each and seven
+                # levels between them, because nothing replayed their history.
+                watcher.warm_new()
+
+        await asyncio.to_thread(prepare)
         await watcher.run()
 
     async def _run_prices(self, _book) -> None:
