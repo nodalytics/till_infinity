@@ -159,6 +159,16 @@ class QuoteSource:
     #: True when the provider pushes updates instead of answering polls.
     streaming: bool = False
 
+    def diagnose(self) -> str:
+        """One line about why this source might not be producing anything.
+
+        The default is the little that is true of every source. The point is
+        that a stall report asks *each* source rather than guessing which one
+        stopped: on 2026-09-16 both transports stopped together four times and
+        three fixes were aimed at the wrong one.
+        """
+        return f"{self.name} streaming={self.streaming}"
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._unavailable: set[str] = set()
@@ -495,6 +505,16 @@ class TradingViewQuotes(QuoteSource):
         out, self._pushed = self._pushed, WriteResult()
         return out
 
+    def diagnose(self) -> str:
+        newest = max(self._touched.values(), default=0.0)
+        age = f"{time.time() - newest:.0f}s" if newest else "never"
+        return (
+            f"tradingview reader={_task_state(self._reader)} "
+            f"repair={_task_state(self._repair)} subscribed={len(self._keys)} "
+            f"failed={len(self._failed)} newest_field={age} "
+            f"sink={'set' if self._sink else 'MISSING'}"
+        )
+
 
 class TradingViewScannerQuotes(QuoteSource):
     """Bid/ask from the keyless scanner endpoint. Request/response, so polled."""
@@ -778,6 +798,61 @@ async def poll_once(
     return tick
 
 
+def _task_state(task: asyncio.Task[Any] | None) -> str:
+    """What became of a background task, including what it died of."""
+    if task is None:
+        return "none"
+    if not task.done():
+        return "alive"
+    with suppress(Exception):
+        exc = task.exception()
+        return f"dead({exc!r})" if exc is not None else "ended"
+    return "done"
+
+
+async def _watch_polls(
+    live: Sequence[QuoteSource],
+    settings: Settings,
+    finished: list[float],
+    wrote: list[float],
+) -> None:
+    """Say when the quote poll stops producing, and which kind of stop it is.
+
+    **Two stalls that look identical from outside and need opposite fixes.** A
+    poll that never returns is a hung await. Polls that return having written
+    nothing is a source gone quiet without saying so. On 2026-09-16 the desk
+    suffered the second four times, three fixes were aimed at the first, and
+    nothing in the process could tell anyone which it was.
+
+    One report per stall rather than one per check, because a symptom shouting
+    buries the cause - `_note_drop` learned that when 132,807 identical
+    warnings rotated the real error out of the logs.
+    """
+    told = ""
+    while True:
+        await asyncio.sleep(30.0)
+        patience = max(180.0, settings.quote_poll_seconds * 6)
+        idle = time.monotonic() - finished[0]
+        dry = time.monotonic() - wrote[0]
+        kind = "hung" if idle >= patience else ("dry" if dry >= patience else "")
+        if not kind:
+            told = ""
+            continue
+        if told == kind:
+            continue
+        told = kind
+        if kind == "hung":
+            log.warning("prices: no quote poll has finished for %.0fs - dumping every task", idle)
+            for task in asyncio.all_tasks():
+                frames = task.get_stack(limit=6)
+                where = " <- ".join(f"{f.f_code.co_name}:{f.f_lineno}" for f in reversed(frames))
+                log.warning("prices: stuck task %s | %s", task.get_name(), where or "no stack")
+        else:
+            log.warning("prices: polls are finishing but nothing has been written for %.0fs", dry)
+        for source in live:
+            log.warning("prices: quote source %s", source.diagnose())
+
+
 async def stream(
     *,
     settings: Settings,
@@ -814,29 +889,10 @@ async def stream(
         # actor reads as running - so each fix has been a guess at which await
         # never returned. This makes the process answer the question itself.
         finished = [time.monotonic()]
-
-        async def watchdog() -> None:
-            told = False
-            while True:
-                await asyncio.sleep(30.0)
-                stuck = time.monotonic() - finished[0]
-                if stuck < max(180.0, settings.quote_poll_seconds * 6):
-                    told = False
-                    continue
-                if told:
-                    continue
-                told = True
-                log.warning(
-                    "prices: no quote poll has finished for %.0fs - dumping every task", stuck
-                )
-                for task in asyncio.all_tasks():
-                    frames = task.get_stack(limit=6)
-                    where = " <- ".join(
-                        f"{f.f_code.co_name}:{f.f_lineno}" for f in reversed(frames)
-                    )
-                    log.warning("prices: stuck task %s | %s", task.get_name(), where or "no stack")
-
-        keeper = asyncio.create_task(watchdog(), name="quote-watchdog")
+        wrote = [time.monotonic()]
+        keeper = asyncio.create_task(
+            _watch_polls(live, settings, finished, wrote), name="quote-watchdog"
+        )
         try:
             while ticks is None or count < ticks:
                 started = time.monotonic()
@@ -844,6 +900,11 @@ async def stream(
                     live, feeds, concurrency=settings.quote_concurrency, sink=sink
                 )
                 finished[0] = time.monotonic()
+                # `.touched`, not the results themselves: a `WriteResult` is
+                # always truthy, so testing the objects would mark every poll
+                # productive and the dry branch would never fire.
+                if tick.written.touched or tick.pushed.touched:
+                    wrote[0] = time.monotonic()
                 count += 1
                 if on_tick is not None:
                     on_tick(count, tick)

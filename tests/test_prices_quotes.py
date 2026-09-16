@@ -379,6 +379,62 @@ async def test_a_poll_that_never_finishes_says_so_and_names_the_tasks(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_polls_that_finish_but_write_nothing_are_reported_too(tmp_path, caplog):
+    """**The stall that actually happens, and the one the first watchdog
+    missed.**
+
+    At 11:03 on 2026-09-16 both transports stopped writing and the watchdog
+    said nothing for nine minutes - because the poll loop was turning perfectly
+    well. A hung await and a source that has gone quiet look identical from
+    outside and need opposite fixes, so they have to be told apart here.
+    """
+    import logging
+
+    from till_infinity.prices import quotes as q
+
+    clock = [0.0]
+    ticking = type("Clock", (), {"monotonic": staticmethod(lambda: clock[0])})
+
+    class Mute(QuoteSource):
+        name = "mute"
+        feed_key = "mute"
+
+        def diagnose(self):
+            return "mute says why it is quiet"
+
+    real_sleep = asyncio.sleep
+
+    async def jump(delay, *a, **k):
+        clock[0] += delay
+        await real_sleep(0)
+
+    async def empty(*a, **k):
+        return QuoteTick()  # finished, wrote nothing
+
+    settings = Settings(data_dir=tmp_path)
+    with (
+        patch.object(q, "poll_once", empty),
+        patch.object(q, "build_quote_sources", lambda *a, **k: [Mute(settings)]),
+        patch.object(q, "time", ticking),
+        patch.object(q.asyncio, "sleep", jump),
+        caplog.at_level(logging.WARNING, logger=q.log.name),
+    ):
+        runner = asyncio.create_task(q.stream(settings=settings, feeds=[], sink=None))
+        for _ in range(300):
+            await real_sleep(0)
+            if any("nothing has been written" in r.getMessage() for r in caplog.records):
+                break
+        runner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await runner
+
+    said = [r.getMessage() for r in caplog.records]
+    assert any("nothing has been written" in m for m in said), said[-3:]
+    assert any("mute says why it is quiet" in m for m in said), "and each source explains itself"
+    assert not any("stuck task" in m for m in said), "a turning loop is not a hung one"
+
+
+@pytest.mark.asyncio
 async def test_the_poll_path_awaits_nothing_that_can_hang(tmp_path):
     """**The strongest form of the rule, because the weaker ones both failed.**
 
