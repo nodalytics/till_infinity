@@ -84,6 +84,15 @@ MEMORY = 4_000
 #: sample to.
 PATH_OFFSETS: tuple[int, ...] = (60, 300, 900, 1800, 3600)
 
+#: Seconds after a touch **resolves** at which the forward return is sampled.
+#:
+#: Shorter than `PATH_OFFSETS` at the near end because that is where the
+#: question lives: a scalp holds fifteen minutes, so what price did an hour
+#: later is history rather than evidence. Longer than one sample because a rule
+#: that is right at five minutes and wrong at fifteen is a different rule from
+#: one that is right at both, and only two numbers can tell them apart.
+FORWARD_OFFSETS: tuple[int, ...] = (60, 300, 900)
+
 #: How many of a series' own resolved touches it takes before its base rate
 #: mostly stops leaning on the pooled one. Higher than `PRIOR_WEIGHT` on
 #: purpose: a base rate is the reference everything else is measured against,
@@ -1034,6 +1043,82 @@ def infer(
 # ------------------------------------------------------------------ tracking
 
 
+def _confluence_n(confluence: object) -> float:
+    """How many timeframes agreed, whatever shape the field is in.
+
+    Declared `str` and written as `"1h+4h+1d"` on the live path, and handed a
+    sequence by several callers - so reading it one way only works until it
+    does not. Counted rather than assumed.
+    """
+    if not confluence:
+        return 0.0
+    if isinstance(confluence, str):
+        return float(len([x for x in confluence.split("+") if x]))
+    try:
+        return float(len([x for x in confluence if x]))
+    except TypeError:
+        return 0.0
+
+
+@dataclass(slots=True)
+class Forward(Restorable):
+    """Where price went after a touch resolved, signed by the call's side.
+
+    **The one thing this desk records about a level that is not an identity.**
+    `push_vol` is signed by how the touch resolved together with which side
+    price arrived from, which makes it 0% or 100% in every cell - the codebase
+    says so in as many words, and it means no rule for choosing a side can be
+    scored against it. `excursion_vol` is only assigned once price goes a full
+    unit past, giving 42,442 zeros against 12,105 values of 1.0 or more with
+    nothing in between. And `path` stops at resolution, which for a touch that
+    resolves in zero seconds is never sampled at all.
+
+    So on 2026-09-17, of 6,352 resolved touches in two days, not one carried an
+    outcome a direction rule could be tested against. Freshness, confluence,
+    push-against-risk - every condition anybody might want to gate on was
+    unfalsifiable on our own data.
+
+    This is the missing label: the return from the level, at fixed horizons
+    after resolution, **multiplied by the side the call took**. Positive means
+    the call was right. Nothing else here has that property.
+    """
+
+    feed: str
+    interval: str
+    level: float
+    #: +1 if the call expected a rise, -1 a fall. The whole point of the field.
+    side: int
+    resolved: float
+    #: Seconds after resolution the touch is still followed for.
+    deadline: float
+    #: Offset in seconds -> signed return in volatility units of the level's
+    #: own interval. Absent rather than zero when no quote landed on an offset:
+    #: a gap in the record is not a measurement.
+    after: dict[str, float] = field(default_factory=dict)
+    #: Conditions carried along so the analysis is self-contained rather than a
+    #: join against a 1.1GB journal on a two-core box.
+    touches: float = 0.0
+    confluence_n: float = 0.0
+    actionable: bool = False
+
+    @property
+    def done(self) -> bool:
+        return len(self.after) >= len(FORWARD_OFFSETS)
+
+    def to_dict(self) -> dict:
+        return {
+            "feed": self.feed,
+            "interval": self.interval,
+            "level": round(self.level, 8),
+            "side": self.side,
+            "resolved": self.resolved,
+            "touches": self.touches,
+            "confluence_n": self.confluence_n,
+            "actionable": self.actionable,
+            **{f"after_{k}": round(v, 4) for k, v in self.after.items()},
+        }
+
+
 @dataclass(slots=True)
 class Tracker(Restorable):
     """Follows interactions from first contact to resolution.
@@ -1062,6 +1147,10 @@ class Tracker(Restorable):
     trap_window: float = TRAP_WINDOW
     memory: Memory = field(default_factory=Memory)
     _open: dict[tuple[str, float], Touch] = field(default_factory=dict)
+    #: Resolved touches still being followed for their forward return, and the
+    #: finished ones waiting to be drained. See `Forward`.
+    _forward: dict[tuple[str, float], Forward] = field(default_factory=dict)
+    _followed: list[Forward] = field(default_factory=list)
 
     def horizon_for(self, touch: Touch) -> float:
         """How long this touch gets, in seconds, for its own timeframe.
@@ -1165,6 +1254,10 @@ class Tracker(Restorable):
 
         An observation older than the touch is refused - see `_live`.
         """
+        # Before the live check, because the whole point is that it outlives
+        # the touch: a touch that resolved in zero seconds has no open window
+        # to be walked in.
+        self._carry(level, price, vol, when)
         touch = self._live(level, when)
         if touch is not None:
             self._walk(touch, level, price, vol, when)
@@ -1316,7 +1409,81 @@ class Tracker(Restorable):
             # could possibly happen - which is why almost none were detected.
             level.broke_at = touch.broke_at
         self.memory.add(touch)
+        # **Followed past its own resolution.** Everything else recorded about
+        # a touch is decided by the moment it resolves, which is why none of it
+        # can score a direction rule. See `Forward`.
+        self._follow(level, touch, side, when)
         return touch
+
+    def _follow(self, level: Level, touch: Touch, side: Side, when: float) -> None:
+        """Start watching where price goes now the touch is over.
+
+        Signed by the side the *call* took rather than by the approach: a call
+        that expected a fall and got one is right, and that is the only sense
+        in which a forward return is a label.
+        """
+        if not level.price:
+            return
+        lean = -1 if side is Side.ABOVE else 1
+        self._forward[self.key(level)] = Forward(
+            feed=touch.feed,
+            interval=touch.interval,
+            level=level.price,
+            side=lean,
+            resolved=when,
+            # **Past the last offset, not at it.** The final sample needs a
+            # window to land in like every other one, and a deadline equal to
+            # the offset leaves it exactly zero seconds wide - which a test
+            # caught by never filling it. As wide as the gap before it.
+            deadline=when + FORWARD_OFFSETS[-1] + (FORWARD_OFFSETS[-1] - FORWARD_OFFSETS[-2]),
+            touches=float(getattr(touch.features, "experience", 0.0) or 0.0),
+            confluence_n=_confluence_n(touch.confluence),
+            actionable=bool(touch.actionable),
+        )
+
+    def _carry(self, level: Level, price: float, vol: Volatility, when: float) -> None:
+        """Fill in a followed touch's return at each offset it has passed.
+
+        Written once per offset and never revised, for the reason `_walk` gives:
+        the point is where price was *then*, and a later quote overwriting it
+        turns a path into a smear.
+        """
+        key = self.key(level)
+        found = self._forward.get(key)
+        if found is None:
+            return
+        unit = vol.price_units(found.level, 1.0)
+        if unit > 0:
+            elapsed = when - found.resolved
+            # **Each offset is filled only by a quote that landed in its own
+            # window**, never by whichever quote happens to arrive next. A
+            # level quoted once an hour would otherwise have one late price
+            # written into the one-minute, five-minute and fifteen-minute
+            # slots alike - three readings of the same moment, presented as a
+            # path. That is the smear `_walk` refuses, and a test caught this
+            # doing it.
+            windows = list(
+                zip(FORWARD_OFFSETS, (*FORWARD_OFFSETS[1:], found.deadline), strict=True)
+            )
+            for offset, until in windows:
+                mark = str(offset)
+                if mark not in found.after and offset <= elapsed < until:
+                    found.after[mark] = found.side * (price - found.level) / unit
+        if found.done or when >= found.deadline:
+            self._forward.pop(key, None)
+            # Kept even when incomplete: a level that stopped being quoted is
+            # itself a fact, and an absent offset is honest where a zero is not.
+            self._followed.append(found)
+
+    def drain_followed(self) -> list[Forward]:
+        """Take the forward returns finished since the last call.
+
+        Draining rather than reading, for the reason `drain_resolved` gives:
+        a consumer that read without clearing would record the same label on
+        every message.
+        """
+        found, self._followed = self._followed, []
+        return found
 
     def open_touch(self, level: Level) -> Touch | None:
         return self._open.get(self.key(level))

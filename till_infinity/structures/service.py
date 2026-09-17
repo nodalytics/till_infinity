@@ -1405,6 +1405,22 @@ class Watcher:
         cannot move without seeing them.
         """
         written = 0
+        # **The label, recorded on its own.** It arrives minutes after the
+        # resolution it belongs to, so it cannot ride on the outcome entry -
+        # and it is the only thing this desk records about a level that a
+        # direction rule can be scored against. See `reactions.Forward`.
+        for found in self.engine.drain_followed():
+            await observe(
+                self.journal,
+                f"{found.feed} {found.level:g}: where it went after",
+                rationale=(
+                    "forward return from the level, signed so positive means the call was right"
+                ),
+                actor="structures",
+                context={"shape": "forward", **found.to_dict()},
+            )
+            written += 1
+
         for level, touch in self.engine.drain_resolved():
             # Announced before the journal lookup, and unconditionally. A
             # resolution is a fact about the market, not a label on one of our

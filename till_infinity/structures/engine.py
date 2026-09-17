@@ -3260,6 +3260,10 @@ class Engine:
         found, self._resolved = self._resolved, []
         return found
 
+    def drain_followed(self) -> list[reactions.Forward]:
+        """The forward returns finished since the last call. See `Forward`."""
+        return self.tracker.drain_followed()
+
     def summary(self) -> list[dict]:
         """What the engine knows, for `structures levels`."""
         rows = []
