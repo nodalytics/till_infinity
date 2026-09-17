@@ -392,7 +392,13 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         got.get("probability_up", 0.5) if up else 1.0 - got.get("probability_up", 0.5)
     )
     base = got.get("base_rate_up", 0.5) if up else 1.0 - got.get("base_rate_up", 0.5)
-    touches, similar = got.get("own_touches", 0.0), int(got.get("neighbours", 0))
+    touches = got.get("own_touches", 0.0)
+    # **Not the neighbour count.** That is `k` by construction - twelve, on
+    # every card this desk has ever sent - so printing it reads as twelve
+    # corroborating cases and carries no information at all. `comparable` is
+    # how many of them the distance weighting actually leans on, which is the
+    # thing the line was always pretending to say.
+    comparable = float(got.get("comparable", 0.0))
     risk = got.get("risk_vol", 0.0)
     push = got.get("expected_push_vol", 0.0)
 
@@ -409,8 +415,9 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         rule,
         f"📊 {signal.venue} · {signal.interval} · fired {_stamp(signal)}",
         "",
-        f"📍 {_price(price)} · {touches:.0f} touches here + {similar} similar · "
-        f"strength {got.get('strength', 0.0):.2f}",
+        f"📍 {_price(price)} · {touches:.0f} touches here"
+        + (f" · leans on {comparable:.1f} comparable" if comparable else " · nothing comparable")
+        + f" · strength {got.get('strength', 0.0):.2f}",
         f"{'📈' if up else '📉'} {signal.direction} {probability:.0%} "
         f"against a {base:.0%} base rate",
     ]

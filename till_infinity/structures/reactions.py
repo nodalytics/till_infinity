@@ -561,6 +561,10 @@ class Inference(Restorable):
     base_rate_up: float
     own_touches: float
     neighbours: int
+    #: Of those `neighbours`, how many the distance weighting actually leans
+    #: on. `neighbours` is `k` by construction and therefore constant; this is
+    #: the number that says whether anything comparable was found.
+    comparable: float = 0.0
     detail: str = ""
     #: A retest of a recent break, arriving from the side it broke to.
     backcheck: bool = False
@@ -784,6 +788,7 @@ class Inference(Restorable):
             "net_push_vol": round(self.net_push, 4),
             "reward_to_risk": round(self.reward_to_risk, 3),
             "neighbours": self.neighbours,
+            "comparable": round(self.comparable, 2),
             "actionable": self.actionable,
             "mixed": self.mixed,
             "detail": self.detail,
@@ -943,8 +948,8 @@ class Memory:
         self.drawn += 1
         return found
 
-    def prior(self, features: Features, interval: str = "") -> tuple[float, float, int]:
-        """(P(up), mean push, count) from similar touches at *other* levels.
+    def prior(self, features: Features, interval: str = "") -> tuple[float, float, int, float]:
+        """(P(up), mean push, count, effective count) from touches at *other* levels.
 
         Distance-weighted, so a close neighbour counts for more than a distant
         one. Without the weighting, k neighbours of wildly different similarity
@@ -961,7 +966,7 @@ class Memory:
         """
         found = self.neighbours(features, interval)
         if not found:
-            return self.base_rate_up, 0.0, 0
+            return self.base_rate_up, 0.0, 0, 0.0
         weights = [1.0 / (1.0 + distance) for distance, _ in found]
         total = sum(weights)
         ups = sum(w for w, (_, touch) in zip(weights, found, strict=True) if touch.push_vol > 0)
@@ -970,7 +975,15 @@ class Memory:
         base = self.base_rate_up
         weight = len(found) / (len(found) + PRIOR_WEIGHT)
         smoothed = weight * (ups / total) + (1.0 - weight) * base
-        return smoothed, push / total, len(found)
+        # **How many of them the answer actually rests on.** The count is
+        # always `k` - twelve, every time, on every card this desk has ever
+        # sent - so printing it says nothing about whether anything comparable
+        # was found. Kish's effective sample size does: twelve near-identical
+        # neighbours come out near twelve, and twelve where one is close and
+        # eleven are distant come out near one.
+        spread = sum(w * w for w in weights)
+        effective = (total * total / spread) if spread else 0.0
+        return smoothed, push / total, len(found), effective
 
     def __len__(self) -> int:
         return len(self._touches)
@@ -1007,7 +1020,7 @@ def infer(
     # Banded by the level's own interval, so a weekly touch is not informed by
     # a population of sub-minute touches whose direction is definitional. See
     # research/similarity.md.
-    prior_up, prior_push, neighbours = memory.prior(features, level.interval)
+    prior_up, prior_push, neighbours, comparable = memory.prior(features, level.interval)
 
     # Shrinkage: the level's own history takes over as it accumulates. With no
     # touches this is entirely the neighbours' answer; past CONFIDENT_TOUCHES it
@@ -1032,6 +1045,7 @@ def infer(
         cost_vol=cost_vol,
         own_touches=own.touches,
         neighbours=neighbours,
+        comparable=comparable,
         detail=detail,
         backcheck=bool(features.backcheck),
         risk_vol=level.risk_vol(side, price or level.price, vol),
@@ -1149,7 +1163,13 @@ class Tracker(Restorable):
     _open: dict[tuple[str, float], Touch] = field(default_factory=dict)
     #: Resolved touches still being followed for their forward return, and the
     #: finished ones waiting to be drained. See `Forward`.
-    _forward: dict[tuple[str, float], Forward] = field(default_factory=dict)
+    #: Keyed by the level's **id**, never by its price. The Kalman mean moves
+    #: every time the level learns something, and it learns from the touch that
+    #: has just resolved - so a follower stored under the price at resolution
+    #: is looked up, moments later, under a key that no longer exists. All 27
+    #: records in the first half hour came back empty for exactly that reason.
+    #: `service.py` warns about this trap fifty lines from where it was made.
+    _forward: dict[str, Forward] = field(default_factory=dict)
     _followed: list[Forward] = field(default_factory=list)
 
     def horizon_for(self, touch: Touch) -> float:
@@ -1425,7 +1445,7 @@ class Tracker(Restorable):
         if not level.price:
             return
         lean = -1 if side is Side.ABOVE else 1
-        self._forward[self.key(level)] = Forward(
+        self._forward[level.id] = Forward(
             feed=touch.feed,
             interval=touch.interval,
             level=level.price,
@@ -1448,8 +1468,7 @@ class Tracker(Restorable):
         the point is where price was *then*, and a later quote overwriting it
         turns a path into a smear.
         """
-        key = self.key(level)
-        found = self._forward.get(key)
+        found = self._forward.get(level.id)
         if found is None:
             return
         unit = vol.price_units(found.level, 1.0)
@@ -1470,7 +1489,7 @@ class Tracker(Restorable):
                 if mark not in found.after and offset <= elapsed < until:
                     found.after[mark] = found.side * (price - found.level) / unit
         if found.done or when >= found.deadline:
-            self._forward.pop(key, None)
+            self._forward.pop(level.id, None)
             # Kept even when incomplete: a level that stopped being quoted is
             # itself a fact, and an absent offset is honest where a zero is not.
             self._followed.append(found)

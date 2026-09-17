@@ -3268,3 +3268,101 @@ def test_the_stated_member_ships_off():
 
     assert stated.ENABLED is False
     assert Book().stated_bps("volatility_75_index", "1m") is None
+
+
+def test_the_card_does_not_print_a_constant_as_evidence():
+    """**"12 similar" was always twelve.**
+
+    It is `DEFAULT_K`, the number of neighbours the model asks for, and it was
+    printed beside the touch count as though twelve comparable cases had been
+    found. Measured on 1,847 published signals: the value was 12 on every one
+    of them. What varies, and what the line was pretending to say, is how many
+    of those the distance weighting actually leans on.
+    """
+    import inspect
+
+    from till_infinity.structures import service as sx
+
+    source = inspect.getsource(sx)
+    assert "similar" not in source or "comparable" in source
+    body = inspect.getsource(sx.level_lines) if hasattr(sx, "level_lines") else source
+    assert "neighbours" not in body.split("📍")[1][:400], (
+        "the card must not print the neighbour count - it is k, and constant"
+    )
+
+
+def test_the_effective_count_says_how_much_evidence_there_really_was():
+    """**Kish's effective sample size is the honest summary.**
+
+    Twelve near-identical neighbours come out near twelve; twelve where one is
+    close and the rest are distant come out near one. The raw count cannot tell
+    those apart - it is `k` in both cases, which is why it was the same number
+    on all 1,847 published signals.
+    """
+    from till_infinity.structures.levels import Side
+    from till_infinity.structures.reactions import Features, Memory, Outcome, Touch
+
+    def resolved(depth: float, push: float) -> Touch:
+        """One settled touch, `depth` volatility units deep on the approach."""
+        touch = Touch(
+            feed="v75",
+            level_price=100.0,
+            features=Features(
+                side=Side.ABOVE,
+                approach_vol=1.0,
+                depth_vol=depth,
+                strength=0.5,
+                run_vol=1.0,
+                experience=0.0,
+            ),
+            started=0.0,
+            entry=100.0,
+            extreme=100.0,
+            interval="1m",
+        )
+        touch.outcome = Outcome.REJECT
+        touch.push_vol = push
+        touch.resolved = 1.0
+        return touch
+
+    asking = Features(
+        side=Side.ABOVE,
+        approach_vol=1.0,
+        depth_vol=1.0,
+        strength=0.5,
+        run_vol=1.0,
+        experience=0.0,
+    )
+
+    alike = Memory()
+    for _ in range(6):
+        alike.add(resolved(1.0, 1.0))
+    _, _, count, effective = alike.prior(asking, "1m")
+
+    mixed = Memory()
+    mixed.add(resolved(1.0, 1.0))
+    for depth in (40.0, 60.0, 80.0, 100.0, 120.0):
+        mixed.add(resolved(depth, 1.0))
+    _, _, spread_count, spread_effective = mixed.prior(asking, "1m")
+
+    assert count == spread_count, "the raw count cannot tell these apart"
+    assert effective > spread_effective, (
+        "identical neighbours must count for more than one close and five distant"
+    )
+    assert 0 < spread_effective <= spread_count
+
+
+def test_an_empty_memory_leans_on_nothing():
+    from till_infinity.structures.levels import Side
+    from till_infinity.structures.reactions import Features, Memory
+
+    asking = Features(
+        side=Side.ABOVE,
+        approach_vol=1.0,
+        depth_vol=1.0,
+        strength=0.5,
+        run_vol=1.0,
+        experience=0.0,
+    )
+    _, _, count, effective = Memory().prior(asking, "1m")
+    assert (count, effective) == (0, 0.0)

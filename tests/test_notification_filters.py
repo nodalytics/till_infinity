@@ -270,6 +270,9 @@ def test_a_level_alert_leads_with_the_instrument_and_the_direction():
             "expected_push_vol": -1.87,
             "own_touches": 9.0,
             "neighbours": 12.0,
+            # What the card prints. `neighbours` is `k` and the same on every
+            # signal; this is how many of them the weighting leans on.
+            "comparable": 4.3,
             "strength": 0.94,
             "risk_vol": 0.62,
         },
@@ -283,7 +286,9 @@ def test_a_level_alert_leads_with_the_instrument_and_the_direction():
     assert "down 77%" in text
     assert "53% base rate" in text
     assert "-1.87v" in text
-    assert "9 touches here + 12 similar" in text
+    assert "9 touches here" in text
+    assert "leans on 4.3 comparable" in text
+    assert "12 similar" not in text, "the neighbour count is k, and constant on every card"
 
 
 def test_a_level_signal_survives_missing_features():

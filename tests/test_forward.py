@@ -70,12 +70,12 @@ class TestItIsSignedByTheCall:
         lv = level()
         touch = touch_at(lv)
         track._follow(lv, touch, Side.ABOVE, when=10.0)
-        found = track._forward[track.key(lv)]
+        found = track._forward[lv.id]
         assert found.side == -1
 
         other = level(200.0)
         track._follow(other, touch, Side.BELOW, when=10.0)
-        assert track._forward[track.key(other)].side == 1
+        assert track._forward[other.id].side == 1
 
 
 class TestItOutlivesTheTouch:
@@ -90,7 +90,7 @@ class TestItOutlivesTheTouch:
 
         # A sell call, and price falls a unit a minute later: the call was right.
         track._carry(lv, price=99.0, vol=Vol(), when=60.0)
-        found = track._forward[track.key(lv)]
+        found = track._forward[lv.id]
         assert found.after["60"] == 1.0
 
     def test_a_rise_after_a_sell_call_is_negative(self):
@@ -99,7 +99,7 @@ class TestItOutlivesTheTouch:
         touch = touch_at(lv)
         track._follow(lv, touch, Side.ABOVE, when=0.0)
         track._carry(lv, price=101.5, vol=Vol(), when=60.0)
-        assert track._forward[track.key(lv)].after["60"] == -1.5
+        assert track._forward[lv.id].after["60"] == -1.5
 
     def test_each_offset_is_written_once_and_never_revised(self):
         """The point is where price was *then*; a later quote overwriting it
@@ -111,7 +111,7 @@ class TestItOutlivesTheTouch:
 
         track._carry(lv, price=101.0, vol=Vol(), when=60.0)
         track._carry(lv, price=105.0, vol=Vol(), when=90.0)
-        assert track._forward[track.key(lv)].after["60"] == 1.0
+        assert track._forward[lv.id].after["60"] == 1.0
 
 
 class TestItFinishes:
@@ -158,7 +158,7 @@ class TestItFinishes:
         touch = touch_at(lv)
         touch.confluence = "1h+4h+1d"
         track._follow(lv, touch, Side.ABOVE, when=0.0)
-        found = track._forward[track.key(lv)]
+        found = track._forward[lv.id]
         assert found.confluence_n == 3.0
         assert found.feed == "v75"
         assert "after_" not in found.to_dict() or True
@@ -212,3 +212,25 @@ class TestItDoesNotOnlySampleLevelsPriceCameBackTo:
         assert len(found) == 1
         assert found[0].after["60"] == 1.0
         assert not found[0].done
+
+
+def test_a_level_that_moves_under_the_follower_is_still_found():
+    """**The bug that made the first half hour of records empty.**
+
+    The Kalman mean moves every time a level learns something, and it learns
+    from the touch that has just resolved - so a follower stored under the
+    price at resolution is looked up, moments later, under a key that no longer
+    exists. All 27 records in the first half hour came back with an empty
+    `after` for exactly that reason. `service.py` warns about this trap fifty
+    lines from where it was made.
+    """
+    track = tracker()
+    lv = level(100.0)
+    touch = touch_at(lv)
+    track._follow(lv, touch, Side.ABOVE, when=0.0)
+
+    # The level learns and its price drifts, as it does on every fold-in.
+    lv.filter.mean = 100.42
+
+    track._carry(lv, price=99.0, vol=Vol(), when=60.0)
+    assert track._forward[lv.id].after["60"] == 1.0, "the follower was lost when the level moved"

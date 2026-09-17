@@ -930,6 +930,10 @@ class Call(Restorable):
                 "edge": self.inference.edge,
                 "own_touches": float(self.inference.own_touches),
                 "neighbours": float(self.inference.neighbours),
+                # How many of those the answer actually rests on. See
+                # `Inference.comparable`: the count itself is `k` and therefore
+                # the same number on every card ever sent.
+                "comparable": float(self.inference.comparable),
                 "strength": self.level.strength(self.time, vol),
                 "risk_vol": self.inference.risk_vol,
                 # Where a violent move began, and whether this level sits in
