@@ -288,3 +288,44 @@ class TestItIsReachedAtAll:
         found = engine.tracker.drain_followed()
         assert len(found) == 1
         assert found[0].done, f"every offset should be filled, got {found[0].after}"
+
+
+class TestTheWindowsAreAges:
+    """`elapsed` is an age; `deadline` is a clock. They are not comparable.
+
+    Every test above resolves its touch at `when=0.0`, where an age and a
+    clock read the same number - so the last window's upper bound could be an
+    absolute timestamp and nothing noticed. At a real epoch the bound becomes
+    1.79e9, `900 <= elapsed < 1.79e9` is true for any quote that ever arrives,
+    and the fifteen-minute slot goes back to taking whichever price turns up.
+    """
+
+    EPOCH = 1_788_300_000.0
+
+    def _followed(self):
+        track = tracker()
+        lv = level()
+        touch = touch_at(lv)
+        track._follow(lv, touch, Side.BELOW, when=self.EPOCH)
+        return track, lv
+
+    def test_a_quote_long_past_the_window_does_not_fill_the_last_offset(self):
+        track, lv = self._followed()
+        # Inside the first window, then nothing until well past the deadline.
+        track._carry(lv, price=101.0, vol=Vol(), when=self.EPOCH + 60.0)
+        track._carry(lv, price=130.0, vol=Vol(), when=self.EPOCH + 9_000.0)
+
+        found = track.drain_followed()
+        assert len(found) == 1
+        assert found[0].after.get("60") == 1.0, "the quote that did land is kept"
+        assert "900" not in found[0].after, (
+            "a quote 2.5 hours late is not the fifteen-minute return"
+        )
+
+    def test_a_quote_inside_the_last_window_still_fills_it(self):
+        """The bound must close the window, not remove it."""
+        track, lv = self._followed()
+        track._carry(lv, price=101.0, vol=Vol(), when=self.EPOCH + 1_000.0)
+
+        found = track._forward[lv.id]
+        assert found.after.get("900") == 1.0

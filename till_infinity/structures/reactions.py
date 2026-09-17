@@ -1492,9 +1492,15 @@ class Tracker(Restorable):
             # slots alike - three readings of the same moment, presented as a
             # path. That is the smear `_walk` refuses, and a test caught this
             # doing it.
-            windows = list(
-                zip(FORWARD_OFFSETS, (*FORWARD_OFFSETS[1:], found.deadline), strict=True)
-            )
+            # **Relative, like `elapsed`.** `deadline` is an absolute clock
+            # time, so closing the last window with it compared an age in
+            # seconds against an epoch: `900 <= elapsed < 1.79e9` is true for
+            # every quote that ever arrives, and the final offset went back to
+            # being filled by whichever one turned up. The tests missed it
+            # because they resolve a touch at `when=0.0`, where an age and a
+            # clock read the same.
+            last = found.deadline - found.resolved
+            windows = list(zip(FORWARD_OFFSETS, (*FORWARD_OFFSETS[1:], last), strict=True))
             for offset, until in windows:
                 mark = str(offset)
                 if mark not in found.after and offset <= elapsed < until:
