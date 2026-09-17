@@ -271,7 +271,13 @@ def check(plan: Plan) -> dict[str, str]:
     return reasons
 
 
-async def _forever(name: str, make: Callable[[], Awaitable[None]], *, settle: float = 1.0) -> None:
+async def _forever(
+    name: str,
+    make: Callable[[], Awaitable[None]],
+    *,
+    settle: float = 1.0,
+    stopping: Callable[[], bool] | None = None,
+) -> None:
     """Run a collector that must never stop, and start it again when it does.
 
     **This does not claim to know why it stops.** Six fixes went to the cause
@@ -301,13 +307,18 @@ async def _forever(name: str, make: Callable[[], Awaitable[None]], *, settle: fl
         try:
             await make()
         except asyncio.CancelledError:
+            # **Honoured unless a caller has said how to tell.** Without a
+            # `stopping` predicate there is no way to distinguish a library's
+            # cancel from a shutdown, and the safe default when you cannot tell
+            # is to stop - a desk that cannot be shut down is a worse bug than
+            # one that stops when it should not.
+            if stopping is None or stopping():
+                raise
             mine = asyncio.current_task()
-            if mine is not None and mine.cancelling() > 0:
-                raise  # a real shutdown, and it still stops here
             if mine is not None:
                 # Balance the request, or the next await raises it again.
                 mine.uncancel()
-            why = "was cancelled by something that never asked"
+            why = "was cancelled while the desk was still running"
         except Exception as exc:
             why = f"ended: {exc!r}"
         else:
@@ -405,6 +416,12 @@ class Stack:
         #: Set by the heartbeat when the last service has gone, and raised out
         #: of `run` so the process exits non-zero rather than looking stopped.
         self._ended: StackEndedError | None = None
+        #: Set when *this desk* is stopping. `_forever` consults it rather than
+        #: `Task.cancelling()`, because anyio's cancel scopes - how httpx
+        #: implements every timeout - call `task.cancel()` on their host task,
+        #: so "did somebody ask" reads true for a library timeout as well as
+        #: for a shutdown. Only this says which.
+        self._stopping = False
 
     async def run(
         self,
@@ -457,9 +474,11 @@ class Stack:
                 if self.plan.once and collectors:
                     await asyncio.wait(collectors)
                     say("stack", "collection pass complete")
+                    self._stopping = True
                     group._abort()
                 elif self.plan.duration is not None:
                     await asyncio.sleep(self.plan.duration)
+                    self._stopping = True
                     group._abort()
 
         if self._ended is not None:
@@ -683,8 +702,14 @@ class Stack:
                 _watch_end(group.create_task(bars(), name="prices:bars"))
                 _watch_end(group.create_task(quotes(), name="prices:quotes"))
             else:
-                group.create_task(_forever("prices:bars", bars), name="prices:bars")
-                group.create_task(_forever("prices:quotes", quotes), name="prices:quotes")
+                stopping = lambda: self._stopping  # noqa: E731
+                for label, make in (("prices:bars", bars), ("prices:quotes", quotes)):
+                    # Still watched as well as supervised: a supervisor that is
+                    # itself cancelled would otherwise vanish exactly as
+                    # quietly as the collector it was put there to watch.
+                    _watch_end(
+                        group.create_task(_forever(label, make, stopping=stopping), name=label)
+                    )
 
     async def _run_news(self, _book) -> None:
         settings = nw.Settings.from_env()
@@ -702,6 +727,7 @@ class Stack:
             )
 
     async def close(self) -> None:
+        self._stopping = True
         await self.bus.close()
 
 

@@ -400,18 +400,27 @@ async def test_a_cancellation_nobody_asked_for_is_a_death(caplog):
             raise asyncio.CancelledError  # nobody asked; it escaped a library
         await asyncio.Event().wait()
 
+    going_down = False
+
     with caplog.at_level(logging.ERROR, logger=st.log.name):
-        task = asyncio.create_task(st._forever("prices:quotes", cancelled_from_below, settle=0.0))
+        task = asyncio.create_task(
+            st._forever(
+                "prices:quotes", cancelled_from_below, settle=0.0, stopping=lambda: going_down
+            )
+        )
         for _ in range(400):
             await asyncio.sleep(0)
             if len(runs) >= 2:
                 break
+        # Only a desk that says it is stopping can stop it now - which is the
+        # property under test, so say so before tidying up.
+        going_down = True
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
     assert len(runs) >= 2, "a spurious cancellation killed the supervisor"
-    assert any("never asked" in r.getMessage() for r in caplog.records)
+    assert any("while the desk was still running" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -428,6 +437,7 @@ async def test_a_real_shutdown_still_stops_a_supervised_collector():
         started.set()
         await asyncio.Event().wait()
 
+    # No `stopping` predicate: cannot tell, so it stops - the safe default.
     task = asyncio.create_task(st._forever("prices:quotes", forever))
     await asyncio.wait_for(started.wait(), timeout=2)
     task.cancel()
@@ -480,3 +490,30 @@ async def test_a_desk_still_running_something_keeps_beating():
     with patch.object(st, "HEARTBEAT", 0.01), contextlib.suppress(TimeoutError):
         await asyncio.wait_for(desk._beat(), timeout=0.2)
     assert desk._ended is None
+
+
+@pytest.mark.asyncio
+async def test_a_desk_that_is_stopping_takes_its_collectors_with_it():
+    """The other half of the discrimination: when the desk says it is going
+    down, a supervised collector goes down with it rather than restarting into
+    a process that is closing."""
+    import asyncio
+
+    from till_infinity import stack as st
+
+    started = asyncio.Event()
+    going_down = False
+
+    async def forever() -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(
+        st._forever("prices:quotes", forever, settle=0.0, stopping=lambda: going_down)
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+    going_down = True
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
