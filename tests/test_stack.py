@@ -4,12 +4,35 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextlib as _contextlib
 import json
+import logging as _logging
 import time
 
 import pytest
 
 from till_infinity import stack as st
+
+
+@_contextlib.contextmanager
+def caplog_records(level, name):
+    """Collect one logger's messages, without depending on propagation."""
+    found = []
+
+    class Grab(_logging.Handler):
+        def emit(self, record):
+            found.append(record.getMessage())
+
+    logger = _logging.getLogger(name)
+    handler = Grab(level)
+    logger.addHandler(handler)
+    was = logger.level
+    logger.setLevel(level)
+    try:
+        yield found
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(was)
 
 
 @pytest.mark.parametrize("name", st.ORDER)
@@ -321,3 +344,139 @@ async def test_a_forever_task_that_is_cancelled_says_so(caplog):
 
     said = [r.getMessage() for r in caplog.records]
     assert any("prices:quotes was cancelled" in m for m in said), said
+
+
+@pytest.mark.asyncio
+async def test_a_collector_that_ends_is_started_again(caplog):
+    """**The claim is deliberately smaller than "the cause is fixed".**
+
+    Six fixes went to why one collector died on 2026-09-16 and it kept dying.
+    This does not care why: a collector that ends gets started again, loudly,
+    which works against a library cancelling something inside httpx as well as
+    against a bug here.
+    """
+    import asyncio
+    import logging
+
+    from till_infinity import stack as st
+
+    runs = []
+
+    async def dies() -> None:
+        runs.append(True)
+        if len(runs) < 3:
+            return  # ends on its own, as the quote poll did
+        await asyncio.Event().wait()
+
+    with caplog.at_level(logging.ERROR, logger=st.log.name):
+        task = asyncio.create_task(st._forever("prices:quotes", dies, settle=0.0))
+        for _ in range(400):
+            await asyncio.sleep(0)
+            if len(runs) >= 3:
+                break
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert len(runs) >= 3, f"it was not restarted: {len(runs)} run(s)"
+    said = [r.getMessage() for r in caplog.records]
+    assert any("returned on its own - restarting" in m for m in said), said[:3]
+
+
+@pytest.mark.asyncio
+async def test_a_cancellation_nobody_asked_for_is_a_death(caplog):
+    """The failure exactly as observed: the task ends cancelled, no exception
+    is recorded, siblings keep running, every gauge reads healthy."""
+    import asyncio
+    import logging
+
+    from till_infinity import stack as st
+
+    runs = []
+
+    async def cancelled_from_below() -> None:
+        runs.append(True)
+        if len(runs) < 2:
+            raise asyncio.CancelledError  # nobody asked; it escaped a library
+        await asyncio.Event().wait()
+
+    with caplog.at_level(logging.ERROR, logger=st.log.name):
+        task = asyncio.create_task(st._forever("prices:quotes", cancelled_from_below, settle=0.0))
+        for _ in range(400):
+            await asyncio.sleep(0)
+            if len(runs) >= 2:
+                break
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert len(runs) >= 2, "a spurious cancellation killed the supervisor"
+    assert any("never asked" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_real_shutdown_still_stops_a_supervised_collector():
+    """A desk that cannot be shut down is a worse bug than the one being
+    fixed."""
+    import asyncio
+
+    from till_infinity import stack as st
+
+    started = asyncio.Event()
+
+    async def forever() -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(st._forever("prices:quotes", forever))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_a_desk_with_nothing_left_running_ends_loudly():
+    """**A clean exit is indistinguishable from a deliberate stop.**
+
+    An actor ends by failing: the supervisor catches it, records it, returns.
+    When the last one goes the process would sit publishing a status of nothing
+    - or exit zero, which `docker` reads as a bounce and restarts on its
+    policy. That happened twice overnight on 2026-09-17 with quotes ninety
+    minutes stale, and nothing distinguished a desk that had died from one that
+    had been stopped.
+    """
+    import asyncio
+    import logging
+    from unittest.mock import patch
+
+    from till_infinity import stack as st
+
+    desk = st.Stack(st.Plan(journal=False))
+    desk.status.failed["prices"] = "the quote poll was cancelled"
+
+    with patch.object(st, "HEARTBEAT", 0.01), caplog_records(logging.ERROR, st.log.name) as said:
+        await asyncio.wait_for(desk._beat(), timeout=2)
+
+    assert desk._ended is not None
+    assert "quote poll was cancelled" in str(desk._ended)
+    assert any("every service has ended" in m for m in said)
+
+
+@pytest.mark.asyncio
+async def test_a_desk_still_running_something_keeps_beating():
+    """It must not fire while anything is alive, or every ordinary restart of
+    one service would take the whole process down."""
+    import asyncio
+    from unittest.mock import patch
+
+    from till_infinity import stack as st
+
+    desk = st.Stack(st.Plan(journal=False))
+    desk.status.running.append("structures")
+    desk.status.failed["prices"] = "gone"
+
+    with patch.object(st, "HEARTBEAT", 0.01), contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(desk._beat(), timeout=0.2)
+    assert desk._ended is None

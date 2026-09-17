@@ -41,7 +41,7 @@ import json
 import os
 import signal
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -271,6 +271,52 @@ def check(plan: Plan) -> dict[str, str]:
     return reasons
 
 
+async def _forever(name: str, make: Callable[[], Awaitable[None]], *, settle: float = 1.0) -> None:
+    """Run a collector that must never stop, and start it again when it does.
+
+    **This does not claim to know why it stops.** Six fixes went to the cause
+    of one collector's death on 2026-09-16: an unreachable reconnect, then an
+    unbounded one, then a reconnect on the polling path, then exceptions in a
+    child task, then the task group itself, then `cancelling()` asked of the
+    wrong task. Every one was a real defect and every one was verified fixed,
+    and the collector kept dying - which is a strong signal that the seventh
+    explanation would have been wrong as well.
+
+    So the claim here is smaller and holds whatever the cause: a collector that
+    ends gets started again, loudly. A silent permanent outage becomes a logged
+    blip, and that works against a library cancelling something deep inside
+    httpx exactly as well as against a bug in this repository.
+
+    **A cancellation nobody requested is a death, not a shutdown**, which is
+    the failure exactly as observed: the task ends cancelled, no exception is
+    recorded anywhere, its siblings keep running, and every gauge reads
+    healthy. `cancelling()` counts requests made against *this* task, so zero
+    means nobody here asked - and a real shutdown, which did ask, still stops.
+
+    Backs off so a collector that cannot start does not spin: `settle` per
+    attempt, capped at a minute.
+    """
+    attempts = 0
+    while True:
+        try:
+            await make()
+        except asyncio.CancelledError:
+            mine = asyncio.current_task()
+            if mine is not None and mine.cancelling() > 0:
+                raise  # a real shutdown, and it still stops here
+            if mine is not None:
+                # Balance the request, or the next await raises it again.
+                mine.uncancel()
+            why = "was cancelled by something that never asked"
+        except Exception as exc:
+            why = f"ended: {exc!r}"
+        else:
+            why = "returned on its own"
+        attempts += 1
+        log.error("stack: %s %s - restarting (attempt %d)", name, why, attempts)
+        await asyncio.sleep(min(60.0, settle * attempts))
+
+
 def _watch_end(task: asyncio.Task[None]) -> asyncio.Task[None]:
     """Say when a task that should run forever stops running.
 
@@ -339,6 +385,15 @@ def _arm_task_dump() -> None:
         log.info("stack: SIGUSR1 will dump every task")
 
 
+class StackEndedError(RuntimeError):
+    """Every service stopped without anybody asking for a shutdown.
+
+    Raised rather than returned so the process exits non-zero. A supervisor
+    that restarts on any exit cannot tell a crash from a clean stop, and the
+    difference is the whole question when a desk goes quiet overnight.
+    """
+
+
 class Stack:
     """Every service, one bus, one process."""
 
@@ -347,6 +402,9 @@ class Stack:
         self.bus = Bus(redis_url=self.plan.redis_url)
         self.status = Status()
         self._stack = contextlib.AsyncExitStack()
+        #: Set by the heartbeat when the last service has gone, and raised out
+        #: of `run` so the process exits non-zero rather than looking stopped.
+        self._ended: StackEndedError | None = None
 
     async def run(
         self,
@@ -403,6 +461,9 @@ class Stack:
                 elif self.plan.duration is not None:
                     await asyncio.sleep(self.plan.duration)
                     group._abort()
+
+        if self._ended is not None:
+            raise self._ended
         return self.status
 
     async def _backfill(self, say) -> int:
@@ -451,6 +512,25 @@ class Stack:
         while True:
             await asyncio.sleep(HEARTBEAT)
             self.status.publish()
+            # **A desk with nothing running is dead, and has to say so.**
+            #
+            # An actor ends by failing: `supervised` catches it, records it and
+            # returns. When the last one goes the process would simply sit here
+            # publishing a status of nothing, or - once this task is also gone -
+            # exit zero, which `docker` reads as a deliberate stop and restarts
+            # on its policy. That happened twice overnight on 2026-09-17 with
+            # quotes ninety minutes stale, and nothing anywhere distinguished a
+            # desk that had died from one that had been stopped.
+            #
+            # `once` and `duration` are the two cases where finishing is the
+            # point, and they never reach here with an empty book.
+            if not self.status.running and self.status.failed:
+                self._ended = StackEndedError(
+                    "every service has ended and none was asked to: "
+                    + ", ".join(f"{name} ({why})" for name, why in self.status.failed.items())
+                )
+                log.error("stack: %s", self._ended)
+                return
 
     def _start(self, group: asyncio.TaskGroup, name: str, book, say):
         """Launch one service as a supervised task. Returns it, or None."""
@@ -563,40 +643,48 @@ class Stack:
         intervals = px.resolve_intervals(self.plan.intervals or None)
         store = px.open_store("sqlite", database=settings.database, data_dir=settings.data_dir)
         async with store, asyncio.TaskGroup() as group:
-            _watch_end(
-                group.create_task(
-                    px.collect(
-                        settings=settings,
-                        store=store,
-                        feeds=feeds,
-                        intervals=intervals,
-                        # Chosen rather than defaulted, for the reason the quote
-                        # list is: a broker-only feed has no other candle source,
-                        # and quotes without bars build no level at all.
-                        sources=px.bar_source_names(),
-                        cycles=1 if self.plan.once else None,
-                        bus=self.bus,
-                    ),
-                    name="prices:bars",
+            # **Supervised, not merely watched.** `_watch_end` said when a
+            # collector stopped; it did not put it back, and a desk whose quote
+            # poll has silently ended looks identical to a quiet market. Both
+            # run under `_forever` now - see its note for why the claim there
+            # is deliberately smaller than "the cause is fixed".
+            #
+            # `once` is the exception: a collection pass is *meant* to end, and
+            # restarting it would turn a one-shot into a loop.
+            def bars() -> Awaitable[None]:
+                return px.collect(
+                    settings=settings,
+                    store=store,
+                    feeds=feeds,
+                    intervals=intervals,
+                    # Chosen rather than defaulted, for the reason the quote
+                    # list is: a broker-only feed has no other candle source,
+                    # and quotes without bars build no level at all.
+                    sources=px.bar_source_names(),
+                    cycles=1 if self.plan.once else None,
+                    bus=self.bus,
                 )
-            )
-            _watch_end(
-                group.create_task(
-                    px.stream(
-                        settings=settings,
-                        feeds=feeds,
-                        # Chosen rather than defaulted, so a broker-only feed is
-                        # actually polled. Registering a synthetic and leaving the
-                        # transport at its default would give a feed that exists,
-                        # is asked for, and never quotes.
-                        sources=px.quote_source_names(),
-                        sink=store.write_quote,
-                        ticks=1 if self.plan.once else None,
-                        bus=self.bus,
-                    ),
-                    name="prices:quotes",
+
+            def quotes() -> Awaitable[None]:
+                return px.stream(
+                    settings=settings,
+                    feeds=feeds,
+                    # Chosen rather than defaulted, so a broker-only feed is
+                    # actually polled. Registering a synthetic and leaving the
+                    # transport at its default would give a feed that exists,
+                    # is asked for, and never quotes.
+                    sources=px.quote_source_names(),
+                    sink=store.write_quote,
+                    ticks=1 if self.plan.once else None,
+                    bus=self.bus,
                 )
-            )
+
+            if self.plan.once:
+                _watch_end(group.create_task(bars(), name="prices:bars"))
+                _watch_end(group.create_task(quotes(), name="prices:quotes"))
+            else:
+                group.create_task(_forever("prices:bars", bars), name="prices:bars")
+                group.create_task(_forever("prices:quotes", quotes), name="prices:quotes")
 
     async def _run_news(self, _book) -> None:
         settings = nw.Settings.from_env()
