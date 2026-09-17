@@ -1475,6 +1475,17 @@ class Tracker(Restorable):
             # itself a fact, and an absent offset is honest where a zero is not.
             self._followed.append(found)
 
+    def _flush_followed(self, when: float) -> None:
+        """Retire followers whose window has closed, quote or no quote.
+
+        Kept with whatever offsets did fill. A level price walked away from has
+        an empty forward return and that is the honest record of it - the
+        alternative is a sample made only of levels price came back to.
+        """
+        done = [key for key, found in self._forward.items() if when >= found.deadline]
+        for key in done:
+            self._followed.append(self._forward.pop(key))
+
     def drain_followed(self) -> list[Forward]:
         """Take the forward returns finished since the last call.
 
@@ -1497,7 +1508,15 @@ class Tracker(Restorable):
 
         A touch that broke and then went quiet counts as a break: it got
         through and nothing took it back. One that never got anywhere is chop.
+
+        **Forward returns are flushed here too, and that is not housekeeping.**
+        `_carry` only runs when a quote arrives for that level, so a record
+        completed only where price stayed near the level it had just left -
+        which is the least representative sample there is, and it showed:
+        two records in an hour against roughly 130 resolutions. Every other
+        follower sat in the map for ever, never journalled and never freed.
         """
+        self._flush_followed(when)
         stale = [
             key
             for key, touch in self._open.items()

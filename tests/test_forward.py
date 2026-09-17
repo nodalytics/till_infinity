@@ -163,3 +163,52 @@ class TestItFinishes:
         assert found.feed == "v75"
         assert "after_" not in found.to_dict() or True
         assert found.to_dict()["side"] == -1
+
+
+class TestItDoesNotOnlySampleLevelsPriceCameBackTo:
+    """**The bias that made the first version nearly useless.**
+
+    `_carry` runs on a quote for that level, so a record completed only where
+    price stayed near the level it had just left - the least representative
+    sample there is. Two records landed in an hour against roughly 130
+    resolutions, and every other follower sat in the map for ever: never
+    journalled, never freed.
+    """
+
+    def test_a_level_price_walked_away_from_is_still_retired(self):
+        track = tracker()
+        lv = level()
+        touch = touch_at(lv)
+        track._follow(lv, touch, Side.ABOVE, when=0.0)
+
+        # No quote ever comes back for this level. The sweep still retires it.
+        track.expire(when=10_000.0)
+
+        found = track.drain_followed()
+        assert len(found) == 1
+        assert found[0].after == {}, "an empty forward return is the honest record"
+        assert not track._forward, "and the follower is freed rather than leaked"
+
+    def test_a_follower_inside_its_window_is_left_alone(self):
+        """The sweep must not retire one that can still be filled."""
+        track = tracker()
+        lv = level()
+        touch = touch_at(lv)
+        track._follow(lv, touch, Side.ABOVE, when=0.0)
+
+        track.expire(when=30.0)
+        assert track.drain_followed() == []
+        assert track._forward
+
+    def test_what_did_fill_survives_the_sweep(self):
+        track = tracker()
+        lv = level()
+        touch = touch_at(lv)
+        track._follow(lv, touch, Side.BELOW, when=0.0)
+        track._carry(lv, price=101.0, vol=Vol(), when=60.0)
+
+        track.expire(when=10_000.0)
+        found = track.drain_followed()
+        assert len(found) == 1
+        assert found[0].after["60"] == 1.0
+        assert not found[0].done
