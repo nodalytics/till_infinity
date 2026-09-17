@@ -15,6 +15,19 @@ from till_infinity import stack as st
 
 
 @_contextlib.contextmanager
+def patch_sleep(module, replacement):
+    """Swap `asyncio.sleep` as the module sees it, and put it back."""
+    import asyncio as _asyncio
+
+    was = _asyncio.sleep
+    module.asyncio.sleep = replacement
+    try:
+        yield
+    finally:
+        module.asyncio.sleep = was
+
+
+@_contextlib.contextmanager
 def caplog_records(level, name):
     """Collect one logger's messages, without depending on propagation."""
     found = []
@@ -517,3 +530,52 @@ async def test_a_desk_that_is_stopping_takes_its_collectors_with_it():
     with contextlib.suppress(asyncio.CancelledError):
         await task
     assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_a_cancellation_between_attempts_does_not_kill_the_supervisor(caplog):
+    """**The hole the first version left, found in production in half an hour.**
+
+    Only the collector was guarded; the wait between attempts was bare. A
+    cancellation landing in that window killed the supervisor outright, which
+    the log showed as `restarting (attempt 1)` followed immediately by
+    `was cancelled - it should run forever`. Every await in `_forever` is a
+    place a library can cancel the task, so every await has to be guarded.
+    """
+    import asyncio
+    import logging
+
+    from till_infinity import stack as st
+
+    runs = []
+    going_down = False
+
+    async def dies() -> None:
+        runs.append(True)
+        raise RuntimeError("the collector fell over")
+
+    # A sleep that is cancelled the first time it is waited on - exactly what a
+    # cancel scope firing during the backoff looks like.
+    real_sleep = asyncio.sleep
+    waits = []
+
+    async def hostile(delay, *a, **k):
+        waits.append(delay)
+        if len(waits) == 1:
+            raise asyncio.CancelledError
+        await real_sleep(0)
+
+    with caplog.at_level(logging.ERROR, logger=st.log.name), patch_sleep(st, hostile):
+        task = asyncio.create_task(
+            st._forever("prices:quotes", dies, settle=0.0, stopping=lambda: going_down)
+        )
+        for _ in range(400):
+            await real_sleep(0)
+            if len(runs) >= 2:
+                break
+        going_down = True
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert len(runs) >= 2, "a cancellation during the backoff killed the supervisor"

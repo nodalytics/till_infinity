@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import os
 import signal
@@ -302,30 +303,45 @@ async def _forever(
     Backs off so a collector that cannot start does not spin: `settle` per
     attempt, capped at a minute.
     """
-    attempts = 0
-    while True:
+
+    async def survive(what: Callable[[], Awaitable[None]]) -> str:
+        """Run `what` and say why it stopped, or raise on a real shutdown.
+
+        **Used for the backoff as well as the collector**, which is not a
+        tidiness point. The first version guarded only the collector and left
+        the wait between attempts bare, so a cancellation landing in that
+        window killed the supervisor outright - caught in production within
+        half an hour of shipping, as `restarting (attempt 1)` followed
+        immediately by `was cancelled - it should run forever`. Every await in
+        here is a place a library can cancel this task, so every await has to
+        be guarded the same way.
+        """
         try:
-            await make()
+            await what()
         except asyncio.CancelledError:
             # **Honoured unless a caller has said how to tell.** Without a
             # `stopping` predicate there is no way to distinguish a library's
-            # cancel from a shutdown, and the safe default when you cannot tell
-            # is to stop - a desk that cannot be shut down is a worse bug than
-            # one that stops when it should not.
+            # cancel from a shutdown, and the safe default when you cannot
+            # tell is to stop - a desk that cannot be shut down is a worse bug
+            # than one that stops when it should not.
             if stopping is None or stopping():
                 raise
             mine = asyncio.current_task()
             if mine is not None:
                 # Balance the request, or the next await raises it again.
                 mine.uncancel()
-            why = "was cancelled while the desk was still running"
+            return "was cancelled while the desk was still running"
         except Exception as exc:
-            why = f"ended: {exc!r}"
-        else:
-            why = "returned on its own"
+            return f"ended: {exc!r}"
+        return ""
+
+    attempts = 0
+    while True:
+        why = await survive(make) or "returned on its own"
         attempts += 1
         log.error("stack: %s %s - restarting (attempt %d)", name, why, attempts)
-        await asyncio.sleep(min(60.0, settle * attempts))
+        wait = min(60.0, settle * attempts)
+        await survive(functools.partial(asyncio.sleep, wait))
 
 
 def _watch_end(task: asyncio.Task[None]) -> asyncio.Task[None]:
