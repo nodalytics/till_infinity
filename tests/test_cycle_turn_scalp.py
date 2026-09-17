@@ -196,3 +196,30 @@ class TestItIsAScalp:
         scalp's stop."""
         assert strategy.style == "scalp"
         assert strategy.hold_seconds <= 4 * 3600.0
+
+
+class TestTheClockIsTheOperatorsToSet:
+    """A class body could only ever cut the setting, never reach it.
+
+    `hold_for` takes the *smaller* of `hold_seconds` and the configured scalp
+    ceiling. This strategy named fifteen minutes, so when `TRADING_MAX_HOLD_S`
+    was raised to 2,700s it went on closing at 900 - while `cycle-scalp`,
+    which names no hold, took the full forty-five. The setting looked applied
+    and was not.
+    """
+
+    def test_it_holds_for_as_long_as_the_scalp_ceiling_allows(self):
+        settings = Settings(max_hold=2_700.0)
+        strategy = STRATEGIES["cycle-turn-scalp"](settings=settings)
+        assert strategy.hold_for("1m") == 2_700.0
+
+    def test_it_tracks_the_ceiling_rather_than_a_number_of_its_own(self):
+        """Lower the setting and it follows - which is the whole point."""
+        strategy = STRATEGIES["cycle-turn-scalp"](settings=Settings(max_hold=600.0))
+        assert strategy.hold_for("1m") == 600.0
+
+    def test_it_agrees_with_the_scalp_it_runs_beside(self):
+        settings = Settings(max_hold=2_700.0)
+        turn = STRATEGIES["cycle-turn-scalp"](settings=settings)
+        scalp = STRATEGIES["cycle-scalp"](settings=settings)
+        assert turn.hold_for("1m") == scalp.hold_for("1m"), "two scalps, one configured ceiling"

@@ -117,18 +117,21 @@ class CycleTurnScalp(LevelStrategy):
     #: exceed the risk budget through a setting nobody reads as a risk setting.
     UNCONFIRMED_RISK: ClassVar[float] = 0.5
 
-    #: **Fifteen minutes.** Enter fast and leave fast: this trades a
-    #: displacement that has already begun to unwind, and a reversion that has
-    #: not happened within a quarter of an hour is not the trade that was
-    #: taken. `hold_for` takes the smaller of this and the configured scalp
-    #: ceiling, so the strategy asks and configuration decides.
+    #: **No hold of its own, so the configured scalp ceiling governs.** This
+    #: asked for fifteen minutes, and because `hold_for` takes the *smaller* of
+    #: the strategy's number and the ceiling, a class body could only ever cut
+    #: the setting - never reach it. `TRADING_MAX_HOLD_S` was raised to 2,700s
+    #: and this strategy went on closing at 900, silently, while its sibling
+    #: `cycle-scalp` - which names no hold - took the full forty-five minutes.
+    #: One ceiling for both scalps, reachable from a deployment.
     #:
-    #: The cost is known and accepted: 48% of this desk's trades already expire
-    #: on the clock at about 0R, and a shorter clock makes that fraction
-    #: larger, not smaller. It is paired with banking small profits rather than
-    #: waiting for targets - see `research/giveback.md`.
+    #: Enter fast and leave fast still holds as the thesis: this trades a
+    #: displacement that has already begun to unwind. The clock is now the
+    #: operator's to set, and 48% of this desk's trades already expire on it at
+    #: about 0R - a shorter clock makes that fraction larger, not smaller,
+    #: which is why it is paired with banking small profits rather than waiting
+    #: for targets. See `research/giveback.md`.
     style: ClassVar[str] = "scalp"
-    hold_seconds: ClassVar[float] = 15 * 60.0
 
     #: `ride`'s exit, which `research/exiting.md` measured as the best of six
     #: over 31,820 replayed touches.
