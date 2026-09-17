@@ -234,3 +234,57 @@ def test_a_level_that_moves_under_the_follower_is_still_found():
 
     track._carry(lv, price=99.0, vol=Vol(), when=60.0)
     assert track._forward[lv.id].after["60"] == 1.0, "the follower was lost when the level moved"
+
+
+class TestItIsReachedAtAll:
+    """The tracker filled these correctly all along. Nothing ever called it.
+
+    `_carry` sat inside `ReactionTracker.update`, which reads as though it
+    outlives the touch - and the tests above drive `update` directly, so they
+    agreed. But the engine only calls `update` for a level whose touch is
+    *open*; once the touch resolved that level stopped being offered prices
+    and its follower aged out untouched. Production on 2026-09-17: 256 of 258
+    records with every offset absent, the two survivors being levels price
+    returned to and opened a second touch on.
+    """
+
+    def _engine_with_a_warm_level(self):
+        from till_infinity.structures import engine as eng
+
+        engine = eng.Engine()
+        # The engine refuses to check an unwarmed feed, so warm the one the
+        # check will look up. Fed directly: this is about whether `carry` is
+        # reached, not about how a series warms.
+        vol = engine.vol_for("t", "1m")
+        for i in range(60):
+            vol.update(100.0 + (i % 7) * 0.1)
+        assert vol.warm, "the fixture needs a warm feed or it proves nothing"
+        lv = Level(feed="t", interval="1m", filter=Kalman(mean=100.0, variance=1.0))
+        engine._levels[("t", "1m")] = [lv]
+        return engine, lv, vol
+
+    def test_a_resolved_level_still_has_its_forward_return_filled(self):
+        engine, lv, _ = self._engine_with_a_warm_level()
+        touch = touch_at(lv)
+        engine.tracker._follow(lv, touch, Side.ABOVE, when=0.0)
+        assert engine.tracker.open_touch(lv) is None, "no open touch - that is the case"
+
+        # Price walks away from the level, which is what most of them do.
+        engine.check("t", "1m", price=101.0, when=60.0)
+
+        found = engine.tracker._forward[lv.id]
+        assert "60" in found.after, "a level with no open touch must still carry its forward return"
+
+    def test_the_offset_is_measured_even_where_price_never_comes_back(self):
+        """The bias this whole record exists to avoid, stated as a test."""
+        engine, lv, _ = self._engine_with_a_warm_level()
+        touch = touch_at(lv)
+        engine.tracker._follow(lv, touch, Side.ABOVE, when=0.0)
+
+        for offset in rx.FORWARD_OFFSETS:
+            # Far enough out that no new touch can open at any point.
+            engine.check("t", "1m", price=140.0, when=float(offset))
+
+        found = engine.tracker.drain_followed()
+        assert len(found) == 1
+        assert found[0].done, f"every offset should be filled, got {found[0].after}"

@@ -1274,10 +1274,6 @@ class Tracker(Restorable):
 
         An observation older than the touch is refused - see `_live`.
         """
-        # Before the live check, because the whole point is that it outlives
-        # the touch: a touch that resolved in zero seconds has no open window
-        # to be walked in.
-        self._carry(level, price, vol, when)
         touch = self._live(level, when)
         if touch is not None:
             self._walk(touch, level, price, vol, when)
@@ -1460,6 +1456,21 @@ class Tracker(Restorable):
             confluence_n=_confluence_n(touch.confluence),
             actionable=bool(touch.actionable),
         )
+
+    def carry(self, level: Level, price: float, vol: Volatility, when: float) -> None:
+        """Advance a forward return on an observation, touch or no touch.
+
+        **Called for every level on every observation, and that is the whole
+        point.** This used to sit inside `update`, which reads as though it
+        outlives the touch - but `update` is only ever called for a level with
+        an *open* touch, so once the touch resolved the follower stopped being
+        offered prices and its window closed empty. Production said so
+        plainly: 256 of 258 records had every offset absent, and the two that
+        filled were levels price happened to come back to and open a second
+        touch on. That is precisely the sample `expire` warns about, arrived
+        at from the other side.
+        """
+        self._carry(level, price, vol, when)
 
     def _carry(self, level: Level, price: float, vol: Volatility, when: float) -> None:
         """Fill in a followed touch's return at each offset it has passed.

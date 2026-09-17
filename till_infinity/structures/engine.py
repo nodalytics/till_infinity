@@ -2836,6 +2836,11 @@ class Engine:
             return []
         calls: list[Call] = []
         for level in self._levels.get((feed, interval), []):
+            # Before anything decides whether this level is interesting. A
+            # forward return is measured *after* its touch resolved, so the
+            # one place it must not live is inside a branch that only runs
+            # while the touch is open - see `ReactionTracker.carry`.
+            self.tracker.carry(level, price, vol, when)
             open_touch = self.tracker.open_touch(level)
             if open_touch is not None:
                 # The wick belongs to this touch only if the touch was already

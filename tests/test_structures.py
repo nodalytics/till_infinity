@@ -1106,6 +1106,9 @@ def test_a_bars_wick_cannot_resolve_a_touch_born_inside_it():
         def __init__(self, started: float) -> None:
             self.started = started
 
+        def carry(self, level, price, vol, when):
+            """Offered for every level, open touch or not - see test_forward."""
+
         def open_touch(self, level):
             return self
 
