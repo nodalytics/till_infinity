@@ -587,6 +587,11 @@ class Trader:
         #: on a move it had already earned, and it gave the lot back. There
         #: were ten deploys on 2026-09-04 alone.
         #:
+        #: When the best and the worst price each happened, so a later question
+        #: about *order* - did the retracement come before the peak or after -
+        #: has an answer. Without it, `best_r` and `adverse_r` describe a trade
+        #: whose shape cannot be reconstructed, which is what left the
+        #: break-even experiment in `manage.py` undecidable.
         #: It also understated the damage: `best_r` on the close is read from
         #: this dict, so a give-back measured after a restart records the peak
         #: it reached *since* the restart, not the one that mattered.
@@ -632,7 +637,7 @@ class Trader:
         #: that one was tracked, and nothing needed the adverse one so nobody
         #: wrote it down. That made "how much heat does a winner take" - the
         #: number that sizes a stop - unanswerable from our own record.
-        self._worst: dict[int, float] = {}
+        self._worst, self._best_at, self._worst_at = {}, {}, {}
         #: feed -> a signal parked until price comes back. One per instrument,
         #: because the per-instrument position limit would refuse the second
         #: anyway and holding several would only decide which to drop later.
@@ -2944,6 +2949,7 @@ class Trader:
         that says whether a 4v stop is protecting anything - could not be got
         out of our own record. See research/stops.md.
         """
+        tick_time = time.time()
         for ticket, live in self.open.items():
             if live.position.symbol != symbol:
                 continue
@@ -2952,10 +2958,18 @@ class Trader:
             price = bid if live.position.side is Side.BUY else ask
             buying = live.position.side is Side.BUY
             seen = self._best.get(ticket)
-            if seen is None:
+            if seen is None or (max(seen, price) if buying else min(seen, price)) != seen:
                 self._best[ticket] = price
-            else:
-                self._best[ticket] = max(seen, price) if buying else min(seen, price)
+                # **When the high came, not only how high.** A break-even stop
+                # can only cut a winner that retraced *after* its peak, and a
+                # dip before the peak is harmless - but `adverse_r` cannot tell
+                # the two apart, so the one question `manage.py` says nobody
+                # has answered stayed unanswerable. 585 closed trades on
+                # 2026-09-17 said a break-even at +0.25R would rescue 107
+                # losers worth -839 while putting at most 143 winners worth
+                # +1,044 at risk, and the width of that "at most" is exactly
+                # this missing ordering.
+                self._best_at[ticket] = tick_time
             # **Armed here because here is where the market is seen.** The
             # trigger is a moment, not a state: a trade touches 1.0R and is
             # back at 0.4R before the manage loop next runs, so a check that
@@ -2970,10 +2984,9 @@ class Trader:
                 ):
                     self._bank_due.add(ticket)
             hurt = self._worst.get(ticket)
-            if hurt is None:
+            if hurt is None or (min(hurt, price) if buying else max(hurt, price)) != hurt:
                 self._worst[ticket] = price
-            else:
-                self._worst[ticket] = min(hurt, price) if buying else max(hurt, price)
+                self._worst_at[ticket] = tick_time
 
     async def _manage(self) -> int:
         """Move stops on open trades, and bank part of the ones in front."""
@@ -4164,6 +4177,18 @@ class Trader:
             # already tracked for `best_r`.
             **self._turn_exit(live, price),
             "adverse_r": round(self._heat(live), 3),
+            # **Seconds from the open to each extreme, so the shape is
+            # recoverable.** `best_r` and `adverse_r` say how far each way and
+            # not in what order, and the order is the whole question for a
+            # break-even rule: a dip before the peak is harmless, a dip after
+            # it is the winner being cut. Zero when the extreme was never
+            # marked - an absence, not an event at the open.
+            "best_after": round(max(0.0, self._best_at.get(position.ticket, 0.0) - live.seen), 1)
+            if self._best_at.get(position.ticket)
+            else 0.0,
+            "worst_after": round(max(0.0, self._worst_at.get(position.ticket, 0.0) - live.seen), 1)
+            if self._worst_at.get(position.ticket)
+            else 0.0,
             "entry_wanted": round(live.intent.entry, 8),
             "entry_filled": round(position.price_open, 8),
             "unattributed": 1.0,

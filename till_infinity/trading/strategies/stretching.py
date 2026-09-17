@@ -117,11 +117,18 @@ class CycleTurnScalp(LevelStrategy):
     #: exceed the risk budget through a setting nobody reads as a risk setting.
     UNCONFIRMED_RISK: ClassVar[float] = 0.5
 
-    #: A scalp, and the ceiling that word implies. `hold_for` takes the smaller
-    #: of this and the configured scalp ceiling, so the strategy asks and
-    #: configuration decides.
+    #: **Fifteen minutes.** Enter fast and leave fast: this trades a
+    #: displacement that has already begun to unwind, and a reversion that has
+    #: not happened within a quarter of an hour is not the trade that was
+    #: taken. `hold_for` takes the smaller of this and the configured scalp
+    #: ceiling, so the strategy asks and configuration decides.
+    #:
+    #: The cost is known and accepted: 48% of this desk's trades already expire
+    #: on the clock at about 0R, and a shorter clock makes that fraction
+    #: larger, not smaller. It is paired with banking small profits rather than
+    #: waiting for targets - see `research/giveback.md`.
     style: ClassVar[str] = "scalp"
-    hold_seconds: ClassVar[float] = 2 * 3_600.0
+    hold_seconds: ClassVar[float] = 15 * 60.0
 
     #: `ride`'s exit, which `research/exiting.md` measured as the best of six
     #: over 31,820 replayed touches.
