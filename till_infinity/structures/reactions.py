@@ -1105,9 +1105,16 @@ class Forward(Restorable):
     resolved: float
     #: Seconds after resolution the touch is still followed for.
     deadline: float
-    #: Offset in seconds -> signed return in volatility units of the level's
-    #: own interval. Absent rather than zero when no quote landed on an offset:
-    #: a gap in the record is not a measurement.
+    #: Offset in seconds -> signed return in the volatility units the level is
+    #: measured in, which is **not the same denominator for every interval**:
+    #: `Engine.vol_for` hands a daily or weekly level the reference estimate
+    #: rather than its own, because the daily series' own volatility never
+    #: warms. One unit is therefore a much smaller price distance there, and
+    #: the first live records showed it - daily levels reading -34 and -27
+    #: against 1m levels reading -1.5. Correct, and not poolable: cut by
+    #: `interval` before averaging anything, or the long intervals decide the
+    #: answer. Absent rather than zero when no quote landed on an offset: a gap
+    #: in the record is not a measurement.
     after: dict[str, float] = field(default_factory=dict)
     #: Conditions carried along so the analysis is self-contained rather than a
     #: join against a 1.1GB journal on a two-core box.
