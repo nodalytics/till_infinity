@@ -882,15 +882,7 @@ class Trader:
         self._quoted_at[feed] = time.time()
         # Accumulate directional pressure. Fed from the quote stream rather
         # than from signals, because signals arrive when a level is touched
-        # and the run that matters is the one that happened on the way there.
-        #
-        # The unit comes from the last signal for this feed, so a feed that has
-        # never published one accumulates nothing and the filter reads zero -
-        # no refusal. That is the right failure direction, but it is a real
-        # blind window and worth naming: the filter is inert on a feed until
-        # its first signal arrives. Signals are frequent enough that the window
-        # is short, and the alternative is inventing a second volatility
-        # estimate here that would disagree with the one everything else uses.
+        # See `trading-service.md` in research/docs.
         unit = price_distance(tick.mid, self._vol_bps.get(feed, 0.0), 1.0)
         if unit > 0:
             self._push.setdefault(feed, Cusum()).push(tick.mid, unit, when=when)
@@ -969,12 +961,7 @@ class Trader:
         if spec is None:
             # **Counted, though not journalled.** "Not worth a refusal record"
             # was right about the journal and wrong about the tally: this is
-            # the first of two ways a signal stops being a trade before any
-            # strategy is asked, and both were invisible. On 2026-09-19 the
-            # desk took nothing for two days while `passed over` sat frozen,
-            # and the reason it sat frozen is that nothing here touches it.
-            # A desk that has stopped trading must be able to say where the
-            # signals are going.
+            # See `trading-service.md` in research/docs.
             self.passed_over["(desk):untraded"] = self.passed_over.get("(desk):untraded", 0) + 1
             return None
         # Kept whether or not this becomes a trade, because what re-arms after
@@ -1058,14 +1045,7 @@ class Trader:
             if self.settings.parallel:
                 # **Every strategy that wants this takes it.** The running
                 # order stops deciding who trades and decides only who goes
-                # first, so the records become comparable on one stream
-                # instead of on the slice each strategy happened to be
-                # offered. It multiplies exposure, deliberately: the guard is
-                # re-asked below with the book as it stands after each fill,
-                # and the per-instrument and position caps are what keep it
-                # bounded. Agreement sizing is skipped - rebuilding one trade
-                # from what several asked for *and* letting each take its own
-                # would count the same agreement twice.
+                # See `trading-service.md` in research/docs.
                 return await self._take_all(payload, spec, tick, engine, verdict)
             others = await self._also_wanted(payload, spec, tick, engine.name)
             verdict, agreed = self._agree(verdict, others)
@@ -1134,13 +1114,7 @@ class Trader:
 
             # **One slot per strategy per instrument.** `max_per_symbol` counts
             # positions on a symbol without asking who opened them, so setting
-            # it to the number of strategies buys the intended shape - eight
-            # strategies, eight positions - and also permits the unintended
-            # one, where a single strategy accumulates eight on the same
-            # instrument across successive signals. That is one idea held
-            # eight times, which is the concentration the cap exists to stop.
-            # Checked by `Live.by`, which is read back from the position's
-            # magic and so survives a restart.
+            # See `trading-service.md` in research/docs.
             if any(
                 live.by == engine.name and live.intent.feed == wanted.feed
                 for live in self.open.values()
@@ -1382,15 +1356,7 @@ class Trader:
                     setattr(engine, name, saved)
                     # Saved state carries `Seen` objects whose numbers are
                     # strings, and one is enough: `Book.observe` subtracts
-                    # prices on every published level, and the guard around
-                    # `handle` turns the `TypeError` into a skipped signal - 124
-                    # of them in one session before the traceback was read.
-                    #
-                    # The log line is not decoration. 392 were found at the
-                    # first restore after this was added, in state written by a
-                    # build whose codec already coerces them, so how they are
-                    # made is still open - and this count at each restart is
-                    # what will answer it.
+                    # See `trading-service.md` in research/docs.
                     fix = getattr(saved, "repair", None)
                     if callable(fix):
                         mended = fix()
@@ -1561,15 +1527,7 @@ class Trader:
         warmed = 0
         # Oldest first, because the window is a bounded deque and keeps what
         # was appended *last*. Fed newest-first it would retain the twelve
-        # oldest levels of the batch and discard everything recent, which is
-        # the exact opposite of the intent and would still produce a
-        # confident-looking number.
-        #
-        # Not for the reason it first appears: efficiency is order-invariant.
-        # Reversing a sequence flips the sign of the net displacement but not
-        # its magnitude, and leaves the distance travelled untouched, so the
-        # ratio is identical either way. Only which levels survive the deque
-        # depends on the order.
+        # See `trading-service.md` in research/docs.
         for entry in reversed(rows):
             context = getattr(entry, "context", None) or {}
             feed, interval = context.get("feed"), context.get("interval")
@@ -1636,13 +1594,7 @@ class Trader:
         """
         # Out of `features`, which is where every strategy reads it from and
         # therefore where it actually is. Read from the top of the payload
-        # this returned early on every signal, so no reading was ever injected
-        # *and* the window never grew - the measure was inert twice over while
-        # the warm start reported 121 of 140 pairs ready.
-        #
-        # The third time today a value has been read from or written to the
-        # wrong level of this payload. `features` is the contract; the top
-        # level carries routing.
+        # See `trading-service.md` in research/docs.
         features = payload.get("features")
         level = features.get("level") if isinstance(features, dict) else None
         if not isinstance(level, int | float):
@@ -1788,13 +1740,7 @@ class Trader:
         """
         # A swing enters on 1h and wants the rejection on something slower: the
         # entry can be fast while the evidence is slow. A scalp names nothing
-        # and is judged on the bar it is entering on.
-        #
-        # **A window, coarsest first.** One timeframe was too narrow a
-        # question: a 4h bar closes six times a day, so insisting on that one
-        # refuses every setup formed inside the last four hours, while asking
-        # only 1h throws away the stronger claim when it exists. Asked coarsest
-        # first so the strongest available evidence is the one reported.
+        # See `trading-service.md` in research/docs.
         window = (engine.candle_intervals if engine else ()) or ()
         if not window:
             window = ((engine.candle_interval if engine else "") or intent.interval,)
@@ -1834,12 +1780,7 @@ class Trader:
         """
         # **And only behind a long wick, when the strategy asks for that.**
         #
-        # `pullback_fraction` alone rests every entry, which is a different
-        # strategy rather than a cheaper version of this one - it trades only
-        # what comes back. The wick is what says whether coming back is likely:
-        # a long tail means price went well past the level and returned inside
-        # the bar, so the close misrepresents where this can be got. A level
-        # held without drama has no retracement to wait for.
+        # See `trading-service.md` in research/docs.
         wants = engine.pullback_when_wick if engine else 0.0
         if wants > 0 and self._rejection.get(intent.feed, 0.0) < wants:
             return None
@@ -1854,17 +1795,7 @@ class Trader:
 
         # **A strategy that trades one particular price is asked first.** The
         # wick and fraction rules below improve a fill that was going to happen
-        # anyway; this is different in kind - a broken structure being retested
-        # is not the same trade a unit away from the line, so there is nothing
-        # for the general rules to improve on.
-        #
-        # Then the small, ordinary improvement, tried before the deep one:
-        # resting a fraction of a unit nearer the level is a different bet from
-        # waiting for the sweep edge - 189 signals of 813 reached that wait and
-        # none of them parked, because by then the fill was already past it.
-        #
-        # Callables rather than coroutines, so the second is never created when
-        # the first answers: an un-awaited coroutine is a warning and a leak.
+        # See `trading-service.md` in research/docs.
         for attempt in (
             lambda: self._rest_at_named_price(payload, intent, tick, by, engine),
             lambda: self._edge_entry(payload, intent, tick, by),
@@ -1880,17 +1811,7 @@ class Trader:
 
         # How far to wait is the **level's** business, not a constant.
         #
-        # A fixed fraction asks every level for the same retracement, and levels
-        # do not retrace the same amount: the wick this one has actually been
-        # pushed to, on the side price is arriving from, is recorded on the
-        # signal and is the measured answer to exactly this question. A level
-        # that gets swept deeply is worth waiting deeper for; a level that
-        # barely gets touched is not, and asking it to retrace as far as the
-        # deep one just means never filling.
-        #
-        # `pullback_fraction` becomes the **ceiling** on that wait rather than
-        # the wait itself, so a level with no wick history yet still parks
-        # somewhere sensible instead of not parking at all.
+        # See `trading-service.md` in research/docs.
         level = float(features.get("level") or 0.0)
         wick = features.get("wick_below_vol" if intent.side is Side.BUY else "wick_above_vol")
         spread = (
@@ -1912,29 +1833,11 @@ class Trader:
         if wick and unit > 0 and level > 0:
             # From the level, not from the fill: the wick is measured from the
             # level and adding it to a fill that has already drifted would ask
-            # for a retracement nobody has ever observed here.
-            # Mean plus a share of the spread, rather than the mean alone.
-            # Half of all wicks are deeper than the mean by definition, so
-            # waiting at it is waiting at a depth that gets exceeded as often
-            # as not - which for a retracement is the difference between being
-            # met and being missed.
+            # See `trading-service.md` in research/docs.
             depth = float(wick) + float(spread) * self.settings.pullback_sigmas
             # Bounded in volatility units rather than at the sweep edge.
             #
-            # It used to clamp at the edge, twice over - once here and again
-            # through a fraction whose ceiling *was* the edge - so a level
-            # whose wicks run deeper than its own zone had the extra depth
-            # discarded and was met shallow. That threw away the best fill the
-            # setup offers: a deep pullback is the sweep, and buying the sweep
-            # is the whole idea.
-            #
-            # The edge is not a safe stopping point either, which was the
-            # stated reason and was wrong. The stop sits *beyond* the edge with
-            # clearance, and `_floored_stop` guarantees it clears the **fill**
-            # by `min_stop_vol` - so a deeper entry gets a proportionally
-            # further stop on its own. An entry that really has gone too far is
-            # refused by the `through` gate when the signal is reconsidered,
-            # which is a check that already exists and is better placed.
+            # See `trading-service.md` in research/docs.
             depth = min(depth, self.settings.pullback_max_vol)
             deep = level - intent.side.sign * depth * unit
 
@@ -1979,17 +1882,7 @@ class Trader:
 
         # How long to wait, in bars of the timeframe that produced the call.
         #
-        # A fraction of the hold makes the wait a property of the strategy
-        # rather than of the market, so a 1m call and a 1h call wait the same
-        # wall-clock time for retracements that happen on completely different
-        # clocks. Bars of the entry interval is the same correction the hold
-        # itself got, applied to the other end.
-        # Bars of the interval that produced the call, falling back to the hold
-        # itself when the interval is unknown - which is a real bound rather
-        # than a second setting nobody would ever tune. There was one, and it
-        # became unreachable the moment bars were preferred: the interval is
-        # always known in practice, so the fraction it scaled was dead config
-        # that still looked live.
+        # See `trading-service.md` in research/docs.
         bars = SECONDS.get(intent.interval, 0.0)
         window = (
             bars * self.settings.pullback_bars if bars else (intent.hold or self.settings.max_hold)
@@ -2191,19 +2084,7 @@ class Trader:
             return "the venues went wide together"
         # Against the **target**, which is what `risk.py` measures it against
         # when the same setting refuses an entry. This used to divide by the
-        # distance price still had to travel to reach `trigger`, under a local
-        # named `risk` that made it read as the trade's risk. It was not: that
-        # gap shrinks to nothing as price arrives - which is the event the
-        # order is waiting for - so the threshold shrank with it and any spread
-        # at all cleared the bar. This check runs before the arrival check
-        # below, so every resting order was withdrawn on the tick it would
-        # have filled. Measured 2026-09-01: nine rests, no fills, no
-        # expiries, every resolution a spread withdrawal.
-        #
-        # Silent with no resting order, and that is not a gap. The point of
-        # this method is to reach in and take back the **broker's** order,
-        # which cannot change its mind; when there is none, arrival re-asks
-        # every gate through `on_signal` and a wide spread is refused there.
+        # See `trading-service.md` in research/docs.
         spread = tick.spread
         resting = held.resting
         if spread > 0 and self.settings.max_spread_fraction > 0 and resting is not None:
@@ -2420,12 +2301,7 @@ class Trader:
             return
         # **Twelve, not four.** Four was enough to show that `interval`
         # dominates - which every strategy refusing signals outside its own
-        # entry set produces, and which says nothing. It is the gates *below*
-        # that line that answer "why is it not trading", and on 2026-09-19
-        # they were invisible: 39,643 signals passed over in fifty minutes,
-        # one trade taken, and the log showed four interval counters. The
-        # counter is a dict in memory and is not journalled, so a truncated
-        # line is the only view there is of it.
+        # See `trading-service.md` in research/docs.
         top = sorted(self.passed_over.items(), key=lambda kv: -kv[1])[:12]
         log.info(
             "trading: %d taken, %d passed over (%s) · %s",
@@ -2505,23 +2381,7 @@ class Trader:
                 "intervals": {str(k): v for k, v in self._intervals.items()},
                 # **What each strategy has accumulated across calls.**
                 #
-                # `Speeds` needs 48 calls per instrument before its slow line
-                # means anything, and `Book` is where `swing-level` keeps every
-                # level it has seen and builds its valuation from. Both were
-                # created in `__init__` and saved nowhere, so a deploy reset
-                # them - and on a day with ten deploys a counter that needs 48
-                # calls on one feed never arrives.
-                #
-                # `momentum-scalp` has taken **no trade in 45 days**: 109 of
-                # its 110 refusals are `warmup: the speeds have not seen enough
-                # calls yet`. It is not a strategy that declines, it is one
-                # that cannot start.
-                #
-                # This is the fourth thing found this session that accumulated
-                # in memory and was wiped by the deploy cadence, after
-                # `Drift._agreement`, `Live.ref` and the intent's interval. The
-                # symptom is never an error - it is a component that looks
-                # configured and does nothing.
+                # See `trading-service.md` in research/docs.
                 "learned": {
                     engine.name: state
                     for engine in self.strategies
@@ -2647,13 +2507,7 @@ class Trader:
         self.equity = account.equity or self.equity
         # **Recalled before the roll, or the roll undoes it.** A fresh `Guard`
         # has `day = ""`, so `roll` sees a new day and clears the running
-        # total; taking the file back first means it sees today already in
-        # place and does nothing, which is the correct outcome.
-        #
-        # The reconcile that follows is what fills `self.open`, so the extremes
-        # are filtered against a book that is one pass stale on the very first
-        # sweep - and `_recall_marks` keeps whatever it cannot place, because a
-        # position adopted moments later still deserves its high-water mark.
+        # See `trading-service.md` in research/docs.
         if not self._recalled:
             self._recalled = True
             self._recall_marks()
@@ -2715,13 +2569,7 @@ class Trader:
                 self._best[ticket] = price
                 # **When the high came, not only how high.** A break-even stop
                 # can only cut a winner that retraced *after* its peak, and a
-                # dip before the peak is harmless - but `adverse_r` cannot tell
-                # the two apart, so the one question `manage.py` says nobody
-                # has answered stayed unanswerable. 585 closed trades on
-                # 2026-09-17 said a break-even at +0.25R would rescue 107
-                # losers worth -839 while putting at most 143 winners worth
-                # +1,044 at risk, and the width of that "at most" is exactly
-                # this missing ordering.
+                # See `trading-service.md` in research/docs.
                 self._best_at[ticket] = tick_time
             # **Armed here because here is where the market is seen.** The
             # trigger is a moment, not a state: a trade touches 1.0R and is
@@ -2759,14 +2607,7 @@ class Trader:
             best = self._best.get(ticket)
             # Said out loud rather than skipped in silence.
             #
-            # Four trades on 2026-09-04 reached 2.75R to 4.32R in front and
-            # closed at their **original** stop for -68.71 between them, with
-            # `break_even_at` 1.0, `trail_vol` 2.0 and `scale_out_at` 1.0 all
-            # configured. This loop had produced two stop moves in 181,039 log
-            # lines and no scale-outs at all, with no errors anywhere: every
-            # position was falling through one of these two guards and nothing
-            # recorded which. That is the shape of every inert feature in
-            # research/inert.md - a legal-looking silence.
+            # See `trading-service.md` in research/docs.
             if spec is None:
                 skipped[f"no spec for {live.intent.feed!r}"] += 1
                 continue
@@ -3687,16 +3528,7 @@ class Trader:
             settled.append((live, price, why))
             # Discarded *after* the outcome is written, not before.
             #
-            # These two lines used to sit above `_settle`, which is what reads
-            # them - `_reach` and `_heat` both return 0.0 for a ticket they
-            # cannot find. So `best_r` and `adverse_r` were written as exactly
-            # 0.000 on every close the book ever made: 188 and 85 of them, min
-            # and max both zero, and not one stopped trade recorded as ever
-            # having been in profit. The tracking was correct, the recording
-            # was correct, and the state was thrown away in between.
-            #
-            # `finally`, so a raising `_settle` still cleans up rather than
-            # leaking a ticket's extremes for the life of the process.
+            # See `trading-service.md` in research/docs.
             try:
                 await self._settle(live, price, why, profit)
             finally:
@@ -3791,17 +3623,7 @@ class Trader:
         if not live.ref:
             # A close with no decision behind it, which after a restart is most
             # of them: `self.open` is rebuilt from the broker by `_reconcile`
-            # and the ref lives in memory, so every position that outlived a
-            # restart closed without reaching the journal. Measured on
-            # 2026-09-01: twenty distinct tickets closed in fourteen hours and
-            # six outcomes recorded.
-            #
-            # Recorded as an **observation**, not an outcome. `journal.outcome`
-            # refuses a parentless entry on purpose - an outcome is a label on
-            # a decision and a label with nothing to label is not one - so
-            # forcing it through there would break that invariant to fix this.
-            # An observation is what this is: something that happened, with no
-            # decision of ours attached.
+            # See `trading-service.md` in research/docs.
             await observe(
                 self.journal,
                 f"{position.symbol} closed {profit:+.2f} at {price:.5g}, unattributed",
@@ -3829,15 +3651,7 @@ class Trader:
                     "profit": round(profit, 2),
                     # What it made in the unit everything else here is judged
                     # in. Money is not comparable across instruments or across
-                    # account sizes; R is, and it was never recorded - so every
-                    # question about how a strategy actually did began with a
-                    # derivation from entry, stop and exit that a reader had to
-                    # do themselves and could get wrong.
-                    #
-                    # Signed against the side, so a profitable short is
-                    # positive. Zero risk means a placeholder intent adopted
-                    # after a restart, where the stop is the broker's and the
-                    # entry is the fill - not a trade that risked nothing.
+                    # See `trading-service.md` in research/docs.
                     "r_multiple": _r_multiple(live.intent, price),
                     "reason": why,
                     # Said plainly because it is not always a fill price: a
@@ -3879,18 +3693,7 @@ class Trader:
                     "adverse_vol": self._heat_vol(live),
                     # What was asked for against what the terminal actually
                     # filled at. `position.price_open` is the broker's own
-                    # record, so this survives a restart and does not depend on
-                    # having kept the order result around.
-                    #
-                    # Until this was written down slippage was not recoverable
-                    # from the journal at all: the decision held the requested
-                    # price, the outcome held the exit, and the fill in between
-                    # reached only an alert. It is signed against the trade -
-                    # positive is a worse fill than asked for, on either side -
-                    # so the sign means the same thing for a buy and a sell.
-                    #
-                    # Zero on an adopted position, whose synthetic intent is
-                    # built from the fill itself.
+                    # See `trading-service.md` in research/docs.
                     "entry_wanted": round(live.intent.entry, 8),
                     "entry_filled": round(position.price_open, 8),
                     "slippage": round(
@@ -3913,12 +3716,7 @@ class Trader:
                 "strategy": by,
                 # **Which shape the policy chose**, for the strategies that
                 # choose one. `opportunity` is a parameter vector rather than a
-                # fixed set of numbers, so "opportunity lost 15.90" says
-                # nothing without it - the arm is the thing being judged, and
-                # its first five trades were recorded with the arm absent.
-                #
-                # Empty for a strategy that has no policy, which is every
-                # other one today.
+                # See `trading-service.md` in research/docs.
                 "arm": self._arm_of(by),
                 # What the spread actually was when this was sent. Three gates
                 # judge spread and none of them wrote down the number they
@@ -4287,12 +4085,7 @@ async def listen(
                 continue
             # **One bad message must not end trading.** Without this a throw
             # here leaves the loop and the trading service is gone, while the
-            # process stays up and the container stays `healthy` - which is how
-            # a single `TypeError` on a resting order's announcement took
-            # trading down on 2026-09-08 and nothing outside said so. The
-            # structures consumer needed the same guard for the same reason.
-            #
-            # `CancelledError` still propagates: that is shutdown.
+            # See `trading-service.md` in research/docs.
             try:
                 await trader.handle(message)
             except asyncio.CancelledError:

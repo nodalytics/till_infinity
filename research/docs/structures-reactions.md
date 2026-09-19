@@ -254,4 +254,49 @@ that way. Nothing was discarded.
         two records in an hour against roughly 130 resolutions. Every other
         follower sat in the map for ever, never journalled and never freed.
 
+## Inline notes
+
+Passages that stood inside the functions named, moved out on 2026-09-19.
+Each keeps its first sentence at the call site.
+
+### `Tracker.update`
+
+MAX_ZONE_VOL from the centre while a rejection needs only
+resolve_vol, so price clipping the far edge of a wide zone arrived
+already past the threshold and closed on the next observation having
+reacted to nothing - 17% of touches, spread evenly across feeds.
+
+Only the rejection. A break is defined by the level, and the trap
+that follows one has to be measured from the level too: `origin`
+keeps tracking the deepest print while the leg in is still
+extending, so during a break it follows price *through* the level,
+and a trap judged against it fires on any small bounce. Measured:
+traps tripled when this was applied to both.
+
+### `Tracker._live`
+
+the meantime can be handed a bar describing a window it did not exist
+in. That resolved 28.9% of outcomes at a negative duration - median
+exactly one bar on a 1m series - and anything reading `seconds` off a
+resolution was reading a quarter of its input backwards.
+
+Refused rather than clamped: clamping keeps the outcome and lies
+about its length, when the bar's range is evidence about a period
+before the touch and says nothing about what the touch did. The touch
+stays open and the next observation resolves it properly.
+
+### `Tracker._carry`
+
+level quoted once an hour would otherwise have one late price
+written into the one-minute, five-minute and fifteen-minute
+slots alike - three readings of the same moment, presented as a
+path. That is the smear `_walk` refuses, and a test caught this
+doing it.
+**Relative, like `elapsed`.** `deadline` is an absolute clock
+time, so closing the last window with it compared an age in
+seconds against an epoch: `900 <= elapsed < 1.79e9` is true for
+every quote that ever arrives, and the final offset went back to
+being filled by whichever one turned up. The tests missed it
+because they resolve a touch at `when=0.0`, where an age and a
+clock read the same.
 

@@ -316,12 +316,7 @@ def alert_payload(signal: Signal) -> dict[str, object]:
         "direction": signal.direction,
         # The timeframe, so `NOTIFY_MIN_INTERVAL` has something to compare.
         #
-        # It was absent, and its absence made that filter silently inert: the
-        # filter reads the interval off the alert, found none, and kept
-        # everything - so a floor could be configured, describe itself
-        # correctly in the log, pass its own tests, and drop nothing at all.
-        # The filter's own rule that a missing interval is *kept* is right for
-        # a trade or a fault and was hiding this.
+        # See `structures-service.md` in research/docs.
         "interval": signal.interval,
     }
     if signal.shape is not Shape.LEVEL:
@@ -369,12 +364,7 @@ def alert_payload(signal: Signal) -> dict[str, object]:
 
     # A rule per line, each opening with the thing it answers, because the
     # previous version was five sentences of numbers and the reader had to
-    # parse it to find the one they wanted. Nothing here is new evidence - it
-    # is the same fields, laid out so the eye can skip.
-    # No header line here. `Notice.as_text` already prints the title above the
-    # body, so a name-and-direction line inside it arrived as the same thing
-    # said twice - and the clock is printed after the body for the same reason,
-    # which is why the time is not repeated either.
+    # See `structures-service.md` in research/docs.
     rule = "━" * 22
     head = [
         rule,
@@ -389,16 +379,7 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     body = list(head)
     # Push against risk, with the division spelled out - and **called an
     # average**, because it is one.
-    #
-    # The first version of this line printed "2.4 to 1", which a reader takes
-    # for a reward-to-risk ratio: target over stop. It is not. `expected_push`
-    # is the *mean* outcome over every resolved touch, the bad ones included,
-    # so it is already something closer to an expected value than to a target -
-    # a better number, under a label that meant something else.
-    #
-    # The dispersion goes beside it for the reason `Inference` states in one
-    # line: "a large mean with a larger sigma is not a call". A reader who
-    # cannot see the spread cannot tell those apart.
+    # See `structures-service.md` in research/docs.
     spread = got.get("push_sigma_vol", 0.0)
     scale = f" ± {spread:.2f}v" if spread else ""
     if risk > 0:
@@ -424,17 +405,7 @@ def alert_payload(signal: Signal) -> dict[str, object]:
 
     # **The cycle reading, on the card rather than only in the journal.**
     #
-    # `zma_*` and `cycle_*` have been published into `features` since they were
-    # wired, so the journal has had them all along - and the card renders a
-    # hand-picked set of fields, which these were never added to. The reading
-    # was therefore recorded, scored, gated on, and **invisible to the person
-    # the alert is for**. Publishing a feature and showing it are two jobs and
-    # only one of them was done.
-    #
-    # Read to a person and acted on by almost nothing, the same standing as the
-    # break risk above: `TRADING_ZMA_GATE` can veto on it once a feed's record
-    # earns that, and nothing else uses it. It is here so the number can be
-    # disagreed with against what the chart then did.
+    # See `structures-service.md` in research/docs.
     body.extend(_cycle_lines(got))
 
     # The range this level sits in, and which wall the model expects first.
@@ -823,18 +794,7 @@ class Watcher:
         self.races = state.get("races", self.races)
         # Configuration re-applied over the restore, and this is not tidying.
         # The pickled engine carries the settings it was **first** built with,
-        # so every one of these was inert from the moment a state file existed:
-        # production drew levels with `pip` alone for the whole life of a
-        # `STRUCTURES_FORMATION` that asked for three passes, and the only
-        # symptom was `run` and `origin` never drawing anything.
-        #
-        # What is learned is kept - the levels, their touch history, the
-        # filters. What was *chosen* comes from this deployment.
-        # **Weights come from their own file, after the engine is restored.**
-        # `store._schema` invalidates the whole state file when any persisted
-        # dataclass changes shape, so a deploy touching one unrelated field
-        # would otherwise throw away every turn this has settled. See
-        # `structures/cycles.py`.
+        # See `structures-service.md` in research/docs.
         self.engine.draw_with(self.settings.formation)
         self.engine.charge_spread = self.settings.charge_spread
         self.engine.consensus.single_source = single_source_feeds()
@@ -1104,13 +1064,7 @@ class Watcher:
             return True
         # A level call is the exception to the paragraph above, and on purpose.
         # It is not unambiguous in that sense - a fundamental absolutely can
-        # explain why a level gave way - but it is the only shape here that is
-        # a *finding* rather than a fault, and the one the channel exists for.
-        # Every call that reaches this point is already `actionable`
-        # (`_level_calls` drops the rest), which is a stricter gate than any
-        # score: enough evidence, enough separation from the base rate, enough
-        # size. Routing it through agents that are switched off means publishing
-        # it to a topic nobody is subscribed to.
+        # See `structures-service.md` in research/docs.
         if signal.shape is Shape.LEVEL:
             return self.settings.alert_levels
         return (
@@ -1147,14 +1101,7 @@ class Watcher:
                     "score": signal.score,
                     # The three that identify *what* this is about. They were
                     # on the Signal all along and simply were not written down,
-                    # so every recorded call was anonymous as to instrument and
-                    # timeframe - which made "how does volatility scale across
-                    # intervals" unanswerable from our own record, and it is a
-                    # question we went looking for an answer to.
-                    #
-                    # `feed` was recoverable from the first tag and `interval`
-                    # was nowhere at all. Both are here now, because a tag is
-                    # for filtering and a context is for measuring.
+                    # See `structures-service.md` in research/docs.
                     "feed": signal.feed,
                     "interval": signal.interval,
                     "venue": signal.venue,
@@ -1286,12 +1233,7 @@ class Watcher:
 
             # Keyed on the price recorded *with the touch*, not the level's
             # current one. The Kalman mean moves when the touch is folded in,
-            # and it is folded in before this runs - so looking up by
-            # `level.price` searches for a key that no longer exists.
-            # Every resolution, not only the predicted ones - and before the
-            # journal lookup for the same reason the announcement is: most
-            # touches were never called by anything, and those are the sample
-            # a model learns most from.
+            # See `structures-service.md` in research/docs.
             self._benchmark(level, touch)
             # Predict-then-learn, like everything else here: `observe` returns
             # what it said before it was told.
@@ -1302,13 +1244,7 @@ class Watcher:
                 continue  # nothing predicted this; the result is a fact, not a label
             # The hour learns from the same event the journal does. `reject`
             # and `backcheck` are the level holding; `break` and `trap` are
-            # price getting through. Chop is neither and is not counted, which
-            # is the discipline the rest of the package applies to it.
-            # Named `resolved_as`, not `outcome`: `outcome` is the journal
-            # function imported at the top of this module, and shadowing it
-            # here made the very next call to it a TypeError. Caught by two
-            # existing tests within a minute, which is the argument for having
-            # them.
+            # See `structures-service.md` in research/docs.
             resolved_as = str(touch.outcome)
             if resolved_as in ("reject", "backcheck", "break", "trap"):
                 self.clock.record(
@@ -1342,29 +1278,11 @@ class Watcher:
                     "interval": level.interval,
                     # Which formation drew this level. Running pip, run and
                     # origin together is pointless without it: the argument for
-                    # merging them is that the journal says which price gets
-                    # respected, and it cannot say that if the record does not
-                    # carry which pass found it.
-                    #
-                    # On the **outcome**, not the signal's features. Features
-                    # are `dict[str, float]` and `Signal.to_dict` rounds every
-                    # value, so a string there raises `TypeError: type str
-                    # doesn't define __round__` - which stopped the structures
-                    # service in production for four minutes.
-                    #
-                    # `drawn_by` rather than `origin`, which in this namespace
-                    # already means the impulse origin.
+                    # See `structures-service.md` in research/docs.
                     "drawn_by": level.origin,
                     # Which other timeframes agreed on this price. It was on
                     # the signal and written back onto the touch and **not
-                    # here**, so all 12,504 resolutions record zero timeframes
-                    # and "does agreement across timeframes predict anything"
-                    # cannot be asked of the only record that can answer it.
-                    #
-                    # A string, so it belongs in the outcome context rather
-                    # than the features, for the reason `drawn_by` does:
-                    # features are `dict[str, float]` and a string there raises
-                    # on the first signal.
+                    # See `structures-service.md` in research/docs.
                     "confluence": touch.confluence,
                     "confluence_n": float(
                         len([t for t in str(touch.confluence or "").split("+") if t])
@@ -1484,17 +1402,7 @@ class Watcher:
         try:
             # **Belt and braces, and the braces are the point.** `latest` asks
             # yfinance for a timeout, which is a promise the library makes; this
-            # is the one the loop keeps. A fetch that hangs here does not slow
-            # the service, it stops it - and on CI, which has no network, it
-            # held a Deploy job `in_progress` for **fifty minutes**, blocking
-            # every deploy queued behind it.
-            #
-            # `to_thread` cannot be cancelled, so this frees the *loop* and
-            # leaves the thread running until the library gives up. That is the
-            # right trade - the service keeps working - and it is not a full
-            # answer: a wedged fetch still holds a worker. `FETCH_TIMEOUT` is
-            # what bounds that, and this is what bounds the damage if it does
-            # not hold.
+            # See `structures-service.md` in research/docs.
             quote = await asyncio.wait_for(
                 asyncio.to_thread(implied.latest), timeout=implied.FETCH_TIMEOUT * 2
             )
@@ -1604,16 +1512,7 @@ class Watcher:
             )
             # How many formations agree on this price, as a number.
             #
-            # `Level.origin` has always carried the passes that drew it -
-            # "pip+run+origin" - and `agree()` has always maintained it through
-            # a merge. Nothing ever counted it, so "does a level two methods
-            # found behave better than a level one method found" could not be
-            # asked, of 969 recorded outcomes or of any others.
-            #
-            # A feature and not a gate, deliberately and in that order: it
-            # lands in the journal beside the outcome, and the outcome
-            # machinery gets to say whether agreement is worth anything before
-            # anything is refused for lacking it.
+            # See `structures-service.md` in research/docs.
             extra = {"drawn_by_n": float(len(_passes(call.level)))}
             # P(this level gives way), from the arrival force and the depth of
             # the touch. Silent until it has 200 resolutions behind it, and
@@ -1649,26 +1548,7 @@ class Watcher:
             reading = band.features()
             # **And the swing's range: origin to origin, on the anchor.**
             #
-            # Two corrections to what this used to be, and the second is the
-            # larger. The first: the call's interval is the wrong anchor for a
-            # strategy that enters below the hour on purpose, since a 15m
-            # trigger gave a box made of two prices a quarter hour of auction
-            # paused at.
-            #
-            # The second: the walls were **confluence zones**, and a zone is a
-            # price several timeframes drew a level at rather than a price
-            # anyone defended. Measured over 4,117 published calls, at 4h the
-            # zone box runs 385bps against the origin box's 71bps and is wider
-            # on 2,711 of 2,724 - so the wall it named was open air with a
-            # price on it, and a 24-hour trade was being asked to aim at it.
-            #
-            # An origin is where a violent move began, so the interest that
-            # stopped the last advance is still resting there. That is a wall.
-            #
-            # Published beside the call's own box, not instead of it. A scalp
-            # wants the box it is trading inside; a swing wants the room before
-            # the next unfilled interest, and at the same moment on the same
-            # instrument those are different boxes.
+            # See `structures-service.md` in research/docs.
             below, above = self.engine.origins_bracketing(call.feed, ANCHOR, call.price, vol)
             wide = between_origins(below, above, call.price, unit, feed=call.feed)
             reading.update(wide.features(prefix="swing_"))
@@ -1763,16 +1643,7 @@ class Watcher:
 
         # Read once before consuming anything, rather than waiting for the
         # first `MACRO` notice. FRED is a slow source and its series move once
-        # a day at fastest, so a restart would otherwise publish level calls
-        # with no policy on them for however long the next poll is away - with
-        # four hundred days of it already sitting in the store.
-        #
-        # **And emit what it finds.** This discarded the return value, which
-        # was worse than not calling it: `calls` records the stance it just
-        # announced, so seven stance changes were computed, marked as already
-        # published, and dropped - and the feeds they were about then stayed
-        # silent until they flipped again. Nothing reached the journal, so the
-        # expensive half of the FRED work looked like a model that never fires.
+        # See `structures-service.md` in research/docs.
         opening = await self._read_macro()
         if opening:
             await self.emit(opening)
@@ -1791,16 +1662,7 @@ class Watcher:
                     seen += 1
                     # **One bad message must not end the service.** Without
                     # this, a throw here leaves the `while`, unwinds the
-                    # TaskGroup and the structures consumer is simply gone -
-                    # while the process stays up and the container stays
-                    # `healthy`, so nothing outside says so. That has now
-                    # happened three times: twice this month per
-                    # `_origin_at`'s note, and again on 2026-09-08, when the
-                    # only trace was 132,807 bus warnings that rotated the
-                    # supervisor's own error out of the logs.
-                    #
-                    # Re-raised for `CancelledError` alone, which is shutdown
-                    # and must not be swallowed.
+                    # See `structures-service.md` in research/docs.
                     try:
                         signals = await self.handle(message)
                     except asyncio.CancelledError:

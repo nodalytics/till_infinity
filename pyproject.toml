@@ -34,9 +34,7 @@ groq = ["pydantic-ai-slim[groq]>=2.28.0"]
 redis = ["redis>=5.0.0"]
 # The native MT5 binding. Marked win32 because it is not a package that has
 # merely been neglected on other platforms - it is an in-process call into a
-# running Windows terminal, and there is no Linux wheel to build against. The
-# marker keeps `uv sync --all-extras` working in CI on Linux, where this
-# resolves to nothing and the bridge backend is used instead.
+# See docs/deployment.md.
 mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
 # Talking to a Windows terminal from anywhere, by proxying the module itself
 # out of a Wine prefix. No platform marker: this half runs on the Linux side.
@@ -66,18 +64,7 @@ line-length = 100
 target-version = "py311"
 # Experiments, not library code. They are written to be read alongside their
 # results and thrown away when the question is answered, so the repo's style
-# gates should not block CI on them - and a lint failure there would stop a
-# deploy over a scratch script.
-#
-# The whole `research` folder rather than `research/harness` alone: a harness
-# and the page reporting it are the same artefact, and splitting the exclusion
-# meant a scratch script one directory up could still block a deploy.
-#
-# `assets` is the same category: a generator run by hand to produce the logo
-# SVGs, judged by looking at what comes out. It is not imported by anything.
-# The exclusion was added after it did exactly what the paragraph above warns
-# about - an unsorted import block in a logo script failed CI and blocked a
-# deploy of the trading service.
+# See docs/deployment.md.
 extend-exclude = ["research", "assets"]
 
 [tool.ruff.lint]
@@ -130,18 +117,13 @@ max-returns = 8
 "tests/channels/*" = ["PT011", "RUF012", "PERF401"]
 # trading/ is a set of ports with several implementations behind each, so the
 # exemptions here are about interfaces rather than about code that got away.
-# A hook an implementation may leave alone still has to declare the arguments
-# its overrides receive, and `Broker.close` doing nothing is the correct
-# behaviour for a backend holding no connection - not an unfinished method.
+# See docs/deployment.md.
 "till_infinity/trading/venues/broker.py" = ["ARG002", "B027"]
 "till_infinity/trading/strategies/strategy.py" = ["B027"]
 "till_infinity/trading/venues/paper.py" = ["ARG002"]
 # The gate chain in `LevelStrategy.consider` is one return per refusal, which
 # is the design: each gate names itself and stops. Collapsing fifteen reasons
-# into fewer exits would trade a readable refusal for a lint score. The branch
-# count is the same fact counted differently - two of the checks have already
-# been extracted to methods on their own merits, and further extraction would
-# be done to satisfy the counter rather than to make anything clearer.
+# See docs/deployment.md.
 "till_infinity/trading/strategies/scalper.py" = ["ARG002", "PLR0911", "PLR0912"]
 # `codec.unpack` is one return per wire type. Collapsing eight tagged
 # shapes into a table would put the mapping somewhere other than beside
@@ -159,9 +141,7 @@ max-returns = 8
 "till_infinity/trading/risk.py" = ["PLR0911"]
 # `Tracker.update` advances one touch through its states - first contact, wick,
 # origin, break, trap window, resolution - and the branch count is one per
-# transition. Splitting it would put half a state machine in another method and
-# make the order the transitions happen in harder to read, not easier, which is
-# the opposite of what the rule is for.
+# See docs/deployment.md.
 "till_infinity/structures/reactions.py" = ["PLR0912"]
 # `import MetaTrader5 as mt5` is the name every MT5 example and the terminal's
 # own documentation uses; renaming it would make this file harder to check

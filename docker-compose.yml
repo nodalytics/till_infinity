@@ -1,16 +1,11 @@
-# Till Infinity, split the way it was designed to run.
+# One process per service over Redis, so they fail independently.
+# `till-infinity run` is the single-process shape - see docs/deployment.md.
 #
-# `till-infinity run` starts every service in one process against an in-process
-# bus, which is right for a laptop. This is the other shape: one process per
-# service over Redis, so they scale and fail independently - a collector
-# restarting does not take the levels model with it.
+#   docker compose up -d                     all but agents and trading
+#   docker compose --profile agents up -d    adds the paid one
+#   docker compose --profile trading up -d   adds the one that can lose money
 #
-#   docker compose up -d                     everything except agents and trading
-#   docker compose --profile agents up -d    including the paid one
-#   docker compose --profile trading up -d   including the one that can lose money
-#
-# Configuration comes from .env; see .env.example. Nothing here bakes a
-# credential into an image or a command line.
+# Config from .env; see .env.example.
 
 x-common: &common
   build: .
@@ -31,8 +26,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # Append-only: a bus that loses its backlog on restart drops whatever was
-    # in flight, and the collectors will not resend it.
+    # Append-only: collectors do not resend a dropped backlog.
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis:/data
@@ -56,15 +50,12 @@ services:
     <<: *common
     command: ["structures", "watch", "--redis", "redis://redis:6379"]
 
-  # ── the record ────────────────────────────────────────────────────────────
-  # One writer for the journal, which is the reason it moved onto the bus.
+  # ── the record: one writer, which is why it is on the bus ─────────────────
   journal:
     <<: *common
     command: ["journal", "listen", "--redis", "redis://redis:6379"]
 
-  # ── delivery ──────────────────────────────────────────────────────────────
-  # Exits quietly when no Telegram or Discord channel is configured, so leaving
-  # it up costs nothing until credentials exist.
+  # ── delivery: exits quietly with no channel configured ────────────────────
   notifications:
     <<: *common
     command: ["notify", "listen", "--redis", "redis://redis:6379"]
@@ -76,13 +67,8 @@ services:
     command: ["agents", "watch", "--redis", "redis://redis:6379"]
 
   # ── execution: the only part that can *lose* money, so opt in twice ───────
-  # The profile starts it; TRADING_LIVE in .env arms it. Without that it runs
-  # the whole path against a paper book and reaches no account.
-  #
-  # This container has no MetaTrader terminal in it and is not going to - the
-  # package is Windows-only. On Linux it reaches MT5 through the bridge, so
-  # TRADING_MT5_URL has to point at a `metatrader-terminal` instance, which runs
-  # the terminal under Wine. Left unset, this stays on paper and says so.
+  # The profile starts it; TRADING_LIVE arms it. No terminal in this container
+  # (Windows-only) - TRADING_MT5_URL must point at a bridge, or it stays paper.
   trading:
     <<: *common
     profiles: ["trading"]

@@ -929,15 +929,7 @@ class FadeToValue(LevelStrategy):
 
         # The same gates every other strategy clears. This overrides `consider`
         # entirely, so it used to run none of them - and being first in the
-        # running order, it was taking most of the trades through the only
-        # ungated path in the system while the other three were refused by
-        # floors it never saw.
-        #
-        # The chase gate is deliberately *not* applied here and the difference
-        # is real rather than an oversight: chasing means filling far from the
-        # level the call was measured at, and this strategy's whole premise is
-        # being far from fair value. That gate would refuse every trade it ever
-        # wanted, by construction.
+        # See `strategies-swing.md` in research/docs.
         bad = self.quality(feed, features, side, interval)
         if bad is not None:
             return bad

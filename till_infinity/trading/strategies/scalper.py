@@ -275,22 +275,7 @@ class LevelStrategy(Strategy):
 
         # How likely the level is to give way, from the arrival speed and how
         # deep the touch went. A different question from the direction every
-        # other gate here reads, and the evidence that it is different is that
-        # `up_rate` - which carries almost all of direction - predicts a break
-        # at AUC 0.4928, which is nothing. See research/force.md.
-        #
-        # Measured over 10,977 resolved touches at five to thirty minutes: the
-        # top fifth by this estimate breaks 43.2% of the time against the
-        # bottom fifth's 16.9%, so the call is right 56.8% there against 83.1%
-        # at the other end. This refuses that top fifth.
-        #
-        # **Refuse, not invert.** Inverting the trade there was measured and
-        # loses: the call is still right more often than not even where it is
-        # weakest, so flipping it turns 56.8% into 43.2%.
-        #
-        # Silent when the estimate is absent, which is the honest state until
-        # the model has 200 resolutions behind it - a level call with no break
-        # reading is not a level call with a low one.
+        # See `strategies-scalper.md` in research/docs.
         ceiling = settings.max_break_risk
         if ceiling > 0:
             risk = features.get("break_probability")
@@ -336,17 +321,7 @@ class LevelStrategy(Strategy):
 
         # How often this level holds *at all*, in the direction being claimed.
         #
-        # `base_rate_up` is always the up rate, so it has to be flipped for a
-        # sell before it means anything - comparing it raw across a set that is
-        # mostly sells describes the direction mix rather than the levels, which
-        # is a mistake this was written after making.
-        #
-        # Gated because the losses concentrate below it: over the first
-        # nineteen closed trades the eight with a directional base under 0.55
-        # produced one winner and -6.74R.
-        # Momentum still running against the trade. Read from the feature the
-        # service injects rather than computed here, because it is an
-        # accumulation over the quote stream and a strategy sees one signal.
+        # See `strategies-scalper.md` in research/docs.
         limit = self.against_limit(interval)
         if limit > 0:
             pressure = _number(features, "pressure_vol")
@@ -478,14 +453,7 @@ class LevelStrategy(Strategy):
         """
         # The **sweep** zone, not the touch zone, and they are different
         # questions. The touch zone's far edge is built from the average wick,
-        # which is right for "is price at this level" and wrong for "how far
-        # past it does price go" - a stop there is exceeded by about half of
-        # all sweeps by construction, which from the account looks like being
-        # stopped out and then watching the move happen.
-        #
-        # Falls back to the touch zone on a signal that predates the wider one,
-        # so an older producer degrades to the previous behaviour rather than
-        # to no zone at all.
+        # See `strategies-scalper.md` in research/docs.
         if side is Side.BUY:
             edge = _number(features, "sweep_low") or _number(features, "zone_low")
         else:
@@ -511,38 +479,12 @@ class LevelStrategy(Strategy):
         """
         # A parked entry brings its own floor, because `min_stop_vol` is written
         # for a fill that may be anywhere near the level and a parked fill is
-        # at it. Without this the floor below would push the tightened stop
-        # straight back out and the setting would do nothing - visibly
-        # configured, silently inert, which is the failure this repository
-        # spent a day finding.
-        # A parked entry brings its own floor, and it is **capped at the
-        # ordinary one** so it can only ever lower it. Guarding the anchored
-        # distance alone was not enough: a large `parked_stop_vol` came
-        # straight back through here and widened the stop, which a test caught
-        # by asking for 99v and getting a position too small to place. A
-        # setting named for reducing risk must not have a path that raises it.
+        # See `strategies-scalper.md` in research/docs.
         ordinary = self.stop_floor_vol(interval)
         floor = (min(floor_vol, ordinary) if floor_vol else ordinary) * unit
         # The broker has a floor of its own and it is not a suggestion: a stop
         # closer than `stops_level` is refused outright, and the refusal
-        # arrives after the decision has been made.
-        #
-        # Wall Street 30 asks for 300 points - 3.00 in price - against gold's
-        # 20, and our stops on it land near 2.7, so the order is accepted or
-        # rejected depending on where volatility happens to be. Taking the
-        # broker's minimum as a floor here turns that coin flip into a trade
-        # with a slightly wider stop, which is the outcome worth having: the
-        # alternative is a refusal, and a refusal is not a safer trade, it is
-        # no trade.
-        #
-        # A small margin over the minimum, because the minimum is checked
-        # against the price at the moment the order lands, not the moment it
-        # was built.
-        # Two terms, because the gap has two causes. The multiple absorbs
-        # movement between deciding and sending; the spread absorbs the part
-        # that is not movement at all - a buy fills at the ask and its stop is
-        # measured against the bid, so one spread of the clearance is gone
-        # before anything has happened.
+        # See `strategies-scalper.md` in research/docs.
         floor = max(floor, spec.min_stop_distance * self.settings.stops_level_margin + spread)
         if floor <= 0:
             return anchored
@@ -1201,54 +1143,7 @@ class SweepAware(LevelStrategy):
 
     # **`ride`'s exit, kept on this entry.** The filter above is what works -
     # the calls it declines are worth +0.189R each - and the exit it had was
-    # the third-worst of the six policies `Ride` was measured over: a fixed
-    # target at one push, no trail, -0.041R against ride's +0.404R.
-    #
-    # Replayed on this strategy's own rule across 52,395 published calls,
-    # 30,875 with the 1m history to walk forward, **with the spread charged**:
-    #
-    #     its own exit   +0.099R   median +0.467   win 61.6%
-    #     ride's exit    +0.655R   median +0.353   win 64.4%
-    #     paired         +0.556R, better on 70.8% of the same trades
-    #
-    # The spread is real and does not reverse it - it costs the old policy
-    # 0.073R a trade, 42% of everything that policy made.
-    #
-    # **Those numbers are inflated about tenfold and the exit stays anyway.**
-    # The harness that produced them had two look-aheads: the trail was raised
-    # on a bar's own high and then allowed to fill on that same bar, and a stop
-    # was booked at its own price even on a bar that gapped through it. A
-    # trailing policy benefits from both; a fixed target does neither.
-    #
-    # Re-run on the corrected walk over 18,272 calls, with the old arithmetic
-    # kept beside it so both saw **the same trades**, the bug was worth
-    # **+0.386R to this exit and +0.006R to the one it beat**:
-    #
-    #     legacy walk    ride - own  +0.432R, better on 68.0%
-    #     corrected      ride - own  +0.046R, better on 36.3%
-    #
-    # So the advantage is real and an order of magnitude smaller, and the shape
-    # is not what the paragraph above describes. The median falls from +0.498 to
-    # **+0.133** and the policy is worse on **64% of the same trades**, winning
-    # only through a thin right tail. Held in both halves of a split sample.
-    #
-    # It is kept rather than reverted because the corrected edge is still
-    # positive, and changed on evidence rather than on a number's collapse. But
-    # a tail edge is a different risk profile from a broad one, and
-    # `research/giveback.md` measures what it feels like live: this strategy
-    # keeps **27%** of its high-water mark and 38 of its 47 closes end on the
-    # hold timeout rather than on any rule here firing at all.
-    #
-    # **Only the exit moves.** The stop, the entry price and the resting
-    # behaviour are what the replay held constant; changing them would make
-    # this a different trade rather than the same trade with a better exit,
-    # which is the mistake `thesis-only` made in reverse - it moved the stop
-    # and left the target, and went on at 0.37 reward-to-risk.
-    #
-    # **The median falls while the mean rises.** A trail wins by the right
-    # tail, so the typical trade is worse and the average one much better. That
-    # is a different risk profile, not only a bigger number, and it will show
-    # as more round trips through profit. See `research/exiting.md`.
+    # See `strategies-scalper.md` in research/docs.
 
     #: Six times the modelled push is far past the p99 of what touches reach,
     #: so it bounds the trade without being what normally ends it.

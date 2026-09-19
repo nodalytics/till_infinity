@@ -217,4 +217,20 @@ that way. Nothing was discarded.
     settles through the level it just arrived at, the estimate that said it was
     cheap here was the thing that failed.
 
+## Inline notes
+
+Passages that stood inside the functions named, moved out on 2026-09-19.
+Each keeps its first sentence at the call site.
+
+### `FadeToValue.consider`
+
+running order, it was taking most of the trades through the only
+ungated path in the system while the other three were refused by
+floors it never saw.
+
+The chase gate is deliberately *not* applied here and the difference
+is real rather than an oversight: chasing means filling far from the
+level the call was measured at, and this strategy's whole premise is
+being far from fair value. That gate would refuse every trade it ever
+wanted, by construction.
 

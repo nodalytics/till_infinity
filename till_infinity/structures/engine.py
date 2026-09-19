@@ -530,15 +530,7 @@ class Series(Restorable):
             self.opens.append(opening)
         # Sparse, so there is no pairing to keep and nothing to pad: a bar
         # with no entry has no minutes, which is what the absence means.
-        # Evicted alongside the window it belongs to.
-        #
-        # **`window_for(self.interval)`, not the module constant.** These two
-        # halves have to agree: the trigger counts entries and the filter keeps
-        # everything back to `times[0]`. With one window they did. With a window
-        # per interval the fine series holds 1,500 bars of `times` while the
-        # constant says 1,000, so the filter put back what the trigger had just
-        # decided was too many - and `fine` settled above its bound instead of
-        # at it. A test caught it at 1,059.
+        # See `structures-engine.md` in research/docs.
         if len(self.fine) > window_for(self.interval) and self.times:
             oldest = self.times[0]
             self.fine = {k: v for k, v in self.fine.items() if k >= oldest}
@@ -626,12 +618,7 @@ def _zma_context(zma) -> dict:
             "zma_agrees": float(zma.agrees),
             # **Displacement alone, published beside the agreement.** The two
             # are different calls with different records: `agrees` waits for
-            # momentum to have turned as well and fires on about 1.5% of the
-            # signals this desk publishes, while `stretched` is the continuous
-            # call `edge_calls`/`edge_right` actually score - and the one
-            # `research/adapting.md` measured winning by 2.5 to 7.8 points at an
-            # identical bet count. A consumer should be able to choose, and to
-            # size on the difference between them.
+            # See `structures-engine.md` in research/docs.
             "zma_stretched": float(zma.stretched),
             "zma_rising": float(zma.rising),
             # The scored record travels with the reading, as counts rather than
@@ -894,14 +881,7 @@ class Call(Restorable):
                 "ensemble_bps": vol.ensemble_bps,
                 # The level's own hold rate on the side price arrived from,
                 # and the decisive interactions behind it. The strongest
-                # single signal a level carries - strength.md puts it at AUC
-                # 0.648 where the `strength` composite reaches 0.548 - and it
-                # was computed on every touch and published nowhere.
-                #
-                # Unshrunk, with its count beside it, so a consumer can apply
-                # its own prior. A rate with two interactions behind it and one
-                # with ninety are not the same number and must not arrive
-                # looking like it.
+                # See `structures-engine.md` in research/docs.
                 "record_hold": self.inference.record_hold,
                 "record_n": self.inference.record_n,
                 # When, which nothing in this package has ever conditioned on.
@@ -1018,22 +998,7 @@ def _read_bars(
             conn.row_factory = sqlite3.Row
             # Oldest first, and grouped so every venue on one bar arrives
             # together - the consensus needs them adjacent to reach a quorum on
-            # that timestamp. `bars * 8` because several venues report each one.
-            # **`open` and `volume` travel too**, and their absence was a
-            # silent defect rather than an omission. The live notice carries
-            # both, so a warmed series held `volumes` full of `nan` while a live
-            # one did not - and `profile`, which is enabled and draws 13,919 of
-            # the book's levels, falls back to equal weights when its weights
-            # are nan. Its own comment says "`Series.volumes` is what it was
-            # waiting for"; on warmed history it was still waiting. `vwap`
-            # cannot draw at all without them.
-            #
-            # **Asked for only if the table has them**, because naming a column
-            # that is not there raises `no such column` and the handler below
-            # turns that into one warning line and *no warm at all*. A store
-            # that is merely older should warm with less, not silently fail to
-            # warm - which is what a narrower fixture did the moment these two
-            # were added.
+            # See `structures-engine.md` in research/docs.
             held = {row[1] for row in conn.execute("PRAGMA table_info(bars)")}
             columns = ["feed", "venue", "interval", "ts", "high", "low", "close"]
             columns += [name for name in ("open", "volume") if name in held]
@@ -1625,33 +1590,7 @@ class Engine:
             inside = any(o.holds(price) for o in found)
             # The pair that brackets the current price. A swing that runs from
             # one origin to the other needs both ends: the near one is where it
-            # enters and the far one is what it aims at, and "nearest" alone
-            # cannot say which side of price it sits on.
-            # **An origin price is standing inside is structure, not absent
-            # structure.** Filtering on `low > price` and `high < price` alone
-            # drops every origin whose band straddles the current price, and it
-            # is not a rare case: measured on the live book, 14 of 46 kept 4h
-            # origins on eurusd contained price, 5 of 23 on gold, and on btc
-            # three did while *none* sat above - so the range reported open air
-            # upward while price stood inside a zone with its ceiling directly
-            # overhead.
-            #
-            # The bound wanted is "the next price at which structure begins or
-            # ends, going that way". For an origin above, that is where its
-            # band starts. For one price is already inside, it is where that
-            # band **finishes** - the far edge is the wall this move meets.
-            #
-            # **The zone travels with its edge.** Choosing the bound from a
-            # list of bare floats threw away which origin it came from, and
-            # with it `origin_above_high`, `origin_above_revisits`,
-            # `origin_below_low` and `origin_below_revisits` - four fields that
-            # were published until 2026-09-07 and are still read by
-            # `trading/strategies/swing.py`. `OriginSwing._anchored_stop` asks
-            # for the far edge and falls back to the level-anchored stop
-            # without it, which is the exact placement that commit was written
-            # to correct, and its `max_revisits` staleness gate reads a count
-            # that is never there, so it can never refuse anything. Neither
-            # failed: both took a documented default for "unknown".
+            # See `structures-engine.md` in research/docs.
             above = [(o.low, o) for o in found if o.low > price]
             below = [(o.high, o) for o in found if o.high < price]
             inside = [o for o in found if o.low <= price <= o.high]
@@ -1695,15 +1634,7 @@ class Engine:
                 "origin_revisits": float(nearest.revisits),
                 # Whether an independent change-point estimate agrees with
                 # where the refinement put this origin. Measured: the refined
-                # price wanders 0.101v under a shifted sampling grid when the
-                # two agree and 0.152v when they do not, and the agreement is
-                # not just marking easy events - it barely moves the estimators
-                # that do not resolve the transition. See `origins.CONFIRM_VOL`
-                # and `research/localising.md`.
-                #
-                # **Published, not acted on.** What is measured is that the
-                # price is better *located*; whether it is better *traded* is
-                # the question this field exists to let the journal answer.
+                # See `structures-engine.md` in research/docs.
                 "origin_confirmed": 1.0 if nearest.confirmed else 0.0,
                 "in_origin": 1.0 if inside else 0.0,
                 # The zone itself, in prices. The four fields above describe an
@@ -2096,12 +2027,7 @@ class Engine:
         venue = str(payload.get("venue") or "")
         # A bar with no extremes is a doji as far as everything below is
         # concerned, and a doji has no leg in and no leg out - which is what an
-        # origin is made of. The fallback above is deliberate, because a notice
-        # from an older producer is better folded in flat than dropped, but it
-        # must not be quiet: `prices.announce_bars` shipped for a while sending
-        # close alone, every live bar arrived flat, and levels on the live path
-        # were built from closing prices while the leg extremes existed only in
-        # replayed history. Nothing said so. This is what would have said so.
+        # See `structures-engine.md` in research/docs.
         if high == low == close:
             key = (feed, interval, venue)
             if key not in self._flat_bars:
@@ -2147,19 +2073,7 @@ class Engine:
         vol = self.vol.of(feed, interval)
         # Once per *bar*, not once per venue row. `Consensus.observe`
         # deliberately answers again on every venue that reports a bar, so the
-        # median improves within a sweep rather than waiting; `Series.add`
-        # handles the repeat by overwriting. A volatility estimate has no such
-        # handling - folding the same close in once per venue fed it a run of
-        # zero returns and dragged the estimate down by however many venues
-        # report past quorum. Measured on the live feeds: six venues on EURUSD
-        # and GBPUSD divided it by four, five on XAUUSD by three, four on
-        # BTCUSD by two, and US500 at exactly quorum was the only one correct.
-        #
-        # Everything this project expresses in volatility units divides by that
-        # number, so distances read two to four times larger than they were:
-        # zone width, resolve distance, KEEP_VOL, the edge gate. The cost of
-        # taking the first quorum's median rather than the last venue's is a
-        # rounding error beside it.
+        # See `structures-engine.md` in research/docs.
         if fresh:
             vol.update(float(close))
             # Whole-bar estimates, once per bar rather than once per venue -
@@ -2216,40 +2130,12 @@ class Engine:
         if not fresh:
             # ...and once per bar, for the same reason the volatility estimate
             # is. `Consensus.observe` answers again on every venue row, and the
-            # median *moves* as venues arrive - on spx500, whose venues quote
-            # genuinely different absolute prices, it moves by more than four
-            # volatility units within a single bar. Checking touches on each
-            # row fed that jitter to the tracker as though it were price: a
-            # touch opened on one venue's row and resolved on the next one's,
-            # at the same timestamp, having observed nothing but the median
-            # rearranging itself. That is 45% of resolutions in this replay and
-            # 46% in the production journal, and it is why two runs of the same
-            # replay disagree - venue arrival order is not stable.
+            # See `structures-engine.md` in research/docs.
             return []
         calls: list[Call] = []
         # A bar is stamped with its **open** time, but it is not knowable until
         # it closes - and quotes carry wall clock. Feeding both to one tracker
-        # mixed two clocks a bar apart: a touch opened by a quote and resolved
-        # by the bar that closed after it recorded a *negative* duration, which
-        # is 10% of resolved touches in the journal, every one of them 5m and
-        # every one about 300 seconds. The number itself is the small harm. The
-        # large one is that `horizon`, `trap_window` and the GAP_FACTOR weekend
-        # guard all test `when - touch.started`, and a negative elapsed trips
-        # none of them.
-        # ...but never later than now, because the bar being delivered is
-        # usually the one still forming. Stamping that one at its close puts it
-        # up to a whole interval in the *future*, and a quote arriving in the
-        # meantime then resolves a touch before it started - the same negative
-        # duration this line was written to remove, in the other direction.
-        # Measured on production: it took negatives from 1.7% of outcomes to
-        # 5.7%, at -98, -98, -98, -7 and -1 seconds rather than the clean one
-        # bar of before, which is the shape of a partly-formed bar rather than
-        # a closed one.
-        #
-        # `min` is right for both cases without knowing which this is. A bar
-        # that has closed was knowable at its close and that is earlier than
-        # now; one still forming is knowable now. During a seed every bar is
-        # long closed, so this leaves the replay alone.
+        # See `structures-engine.md` in research/docs.
         observed = min(when + lv.SECONDS.get(interval, 0.0), time.time())
         for other in self.intervals_for(feed):
             # `when` is the bar's *open*, which is what says whether a touch
@@ -2376,18 +2262,7 @@ class Engine:
                 level.broke_at = touch.broke_at
             # Held back, which the resolving path does and this one did not.
             # A touch that expired did so because price sat at the level and
-            # never went anywhere, so price is still there - and leaving the
-            # level re-armed opened another touch against the same visit on the
-            # very next observation, which produced another call and another
-            # alert. On a market that has closed, where the price is frozen and
-            # nothing can ever resolve, that is a loop: it fired repeatedly on
-            # USDCNH and AUDUSD at the same levels on a Saturday morning.
-            #
-            # `True` rather than `contains(price)` because there is no current
-            # price here - expiry is a clock event. It is also the right answer:
-            # the visit is not over, only this observation of it. `check`
-            # re-arms it once price is REARM_VOL away, which is what "over"
-            # means.
+            # See `structures-engine.md` in research/docs.
             level.waiting = True
             self._deliver(level, touch, self.vol_for(touch.feed, touch.interval), when)
 
@@ -2679,19 +2554,7 @@ class Engine:
             return 0.0
         # Clamped, and the number is why. `slowing` is a ratio, so a near-zero
         # denominator sends it to infinity - a guard on `before <= 0` catches
-        # zero and nothing else. Measured 2026-09-03 from the break model's own
-        # standardiser: the running mean of this feature was **141,380,329**,
-        # against 1.36 for `approach_vol` and 0.18 for `slope`.
-        #
-        # That poisons everything standardised beside it. One input whose
-        # variance is eight orders of magnitude larger than its neighbours'
-        # makes every other weight rescale each time a new extreme lands, which
-        # is exactly what the weight watcher caught: `approach_vol` moving from
-        # -0.313 to -0.034 in thirty minutes with no change in what it measures.
-        #
-        # `SLOWING_CAP` is far outside anything meaningful - a leg ten times
-        # faster than the one before it is already an extreme reading - so this
-        # discards no information a linear model could have used.
+        # See `structures-engine.md` in research/docs.
         return min(after / before, SLOWING_CAP)
 
     # ---------------------------------------------------------------- state

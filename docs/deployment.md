@@ -234,3 +234,374 @@ Then revisit
 [todo.md](todo.md)'s standing note that nothing heavier than a read can run
 alongside the service; it was true of the old hardware and is the reason
 several diagnostics this project needs have never been run.
+
+## Notes moved out of the deploy files
+
+Condensed on 2026-09-19. Each passage below stood in the file named, at
+the line named, and its first sentence is still there. Every one of these
+is a failure that happened rather than a precaution: a race between two
+deploys, a disk that filled because cleanup ran after the pull, a pull
+that died on a dangling containerd lease, a window with no container at
+all.
+
+### `deploy.sh`
+
+**line 2**
+
+
+  IMAGE=ghcr.io/owner/repo TAG=<sha> bash deploy.sh
+
+One container, not the compose split. Six separate services need about 861 MB
+before Redis, data or the OS - measured, not estimated - against the 908 MB
+this started on. `till-infinity run` is one process with an in-process bus,
+which is the shape that hardware could hold.
+
+The instance is larger now and the split would fit, but one process is also
+what makes the in-process bus possible, so this is no longer only a memory
+decision. The memory limit below is derived from the host rather than pinned,
+so the same script is correct on either.
+
+**line 18**
+
+them wastes a pull and produces confusing output - on 2026-09-15 a hand
+deploy and an automatic one interleaved, and the loser reported "could not
+rename the running container" while the winner was quietly succeeding. The
+outcome was correct because the rename is guarded, but nobody reading the
+output could tell that.
+
+**line 45**
+
+Agents are off: they need a paid credential, and this box has 908 MB of RAM,
+so the free path is the one that fits. Set AGENTS_ENABLED=1 and add a key to
+turn them on.
+
+**line 61**
+
+`set -e` ends the script above the line that would have fixed it. That is how
+this box reached 99% full with five 973 MB images on a 6.7 GB disk.
+
+`-af` with no age filter, because an age filter is the same bug in slower
+form - several deploys in one day are all newer than any window worth setting.
+Docker never removes the image a running container is using, so the version
+currently serving is safe; what is lost is a local copy of the *previous*
+one, and that lives in the registry, which is where a rollback should come
+from anyway.
+
+**line 77**
+
+
+  Error response from daemon: lease does not exist: not found
+
+It is transient - the same pull succeeds immediately afterwards - but the
+deploy job fails, and a failed deploy is the quietest failure here: the
+previous image keeps running and keeps reporting healthy, so the only symptom
+is that a change nobody doubted is not actually live. That went unnoticed for
+twenty minutes once.
+
+**line 100**
+
+Removing it here leaves a window with no container, and two things can go
+wrong in that window. The new one may fail to start, and then the desk is
+down with nothing to put back. Or another deploy can land inside it, in which
+case `docker run` below fails on a name conflict and this script exits
+reporting success over somebody else's container. Both were reached in
+practice on 2026-09-15.
+
+Stopped first, because two containers both holding broker sessions would both
+place orders. The rename costs nothing and buys an undo.
+
+**line 124**
+
+`-prev` to restore, which left the desk with no container at all - exactly
+the outcome the rollback exists to prevent, reached by the rollback itself.
+There is no previous container whenever another deploy has just replaced it,
+which on this box is a normal race rather than an unusual one.
+
+A container that started and looks unhealthy is worth keeping if the
+alternative is nothing: it may recover, its logs can be read, and it can be
+replaced deliberately. Nothing recovers from nothing.
+
+**line 144**
+
+left the host itself enough to breathe. Hard-coding it means a bigger machine
+runs the service in a 640MB box and wastes the rest, while a smaller one
+would be over-committed on the first deploy and nobody would notice until the
+kills started.
+
+70% of total, floored at 512m so a tiny instance still starts and can say why
+it is unhappy.
+
+**line 167**
+
+tunnel bound to the docker bridge. Without this the container cannot
+resolve the host at all and TRADING_MT5_URL has nowhere to point.
+Costs nothing when trading is off, which is the default.` \
+
+**line 182**
+
+`.State.Running` reads true for the instants it is up - so a crash-looper
+passes a naive check and the rollback gets deleted underneath it. A restart
+count above zero this soon is a container that has already died once.
+**Given time to settle, and asked twice.** Twenty seconds was not enough: a
+healthy container failed this check on 2026-09-15 and was deleted for it. The
+desk loads a 145MB state file at start, so a single sample taken while that
+is happening says nothing. `tr -d` because a stray newline in the captured
+value made the failure message unreadable and the comparison meaningless.
+
+### `.github/workflows/deploy.yml`
+
+**line 1**
+
+The instance does not build its own image: a `uv sync` of river and pandas is
+slow on two cores at best and was OOM-killed at worst on the 908MB box this
+started on. GitHub builds and publishes; the instance pulls.
+
+For **both** architectures, since they are not all the same - the box may be
+Graviton, and an amd64-only image fails at the pull rather than at the build.
+
+**line 15**
+
+backfill, and one of them was a docs-only commit; the level pipeline was
+down for four hours across them. A push that cannot alter the image
+should not restart the service.
+
+`paths-ignore` skips the run only when *every* changed file matches, so a
+commit touching code and docs together still deploys.
+
+**line 43**
+
+manifest for linux/arm64/v8", which is a clear message arriving at the
+least convenient moment - after the old box has been stopped for the
+cutover.
+
+Native runners rather than QEMU. The repository is public, so
+`ubuntu-24.04-arm` is free, and emulating an arm64 build of pandas and
+river costs an order of magnitude more wall clock than running it on the
+architecture it targets.
+
+**line 158**
+
+before a single byte is transferred, so a full disk cannot fail the scp
+either; and it holds even when deploying a commit whose `deploy.sh`
+predates that fix - a rollback to an old tag is exactly when the box is
+already full. Reporting free space makes the next failure legible
+instead of arriving as `no space left on device` with no context.
+
+### `pyproject.toml`
+
+**line 35**
+
+running Windows terminal, and there is no Linux wheel to build against. The
+marker keeps `uv sync --all-extras` working in CI on Linux, where this
+resolves to nothing and the bridge backend is used instead.
+
+**line 67**
+
+gates should not block CI on them - and a lint failure there would stop a
+deploy over a scratch script.
+
+The whole `research` folder rather than `research/harness` alone: a harness
+and the page reporting it are the same artefact, and splitting the exclusion
+meant a scratch script one directory up could still block a deploy.
+
+`assets` is the same category: a generator run by hand to produce the logo
+SVGs, judged by looking at what comes out. It is not imported by anything.
+The exclusion was added after it did exactly what the paragraph above warns
+about - an unsorted import block in a logo script failed CI and blocked a
+deploy of the trading service.
+
+**line 131**
+
+A hook an implementation may leave alone still has to declare the arguments
+its overrides receive, and `Broker.close` doing nothing is the correct
+behaviour for a backend holding no connection - not an unfinished method.
+
+**line 139**
+
+into fewer exits would trade a readable refusal for a lint score. The branch
+count is the same fact counted differently - two of the checks have already
+been extracted to methods on their own merits, and further extraction would
+be done to satisfy the counter rather than to make anything clearer.
+
+**line 160**
+
+transition. Splitting it would put half a state machine in another method and
+make the order the transitions happen in harder to read, not easier, which is
+the opposite of what the rule is for.
+
+### `deploy.sh`
+
+**line 2**
+
+
+  IMAGE=ghcr.io/owner/repo TAG=<sha> bash deploy.sh
+
+One container, not the compose split. Six separate services need about 861 MB
+before Redis, data or the OS - measured, not estimated - against the 908 MB
+this started on. `till-infinity run` is one process with an in-process bus,
+which is the shape that hardware could hold.
+
+The instance is larger now and the split would fit, but one process is also
+what makes the in-process bus possible, so this is no longer only a memory
+decision. The memory limit below is derived from the host rather than pinned,
+so the same script is correct on either.
+
+**line 18**
+
+them wastes a pull and produces confusing output - on 2026-09-15 a hand
+deploy and an automatic one interleaved, and the loser reported "could not
+rename the running container" while the winner was quietly succeeding. The
+outcome was correct because the rename is guarded, but nobody reading the
+output could tell that.
+
+**line 61**
+
+`set -e` ends the script above the line that would have fixed it. That is how
+this box reached 99% full with five 973 MB images on a 6.7 GB disk.
+
+`-af` with no age filter, because an age filter is the same bug in slower
+form - several deploys in one day are all newer than any window worth setting.
+Docker never removes the image a running container is using, so the version
+currently serving is safe; what is lost is a local copy of the *previous*
+one, and that lives in the registry, which is where a rollback should come
+from anyway.
+
+**line 77**
+
+
+  Error response from daemon: lease does not exist: not found
+
+It is transient - the same pull succeeds immediately afterwards - but the
+deploy job fails, and a failed deploy is the quietest failure here: the
+previous image keeps running and keeps reporting healthy, so the only symptom
+is that a change nobody doubted is not actually live. That went unnoticed for
+twenty minutes once.
+
+**line 100**
+
+Removing it here leaves a window with no container, and two things can go
+wrong in that window. The new one may fail to start, and then the desk is
+down with nothing to put back. Or another deploy can land inside it, in which
+case `docker run` below fails on a name conflict and this script exits
+reporting success over somebody else's container. Both were reached in
+practice on 2026-09-15.
+
+Stopped first, because two containers both holding broker sessions would both
+place orders. The rename costs nothing and buys an undo.
+
+**line 124**
+
+`-prev` to restore, which left the desk with no container at all - exactly
+the outcome the rollback exists to prevent, reached by the rollback itself.
+There is no previous container whenever another deploy has just replaced it,
+which on this box is a normal race rather than an unusual one.
+
+A container that started and looks unhealthy is worth keeping if the
+alternative is nothing: it may recover, its logs can be read, and it can be
+replaced deliberately. Nothing recovers from nothing.
+
+**line 144**
+
+left the host itself enough to breathe. Hard-coding it means a bigger machine
+runs the service in a 640MB box and wastes the rest, while a smaller one
+would be over-committed on the first deploy and nobody would notice until the
+kills started.
+
+70% of total, floored at 512m so a tiny instance still starts and can say why
+it is unhappy.
+
+**line 167**
+
+tunnel bound to the docker bridge. Without this the container cannot
+resolve the host at all and TRADING_MT5_URL has nowhere to point.
+Costs nothing when trading is off, which is the default.` \
+
+**line 182**
+
+`.State.Running` reads true for the instants it is up - so a crash-looper
+passes a naive check and the rollback gets deleted underneath it. A restart
+count above zero this soon is a container that has already died once.
+**Given time to settle, and asked twice.** Twenty seconds was not enough: a
+healthy container failed this check on 2026-09-15 and was deleted for it. The
+desk loads a 145MB state file at start, so a single sample taken while that
+is happening says nothing. `tr -d` because a stray newline in the captured
+value made the failure message unreadable and the comparison meaningless.
+
+### `deploy.sh`
+
+**line 2**
+
+
+  IMAGE=ghcr.io/owner/repo TAG=<sha> bash deploy.sh
+
+One container, not the compose split. Six separate services need about 861 MB
+before Redis, data or the OS - measured, not estimated - against the 908 MB
+
+**line 10**
+
+The instance is larger now and the split would fit, but one process is also
+what makes the in-process bus possible, so this is no longer only a memory
+decision. The memory limit below is derived from the host rather than pinned,
+so the same script is correct on either.
+
+**line 18**
+
+them wastes a pull and produces confusing output - on 2026-09-15 a hand
+deploy and an automatic one interleaved, and the loser reported "could not
+rename the running container" while the winner was quietly succeeding. The
+outcome was correct because the rename is guarded, but nobody reading the
+output could tell that.
+
+**line 67**
+
+currently serving is safe; what is lost is a local copy of the *previous*
+one, and that lives in the registry, which is where a rollback should come
+from anyway.
+
+**line 77**
+
+
+  Error response from daemon: lease does not exist: not found
+
+It is transient - the same pull succeeds immediately afterwards - but the
+deploy job fails, and a failed deploy is the quietest failure here: the
+previous image keeps running and keeps reporting healthy, so the only symptom
+is that a change nobody doubted is not actually live. That went unnoticed for
+twenty minutes once.
+
+**line 100**
+
+Removing it here leaves a window with no container, and two things can go
+wrong in that window. The new one may fail to start, and then the desk is
+down with nothing to put back. Or another deploy can land inside it, in which
+
+**line 106**
+
+
+Stopped first, because two containers both holding broker sessions would both
+place orders. The rename costs nothing and buys an undo.
+
+**line 127**
+
+which on this box is a normal race rather than an unusual one.
+
+A container that started and looks unhealthy is worth keeping if the
+alternative is nothing: it may recover, its logs can be read, and it can be
+replaced deliberately. Nothing recovers from nothing.
+
+**line 144**
+
+left the host itself enough to breathe. Hard-coding it means a bigger machine
+runs the service in a 640MB box and wastes the rest, while a smaller one
+would be over-committed on the first deploy and nobody would notice until the
+kills started.
+
+70% of total, floored at 512m so a tiny instance still starts and can say why
+it is unhappy.
+
+**line 185**
+
+**Given time to settle, and asked twice.** Twenty seconds was not enough: a
+healthy container failed this check on 2026-09-15 and was deleted for it. The
+desk loads a 145MB state file at start, so a single sample taken while that
+
