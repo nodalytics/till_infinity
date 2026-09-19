@@ -807,7 +807,17 @@ class Trader:
             self._quote(message.payload)
             feed = str(message.payload.get("feed") or "")
             symbol = self._symbol_of.get(feed)
-            if symbol and (feed in self._waiting or self._shadows or self._untaken.get(feed)):
+            # **Per feed, like everything else in this condition.** It read
+            # `or self._shadows`, which is true for *every* feed as soon as one
+            # shadow exists anywhere - and `_watch_shadows` below discards every
+            # shadow not on this feed anyway. So one stopped trade made each
+            # quote on all ~42 traded feeds cost a broker round trip, serially,
+            # in the loop that also has to hand trading its signals. Signals
+            # queued behind quotes that never drained, and a shadow on a feed
+            # that stops quoting never retires, so it outlived every restart.
+            # From the last stops on 2026-09-17 nothing was traded again.
+            shadowed = any(shade.feed == feed for shade in self._shadows.values())
+            if symbol and (feed in self._waiting or shadowed or self._untaken.get(feed)):
                 got = await self._tick(symbol)
                 if got is not None:
                     await self._watch_shadows(feed, got)

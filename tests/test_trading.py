@@ -8861,3 +8861,68 @@ async def test_received_says_never_when_nothing_has_arrived(caplog):
         trader._say_what_it_is_doing()
     said = " ".join(r.getMessage() for r in caplog.records)
     assert "0 signal(s) received this process, last never" in said, said
+
+
+class TestOneStoppedTradeMustNotStallEveryFeed:
+    """**Nothing was traded from 2026-09-17 to 2026-09-19, and this is why.**
+
+    A shadow follows a stopped trade to see whether its target arrived anyway.
+    The gate that decides whether a quote needs a broker round trip read
+    `or self._shadows` - true for *every* feed once one shadow existed - while
+    `_watch_shadows` itself only looks at shadows on the quote's own feed. So
+    one stopped trade made every quote on every traded feed cost a broker call,
+    serially, in the loop that also delivers signals. Signals queued behind
+    quotes that never drained. The shadow was on a feed that stopped quoting,
+    so it never retired and was restored on every restart.
+    """
+
+    def _shadow(self, feed: str):
+        import time
+
+        from till_infinity.trading.service import Shadow
+
+        return Shadow(
+            feed=feed,
+            side=Side.BUY,
+            entry=100.0,
+            stop=99.0,
+            target=102.0,
+            ref="",
+            by="level-scalp",
+            until=time.time() + 86_400,
+        )
+
+    async def _trader_counting_ticks(self):
+        trader = Trader(Bus(), settings=settings())
+        await trader.start()
+        asked: list[str] = []
+        real = trader._tick
+
+        async def counting(symbol):
+            asked.append(str(symbol))
+            return await real(symbol)
+
+        trader._tick = counting  # type: ignore[method-assign]
+        return trader, asked
+
+    async def test_a_shadow_on_another_feed_costs_this_quote_nothing(self):
+        trader, asked = await self._trader_counting_ticks()
+        trader._shadows = {1: self._shadow("somewhere-else")}
+        asked.clear()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        assert not asked, (
+            f"a shadow on another feed sent this quote to the broker: {asked} - "
+            "one stopped trade was costing every feed a round trip"
+        )
+
+    async def test_a_shadow_on_this_feed_is_still_followed(self):
+        """The fix must narrow the gate, not remove it."""
+        trader, asked = await self._trader_counting_ticks()
+        trader._shadows = {1: self._shadow("gold")}
+        asked.clear()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        assert asked, "a shadow on this very feed was not followed"
