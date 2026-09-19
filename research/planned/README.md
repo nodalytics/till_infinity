@@ -22,5 +22,6 @@ document later.
 | [score.md](score.md) | designed, not built - one number per instrument in [−1, +1], and the decisions that are easy to get wrong quietly |
 | [calibration.md](calibration.md) | not measured on this system - does 80% mean 80%, and what sizing needs from a probability before it can read one |
 | [countering-the-anchor.md](countering-the-anchor.md) | not built - scalping the pullback to a daily call's own entry, on the opposite side to the call |
-| [meta-labelling.md](meta-labelling.md) | blocked on the label - whether to take a signal or its inverse, and why today's forward return would teach "always invert" |
+| [meta-labelling.md](meta-labelling.md) | measured - no edge (AUC 0.506); the level calls carry no direction at 5 minutes, and the old label would have taught "always invert" |
+| [directional-edge.md](directional-edge.md) | not built - where a directional edge could live now the broker is readable, and why the horizon comes before the signal |
 | [local-models.md](local-models.md) | not built - small models hosted locally, and which consumer actually makes that worth doing |

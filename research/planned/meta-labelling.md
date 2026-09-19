@@ -1,6 +1,6 @@
 # Meta-labelling: take the signal, or its inverse
 
-Status: **not built. Blocked on the label, which is measured wrong today.**
+Status: **measured 2026-09-19 on reconstructed labels. No edge - AUC 0.506.** See the result at the end.
 
 The proposal: for each level signal, a second model decides whether to take
 it as published or the other way round, from the features the signal carried
@@ -92,3 +92,43 @@ the better of "always raw" and "always invert" is a coin with extra steps.
 * An edge exists in sample and vanishes on the held-out period - the
   Coinbase premium's pattern, and the reason every claim here is scored
   out of sample.
+
+## Result, 2026-09-19
+
+Labels rebuilt from stored bars for 28,208 level calls on the 33 core
+instruments (FX, indices, metals, energy, btc/eth/sol), synthetics excluded:
+the return from the close at decision time to the close 5 minutes later,
+signed by the call. The corrected label confirms the trap above -
+
+| horizon | old label "right" | corrected "right" |
+|---|---|---|
+| 60s | 4.9% (synthetics) | 47.8% |
+| 300s | 11.6% | 49.6% |
+| 900s | 20.7% | 50.0% |
+
+- the raw call is a coin flip once it is measured from where a trade could
+enter.
+
+Then 59 features (the 68 numeric ones less ten raw price levels, which
+identify the instrument and the week rather than the setup), walk-forward
+over five time-ordered folds with the 5-minute horizon purged and a
+30-minute embargo. 16,627 calls out of sample:
+
+| strategy | hit | AUC | gross | net of spread |
+|---|---|---|---|---|
+| always raw | 50.1% | - | -0.06bp | -2.13bp |
+| always invert | 49.9% | - | +0.06bp | -2.00bp |
+| logistic regression | 49.7% | 0.506 | -0.12bp | -2.18bp |
+| gradient boosting | 50.4% | 0.506 | -0.00bp | -2.07bp |
+| logistic, p >= 0.55 only | 51.0% | - | +0.13bp | -2.02bp |
+
+Nothing separates a right call from a wrong one, and every strategy nets the
+spread. Spreads are stated per market class (1.5bp FX to 3bp crypto and
+energy), not measured per trade; the conclusion does not depend on them,
+since the gross column is already zero.
+
+So the meta-model has nothing to find at this horizon: the level calls carry
+no directional information at 5 minutes, conditioned on anything recorded.
+Not re-run at longer horizons - see `directional-edge.md` for why the horizon
+is the first thing to change.
+
