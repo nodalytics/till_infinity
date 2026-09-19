@@ -620,6 +620,20 @@ class Settings:
     #: comparison and multiply the risk, since two strategies on one signal is
     #: one idea found twice. Evaluating in parallel fixes it for free.
     evaluate_all: bool = False
+    #: Let **every** strategy that wants a signal take it, rather than the
+    #: first one in the running order.
+    #:
+    #: This multiplies exposure on purpose. Seventeen strategies wanting one
+    #: signal is seventeen positions on one idea, and the per-instrument limit
+    #: exists to refuse exactly that - so `risk.allows` is re-asked with the
+    #: book as it stands after each fill, not as it stood before the first.
+    #: The cap is what makes this bounded rather than unbounded, and it is the
+    #: reason this is a switch rather than the default.
+    #:
+    #: Agreement sizing is skipped when it is on. Rebuilding a trade from what
+    #: several strategies collectively asked for, and *also* letting each of
+    #: them take their own, counts the same agreement twice.
+    parallel: bool = False
     #: How many strategies must want the same side before the trade is rebuilt
     #: from what they collectively asked for. Zero or one disables it.
     #:
@@ -1674,6 +1688,7 @@ class Settings:
             min_base_rate=_float("TRADING_MIN_BASE_RATE", 0.0),
             probability_percentile=_float("TRADING_PROBABILITY_PERCENTILE", 0.0),
             evaluate_all=_flag("TRADING_EVALUATE_ALL", False),
+            parallel=_flag("TRADING_PARALLEL", False),
             consensus_min=_int("TRADING_CONSENSUS_MIN", 2),
             thesis_stop_vol=_float("TRADING_THESIS_STOP_VOL", 4.0),
             min_edge=_float("TRADING_MIN_EDGE", 0.15),

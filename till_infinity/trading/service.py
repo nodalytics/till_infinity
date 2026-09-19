@@ -1030,8 +1030,16 @@ class Trader:
             )
         return None
 
-    async def on_signal(
-        self, payload: dict[str, Any], *, observe: bool = True, park: bool = True
+    async def on_signal(  # noqa: PLR0911, PLR0915 - one gate per branch, in the
+        # order they are applied, for the reason `risk.allows` gives: the order
+        # is the design, and splitting it across helpers would hide it. Each
+        # return is a distinct way a signal stops being a trade, and each one
+        # is recorded differently.
+        self,
+        payload: dict[str, Any],
+        *,
+        observe: bool = True,
+        park: bool = True,
     ) -> Intent | Refusal | None:
         """Consider one signal against every strategy. The first taker wins.
 
@@ -1132,6 +1140,18 @@ class Trader:
                     await self._record_refusal(verdict, parked, engine.name)
                     await self._also_wanted(payload, spec, tick, engine.name)
                     return parked
+            if self.settings.parallel:
+                # **Every strategy that wants this takes it.** The running
+                # order stops deciding who trades and decides only who goes
+                # first, so the records become comparable on one stream
+                # instead of on the slice each strategy happened to be
+                # offered. It multiplies exposure, deliberately: the guard is
+                # re-asked below with the book as it stands after each fill,
+                # and the per-instrument and position caps are what keep it
+                # bounded. Agreement sizing is skipped - rebuilding one trade
+                # from what several asked for *and* letting each take its own
+                # would count the same agreement twice.
+                return await self._take_all(payload, spec, tick, engine, verdict)
             others = await self._also_wanted(payload, spec, tick, engine.name)
             verdict, agreed = self._agree(verdict, others)
             if agreed:
@@ -1156,6 +1176,94 @@ class Trader:
                 )
             return await self.take(verdict, engine.name)
         return None
+
+    async def _take_all(
+        self,
+        payload: dict[str, Any],
+        spec: SymbolSpec,
+        tick: Tick,
+        first: Any,
+        verdict: Intent,
+    ) -> Intent | Refusal | None:
+        """Take this signal for every strategy that wants it, not just the first.
+
+        **The book is re-read between fills, and that is the whole safety
+        property.** Asking the guard once, before any of them opened, would
+        let all seventeen pass the same position cap on the same stale count -
+        which is not a cap. Each intent is checked against the account as it
+        stands *after* the previous one filled.
+
+        The first strategy's verdict is passed in already built, so it is not
+        reconsidered; the rest are asked here. A strategy that refuses is
+        counted exactly as it is on the sequential path.
+        """
+        taken: list[tuple[str, Intent]] = []
+        outcome: Intent | Refusal | None = None
+        for engine in [first, *[e for e in self.strategies if e is not first]]:
+            if engine is first:
+                wanted: Intent | Refusal | None = verdict
+            else:
+                if not engine.wants(payload):
+                    continue
+                try:
+                    wanted = await engine.consider_async(
+                        payload,
+                        spec=spec,
+                        tick=tick,
+                        equity=self.equity,
+                        positions=await self._positions(),
+                        peak=self.peak_equity,
+                    )
+                except Exception as exc:
+                    # One strategy failing must not cost the others their fill.
+                    log.debug("trading: %s could not be considered: %s", engine.name, exc)
+                    continue
+            if not isinstance(wanted, Intent):
+                if isinstance(wanted, Refusal):
+                    self.refused += 1
+                    key = f"{engine.name}:{wanted.gate}"
+                    self.passed_over[key] = self.passed_over.get(key, 0) + 1
+                continue
+
+            # Re-read, per intent. See the docstring.
+            positions = await self._positions(fresh=True)
+            stopped = self.guard.allows(
+                wanted,
+                positions=positions,
+                tick=tick,
+                risk_of={t: live.intent.risk_money for t, live in self.open.items()},
+                feed_of=self._feed_of,
+            )
+            if stopped is not None:
+                self.refused += 1
+                await self._record_refusal(wanted, stopped, engine.name)
+                outcome = outcome or stopped
+                continue
+
+            sized = lots(
+                spec,
+                equity=self.equity,
+                risk_fraction=self.settings.risk_fraction,
+                stop_distance=abs(wanted.entry - wanted.stop),
+                max_risk_money=self.settings.max_risk_money,
+            )
+            if not sized.ok:
+                outcome = outcome or Refusal("size", sized.reason, wanted.feed)
+                continue
+            wanted = replace(wanted, volume=sized.volume, risk_money=sized.risk_money)
+            got = await self.take(wanted, engine.name)
+            if isinstance(got, Intent):
+                taken.append((engine.name, got))
+            outcome = outcome if isinstance(outcome, Intent) else got
+
+        if taken:
+            log.info(
+                "trading: %s %s taken in parallel by %s",
+                taken[0][1].side,
+                taken[0][1].feed,
+                " + ".join(name for name, _ in taken),
+            )
+        return outcome
 
     def _agree(self, taken: Intent, others: list[tuple[str, Intent]]) -> tuple[Intent, list[str]]:
         """Rebuild a trade from what the strategies that agreed with it wanted.

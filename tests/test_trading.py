@@ -8545,3 +8545,98 @@ def test_every_level_trading_publishes_is_one_the_notifier_accepts():
     assert levels, "the publish sites should be findable"
     for level in sorted(levels):
         Level.parse(level)  # raises if the notifier would reject it
+
+
+async def test_parallel_lets_every_wanting_strategy_take_the_trade():
+    """The running order stops deciding *who* trades and decides only who is first.
+
+    The point is comparability: with one taker, each strategy is scored on the
+    slice of the stream it happened to be offered, and two records built that
+    way cannot be put beside each other.
+    """
+    made = settings(parallel=True)
+    made.strategies = ("level-scalp", "thesis-only", "sweep-aware")
+    trader = Trader(Bus(), settings=made)
+    await trader.start()
+    # **`max_per_symbol` is 1 by default and is the binding constraint.** It
+    # exists to stop two strategies holding one idea, so parallel execution is
+    # inert until it is raised - the code change alone does nothing, which is
+    # worth a test of its own below. Set after `start`, because the risk plan
+    # is applied there and puts the plan's value back over an assignment made
+    # before it.
+    trader.settings.max_per_symbol = 5
+    trader.guard.settings.max_per_symbol = 5
+
+    took: list[str] = []
+    real_take = trader.take
+
+    async def counting(intent, by=""):
+        took.append(by)
+        return await real_take(intent, by)
+
+    trader.take = counting  # type: ignore[method-assign]
+    # A quote first: without a tick the signal is undealable and nothing is
+    # taken, which would make this pass for the wrong reason.
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.on_signal(signal())
+
+    assert len(took) == len(set(took)), f"a strategy took the same signal twice: {took}"
+    assert len(took) > 1, f"only {took} took it - the others were not given the chance"
+
+
+async def test_the_position_cap_is_re_read_between_parallel_fills():
+    """**The one way this turns a cap into no cap.**
+
+    Asking the guard once, before any of them opened, lets every strategy pass
+    the same stale position count - so a limit of one admits seventeen. Each
+    intent has to be checked against the book as it stands *after* the
+    previous fill.
+    """
+    import inspect
+
+    from till_infinity.trading import service
+
+    source = inspect.getsource(service.Trader._take_all)
+    assert "fresh=True" in source, (
+        "the guard must be re-asked against a freshly read book between fills, "
+        "or every strategy passes the same stale count"
+    )
+    assert "self.guard.allows" in source, "parallel fills must still go through the guard"
+
+
+def test_parallel_is_off_unless_asked_for():
+    """It multiplies exposure on purpose, so it cannot be the default."""
+    assert td.Settings().parallel is False
+
+
+async def test_parallel_is_still_bounded_by_the_per_symbol_cap():
+    """**The cap is what keeps this from being unbounded, so it stays.**
+
+    Turning parallel on does not remove a limit; it lets several strategies
+    reach one. With `max_per_symbol` at its default of 1 the second strategy
+    is refused `already_open`, which means enabling parallel without also
+    raising the cap changes nothing - and silently changing nothing is the
+    failure this asserts against.
+    """
+    made = settings(parallel=True)
+    made.strategies = ("level-scalp", "thesis-only", "sweep-aware")
+    assert made.max_per_symbol == 1, "the default is what makes this test meaningful"
+    trader = Trader(Bus(), settings=made)
+    await trader.start()
+
+    took: list[str] = []
+    real_take = trader.take
+
+    async def counting(intent, by=""):
+        took.append(by)
+        return await real_take(intent, by)
+
+    trader.take = counting  # type: ignore[method-assign]
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.on_signal(signal())
+
+    assert len(took) == 1, f"the per-symbol cap should hold at 1, got {took}"
