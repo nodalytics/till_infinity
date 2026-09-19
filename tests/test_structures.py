@@ -3369,3 +3369,17 @@ def test_an_empty_memory_leans_on_nothing():
     )
     _, _, count, effective = Memory().prior(asking, "1m")
     assert (count, effective) == (0, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_a_repeat_inside_the_cooldown_is_counted_not_just_skipped():
+    """The per-signal log line is written for every signal, including the ones
+    `emit` declines as repeats, so the log alone overstates what went out."""
+    watcher = Watcher(Bus(), settings=sx.Settings())
+    first = _signal(Shape.STALE)
+    assert await watcher.emit([first]) == 1
+    assert await watcher.emit([_signal(Shape.STALE)]) == 0
+    assert watcher.published == 1
+    assert watcher.deduped == 1
+    assert "published 1" in watcher.publish_tally()
+    assert "held 1" in watcher.publish_tally()

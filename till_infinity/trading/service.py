@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field, replace
@@ -924,7 +925,7 @@ class Trader:
             )
         return None
 
-    async def on_signal(  # noqa: PLR0911, PLR0915 - one gate per branch, in the
+    async def on_signal(  # noqa: PLR0911, PLR0912, PLR0915 - one gate per branch, in the
         # order they are applied, for the reason `risk.allows` gives: the order
         # is the design, and splitting it across helpers would hide it. Each
         # return is a distinct way a signal stops being a trade, and each one
@@ -986,9 +987,11 @@ class Trader:
             return refusal
 
         positions = await self._positions()
+        asked = 0
         for engine in self.strategies:
             if not engine.wants(payload):
                 continue
+            asked += 1
             verdict = await engine.consider_async(
                 payload,
                 spec=spec,
@@ -1070,6 +1073,16 @@ class Trader:
                     verdict.volume,
                 )
             return await self.take(verdict, engine.name)
+        if not asked:
+            # **The third silent return, and the likeliest.** `wants` is a
+            # shape check, so a signal no strategy recognises falls through
+            # every one of them and out of the loop without a refusal, a trade
+            # or a desk counter - which is exactly what the desk showed: calls
+            # published on traded instruments and no trace of any of them.
+            # Keyed by the shape actually received, so a mismatch names itself.
+            shape = re.sub(r"[^a-z0-9]+", "_", str(payload.get("shape") or "none").lower())
+            key = f"(desk):unwanted_{shape}"
+            self.passed_over[key] = self.passed_over.get(key, 0) + 1
         return None
 
     async def _take_all(

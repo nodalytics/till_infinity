@@ -575,6 +575,8 @@ class Watcher:
         #: the two are indistinguishable without a number.
         self.dropped = 0
         self.published = 0
+        #: Signals `fresh` held back as repeats inside the cooldown.
+        self.deduped = 0
         self.alerted = 0
 
     # ---------------------------------------------------------- persistence
@@ -975,7 +977,18 @@ class Watcher:
             return "no drift fired yet"
         return f"drift: adwin fired {adwin} time(s)"
 
+    def publish_tally(self) -> str:
+        """How many signals went out, against how many were held as repeats.
+
+        The line logged per signal is written for every signal `run` produces,
+        including the ones `emit` then declines to send as repeats of a finding
+        inside the cooldown. Read alone it overstates what reached the bus;
+        this is the number that reached it.
+        """
+        return f"published {self.published} signal(s), held {self.deduped} as repeats"
+
     def save(self) -> None:
+        log.info("structures: %s", self.publish_tally())
         log.info("structures: %s", self.origin_tally())
         log.info("structures: %s", self.drift_tally())
         log.info("structures: %s", self.refinement_tally())
@@ -1077,6 +1090,9 @@ class Watcher:
         sent = 0
         for signal in signals:
             if not self.fresh(signal):
+                # Counted: the caller logs every signal whether or not it went
+                # out, so the log alone overstates what reached the bus.
+                self.deduped += 1
                 continue
             await self.bus.publish(SIGNALS, signal.to_dict(), source="structures")
             self.published += 1

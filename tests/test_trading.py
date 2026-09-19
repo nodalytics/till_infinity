@@ -8785,3 +8785,30 @@ async def test_the_desk_counters_are_shown_however_small_they_are(caplog):
         f"a small desk counter was ranked out of the line: {said[:400]}"
     )
     assert "(desk):shut x1" in said, f"the smallest one was dropped: {said[:400]}"
+
+
+async def test_a_signal_no_strategy_wants_is_counted_by_its_shape():
+    """**The third silent return.** A shape no strategy recognises fell out of
+    the loop with no refusal, no trade and no desk counter - which is what the
+    desk showed, calls published on traded instruments and no trace of them.
+    Keyed by the shape received, so a mismatch names itself."""
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    payload = signal()
+    payload["shape"] = "Shape.LEVEL"  # the kind of mismatch this exists to catch
+    await trader.on_signal(payload)
+    assert trader.passed_over.get("(desk):unwanted_shape_level") == 1, dict(trader.passed_over)
+
+
+async def test_a_signal_a_strategy_wants_is_not_counted_as_unwanted():
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.on_signal(signal())
+    unwanted = {k: v for k, v in trader.passed_over.items() if "unwanted" in k}
+    assert not unwanted, f"a level signal was counted as unwanted: {unwanted}"
