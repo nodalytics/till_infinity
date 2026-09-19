@@ -8701,3 +8701,49 @@ async def test_one_strategy_cannot_hold_two_positions_on_one_instrument():
     # one-slot-per-strategy rule can stop a second.
     await trader.on_signal(signal())
     assert len(took) == 1, f"one strategy took a second position on the same instrument: {took}"
+
+
+class TestTheDeskCanSayWhereSignalsWent:
+    """**Two ways a signal dies before any strategy is asked, both untallied.**
+
+    On 2026-09-19 the desk took nothing for two days while `passed over` sat
+    frozen at 39,643 and structures published level calls the whole time. The
+    counter was frozen because neither of the early returns in `on_signal`
+    touches it: a feed we do not trade, and an instrument we do trade that is
+    undealable right now. A desk that has stopped has to be able to say which.
+    """
+
+    async def test_a_signal_on_an_untraded_feed_is_counted(self):
+        trader = Trader(Bus(), settings=settings())
+        await trader.start()
+        payload = signal()
+        payload["feed"] = "something-we-do-not-trade"
+        await trader.on_signal(payload)
+        assert trader.passed_over.get("(desk):untraded") == 1, (
+            f"untraded feed left no trace: {dict(trader.passed_over)}"
+        )
+
+    async def test_an_undealable_instrument_is_counted_under_its_gate(self):
+        """No quote at all is the plainest way to be undealable."""
+        trader = Trader(Bus(), settings=settings())
+        await trader.start()
+
+        async def no_tick(symbol):
+            return None
+
+        trader._tick = no_tick  # type: ignore[method-assign]
+        await trader.on_signal(signal())
+        desk = {k: v for k, v in trader.passed_over.items() if k.startswith("(desk):")}
+        assert desk, f"an undealable instrument left no trace: {dict(trader.passed_over)}"
+        assert "(desk):untraded" not in desk, "gold is traded; this is not the untraded path"
+
+    async def test_a_dealable_signal_still_reaches_the_strategies(self):
+        """The counters must not swallow the ordinary path."""
+        trader = Trader(Bus(), settings=settings())
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        await trader.on_signal(signal())
+        desk = {k: v for k, v in trader.passed_over.items() if k.startswith("(desk):")}
+        assert not desk, f"a dealable signal was counted as blocked: {desk}"

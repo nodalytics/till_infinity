@@ -1065,7 +1065,16 @@ class Trader:
         feed = str(payload.get("feed") or "")
         spec = self.specs.get(feed)
         if spec is None:
-            return None  # not traded here; not worth a refusal record
+            # **Counted, though not journalled.** "Not worth a refusal record"
+            # was right about the journal and wrong about the tally: this is
+            # the first of two ways a signal stops being a trade before any
+            # strategy is asked, and both were invisible. On 2026-09-19 the
+            # desk took nothing for two days while `passed over` sat frozen,
+            # and the reason it sat frozen is that nothing here touches it.
+            # A desk that has stopped trading must be able to say where the
+            # signals are going.
+            self.passed_over["(desk):untraded"] = self.passed_over.get("(desk):untraded", 0) + 1
+            return None
         # Kept whether or not this becomes a trade, because what re-arms after
         # a stop is the signal put back through every gate - not the intent,
         # which has already been proved wrong once at this price.
@@ -1081,6 +1090,10 @@ class Trader:
 
         tick = await self._tick(spec.symbol)
         if refusal := self._undealable(feed, spec, tick):
+            # The other silent one, and the more misleading of the two: an
+            # instrument we *do* trade, refused for a reason nothing recorded.
+            key = f"(desk):{refusal.gate}"
+            self.passed_over[key] = self.passed_over.get(key, 0) + 1
             return refusal
 
         positions = await self._positions()
