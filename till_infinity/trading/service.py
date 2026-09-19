@@ -2634,7 +2634,15 @@ class Trader:
                 ", ".join(self.settings.intervals),
             )
             return
-        top = sorted(self.passed_over.items(), key=lambda kv: -kv[1])[:4]
+        # **Twelve, not four.** Four was enough to show that `interval`
+        # dominates - which every strategy refusing signals outside its own
+        # entry set produces, and which says nothing. It is the gates *below*
+        # that line that answer "why is it not trading", and on 2026-09-19
+        # they were invisible: 39,643 signals passed over in fifty minutes,
+        # one trade taken, and the log showed four interval counters. The
+        # counter is a dict in memory and is not journalled, so a truncated
+        # line is the only view there is of it.
+        top = sorted(self.passed_over.items(), key=lambda kv: -kv[1])[:12]
         log.info(
             "trading: %d taken, %d passed over (%s) · %s",
             self.taken,

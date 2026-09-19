@@ -579,3 +579,113 @@ async def test_a_cancellation_between_attempts_does_not_kill_the_supervisor(capl
             await task
 
     assert len(runs) >= 2, "a cancellation during the backoff killed the supervisor"
+
+
+@pytest.mark.asyncio
+async def test_a_scope_that_keeps_cancelling_does_not_spin_the_supervisor(caplog):
+    """**105,021 restarts in four and a half hours - about six a second.**
+
+    An anyio cancel scope belongs to the task that entered it, and once its
+    deadline has passed it re-delivers cancellation at *every* checkpoint in
+    that task until the scope is exited. Catching the `CancelledError` and
+    calling `uncancel` does not exit it, so the backoff was cancelled the
+    instant it started, and so was the next attempt's.
+
+    Modelled here exactly that way: the collector marks whichever task it ran
+    in as poisoned, and every later sleep *in that task* is cancelled. Run in
+    the supervisor's own task the backoff can never complete; run in a task of
+    its own the poison dies with it, which is the fix.
+    """
+    import asyncio
+    import logging
+
+    from till_infinity import stack as st
+
+    runs = []
+    poisoned = set()
+    going_down = False
+
+    async def enters_a_scope_that_outlives_it() -> None:
+        # The scope belongs to whatever task is running this.
+        mine = asyncio.current_task()
+        runs.append(mine)
+        poisoned.add(mine)
+        raise asyncio.CancelledError
+
+    real_sleep = asyncio.sleep
+    finished = []
+
+    async def scoped(delay, *a, **k):
+        if asyncio.current_task() in poisoned:
+            # The scope re-delivering at this checkpoint.
+            raise asyncio.CancelledError
+        await real_sleep(0)
+        finished.append(delay)
+
+    with caplog.at_level(logging.ERROR, logger=st.log.name), patch_sleep(st, scoped):
+        task = asyncio.create_task(
+            st._forever(
+                "prices:quotes",
+                enters_a_scope_that_outlives_it,
+                settle=1.0,
+                stopping=lambda: going_down,
+            )
+        )
+        for _ in range(600):
+            await real_sleep(0)
+            if len(runs) >= 3:
+                break
+        going_down = True
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert len(runs) >= 2, "the collector should be restarted"
+    assert finished, (
+        "every backoff was cancelled before it could elapse - the supervisor is spinning"
+    )
+    assert finished[0] >= 1.0, f"backed off {finished[0]}s, which is not a backoff"
+
+
+@pytest.mark.asyncio
+async def test_it_stops_saying_the_same_thing_a_hundred_thousand_times(caplog):
+    """96% of a container's log was this one line, which buried everything.
+
+    A collector restarting in a loop is one fact, not a hundred thousand of
+    them, and the line reporting it must not be the reason the log is useless.
+    """
+    import asyncio
+    import logging
+
+    from till_infinity import stack as st
+
+    going_down = False
+    runs = []
+
+    async def dies() -> None:
+        runs.append(True)
+        raise RuntimeError("down again")
+
+    real_sleep = asyncio.sleep
+
+    async def instant(delay, *a, **k):
+        await real_sleep(0)
+
+    with caplog.at_level(logging.ERROR, logger=st.log.name), patch_sleep(st, instant):
+        task = asyncio.create_task(
+            st._forever("prices:quotes", dies, settle=0.0, stopping=lambda: going_down)
+        )
+        for _ in range(4_000):
+            await real_sleep(0)
+            if len(runs) >= 40:
+                break
+        going_down = True
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    said = [r for r in caplog.records if "restarting (attempt" in r.getMessage()]
+    assert len(runs) >= 20, "the fixture needs the collector to restart many times"
+    assert len(said) < len(runs), (
+        f"logged {len(said)} lines for {len(runs)} restarts - every one of them"
+    )

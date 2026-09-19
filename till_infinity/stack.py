@@ -335,11 +335,51 @@ async def _forever(
             return f"ended: {exc!r}"
         return ""
 
+    async def attempt() -> str:
+        """Run the collector in a task of its own, and say why it stopped.
+
+        **The collector cannot share this task, and that is the whole fix.**
+        An anyio cancel scope - which is how httpx implements every timeout -
+        belongs to the task that entered it, and once its deadline has passed
+        it re-delivers cancellation at *every* checkpoint until the scope is
+        exited. Catching the `CancelledError` here and calling `uncancel` does
+        not exit that scope, so the next await was cancelled too, and the next:
+        the backoff below never elapsed and the loop spun.
+
+        It is not a theory. On 2026-09-18 this logged 105,021 restarts in four
+        and a half hours - about six a second - and 96% of the container's log
+        was this one line, which buried everything else on a two-core box.
+
+        Given a task of its own, a scope entered inside `make` dies with that
+        task. Nothing can reach this one but a real shutdown, so the wait
+        between attempts is an ordinary `sleep` again.
+        """
+        task = asyncio.create_task(make(), name=f"stack:{name}")
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+            raise
+        if task.cancelled():
+            return "was cancelled while the desk was still running"
+        failed = task.exception()
+        if failed is not None:
+            return f"ended: {failed!r}"
+        return "returned on its own"
+
     attempts = 0
+    said = 0
     while True:
-        why = await survive(make) or "returned on its own"
+        why = await attempt()
         attempts += 1
-        log.error("stack: %s %s - restarting (attempt %d)", name, why, attempts)
+        # Logged at widening intervals. A collector restarting in a tight loop
+        # is one fact, not a hundred thousand of them, and the line that says
+        # so must not be the reason the log is useless.
+        if attempts >= said * 2 or attempts <= 3:
+            said = attempts
+            log.error("stack: %s %s - restarting (attempt %d)", name, why, attempts)
         wait = min(60.0, settle * attempts)
         await survive(functools.partial(asyncio.sleep, wait))
 
