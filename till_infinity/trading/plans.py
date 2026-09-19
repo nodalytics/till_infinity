@@ -108,6 +108,31 @@ class Plan:
         )
 
 
+def describe_effective(settings: Settings, environ: Mapping[str, str] | None = None) -> str:
+    """The risk envelope the desk will actually trade with, not the plan's own.
+
+    `str(plan)` prints the named plan, and every field the environment
+    overrides is then wrong on screen: `trading doctor` reported `0.25%/trade,
+    4 open, p>58%` for a desk running 0.5%, 34 open and no probability floor.
+    That is the one readout somebody checks before trusting the limits, so it
+    has to describe the settings after the plan and the environment have both
+    been applied - and say which of the two each number came from.
+    """
+    env = os.environ if environ is None else environ
+    overridden = [field for field, variable in CONTROLS.items() if variable in env]
+    risk = settings.risk_fraction
+    halt = settings.daily_loss_fraction / risk if risk else 0.0
+    text = (
+        f"{settings.risk_plan}: {risk:.2%}/trade, {settings.daily_loss_fraction:.1%}/day "
+        f"({halt:.0f} losses), {settings.max_positions} open, "
+        f"{settings.max_per_symbol} per symbol, p>{settings.min_probability:.0%}, "
+        f"RR>{settings.min_reward_to_risk:.1f}"
+    )
+    if overridden:
+        text += f" (from the environment: {', '.join(overridden)})"
+    return text
+
+
 PLANS: dict[str, Plan] = {
     plan.name: plan
     for plan in (

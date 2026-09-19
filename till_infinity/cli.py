@@ -2502,7 +2502,7 @@ def trading_doctor(symbols, plan, strategies, backend):
 
     armed = "[red]LIVE - orders reach the account[/]" if settings.live else "[green]paper[/]"
     console.print(f"\nmode: {armed}")
-    console.print(f"plan: {escape(str(tp.get(settings.risk_plan)))}")
+    console.print(f"plan: {escape(tp.describe_effective(settings))}")
     console.print(f"strategies: {', '.join(settings.strategies)}")
     console.print(f"instruments: {', '.join(settings.symbols)}")
     console.print(f"timeframes: {', '.join(settings.intervals)}")

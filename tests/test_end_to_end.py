@@ -238,3 +238,61 @@ class TestASignalCrossesTheBus:
             f"days (counters: taken={trader.taken} refused={trader.refused} "
             f"passed_over={dict(trader.passed_over)})"
         )
+
+
+class TestTradingListensBeforeItConnects:
+    """A level call published while the broker is still attaching must land.
+
+    `_attach` connects to the terminal and scans its symbols - about two
+    minutes on the instance - and `Bus.publish` only reaches groups that
+    already exist. Trading used to subscribe after that, so anything published
+    in the window was delivered to nobody. The first run of the test above
+    lost its call exactly that way.
+    """
+
+    @pytest.mark.asyncio
+    async def test_signals_are_subscribed_while_the_broker_is_still_attaching(self, monkeypatch):
+        from till_infinity.trading import service as svc
+
+        attaching = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_attach(trader):
+            attaching.set()
+            await release.wait()
+
+        monkeypatch.setattr(svc, "_attach", slow_attach)
+        bus = Bus()
+        task = asyncio.create_task(td.listen(bus, settings=trading_settings(), limit=1))
+        await asyncio.wait_for(attaching.wait(), timeout=10)
+
+        try:
+            assert (SIGNALS, "trading") in bus._channels, (
+                "trading is still connecting to its broker and is not yet listening "
+                "for signals, so a call published now is delivered to nobody"
+            )
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_quotes_are_not_subscribed_early(self, monkeypatch):
+        """Deliberately: they would queue a thousand stale quotes per restart."""
+        from till_infinity.trading import service as svc
+
+        attaching = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_attach(trader):
+            attaching.set()
+            await release.wait()
+
+        monkeypatch.setattr(svc, "_attach", slow_attach)
+        bus = Bus()
+        task = asyncio.create_task(td.listen(bus, settings=trading_settings(), limit=1))
+        await asyncio.wait_for(attaching.wait(), timeout=10)
+        try:
+            assert (QUOTES, "trading") not in bus._channels
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

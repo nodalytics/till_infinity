@@ -4067,9 +4067,22 @@ async def listen(
     See `trading-service.md` in research/docs.
     """
     trader = Trader(bus, settings=settings, journal=journal, broker=broker)
+    # **Signals before the broker, everything else after.** `_attach` connects
+    # to the terminal and scans its symbols - about two minutes on the
+    # instance - and `Bus.publish` only reaches groups that already exist, so
+    # a level call published in that window went to nobody. It does not bite
+    # today only because structures warms slower (~6.5 min to its first call),
+    # which is an accident of timing rather than a guarantee; the end-to-end
+    # test lost its call exactly this way. Quotes are left until after: they
+    # are continuous and supersede each other, and subscribing them early
+    # would queue a thousand stale ones on every restart and drop the rest.
+    early = {SIGNALS: bus.subscribe(SIGNALS, group="trading")}
     await _attach(trader)
 
-    streams = {topic: bus.subscribe(topic, group="trading") for topic in TOPICS}
+    streams = {
+        **early,
+        **{topic: bus.subscribe(topic, group="trading") for topic in TOPICS if topic not in early},
+    }
     queue: asyncio.Queue[Message | None] = asyncio.Queue()
 
     async def pump(topic: str) -> None:
