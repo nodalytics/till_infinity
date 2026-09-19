@@ -21,6 +21,5 @@ document later.
 |---|---|
 | [score.md](score.md) | designed, not built - one number per instrument in [−1, +1], and the decisions that are easy to get wrong quietly |
 | [calibration.md](calibration.md) | not measured on this system - does 80% mean 80%, and what sizing needs from a probability before it can read one |
-| [coinbase-premium.md](coinbase-premium.md) | not measured - whether the Coinbase/Binance BTC spread leads price, and for how long, before it can be a directional bet |
 | [countering-the-anchor.md](countering-the-anchor.md) | not built - scalping the pullback to a daily call's own entry, on the opposite side to the call |
 | [local-models.md](local-models.md) | not built - small models hosted locally, and which consumer actually makes that worth doing |

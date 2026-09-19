@@ -3638,15 +3638,16 @@ Noted 2026-09-19. Each has a document in
 [research/planned](../research/planned/) saying what would have to be true and
 what would kill it; none of them exists in the code.
 
-- **The Coinbase premium as a directional signal.** The BTC/USD-on-Coinbase
-  against BTC/USDT-on-Binance gap, used as a *direction* rather than as the
-  reversion signal `zma` already trades it as. The claim circulates without a
-  horizon attached, which is what makes it untestable as usually stated: the
-  first question is how long the sign persists, and the one that decides
-  whether it is real is whether the premium leads price or merely moves with
-  it. Tradeable on Deriv without a Coinbase or Binance account, because the
-  premium is information and the position is taken wherever we already deal.
-  See [coinbase-premium.md](../research/planned/coinbase-premium.md).
+- **The Coinbase premium is refuted as stated, and unproven otherwise.**
+  Measured 2026-09-19 on 23 days of our own quotes. The raw premium is
+  negative 84% of the time because USDT is not a dollar, so "short the
+  negative" is a constant short rather than a signal. Demeaned against its own
+  24h level it looked significant at four hours - until the overlapping
+  windows were taken out, which was all of it. On non-overlapping windows
+  nothing reaches significance and the sign flips at an hour. The best honest
+  estimate is +1.12bp at five minutes against a 2.26bp Deriv round trip. It
+  does lead price rather than follow it, which is the one test it passes.
+  See [coinbase-premium.md](../research/coinbase-premium.md).
 - **Countering the anchor.** On a daily-or-higher call, take the *opposite*
   side and scalp the pullback to the anchor's own entry price. Not the same as
   `inverse`, which mirrors every call on every timeframe as a control: this
