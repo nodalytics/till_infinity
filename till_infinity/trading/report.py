@@ -150,14 +150,7 @@ class Group:
 class TurnComparison:
     """What riding the turn model's exit instead would have done, from the journal.
 
-    Read from closed trades rather than from a running tally, so the answer
-    survives a restart and can be asked of any window. The in-process tally on
-    the service is a convenience; this is the record.
-
-    **Every row is an upper bound.** A resting order at the suggested level
-    would have filled there or not at all, so the comparison is fair for a
-    take-profit and optimistic for anything needing a chase. See
-    `trading/turning.py`.
+    See `trading-report.md` in research/docs.
     """
 
     scored: int = 0

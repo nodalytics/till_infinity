@@ -238,15 +238,7 @@ def redis_channel(
 ):
     """Create a Redis-backed channel.
 
-    Args:
-        key:              Redis stream key
-        group:            consumer group name (shared across workers)
-        consumer:         consumer id (unique per worker, auto-generated)
-        maxlen:           stream cap (approximate)
-        url:              Redis URL (defaults to REDIS_URL env var)
-        persistent_path:  if set, wrap sender with SQLite outbox so
-                          failed sends survive Redis outages and
-                          replay when the primary recovers.
+    See `channels-redis.md` in research/docs.
     """
     channel = RedisChannel[T](key, group, consumer, maxlen, url)
     tx, rx = channel.split()

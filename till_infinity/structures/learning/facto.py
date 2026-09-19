@@ -126,20 +126,7 @@ TYPICAL = 2.0
 def saturate(value: float, *, typical: float = TYPICAL) -> float:
     """Map [0, inf) onto [0, 1), monotonically, with no cutoff to argue about.
 
-    A factorisation machine's gradients are *quadratic* in feature magnitude -
-    the interaction terms multiply two features together - so an unbounded
-    input does not merely skew the fit, it diverges it. Feeding the raw values
-    took the latent factors non-finite within tens of examples, after which
-    `Model.predict` returned zero forever and the model learned nothing while
-    reporting nothing wrong.
-
-    Saturating rather than clipping because a clip needs a maximum, and any
-    maximum here is a number someone made up: it would treat a four-volatility
-    approach and a forty-volatility one as the same event, which is exactly the
-    distinction a violent touch consists of. This keeps the ordering everywhere
-    and simply stops the tail from dominating - the same instinct as
-    `experience_of` log-compressing a touch count, held to a hard bound because
-    the FM needs one.
+    See `structures-learning-facto.md` in research/docs.
     """
     if not math.isfinite(value):
         return 1.0
@@ -166,16 +153,7 @@ class Example(Restorable):
 def encode(context: dict[str, Any]) -> dict[str, float]:
     """Journal context -> the flat dict river wants.
 
-    Categoricals become `name_value: 1.0` rather than an integer code. An
-    integer would tell the model that `1h` sits between `15m` and `4h` on some
-    scale it should interpolate along, which is true of the durations and not
-    of anything the model does with them.
-
-    Everything this returns is bounded, which is the property the FM needs -
-    see `saturate`. The volatility-unit features are saturated into [0, 1) on
-    the way past; the rest already hold themselves down, `strength`, `regime`,
-    `pivot` and `backcheck` in [0, 1] by construction and `experience` growing
-    like the log of a touch count, which no market reaches the far end of.
+    See `structures-learning-facto.md` in research/docs.
     """
     out: dict[str, float] = {}
     for name in NUMERIC:
@@ -326,20 +304,7 @@ class Model(Restorable):
     def predict(self, features: dict[str, float]) -> float:
         """Zero when there is nothing to say. Two cases, both real.
 
-        `FMRegressor.predict_one` raises `AttributeError` - not something
-        catchable by intent - in two situations, because its internal dot
-        product returns a plain float where river expects a numpy scalar and
-        calls `.item()` on it:
-
-        - **nothing learned yet.** Progressive validation predicts *before* it
-          learns, so the first example hits this every time. The discipline and
-          the library disagree, and this is where they are reconciled.
-        - **fewer than two features.** An FM models *pairwise* interactions, and
-          one feature has no pairs. Real rows carry several, but a sparse
-          journal entry would otherwise take down a running service.
-
-        Zero is also the honest answer in both: a model with no history, or no
-        interaction to look at, has no opinion about the next push.
+        See `structures-learning-facto.md` in research/docs.
         """
         if not self._fitted or len(features) < 2:
             return 0.0
@@ -407,16 +372,6 @@ def evaluate(examples: Sequence[Example], *, model: Model | None = None) -> Repo
 def fit(journal_db: Path | str, *, since: float = 0.0, **kwargs) -> Report:
     """Read the journal and report. The everyday entry point.
 
-    `since` exists because a measurement bug does not only corrupt the numbers
-    it produced - it corrupts every example recorded while it was live. Touch
-    counts fed `experience` and `strength`, and a pooled base rate made `edge`
-    wrong on every row, so examples from before those were fixed describe a
-    model that no longer exists. Fitting across the boundary would teach the FM
-    the relationship between features and outcomes *as they were mismeasured*,
-    which is worse than having no model, because it would look like one.
-
-    Pass a unix timestamp to count only what was recorded after a known-good
-    point. There is no default: where the boundary sits is a judgement about
-    this deployment's history, not something the code can know.
+    See `structures-learning-facto.md` in research/docs.
     """
     return evaluate(dataset(journal_db, since=since), **kwargs)

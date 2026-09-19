@@ -111,16 +111,7 @@ def points(
 ) -> list[Point]:
     """Round numbers as turning points, so levels can form at them.
 
-    **These are not turns and the code should not pretend otherwise.** Every
-    other formation emits a price where something happened; this emits a price
-    because of how it is written. It is given `Swing.HIGH` above the last price
-    and `Swing.LOW` below for the same reason a mode is - those are the only
-    two `form` accepts - and the `index` and `time` are the last bar's, because
-    a round number has no moment of its own.
-
-    That is a real weakness and it is the reason this is worth measuring rather
-    than assuming: a formation with no history behind it either works or is
-    superstition, and the touch record is what separates those.
+    See `structures-drawing-rounds.md` in research/docs.
     """
     if not prices or len(times) != len(prices):
         return []

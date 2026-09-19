@@ -106,17 +106,7 @@ def quotes(prices_db: Path, feed: str, limit: int = 20) -> list[dict[str, Any]]:
 def spreads(prices_db: Path, feed: str, hours: int = 24) -> list[dict[str, Any]]:
     """Spread statistics per venue - who is consistently tightest, and who blew out.
 
-    The window **excludes the latest quote**, which is returned beside it as
-    `latest_bps`. That is not a detail: the question anyone asks here is "is
-    what I am looking at now unusual", and answering it against a window
-    containing that same reading is circular. It produced exactly that - an
-    alert reporting a venue "at the historical maximum" on a maximum of 8.49
-    against a current 8.5, which is the current reading having been folded into
-    its own comparison. True by construction and worth nothing.
-
-    `latest_pctile` is the honest version: what share of the *prior* samples
-    were at or below the latest one. 100 means genuinely wider than anything
-    else in the window, and it can now say so without tautology.
+    See `agents-data.md` in research/docs.
     """
     since = (time.time() - hours * 3600) * 1000
     with read_only(prices_db) as conn:
@@ -288,19 +278,7 @@ def headlines(
 def arrivals(news_db: Path, days: int = 30) -> list[tuple[float, list[str]]]:
     """When each recent headline landed and what it was tagged with.
 
-    Not a tool - nothing here is meant for a model to read. It exists so the
-    headline gate can start knowing how much is normally written about each
-    instrument, instead of learning it again from nothing after every restart.
-
-    That matters more than it sounds. The gate needs a handful of arrivals per
-    feed before its rate means anything, and the feeds worth hearing about are
-    exactly the ones slowest to get there: usdchf runs at five headlines a week,
-    so it would spend eleven days deaf, and the service restarts on every
-    deploy. Thirty days of history clears the warmup for every tracked feed at
-    once.
-
-    Deliberately unbounded by `MAX_ROWS`: this is a startup read of two columns,
-    not a query whose result reaches a prompt.
+    See `agents-data.md` in research/docs.
     """
     since = time.time() - days * 86400
     with read_only(news_db) as conn:
@@ -340,13 +318,7 @@ def _engine(state_dir: Path):
 def levels(state_dir: Path, feed: str, interval: str = "", limit: int = 25) -> list[dict[str, Any]]:
     """Key price levels found for one instrument, strongest first.
 
-    Each carries where it is, how wide the zone is, how many *effective*
-    touches it has from each side, and what price did on arrival - including
-    `trap_rate`, the share of breakouts here that were taken back.
-
-    Touch counts are decayed by age, so they are smaller than a raw tally and
-    are the number that should be reasoned about: a level tested ten times last
-    quarter is weaker evidence than one tested twice this week.
+    See `agents-data.md` in research/docs.
     """
     engine = _engine(state_dir)
     if engine is None:
@@ -396,13 +368,7 @@ def level_at(state_dir: Path, feed: str, price: float, limit: int = 5) -> list[d
 def next_levels(state_dir: Path, feed: str, price: float, limit: int = 5) -> list[dict[str, Any]]:
     """Which levels price is likely to reach next, soonest first.
 
-    Ordered by *time*, not distance - a level on a fast timeframe can be
-    reached long before a nearer one on a slow timeframe, because the clocks
-    differ by more than the distances do.
-
-    Each carries a median time and a slow case. There is no average: the
-    first-passage distribution has an infinite mean, so any "average time to
-    reach" grows with however long you collected data for.
+    See `agents-data.md` in research/docs.
     """
     engine = _engine(state_dir)
     if engine is None:

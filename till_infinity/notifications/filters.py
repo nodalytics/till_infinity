@@ -109,16 +109,7 @@ class Filter:
     def key(self, payload: dict[str, Any]) -> tuple[str, str, str, str]:
         """What makes two alerts "the same finding" for the repeat check.
 
-        `event` is part of it, and leaving it out was a real fault rather than
-        an omission. Opening a trade and closing it share a shape, an
-        instrument and a venue, so a position opened and closed inside the
-        cooldown had its **close** dropped as a repeat of its own fill.
-
-        The bias that produced is the reason this is worth a paragraph. A trade
-        that closes within fifteen minutes is usually one that was stopped out,
-        so the alerts that vanished were disproportionately the losses, and the
-        channel read as a record of wins. A filter that silently changes what a
-        feed appears to say is worse than one that is merely too quiet.
+        See `notifications-filters.md` in research/docs.
         """
         fields = payload.get("fields") or {}
         # The source is `agents/analyst`, not `agents`, so the fallback takes

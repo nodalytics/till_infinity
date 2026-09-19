@@ -67,15 +67,7 @@ def points(
 ) -> list[Point]:
     """Turning points where one run ends and the next begins.
 
-    Walks the series once, holding the current run's direction and its extreme.
-    When price has come back off that extreme by `threshold` volatility units,
-    the run is over: the extreme was a turn, and the bar that completed the
-    retracement is when it became knowable.
-
-    Returns points in the order they were *settled*, which is also the order
-    they became usable. An unfinished trailing run contributes nothing - its
-    extreme may still be exceeded, and emitting it would be the trailing-swing
-    look-ahead that `pips.confirmed` exists to prevent.
+    See `structures-drawing-runs.md` in research/docs.
     """
     if len(times) != len(prices):
         raise ValueError("times and prices must be the same length")

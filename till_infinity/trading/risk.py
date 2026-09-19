@@ -87,18 +87,7 @@ class Guard:
     def restore(self, saved: object, now: float | None = None) -> bool:
         """Take the day's total back, if it is still the same day.
 
-        **The halt is the reason this exists.** `roll`'s docstring rejects
-        carrying a halt "until someone restarts the process", because that lets
-        the size of the loss decide how long trading stops. The implementation
-        had the opposite failure and nobody had noticed: a fresh `Guard` has
-        `day = ""`, so the first roll after *any* restart cleared `realised`,
-        cleared `halted`, and reset `opening_equity` to whatever equity was
-        showing - a lower base, from which a further full daily loss was
-        allowed. There were ten deploys on 2026-09-04.
-
-        Returns whether anything was taken. A saved day that is not today is
-        ignored: the halt is meant to end at the date change and this must not
-        resurrect it.
+        See `trading-risk.md` in research/docs.
         """
         if not isinstance(saved, dict):
             return False

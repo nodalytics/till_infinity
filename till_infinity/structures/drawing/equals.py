@@ -104,14 +104,7 @@ def points(
 ) -> list[Point]:
     """Equal extremes as turning points, so levels can form at them.
 
-    Built on `pips.points` rather than on the bars directly: the turns are
-    already found and already confirmed, and re-deriving them here would be a
-    second implementation of the same thing that could drift from the first.
-
-    Every emitted point keeps its own time and price - they are real turns, not
-    a synthesised average - so the outcome machinery sees the same objects it
-    always has. What this pass changes is *which* it emits: only those with a
-    twin, ranked by how many twins they have.
+    See `structures-drawing-equals.md` in research/docs.
     """
     from . import pips as pp
 

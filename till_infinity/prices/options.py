@@ -125,14 +125,7 @@ class Strike:
 def dealer_sign(kind: str, *, dealers_short_calls: bool = True) -> int:
     """+1 or -1 for a strike, under a **stated** assumption about who holds it.
 
-    The convention behind every "GEX" chart is that the public buys calls and
-    dealers sell them, so dealers are short call gamma and long put gamma. On
-    crypto venues, where covered-call selling by holders is a large share of
-    the flow, that is arguably backwards - which is exactly why this is a
-    parameter with a default rather than arithmetic baked into a total.
-
-    Nothing in this repository is entitled to use it without saying which way
-    it set it and why.
+    See `prices-options.md` in research/docs.
     """
     if dealers_short_calls:
         return -1 if kind == "call" else 1

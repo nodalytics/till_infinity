@@ -93,14 +93,7 @@ def liquidity_beyond(
 ) -> tuple[float, int]:
     """(distance to the nearest level beyond this one, how many are within reach).
 
-    "Beyond" is away from where price is arriving from: an arrival from above
-    is heading down, so what is beyond is *below*. That is the direction a
-    sweep of this level would travel, and therefore the only side whose resting
-    orders are a reason to run it.
-
-    Returns a distance of 0.0 when there is nothing within reach, which is the
-    interesting case rather than a missing value - it says a stop placed beyond
-    this level is not sitting in front of an obvious target.
+    See `structures-drawing-sweeps.md` in research/docs.
     """
     if not level.price:
         return 0.0, 0
@@ -136,14 +129,7 @@ def exposure(
 ) -> float:
     """How much of the way to the next level a stop at `stop_vol` reaches.
 
-    The number a strategy actually wants. Above 1.0 the stop sits *past* the
-    liquidity resting beyond, so a run that takes those orders takes this one
-    on the way - the worst place to stand. Near zero the stop is nowhere near
-    it. Zero exactly means there is nothing within reach to be run toward.
-
-    Deliberately a ratio rather than a verdict. Where the line falls is a
-    question for the journal, and hard-coding one here would be inventing the
-    answer this module exists to make measurable.
+    See `structures-drawing-sweeps.md` in research/docs.
     """
     distance, _ = liquidity_beyond(level, levels, side, vol)
     if distance <= 0:

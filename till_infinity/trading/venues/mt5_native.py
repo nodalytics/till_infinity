@@ -262,14 +262,7 @@ class NativeBroker(Broker):
     async def _filling(self, symbol: str) -> int:
         """The fill policy this symbol accepts, preferring the configured one.
 
-        Brokers differ, and a policy the symbol does not allow is rejected with
-        "Unsupported filling mode" - a failure that looks like a bad order and
-        is really a bad constant. The symbol's own `filling_mode` mask is the
-        authority; the setting only chooses between what it permits.
-
-        Async because the lookup is a call into the terminal, and over RPyC
-        that is a socket round trip. Building it into the request dict
-        synchronously blocked the event loop on the network for every order.
+        See `trading-venues-mt5_native.md` in research/docs.
         """
         mt5 = self._require()
         wanted = {

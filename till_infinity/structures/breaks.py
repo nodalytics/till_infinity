@@ -89,13 +89,7 @@ class Break(Restorable):
 def last_break(turns: Sequence[Point]) -> Break | None:
     """The most recent change of character in a swing sequence, if there is one.
 
-    Labels the sequence and walks it once, remembering the previous swing of
-    each kind and the label it carried. A flip in either series is a break; the
-    most recent of the two is returned.
-
-    Returns `None` for a sequence with no flip in it - which is the honest
-    answer for a market that has simply been trending, and is why this is not a
-    trend filter.
+    See `structures-breaks.md` in research/docs.
     """
     previous: dict[Swing, tuple[Point, Structure | None]] = {}
     found: Break | None = None

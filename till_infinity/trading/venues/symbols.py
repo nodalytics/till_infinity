@@ -132,16 +132,7 @@ async def _catalogue(broker: Broker) -> list[str] | None:
 def matches(feed: str, listing: Sequence[str]) -> list[str]:
     """Symbols in `listing` that look like this instrument, best first.
 
-    A match is one of the instrument's names plus **anything**, which is what
-    makes an unguessed suffix findable. Ranked by how much was appended, so an
-    exact `XAUUSD` beats `XAUUSD.s` beats `XAUUSD.raw.cfd` - the shortest
-    addition is the plain instrument and the longer ones are variants of it.
-
-    Case-insensitive **on both sides**, because it was only half so and that
-    half worked by luck. The listing was upper-cased and the configured name
-    was not, which every entry survived by being upper-case already. The first
-    mixed-case instrument added - `Volatility 75 Index` - matched nothing at
-    all, and the failure reads as "the broker does not carry it".
+    See `trading-venues-symbols.md` in research/docs.
     """
     names = [name.upper() for name in INSTRUMENTS.get(feed, ())]
     found: list[tuple[int, int, str]] = []

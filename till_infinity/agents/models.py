@@ -50,16 +50,7 @@ class Finding(BaseModel):
     def _strip_calls(cls, values: list[str]) -> list[str]:
         """Take the plumbing out of the evidence.
 
-        The prompt asks for figures and says not to cite the call, which the
-        model mostly honours and did not here: it published
-        `(from default_api.spreads(feed='btc'))` to the channel - a namespace
-        belonging to how the model is wired to its tools, not to anything about
-        the market. `default_api` is not even ours.
-
-        A prompt is a request. This is the guarantee, and it lives on the model
-        rather than at the alert so the journal gets the same treatment: an
-        evidence string is read back by `facto` and by a person reviewing a
-        call months later, and neither is helped by a function signature.
+        See `agents-models.md` in research/docs.
         """
         cleaned = []
         for value in values:

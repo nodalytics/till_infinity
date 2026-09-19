@@ -103,14 +103,7 @@ class Bar:
 def hammer(bar: Bar) -> bool:
     """A long lower wick, a small body near the top. Rejection from below.
 
-    Not required to be a bullish bar. A hammer's message is in the tail - the
-    auction went down, found no takers and came back - and whether the close
-    finished a tick above or below the open is a detail of where the bar
-    happened to open, not of what happened inside it.
-
-    A body of almost nothing is accepted rather than refused. That shape is a
-    dragonfly doji, and at a level it is the *strongest* version of this
-    pattern, not a degenerate one: price left and came all the way back.
+    See `trading-candles.md` in research/docs.
     """
     if bar.range <= 0:
         return False
@@ -167,13 +160,7 @@ def touched(bar: Bar, level: float, tolerance: float = 0.0) -> bool:
 def rejection_wick(bars: list[Bar], want_up: bool) -> float:
     """How much of the last bar was the wick that rejected the level, in [0, 1].
 
-    The side that matters is the one price was pushed back *from*: a long is
-    rejected at the low, so its evidence is the lower wick. Zero on a bar with
-    no range, which is a bar nothing happened in.
-
-    Read by the entry rule rather than by the pattern check - a long tail is
-    not what makes a hammer a hammer, it is what makes waiting for a pullback
-    worth doing.
+    See `trading-candles.md` in research/docs.
     """
     if not bars:
         return 0.0
@@ -186,17 +173,7 @@ def rejection_wick(bars: list[Bar], want_up: bool) -> float:
 def confirms(bars: list[Bar], level: float, want_up: bool, tolerance: float = 0.0) -> str:
     """The pattern confirming a trade at `level`, or "" if none does.
 
-    Three conditions, and a pattern satisfying two of them is not a weaker
-    signal - it is a different event:
-
-    1. the pattern is present on the **last closed bar**,
-    2. that bar **reached the level**, and
-    3. it **closed on the side the trade wants**, which is what separates a
-       rejection from a breakout that has not finished yet.
-
-    The third is the one most easily left out and the most important. A hammer
-    whose tail pierces support and whose close is still below it is not support
-    holding; it is support breaking, drawn in a shape that looks reassuring.
+    See `trading-candles.md` in research/docs.
     """
     if len(bars) < 2:
         return ""

@@ -226,3 +226,20 @@ document says so and shows the split that establishes it.
 where roughly half of all outcomes were artefacts - touches resolving at the
 instant they opened - so earlier measurements in this project are not
 comparable, and several were withdrawn.
+
+## Module notes
+
+One file per module, holding what used to sit inside its docstrings: the
+measurement behind a number, the failure a guard came from, the thing that was
+tried and did not work. Moved out on 2026-09-19, when the package was 47%
+prose by line - 25,948 lines of it against 29,562 of code - and the file you
+opened to find out what a function *did* answered with its own history first.
+
+The code kept every summary line and gained a pointer. Nothing here is new and
+nothing was discarded; `git log -p` on the module is the same text in the same
+order. Named after the module, so `trading/service.py` is
+[trading-service.md](trading-service.md).
+
+They are notes rather than documents: no argument runs across them, and a
+section is only worth reading beside the function it names.
+

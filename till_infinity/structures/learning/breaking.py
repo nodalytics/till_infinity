@@ -236,13 +236,7 @@ class Breaks(Restorable):
     def inputs(features: object) -> list[float]:
         """Every feature, read off whatever carries them.
 
-        Takes the object rather than importing `reactions.Features`, so this
-        module stays cheap to import and to test - and so a caller can pass the
-        plain feature dictionary a signal carries.
-
-        `ABSOLUTE` names are taken as magnitudes. A signed slope would ask a
-        linear fit to learn that steep up and steep down both break, which is
-        exactly the shape a linear fit cannot represent.
+        See `structures-learning-breaking.md` in research/docs.
         """
         if isinstance(features, dict):
             raw = [float(features.get(name) or 0.0) for name in NAMES]
@@ -264,20 +258,7 @@ class Breaks(Restorable):
     def _fresh_start_if_the_recipe_changed(self) -> None:
         """Drop statistics gathered under a different meaning of the inputs.
 
-        Adding an input is handled already: `Logistic` and `Scaler` rebuild on
-        a length change. **Re-meaning one is not**, and that is the case this
-        catches. `slowing` was an unbounded ratio whose running mean in the
-        standardiser had reached 141,380,329; capping it at 10.0 fixed every
-        future value and could never fix the statistics, because `Scaler` is
-        plain Welford with no decay - at n=5,256 a clamped observation moves
-        the mean by (10 - 141M)/5256, and recovery would take on the order of
-        1e11 samples. The cap read as done and changed nothing.
-
-        Checked here rather than in `__setstate__`, which was tried and is a
-        trap: a `slots=True` dataclass is a new class object built after the
-        method bodies compile, so bare `super()` raises at unpickling time
-        only, and `Breaks.recipe` is the slot *descriptor* rather than the
-        default, so the comparison never matches.
+        See `structures-learning-breaking.md` in research/docs.
         """
         if self.recipe == RECIPE:
             return

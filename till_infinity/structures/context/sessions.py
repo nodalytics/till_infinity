@@ -150,17 +150,7 @@ class Clock(Restorable):
     def base_rate(self, feed: str) -> float:
         """The instrument's pooled hold rate across every hour.
 
-        The thing each hour is shrunk toward, and the thing an hour's rate has
-        to be read against. An hour at 70% where the instrument holds 70%
-        anyway has said nothing, however many observations are behind it.
-
-        **Itself shrunk, toward a coin.** Shrinking an hour toward a base rate
-        computed from the same handful of observations is no protection at all:
-        an instrument whose only two interactions both held has a pooled rate
-        of 1.0, so the hour is shrunk toward 1.0 and reports 1.0. Caught by
-        asking a two-observation clock what it thought and being told
-        "certainty". A new instrument now reads near a coin flip until it has
-        earned otherwise.
+        See `structures-context-sessions.md` in research/docs.
         """
         hours = self._hours.get(feed)
         if not hours:

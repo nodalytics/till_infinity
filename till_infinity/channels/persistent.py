@@ -293,15 +293,7 @@ def wrap_with_outbox(
 ):
     """Decorate a Sender with a persistent outbox underneath.
 
-    Args:
-        sender:        the primary Sender to wrap
-        path:          SQLite file for the outbox
-        channel_name:  used to namespace outbox/DLQ rows
-        dlq:           True → auto-create DLQ at same path,
-                       or pass a DeadLetterQueue instance, or False to skip
-        max_attempts:  how many retries before parking in DLQ
-        backoff:       BackoffPolicy for replay spacing (default: exponential)
-        metrics:       MetricsHook (default: process-wide default)
+    See `channels-persistent.md` in research/docs.
     """
     outbox = Outbox(path, channel_name)
     dlq_obj = None

@@ -163,17 +163,7 @@ def read(
 ) -> list[Entry]:
     """Most recent first. Every filter is optional and they compose.
 
-    `limit` is honoured as asked. It used to be silently clamped to `MAX_ROWS`,
-    which made the argument a suggestion: `facto.dataset` asked for 200,000 rows
-    to assemble its training examples, received the most recent 500, and found
-    ~167 usable outcomes in a journal holding 9,359 of them. Nothing reported a
-    truncation, so the shortfall read as a data problem - outcomes recorded
-    without their features - rather than as a window that was never opened.
-
-    `MAX_ROWS` remains what it always was in practice: the ceiling the CLI puts
-    on a listing so a long history cannot flood a terminal. That is a display
-    concern, and it belongs to the display. A caller that names a number is
-    stating what it can hold, and the callers here bound themselves.
+    See `journal-store.md` in research/docs.
     """
     where: list[str] = []
     params: list[Any] = []

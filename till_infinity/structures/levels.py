@@ -203,15 +203,7 @@ TOUCH_HALF_LIFE_DAYS = 21.0
 def half_life_days(interval: str) -> float:
     """How fast a level's evidence should fade, for its timeframe.
 
-    A single constant cannot serve both ends. Twenty-one days is far too long
-    for a 5m level - behaviour from three weeks ago on a five-minute chart is
-    not evidence about now - and far too short for a weekly one, which might
-    only be tested a handful of times a year and would have forgotten each
-    touch before the next arrived.
-
-    Anchoring to the window instead makes it self-scaling: evidence halves over
-    about half the history that timeframe can see. That works out at under a
-    day for 5m, ten days for 1h, six weeks for 4h and most of a year for 1d.
+    See `structures-levels.md` in research/docs.
     """
     seconds = SECONDS.get(interval)
     if not seconds:
@@ -466,21 +458,7 @@ class SideStats(Restorable):
     def hold_rate(self) -> float:
         """Share of decisive interactions this side turned price away.
 
-        `rejects` already carries back checks, because a retest that holds is
-        the level holding - see `record`. Breaks and traps both count as price
-        having got through, a trap being one that came back.
-
-        This is the strongest thing a level knows about itself. Bucketed on
-        corrected code it runs 59.4% to 92.2% across four bands with an AUC of
-        0.648, and it is the only signal in that study that got *stronger* when
-        the volatility denominator was fixed - against `Level.strength`'s 0.548,
-        a composite that does not contain it.
-
-        Unshrunk on purpose. Consumers want different priors and the honest
-        pooled rate to shrink toward is instrument- and epoch-specific, so the
-        raw rate is published beside `decisive` and the caller does its own.
-        Zero decisive interactions gives 0.0, which is why the count travels
-        with it - a rate with nothing behind it is not a low rate.
+        See `structures-levels.md` in research/docs.
         """
         decisive = self.decisive
         return self.rejects / decisive if decisive > 0 else 0.0
@@ -610,15 +588,7 @@ class Level(Restorable):
     def zone(self, vol: Volatility) -> tuple[float, float]:
         """The band that counts as touching, in price.
 
-        A level is a zone, not a line, and it is not symmetric. The centre is
-        the **origin** - where the leg in ended and the leg out began - and each
-        edge extends by however far the **wick** ran past it on that side. Price
-        arriving from above wicks *down* through the level, so the lower edge is
-        the one that stretches; arriving from below stretches the upper.
-
-        Width also has a floor from the filter's own uncertainty, so a level
-        with no wicks recorded yet is still a band rather than a line, and both
-        edges are clamped in volatility units to stay meaningful in any regime.
+        See `structures-levels.md` in research/docs.
         """
         half = self.filter.sigma * ZONE_SIGMA
         # The floor is whichever binds: a typical move, or enough ticks that
@@ -651,19 +621,7 @@ class Level(Restorable):
     def sweep_zone(self, vol: Volatility, sigmas: float) -> tuple[float, float]:
         """The band a **stop** has to clear, which is wider than the touch band.
 
-        `zone` answers "is price at this level", and for that a band built from
-        the average wick is right - widening it would make every passing tick an
-        interaction and the level's own statistics would stop meaning anything.
-
-        A stop asks a different question: *how far past this level does price
-        go when it goes past*. Answering it with the same average puts the stop
-        at the depth roughly half of all sweeps exceed, which from the account
-        looks like being stopped out and then watching the move happen. This is
-        the same construction with the far edge pushed out by `sigmas` of the
-        wick's own spread instead.
-
-        Clamped by the same ceiling as `zone`: past that width a level predicts
-        nothing, and that stays true whichever question is being asked.
+        See `structures-levels.md` in research/docs.
         """
         low, high = self.zone(vol)
         ceiling = vol.price_units(self.price, MAX_ZONE_VOL)
@@ -789,17 +747,7 @@ class Level(Restorable):
     def regime_changed(self, severity: float = 0.5) -> None:
         """The market changed character. What this level used to do counts less.
 
-        `severity` is the change's percentile among past changes, in [0, 1], so
-        the discount is graded rather than flat:
-
-            decay = 1 - severity * (1 - REGIME_DECAY)
-
-        A 99th-percentile change nearly resets the history; a 55th-percentile
-        one barely touches it. Grading matters because the alternative is one
-        constant standing in for every regime change there will ever be.
-
-        The level itself survives either way - price still turns there. It is
-        the statistics that were learned in a market that no longer exists.
+        See `structures-levels.md` in research/docs.
         """
         severity = min(max(severity, 0.0), 1.0)
         decay = 1.0 - severity * (1.0 - REGIME_DECAY)
@@ -892,20 +840,7 @@ def form(
 ) -> list[Level]:
     """Cluster swing points into levels.
 
-    Agglomerative and one-dimensional: sort the swings by price and merge
-    neighbours that sit within `tolerance_vol` volatility units of each other.
-    Simple, and correct for the shape of the problem - the data is a line, so
-    the cluster boundaries are just the gaps in it, and the popular alternatives
-    (k-means, DBSCAN) either need k chosen in advance or rediscover exactly this
-    in more code.
-
-    Clustering in **volatility units** rather than basis points is what lets one
-    tolerance work across gold, BTC and EURUSD at once.
-
-    A cluster needs `min_swings` distinct turns. Two is not enough: any two
-    swings define a line, so a two-swing level is not evidence of anything, and
-    admitting them is how a chart ends up with a level every few basis points -
-    at which density every price is "at a level" and the model predicts nothing.
+    See `structures-levels.md` in research/docs.
     """
     ordered = sorted((point for point in turns if point.is_turn), key=lambda p: p.price)
     if not ordered:
@@ -956,15 +891,7 @@ def _variance(values: Sequence[float], mean: float) -> float:
 def agree(left: str, right: str) -> str:
     """Combine two origins into one, keeping the fact that both found it.
 
-    The point of forming levels two ways is not to pick a winner but to notice
-    where they **agree**: a bar extreme that is also a run boundary has been
-    confirmed by two methods that fail differently, which is a stronger claim
-    than either makes alone. A level only one pass found is weaker, and the
-    difference is invisible unless it is recorded here.
-
-    Sorted and joined so `pip+run` and `run+pip` are the same string - an
-    origin that depends on the order the passes happened to run in would be a
-    fact about the code rather than about the level.
+    See `structures-levels.md` in research/docs.
     """
     parts = {part for side in (left, right) for part in side.split("+") if part}
     return "+".join(sorted(parts))

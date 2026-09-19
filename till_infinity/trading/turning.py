@@ -162,15 +162,7 @@ def suggestion_from(features: dict, side: Side) -> float:
 def score(ride: TurnExit, *, best_r: float, took_r: float) -> TurnOutcome:
     """What the suggested exit would have made on the path the trade actually saw.
 
-    **Both arguments are in R, and that is deliberate.** `best_r` is what the
-    service already computes for the journal - how far in front the trade got,
-    in units of the risk it was sized for - and `ahead` is built on the same
-    denominator, so "was the suggestion reached" is one comparison with no
-    prices, no signs and no conversion to get backwards.
-
-    If the suggestion sat inside the path, a resting order there would have
-    filled and the trade would have banked `ahead` R; if it did not, the
-    suggestion never triggered and the trade ended however it actually ended.
+    See `trading-turning.md` in research/docs.
     """
     if not ride.scorable:
         why = "no risk" if ride.risk <= 0 else f"suggestion {ride.ahead:+.2f}R from entry"

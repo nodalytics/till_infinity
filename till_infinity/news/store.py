@@ -298,15 +298,7 @@ class SqliteStore(Store):
     async def series(self, source: str = "", since: float = 0.0) -> list[Observation]:
         """Every observation from one source, oldest first.
 
-        `observations` takes the newest rows across all series, which is the
-        right shape for a status page and the wrong one for a model: thirty
-        series interleaved into a limit of fifty gives one or two points each,
-        and a change over ninety days cannot be computed from two points.
-
-        Oldest first because a consumer folding these into a time-ordered
-        window should not have to reverse them, and ninety days of thirty
-        daily-at-fastest series is a few thousand rows - small enough to read
-        whole rather than paged.
+        See `news-store.md` in research/docs.
         """
         async with self._lock:
             return await asyncio.to_thread(self._series, source, since)

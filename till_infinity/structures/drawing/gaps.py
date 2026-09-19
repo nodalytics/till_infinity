@@ -119,16 +119,7 @@ def points(
 ) -> list[Point]:
     """Open imbalances as turning points, so levels can form at them.
 
-    **A gap has no side**, like a mode and unlike a swing: price can arrive at
-    it from either direction, and which side it is on depends only on where
-    price is now. `Swing.HIGH` and `Swing.LOW` are the only turns `form`
-    accepts, so a gap above the last price is emitted as resistance and one
-    below as support.
-
-    `confirmed` is the time of the **third** bar, not the middle one. The gap
-    does not exist until the third bar has printed - that is what makes it a
-    gap - so anything asking when this became usable must not be told the
-    middle bar's time, which is a bar earlier than the evidence.
+    See `structures-drawing-gaps.md` in research/docs.
     """
     if not closes or len(times) != len(closes) or len(highs) != len(closes):
         return []

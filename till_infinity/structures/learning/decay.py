@@ -124,15 +124,7 @@ class Reading(Restorable):
 class Decay(Restorable):
     """Watches one or more models' error streams and says when one changed.
 
-    Keyed by a name the caller chooses, so several models can be watched by one
-    instance and the log line says which.
-
-    `Restorable` because it is in `structures` and therefore persisted, and a
-    watcher whose alarm history resets on every restart would report a model as
-    healthy because the process is young - which is the failure the daily loss
-    limit already made once. The detectors themselves are River objects rebuilt
-    on first use; what survives is the count and the rate, which is what a
-    reader wants.
+    See `structures-learning-decay.md` in research/docs.
     """
 
     #: Decayed error rate, matching `online`'s horizon so the two are readable

@@ -144,20 +144,7 @@ class Drift:
     def _counts(self) -> dict[str, int]:
         """The agreement counters, created if this instance predates them.
 
-        **`Drift` is persisted and is not a `Restorable` dataclass**, so nothing
-        fills in a field a save was written before. `_agreement` was added with
-        the KSWIN work; every instance restored from an older save came back
-        without it, and the first time ADWIN actually fired the attribute
-        access threw.
-
-        That threw inside the structures consumer, which had no per-message
-        guard, so the service stopped and the container stayed `healthy` -
-        eleven hours of it on 2026-09-08, with 132,807 bus warnings burying the
-        one line that named the fault. Both of those are fixed too; this is the
-        fault itself.
-
-        Asked for rather than assumed, which is the same guard `_remember_origins`
-        needed for `_origins` and `_note_change` for `_changes`.
+        See `structures-learning-drift.md` in research/docs.
         """
         found = getattr(self, "_agreement", None)
         if not isinstance(found, dict):

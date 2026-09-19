@@ -135,21 +135,7 @@ class Band(Restorable):
 class Bench(Restorable):
     """Every model on one stream of touches, scored the same way.
 
-    **One set of models per horizon band, not one across everything.** Pooled,
-    every score here was dominated by a population where the answer is written
-    into the question: a touch approached from above that resolves inside a
-    minute resolves upward 100.0% of the time, because that is what a rejection
-    means, and 46% of resolutions are that fast. Every model reproduced the
-    definition and scored 84-88% against a 52% base rate.
-
-    Banding is not a reporting change. A parametric model fitted on the pooled
-    stream *learns* the fast tautology and carries it into its predictions
-    about slow touches, so the band has to reach the training and not only the
-    report. See research/similarity.md.
-
-    The kNN needs no equivalent here because it has no parameters - its
-    training set is its neighbour pool, and `Memory.neighbours` bands that
-    directly.
+    See `structures-learning-baseline.md` in research/docs.
     """
 
     bands: dict[int, Band] = field(default_factory=dict)
@@ -218,15 +204,7 @@ class Bench(Restorable):
     ) -> dict[str, float]:
         """One resolved touch through every model. Returns what each predicted.
 
-        `held` is the ground truth. `knn_said` is what `reactions` claimed, so
-        the incumbent is scored on exactly the touches its challengers saw -
-        the alternative, two separate runs, compares two samples rather than
-        two models.
-
-        `interval` picks the horizon band. Everything is scored twice: into its
-        own band, which is the number worth reading, and into the pooled set,
-        which is what every earlier figure in this repository was. Keeping both
-        is what makes the size of the mistake visible rather than asserted.
+        See `structures-learning-baseline.md` in research/docs.
         """
         from ..reactions import band_of
 

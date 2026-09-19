@@ -164,13 +164,7 @@ def compare(
 ) -> Comparison:
     """Compare `value` across buckets, pooled and within each stratum.
 
-    `bucket` is a key or a function of the row. `within` names the stratum keys;
-    empty means pooled only, which is the thing this exists to discourage and is
-    still allowed, because a caller who has thought about it should not have to
-    fight the helper.
-
-    Raises if `value` carries no information - a comparison of a constant is a
-    flat table somebody will then try to explain. See `liveness`.
+    See `shared-strata.md` in research/docs.
     """
     assert_alive(rows, value)
     read = bucket if callable(bucket) else (lambda r, k=bucket: str(r.get(k, "unknown")))
