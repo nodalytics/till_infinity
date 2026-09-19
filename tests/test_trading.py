@@ -8769,7 +8769,12 @@ async def test_the_desk_counters_are_shown_however_small_they_are(caplog):
         "(desk):shut": 1,
     }
     trader.taken = 1
-    trader._last_summary = 0.0
+    # **Relative to `monotonic`, not zero.** The method rate-limits itself with
+    # `monotonic() - _last_summary < 300`, and `monotonic()` is machine uptime:
+    # zero is "long ago" on a developer's laptop and "just now" on a CI runner
+    # that booted a minute earlier, which is exactly how this passed here and
+    # failed there.
+    trader._last_summary = time.monotonic() - 10_000.0
 
     with caplog.at_level(logging.INFO, logger=svc.log.name):
         trader._say_what_it_is_doing()
