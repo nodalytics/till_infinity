@@ -1,3 +1,4 @@
+import time
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
@@ -148,3 +149,107 @@ def test_a_frame_with_no_open_column_is_not_an_error():
 
     source = YahooSource.__new__(YahooSource)
     assert source._shape(pd.DataFrame({"Close": [1.0]}), "1m", "1m", 5) == []
+
+
+class TestAShutMarketIsNotAskedEverySweep:
+    """**Yahoo answers a closed market exactly as it answers a delisted one.**
+
+    "possibly delisted; no price data found" covers both, so a weekend put
+    eight index and futures symbols into a retry loop that ran on every sweep
+    for two days. It was the dominant line in the container's log and pure
+    work on two cores that `structures` needs - the same starvation the
+    threading fix above exists for, arrived at from the other side.
+    """
+
+    def _job(self, ticker="^NDX", interval="1m"):
+        from till_infinity.prices.models import Symbol
+        from till_infinity.prices.source import Job
+
+        return Job(
+            source="yahoo",
+            feed="us100",
+            symbol=Symbol("YAHOO", ticker),
+            intervals=(INTERVALS[interval],),
+        )
+
+    def _source(self, fail_with=None):
+        from till_infinity.prices.source import PermanentError
+
+        source = YahooSource.__new__(YahooSource)
+        source.settings = type("S", (), {"yahoo_request_gap": 0.0, "yahoo_concurrency": 1})()
+        calls: list[str] = []
+
+        async def series(ticker, interval, bars, cache):
+            calls.append(ticker)
+            if fail_with:
+                raise PermanentError(fail_with)
+            return []
+
+        source._series = series  # type: ignore[method-assign]
+        source.keep = lambda candles, interval: candles  # type: ignore[method-assign]
+        return source, calls
+
+    async def _sink(self, key, candles):
+        from till_infinity.prices.models import WriteResult
+
+        return WriteResult()
+
+    @pytest.mark.asyncio
+    async def test_the_second_sweep_does_not_ask_again(self):
+        import till_infinity.prices.yahoo as y
+
+        y.forget_quiet()
+        source, calls = self._source(fail_with="possibly delisted; no price data found")
+        job = self._job()
+        await source.fetch(job, 100, self._sink)
+        await source.fetch(job, 100, self._sink)
+        await source.fetch(job, 100, self._sink)
+        assert calls == ["^NDX"], f"asked {len(calls)} times; the backoff did nothing"
+
+    @pytest.mark.asyncio
+    async def test_the_wait_widens_rather_than_repeating_one_delay(self):
+        import till_infinity.prices.yahoo as y
+
+        y.forget_quiet()
+        source, _ = self._source(fail_with="no price data found")
+        job = self._job()
+        waits = []
+        for _ in range(4):
+            # Pretend the wait has elapsed, so the next attempt is allowed.
+            if ("^NDX", "1m") in y._QUIET:
+                _until, strikes = y._QUIET[("^NDX", "1m")]
+                y._QUIET[("^NDX", "1m")] = (0.0, strikes)
+            await source.fetch(job, 100, self._sink)
+            until, _strikes = y._QUIET[("^NDX", "1m")]
+            waits.append(round(until - time.time()))
+        assert waits == sorted(waits), f"the wait must widen, got {waits}"
+        assert waits[-1] > waits[0], f"the wait never widened: {waits}"
+
+    @pytest.mark.asyncio
+    async def test_it_is_capped_so_a_reopening_market_is_found_again(self):
+        import till_infinity.prices.yahoo as y
+
+        y.forget_quiet()
+        source, _ = self._source(fail_with="no price data found")
+        job = self._job()
+        for _ in range(20):
+            if ("^NDX", "1m") in y._QUIET:
+                _u, strikes = y._QUIET[("^NDX", "1m")]
+                y._QUIET[("^NDX", "1m")] = (0.0, strikes)
+            await source.fetch(job, 100, self._sink)
+        until, strikes = y._QUIET[("^NDX", "1m")]
+        left = until - time.time()
+        assert left <= y.QUIET_MAX_S + 1, f"waiting {left:.0f}s, past the cap"
+        assert strikes >= 20
+
+    @pytest.mark.asyncio
+    async def test_a_symbol_that_answers_is_forgotten(self):
+        """Monday has to undo Saturday, or the cap is the only way back."""
+        import till_infinity.prices.yahoo as y
+
+        y.forget_quiet()
+        y._QUIET[("^NDX", "1m")] = (0.0, 7)
+        source, calls = self._source()  # answers normally
+        await source.fetch(self._job(), 100, self._sink)
+        assert ("^NDX", "1m") not in y._QUIET, "a symbol that answered is still being skipped"
+        assert calls == ["^NDX"]

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
@@ -112,6 +113,25 @@ def resample(frame: pd.DataFrame, rule: str) -> pd.DataFrame:
     return out.dropna(subset=["Open"])
 
 
+#: When a (ticker, interval) may be asked for again, and how many empty
+#: answers it has given in a row.
+#:
+#: **Module level, because a source does not outlive a sweep.** `build_sources`
+#: makes a new `YahooSource` for every pass, so anything remembered on the
+#: instance is forgotten before it could be used, and the same closed market is
+#: asked again on the next pass.
+_QUIET: dict[tuple[str, str], tuple[float, int]] = {}
+
+#: The longest a symbol is left alone. A market that reopens is picked up
+#: within this, so the cap is a promptness bound rather than a tuning knob.
+QUIET_MAX_S = 1_800.0
+
+
+def forget_quiet() -> None:
+    """Drop the backoff table. For tests, and for a deliberate re-probe."""
+    _QUIET.clear()
+
+
 class YahooSource(Source):
     """Candles from Yahoo Finance."""
 
@@ -134,11 +154,42 @@ class YahooSource(Source):
         total = WriteResult()
         cache: dict[str, pd.DataFrame] = {}
         for interval in job.intervals:
+            # **A shut market answers exactly like a delisted one.** Yahoo says
+            # "possibly delisted; no price data found" for both, so a weekend
+            # put eight index and futures symbols into a retry loop that ran
+            # every sweep for two days - the dominant line in the log, and pure
+            # work on a two-core box that `structures` is competing with for
+            # the same cores. Backing off on the answer rather than on a
+            # session calendar handles a holiday and a genuine delisting too,
+            # neither of which a calendar would have known about.
+            key = (job.symbol.ticker, interval.name)
+            until, strikes = _QUIET.get(key, (0.0, 0))
+            now = time.time()
+            if now < until:
+                continue
             try:
                 candles = await self._series(job.symbol.ticker, interval, bars, cache)
             except PermanentError as exc:
-                log.warning("skipping %s %s: %s", job.symbol.full, interval.name, exc)
+                strikes += 1
+                wait = min(QUIET_MAX_S, 60.0 * 2 ** (strikes - 1))
+                _QUIET[key] = (now + wait, strikes)
+                # Said at widening intervals, for the reason the backoff exists:
+                # the line reporting the noise must not become the noise.
+                if strikes <= 2 or strikes % 10 == 0:
+                    log.warning(
+                        "skipping %s %s for %.0fs (%d empty in a row): %s",
+                        job.symbol.full,
+                        interval.name,
+                        wait,
+                        strikes,
+                        exc,
+                    )
                 continue
+            if strikes:
+                log.info(
+                    "%s %s answers again after %d empty", job.symbol.full, interval.name, strikes
+                )
+            _QUIET.pop(key, None)
             total += await sink(job.key(interval), self.keep(candles, interval))
             await asyncio.sleep(self.settings.yahoo_request_gap)
         return total
