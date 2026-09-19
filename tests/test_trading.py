@@ -8747,3 +8747,36 @@ class TestTheDeskCanSayWhereSignalsWent:
         await trader.on_signal(signal())
         desk = {k: v for k, v in trader.passed_over.items() if k.startswith("(desk):")}
         assert not desk, f"a dealable signal was counted as blocked: {desk}"
+
+
+async def test_the_desk_counters_are_shown_however_small_they_are(caplog):
+    """**They are smallest exactly when they are wanted most.**
+
+    `passed_over` is restored with the day, so a fresh count of five competes
+    with four thousand carried over from before the restart and never reaches
+    a top-N list. Those counters answer why a quiet desk is quiet; ranking
+    them away hides them at the only moment anybody looks.
+    """
+    import logging
+
+    from till_infinity.trading import service as svc
+
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+    trader.passed_over = {
+        **{f"strategy-{i}:interval": 1000 + i for i in range(12)},
+        "(desk):untraded": 3,
+        "(desk):shut": 1,
+    }
+    trader.taken = 1
+    trader._last_summary = 0.0
+
+    with caplog.at_level(logging.INFO, logger=svc.log.name):
+        trader._say_what_it_is_doing()
+
+    said = " ".join(r.getMessage() for r in caplog.records)
+    assert "passed over" in said, f"the summary never printed: {said[:120]}"
+    assert "(desk):untraded x3" in said, (
+        f"a small desk counter was ranked out of the line: {said[:400]}"
+    )
+    assert "(desk):shut x1" in said, f"the smallest one was dropped: {said[:400]}"

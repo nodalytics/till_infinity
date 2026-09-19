@@ -2302,7 +2302,15 @@ class Trader:
         # **Twelve, not four.** Four was enough to show that `interval`
         # dominates - which every strategy refusing signals outside its own
         # See `trading-service.md` in research/docs.
-        top = sorted(self.passed_over.items(), key=lambda kv: -kv[1])[:12]
+        ranked = sorted(self.passed_over.items(), key=lambda kv: -kv[1])
+        # **The `(desk):` counters are always shown, whatever they rank.**
+        # `passed_over` is restored with the day, so a fresh count of five
+        # competes with four thousand carried over from before the restart and
+        # never reaches a top-N list. Those counters exist to answer why a
+        # quiet desk is quiet, which is exactly the moment their numbers are
+        # smallest - ranking them away hides them when they are wanted most.
+        desk = [kv for kv in ranked if kv[0].startswith("(desk):")]
+        top = [kv for kv in ranked if not kv[0].startswith("(desk):")][:12] + desk
         log.info(
             "trading: %d taken, %d passed over (%s) · %s",
             self.taken,
