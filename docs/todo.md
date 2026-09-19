@@ -3647,7 +3647,7 @@ what would kill it; none of them exists in the code.
   nothing reaches significance and the sign flips at an hour. The best honest
   estimate is +1.12bp at five minutes against a 2.26bp Deriv round trip. It
   does lead price rather than follow it, which is the one test it passes.
-  See [coinbase-premium.md](../research/coinbase-premium.md).
+  See [coinbase-premium.md](../research/docs/coinbase-premium.md).
 - **Countering the anchor.** On a daily-or-higher call, take the *opposite*
   side and scalp the pullback to the anchor's own entry price. Not the same as
   `inverse`, which mirrors every call on every timeframe as a control: this
