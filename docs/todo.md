@@ -3631,3 +3631,34 @@ worth running on the trap population as it stands.
   same account and magic number makes both of them reconcile positions the
   other opened. The magic is what separates our trades from a hand-placed one;
   it does not separate us from ourselves.
+
+## Three ideas not yet measured
+
+Noted 2026-09-19. Each has a document in
+[research/planned](../research/planned/) saying what would have to be true and
+what would kill it; none of them exists in the code.
+
+- **The Coinbase premium as a directional signal.** The BTC/USD-on-Coinbase
+  against BTC/USDT-on-Binance gap, used as a *direction* rather than as the
+  reversion signal `zma` already trades it as. The claim circulates without a
+  horizon attached, which is what makes it untestable as usually stated: the
+  first question is how long the sign persists, and the one that decides
+  whether it is real is whether the premium leads price or merely moves with
+  it. Tradeable on Deriv without a Coinbase or Binance account, because the
+  premium is information and the position is taken wherever we already deal.
+  See [coinbase-premium.md](../research/planned/coinbase-premium.md).
+- **Countering the anchor.** On a daily-or-higher call, take the *opposite*
+  side and scalp the pullback to the anchor's own entry price. Not the same as
+  `inverse`, which mirrors every call on every timeframe as a control: this
+  fires only where the horizon mismatch is largest and has a defined target
+  rather than an inverted one. The tail risk is the whole question - a daily
+  buy that never looks back is a short held into a trend. See
+  [countering-the-anchor.md](../research/planned/countering-the-anchor.md).
+- **Small models, hosted locally.** Worth separating by consumer. `agents`
+  wakes on a timer and is not where the bill comes from; `council` is a model
+  call per voice per round against hundreds of signals an hour, and is switched
+  off for exactly that reason. Local inference is an optimisation for the first
+  and an enabling condition for the second. The blocker is that the desk has no
+  room - 2.6 GB and OOM-killed four times in two days - so this is a question
+  about which *other* host, and what that host failing would take down. See
+  [local-models.md](../research/planned/local-models.md).
