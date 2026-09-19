@@ -1225,6 +1225,24 @@ class Trader:
                     self.passed_over[key] = self.passed_over.get(key, 0) + 1
                 continue
 
+            # **One slot per strategy per instrument.** `max_per_symbol` counts
+            # positions on a symbol without asking who opened them, so setting
+            # it to the number of strategies buys the intended shape - eight
+            # strategies, eight positions - and also permits the unintended
+            # one, where a single strategy accumulates eight on the same
+            # instrument across successive signals. That is one idea held
+            # eight times, which is the concentration the cap exists to stop.
+            # Checked by `Live.by`, which is read back from the position's
+            # magic and so survives a restart.
+            if any(
+                live.by == engine.name and live.intent.feed == wanted.feed
+                for live in self.open.values()
+            ):
+                self.refused += 1
+                key = f"{engine.name}:already_open"
+                self.passed_over[key] = self.passed_over.get(key, 0) + 1
+                continue
+
             # Re-read, per intent. See the docstring.
             positions = await self._positions(fresh=True)
             stopped = self.guard.allows(

@@ -8640,3 +8640,64 @@ async def test_parallel_is_still_bounded_by_the_per_symbol_cap():
     await trader.on_signal(signal())
 
     assert len(took) == 1, f"the per-symbol cap should hold at 1, got {took}"
+
+
+async def test_one_strategy_cannot_hold_two_positions_on_one_instrument():
+    """**Eight strategies, eight positions - not one strategy holding eight.**
+
+    `max_per_symbol` counts positions on a symbol without asking who opened
+    them. Setting it to the number of strategies buys the intended shape and
+    also permits the unintended one: a single strategy accumulating a position
+    per signal on the same instrument, which is one idea held eight times.
+
+    The real strategies mostly refuse a second one by themselves, having been
+    handed the open book - so this uses a stub that always wants the trade.
+    Relying on their good manners is exactly what this guards against: it
+    leaves the rule enforced by every strategy separately and by nothing at
+    all centrally, and a new one only has to forget.
+    """
+    made = settings(parallel=True)
+    trader = Trader(Bus(), settings=made)
+    await trader.start()
+    trader.settings.max_per_symbol = 17
+    trader.guard.settings.max_per_symbol = 17
+
+    greedy = trader.strategies[0]
+
+    class Insatiable(type(greedy)):
+        """The real strategy, blind to the open book.
+
+        Subclassed rather than hand-rolled: a stub would have to reimplement
+        the whole interface, and the first thing it got wrong would be the
+        thing the test appeared to prove.
+        """
+
+        # **The real name, deliberately.** Attribution is read back from the
+        # position's magic number, so an invented name has no magic, `Live.by`
+        # comes back empty and the rule cannot match - which is worth knowing
+        # in its own right: a strategy whose magic is unregistered slips the
+        # check.
+        async def consider_async(self, payload, **kw):
+            kw["positions"] = []
+            return await super().consider_async(payload, **kw)
+
+    trader.strategies = [Insatiable(settings=made)]
+
+    took: list[str] = []
+    real_take = trader.take
+
+    async def counting(intent, by=""):
+        took.append(by)
+        return await real_take(intent, by)
+
+    trader.take = counting  # type: ignore[method-assign]
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    await trader.on_signal(signal())
+    assert len(took) == 1, f"the stub should have taken exactly one, got {took}"
+
+    # It still wants gold and the per-symbol cap is 17, so only the
+    # one-slot-per-strategy rule can stop a second.
+    await trader.on_signal(signal())
+    assert len(took) == 1, f"one strategy took a second position on the same instrument: {took}"
