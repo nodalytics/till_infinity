@@ -8926,3 +8926,50 @@ class TestOneStoppedTradeMustNotStallEveryFeed:
             Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
         )
         assert asked, "a shadow on this very feed was not followed"
+
+
+class TestListenIntakeIsBoundedAndPutsSignalsFirst:
+    """`listen` read every topic into one unbounded queue. Quotes flood and
+    signals are rare, so a slow quote path starved signals for two days and the
+    queue grew without limit - the memory profile of the container's OOM kills.
+    """
+
+    async def _stream(self, messages):
+        for m in messages:
+            yield m
+
+    def _quote(self, i):
+        return Message(topic=QUOTES, payload={"feed": "gold", "bid": 4400.0 + i, "ask": 4401.0 + i})
+
+    async def test_a_signal_overtakes_a_quote_backlog(self):
+        from till_infinity.trading.service import _Intake
+
+        intake = _Intake()
+        await intake.pump(QUOTES, self._stream([self._quote(i) for i in range(500)]))
+        await intake.pump(SIGNALS, self._stream([Message(topic=SIGNALS, payload=signal())]))
+        # Drain the two close sentinels the pumps left behind.
+        first = [await intake.next() for _ in range(3)]
+        topics = [m.topic if m is not None else None for m in first]
+        assert SIGNALS in topics, f"a signal waited behind 500 quotes: {topics}"
+        assert QUOTES not in topics, "a quote was handed out while a signal was waiting"
+
+    async def test_the_quote_backlog_is_bounded(self):
+        from till_infinity.trading import service as svc
+
+        intake = svc._Intake()
+        flood = svc.QUOTE_BACKLOG + 2_000
+        await intake.pump(QUOTES, self._stream([self._quote(i) for i in range(flood)]))
+        assert len(intake.quotes) == svc.QUOTE_BACKLOG, "the quote backlog grew past its bound"
+        assert intake.shed == 2_000, f"shed quotes must be counted, got {intake.shed}"
+
+    async def test_quotes_keep_their_order_and_shed_the_oldest(self):
+        """The Cusum and venue consensus integrate every step, so order matters."""
+        from till_infinity.trading import service as svc
+
+        intake = svc._Intake()
+        flood = svc.QUOTE_BACKLOG + 10
+        await intake.pump(QUOTES, self._stream([self._quote(i) for i in range(flood)]))
+        await intake.next()  # the close sentinel
+        bids = [(await intake.next()).payload["bid"] for _ in range(3)]
+        assert bids == sorted(bids), f"quotes came out of order: {bids}"
+        assert bids[0] == 4400.0 + 10, "the oldest ten should have been shed, not the newest"

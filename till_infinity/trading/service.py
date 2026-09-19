@@ -31,7 +31,7 @@ import asyncio
 import contextlib
 import re
 import time
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, ClassVar
@@ -144,6 +144,11 @@ ATTEMPT = "_attempt"
 #: for the record rather than for a decision, and is the seam anything that
 #: learns from outcomes will attach to.
 TOPICS: tuple[str, ...] = (SIGNALS, QUOTES, EVENTS, RESOLUTIONS)
+
+#: Bounds on `listen`'s intake. Signals, events and resolutions are rare and
+#: kept whole; quotes are a flood, kept in order, oldest shed on overflow.
+PRIORITY_BACKLOG = 10_000
+QUOTE_BACKLOG = 5_000
 
 #: How long to wait between attempts to attach to the terminal, in seconds, and
 #: the ceiling that backoff climbs to.
@@ -4091,6 +4096,56 @@ def _intent_from(position: Position, feed_of: dict[str, str] | None = None) -> I
     )
 
 
+class _Intake:
+    """`listen`'s intake: two bounded queues, signals always ahead of quotes.
+
+    It was one unbounded queue shared by every topic. Quotes flood and signals
+    are rare, so a slow quote path starved signals for two days and the queue
+    grew without limit. Quotes keep their order - the Cusum, Focus and venue
+    consensus integrate every step, so they cannot be conflated - and shed the
+    oldest only on overflow, counted, rather than growing until the container
+    is killed.
+    """
+
+    def __init__(self) -> None:
+        self.priority: asyncio.Queue[Message | None] = asyncio.Queue(maxsize=PRIORITY_BACKLOG)
+        self.quotes: deque[Message] = deque(maxlen=QUOTE_BACKLOG)
+        self.wake = asyncio.Event()
+        self.shed = 0
+
+    async def pump(self, topic: str, stream: Any) -> None:
+        try:
+            async for message in stream:
+                if topic == QUOTES:
+                    if len(self.quotes) == self.quotes.maxlen:
+                        self.shed += 1
+                        if self.shed in (1, 10, 100) or self.shed % 1000 == 0:
+                            log.warning(
+                                "trading: quote backlog full at %d - shed %d oldest so far",
+                                QUOTE_BACKLOG,
+                                self.shed,
+                            )
+                    self.quotes.append(message)
+                else:
+                    await self.priority.put(message)
+                self.wake.set()
+        finally:
+            # A sentinel per topic, so the loop knows "closed" from "quiet".
+            await self.priority.put(None)
+            self.wake.set()
+
+    async def next(self) -> Message | None:
+        """The next message, signals first. `None` marks a topic closing."""
+        while self.priority.empty() and not self.quotes:
+            # No await between the check and the wait, so no pump can slip a
+            # message in unseen.
+            self.wake.clear()
+            await self.wake.wait()
+        if not self.priority.empty():
+            return self.priority.get_nowait()
+        return self.quotes.popleft()
+
+
 async def listen(
     bus: Bus,
     *,
@@ -4120,30 +4175,20 @@ async def listen(
         **early,
         **{topic: bus.subscribe(topic, group="trading") for topic in TOPICS if topic not in early},
     }
-    queue: asyncio.Queue[Message | None] = asyncio.Queue()
-
-    async def pump(topic: str) -> None:
-        try:
-            async for message in streams[topic]:
-                await queue.put(message)
-        finally:
-            # A sentinel per topic, so the loop below knows the difference
-            # between "quiet" and "closed" without polling either.
-            await queue.put(None)
-
-    tasks = [asyncio.create_task(pump(topic), name=f"trading:{topic}") for topic in TOPICS]
+    intake = _Intake()
+    tasks = [
+        asyncio.create_task(intake.pump(topic, streams[topic]), name=f"trading:{topic}")
+        for topic in TOPICS
+    ]
     tasks.append(asyncio.create_task(_heartbeat(trader), name="trading:heartbeat"))
 
     handled, closed, skipped = 0, 0, 0
     try:
         while closed < len(TOPICS):
-            message = await queue.get()
+            message = await intake.next()
             if message is None:
                 closed += 1
                 continue
-            # **One bad message must not end trading.** Without this a throw
-            # here leaves the loop and the trading service is gone, while the
-            # See `trading-service.md` in research/docs.
             try:
                 await trader.handle(message)
             except asyncio.CancelledError:
