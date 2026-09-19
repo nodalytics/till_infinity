@@ -404,7 +404,7 @@ class Trader:
     #: `TRADING_INTERVALS` nor `TRADING_INTERVAL_WEIGHT` can be set responsibly.
     _intervals: dict[int, str]
 
-    def __init__(
+    def __init__(  # noqa: PLR0915 - one assignment per piece of state; a trader has that much
         self,
         bus: Bus,
         *,
@@ -473,6 +473,13 @@ class Trader:
         self.venue = ""
         self.taken = 0
         self.refused = 0
+        #: Signals `handle` has been given since this process started, and when
+        #: the last one arrived. **Never persisted, never restored** - which is
+        #: the point. `taken`, `refused` and `passed_over` come back from the
+        #: saved day, so a desk that receives nothing and a desk whose counters
+        #: were put back print the same line. This one cannot be put back.
+        self.received = 0
+        self.received_at = 0.0
         self._symbol_of: dict[str, str] = {}
         self._feed_of: dict[str, str] = {}
         #: The order just sent, waiting to be matched to the position it
@@ -815,6 +822,8 @@ class Trader:
             self._resolution(message.payload)
             return None
         if message.topic == SIGNALS:
+            self.received += 1
+            self.received_at = time.time()
             return await self.on_signal(message.payload)
         return None
 
@@ -2304,6 +2313,11 @@ class Trader:
         if time.monotonic() - self._last_summary < every:
             return
         self._last_summary = time.monotonic()
+        # On a line of its own, and first. The summary below runs past the
+        # console's 200 columns and wraps, and this is the one number that
+        # says whether any signal has reached trading at all this process.
+        ago = f"{time.time() - self.received_at:.0f}s ago" if self.received_at else "never"
+        log.info("trading: %d signal(s) received this process, last %s", self.received, ago)
         if not self.passed_over and not self.taken:
             log.info(
                 "trading: nothing seen yet - %s on %s, %s",

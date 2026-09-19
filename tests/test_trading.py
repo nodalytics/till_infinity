@@ -8812,3 +8812,52 @@ async def test_a_signal_a_strategy_wants_is_not_counted_as_unwanted():
     await trader.on_signal(signal())
     unwanted = {k: v for k, v in trader.passed_over.items() if "unwanted" in k}
     assert not unwanted, f"a level signal was counted as unwanted: {unwanted}"
+
+
+async def test_received_counts_signals_and_survives_the_day_restore(caplog):
+    """**The one counter the saved day cannot put back.**
+
+    `taken`, `refused` and `passed_over` are restored at the first sweep, so a
+    desk that receives nothing and a desk whose counters were restored print the
+    same summary. `received` is never persisted, so it separates the two.
+    """
+    import logging
+    import time
+
+    from till_infinity.trading import service as svc
+
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+    assert trader.received == 0
+    await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    await trader.handle(Message(topic=SIGNALS, payload=signal()))
+    assert trader.received == 2, "handle must count every signal it is given"
+
+    # A restored day must not touch it.
+    trader.taken = 999
+    trader.refused = 999
+    assert trader.received == 2
+
+    trader._last_summary = time.monotonic() - 10_000.0
+    with caplog.at_level(logging.INFO, logger=svc.log.name):
+        trader._say_what_it_is_doing()
+    said = [r.getMessage() for r in caplog.records]
+    line = next((m for m in said if "received this process" in m), "")
+    assert "2 signal(s) received this process" in line, said
+    assert len(line) < 120, f"must fit on one console line, got {len(line)}"
+
+
+async def test_received_says_never_when_nothing_has_arrived(caplog):
+    import logging
+    import time
+
+    from till_infinity.trading import service as svc
+
+    trader = Trader(Bus(), settings=settings())
+    await trader.start()
+    trader.passed_over = {"x:interval": 1}
+    trader._last_summary = time.monotonic() - 10_000.0
+    with caplog.at_level(logging.INFO, logger=svc.log.name):
+        trader._say_what_it_is_doing()
+    said = " ".join(r.getMessage() for r in caplog.records)
+    assert "0 signal(s) received this process, last never" in said, said
