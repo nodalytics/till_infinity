@@ -1044,6 +1044,25 @@ class Settings:
     #: seen earlier. Averaged across the open positions and signed against the
     #: direction they hold, so a hedged book reads near zero rather than alarming.
     basket_momentum: float = 0.0
+    #: UTC hours in which no new position may be opened. Empty opens at any hour.
+    #:
+    #: **Measured, and predicted before it was measured.** The broker widens its
+    #: quotes around the daily rollover: median spread at 21:00 UTC is 15.4x the
+    #: day's median, 10.7x at 22:00 and 2.5x at 23:00. Bid-based bars record that
+    #: as a 1.4bp dip at 21:00 and a 1.4bp recovery at 22:00 - a round trip that
+    #: nets to nothing and that nobody can trade.
+    #:
+    #: The window was identified from the spread alone, and only then checked
+    #: against outcomes: 142 of 989 closed trades were opened between 20:00 and
+    #: 23:00, 14% of them, and they account for **-661 of the -1,470 total loss**,
+    #: which is 45%. 20:00 has the worst mean R of any hour at -0.343.
+    #:
+    #: `max_spread_fraction` does not catch this, and cannot: it compares the
+    #: spread to the *reward*, so a distant target passes however wide the quote
+    #: has become. This is the gate that does.
+    #:
+    #: See `research/docs/intraday.md`.
+    quiet_hours: tuple[int, ...] = ()
 
     stale_after: float = 0.0
     #: How far the trade must have travelled by `stale_after` to count as
@@ -1263,6 +1282,11 @@ class Settings:
             basket_take_fraction=_float("TRADING_BASKET_TAKE_FRACTION", 0.0),
             basket_spare_progress=_float("TRADING_BASKET_SPARE_PROGRESS", 0.0),
             basket_momentum=_float("TRADING_BASKET_MOMENTUM", 0.0),
+            quiet_hours=tuple(
+                int(h)
+                for h in (os.environ.get("TRADING_QUIET_HOURS") or "").replace(" ", "").split(",")
+                if h.strip().isdigit() and 0 <= int(h) <= 23
+            ),
             stale_after=_float("TRADING_STALE_AFTER_S", 0.0),
             stale_move=_float("TRADING_STALE_MOVE", 0.25),
             reentry_max=_int("TRADING_REENTRY_MAX", 0),

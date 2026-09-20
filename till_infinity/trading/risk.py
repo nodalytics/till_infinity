@@ -281,6 +281,23 @@ class Guard:
         if self.halted:
             return self._no("halted", intent.feed, self.halted)
 
+        # **Before anything else about the signal, because it is about the clock.**
+        # The broker's quotes widen around the daily rollover - 15.4x the median
+        # spread at 21:00 UTC - and 14% of closed trades were opened in that window
+        # for 45% of the loss. `max_spread_fraction` cannot catch it, since it
+        # compares the spread to the reward and a distant target passes however
+        # wide the quote is. See `Settings.quiet_hours`.
+        quiet = self.settings.quiet_hours
+        if quiet:
+            hour = datetime.fromtimestamp(when, UTC).hour
+            if hour in quiet:
+                return self._no(
+                    "quiet_hour",
+                    intent.feed,
+                    f"{hour:02d}:00 UTC is a quiet hour - the spread is widest around "
+                    f"the rollover and nothing opens here",
+                )
+
         if self.context is not None:
             release = self.context.blackout(intent.feed, when)
             if release is not None:
