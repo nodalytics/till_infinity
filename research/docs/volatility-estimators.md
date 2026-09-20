@@ -186,3 +186,59 @@ is not the same as removing the stack.
 The change the evidence supports is narrow: make an EWMA of true range available as
 a feature and let `scaling.by_volatility` read it in place of `vol_bps`. Everything
 else the stack feeds should stay where it is.
+
+## Should the geometry unit be recalibrated too? No.
+
+`price_distance(level, vol_bps, 1.0)` is the unit that turns `risk_vol` and
+`expected_push_vol` into a stop and a target, and `vol_bps` is
+`max(self._mean_abs, floor)` - the mean absolute close-to-close move, which is the
+weakest estimator in the race above. The obvious next step is to make the EWMA that
+unit as well. Measured on 15,605 non-overlapping calls across 42 instruments,
+walking both geometries forward on the broker's bars:
+
+**The rescale would be large and wildly uneven.** EWMA unit divided by the current
+one:
+
+| p10 | p25 | p50 | p75 | p90 |
+|---|---|---|---|---|
+| 0.19x | 0.42x | **0.80x** | 1.53x | 1.94x |
+
+Per instrument the median ratio runs from **0.13x on crash_1000_index to 1.59x on
+volatility_25_index**, a twelve-fold spread. Every stop and target on the desk would
+move, by a different factor per instrument, and the `risk_vol` and
+`expected_push_vol` multiples were measured against the old unit - so their meaning
+would change silently.
+
+**And it buys nothing.**
+
+| unit | target | stop | win rate | R:R | EV |
+|---|---|---|---|---|---|
+| current | 6,372 | 6,428 | 49.8% | 0.93 | **-0.041R** |
+| EWMA | 7,457 | 7,433 | **50.1%** | 0.93 | **-0.035R** |
+
+Three tenths of a point of win rate, and EV still negative. R:R is identical by
+construction, because the unit scales *both* barriers - so the hit rate was the only
+thing that could move, and it did not. The one real difference is that trades
+resolve faster: "neither barrier within 45 bars" falls from 2,805 to 715, since the
+EWMA unit is tighter at the median. Faster, not better.
+
+This is `exits.md`'s finding arriving from a third direction. Barrier geometry is a
+reparameterisation: with no ability to call the side, moving the barriers moves
+along a fair-odds line and the costs decide the rest.
+
+**So a better volatility forecast is not a better geometry unit.** The two uses are
+different. Sizing asks *how much to risk* and a better forecast makes the risk per
+trade more consistent, which is why `scaling.by_volatility` now reads the EWMA. The
+unit asks *where to put the barriers*, and that question is answered by the
+multiples, which were calibrated against `vol_bps` and are fine there.
+
+### What did change
+
+`Ranges.bps` - documented as "the one to read if only reading one" - is now the
+EWMA rather than Yang-Zhang, so the first-class reading is the one that measured
+best. Yang-Zhang stays as `yang_zhang_bps`, because it is the most efficient of the
+*window* estimators and the likeliest candidate if the EWMA is ever beaten.
+
+`Vol.range_bps` still returns Yang-Zhang deliberately: it is a recorded feature and
+an input to `learned`, so moving it would retrain that model against a different
+quantity for no measured gain. The EWMA is published beside it as `ewma_tr_bps`.

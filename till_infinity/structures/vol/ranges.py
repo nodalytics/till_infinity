@@ -215,7 +215,25 @@ class Ranges(Restorable):
 
     @property
     def bps(self) -> float:
-        """Yang-Zhang, in basis points. The one to read if only reading one."""
+        """The EWMA of true range, in basis points. The one to read if reading one.
+
+        **First class because it measured best**, not because it is simplest. See
+        `TR_ALPHA` for the numbers: it beat every other figure the desk produces at
+        the horizon each of those was built for, GARCH included on GARCH's own
+        quantity. The estimators below are kept and recorded so the comparison
+        stays visible and so a later measurement can overturn this one, which is
+        the only reason to keep a beaten estimator at all.
+        """
+        return self.ewma_tr_bps
+
+    @property
+    def yang_zhang_bps(self) -> float:
+        """Yang-Zhang over the window. Supporting - it was `bps` until 2026-09-20.
+
+        Still the most efficient of the *window* estimators here, and level with
+        ATR in the race, which is why it stays: if the EWMA is ever beaten it is
+        the most likely candidate.
+        """
         return self._as_bps(yang_zhang(self._bars))
 
     @property

@@ -302,7 +302,8 @@ class Volatility(Restorable):
         members = {
             "ew": self.bps,
             "garch": self._garch.bps,
-            "range": self._ranges.bps,
+            "range": self._ranges.yang_zhang_bps,
+            "ewma_tr": self._ranges.ewma_tr_bps,
             "har": self._har.predict(),
         }
         # **The one member that is not a function of the past.** Absent rather
@@ -353,8 +354,14 @@ class Volatility(Restorable):
 
     @property
     def range_bps(self) -> float:
-        """Yang-Zhang over the recent bars, in bps. Zero-ish until warm."""
-        return self._ranges.bps
+        """Yang-Zhang over the recent bars, in bps. Zero-ish until warm.
+
+        Still Yang-Zhang after `Ranges.bps` became the EWMA, deliberately: this is
+        a recorded feature and an input to `learned`, so moving it would retrain
+        that model against a different quantity for no measured gain. The EWMA is
+        published separately as `ewma_tr_bps`.
+        """
+        return self._ranges.yang_zhang_bps
 
     @property
     def ewma_tr_bps(self) -> float:
