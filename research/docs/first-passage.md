@@ -98,3 +98,43 @@ be measured per instrument before any short-horizon breakeven is trusted.
 3 bands and 7 families, so 10 cells: one at p < 0.05 is expected by chance. Two
 were far beyond it, and both are explained by the overshoot above rather than by
 anything predictive.
+
+## Correction: a bar's extreme is not a fill price
+
+The overshoot above is measured from **bar highs and lows**, and using it as a
+proxy for what a stop costs overstates it badly. A stop fills at the *first tick
+past its level*; the bar's extreme is wherever price eventually travelled inside
+that minute. On a spike bar those are not close.
+
+The desk records its own fills, so this is measurable. 188 stop exits with an R
+recorded, where a stop filling exactly at its level is -1.000R:
+
+| | median | mean | past the stop | worst |
+|---|---|---|---|---|
+| all stop exits | **-1.020R** | **-1.081R** | 80% | -2.879R |
+| boom (n=17) | -1.246R | **-1.417R** | 76% | -2.88R |
+| crash (n=21) | -1.001R | -1.149R | 43% | -2.03R |
+| volatility (n=119) | -1.021R | -1.050R | 87% | -2.57R |
+| index (n=20) | -1.039R | -1.042R | 95% | -1.14R |
+| fx (n=6) | -1.000R | -1.004R | 17% | -1.03R |
+
+Entry slippage over 964 trades is small: median 0.04bp, p90 1.75bp, p99 5.37bp,
+worst 7.34bp, and the synthetics are the worst of it.
+
+**So boom slips 1.42R on average, not seven times its stop.** Redoing the
+arithmetic with the measured figure rather than the bar-derived one:
+
+    EV = 0.602*B - 0.398*1.42B - S = +0.037B - S
+
+which at a 10x band is `-0.63S` - negative, but marginal, not the `-2.18B` stated
+above. **The inverted-boom result is therefore unresolved rather than refuted**,
+and it rests on 17 stop fills, so it is not settled in either direction. Widening
+the band helps the arithmetic (at 40x it turns positive) but 47.4% of calls never
+reach either barrier within two hours there, and the direction accuracy at that
+width has not been measured per family.
+
+What does survive unchanged: **80% of stops fill past their level**, so a stop is
+a request rather than a price, and the cost of a trade is the spread plus that
+overshoot. The spread is 0.10-1.07bp and the overshoot is a further 2-8% of the
+risk on a typical trade and 42% on boom. Neither is ruinous, and neither was
+being counted.
