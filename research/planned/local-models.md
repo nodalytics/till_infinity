@@ -39,6 +39,36 @@ change to the trading box; it is either
 Neither is free, and the comparison is against an API call that costs money but
 never needs patching, never runs out of disk and never has to be restarted.
 
+## The host exists, and it has no GPU
+
+Measured 2026-09-20 on the `stb` machine (the one that also runs the MT5
+terminal the live desk trades through):
+
+| | |
+|---|---|
+| cores | 64 |
+| RAM | 125 GB, 119 GB free |
+| disk | 506 GB free |
+| GPU | **none** - `lspci` shows only host bridges, no display or compute device |
+| already running | ollama (embeddings only: `bge-m3`), redis, mongo, nginx, the MT5 terminal |
+| load | 0.02 over the last minute; MT5 uses 7% of one core and 1.2 of its 4 GB |
+
+That settles the question this document opened with, and not the way it
+guessed. The blocker was never capacity - it is the **GPU**, and there is not
+one.
+
+* **`agents` is comfortable.** It wakes on a timer, so CPU inference on 64
+  cores is fast enough, and a small quantised model fits in RAM many times
+  over. ollama is already installed, so nothing new has to be operated.
+* **`council` is not.** Four voices per signal against hundreds of signals an
+  hour needs throughput CPU inference cannot give. That is the consumer whose
+  cost scales with market activity, so it is also the only one where this
+  would change what is *possible* - and it is the one that needs hardware the
+  machine does not have.
+
+The other caution is shared, not technical: a training or inference job that
+takes all 64 cores is on the same host as the live desk's terminal. Cap it.
+
 ## What to measure before committing
 
 1. **Does a small model do the job at all?** Replay a month of `agents` wakes
