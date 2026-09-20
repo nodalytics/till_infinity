@@ -37,6 +37,7 @@ from .structures.drawing import confluence as cf
 from .structures.vol import stated
 from .trading import plans as tp
 from .trading import report as tr
+from .trading.strategies import strategy as ts
 
 log = get_logger(__name__)
 T = TypeVar("T")
@@ -2504,6 +2505,19 @@ def trading_doctor(symbols, plan, strategies, backend):
     console.print(f"\nmode: {armed}")
     console.print(f"plan: {escape(tp.describe_effective(settings))}")
     console.print(f"strategies: {', '.join(settings.strategies)}")
+    # Per-strategy risk, which the plan line cannot show because it is one line
+    # about the deployment. A strategy that names nothing is governed by the
+    # plan, and says so.
+    shares = Table("strategy", "style", "share of risk", "cooldown", box=None, pad_edge=False)
+    for engine in ts.build(list(settings.strategies), settings):
+        own = engine.limits
+        shares.add_row(
+            engine.name,
+            engine.style,
+            f"{engine.share_of_risk:.0%}" + ("" if engine.risk_share else " (by style)"),
+            f"{own.cooldown(settings):.0f}s" + ("" if own.loss_cooldown else " (plan)"),
+        )
+    console.print(shares)
     console.print(f"instruments: {', '.join(settings.symbols)}")
     console.print(f"timeframes: {', '.join(settings.intervals)}")
     if chosen == td.HTTP and not settings.account_equity:

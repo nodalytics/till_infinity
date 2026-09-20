@@ -60,7 +60,7 @@ from .sessions import Sessions
 from .sizing import lots, price_distance
 from .strategies import strategy
 from .strategies.opportunity import PRESETS
-from .strategies.policy import Policy
+from .strategies.policy import Entries, Policy
 from .strategies.strategy import Strategy
 from .venues import replicate
 from .venues import symbols as sym
@@ -625,6 +625,11 @@ class Trader:
         #: from `_record_untaken` - which is full information, every arm on
         #: every signal - and from real closes.
         self.policy = Policy()
+        #: Which strategy's *entry* is worth taking on each family, which the
+        #: shape policy cannot express: `_credit` keys its arms by shape, so two
+        #: strategies with the same exit are one arm there. Recording only -
+        #: nothing reads this yet, by design. See `Entries`.
+        self.entries = Entries()
         # Attached to whichever strategies read one. A strategy without a
         # policy keeps its class defaults, which are the measured ones - so
         # nothing is ever shaped by a guess, only by a default or by evidence.
@@ -2417,6 +2422,7 @@ class Trader:
                 # *learned* state here - pressure and trend rebuild from the
                 # market in minutes, a ranking does not.
                 "policy": self.policy,
+                "entries": self.entries,
                 "untaken": self._untaken,
                 "shadows": self._shadows,
                 # A stop that re-arms and is then lost to a deploy is a
@@ -2497,6 +2503,9 @@ class Trader:
         got = payload.get("policy")
         if type(got).__name__ == "Policy":
             self.policy = got
+        kept = payload.get("entries")
+        if type(kept).__name__ == "Entries":
+            self.entries = kept
         self._restore_refs(payload.get("refs"))
         self._restore_learned(payload.get("learned"))
         self._restore_intervals(payload.get("intervals"))
@@ -3383,6 +3392,10 @@ class Trader:
             arm = str(getattr(engine, "arm", "") or "")
         if arm:
             self.policy.observe(feed, interval, arm, reward)
+        # The same reward, filed against the strategy rather than its shape. The
+        # shape ledger deliberately pools strategies that share an exit, so this
+        # is the only place the per-strategy question is even asked.
+        self.entries.observe(feed, by, reward)
 
     async def _watch_shadows(self, feed: str, tick: Tick) -> None:
         """Follow stopped trades to see whether the target arrived anyway.

@@ -101,13 +101,12 @@ class Ledger:
         return {arm: s for (ctx, arm), s in self.cells.items() if ctx == context}
 
 
-def context_of(feed: str, interval: str) -> tuple[str, ...]:
-    """Context keys from most specific to least, for backing off.
+def family_of(feed: str) -> str:
+    """Which process this instrument belongs to.
 
-    Family rather than instrument: gold and silver share a process in a way
-    gold and a synthetic do not, and per-instrument cells would be thin for
-    months. `research/failing.md` measures the family split as the one that
-    actually separates.
+    Family rather than instrument: gold and silver share a process in a way gold
+    and a synthetic do not, and per-instrument cells would be thin for months.
+    `research/failing.md` measures the family split as the one that separates.
     """
     low = feed.lower()
     if "boom" in low:
@@ -124,6 +123,12 @@ def context_of(feed: str, interval: str) -> tuple[str, ...]:
         family = "fx"
     else:
         family = "index"
+    return family
+
+
+def context_of(feed: str, interval: str) -> tuple[str, ...]:
+    """Context keys from most specific to least, for backing off."""
+    family = family_of(feed)
     return (f"{family}|{interval}", family, "")
 
 
@@ -168,3 +173,76 @@ class Policy:
             if best is not None:
                 return self.arms[best[1]], f"{context or 'book'}:{best[1]} at {best[0]:+.3f}R"
         return self.fallback, "cold, using the measured default"
+
+
+@dataclass(slots=True)
+class Entries:
+    """Which strategy's *entry* is worth taking on a family. Recording only.
+
+    A second ledger rather than more arms in the first, because the two learn
+    different things and need different densities.
+
+    `Policy` chooses exit geometry, and `_credit` keys its arms by shape on
+    purpose: two strategies with the same exit pool their evidence, so
+    `level-scalp` and `sweep-aware` are one arm there. That is right for
+    geometry - and it makes "does this strategy read gold better than that one"
+    unaskable, because the strategies disappear into their shapes. Everything the
+    shape ledger has learned differs by `target`, `trail` and `hold`, never by a
+    strategy name, and that is why.
+
+    This asks the other question and pays for it in density. Keyed on the family
+    alone, with no interval split: seven families by seventeen strategies is 119
+    cells, where splitting by interval would be eight hundred. The shape ledger
+    already sits at 241 cells and 9.7 observations each, and a thinner table
+    would be noise with a ranking printed over it.
+
+    **Nothing reads this.** It records, so that whether the interaction exists
+    can be decided on evidence instead of assumed. The evidence arrives free:
+    `Untaken` already follows every strategy's intent to its own target or stop
+    on the live quote stream, so every strategy reports on every signal whether
+    or not it traded - which is the full-information setting `Policy`'s docstring
+    argues makes exponential weights right and a bandit's exploration a waste.
+    """
+
+    #: Observations a cell needs before it is worth reading at all. The same
+    #: floor `Policy` uses, for the same reason: a ranking on four observations
+    #: is how a 5-stop sample became an instrument-wide sizing rule.
+    MIN_SEEN: ClassVar[int] = 30
+
+    ledger: Ledger = field(default_factory=Ledger)
+
+    def observe(self, feed: str, by: str, reward: float) -> None:
+        """Credit one strategy with what its entry was worth on this family."""
+        if by:
+            self.ledger.observe(family_of(feed), by, reward)
+
+    def ranking(self, feed: str, warm_only: bool = True) -> list[tuple[str, Score]]:
+        """Strategies on this family, best first. Empty while it is cold."""
+        arms = self.ledger.arms(family_of(feed))
+        keep = [(n, s) for n, s in arms.items() if s.seen >= self.MIN_SEEN or not warm_only]
+        return sorted(keep, key=lambda kv: -kv[1].mean)
+
+    def describe(self) -> str:
+        """One line per family, for the operator to read before trusting any of it."""
+        families: dict[str, dict[str, Score]] = {}
+        for (family, arm), score in self.ledger.cells.items():
+            families.setdefault(family, {})[arm] = score
+        if not families:
+            return "entries: nothing recorded yet"
+        out = []
+        busiest = sorted(families.items(), key=lambda kv: -sum(s.seen for s in kv[1].values()))
+        for family, arms in busiest:
+            warm = sorted(
+                ((n, s) for n, s in arms.items() if s.seen >= self.MIN_SEEN),
+                key=lambda kv: -kv[1].mean,
+            )
+            seen = sum(s.seen for s in arms.values())
+            best = (
+                ", ".join(f"{n} {s.mean:+.2f}R(n={s.seen})" for n, s in warm[:3])
+                if warm
+                else f"none of {len(arms)} warm yet"
+            )
+            out.append(
+                f"  {family or 'book':<12} {seen:>6} obs over {len(arms):>2} strategies - {best}"
+            )
+        return "entries, by family:\n" + "\n".join(out)
