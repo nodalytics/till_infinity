@@ -88,3 +88,47 @@ distributed across every barrier configuration in use, which is the signature of
 the absent direction already measured six other ways today, and that the one
 positive exit path is the one that gives up on the trade rather than the one that
 aims at something.
+
+## `stale` resolved: the rule works, and there was no leak
+
+Investigated 2026-09-20 after the section above flagged it. Two things in that
+flag were wrong.
+
+**`stale` is the desk's own close, not the broker's.** `_stale` in
+`trading/service.py` closes a position past its age threshold that has never
+gained `risk * stale_move` (0.25R) in our favour. `exit_source: broker` means the
+broker *executed* it; the decision was ours. Reading that field as attribution of
+cause is what produced "something outside the desk's geometry is closing
+positions".
+
+**The -446.01 is the rule limiting a larger loss, not causing one.** Its log line
+says "closing flat" while the realised median is -0.259R, which looked like a rule
+misdescribing itself into a systematic loss. Against trades that also never gained
+0.25R but were not closed stale:
+
+| | n | mean R |
+|---|---|---|
+| went nowhere, left alone | 370 | **-0.422R** |
+| went nowhere, closed stale | 58 | **-0.244R** |
+| | | **+0.177R saved per trade** |
+
+137 of the 370 left alone went on to stop out at -1.087R. Closing at -0.24R beats
+a 37% chance of -1.09R, and over 58 closes the rule saved about **+10.3R**.
+
+It also fires exactly where intended: `best_r` at the close has median 0.0000 and
+a **maximum of 0.0760**, so all 63 were far under the 0.25R threshold and none
+were closed while making progress. They are mostly synthetics - crash_500 (15),
+volatility_50 (7), boom_1000 (7) - on 5m, held 15-60 minutes.
+
+### `best_r` is not always recorded, and it matters
+
+46 of the peer trades **hit their target while carrying `best_r` < 0.25**, which
+cannot happen: a target hit implies at least that much favourable excursion. So
+`best_r` is unpopulated for some trades and defaults to zero - `_best` is filled
+from observed quotes, so a fast resolution can finish before one lands.
+
+This weakens the peer group rather than the conclusion. The contamination is
+trades that *did* move, averaging +0.697R, which pulls the peer mean **up**, so
+the rule's +0.177R advantage is if anything understated. But any future analysis
+keying on `best_r` needs to treat zero as "unknown" rather than "flat", and the
+1,771 maximum noted above is the same field's other fault.
