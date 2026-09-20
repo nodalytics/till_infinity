@@ -766,13 +766,15 @@ def test_the_heap_walk_never_touches_an_attribute(caplog):
 
     import asyncio
 
-    real = asyncio.get_running_loop if hasattr(asyncio, "get_running_loop") else None
-    asyncio.get_running_loop = lambda: Loop()  # type: ignore[assignment]
+    def pretend() -> Loop:
+        return Loop()
+
+    real = asyncio.get_running_loop
+    asyncio.get_running_loop = pretend  # type: ignore[assignment]
     try:
         stack._arm_heap_dump()
     finally:
-        if real is not None:
-            asyncio.get_running_loop = real  # type: ignore[assignment]
+        asyncio.get_running_loop = real  # type: ignore[assignment]
 
     assert fired, "the handler should have been armed"
     with caplog.at_level(logging.WARNING, logger="till_infinity.stack"):
