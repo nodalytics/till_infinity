@@ -98,3 +98,39 @@ Recorded because each would have shipped as a finding.
 What settled it was running the identical harness on a shuffled target: 0.521
 against 1.000, which proved the harness sound and the data leaky, in one step
 that should have come first.
+
+## Correction, 2026-09-20: the spread was assumed 4-6x too wide
+
+Every cost figure above, and in `../planned/directional-edge.md`, used the stated
+per-class spread: 1.5bp FX, 2bp metals, 3bp crypto and energy. The MT5 bridge
+returns the broker's **own** bid-ask on every bar, and it is far tighter:
+
+| | measured | assumed |
+|---|---|---|
+| usdjpy | **0.19bp** | 1.5 |
+| eurusd | **0.26bp** | 1.5 |
+| btc | **0.31bp** | 3.0 |
+| gold | **0.35bp** | 2.0 |
+| crash/boom 1000 | **0.10bp** | 3.0 |
+| volatility 25 | 1.07bp | 3.0 |
+
+Measured over 2,519,958 M1 bars for 42 instruments, 2026-07-20 to 2026-09-20.
+MT5's `spread` is the bid-ask in points, so this is the **whole round trip**, not
+one side of it.
+
+**What survives.** The finding that there is no directional edge does not depend
+on the spread at all: gross return is -0.01 to -0.14bp out to an hour and the
+hit rate is 49.3-50.7% conditional on a real move. A gross of zero is negative
+net of any cost.
+
+**What does not.** The claim that 1-5 minutes is arithmetically hopeless. With a
+2bp round trip, breakeven at one minute needed 97.6% accuracy against a 2.1bp
+mean move - absurd. At 0.26bp it needs **56.2%**, which is demanding but
+ordinary. So the horizon argument is much weaker than stated: short holds are
+not disqualified by cost, they are simply not being called correctly.
+
+Two caveats on the measurement. This is the **demo** account, and a live one may
+quote wider. And the bid-ask is not the whole cost - slippage on a market order
+and any commission sit on top, and neither is in this figure. The desk records
+its own fills, so both are measurable rather than assumable, and should be
+measured before the 56.2% is relied on.

@@ -151,7 +151,13 @@ The cost geometry, and this part is not a statistical claim:
 | 4h | 32.1bp | ~6% |
 | 1d | 89.5bp | ~2% |
 
-**The desk scalps the one horizon where the spread cannot be cleared.** A
+**Corrected 2026-09-20:** the round trip was measured from the broker's own
+bid-ask, not assumed, and it is 0.10-1.07bp rather than 1.5-3bp - see
+`../docs/banded-labels.md`. Breakeven at one minute is therefore about **56%**,
+not the 98% a 2bp assumption implied, so the sentence below overstates the
+case. Cost does not disqualify a one-minute hold; the absent direction does.
+
+**The desk scalps the horizon where the least movement is available.** A
 genuine 55% edge earns about 0.1bp gross at a minute against 2bp of cost; the
 same 55% earns about 9bp at a day. No signal fixes a minute, and a mediocre
 signal is enough at a day. That is what names what to build: the candidates
