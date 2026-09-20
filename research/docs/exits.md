@@ -170,3 +170,45 @@ signal look like +5.2%; price units rather than relative made every volatility
 estimator look like 0.57; and selection across twenty instruments makes one of them
 look profitable. Every one of them was a real number in a real record. The control
 is what decides, and the control has to be chosen before looking.
+
+## Stop from a finer timeframe, target from a coarser one: no
+
+Measured 2026-09-20 on 11,944 non-overlapping level calls against the broker's own
+M1 bars. Every earlier geometry test moved both barriers together, and this is the
+one variant that does not - so it was the only untried way to raise reward-to-risk
+without walking the fair-odds line.
+
+Volatility scales with time, so a stop placed in a finer interval's unit is tighter
+and a target in a coarser one's is further. The scaling was measured from the calls
+rather than assumed - median `vol_bps` runs 1.29 at 1m, 3.11 at 5m, 5.54 at 15m,
+18.66 at 1h - which is flatter than the square root of time would predict.
+
+| geometry | n | win rate | win R | R:R | EV |
+|---|---|---|---|---|---|
+| **as it is now** | 11,944 | **51.6%** | 0.98 | 0.95 | **+0.022R** |
+| stop one finer, target one coarser | 11,829 | 37.7% | 1.65 | **1.73** | +0.001R |
+| stop two finer, target two coarser | 11,782 | **25.5%** | 2.68 | **3.02** | **-0.060R** |
+| stop one finer only | 12,524 | 46.1% | 1.18 | 1.16 | +0.006R |
+| target one coarser only | 11,154 | 42.8% | 1.39 | 1.40 | +0.022R |
+
+**It does exactly what it was meant to, and it does not help.** Reward-to-risk goes
+0.95 to 1.73 to 3.02, which is the point of the change; the win rate goes 51.6% to
+37.7% to 25.5%, which is the price. EV is flat at one step and worse at two. The
+desk's realised 0.78 against the 1.15 its win rate needs cannot be closed this way,
+because moving the stop moves the win rate with it.
+
+That is the fair-odds line for the fourth time, after `magnet.md`, the
+`vol_bps`-versus-EWMA unit swap, and the barrier-width sweep above. **Barrier
+placement is not a lever on expectation.** It sets where on the line the desk sits,
+and costs decide the rest.
+
+### Reading these numbers
+
+The simulation charges no spread and no slippage and discards trades unresolved
+within 45 bars, so `+0.022R` for the current geometry is a **gross** figure and does
+not contradict the `-0.19R` the journal records net. The comparison between rows is
+what this establishes; the level is not.
+
+The vol scaling is also thin at the coarse end - 4h and 1d have two feeds each with
+20+ calls - so the two-step row leans on extrapolated units more than the one-step
+row does.
