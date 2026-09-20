@@ -2309,6 +2309,28 @@ class Trader:
         if refusal := self._closing_soon(intent):
             log.info("trading: %s - %s", intent.title, refusal.detail)
             return refusal
+        # **One slot per strategy per instrument, checked here because this is the
+        # chokepoint.**
+        #
+        # The rule lived only in `_take_all`, and three other paths reach this
+        # method: the non-parallel branch through `_agree`, a parked entry released
+        # when price comes back to it, and a re-armed setup. A parked entry is the
+        # one that bit - the rule is applied when it is parked and nothing checks
+        # again when it fills, so two entries resting on one feed both became
+        # positions. Found on 09-15: `cycle-scalp` held step_index twice,
+        # volatility_50_1s twice and jump_10 twice, each pair the same interval with
+        # different geometry, so two separate signals each opened a position.
+        #
+        # Checked against `by` and the feed rather than the symbol, because
+        # `max_per_symbol` already counts positions per symbol without asking who
+        # opened them - this is the per-strategy half, and the account experiences
+        # a doubled position as doubled risk whichever rule was meant to stop it.
+        if by and any(
+            live.by == by and live.intent.feed == intent.feed for live in self.open.values()
+        ):
+            key = f"{by}:already_open"
+            self.passed_over[key] = self.passed_over.get(key, 0) + 1
+            return Refusal("already_open", f"{by} already holds {intent.feed}", intent.feed)
         ref = await self._record_intent(intent, by)
 
         if not self.settings.live:
