@@ -52,6 +52,7 @@ not something the query parameter can express.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
@@ -72,6 +73,12 @@ from .broker import Broker, BrokerError, NotConnectedError, RejectedError, Trans
 log = get_logger(__name__)
 
 #: The terminal's "request completed" code. Everything else is a rejection.
+#: How long a deal listing is reused. One reconcile pass settles every
+#: position that closed together, and the bridge answers with the whole day
+#: each time, so this collapses that to a single request. Short enough that
+#: a deal landing between passes is still seen on the next one.
+DEALS_HELD_FOR = 2.0
+
 TRADE_DONE = 10009
 
 
@@ -93,6 +100,12 @@ class HttpBroker(Broker):
         #: symbol's tick value is directly comparable with its contract size -
         #: see `_spec_from`.
         self._account_currency = ""
+        #: The last deal listing and when it was fetched. `_reconcile` asks about
+        #: every position that closed in one pass and this bridge answers with
+        #: the whole day each time, so a pass settling six trades would
+        #: otherwise make six identical requests.
+        self._deals: list[dict[str, Any]] = []
+        self._deals_at = 0.0
 
     # ------------------------------------------------------------- lifecycle
 
@@ -390,6 +403,27 @@ class HttpBroker(Broker):
             comment=str(result.get("comment") or ""),
         )
 
+    async def _recent_deals(self, fresh: bool = False) -> list[dict[str, Any]]:
+        """The last day's deals, held for a moment so one pass fetches once.
+
+        `fresh` forces a refetch, which a miss needs: a deal that landed after
+        the listing was taken is absent from it, and serving that from cache
+        would report no deal for a position that has one.
+        """
+        now = time.monotonic()
+        if not fresh and self._deals and now - self._deals_at < DEALS_HELD_FOR:
+            return self._deals
+        try:
+            raw = await self._get("/history/deals", params={"days": 1})
+        except Exception as exc:
+            log.debug("trading: could not read deal history: %s", exc)
+            return []
+        rows = raw if isinstance(raw, list) else raw.get("deals", [])
+        if isinstance(rows, list):
+            self._deals, self._deals_at = rows, now
+            return rows
+        return []
+
     async def closed_deal(self, ticket: int) -> tuple[float, float] | None:
         """The closing deal for a position, from the bridge's history.
 
@@ -398,19 +432,22 @@ class HttpBroker(Broker):
         close leaves several, so the profits are summed and the last price is
         the one the position finally left at.
         """
-        try:
-            raw = await self._get("/history/deals", params={"days": 1})
-        except Exception as exc:
-            log.debug("trading: could not read deal history: %s", exc)
-            return None
-        rows = raw if isinstance(raw, list) else raw.get("deals", [])
-        closing = [
-            row
-            for row in rows
-            if isinstance(row, dict)
-            and int(row.get("position_id") or 0) == ticket
-            and int(row.get("entry") or 0) == 1
-        ]
+
+        def closes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            return [
+                row
+                for row in rows
+                if isinstance(row, dict)
+                and int(row.get("position_id") or 0) == ticket
+                and int(row.get("entry") or 0) == 1
+            ]
+
+        closing = closes(await self._recent_deals())
+        if not closing:
+            # Not in the held listing, which for a position that just closed
+            # usually means the deal landed after it was taken. One refetch,
+            # then believe the answer.
+            closing = closes(await self._recent_deals(fresh=True))
         if not closing:
             return None
         closing.sort(key=lambda row: row.get("time_msc") or row.get("time") or 0)

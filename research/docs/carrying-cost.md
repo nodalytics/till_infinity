@@ -50,6 +50,21 @@ Anything that lengthens holds - a carry strategy, a wider target, a longer
 `max_hold` - makes this misreport its own results, and on the synthetics it would
 do so heavily.
 
+**Fixed 2026-09-20.** `_reconcile` now asks `closed_deal` on every close rather
+than only on a vanished position, so the recorded profit is the money the account
+actually saw. The observed exit price is still used wherever the desk knows why the
+trade ended - only a position that vanished has no price worth trusting - so
+`r_multiple` is unchanged and this corrects the money and nothing else.
+
+Two details the fix needed. The bridge answers `/history/deals` with the **whole
+day** however one ticket is asked for, so a pass settling six trades would send
+six identical requests; the listing is now held for `DEALS_HELD_FOR` seconds. And
+a miss forces one refetch, because a deal that landed after the listing was taken
+is absent from it, and serving that from cache would report no deal for a position
+that has one - which would have quietly restored the bug the cache was added to
+support. Backends that cannot answer, the paper book among them, inherit the
+port's `None` and keep the old fallback.
+
 ## What this rules out
 
 **Carry on the synthetics, completely.** A carry trade needs a side that is paid

@@ -3578,17 +3578,34 @@ class Trader:
                 continue
             price, why = exact.get(ticket, (live.position.price_current, "gone"))
             profit = live.position.profit
-            if why == "gone":
-                # Ask the terminal what it actually paid, rather than settling
-                # at the last snapshot we happened to hold. See
-                # `Broker.closed_deal`.
-                try:
-                    told = await self.execution.closed_deal(ticket)
-                except BrokerError as exc:
-                    log.debug("trading: could not confirm #%d: %s", ticket, exc)
-                    told = None
-                if told is not None and told[0]:
-                    price, profit, why = told[0], told[1], "closed"
+            # **Ask the terminal what it actually paid, on every close.**
+            #
+            # `position.profit` is the price move and nothing else: MT5 reports
+            # swap on its own field, so a profit read from the position omits it.
+            # `closed_deal` sums profit, swap, commission and fee over the
+            # closing deals, which is the money the account actually saw.
+            #
+            # This used to be asked only when `why == "gone"`, so every ordinary
+            # exit - stop, target, hold, stale - recorded a figure with no swap
+            # in it: 955 of 971 outcomes. That was under 1% of the loss *because*
+            # holds are minutes, and it grows directly with holding period, so it
+            # was a latent misreport rather than a harmless one. Measured
+            # 2026-09-20: 24.03 of swap against 2,760.57 of loss over 30 days,
+            # charged on 9 of 3,331 deals, and 7.12 on a single Crash 1000 deal.
+            # See `research/docs/carrying-cost.md`.
+            #
+            # The price is still the observed one wherever the desk knows why the
+            # trade ended. Only a position that vanished has no exit price worth
+            # trusting, and that case alone takes the deal's.
+            try:
+                told = await self.execution.closed_deal(ticket)
+            except BrokerError as exc:
+                log.debug("trading: could not confirm #%d: %s", ticket, exc)
+                told = None
+            if told is not None:
+                profit = told[1]
+                if why == "gone" and told[0]:
+                    price, why = told[0], "closed"
             del self.open[ticket]
             settled.append((live, price, why))
             # Discarded *after* the outcome is written, not before.

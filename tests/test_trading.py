@@ -9122,3 +9122,116 @@ def test_each_strategy_reports_limits_naming_itself():
 
     for engine in build(["level-scalp", "swing-level", "snap"], settings()):
         assert engine.limits.by == engine.name, (engine.limits.by, engine.name)
+
+
+# --------------------------------------------- swap reaches every recorded exit
+
+
+class TestTheRecordedProfitIncludesWhatWasActuallyPaid:
+    """**`position.profit` is the price move and nothing else.**
+
+    MT5 reports swap on its own field, so a profit read off the position omits
+    it. `closed_deal` sums profit, swap, commission and fee over the closing
+    deals, and it used to be consulted only when the desk did not know why a
+    position had gone - so 955 of 971 outcomes recorded a figure with no swap in
+    it. Under 1% of the loss while holds are minutes, and growing directly with
+    holding period.
+    """
+
+    def _broker(self, deals):
+        from till_infinity.trading.venues import mt5_http
+
+        class Fake(mt5_http.HttpBroker):
+            def __init__(self):
+                super().__init__(settings())
+                self.fetches = 0
+
+            async def _get(self, path, params=None):
+                assert path == "/history/deals", path
+                self.fetches += 1
+                return deals
+
+        return Fake()
+
+    async def test_it_sums_swap_and_commission_into_the_profit(self):
+        broker = self._broker(
+            [
+                {
+                    "position_id": 7,
+                    "entry": 1,
+                    "price": 4400.0,
+                    "profit": 10.0,
+                    "swap": -7.12,
+                    "commission": -0.5,
+                    "fee": 0.0,
+                    "time": 1,
+                },
+            ]
+        )
+        got = await broker.closed_deal(7)
+        assert got is not None
+        price, profit = got
+        assert price == 4400.0
+        assert abs(profit - 2.38) < 1e-9, profit
+
+    async def test_several_closes_in_one_pass_fetch_once(self):
+        """The bridge answers with the whole day, so asking per ticket without
+        this made a pass settling six trades send six identical requests."""
+        deals = [
+            {
+                "position_id": t,
+                "entry": 1,
+                "price": 100.0 + t,
+                "profit": 1.0,
+                "swap": 0.0,
+                "commission": 0.0,
+                "fee": 0.0,
+                "time": t,
+            }
+            for t in (1, 2, 3, 4, 5, 6)
+        ]
+        broker = self._broker(deals)
+        for t in (1, 2, 3, 4, 5, 6):
+            assert await broker.closed_deal(t) is not None
+        assert broker.fetches == 1, broker.fetches
+
+    async def test_a_miss_refetches_rather_than_trusting_the_cache(self):
+        """A deal that landed after the listing was taken is absent from it, and
+        serving that from cache reports no deal for a position that has one."""
+        from till_infinity.trading.venues import mt5_http
+
+        landed: list[dict] = []
+
+        class Fake(mt5_http.HttpBroker):
+            def __init__(self):
+                super().__init__(settings())
+                self.fetches = 0
+
+            async def _get(self, path, params=None):
+                self.fetches += 1
+                return list(landed)
+
+        broker = Fake()
+        assert await broker.closed_deal(9) is None  # nothing yet: 2 fetches
+        landed.append(
+            {
+                "position_id": 9,
+                "entry": 1,
+                "price": 50.0,
+                "profit": 3.0,
+                "swap": -1.0,
+                "commission": 0.0,
+                "fee": 0.0,
+                "time": 1,
+            }
+        )
+        got = await broker.closed_deal(9)
+        assert got is not None, "a miss must refetch, not serve the stale listing"
+        assert abs(got[1] - 2.0) < 1e-9, got
+
+    async def test_a_backend_that_cannot_answer_changes_nothing(self):
+        """The paper book inherits the port's `None`, so the fallback to
+        `position.profit` has to stay intact."""
+        from till_infinity.trading.venues.broker import Broker
+
+        assert await Broker.closed_deal(object(), 1) is None
