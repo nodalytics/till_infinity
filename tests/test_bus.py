@@ -329,3 +329,60 @@ async def test_a_topic_with_a_subscriber_says_nothing():
     with caplog_at(logging.WARNING, b.log.name) as records:
         assert await line.publish("somebody.listens", {"a": 1}) == 1
     assert not [r for r in records if "nobody subscribed" in r.getMessage()]
+
+
+async def test_both_sweeps_report_bars_that_never_reached_the_live_path(caplog):
+    """**The derived-spread sweep announced without counting what it dropped.**
+
+    `notices` truncates to `MAX_NOTICES`, and the collection sweep logged the
+    shortfall while the spread sweep published the batch and said nothing - so a
+    spread catching up on more than eight bars lost its oldest ones silently,
+    which is the one shape `MAX_NOTICES` documents a warning against. Both now
+    go through `announce`.
+    """
+    import logging
+
+    from till_infinity.prices.service import MAX_NOTICES, announce
+
+    class Recorder:
+        def __init__(self):
+            self.sent = []
+
+        async def publish(self, topic, payload, source=""):
+            self.sent.append(payload)
+
+    extra = 4
+    bars = [
+        Bar(time=1_700_000_000 + i * 300, open=10.0, high=11.0, low=9.0, close=10.5, volume=3)
+        for i in range(MAX_NOTICES + extra)
+    ]
+    bus = Recorder()
+
+    with caplog.at_level(logging.WARNING, logger="till_infinity.prices"):
+        await announce(bus, KEY, bars, WriteResult(inserted=len(bars)))
+
+    assert len(bus.sent) == MAX_NOTICES, len(bus.sent)
+    assert bus.sent[-1]["time"] == bars[-1].time
+    said = caplog.text
+    assert "never reached the live path" in said, said
+    assert str(extra) in said, said
+
+
+def test_nothing_publishes_a_notice_without_going_through_announce():
+    """Structural, deliberately. The defect was not a wrong line but a *second*
+    call site that did not repeat the accounting, so what needs guarding is that
+    no third one appears - which the behavioural test above cannot see."""
+    import inspect
+
+    from till_infinity.prices import service
+
+    source = inspect.getsource(service)
+    publishes = [
+        line.strip()
+        for line in source.splitlines()
+        if "bus.publish(BARS" in line or "publish(BARS" in line
+    ]
+    inside_announce = inspect.getsource(service.announce)
+
+    for line in publishes:
+        assert line in inside_announce, f"a BARS notice is published outside announce(): {line}"

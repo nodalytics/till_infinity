@@ -149,6 +149,29 @@ def _notice(key: SeriesKey, latest: Bar, result: WriteResult) -> dict[str, objec
     }
 
 
+async def announce(bus: Bus, key: SeriesKey, candles: Sequence[Bar], result: WriteResult) -> None:
+    """Publish one notice per new bar, and say so when `MAX_NOTICES` truncates.
+
+    Both sweeps announce and only one of them counted what `notices` left out,
+    so a derived spread with more than `MAX_NOTICES` new bars lost its oldest
+    ones silently - the exact shape `MAX_NOTICES` documents a warning against.
+    Shared rather than repeated, so the accounting cannot be forgotten by the
+    next caller either.
+    """
+    batch = notices(key, candles, result)
+    dropped = min(result.touched, len(candles)) - len(batch)
+    if dropped > 0:
+        log.warning(
+            "prices: %s wrote %d bars and announced %d - %d never reached the live path",
+            key,
+            result.touched,
+            len(batch),
+            dropped,
+        )
+    for payload in batch:
+        await bus.publish(BARS, payload, source="prices")
+
+
 async def sweep(
     *,
     settings: Settings,
@@ -169,18 +192,7 @@ async def sweep(
         # subscriber that hears about a bar can always go and read it.
         result = await store.write(key, candles, INTERVALS[key.interval])
         if bus is not None and result.touched and candles:
-            batch = notices(key, candles, result)
-            dropped = min(result.touched, len(candles)) - len(batch)
-            if dropped > 0:
-                log.warning(
-                    "prices: %s wrote %d bars and announced %d - %d never reached the live path",
-                    key,
-                    result.touched,
-                    len(batch),
-                    dropped,
-                )
-            for payload in batch:
-                await bus.publish(BARS, payload, source="prices")
+            await announce(bus, key, candles, result)
         return result
 
     async with AsyncExitStack() as stack:
@@ -326,8 +338,7 @@ async def derive(
         result = await store.write(key, got.bars, interval)
         summary.written += result.touched
         if bus is not None and result.touched:
-            for payload in notices(key, got.bars, result):
-                await bus.publish(BARS, payload, source="prices")
+            await announce(bus, key, got.bars, result)
     summary.elapsed = time.monotonic() - started
     log.info(
         "prices: derived %s in %.1fs%s",
