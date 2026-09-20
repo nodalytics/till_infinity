@@ -141,3 +141,48 @@ own design implies and it is the one test that could reverse this. If EWMA true
 range still wins at the horizon sizing actually uses, add it as a feature and let
 `scaling.by_volatility` read it, which is a small change with a large measured
 difference behind it.
+
+## Resolved: each estimator at its own horizon, and it still loses
+
+The caveat above was the one thing that could have reversed this, so it was tested
+rather than argued. Two unfairnesses were removed:
+
+* **Horizon.** A bar means the *call's own interval*, so every estimator was scored
+  at one bar ahead - GARCH's horizon - and at five, which is `learned.py`'s
+  `HORIZON`, for 1m, 5m, 15m and 1h calls separately.
+* **Target quantity.** GARCH forecasts the variance of returns and a true range
+  forecasts a range. Both targets were scored: realised range, and realised
+  volatility from 1-minute returns.
+
+EWMA true range wins **every cell**:
+
+| call interval | horizon | EWMA TR range/vol | best of the desk's | ratio |
+|---|---|---|---|---|
+| 1m | 5 bars (5m) | **0.425 / 0.382** | `vol_bps` 0.362 / 0.324 | 1.17x |
+| 5m | 1 bar (5m) | **0.373 / 0.331** | `forecast_bps` 0.249 / 0.240 | 1.50x |
+| 5m | 5 bars (25m) | **0.330 / 0.382** | `forecast_bps` 0.231 / 0.268 | 1.43x |
+| 15m | 1 bar (15m) | **0.336 / 0.356** | `forecast_bps` 0.165 / 0.183 | 2.04x |
+| 15m | 5 bars (75m) | **0.281 / 0.344** | `forecast_bps` 0.138 / 0.177 | 2.04x |
+| 1h | 1 bar (60m) | 0.192 / 0.065 | `range_bps` 0.097 | 184 obs, thin |
+
+Two details that matter more than the averages. **GARCH loses on its home turf**:
+5m calls, one bar ahead, scored against the variance of returns - precisely what it
+forecasts - 0.166 against EWMA TR's 0.331. And the gap **widens with the
+interval**, from 1.17x at 1m to 2.04x at 15m, which is the opposite of what a
+horizon-mismatch explanation would predict.
+
+The 1h row is 184 observations and EWMA TR's score against volatility collapses to
+0.065 there, so nothing above should be read as holding at 1h and above.
+
+### What this does not establish
+
+Forecasting the realised range better is not the same as trading better. Sizing to
+a better volatility forecast *should* improve risk-adjusted return, but that is an
+inference and it has not been measured. The desk's stack also does more than
+produce a magnitude - `forecast_ratio` feeds `scaling.by_regime`, which is a
+different question from "how far will it move" - so replacing the magnitude input
+is not the same as removing the stack.
+
+The change the evidence supports is narrow: make an EWMA of true range available as
+a feature and let `scaling.by_volatility` read it in place of `vol_bps`. Everything
+else the stack feeds should stay where it is.
