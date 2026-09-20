@@ -1023,6 +1023,27 @@ class Settings:
     #: Close the whole book at this net profit, as a share of opening equity.
     #: Zero is off.
     basket_take_fraction: float = 0.0
+    #: Spare a book whose positions are this far toward their targets, in the
+    #: median, from the give-back rule. Zero spares nothing.
+    #:
+    #: Closing on a net dip is blunt when half the book is nearly home: the dip may
+    #: be the last pullback before the targets, and a basket close pays the spread
+    #: on every leg to avoid it. This is the "have they gotten to some good targets"
+    #: half - progress measured as how far price has travelled from entry toward
+    #: target, so 0.8 means the median position is four fifths of the way.
+    #:
+    #: It spares only the give-back. The stop is a loss limit and answers to
+    #: nothing else.
+    basket_spare_progress: float = 0.0
+    #: Close the book when accumulated momentum against it reaches this many
+    #: volatility units. Zero is off.
+    #:
+    #: The give-back rule is backward-looking - it waits for profit to be handed
+    #: back before acting. `structures.cusum` measures net directional progress
+    #: without a window, so momentum running against the book is the same reversal
+    #: seen earlier. Averaged across the open positions and signed against the
+    #: direction they hold, so a hedged book reads near zero rather than alarming.
+    basket_momentum: float = 0.0
 
     stale_after: float = 0.0
     #: How far the trade must have travelled by `stale_after` to count as
@@ -1240,6 +1261,8 @@ class Settings:
             basket_give_back=_float("TRADING_BASKET_GIVE_BACK", 0.0),
             basket_stop_fraction=_float("TRADING_BASKET_STOP_FRACTION", 0.0),
             basket_take_fraction=_float("TRADING_BASKET_TAKE_FRACTION", 0.0),
+            basket_spare_progress=_float("TRADING_BASKET_SPARE_PROGRESS", 0.0),
+            basket_momentum=_float("TRADING_BASKET_MOMENTUM", 0.0),
             stale_after=_float("TRADING_STALE_AFTER_S", 0.0),
             stale_move=_float("TRADING_STALE_MOVE", 0.25),
             reentry_max=_int("TRADING_REENTRY_MAX", 0),

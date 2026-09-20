@@ -179,7 +179,13 @@ class Guard:
     def daily_loss_limit(self) -> float:
         return self.opening_equity * self.settings.daily_loss_fraction
 
-    def basket(self, net: float, equity: float) -> str:
+    def basket(
+        self,
+        net: float,
+        equity: float,
+        progress: float | None = None,
+        against: float = 0.0,
+    ) -> str:
         """Why the whole book should be closed now, or "" to leave it open.
 
         **The gap this fills.** `daily_loss_fraction` halts *opening* on realised
@@ -214,11 +220,28 @@ class Guard:
                 f"the open book is {money(net, self.currency)}, past the "
                 f"{loss:.1%} basket stop on {money(opening, self.currency, signed=False)}"
             )
+        # **Momentum before give-back, because it is the same reversal seen sooner.**
+        # Give-back waits for profit to be handed back; `cusum` measures net
+        # directional progress without a window, so a book the market has turned
+        # against is readable before the money is gone.
+        heat = self.settings.basket_momentum
+        if heat > 0 and against >= heat:
+            return (
+                f"momentum has run {against:.2f}v against the open book, past the "
+                f"{heat:.2f}v it tolerates, with the book at {money(net, self.currency)}"
+            )
         give = self.settings.basket_give_back
         # Only once there was a profit worth protecting. A peak of nothing would
         # make this fire on the first tick a book went red, which is the stop's
         # job and at the stop's threshold, not this one's.
         if give > 0 and self.basket_peak > 0 and net <= self.basket_peak * (1.0 - give):
+            spare = self.settings.basket_spare_progress
+            # Nearly home is a reason to wait, not to close. The dip may be the
+            # last pullback before the targets, and closing pays the spread on
+            # every leg to avoid it. Only the give-back is spared: the stop is a
+            # loss limit and answers to nothing else.
+            if spare > 0 and progress is not None and progress >= spare:
+                return ""
             return (
                 f"the open book peaked at {money(self.basket_peak, self.currency)} "
                 f"and is {money(net, self.currency)}, having given back {give:.0%}"

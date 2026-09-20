@@ -182,3 +182,137 @@ class TestTheServiceActsOnIt:
         settings.basket_stop_fraction = 0.01
         trader = Trader(Bus(), settings=settings)
         assert await trader._basket() == 0
+
+
+class TestItUsesMomentumAndTargetProgress:
+    """**Closing on a net dip is blunt.** A book whose positions are nearly at
+    target may be in the last pullback before them, and a basket close pays the
+    spread on every leg to avoid it. And give-back is backward-looking: it waits for
+    profit to be handed back, while `cusum` reads the reversal that will do it.
+    """
+
+    def test_a_book_nearly_at_target_is_spared_the_give_back(self):
+        guard = desk(basket_give_back=0.5, basket_spare_progress=0.8)
+        guard.basket(200.0, 10_000.0, progress=0.85)
+        # Handed back 60%, which would normally close it - but it is 85% of the way.
+        assert guard.basket(80.0, 10_000.0, progress=0.85) == ""
+
+    def test_a_book_going_nowhere_is_not_spared(self):
+        guard = desk(basket_give_back=0.5, basket_spare_progress=0.8)
+        guard.basket(200.0, 10_000.0, progress=0.2)
+        assert guard.basket(80.0, 10_000.0, progress=0.2) != ""
+
+    def test_progress_never_spares_the_stop(self):
+        """A loss limit answers to nothing else. A book 95% of the way to target
+        that is still past the stop is past the stop."""
+        guard = desk(basket_stop_fraction=0.01, basket_spare_progress=0.8)
+        said = guard.basket(-200.0, 10_000.0, progress=0.95)
+        assert said, "progress must not spare the loss limit"
+        assert "basket stop" in said, said
+
+    def test_momentum_against_the_book_closes_it(self):
+        guard = desk(basket_momentum=2.0)
+        assert guard.basket(50.0, 10_000.0, against=1.0) == ""
+        said = guard.basket(50.0, 10_000.0, against=2.5)
+        assert said, "2.5v against a 2.0v tolerance should close"
+        assert "momentum" in said, said
+
+    def test_momentum_is_read_before_give_back(self):
+        """The same reversal, seen sooner. An operator reading the log should be
+        told the market turned, not that profit went missing."""
+        guard = desk(basket_momentum=2.0, basket_give_back=0.5)
+        guard.basket(200.0, 10_000.0, against=0.0)
+        said = guard.basket(50.0, 10_000.0, against=3.0)
+        assert "momentum" in said, said
+
+    def test_an_unknown_progress_does_not_spare_anything(self):
+        """None means unmeasurable, and treating that as "not close" would let an
+        unmeasurable book escape the rule."""
+        guard = desk(basket_give_back=0.5, basket_spare_progress=0.8)
+        guard.basket(200.0, 10_000.0, progress=None)
+        assert guard.basket(80.0, 10_000.0, progress=None) != ""
+
+    def test_both_are_off_at_zero(self):
+        guard = desk(basket_give_back=0.5)
+        guard.basket(200.0, 10_000.0, progress=0.99, against=99.0)
+        assert guard.basket(80.0, 10_000.0, progress=0.99, against=99.0) != ""
+
+
+class TestTheBookReadings:
+    def test_progress_is_the_median_not_the_mean(self):
+        """One malformed target - `best_r` reached 1,771 on the record - would
+        otherwise decide the whole book."""
+        from till_infinity.bus import Bus
+        from till_infinity.trading.models import Intent, Position, Side
+        from till_infinity.trading.service import Live, Trader
+
+        trader = Trader(Bus(), settings=Settings(live=False))
+        for ticket, target in ((1, 4420.0), (2, 4420.0), (3, 4_000_000.0)):
+            trader.open[ticket] = Live(
+                position=Position(
+                    ticket=ticket,
+                    symbol="XAUUSD",
+                    side=Side.BUY,
+                    volume=0.05,
+                    price_open=4400.0,
+                    price_current=4402.0,
+                ),
+                intent=Intent(
+                    feed="gold",
+                    symbol="XAUUSD",
+                    side=Side.BUY,
+                    volume=0.05,
+                    entry=4400.0,
+                    stop=4390.0,
+                    target=target,
+                    interval="15m",
+                ),
+                by="snap",
+            )
+        got = trader._book_progress()
+        assert got is not None
+        assert 0.05 < got < 0.15, got
+
+    def test_a_hedged_book_reads_near_zero_momentum(self):
+        """A per-position reading would call a hedged book alarming from both
+        sides at once."""
+        from till_infinity.bus import Bus
+        from till_infinity.structures.context.cusum import Cusum
+        from till_infinity.trading.models import Intent, Position, Side
+        from till_infinity.trading.service import Live, Trader
+
+        trader = Trader(Bus(), settings=Settings(live=False))
+        running = Cusum()
+        running.up, running.down, running.started = 2.0, 0.0, True
+        trader._push["gold"] = running
+        for ticket, side in ((1, Side.BUY), (2, Side.SELL)):
+            trader.open[ticket] = Live(
+                position=Position(
+                    ticket=ticket,
+                    symbol="XAUUSD",
+                    side=side,
+                    volume=0.05,
+                    price_open=4400.0,
+                    price_current=4400.0,
+                ),
+                intent=Intent(
+                    feed="gold",
+                    symbol="XAUUSD",
+                    side=side,
+                    volume=0.05,
+                    entry=4400.0,
+                    stop=4390.0,
+                    target=4420.0,
+                    interval="15m",
+                ),
+                by="snap",
+            )
+        assert abs(trader._book_against()) < 1e-9, trader._book_against()
+
+    def test_a_flat_book_has_no_progress_to_report(self):
+        from till_infinity.bus import Bus
+        from till_infinity.trading.service import Trader
+
+        trader = Trader(Bus(), settings=Settings(live=False))
+        assert trader._book_progress() is None
+        assert trader._book_against() == 0.0

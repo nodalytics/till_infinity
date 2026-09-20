@@ -34,6 +34,7 @@ import time
 from collections import Counter, deque
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from statistics import median
 from typing import Any, ClassVar
 
 from .. import trading
@@ -2707,6 +2708,48 @@ class Trader:
                 self._worst[ticket] = price
                 self._worst_at[ticket] = tick_time
 
+    def _book_progress(self) -> float | None:
+        """How far the open book has travelled toward its targets, in the median.
+
+        Zero is at entry and one is at target; past one is a position the target has
+        not yet closed. The **median** rather than the mean, because one position
+        with a malformed target - `best_r` reaching 1,771 on the record - would
+        otherwise decide the whole book.
+
+        None when nothing can be measured, so the caller leaves the rule alone
+        rather than treating an unknown as "not close".
+        """
+        seen: list[float] = []
+        for live in self.open.values():
+            intent, price = live.intent, float(live.position.price_current or 0.0)
+            span = (intent.target - intent.entry) * intent.side.sign
+            if price <= 0 or span <= 0:
+                continue
+            seen.append(((price - intent.entry) * intent.side.sign) / span)
+        if not seen:
+            return None
+        return float(median(seen))
+
+    def _book_against(self) -> float:
+        """Accumulated momentum running against the open book, in volatility units.
+
+        `structures.cusum` reports net directional progress without a window and
+        signs it upward, so a short position is helped by negative pressure and hurt
+        by positive. Averaged across the positions and signed against what each
+        holds, so a hedged book reads near zero rather than alarming - which is the
+        case a per-position reading would get wrong.
+        """
+        seen: list[float] = []
+        for live in self.open.values():
+            running = self._push.get(live.intent.feed)
+            if running is None:
+                continue
+            # Positive pressure is upward, so a long is hurt by negative pressure.
+            seen.append(-running.pressure * live.intent.side.sign)
+        if not seen:
+            return 0.0
+        return float(sum(seen) / len(seen))
+
     async def _basket(self) -> int:
         """Close every open position when the book as a whole says so.
 
@@ -2723,7 +2766,7 @@ class Trader:
         if not self.open:
             return 0
         net = sum(float(live.position.profit or 0.0) for live in self.open.values())
-        why = self.guard.basket(net, self.equity)
+        why = self.guard.basket(net, self.equity, self._book_progress(), self._book_against())
         if not why:
             return 0
         # Named before anything is closed, because a close that fails part way
@@ -2753,6 +2796,8 @@ class Trader:
                 "opening_equity": round(self.guard.opening_equity, 2),
                 "wanted": len(self.open),
                 "closed": closed,
+                "progress": (round(p, 4) if (p := self._book_progress()) is not None else None),
+                "against_vol": round(self._book_against(), 4),
                 "give_back": self.settings.basket_give_back,
                 "stop_fraction": self.settings.basket_stop_fraction,
                 "take_fraction": self.settings.basket_take_fraction,
