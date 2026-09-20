@@ -1003,6 +1003,27 @@ class Settings:
     #: Seconds after which a trade that has gone nowhere is closed flat. Zero
     #: is off.
     #: Measured; see `research/docs/settings.md`.
+    #: Close the whole open book when its net floating profit hands back this
+    #: share of the best it showed today. Zero is off.
+    #:
+    #: **The gap it fills.** `daily_loss_fraction` halts *opening* on realised
+    #: loss and leaves open positions alone, so nothing acted on the floating
+    #: total across them. With `parallel` on, seventeen strategies can hold the
+    #: same direction on the same instrument, which the account experiences as one
+    #: position seventeen times over.
+    #:
+    #: It buys a bounded tail, not an edge: with direction absent every exit rule
+    #: has the same expectation before costs, and closing a book pays the spread
+    #: on every leg. See `research/docs/exits.md`.
+    basket_give_back: float = 0.0
+    #: Close the whole book at this net loss, as a share of the day's opening
+    #: equity. Zero is off. Independent of `daily_loss_fraction`, which counts
+    #: realised loss and stops new trades rather than closing open ones.
+    basket_stop_fraction: float = 0.0
+    #: Close the whole book at this net profit, as a share of opening equity.
+    #: Zero is off.
+    basket_take_fraction: float = 0.0
+
     stale_after: float = 0.0
     #: How far the trade must have travelled by `stale_after` to count as
     #: having started, in R. Deliberately generous - this is meant to catch
@@ -1216,6 +1237,9 @@ class Settings:
             stops_level_margin=_float("TRADING_STOPS_LEVEL_MARGIN", 1.25),
             scale_out_at=_float("TRADING_SCALE_OUT_AT", 0.0),
             scale_out_fraction=_float("TRADING_SCALE_OUT_FRACTION", 0.5),
+            basket_give_back=_float("TRADING_BASKET_GIVE_BACK", 0.0),
+            basket_stop_fraction=_float("TRADING_BASKET_STOP_FRACTION", 0.0),
+            basket_take_fraction=_float("TRADING_BASKET_TAKE_FRACTION", 0.0),
             stale_after=_float("TRADING_STALE_AFTER_S", 0.0),
             stale_move=_float("TRADING_STALE_MOVE", 0.25),
             reentry_max=_int("TRADING_REENTRY_MAX", 0),

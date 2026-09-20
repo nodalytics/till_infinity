@@ -107,6 +107,12 @@ class Guard:
     #: gate -> how many times it refused. See `Refusal` on why this is counted.
     refusals: dict[str, int] = field(default_factory=dict)
     halted: str = ""
+    #: The best net floating profit the open book has shown today, in money.
+    #:
+    #: Kept here rather than in the service because it is day state and has to
+    #: survive a deploy: a peak that resets on restart makes the give-back rule
+    #: measure from wherever the desk happened to reboot.
+    basket_peak: float = 0.0
 
     def state(self) -> dict[str, object]:
         """The day's running total, for keeping across a restart.
@@ -122,6 +128,7 @@ class Guard:
             "trades": self.trades,
             "wins": self.wins,
             "halted": self.halted,
+            "basket_peak": self.basket_peak,
             "last_loss": dict(self.last_loss),
         }
 
@@ -141,6 +148,7 @@ class Guard:
         self.trades = int(saved.get("trades") or 0)
         self.wins = int(saved.get("wins") or 0)
         self.halted = str(saved.get("halted") or "")
+        self.basket_peak = float(saved.get("basket_peak") or 0.0)
         got = saved.get("last_loss")
         if isinstance(got, dict):
             self.last_loss = {
@@ -164,11 +172,61 @@ class Guard:
             log.info("trading: new day, the halt from %s is lifted", self.day)
         self.day, self.opening_equity = today, equity
         self.realised, self.trades, self.wins, self.halted = 0.0, 0, 0, ""
+        self.basket_peak = 0.0
         return True
 
     @property
     def daily_loss_limit(self) -> float:
         return self.opening_equity * self.settings.daily_loss_fraction
+
+    def basket(self, net: float, equity: float) -> str:
+        """Why the whole book should be closed now, or "" to leave it open.
+
+        **The gap this fills.** `daily_loss_fraction` halts *opening* on realised
+        loss and leaves what is already open alone, so nothing in the desk acts on
+        the floating total across positions. With `parallel` on, seventeen
+        strategies can hold the same direction on the same instrument at once, and
+        that is a single position seventeen times over as far as the account is
+        concerned.
+
+        Three rules, each off at zero, checked worst-first so a book that trips
+        two is reported by the one that matters:
+
+        * **give-back** - having shown a peak profit, close if the book hands back
+          that share of it. A trailing stop on the basket rather than on a trade.
+        * **stop** - close if the net loss reaches this share of the day's opening
+          equity.
+        * **take** - close if the net profit reaches this share of it.
+
+        **This does not create edge and is not meant to.** With direction absent -
+        see `research/docs/exits.md` - every exit rule has the same expectation
+        before costs, and closing a book pays the spread on every leg. What it buys
+        is a bounded tail: the desk stops being able to hold a losing basket open
+        indefinitely, which is a risk decision rather than a profit one.
+        """
+        opening = self.opening_equity or equity
+        if opening <= 0:
+            return ""
+        self.basket_peak = max(self.basket_peak, net)
+        loss = self.settings.basket_stop_fraction
+        if loss > 0 and net <= -loss * opening:
+            return (
+                f"the open book is {money(net, self.currency)}, past the "
+                f"{loss:.1%} basket stop on {money(opening, self.currency, signed=False)}"
+            )
+        give = self.settings.basket_give_back
+        # Only once there was a profit worth protecting. A peak of nothing would
+        # make this fire on the first tick a book went red, which is the stop's
+        # job and at the stop's threshold, not this one's.
+        if give > 0 and self.basket_peak > 0 and net <= self.basket_peak * (1.0 - give):
+            return (
+                f"the open book peaked at {money(self.basket_peak, self.currency)} "
+                f"and is {money(net, self.currency)}, having given back {give:.0%}"
+            )
+        take = self.settings.basket_take_fraction
+        if take > 0 and net >= take * opening:
+            return f"the open book is {money(net, self.currency)}, at the {take:.1%} basket target"
+        return ""
 
     def allows(  # noqa: PLR0912 - one gate per branch, in the order they are
         # applied. Splitting them across helpers would hide that order, and the

@@ -2607,6 +2607,10 @@ class Trader:
         await self._reconcile()
         await self._orphans()
         await self._manage()
+        # After `_manage`, so a stop it just moved is in force before the book is
+        # judged, and before `_expire`, so a basket close is attributed to the
+        # basket rather than to whichever trade happened to time out first.
+        await self._basket()
         self._remember_marks()
         await self._expire()
         await self._rearm_stopped()
@@ -2680,6 +2684,65 @@ class Trader:
             if hurt is None or (min(hurt, price) if buying else max(hurt, price)) != hurt:
                 self._worst[ticket] = price
                 self._worst_at[ticket] = tick_time
+
+    async def _basket(self) -> int:
+        """Close every open position when the book as a whole says so.
+
+        The account does not hold seventeen opinions, it holds one balance, and
+        nothing here read that. `Guard.allows` decides whether to *open*, the
+        per-trade stops decide each leg, and `daily_loss_fraction` halts opening on
+        realised loss - none of them can act on the floating total across positions,
+        which with `parallel` on is the same direction on the same instrument up to
+        seventeen times over.
+
+        `Guard.basket` holds the policy, this holds the action: the split every
+        other limit here already follows.
+        """
+        if not self.open:
+            return 0
+        net = sum(float(live.position.profit or 0.0) for live in self.open.values())
+        why = self.guard.basket(net, self.equity)
+        if not why:
+            return 0
+        # Named before anything is closed, because a close that fails part way
+        # through leaves a book that no longer matches the reason it was judged on,
+        # and the log is the only record of what the whole book looked like.
+        log.warning("trading: closing all %d position(s) - %s", len(self.open), why)
+        closed = 0
+        for ticket in list(self.open):
+            try:
+                await self.execution.close_position(ticket)
+            except BrokerError as exc:
+                # One leg refusing must not strand the rest: an index in its daily
+                # break cannot be closed and the others still can, and leaving them
+                # open because of it is the opposite of what was asked for.
+                log.warning("trading: could not close #%d for the basket: %s", ticket, exc)
+                continue
+            closed += 1
+        await observe(
+            self.journal,
+            f"closed the book: {len(self.open)} position(s), net {self.money(net)}",
+            rationale=why,
+            actor="trading",
+            context={
+                "shape": "basket",
+                "net": round(net, 2),
+                "peak": round(self.guard.basket_peak, 2),
+                "opening_equity": round(self.guard.opening_equity, 2),
+                "wanted": len(self.open),
+                "closed": closed,
+                "give_back": self.settings.basket_give_back,
+                "stop_fraction": self.settings.basket_stop_fraction,
+                "take_fraction": self.settings.basket_take_fraction,
+            },
+            tags=("basket", "close"),
+        )
+        # The peak is the *open book's*, so it means nothing once the book is flat.
+        # Leaving it would have the next position judged against a peak it never
+        # contributed to.
+        if closed and not any(t in self.open for t in list(self.open)):
+            self.guard.basket_peak = 0.0
+        return closed
 
     async def _manage(self) -> int:
         """Move stops on open trades, and bank part of the ones in front."""
