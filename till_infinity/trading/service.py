@@ -1044,6 +1044,7 @@ class Trader:
                 tick=tick,
                 risk_of={t: live.intent.risk_money for t, live in self.open.items()},
                 feed_of=self._feed_of,
+                limits=engine.limits,
             )
             if stopped is not None:
                 self.refused += 1
@@ -1169,6 +1170,7 @@ class Trader:
                 tick=tick,
                 risk_of={t: live.intent.risk_money for t, live in self.open.items()},
                 feed_of=self._feed_of,
+                limits=engine.limits,
             )
             if stopped is not None:
                 self.refused += 1

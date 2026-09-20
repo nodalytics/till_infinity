@@ -33,9 +33,29 @@ from typing import Any, ClassVar
 from ...logging import get_logger
 from ..config import Settings
 from ..models import SymbolSpec, Tick, Verdict
+from ..risk import Limits
 from .floors import Floors
 
 log = get_logger(__name__)
+
+#: The share of per-trade risk each style takes, where a strategy names none.
+#:
+#: A scalp is the reference. A swing holds across session breaks, and a position
+#: across nights and weekends, so the stop that bounds the loss can be gapped
+#: through - and the longer the hold, the more chances there are for that. Both
+#: also occupy capital while they wait, which is risk the account carries
+#: without any of it showing up as a stop distance.
+#:
+#: The numbers are mild on purpose. The loss on a stopped trade is the same
+#: whatever the hold, so this is pricing gap risk and occupancy, not variance,
+#: and neither justifies halving a position. Nothing here has been measured
+#: against outcomes: 904 closed trades across 13 strategies is 2.1 per cell,
+#: and sizing on that would be fitting noise - see `research/docs/choosing.md`.
+RISK_SHARE_BY_STYLE: dict[str, float] = {
+    "scalp": 1.0,
+    "swing": 0.85,
+    "position": 0.7,
+}
 
 
 class Strategy(ABC):
@@ -139,6 +159,51 @@ class Strategy(ABC):
     #: here rather than depending on how the deployment happens to be tuned.
     pullback_fraction: ClassVar[float] = 0.0
 
+    #: This strategy's share of the deployment's per-trade risk. Zero means take
+    #: the share its `style` implies, in `RISK_SHARE_BY_STYLE`.
+    #:
+    #: The four existing multipliers all read the *current bar* - trend,
+    #: momentum, conviction, crowding - so nothing said "this one holds for a
+    #: day and that one for two minutes, size them differently". This is that
+    #: number, and it is structural rather than a reading.
+    #:
+    #: **Not variance by holding time.** The tempting rule is to divide by the
+    #: square root of the hold, and it is wrong here: a hard stop bounds the
+    #: loss per trade whatever the hold, so a 24-hour trade and a 2-minute one
+    #: risk the same money by construction. What actually grows with the hold is
+    #: the risk of *gapping through* that stop - a weekend, a session break, a
+    #: release - which the stop cannot bound, and the capital the position
+    #: occupies while it waits. Both are real and neither is dramatic, so the
+    #: shares below are mild.
+    risk_share: ClassVar[float] = 0.0
+
+    #: Seconds this strategy waits after a loss on a feed before taking another.
+    #: Zero means the deployment's `loss_cooldown`.
+    #:
+    #: One global number cannot fit both: 900s against a 120-second scalp is a
+    #: seven-to-one throttle, and against a day-long swing it is nothing.
+    cooldown_s: ClassVar[float] = 0.0
+
+    @property
+    def share_of_risk(self) -> float:
+        """The structural size multiplier, resolved. Never above 1.
+
+        Capped like its siblings in `scaling.combined`: a per-strategy knob may
+        argue for less risk and never for more, so a typo cannot enlarge a
+        position.
+        """
+        share = self.risk_share or RISK_SHARE_BY_STYLE.get(self.style, 1.0)
+        return max(0.0, min(1.0, share))
+
+    @property
+    def limits(self) -> Limits:
+        """The gate values `risk.Guard` should apply to *this* strategy.
+
+        Zero on any field means the deployment's own, so a strategy that names
+        nothing is governed exactly as it was before this existed.
+        """
+        return Limits(by=self.name, loss_cooldown=self.cooldown_s)
+
     def horizon(self, interval: str) -> float:
         """How far this strategy's hold stretches one bar of `interval`.
 
@@ -227,6 +292,11 @@ class Strategy(ABC):
             # closes against +35.03 over 21 at 15m and above, monotone across
             # every band between. See `scaling.by_interval`.
             scaling.by_interval(interval, settings.interval_weight),
+            # This strategy's structural share, which is the only one of these
+            # that is not a reading of the current bar. Folded in here rather
+            # than at the three sizing call sites, so it cannot be added to two
+            # of them and forgotten in the third.
+            self.share_of_risk,
         )
 
     @property

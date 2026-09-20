@@ -8973,3 +8973,152 @@ class TestListenIntakeIsBoundedAndPutsSignalsFirst:
         bids = [(await intake.next()).payload["bid"] for _ in range(3)]
         assert bids == sorted(bids), f"quotes came out of order: {bids}"
         assert bids[0] == 4400.0 + 10, "the oldest ten should have been shed, not the newest"
+
+
+# ------------------------------------------------- one risk plan per strategy
+
+
+def test_a_strategy_may_set_its_own_cooldown_without_touching_the_deployment():
+    """**One global cooldown cannot fit a 120-second scalp and a day-long swing.**
+
+    900s against a scalp that holds two minutes is a seven-to-one throttle; the
+    same number against a swing is nothing at all.
+    """
+    from till_infinity.trading.risk import Limits
+
+    guard = Guard(settings(loss_cooldown=900.0))
+    guard.roll(10_000.0, now=1_000.0)
+    guard.record("gold", -20.0, 9_980.0, now=1_000.0)
+
+    # The deployment's 900s still refuses at +100s.
+    assert guard.allows(intent(), positions=[], now=1_100.0).gate == "cooldown"
+    # A strategy naming 60s of its own is free by then.
+    quick = Limits(by="snap", loss_cooldown=60.0)
+    assert guard.allows(intent(), positions=[], now=1_100.0, limits=quick) is None
+    # And one naming a longer wait is still held.
+    slow = Limits(by="swing-level", loss_cooldown=3_600.0)
+    assert guard.allows(intent(), positions=[], now=1_100.0, limits=slow).gate == "cooldown"
+
+
+def test_zero_on_a_limit_means_the_deployments_own():
+    """The idiom the rest of the module already uses, so a strategy that names
+    nothing is governed exactly as it was before any of this existed."""
+    from till_infinity.trading.risk import Limits
+
+    guard = Guard(settings(loss_cooldown=900.0))
+    guard.roll(10_000.0, now=1_000.0)
+    guard.record("gold", -20.0, 9_980.0, now=1_000.0)
+
+    named_nothing = Limits(by="level-scalp")
+    assert (
+        guard.allows(intent(), positions=[], now=1_100.0, limits=named_nothing).gate == "cooldown"
+    )
+    # Identical to passing no limits at all.
+    assert guard.allows(intent(), positions=[], now=1_100.0).gate == "cooldown"
+
+
+def test_a_strategy_cannot_be_given_its_own_daily_loss_budget():
+    """**The one that would cost real money.**
+
+    Seventeen strategies with a daily loss budget each is an account that can
+    lose seventeen times its configured limit. `Limits` must carry no field
+    through which an account-level gate could be overridden, and this asserts it
+    structurally rather than trusting a reading of the code.
+    """
+    import dataclasses
+
+    from till_infinity.trading.risk import ACCOUNT_LEVEL, PER_STRATEGY, Limits
+
+    fields = {f.name for f in dataclasses.fields(Limits)} - {"by"}
+    assert fields == PER_STRATEGY, fields
+    assert not (fields & ACCOUNT_LEVEL), fields & ACCOUNT_LEVEL
+    for name in ("max_positions", "daily_loss_fraction", "max_currency_exposure", "max_per_symbol"):
+        assert not hasattr(Limits(), name), name
+
+
+def test_the_daily_stop_still_measures_the_whole_account():
+    """Whatever a strategy asks for, the halt is the account's."""
+    from till_infinity.trading.risk import Limits
+
+    guard = Guard(settings(daily_loss_fraction=0.03))
+    guard.roll(10_000.0, now=1_000.0)
+    guard.record("gold", -400.0, 9_600.0, now=1_100.0)
+
+    greedy = Limits(by="cycle-scalp", loss_cooldown=1.0)
+    stopped = guard.allows(intent(), positions=[], now=1_200.0, limits=greedy)
+    assert stopped is not None
+    assert stopped.gate == "halted", stopped.gate
+
+
+def test_a_longer_hold_takes_a_smaller_share_of_the_risk():
+    """Structural, not a reading of the bar: the four existing multipliers all
+    look at the current candle, so nothing said "this one holds for a day"."""
+    from till_infinity.trading.strategies.strategy import RISK_SHARE_BY_STYLE
+
+    assert RISK_SHARE_BY_STYLE["scalp"] == 1.0
+    assert RISK_SHARE_BY_STYLE["swing"] < RISK_SHARE_BY_STYLE["scalp"]
+    assert RISK_SHARE_BY_STYLE["position"] < RISK_SHARE_BY_STYLE["swing"]
+    # Mild on purpose: a hard stop bounds the loss whatever the hold, so this
+    # prices gap risk and occupancy, not variance.
+    assert min(RISK_SHARE_BY_STYLE.values()) >= 0.5
+
+
+def test_a_per_strategy_share_can_never_enlarge_a_position():
+    """Like every multiplier in `scaling.combined`. A typo must not size up."""
+    from till_infinity.trading.strategies import strategy as st
+
+    class Greedy(st.Strategy):
+        name = "greedy"
+        style = "scalp"
+        risk_share = 4.0
+
+        def consider(self, payload, **kw):  # pragma: no cover - never called
+            return None
+
+    assert Greedy(settings()).share_of_risk == 1.0
+
+    class Careful(Greedy):
+        name = "careful"
+        risk_share = 0.4
+
+    assert Careful(settings()).share_of_risk == 0.4
+
+
+def test_the_share_reaches_the_real_sizing_path():
+    """**Behaviour, not just a constant.**
+
+    The three sizing call sites all multiply by `risk_scale`, so folding the
+    share in there is what makes it real. Two live strategies of different
+    styles, the same empty features so every other multiplier is off, must now
+    differ - and by exactly their styles' ratio.
+    """
+    from till_infinity.trading.strategies.strategy import RISK_SHARE_BY_STYLE, build
+
+    made = {s.name: s for s in build(["level-scalp", "swing-level"], settings())}
+    scalp, swing = made["level-scalp"], made["swing-level"]
+    assert scalp.style == "scalp", scalp.style
+    assert swing.style == "swing", swing.style
+
+    args = {
+        "feed": "gold",
+        "features": {},
+        "positions": (),
+        "equity": 10_000.0,
+        "peak": 10_000.0,
+        "interval": "15m",
+        "side": Side.BUY,
+    }
+    fast, slow = scalp.risk_scale(**args), swing.risk_scale(**args)
+
+    assert slow < fast, (fast, slow)
+    want = RISK_SHARE_BY_STYLE["swing"] / RISK_SHARE_BY_STYLE["scalp"]
+    assert abs((slow / fast) - want) < 1e-9, (slow / fast, want)
+
+
+def test_each_strategy_reports_limits_naming_itself():
+    """`Guard` is handed these per decision, so the name has to be right or a
+    refusal is attributed to the wrong strategy."""
+    from till_infinity.trading.strategies.strategy import build
+
+    for engine in build(["level-scalp", "swing-level", "snap"], settings()):
+        assert engine.limits.by == engine.name, (engine.limits.by, engine.name)

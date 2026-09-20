@@ -44,6 +44,47 @@ def _day(when: float) -> str:
     return datetime.fromtimestamp(when, UTC).strftime("%Y-%m-%d")
 
 
+@dataclass(frozen=True, slots=True)
+class Limits:
+    """One strategy's own gate values. Zero on a field means the deployment's.
+
+    **Only the gates that are about a single trade.** `max_positions`,
+    `max_per_symbol`, `daily_loss_fraction` and `max_currency_exposure` are
+    deliberately absent, because they are properties of the *account*: give
+    seventeen strategies a daily loss budget each and the account can lose
+    seventeen times the limit it was configured with. Those stay global, and
+    there is no field here through which one could be overridden.
+
+    The two spread gates are absent for a different reason - they need no
+    tailoring. `max_spread_fraction` is `spread / reward` and
+    `max_spread_risk_fraction` is `spread / risk`, so both are already
+    normalised by the strategy's own geometry: a distant target already buys the
+    right to pay more, without anybody setting a number per strategy.
+    """
+
+    by: str = ""
+    #: Seconds to wait after a loss on a feed. Zero means `loss_cooldown`.
+    loss_cooldown: float = 0.0
+    #: Reward-to-risk floor. Zero means `min_reward_to_risk`.
+    min_reward_to_risk: float = 0.0
+
+    def cooldown(self, settings: Settings) -> float:
+        return self.loss_cooldown or settings.loss_cooldown
+
+    def reward_floor(self, settings: Settings) -> float:
+        return self.min_reward_to_risk or settings.min_reward_to_risk
+
+
+#: Every field a strategy may govern for itself, as a set, so a test can assert
+#: that no account-level limit has quietly joined them.
+PER_STRATEGY: frozenset[str] = frozenset({"loss_cooldown", "min_reward_to_risk"})
+
+#: What stays the account's, whatever a strategy says.
+ACCOUNT_LEVEL: frozenset[str] = frozenset(
+    {"max_positions", "max_per_symbol", "daily_loss_fraction", "max_currency_exposure"}
+)
+
+
 @dataclass(slots=True)
 class Guard:
     """The day's state, and the decision to take another trade or not."""
@@ -141,6 +182,7 @@ class Guard:
         now: float | None = None,
         risk_of: dict[int, float] | None = None,
         feed_of: dict[str, str] | None = None,
+        limits: Limits | None = None,
     ) -> Refusal | None:
         """None if this trade may go ahead, else the gate that stopped it.
 
@@ -151,6 +193,9 @@ class Guard:
         decides which one gets named when several apply.
         """
         when = now if now is not None else time.time()
+        # The strategy's own values where it names any, the deployment's where it
+        # does not. Never the account's - see `Limits` on what is absent and why.
+        mine = limits or Limits()
 
         if self.halted:
             return self._no("halted", intent.feed, self.halted)
@@ -204,8 +249,9 @@ class Guard:
             )
 
         lost = self.last_loss.get(intent.feed)
-        if lost and when - lost < self.settings.loss_cooldown:
-            left = self.settings.loss_cooldown - (when - lost)
+        cooldown = mine.cooldown(self.settings)
+        if lost and when - lost < cooldown:
+            left = cooldown - (when - lost)
             return self._no("cooldown", intent.feed, f"{left:.0f}s left after a loss")
 
         # Zero is off, explicitly, like every other floor here. Relying on
@@ -220,7 +266,7 @@ class Guard:
         # - it refused 40,421 of 47,676 calls to gain nothing. See
         # research/replay.md and todo 0f, whose original figures were computed
         # on realised push rather than R and overstated this fivefold.
-        floor = self.settings.min_reward_to_risk
+        floor = mine.reward_floor(self.settings)
         if floor > 0 and intent.reward_to_risk < floor:
             return self._no(
                 "reward_to_risk",
