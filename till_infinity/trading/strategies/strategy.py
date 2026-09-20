@@ -276,8 +276,27 @@ class Strategy(ABC):
                 ],
                 settings.crowding_share,
             ),
+            # **`ewma_tr_bps`, not `vol_bps`.** A decaying average of true range
+            # forecast the next bar's movement better than every figure the desk
+            # produces, at the horizon each of those was built for: against 11,797
+            # recorded calls it beat `vol_bps`, `garch_bps`, `ensemble_bps`,
+            # `forecast_bps` and `range_bps` in every cell, and beat GARCH at one
+            # bar ahead scored against return variance - GARCH's own quantity -
+            # 0.331 to 0.166. The margin widens with the interval, 1.17x at 1m to
+            # 2.04x at 15m. See `research/docs/volatility-estimators.md`.
+            #
+            # `vol_bps` remains the fallback, for a signal published before this
+            # feature existed or a series whose ranges are not warm. It is not a
+            # switch: an absent reading has to size *somehow*, and the previous
+            # answer is the right one to keep.
+            #
+            # Only the magnitude moves here. `by_regime` still reads
+            # `forecast_ratio`, which asks whether this instrument's volatility is
+            # unusual *for itself* - a different question, and not one this
+            # measurement touched.
             scaling.by_volatility(
-                float(features.get("vol_bps") or 0.0), settings.volatility_target_bps
+                float(features.get("ewma_tr_bps") or features.get("vol_bps") or 0.0),
+                settings.volatility_target_bps,
             ),
             # How far this instrument's volatility sits from its own normal.
             # Both tails are worse for a level holding, so this is a distance

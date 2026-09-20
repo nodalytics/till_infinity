@@ -865,6 +865,12 @@ class Call(Restorable):
                 # the next bar rather than a reading of the last ones. Both
                 # recorded and used by nothing - see `ranges.py` and `har.py`.
                 "range_bps": vol.range_bps,
+                # **The one sizing reads.** A decaying average of true range,
+                # which measured better than every other figure here at the
+                # horizons they were each built for - including GARCH at one bar
+                # against return variance, its own quantity. See
+                # `research/docs/volatility-estimators.md` and `ranges.TR_ALPHA`.
+                "ewma_tr_bps": vol.ewma_tr_bps,
                 "forecast_bps": vol.forecast_bps,
                 "forecast_ratio": vol.forecast_ratio,
                 # Recorded so the directional question can be settled from the

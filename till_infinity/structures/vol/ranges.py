@@ -75,6 +75,24 @@ WINDOW = 60
 #: not move at all gives zero, and everything downstream divides.
 MIN_VOL_BPS = 0.05
 
+#: Smoothing for the true-range average. `1/14` is Wilder's, and 14 is the period
+#: every measurement below was taken at.
+#:
+#: **This is the best near-term volatility forecast measured on this desk**, which
+#: was not the expected result. Against 11,797 recorded level calls on the broker's
+#: own bars, scored at each estimator's own horizon and against both realised range
+#: and realised return variance, an EWMA of true range beat `vol_bps`,
+#: `garch_bps`, `ensemble_bps`, `forecast_bps` and `range_bps` in every cell -
+#: including GARCH at one bar ahead scored against return variance, which is
+#: exactly what GARCH forecasts, 0.331 against its 0.166. The margin widens with
+#: the interval, 1.17x at 1m to 2.04x at 15m. See
+#: `research/docs/volatility-estimators.md`.
+#:
+#: Recursive rather than windowed, because that is what an EWMA is: the estimate
+#: carries every bar it has seen with an exponentially decaying weight, and
+#: recomputing it over `WINDOW` bars would be a different quantity.
+TR_ALPHA = 1.0 / 14.0
+
 
 #: Yang-Zhang's weight on the overnight term. `k` is chosen to minimise the
 #: variance of the estimator; this is the standard form with n = WINDOW.
@@ -168,11 +186,22 @@ class Ranges(Restorable):
     warmup: int = WARMUP
     floor_bps: float = MIN_VOL_BPS
     _bars: list[Bar] = field(default_factory=list)
+    #: The decaying average of true range, in price. Accumulated rather than
+    #: derived, so it survives the window it is kept alongside.
+    _ewma_tr: float = 0.0
 
     def observe(self, open_: float, high: float, low: float, close: float) -> None:
         """Fold in one bar. Prices, in the order a candle is usually written."""
         if min(open_, high, low, close) <= 0:
             return
+        # True range needs the previous close, so it is taken before appending.
+        # The first bar has none, and its own high-low is the honest stand-in.
+        prev = self._bars[-1].close if self._bars else close
+        span = max(high - low, abs(high - prev), abs(low - prev))
+        if span > 0:
+            self._ewma_tr = (
+                span if self._ewma_tr <= 0 else (self._ewma_tr + TR_ALPHA * (span - self._ewma_tr))
+            )
         self._bars.append(Bar(open=open_, high=high, low=low, close=close))
         if len(self._bars) > self.window:
             del self._bars[: len(self._bars) - self.window]
@@ -188,6 +217,22 @@ class Ranges(Restorable):
     def bps(self) -> float:
         """Yang-Zhang, in basis points. The one to read if only reading one."""
         return self._as_bps(yang_zhang(self._bars))
+
+    @property
+    def ewma_tr_bps(self) -> float:
+        """The decaying true-range average, in basis points of the last close.
+
+        Relative rather than absolute, so it is comparable across instruments and
+        with everything else here - and so a price level that moved does not read
+        as volatility that rose. That confusion cost a whole run of this
+        measurement: in price units every estimator scored about 0.57 because it
+        was tracking the price level, and normalising collapsed them to 0.30 and
+        reordered the table.
+        """
+        if not self._bars or self._ewma_tr <= 0:
+            return self.floor_bps
+        last = self._bars[-1].close
+        return self._as_bps(self._ewma_tr / last) if last > 0 else self.floor_bps
 
     @property
     def parkinson_bps(self) -> float:

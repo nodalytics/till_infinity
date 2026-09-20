@@ -357,6 +357,17 @@ class Volatility(Restorable):
         return self._ranges.bps
 
     @property
+    def ewma_tr_bps(self) -> float:
+        """The decaying true-range average, in bps. See `ranges.TR_ALPHA`.
+
+        Measured as the best near-term volatility forecast on this desk, ahead of
+        `bps`, `garch_bps`, `ensemble_bps`, `forecast_bps` and `range_bps` at every
+        horizon each of those was built for - see
+        `research/docs/volatility-estimators.md`.
+        """
+        return self._ranges.ewma_tr_bps
+
+    @property
     def range_warm(self) -> bool:
         return self._ranges.warm
 
