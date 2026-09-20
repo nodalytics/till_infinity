@@ -123,6 +123,22 @@ call, spread from brent at -86bp to us100 at +39bp - the shape of 635 noisy
 observations, not of a shared effect. The `+6.20bp` in the table is also a rule
 chosen on the test data, which is a second reason to discard it.
 
+### The sign label was the wrong label, and the better one agrees
+
+Checked 2026-09-20 against the labelling used by two candlestick-pattern papers:
+Up / Flat / Down against a magnitude band, rather than the sign of the return.
+The sign label counts a 0.1bp drift and a 50bp move as the same event, so it
+could have been hiding a direction that costs ate.
+
+It was not. Against a 4bp band - twice the round trip - **86.0% of one-minute
+calls never move enough to pay for a trade**, and conditional on the market
+actually moving, the call is still 49.3% to 50.7% at every horizon to four
+hours. Whether a move is coming is mildly forecastable (AUC 0.573
+within-instrument against a 0.511 shuffled null), which buys position sizing and
+not a filter, because filtering a coin flip leaves a coin flip. Full result,
+including three leakage errors made on the way, in
+`../docs/banded-labels.md`.
+
 ### What the sweep does establish
 
 The cost geometry, and this part is not a statistical claim:
