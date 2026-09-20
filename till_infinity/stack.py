@@ -182,6 +182,21 @@ STATUS_FILE = Path(os.environ.get("STACK_STATUS_FILE") or ".data/stack.json")
 #:
 #: Sixty seconds against a `--max-age` of 300 leaves four missed beats before the
 #: probe complains, so a slow moment is not an outage.
+#: Buffers smaller than this are not worth naming in a heap dump. 64KB keeps
+#: the report to the handful of allocations that could account for hundreds of
+#: megabytes, rather than every small bytes object in the process.
+BUFFER_WORTH_NAMING = 64 * 1024
+
+#: The types whose size a heap dump may read, **by name**.
+#:
+#: **A heap walk must not touch attributes.** The first version asked every object
+#: for `nbytes` with `getattr`, which runs `__getattr__` on whatever happens to be
+#: live: a `pytest.mark` object answered by *creating a mark* called `nbytes`, and
+#: a `ctypes` library loader answered by trying to dlopen a shared object called
+#: "nbytes" and raising. Arbitrary code, inside a signal handler, on a live desk.
+#: Matching on the type's name touches no instance at all.
+BUFFER_TYPES: frozenset[str] = frozenset({"ndarray", "bytes", "bytearray", "memoryview", "array"})
+
 HEARTBEAT = float(os.environ.get("STACK_HEARTBEAT") or 60.0)
 
 
@@ -392,9 +407,16 @@ def _arm_heap_dump() -> None:
     reading, which has already ruled out the bounded structures. This counts
     live objects by type instead of guessing.
 
-    Counts, not sizes: `sys.getsizeof` over millions of objects is slow and a
-    leak shows up as a count anyway. Guarded and rate-limited, because walking
-    the heap pauses the loop and this runs on a live desk.
+    Counts **and the bytes behind buffers**, because counts alone were blind to
+    the growth they were added to find. On 2026-09-20 the desk gained about 300MB
+    in twenty minutes while the object count rose 2,900 a minute - some 17MB an
+    hour at any plausible size per object. A numpy array is *one* object holding
+    megabytes, so a buffer-backed leak is invisible to a census and obvious to a
+    byte count. `getsizeof` over four million objects is still too slow, so only
+    the types that carry a buffer are measured and the rest are counted.
+
+    Guarded and rate-limited, because walking the heap pauses the loop and this
+    runs on a live desk.
     """
     try:
         loop = asyncio.get_running_loop()
@@ -406,9 +428,21 @@ def _arm_heap_dump() -> None:
 
         started = time.monotonic()
         counts: dict[str, int] = {}
+        # type -> (objects, bytes). Only for things whose size is a cheap read:
+        # `nbytes` on an array, `len` on a buffer. Anything else is counted.
+        heavy: dict[str, list[int]] = {}
         for obj in gc.get_objects():
             name = type(obj).__name__
             counts[name] = counts.get(name, 0) + 1
+            size = 0
+            if name in BUFFER_TYPES:
+                with contextlib.suppress(Exception):
+                    got = obj.nbytes if name in ("ndarray", "array") else len(obj)
+                    size = got if isinstance(got, int) else 0
+            if size >= BUFFER_WORTH_NAMING:
+                row = heavy.setdefault(name, [0, 0])
+                row[0] += 1
+                row[1] += size
         top = sorted(counts.items(), key=lambda kv: -kv[1])[:15]
         log.warning(
             "stack: heap has %d tracked object(s), walked in %.1fs",
@@ -417,6 +451,16 @@ def _arm_heap_dump() -> None:
         )
         for name, n in top:
             log.warning("stack: heap %-28s %d", name, n)
+        if heavy:
+            total = sum(row[1] for row in heavy.values())
+            log.warning("stack: heap buffers hold %.0fMB in all", total / 1e6)
+            for name, (n, size) in sorted(heavy.items(), key=lambda kv: -kv[1][1])[:10]:
+                log.warning("stack: heap buffer %-21s %6d objects %8.1fMB", name, n, size / 1e6)
+        else:
+            log.warning(
+                "stack: heap no buffer over %dKB - growth is not buffers",
+                BUFFER_WORTH_NAMING // 1024,
+            )
 
     with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
         loop.add_signal_handler(signal.SIGUSR2, dump)

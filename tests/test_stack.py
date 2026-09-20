@@ -730,3 +730,63 @@ async def test_sigusr2_says_what_the_heap_is_full_of(caplog):
     said = " ".join(r.getMessage() for r in caplog.records)
     assert "tracked object(s)" in said, said
     assert "heap " in said, "it must name the types it found"
+
+
+def test_the_heap_walk_never_touches_an_attribute(caplog):
+    """**A heap walk runs over whatever happens to be live.**
+
+    The first version of the buffer sizing asked every object for `nbytes` with
+    `getattr`, which runs `__getattr__`: a `pytest.mark` object answered by
+    creating a mark called `nbytes`, and a `ctypes` loader by trying to dlopen a
+    shared object of that name and raising `OSError`. Arbitrary code, in a signal
+    handler, on a live desk. So an object that explodes on attribute access has
+    to be walked past, not interrogated.
+    """
+    import logging
+
+    from till_infinity import stack
+
+    touched = []
+
+    class Landmine:
+        def __getattr__(self, name):
+            touched.append(name)
+            raise OSError(f"{name}: cannot open shared object file")
+
+        def __len__(self):
+            touched.append("__len__")
+            raise OSError("len")
+
+    mine = Landmine()  # noqa: F841 - must be live on the heap during the walk
+    fired = []
+
+    class Loop:
+        def add_signal_handler(self, sig, fn):
+            fired.append(fn)
+
+    import asyncio
+
+    real = asyncio.get_running_loop if hasattr(asyncio, "get_running_loop") else None
+    asyncio.get_running_loop = lambda: Loop()  # type: ignore[assignment]
+    try:
+        stack._arm_heap_dump()
+    finally:
+        if real is not None:
+            asyncio.get_running_loop = real  # type: ignore[assignment]
+
+    assert fired, "the handler should have been armed"
+    with caplog.at_level(logging.WARNING, logger="till_infinity.stack"):
+        fired[0]()  # the dump itself
+
+    assert not touched, f"the walk touched attributes on a hostile object: {touched}"
+    assert "tracked object(s)" in caplog.text
+
+
+def test_it_names_a_large_buffer_that_a_census_would_miss():
+    """One array is one object holding megabytes, which is why counts alone were
+    blind to the growth this was extended to find."""
+    from till_infinity import stack
+
+    assert "ndarray" in stack.BUFFER_TYPES
+    assert "bytes" in stack.BUFFER_TYPES
+    assert stack.BUFFER_WORTH_NAMING == 64 * 1024
