@@ -34,7 +34,9 @@ groq = ["pydantic-ai-slim[groq]>=2.28.0"]
 redis = ["redis>=5.0.0"]
 # The native MT5 binding. Marked win32 because it is not a package that has
 # merely been neglected on other platforms - it is an in-process call into a
-# See docs/deployment.md.
+# running Windows terminal, with no Linux wheel to build against. The marker
+# keeps `uv sync --all-extras` working in CI, where it resolves to nothing and
+# the bridge backend is used instead.
 mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
 # Talking to a Windows terminal from anywhere, by proxying the module itself
 # out of a Wine prefix. No platform marker: this half runs on the Linux side.
@@ -63,8 +65,8 @@ dev = [
 line-length = 100
 target-version = "py311"
 # Experiments, not library code. They are written to be read alongside their
-# results and thrown away when the question is answered, so the repo's style
-# See docs/deployment.md.
+# results and thrown away once the question is answered, so the repo's style
+# rules would cost more than they return here.
 extend-exclude = ["research", "assets"]
 
 [tool.ruff.lint]
@@ -123,7 +125,7 @@ max-returns = 8
 "till_infinity/trading/venues/paper.py" = ["ARG002"]
 # The gate chain in `LevelStrategy.consider` is one return per refusal, which
 # is the design: each gate names itself and stops. Collapsing fifteen reasons
-# See docs/deployment.md.
+# into fewer exits would trade a readable refusal for a lint score.
 "till_infinity/trading/strategies/scalper.py" = ["ARG002", "PLR0911", "PLR0912"]
 # `codec.unpack` is one return per wire type. Collapsing eight tagged
 # shapes into a table would put the mapping somewhere other than beside
@@ -141,7 +143,8 @@ max-returns = 8
 "till_infinity/trading/risk.py" = ["PLR0911"]
 # `Tracker.update` advances one touch through its states - first contact, wick,
 # origin, break, trap window, resolution - and the branch count is one per
-# See docs/deployment.md.
+# transition. Splitting it would put half a state machine in another method and
+# make the order the transitions happen in harder to read, not easier.
 "till_infinity/structures/reactions.py" = ["PLR0912"]
 # `import MetaTrader5 as mt5` is the name every MT5 example and the terminal's
 # own documentation uses; renaming it would make this file harder to check

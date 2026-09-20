@@ -10,7 +10,9 @@ set -euo pipefail
 
 # **One deploy at a time.** This box deploys on every push and can also be
 # driven by hand, so two runs overlapping is normal rather than exotic. Racing
-# See docs/deployment.md.
+# them wastes a pull and produces confusing output: on 2026-09-15 a hand deploy
+# and an automatic one interleaved, and the loser reported "could not rename the
+# running container" while the winner was quietly succeeding.
 exec 9>/home/ubuntu/.deploy.lock
 if ! flock -w 600 9; then
   echo "another deploy has held the lock for ten minutes - not starting" >&2
@@ -55,7 +57,8 @@ fi
 # `-af` with no age filter, because an age filter is the same bug in slower
 # form - several deploys in one day are all newer than any window worth setting.
 # Docker never removes the image a running container is using, so the version
-# See docs/deployment.md.
+# currently serving is safe. What is lost is a local copy of the *previous* one,
+# and that lives in the registry, which is where a rollback should come from.
 echo "reclaiming disk before the pull"
 docker container prune -f >/dev/null 2>&1 || true
 docker image prune -af >/dev/null 2>&1 || true
@@ -102,7 +105,7 @@ fi
 # `-prev` to restore, which left the desk with no container at all - exactly
 # the outcome the rollback exists to prevent, reached by the rollback itself.
 # There is no previous container whenever another deploy has just replaced it,
-# See docs/deployment.md.
+# which on this box is a normal race rather than an unusual one.
 restore_previous() {
   if [[ -z "$ROLLBACK_FROM" ]] || ! docker inspect "$PREV" >/dev/null 2>&1; then
     echo "nothing to roll back to - leaving the new container in place" >&2
@@ -115,7 +118,8 @@ restore_previous() {
 
 # Sized from the host rather than pinned, because the pin was wrong on both
 # boxes it ever ran on. 640m was chosen for a 908MB instance - about 70%, which
-# See docs/deployment.md.
+# left the host enough to breathe. Hard-coding it wastes a bigger machine and
+# over-commits a smaller one, unnoticed until the kills start.
 TOTAL_MB="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)"
 LIMIT_MB="$(( TOTAL_MB * 70 / 100 ))"
 [[ "$LIMIT_MB" -lt 512 ]] && LIMIT_MB=512

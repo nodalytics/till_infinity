@@ -9,7 +9,9 @@ on:
     branches: [main]
     # Prose and experiments change nothing the instance runs, and every deploy
     # is a restart. On 2026-08-14 four deploys in an afternoon each cost a
-    # See docs/deployment.md.
+    # backfill, one of them for a docs-only commit, and the level pipeline was
+    # down for four hours across them. A push that cannot alter the image should
+    # not restart the service.
     paths-ignore:
       - "docs/**"
       - "research/**"
@@ -32,7 +34,8 @@ jobs:
 
   # Both architectures, because the instances are not all the same. An
   # amd64-only image fails at `docker pull` on Graviton with "no matching
-  # See docs/deployment.md.
+  # manifest for linux/arm64/v8" - a clear message arriving at the least
+  # convenient moment, after the old box has been stopped for the cutover.
   build:
     needs: test
     strategy:
@@ -140,7 +143,9 @@ jobs:
 
       # `deploy.sh` prunes before it pulls, which is where the guarantee lives.
       # This step exists anyway, for two reasons worth the duplication: it runs
-      # See docs/deployment.md.
+      # before a byte is transferred, so a full disk cannot fail the scp either;
+      # and it holds when deploying a commit whose `deploy.sh` predates that fix,
+      # which is exactly when the box is already full.
       - name: Reclaim disk on the instance
         env:
           HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
