@@ -65,3 +65,37 @@ that way. Nothing was discarded.
         making a deliberate choice and keeps it.
 
 
+
+
+## `restore_deque` - a bound only the default carries is not a bound
+
+Added 2026-09-20, after `Cusum.events` was found to be the growth behind the
+container's OOM kills.
+
+`__setstate__` assigns the stored value straight onto the field. Pickle stores a
+deque's *contents*, and any state written while the field was a `list` - which
+is every state written before it was bounded - restores as a `list`. `maxlen` is
+then gone, and the field grows for the life of the process while its declaration
+says it cannot. Measured on the pre-fix source, a `deque(maxlen=22)` field
+restored from a list reached **10,110 entries**.
+
+This held for all 21 `deque(maxlen=...)` fields across 11 modules, which is why
+the repair is here rather than in `Cusum`. It also invalidated a line of
+reasoning used while hunting the leak: *"that field is a capped deque, so it
+cannot be what grows"* was read off the declaration and was not true of the
+running object. A bound is only evidence if it is checked on the live heap.
+
+### The stored bound wins
+
+The first version read the cap from the `default_factory` and forced it onto
+whatever arrived. That resized a restored `Zma._prices` window from 20 to 50,
+caught by `test_zma_wiring`, because **the bound can be per-instance**: `Zma`
+sizes its window from `period`, so the factory reports the number a
+default-constructed object would get and not this one's.
+
+So a stored deque is left exactly as it is - pickle preserves `maxlen`, and that
+is the instance's own answer. The factory is consulted only for a value that
+arrives carrying no bound at all: a `list`, a `tuple`, or a deque with
+`maxlen is None`. Reading the factory is also gated on the annotation naming a
+deque, so introspection never calls an unrelated one - `Learned._model` builds a
+river pipeline, and a cached field lookup has no business doing that.
