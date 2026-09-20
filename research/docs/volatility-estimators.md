@@ -88,3 +88,56 @@ Caveats: rank correlation only, so this says which estimator orders the future
 better and not how to map it to a lot size. Instruments are not independent of one
 another. And the lookback of 14 was fixed across every estimator rather than tuned
 per estimator, which would favour whichever suits 14 best.
+
+## The desk's own stack loses to an EWMA of true range
+
+The race above compared textbook estimators and left out the one that matters. The
+desk forecasts volatility through a consensus over GARCH, HAR, a learned
+regressor, a stated book and an analogue model, so the comparison that decides
+whether to change anything is against **that**, not against ATR.
+
+11,797 recorded level calls, one an hour per instrument so the forward windows do
+not overlap, 42 instruments, forecasting the realised range over the next 30
+minutes:
+
+| predictor | mean rho | median | wins |
+|---|---|---|---|
+| **EWMA true range** | **0.322** | **0.557** | **23/42** |
+| `forecast_bps` | 0.142 | 0.155 | 3/42 |
+| `vol_bps` - what sizing reads | 0.128 | 0.079 | 1/42 |
+| `range_bps` | 0.128 | 0.075 | 4/42 |
+| `ensemble_bps` | 0.124 | 0.092 | 1/42 |
+| `garch_bps` | 0.117 | 0.080 | 0/42 |
+| `risk_vol` | -0.026 | -0.023 | 10/42 |
+
+A fourteen-period EWMA of true range forecasts the next half hour about **2.3
+times** better than the best of the desk's own figures, and wins on 23 instruments
+against 3.
+
+### The caveat that could overturn this
+
+**The desk's estimators may be answering a different question.** `learned.py`
+forecasts five bars ahead by construction and GARCH targets the next bar's
+variance, so judging them at 30 minutes may be judging them on a horizon they were
+never built for. A fair verdict would compare each at its own horizon.
+
+What keeps it relevant anyway is that `vol_bps` is what **sizing reads**, through
+`scaling.by_volatility`, and the desk sizes trades it holds for minutes to hours.
+Whatever horizon the estimator was built for, 30 minutes is the horizon it is being
+used at.
+
+Two smaller notes. EWMA TR's median (0.557) is far above its mean (0.322), so it is
+strong on most instruments and poor on a few - the synthetics, whose volatility does
+not vary, which `impulse-consistency.md` found the same way. And `risk_vol` is
+negative here, which is not damning: it is a risk-to-invalidation measure rather
+than a volatility forecast, and it was included only to see whether it carried
+volatility information. It does not.
+
+### What to do
+
+Before changing any sizing, re-run this with each estimator at its own horizon -
+GARCH at one bar, `learned` at five - because that is the comparison the desk's
+own design implies and it is the one test that could reverse this. If EWMA true
+range still wins at the horizon sizing actually uses, add it as a feature and let
+`scaling.by_volatility` read it, which is a small change with a large measured
+difference behind it.
