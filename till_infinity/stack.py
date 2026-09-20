@@ -382,6 +382,47 @@ def _arm_task_dump() -> None:
         log.info("stack: SIGUSR1 will dump every task")
 
 
+def _arm_heap_dump() -> None:
+    """`kill -USR2` and it says what the heap is full of.
+
+    The container's memory is anonymous heap, not page cache - the kernel
+    reports 2.2GB anon against 331MB file, and the OOM kills recorded
+    `anon-rss: 2.7GB`. The persisted state is only 150MB, so whatever grows is
+    not saved, which rules the state file out as evidence and leaves code
+    reading, which has already ruled out the bounded structures. This counts
+    live objects by type instead of guessing.
+
+    Counts, not sizes: `sys.getsizeof` over millions of objects is slow and a
+    leak shows up as a count anyway. Guarded and rate-limited, because walking
+    the heap pauses the loop and this runs on a live desk.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - only outside a loop
+        return
+
+    def dump() -> None:
+        import gc
+
+        started = time.monotonic()
+        counts: dict[str, int] = {}
+        for obj in gc.get_objects():
+            name = type(obj).__name__
+            counts[name] = counts.get(name, 0) + 1
+        top = sorted(counts.items(), key=lambda kv: -kv[1])[:15]
+        log.warning(
+            "stack: heap has %d tracked object(s), walked in %.1fs",
+            sum(counts.values()),
+            time.monotonic() - started,
+        )
+        for name, n in top:
+            log.warning("stack: heap %-28s %d", name, n)
+
+    with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
+        loop.add_signal_handler(signal.SIGUSR2, dump)
+        log.info("stack: SIGUSR2 will dump what the heap is full of")
+
+
 class StackEndedError(RuntimeError):
     """Every service stopped without anybody asking for a shutdown.
 
@@ -437,6 +478,7 @@ class Stack:
                 book = await self._stack.enter_async_context(jr.Journal(_journal_db()))
 
             _arm_task_dump()
+            _arm_heap_dump()
             async with asyncio.TaskGroup() as group:
                 collectors: list[asyncio.Task[None]] = []
                 for name in runnable:

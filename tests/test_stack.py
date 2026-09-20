@@ -689,3 +689,44 @@ async def test_it_stops_saying_the_same_thing_a_hundred_thousand_times(caplog):
     assert len(said) < len(runs), (
         f"logged {len(said)} lines for {len(runs)} restarts - every one of them"
     )
+
+
+@contextlib.contextmanager
+def patch_running_loop(module, loop):
+    """Hand a module's `asyncio.get_running_loop` a stand-in loop."""
+    import asyncio as real
+
+    original = real.get_running_loop
+    real.get_running_loop = lambda: loop
+    try:
+        yield
+    finally:
+        real.get_running_loop = original
+
+
+@pytest.mark.asyncio
+async def test_sigusr2_says_what_the_heap_is_full_of(caplog):
+    """The container's memory is anonymous heap, not page cache: the kernel
+    reported 2.2GB anon against 331MB file, and the persisted state is 150MB.
+    So what grows is not saved, and counting live objects by type is the only
+    way to name it without guessing."""
+    import logging
+    import signal as sig
+
+    from till_infinity import stack as st
+
+    handlers = {}
+
+    class Loop:
+        def add_signal_handler(self, number, fn):
+            handlers[number] = fn
+
+    with patch_running_loop(st, Loop()):
+        st._arm_heap_dump()
+
+    assert sig.SIGUSR2 in handlers, "SIGUSR2 was never armed"
+    with caplog.at_level(logging.WARNING, logger=st.log.name):
+        handlers[sig.SIGUSR2]()
+    said = " ".join(r.getMessage() for r in caplog.records)
+    assert "tracked object(s)" in said, said
+    assert "heap " in said, "it must name the types it found"
