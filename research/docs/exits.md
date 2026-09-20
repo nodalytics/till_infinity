@@ -132,3 +132,41 @@ trades that *did* move, averaging +0.697R, which pulls the peer mean **up**, so
 the rule's +0.177R advantage is if anything understated. But any future analysis
 keying on `best_r` needs to treat zero as "unknown" rather than "flat", and the
 1,771 maximum noted above is the same field's other fault.
+
+## Per-instrument profit is selection, not skill
+
+Checked 2026-09-20 after the observation that the desk looks "very profitable in
+Volatility 100 Index". It does, in the record: 56 closed trades, **+237.69**, 62%
+wins, mean R +0.109. Three of the volatility indices are the three most profitable
+instruments on the book, which is a striking pattern to see.
+
+It is what looking at twenty instruments produces.
+
+| | |
+|---|---|
+| `volatility_100_index` | n=56, +237.69, mean R +0.109, **t = +0.81** |
+| its rank by mean R among the 20 instruments with 20+ trades | **4th** |
+| shuffling which instrument each trade belongs to, the best of 20 reached that P&L | **81.3% of 2,000 runs** |
+| ...reached that mean R | **93.3% of runs** |
+
+A result at least this good appears by chance, from the best of twenty, in 93% of
+shuffles. The instrument is not an unusual draw; it is a typical one, and its own
+t-statistic says so independently.
+
+**`volatility_75_index` deserves a specific warning.** At +716.68 it is the largest
+P&L on the book, from **24 trades**, with a mean R of only +0.147 and t = +0.71.
+Large money from a small mean R means the money came from position *size* rather
+than from better calls, which is the profile most likely to reverse - and 24 trades
+is nothing.
+
+This agrees with two measurements taken from other directions. The variance ratios
+on 2026-09-19 found the volatility indices to be random walks by construction, and
+`impulse-consistency.md` found continuation on them at 49.5% against a 49.4% base
+rate. Three independent lines, one answer.
+
+**The general rule this is the fourth instance of today.** Overlapping windows made
+the Coinbase premium t = 4.55; bar extremes rather than fills made an inverted boom
+signal look like +5.2%; price units rather than relative made every volatility
+estimator look like 0.57; and selection across twenty instruments makes one of them
+look profitable. Every one of them was a real number in a real record. The control
+is what decides, and the control has to be chosen before looking.
