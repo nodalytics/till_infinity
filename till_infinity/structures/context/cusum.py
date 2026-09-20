@@ -44,9 +44,28 @@ question something better than an average over a window somebody guessed.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 
 from ..state import Restorable
+
+#: Crossings kept per filter. Only the newest is ever read - `Ensemble.bias`
+#: takes `events[-1].side`, and nothing else looks at the list - but it was an
+#: unbounded `list`, so every filter kept every crossing it had ever made for
+#: the life of the process.
+#:
+#: This was the growth behind the OOM kills. A heap dump on 2026-09-20 found
+#: `Event` absent from the fifteen commonest types at 03:16 and at **350,672**
+#: five minutes later: +336k objects, which was the whole of the +337,736 the
+#: heap grew in that window, or about 1,100 crossings a second across every
+#: filter. Twelve hours of that is tens of millions of objects in a container
+#: with 2.6GB.
+#:
+#: A `deque` keeps `[-1]` and truthiness working unchanged, so no reader moves.
+#: 64 rather than 1 so a future reader can ask for recent history without
+#: reintroducing the same bug, and because bounding the tail is what matters,
+#: not how short it is.
+EVENTS_KEPT = 64
 
 #: Volatility units of net directional progress that constitute an event.
 #:
@@ -114,7 +133,7 @@ class Cusum(Restorable):
     down: float = 0.0
     last: float = 0.0
     started: bool = False
-    events: list[Event] = field(default_factory=list)
+    events: deque[Event] = field(default_factory=lambda: deque(maxlen=EVENTS_KEPT))
 
     def reset(self) -> None:
         self.up = 0.0

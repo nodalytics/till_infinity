@@ -100,3 +100,26 @@ def test_a_slow_accumulation_and_a_fast_one_both_register():
     assert slow
     assert fast
     assert slow[0].side == fast[0].side == "up"
+
+
+def test_the_filter_does_not_keep_every_crossing_it_ever_made():
+    """**`events` was an unbounded list and this was the OOM.**
+
+    A heap dump on 2026-09-20 found `Event` outside the fifteen commonest types
+    at 03:16 and at 350,672 five minutes later - the whole of the heap's
+    +337,736 in that window, about 1,100 crossings a second across every
+    filter, in a container with 2.6GB. Only `events[-1]` is ever read.
+    """
+    from till_infinity.structures.context.cusum import EVENTS_KEPT, Cusum
+
+    filter_ = Cusum(threshold=1.0)
+    price = 100.0
+    for step in range(4_000):
+        # Alternating runs long enough to fire, so every push earns a crossing.
+        price += 2.0 if (step // 3) % 2 == 0 else -2.0
+        filter_.push(price, unit=1.0, when=float(step), index=step)
+
+    assert len(filter_.events) <= EVENTS_KEPT, len(filter_.events)
+    # The reader still sees the newest crossing, which is all it ever wanted.
+    assert filter_.events[-1].side in ("up", "down")
+    assert filter_.events[-1].index > 3_000

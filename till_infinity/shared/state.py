@@ -31,6 +31,7 @@ other, and this one is cheap.
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import enum
 import functools
@@ -97,6 +98,71 @@ def restore_number(cls: type, name: str, value: Any) -> Any:
             return kind(float(value))
         except ValueError:
             return value
+    return value
+
+
+@functools.cache
+def _deque_bounds(cls: type) -> dict[str, int]:
+    """Field name -> `maxlen`, for fields whose default is a bounded deque.
+
+    The bound is in the `default_factory`, not the annotation, so the only way
+    to read it is to build one. Gated on the annotation first so this never
+    calls an unrelated factory - `Learned._model` builds a river pipeline, and
+    introspection has no business doing that. Cached like its neighbours.
+    """
+    try:
+        hints = typing.get_type_hints(cls)
+    except Exception:  # a forward reference this build cannot resolve
+        return {}
+    found = {}
+    for field in dataclasses.fields(cls):
+        hint = hints.get(field.name)
+        if typing.get_origin(hint) is not collections.deque and hint is not collections.deque:
+            continue
+        if field.default_factory is dataclasses.MISSING:
+            continue
+        try:
+            made = field.default_factory()
+        except Exception:  # a factory that needs arguments it cannot get here
+            continue
+        if isinstance(made, collections.deque) and made.maxlen is not None:
+            found[field.name] = made.maxlen
+    return found
+
+
+def restore_deque(cls: type, name: str, value: Any) -> Any:
+    """Put a bounded deque field back inside its bound.
+
+    **A bound that only the default carries is not a bound.** Pickle stores a
+    deque's contents, and this restores by assigning the stored value straight
+    onto the field, so a state written as a `list` - or written while the field
+    still *was* a list - lands as a list and `maxlen` is gone. The field then
+    grows for the life of the process while the declaration says it cannot.
+
+    That is not hypothetical. `Cusum.events` was an unbounded list and reached
+    350,672 live objects, about 1,100 a second, which was the growth behind the
+    container's OOM kills; bounding the field alone would have been undone by
+    the first restore. Every `deque(maxlen=...)` field in the codebase had the
+    same hole, which is why this is here rather than in `Cusum`.
+
+    Longer states keep their **newest** entries, which is what a deque with a
+    `maxlen` would have kept had it been bounded all along.
+
+    A stored deque is left exactly as it is, because pickle preserves `maxlen`
+    and the stored bound is the more trustworthy of the two: `Zma._prices` is
+    sized from the instance's `period`, so the factory's number is a placeholder
+    for a default-constructed object and not this one's bound. Forcing the
+    factory's cap onto it resized a restored window from 20 to 50. The factory
+    is therefore only a fallback, for a value that arrives carrying no bound of
+    its own - which is precisely the `list` case this exists for.
+    """
+    cap = _deque_bounds(cls).get(name)
+    if cap is None:
+        return value
+    if isinstance(value, collections.deque):
+        return value if value.maxlen is not None else collections.deque(value, maxlen=cap)
+    if isinstance(value, list | tuple):
+        return collections.deque(value, maxlen=cap)
     return value
 
 
@@ -179,5 +245,6 @@ class Restorable:
                 continue
             value = restore_enum(type(self), field.name, value)
             value = restore_number(type(self), field.name, value)
+            value = restore_deque(type(self), field.name, value)
             # `object.__setattr__`, so this works on frozen dataclasses too.
             object.__setattr__(self, field.name, value)

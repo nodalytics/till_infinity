@@ -207,6 +207,22 @@ CHANGE_MEMORY = 30.0
 #: episode because the wrong answer was the more believable one.
 HORIZON = 5
 
+#: **The 1.2MB in the table above is measured at 3,000 observations and does not
+#: hold.** A heap dump on 2026-09-20 found this one pooled tree holding 77,900
+#: `TEBSTSplitter` and 472,889 `EBSTNode`, each node carrying a `Mean` and a
+#: `Var` - about 1.4M of 4.2M live objects. At the ~1.3 bar-closes a second
+#: below, 3,000 observations is 38 minutes of running.
+#:
+#: It is a **floor, not a leak**: two dumps five minutes apart gave byte-identical
+#: counts, so the tree has plateaued and is not what grows. That mattered, since
+#: the growth was `Cusum.events` and capping the tree would have treated the
+#: wrong thing. Left unbounded deliberately - `max_depth` is 980 and river checks
+#: `max_size=500`MB only every `memory_estimate_period=1_000_000` learns, which
+#: at this rate is 8.9 days and so has never once run - because a cap changes
+#: what the forecaster predicts and nothing measured says it needs one. Revisit
+#: if a dump shows these counts moving; note that river's estimate undercounts,
+#: as `EBSTNode` has no `__slots__` and so pays for a `__dict__` per node.
+
 
 def _anomaly_model():
     """Joint anomaly score over the whole feature row.
