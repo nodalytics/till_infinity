@@ -1,6 +1,8 @@
 # Directional edge from the broker's own data
 
-Status: **planned, not built.**
+Status: **the horizon question is measured (2026-09-20). Nothing else is
+built.** The answer is at the end: no edge in the level calls out to a day,
+and the reason 1-5 minutes cannot work is arithmetic rather than signal.
 
 The desk can now read the broker directly through the MT5 bridge. This asks
 what that makes possible that was not possible before, and where a
@@ -85,3 +87,65 @@ what to build.
 * Edges appear only at horizons far longer than the desk is built for -
   which would be a finding rather than a failure, because it names what to
   build instead.
+
+## Result: the horizon sweep, 2026-09-20
+
+The corrected entry-referenced label from `meta-labelling.md`, extended from 1
+minute to 1 day on 28,208 level calls against 1,008,930 stored bars for the 33
+core instruments. The exit tolerance widens with the horizon, so that calls
+made before a market shuts are not silently dropped at the long end.
+
+| horizon | n | call right | gross | mean absolute move | net raw | best constant rule |
+|---|---|---|---|---|---|---|
+| 1m | 26,682 | 50.5% | -0.01bp | **2.1bp** | -2.07 | -2.04 |
+| 5m | 27,734 | 50.5% | -0.02 | 4.7 | -2.08 | -2.03 |
+| 15m | 27,953 | 50.5% | -0.08 | 8.0 | -2.13 | -1.98 |
+| 1h | 27,977 | 50.8% | -0.14 | 16.1 | -2.19 | -1.91 |
+| 4h | 27,661 | 50.7% | -1.05 | 32.1 | -3.11 | -1.00 |
+| 1d | 22,557 | 48.0% | -8.29 | 89.5 | -10.38 | **+6.20** |
+
+### The 1-day row is overlap, not edge
+
+It is the only row that looks like anything, and it does not survive the rule
+this document already set. 22,557 daily windows drawn from 33 instruments over
+23 days re-count the same day of return up to 35 times. Taking one call per
+instrument per day instead:
+
+| | n | mean | t |
+|---|---|---|---|
+| overlapping | 22,557 | -8.29bp | **-8.31** |
+| non-overlapping | 635 | -4.83bp | **-0.94** |
+
+Shuffling which side each call took reproduces an absolute t of 0.94 or more in
+**34.5% of 400 runs**, so the non-overlapping result is what chance returns a
+third of the time. 21 of 33 instruments favour inverting and 12 favour the raw
+call, spread from brent at -86bp to us100 at +39bp - the shape of 635 noisy
+observations, not of a shared effect. The `+6.20bp` in the table is also a rule
+chosen on the test data, which is a second reason to discard it.
+
+### What the sweep does establish
+
+The cost geometry, and this part is not a statistical claim:
+
+| horizon | mean absolute move | round trip as a share of it |
+|---|---|---|
+| 1m | 2.1bp | ~100% |
+| 15m | 8.0bp | ~25% |
+| 1h | 16.1bp | ~12% |
+| 4h | 32.1bp | ~6% |
+| 1d | 89.5bp | ~2% |
+
+**The desk scalps the one horizon where the spread cannot be cleared.** A
+genuine 55% edge earns about 0.1bp gross at a minute against 2bp of cost; the
+same 55% earns about 9bp at a day. No signal fixes a minute, and a mediocre
+signal is enough at a day. That is what names what to build: the candidates
+listed above are all daily-to-monthly, and that is not a coincidence.
+
+Caveat carried forward: spreads here are the stated per-class figures (1.5bp FX
+to 3bp crypto and energy), not measured per trade from the bridge's ticks. The
+conclusion does not lean on them, because the gross column is already zero at
+every horizon short of a day.
+
+Tests run for this result: 6 horizons x 1 label, plus 1 non-overlapping
+re-test and a 400-run shuffle. One cell of 6 crossed p < 0.05 naively and it is
+the one the overlap test rejects.

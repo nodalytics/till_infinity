@@ -129,6 +129,20 @@ since the gross column is already zero.
 
 So the meta-model has nothing to find at this horizon: the level calls carry
 no directional information at 5 minutes, conditioned on anything recorded.
-Not re-run at longer horizons - see `directional-edge.md` for why the horizon
-is the first thing to change.
+
+Re-run at longer horizons on 2026-09-20, out to a day: the call stays at
+50.5-50.8% through 4 hours, and the one row that looks different (48.0% at a
+day, which would make inverting worth +6.20bp net) is overlapping windows -
+t = -8.31 overlapping becomes t = -0.94 on one call per instrument per day, and
+a shuffled control beats that 34.5% of the time. See the horizon sweep in
+`directional-edge.md`, including the part that does hold: the mean absolute
+move is 2.1bp at a minute against a ~2bp round trip.
+
+**What this means for the two changes this document asks for.** Recording the
+label from the entry price and writing `level_id` are still the right fix - the
+current label is measured from the level and leaks the resolution side, so it
+will mislead anything that reads it later. But they buy no edge at the horizons
+the desk trades, so they are correctness work on the record, not a route to a
+model. Worth doing when the recording path is touched anyway; not worth a
+deploy of its own.
 
