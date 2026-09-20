@@ -208,20 +208,39 @@ CHANGE_MEMORY = 30.0
 HORIZON = 5
 
 #: **The 1.2MB in the table above is measured at 3,000 observations and does not
-#: hold.** A heap dump on 2026-09-20 found this one pooled tree holding 77,900
-#: `TEBSTSplitter` and 472,889 `EBSTNode`, each node carrying a `Mean` and a
-#: `Var` - about 1.4M of 4.2M live objects. At the ~1.3 bar-closes a second
-#: below, 3,000 observations is 38 minutes of running.
+#: hold.** A heap dump on 2026-09-20 found this one pooled tree holding 77,966
+#: `TEBSTSplitter` and 473,605 `EBSTNode`, each node carrying a `Mean` and a
+#: `Var` - about 1.4M of 4.2M live objects, and roughly **282MB** by river's own
+#: accounting at 595 bytes a node. At the ~1.3 bar-closes a second below, 3,000
+#: observations is 38 minutes of running.
 #:
-#: It is a **floor, not a leak**: two dumps five minutes apart gave byte-identical
-#: counts, so the tree has plateaued and is not what grows. That mattered, since
-#: the growth was `Cusum.events` and capping the tree would have treated the
-#: wrong thing. Left unbounded deliberately - `max_depth` is 980 and river checks
-#: `max_size=500`MB only every `memory_estimate_period=1_000_000` learns, which
-#: at this rate is 8.9 days and so has never once run - because a cap changes
-#: what the forecaster predicts and nothing measured says it needs one. Revisit
-#: if a dump shows these counts moving; note that river's estimate undercounts,
-#: as `EBSTNode` has no `__slots__` and so pays for a `__dict__` per node.
+#: It is a **floor, not a leak.** Dumps taken minutes apart, and across two
+#: separate process runs, gave byte-identical counts - 482,886 `Mean`, 482,794
+#: `Var`, 473,605 `EBSTNode`, 77,966 `TEBSTSplitter` every time - so the tree
+#: reaches a size and stays there. The growth that caused the OOM kills was
+#: `Cusum.events`, which is fixed. This is the other half of the problem: 1.35GB
+#: of largely static structure in a 2.6GB container, leaving no headroom for the
+#: work.
+#:
+#: **Two things kept it uncapped, and both had to change.** River checks
+#: `max_size` only every `memory_estimate_period` learns, which at 1,000,000 is
+#: 8.9 days at this rate, and this desk has never stayed up nine days - so the
+#: check had never once run. And the default `max_size` is 500MB, so even when it
+#: did run it would not have fired against a 282MB tree. Fixing only the period,
+#: which was the first diagnosis, would have changed nothing.
+#:
+#: Measured before choosing the number: a cap of 16MB checked every 5,000 learns
+#: held a tree to 15.8MB by river's own estimate, so enforcement is accurate to
+#: it. 32MB allows roughly 400 leaves - comparable to what an uncapped tree
+#: reached on 60,000 observations - and saves about 250MB of the floor.
+#:
+#: The value being traded away is small. This tree produces `forecast_bps`, which
+#: scored 0.142 to 0.249 against a plain EWMA of true range's 0.322 to 0.425 at
+#: every horizon tested - see `research/docs/volatility-estimators.md`. Over the
+#: cap river deactivates its least promising leaves rather than refusing to grow,
+#: so the tree keeps predicting and keeps adapting.
+MAX_TREE_MB = 32.0
+MEMORY_CHECK_EVERY = 5_000
 
 
 def _anomaly_model():
@@ -239,7 +258,11 @@ def _model():
 
     See `structures-vol-learned.md` in research/docs.
     """
-    return preprocessing.StandardScaler() | tree.HoeffdingTreeRegressor(grace_period=50)
+    return preprocessing.StandardScaler() | tree.HoeffdingTreeRegressor(
+        grace_period=50,
+        max_size=MAX_TREE_MB,
+        memory_estimate_period=MEMORY_CHECK_EVERY,
+    )
 
 
 @dataclass(slots=True)
