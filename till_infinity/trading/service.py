@@ -1115,6 +1115,33 @@ class Trader:
             self.passed_over[key] = self.passed_over.get(key, 0) + 1
         return None
 
+    def _shadow_unfilled(
+        self, payload: dict[str, Any], tick: Tick, engine: Any, intent: Intent
+    ) -> None:
+        """Follow an intent a strategy formed in parallel mode but did not get.
+
+        **Parallel mode was collecting no counterfactual at all.** Shadows come
+        only from `_also_wanted`, and `on_signal` returns `_take_all` before
+        reaching it whenever `parallel` is on - so every intent refused there for
+        a slot, a guard or a size simply vanished. The policy was left learning
+        from parked signals alone: 2,349 observations over weeks. Turning
+        parallel on to gather comparative data switched the comparison off.
+        """
+        found = payload.get("features")
+        readings = found if isinstance(found, dict) else {}
+        state = readings.get("regime")
+        interval = str(payload.get("interval") or "")
+        self._remember_untaken(
+            str(payload.get("feed") or ""),
+            engine.name,
+            intent,
+            interval,
+            engine.hold_for(interval),
+            tick.time,
+            float(state) if isinstance(state, int | float) else 0.0,
+            str(payload.get("market") or ""),
+        )
+
     async def _take_all(
         self,
         payload: dict[str, Any],
@@ -1129,6 +1156,7 @@ class Trader:
         """
         taken: list[tuple[str, Intent]] = []
         outcome: Intent | Refusal | None = None
+
         for engine in [first, *[e for e in self.strategies if e is not first]]:
             if engine is first:
                 wanted: Intent | Refusal | None = verdict
@@ -1165,6 +1193,7 @@ class Trader:
                 self.refused += 1
                 key = f"{engine.name}:already_open"
                 self.passed_over[key] = self.passed_over.get(key, 0) + 1
+                self._shadow_unfilled(payload, tick, engine, wanted)
                 continue
 
             # Re-read, per intent. See the docstring.
@@ -1180,6 +1209,7 @@ class Trader:
             if stopped is not None:
                 self.refused += 1
                 await self._record_refusal(wanted, stopped, engine.name)
+                self._shadow_unfilled(payload, tick, engine, wanted)
                 outcome = outcome or stopped
                 continue
 
@@ -1192,6 +1222,7 @@ class Trader:
             )
             if not sized.ok:
                 outcome = outcome or Refusal("size", sized.reason, wanted.feed)
+                self._shadow_unfilled(payload, tick, engine, wanted)
                 continue
             wanted = replace(wanted, volume=sized.volume, risk_money=sized.risk_money)
             got = await self.take(wanted, engine.name)
@@ -3676,6 +3707,25 @@ class Trader:
         position = live.position
         profit = position.profit if profit is None else profit
         self.guard.record(live.intent.feed, profit, self.equity)
+        # **A real close teaches the policy too, and until now none of them did.**
+        #
+        # `_credit` had exactly one caller, inside `_record_untaken`, so the
+        # ledgers learned only from intents that were *never traded* - and
+        # `_also_wanted`, the only thing that produces those, is bypassed
+        # whenever `parallel` is on, because the main path returns `_take_all`
+        # before reaching it. So on a desk running parallel the learner saw only
+        # parked signals: 2,349 observations over weeks, while 971 trades closed
+        # with real fills and real slippage that it never heard about.
+        #
+        # Real outcomes are the better evidence of the two. A shadow is followed
+        # on the quote stream and assumes its stop fills at the level; a real one
+        # paid the spread, the slippage and whatever the broker actually gave.
+        # Same unit either way - `r_multiple` against the intent, which `Score`
+        # clips - so the two are directly comparable in one ledger.
+        if live.by:
+            self._credit(
+                live.by, live.intent.feed, live.intent.interval, _r_multiple(live.intent, price)
+            )
         self._maybe_rearm(live, price)
         log.info(
             "trading: closed #%d %s [%s] @ %.5g for %+.2f (%s) · %s",
