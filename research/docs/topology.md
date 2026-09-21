@@ -82,10 +82,23 @@ clusters - the most replicated fact in finance. A trailing realised-volatility r
 clears that null easily. So the harness now fits three models on identical rows:
 topology alone, trailing volatility alone, and both together.
 
-The first indication is not encouraging for topology: adding six ordinary trailing
-volatility ratios took `expansion` from 0.3604 to **0.4305**. Most of the signal was
-never topological. The decisive number is `both together` against `trailing volatility
-only`, which is running.
+**And the baseline wins.** Three models on identical rows, `expansion`, 64,335 rows:
+
+| model | balanced accuracy | lift over null | features |
+|-------|------------------:|---------------:|---------:|
+| block-shuffled null | 0.3324 | - | - |
+| topology only | 0.3604 | +0.0280 | 12 |
+| **trailing volatility only** | **0.4279** | **+0.0954** | **6** |
+| both together | 0.4305 | +0.0981 | 18 |
+
+Six trivial realised-volatility ratios beat twelve persistence features by **6.8
+points**, and adding topology on top of them buys **0.0026** - a quarter of a point
+for a Vietoris-Rips filtration per window.
+
+So persistence is re-deriving volatility clustering the expensive way, and doing it
+worse than four lines of numpy. The registered prediction was correct that volatility
+beats noise where direction does not, and the baseline shows that this was never the
+interesting comparison.
 
 **The bar is not the shuffled null, it is GARCH.** A volatility signal that has not
 been compared against a conditional-variance model has established nothing, because
@@ -125,9 +138,45 @@ is why the controls are not optional: base rate as placebo, block bootstrap size
 window plus horizon, fit on the past and score on the future, leave one instrument out,
 and the survivor count printed against the count expected by chance.
 
-A smoke test on two instruments returned **0 of 7 shapes clearing their bands** against
-0.4 expected - but with 185 to 507 windows per shape the bands were +/-5 to 7%, too wide
-to conclude anything either way. The panel result belongs here when it lands.
+### The result: exactly chance
+
+77,190 windows across ten instruments, 19 shapes large enough to judge:
+
+| shape | n | hit | gap | bootstrap band | what is in it |
+|------:|--:|----:|----:|---------------:|---------------|
+| 17 | 1,021 | 51.9% | +2.2% | +/-3.3% | undiscovered |
+| 13 | 4,383 | 51.2% | +1.7% | +/-1.6% | 3% named, mostly double bottom |
+| 14 | 1,815 | 51.2% | +1.5% | +/-2.1% | 3% named, mostly double top |
+| 8 | 2,065 | 50.7% | +1.0% | +/-2.3% | undiscovered |
+| 0 | 611 | 46.2% | -3.7% | +/-4.1% | undiscovered |
+| 18 | 364 | 46.4% | -3.4% | +/-5.3% | 5% named, mostly double bottom |
+
+**1 of 19 shapes clears its bootstrap band, against about 1.0 expected by chance.**
+That is not a weak result, it is precisely the null: one survivor is what nineteen coin
+flips produce. The single survivor, shape 13 at +1.7% +/- 1.6%, clears by 0.1 points.
+
+The **undiscovered** clusters - those containing almost no named pattern, which were the
+whole point of the exercise - did no better than the rest. The best of them is +2.2%
++/- 3.3%, which does not clear.
+
+A smoke test on two instruments had returned 0 of 7 against 0.4 expected, with bands of
++/-5 to 7% too wide to conclude from. The panel has ten times the data and lands on
+chance.
+
+### What this rules out, and what it does not
+
+It rules out the specific claim the harness was built for: that clustering warp-invariant
+topological signatures of 40-bar windows finds shapes followed by a directional edge. On
+this instrument set, at this window and horizon, with these controls, it does not - and
+the `undiscovered` column being no better than the named one is the cleanest part of the
+answer.
+
+It does not rule out shapes in general. Four choices were made without justification and
+each could matter: the embedding dimension `DIM = 3` and unit lag, the 40-bar window, the
+24-bar horizon, and 20 clusters. The measure-theoretic embedding paper is explicit that
+`tau` and `m` should be chosen by false nearest neighbours or mutual information rather
+than assumed, and nothing here did that. A negative result under arbitrary parameters is
+weaker than a negative result under chosen ones.
 
 ## Which branch of topology is usable, and a correction
 
@@ -161,9 +210,10 @@ when the question is whether the *method* applies. It does:
 
 ## The honest position
 
-Across three representations, the only thing that has cleared a null is a **volatility**
-signal, and the first evidence says most of that belongs to trailing volatility rather
-than to topology. Nothing has yet identified an exploitable *shape*, old or new.
+Across three representations, the only thing to clear a null is a **volatility** signal,
+and it loses to six lines of trailing volatility by 6.8 points. Nothing has identified an
+exploitable *shape* - old, new, or undiscovered. The shape search landed exactly on its
+chance line.
 
 That is now consistent enough across this repository to be a prior rather than a
 coincidence: direction has failed six independent ways in `directional-edge`, again in
