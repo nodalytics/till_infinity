@@ -167,15 +167,41 @@ continuation while efficiency over 50 predicts reversal is a coherent story only
 distinguishes the two horizons. Nothing here does, and a variable that flips sign with its own
 lookback is as easily a fitting artefact as a crossover.
 
-### What would settle it, and it is one run
+### The pre-registered test: NOT CONFIRMED
 
-One **pre-registered** cell - window 20, hold 12 - on instruments held out from the search, with
-the error bar computed on the difference and no other cell scored. That is a single hypothesis, so
-no correction applies, and `power.py` says about 5,000 non-overlapping observations suffice at this
-effect size. The held-out half of 38 instruments provides them.
+Run as `confirm_efficiency.py` with the criterion fixed beforehand — one cell (window 20, hold 12),
+24 instruments never used to find the effect, error bar on the **difference**, non-overlapping,
+market exit, costs charged:
 
-Until that runs, the honest status is: **a monotone, cost-clearing, theoretically-indicated
-candidate that has not survived correction.**
+| held-out test | |
+|---|---|
+| top decile mean | **+0.0613** |
+| bottom decile mean | **−0.0330** |
+| difference | **+0.0943** |
+| 2 × bootstrap SE of the difference | **0.1031** |
+| top decile net of cost | +0.0367 |
+| n | 5,033 top / 5,036 bottom |
+
+**It misses by 8%.** The verdict was defined in advance as confirmed only if the difference cleared
+two standard errors of the difference, and it did not. No reinterpretation is being applied.
+
+Two things about the near-miss are worth stating without inflating them. The sample was **not**
+short — 5,033 is what `power.py` said was needed at this effect size; the bar is wide because the
+difference's standard error is properly computed, where the earlier run used the single-arm one.
+And the effect **replicated in both sign and magnitude on instruments never used to find it**:
++0.0943 held-out against +0.0631 in-sample, top arm positive and bottom arm negative as predicted.
+That is a near-miss with the right shape rather than a null.
+
+**Status: the most promising thing in this repository, and about one doubling of independent sample
+from being decidable.** Not a result, and not refuted.
+
+### What would settle it
+
+More independent observations, and the routes are bounded. `MaxBars` caps the bridge at 100,000
+bars per instrument, so more hourly history is not available. Finer bars give about four times the
+non-overlapping observations per unit of calendar time at this window and hold — 15m data exists
+for the synthetic family and covers roughly a year — so the practical route is a 15m pull across
+the FX, index and crypto instruments too, then the same pre-registered cell re-run once.
 
 ## 8. The theory, in one paragraph
 
