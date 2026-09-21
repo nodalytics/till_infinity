@@ -70,9 +70,30 @@ sys.path.insert(0, str(HERE.parent / "training"))
 import candles  # noqa: E402
 from efficiency import efficiency  # noqa: E402
 
-#: The pre-registered cell. Not swept.
-WINDOW = 20
-HOLD = 12
+#: The pre-registered cell, in bars. Not swept.
+#:
+#: **Overridable only to translate the same cell to another timeframe**, and the translation is
+#: not free of judgement, so it is stated here rather than decided at the prompt.
+#:
+#: The cell was fixed at 1h, so `window 20, hold 12` means a **20-hour** measurement window and a
+#: **12-hour** hold. Moving to 15m bars there are two different things it could mean, and they
+#: are different hypotheses:
+#:
+#: * **calendar-matched** (`window 80, hold 48` at 15m) keeps the 20h/12h spans. It is the
+#:   faithful translation - and it buys nothing. The stride is `max(window, hold)` bars, which is
+#:   80 x 15m = 20 hours, exactly the 1h version's 20 x 1h. Same number of independent
+#:   observations, over the same calendar period, re-measuring the same price moves from finer
+#:   bars. **It is not new evidence**, and an earlier claim in `a-theory-from-ohlc.md` that 15m
+#:   would give four times the sample was wrong for precisely this reason.
+#: * **bar-matched** (`window 20, hold 12` at 15m) keeps the bar counts, giving a 5-hour window
+#:   and a 3-hour hold. The stride falls to 5 hours, so there are about **four times** as many
+#:   independent observations - but it tests whether the effect is a property of the estimator's
+#:   *bar window* rather than of a 20-hour calendar span. That is a **different hypothesis**, so
+#:   a positive result here is exploratory and cannot be reported as confirming the 1h cell.
+#:
+#: The 1h run remains the only confirmatory test. Anything at 15m is labelled as what it is.
+WINDOW = int(os.environ.get("DE_WINDOW", "20"))
+HOLD = int(os.environ.get("DE_HOLD", "12"))
 
 #: Instruments the effect was found on. Excluded, so this is a genuine holdout.
 SEARCHED = frozenset(
@@ -99,7 +120,11 @@ SPREAD = {"boom": 0.004, "crash": 0.004, "volatility": 0.004, "default": 0.020}
 ANNUAL_SWAP = {"boom": 36.0, "crash": 18.0}
 
 DRAWS = 2000
-BLOCK = 4 * HOLD
+
+
+def block_len() -> int:
+    """Bootstrap block, longer than the hold so overlapping trades stay inside a block."""
+    return 4 * HOLD
 
 
 def cost_for(symbol: str, tr_frac: float) -> float:
@@ -122,18 +147,26 @@ def difference_error(top: np.ndarray, bottom: np.ndarray, seed: int = 0) -> floa
     out = np.empty(DRAWS)
     for d in range(DRAWS):
         picks = []
+        size = block_len()
         for arm in (top, bottom):
-            if len(arm) < BLOCK * 3:
+            if len(arm) < size * 3:
                 return float("nan")
-            count = int(np.ceil(len(arm) / BLOCK))
-            starts = rng.integers(0, len(arm) - BLOCK, size=count)
-            picks.append(np.concatenate([arm[i : i + BLOCK] for i in starts])[: len(arm)])
+            count = int(np.ceil(len(arm) / size))
+            starts = rng.integers(0, len(arm) - size, size=count)
+            picks.append(np.concatenate([arm[i : i + size] for i in starts])[: len(arm)])
         out[d] = picks[0].mean() - picks[1].mean()
     return float(out.std())
 
 
-def collect(where: Path, held: list[str], interval: str):
-    """Top and bottom decile returns across the held-out instruments, plus mean cost."""
+def collect(where: Path, held: list[str], interval: str, half: str = ""):
+    """Top and bottom decile returns across the held-out instruments, plus mean cost.
+
+    `half` splits each instrument's history by time: `"early"` keeps the first half of its
+    bars, `"late"` the second. **This is the period-stability test and it matters more than
+    another timeframe.** An effect present in 2017-2022 and absent since has decayed, and a
+    decayed edge is not an edge; the deciles are recomputed within each half so the split is
+    not contaminated by a threshold fitted on the whole series.
+    """
     top: list[float] = []
     bottom: list[float] = []
     costs: list[float] = []
@@ -143,6 +176,10 @@ def collect(where: Path, held: list[str], interval: str):
         if not found:
             continue
         bars, _repaired = candles.read(found[0])
+        if half == "early":
+            bars = bars[: len(bars) // 2]
+        elif half == "late":
+            bars = bars[len(bars) // 2 :]
         if len(bars) < 5000:
             continue
         tr = candles.true_range(bars)
@@ -174,7 +211,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("symbols", nargs="*", default=[])
     ap.add_argument("--where", default=os.environ.get("WHERE", ".secrets/broker-deep"))
-    ap.add_argument("--interval", default="1h")
+    ap.add_argument("--interval", default=os.environ.get("INTERVAL", "1h"))
+    ap.add_argument(
+        "--half",
+        default=os.environ.get("HALF", ""),
+        choices=["", "early", "late"],
+        help="split each instrument's history; the period-stability test",
+    )
     args = ap.parse_args()
 
     where = Path(args.where).expanduser()
@@ -188,14 +231,22 @@ def main() -> int:
         )
     held = [n for n in names if n not in SEARCHED and "micro" not in n and ".conv" not in n]
 
+    mode = (
+        "CONFIRMATORY (the pre-registered 1h cell)"
+        if args.interval == "1h" and (WINDOW, HOLD) == (20, 12)
+        else f"EXPLORATORY - {args.interval} bars, not the pre-registered cell"
+    )
     print(
-        f"PRE-REGISTERED: directional efficiency window {WINDOW}, hold {HOLD}, one cell.\n"
-        "Non-overlapping, market exit, no stop. Error bar on the DIFFERENCE.\n"
-        f"\nheld out {len(held)} instruments, excluding the {len(SEARCHED)} the effect was "
-        "found on:\n  " + ", ".join(held)
+        f"{mode}\n"
+        f"directional efficiency window {WINDOW}, hold {HOLD}, one cell, {args.interval} bars"
+        + (f", {args.half} half of each history.\n" if args.half else ".\n")
+        + "Non-overlapping, market exit, no stop. Error bar on the DIFFERENCE.\n"
+        + f"\nheld out {len(held)} instruments, excluding the {len(SEARCHED)} the effect "
+        + "was found on:\n  "
+        + ", ".join(held)
     )
 
-    top_a, bottom_a, cost, used = collect(where, held, args.interval)
+    top_a, bottom_a, cost, used = collect(where, held, args.interval, args.half)
 
     if len(top_a) < 500 or len(bottom_a) < 500:
         print(f"\nnot enough held-out observations: top {len(top_a)}, bottom {len(bottom_a)}")

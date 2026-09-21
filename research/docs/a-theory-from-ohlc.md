@@ -195,13 +195,54 @@ That is a near-miss with the right shape rather than a null.
 **Status: the most promising thing in this repository, and about one doubling of independent sample
 from being decidable.** Not a result, and not refuted.
 
-### What would settle it
+### Settled: the candidate has decayed, and it is dead
 
-More independent observations, and the routes are bounded. `MaxBars` caps the bridge at 100,000
-bars per instrument, so more hourly history is not available. Finer bars give about four times the
-non-overlapping observations per unit of calendar time at this window and hold — 15m data exists
-for the synthetic family and covers roughly a year — so the practical route is a 15m pull across
-the FX, index and crypto instruments too, then the same pre-registered cell re-run once.
+The 15m pull was done and the cell re-run. It resolved the question, though not in the way
+predicted, and two of my own claims were wrong on the way.
+
+**First correction.** The 15m route was supposed to give four times the independent observations.
+It does not, for the calendar-matched translation: the stride is `max(window, hold)` bars, so 80
+bars of 15m is 20 hours exactly as 20 bars of 1h is, giving the same count. Only the *bar-matched*
+version (window 20, hold 12 at 15m, i.e. a 5-hour window and a 3-hour hold) multiplies the sample,
+and that is a different hypothesis.
+
+**The bar-matched test says the effect is calendar-anchored, not bar-count.** At 15m with window 20
+and hold 12, on 11,233 observations and a tighter bar than the 1h test: top −0.0074, bottom +0.0058,
+difference **−0.0132 ± 0.0692**. Nothing, with the wrong sign. So the effect needs a ~20-hour span,
+not "20 bars" of any size.
+
+**Second correction, and it is the one that mattered.** I dismissed the calendar-matched 15m run as
+re-measuring the same price moves. It does not: **15m data covers 2022-09 to 2026-09, 4.02 years,
+against the 1h series' 2017-01 to 2026-09, 9.65 years.** It is the recent 42%, so it is a subperiod
+test, not a re-measurement.
+
+That prompted the test that should have been run first — splitting the 1h holdout by period:
+
+| 1h holdout, same pre-registered cell | difference | 2 × bootstrap SE | top net of cost |
+|---|---|---|---|
+| early half, 2017–2022 | **+0.0861** | 0.1497 | +0.0560 |
+| late half, 2022–2026 | **−0.0308** | 0.1340 | +0.0047 |
+
+**The effect is entirely in the early half and reverses sign in the recent half.** And three
+independent measurements of the recent period now agree:
+
+| recent-period measurement | difference |
+|---|---|
+| late half of 1h holdout | −0.0308 |
+| calendar-matched 15m (2022–2026 by construction) | −0.2461 |
+| bar-matched 15m (same period) | −0.0132 |
+
+All negative, against +0.0861 in the older period. No single one of them clears a bar, but their
+agreement is the point: the candidate is present in 2017–2022 and absent or reversed since.
+
+**A decayed edge is not an edge.** The candidate is dead, and the conclusion in this document
+stands as written: the strategy space reachable from OHLC is close to empty, and the binding
+constraint is data rather than method.
+
+The one genuinely useful by-product is a method note. **The period split should be the first test
+run on any future candidate, not the last.** It cost one command, it was decisive where the
+pre-registered holdout was a near-miss, and had it been run first it would have saved the 15m pull
+and two wrong claims about what that pull would buy.
 
 ## 8. The theory, in one paragraph
 
