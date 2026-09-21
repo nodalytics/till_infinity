@@ -28,3 +28,4 @@ document later.
 | [ensembles.md](ensembles.md) | not built - individual signals are weak; when combining them helps, when it cannot, and why the power audit makes this the best experiment left |
 | [carried-ideas.md](carried-ideas.md) | a triage - research directions from earlier work elsewhere, graded against what has since been measured here |
 | [more-mathematics.md](more-mathematics.md) | a triage - Catalan numbers, quantum mechanics with algebraic topology, and why a new formalism on the same close prices cannot add information |
+| [cross-spreads.md](cross-spreads.md) | not measured - the only positive directional result here is an arbitrage residual the account cannot hold; whether the holdable kind carries any of it, and what two legs cost |
