@@ -137,10 +137,11 @@ Three things remain genuinely untested, and they are cheap:
 ## Addendum, 2026-09-21: the finer bars settle it, and correct two claims
 
 `fade ON spike` was the one hypothesis this document left open. 5m and 15m bars for the
-Boom/Crash family were downloaded to resolve it. It is refuted, and the reasoning that made
-finer resolution look attractive was wrong twice over.
+Boom/Crash family were downloaded to resolve it. **It is not resolved, and it cannot be with
+this data** - see the correction below - and the reasoning that made finer resolution look
+attractive was wrong twice over.
 
-### The hypothesis fails on its own mirror symmetry
+### The hypothesis loses its mirror symmetry
 
 What made fading a spike interesting was that it was directionally consistent everywhere. At
 5m it is not:
@@ -152,8 +153,14 @@ What made fading a spike interesting was that it was directionally consistent ev
 
 **Each instrument flips sign between resolutions, and they flip in opposite directions.** Only
 the Crash 5m cell clears its error bar, at +0.085 against ±0.079, on n=404 - one marked cell
-out of dozens, and its mirror on Boom is negative. A structural effect on a pair of
-deliberately mirrored instruments does not behave this way; noise does.
+out of dozens, and its mirror on Boom is negative.
+
+**Corrected later the same day: this is not a refutation.** `power-and-sizing.md` shows the
+study was 50 to 82 times short of the sample needed to detect a tradable effect, so it cannot
+tell a real +1.6-point edge from zero. A sign flip is what an underpowered test produces either
+way. The honest verdict is **unresolvable with the data available**, and the route to resolving
+it is a larger event budget from the detector's `TARGET_RATE`, not finer bars - `MaxBars` caps
+those at about a year.
 
 ### Correction one: the sample barely grew
 
@@ -188,6 +195,8 @@ a faster timeframe to escape financing is moving the wrong way.
 
 ### What is left
 
-Nothing. Every hypothesis this research opened is now either measured null or refuted, and the
-cost structure is understood well enough to say why: the effects are around 0.03-0.08 TR and
-the costs are 0.08 TR and up.
+The cost structure is understood well enough to say why nothing has worked: effects are around
+0.03-0.08 TR and costs are 0.08 TR and up. But `power-and-sizing.md` shows that **seven of
+fifteen studies here could not have detected a tradable effect even if one existed**, so the
+correct summary is not "everything is refuted" - it is that the large-sample studies are real
+negatives and the small-cell ones, this one included, never had the power to say.
