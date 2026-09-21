@@ -1,0 +1,15 @@
+# The research-only ML and DL stack.
+#
+# **Deliberately not in `pyproject.toml`.** The desk's container has a 2.6GB
+# memory limit and has been OOM-killed sixty-three times; TensorFlow alone is a
+# 247MB wheel and neither it nor scikit-learn is imported by anything that runs
+# live. Keeping them here means `uv sync` for the desk cannot drag them in and a
+# resolution failure in this stack cannot break a deploy.
+#
+#   uv venv .venv-research --python 3.11
+#   uv pip install --python .venv-research/bin/python -r research/training/requirements.txt
+scikit-learn>=1.5
+tensorflow-cpu>=2.16,<2.21
+pandas>=2.2
+pyarrow>=15
+yfinance>=1.5.2

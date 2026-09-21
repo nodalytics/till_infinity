@@ -54,3 +54,4 @@ logs/
 # Claude Code
 .claude/
 __pycache__/
+.venv-research/
