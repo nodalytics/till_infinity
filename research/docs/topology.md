@@ -6,8 +6,9 @@ order is the argument. Each failed for a reason that motivated the next.
 | harness | representation | what it can see | outcome |
 |---------|----------------|-----------------|---------|
 | `motifs.py` | raw candle windows, k-means | fixed-length pixel patterns | died on its own bootstrap |
-| `tda.py` | persistence **scalars** | how much structure, not which | volatility yes, direction no |
-| `shapes.py` | persistence **images** | which shape, warp-invariant | built, running |
+| `tda.py` | persistence **scalars** | how much structure, not which | loses to 6 trailing-vol ratios |
+| `shapes.py` | persistence **images** | which shape, warp-invariant | chance, at the wrong embedding |
+| `embed.py` | - | the embedding itself | **lag 4, dimension 6 - not 1 and 3** |
 
 ## What clustering raw windows found, and why it does not count
 
@@ -171,12 +172,49 @@ this instrument set, at this window and horizon, with these controls, it does no
 the `undiscovered` column being no better than the named one is the cleanest part of the
 answer.
 
-It does not rule out shapes in general. Four choices were made without justification and
-each could matter: the embedding dimension `DIM = 3` and unit lag, the 40-bar window, the
-24-bar horizon, and 20 clusters. The measure-theoretic embedding paper is explicit that
-`tau` and `m` should be chosen by false nearest neighbours or mutual information rather
-than assumed, and nothing here did that. A negative result under arbitrary parameters is
-weaker than a negative result under chosen ones.
+It does not rule out shapes in general, and one of the reasons turned out to be real
+rather than rhetorical.
+
+## The embedding was wrong, and it was measurable
+
+`tda.py` and `shapes.py` both fixed the delay embedding at dimension 3 with unit lag.
+Neither had any justification for that, and the measure-theoretic embedding paper is
+explicit that `tau` and `m` should come from false nearest neighbours or mutual
+information rather than be assumed. So `embed.py` measures them.
+
+| instrument | lag | dim | false-neighbour fraction, dimensions 1-6 |
+|------------|----:|----:|------------------------------------------|
+| xauusd | 5 | 6 | 1.00 0.88 0.50 0.20 0.06 0.02 |
+| eurusd | 5 | 6 | 1.00 0.87 0.51 0.21 0.06 0.02 |
+| gbpusd | 2 | 6 | 1.00 0.88 0.51 0.19 0.07 0.02 |
+| usdjpy | 4 | 6 | 1.00 0.88 0.51 0.19 0.06 0.02 |
+| volatility_75 | 4 | 5 | 1.00 0.91 0.56 0.19 0.04 0.00 |
+| boom_1000 | 4 | 5 | 1.00 0.91 0.57 0.21 0.04 0.01 |
+| btcusd | 3 | 6 | 1.00 0.88 0.51 0.19 0.06 0.02 |
+
+**Median lag 4, median dimension 6.** Lag 1 embeds adjacent returns, which are nearly
+redundant, so the cloud collapses towards its diagonal and carries little shape;
+dimension 3 under-embeds a series whose false neighbours do not settle until 6. The
+curves are near-identical across seven instruments, so this is not a noisy estimate.
+
+A small structural detail worth keeping: every real instrument needs dimension **6**
+while both synthetics settle at **5**. The generated processes are genuinely simpler.
+
+So the `shapes.py` result above was measured at the wrong embedding, and the obvious
+objection to it - "your embedding was bad" - was correct. It is re-run at lag 4,
+dimension 6, window 64.
+
+**This affects the two harnesses differently.** The shape search is provisional until
+the re-run. The `tda.py` conclusion is far more robust to it: a better embedding would
+have to close a 6.8-point gap to six trailing-volatility ratios *and then* improve on
+the combined model, which is a much taller order than lifting 0.3604.
+
+### What `embed.py` cannot settle
+
+Both criteria were designed for deterministic chaotic systems observed with little
+noise, and a price series is neither. These are the least arbitrary choice available,
+not the correct embedding. Their value is that the next negative result is no longer
+answerable with "you picked 3 and 1 out of the air".
 
 ## Which branch of topology is usable, and a correction
 

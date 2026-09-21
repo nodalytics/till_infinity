@@ -77,9 +77,19 @@ sys.path.insert(0, str(HERE.parent / "training"))
 
 import candles  # noqa: E402
 
-#: Delay embedding dimension and window, as in `tda.py` so results are comparable.
-DIM = 3
-WINDOW = 40
+#: Delay embedding, **measured rather than assumed**. `embed.py` puts the first
+#: minimum of mutual information at a lag of 4 to 5 and false nearest neighbours at
+#: dimension 6 across every real instrument (5 on the synthetics), with near-identical
+#: curves on all seven tested. The first version of this file used lag 1 and dimension
+#: 3, which collapses the cloud towards its diagonal - adjacent returns are nearly
+#: redundant - and under-embeds it. Its negative result was measured at the wrong
+#: embedding.
+DIM = 6
+LAG = 4
+
+#: Bars in the window. It has to hold `DIM * LAG` coordinates plus enough points for a
+#: cloud to have shape, so raising the dimension raised this too.
+WINDOW = 64
 
 #: Persistence image resolution per side. 8x8 per homology dimension keeps the
 #: vector small enough to cluster and large enough to tell shapes apart.
@@ -111,7 +121,11 @@ def diagrams(bars: np.ndarray, at: int) -> dict[int, np.ndarray]:
     # Scaled out, so the diagram is about shape rather than about size - size is
     # what `vol_bps` already reports and what `tda.py` found.
     returns = returns / spread
-    points = np.stack([returns[i : i + DIM] for i in range(len(returns) - DIM + 1)])
+    span = (DIM - 1) * LAG
+    count = len(returns) - span
+    if count < DIM + 2:
+        return {}
+    points = np.stack([returns[i * LAG : i * LAG + count] for i in range(DIM)], axis=1)
     if len(points) < DIM + 2:
         return {}
     out = ripser(points, maxdim=1)["dgms"]
@@ -292,7 +306,7 @@ def main() -> int:
         return 1
 
     print(
-        f"delay d={DIM}, window {WINDOW}, persistence images {PIXELS}x{PIXELS} per "
+        f"delay d={DIM} lag={LAG}, window {WINDOW}, images {PIXELS}x{PIXELS} per "
         f"dimension, {args.shapes} shapes, one row per {args.every} bars\n"
     )
     rows, classes = build(paths, args.horizon, args.band, args.every)
