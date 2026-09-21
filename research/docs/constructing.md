@@ -181,3 +181,47 @@ both are about *data* rather than method, which is the same conclusion
 One further limit worth stating, which this document did not: the whole result rests on **25 days
 of one asset class**. Stability across two twelve-day halves is what was testable, and it passed;
 stability across years remains unmeasured.
+
+---
+
+## Addendum 2, 2026-09-21: the deviation's half-life is under one second
+
+The lag profile could not separate sub-minute arbitrage from receive-clock noise. Quotes can
+answer the question that actually decides the matter, which is not *what* the deviation is but
+**how long it stays open**.
+
+Fitted as an Ornstein-Uhlenbeck decay of the spread toward a trailing level, across 15 venue
+pairs on 5.25 million btc quotes spanning 2026-08-13 to 2026-09-21:
+
+| grid | 1s | 5s | 15s | 60s |
+|---|---|---|---|---|
+| median half-life | **0.6s** | 2.8s | 8.8s | 38.3s |
+
+**The estimate is about 0.6 grid steps at every resolution.** That is the signature of a process
+faster than the finest clock available: at a one-second grid the measurement is of the grid, not
+of the deviation, so the true half-life is at or below one second. The fit is not degenerate -
+`R²` runs 0.25 to 0.39 at the one-second grid.
+
+### What this settles
+
+**The cross-venue result is unreachable, and the number says so without needing the mechanism.**
+A deviation with a sub-second half-life cannot be acted on by a desk with one broker and 138ms of
+latency to its nearest venue, whether the deviation is genuine arbitrage or jitter between two
+receive clocks.
+
+That is a stronger and cleaner statement than the two already on record here. It was known that
+`Spread.tradeable` is false for every row, and that
+[`crossing.md`](crossing.md) measured 90.2% of deviations belonging to a venue the desk cannot
+hold. Both are facts about *access*. This is a fact about *time*, and it would hold even with
+accounts at both venues.
+
+### Status of the only positive result in this repository
+
+AUC 0.7610 across 63 pairs, stable across both halves of its window, replicating above the 0.6985
+originally reported. It is a real measurement of something. It is also **not a strategy and cannot
+become one on this infrastructure**, and the reason is now a measured half-life rather than an
+argument about tradeability.
+
+`spreadquotes.py` computes this spread from live quotes and keeps a z-score on it. Nothing
+downstream should act on that z-score expecting to capture reversion; at a sub-second half-life,
+by the time a signal is published the deviation has closed several times over.
