@@ -122,3 +122,62 @@ question on.
 
     till-infinity prices spreads
     till-infinity prices spreads --kind venue --build 1m --build 15m
+
+---
+
+## Addendum, 2026-09-21: the signal lives entirely inside one bar
+
+Re-measured on the multi-venue store — 63 venue pairs across btc, eth and sol, six venues,
+2026-08-14 to 2026-09-08.
+
+**The finding replicates and does not decay.** Mean AUC across 63 spread series is **0.7610**
+against **0.5122** for the same detector on outright single-venue prices, and it is stable across
+the two halves of the window — 0.7574 then 0.7647. That is above the 0.6985 reported here
+originally, with the control flat at chance in both halves. Whatever it is, it is real and it is
+not a fluke of the original sample.
+
+**But it reaches only one bar ahead.** Scoring the same `-z` against the step at increasing lag:
+
+| lag (minutes) | 1 | 2 | 3 | 5 | 10 | 20 |
+|---|---|---|---|---|---|---|
+| mean AUC, 63 pairs | **0.7610** | **0.5151** | 0.5077 | 0.5032 | 0.5001 | 0.5007 |
+
+It collapses at lag 2 and is gone by lag 10.
+
+### What that does and does not settle
+
+**It does not identify the mechanism**, and a harness written here first claimed it did. Two
+explanations produce an identical lag-1-only profile:
+
+* **non-synchronous sampling** — every timestamp in this store is our own receive clock
+  ([lagging.md](lagging.md)), so a spread between two venues carries measurement noise that
+  reverts within one bar by construction, and was never a real price difference;
+* **genuine sub-minute arbitrage** — cross-venue crypto arbitrage closes in seconds, so a real
+  deviation also completes inside one 1-minute bar and leaves nothing for the next close.
+
+One-minute bars cannot separate them. This document already half-said so — the spreads "revert by
+arbitrage... which operates in seconds", and "a 1m close samples a seconds-scale process once and
+misses most of it" — and [`spreadquotes.py`](../../till_infinity/structures/spreadquotes.py)
+exists because of it. Settling the mechanism needs the `quotes` table, not `bars`.
+
+**It does settle reachability, and that is the practical point.** The whole signal is inside one
+bar, so **a rule that reads a bar close and then acts has nothing left to trade**. That holds
+whichever mechanism is right, and it is a stronger constraint than the untradeability already
+recorded here: it was never only that the second leg sits at a venue the desk cannot hold, it is
+that by the time a bar has closed the deviation has already gone.
+
+### Where that leaves the only positive result here
+
+AUC 0.70 stands as a measurement and is no longer the thing to build on. Two routes remain, and
+both are about *data* rather than method, which is the same conclusion
+[`a-theory-from-ohlc.md`](a-theory-from-ohlc.md) reaches from the other end:
+
+* **quotes rather than bars**, which would both identify the mechanism and give the only
+  resolution at which the deviation is still open;
+* **a venue pair the account can actually hold**, since `Spread.tradeable` is false for every row
+  above and [`crossing.md`](crossing.md) measured 90.2% of cross-venue deviations belonging to a
+  venue the desk cannot reach.
+
+One further limit worth stating, which this document did not: the whole result rests on **25 days
+of one asset class**. Stability across two twelve-day halves is what was testable, and it passed;
+stability across years remains unmeasured.
