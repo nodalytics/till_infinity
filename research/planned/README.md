@@ -25,3 +25,5 @@ document later.
 | [meta-labelling.md](meta-labelling.md) | measured - no edge (AUC 0.506); the level calls carry no direction at 5 minutes, and the old label would have taught "always invert" |
 | [directional-edge.md](directional-edge.md) | not built - where a directional edge could live now the broker is readable, and why the horizon comes before the signal |
 | [local-models.md](local-models.md) | not built - the host exists (64 cores, 125GB) and has no GPU, which is fine for `agents` and rules out `council` |
+| [ensembles.md](ensembles.md) | not built - individual signals are weak; when combining them helps, when it cannot, and why the power audit makes this the best experiment left |
+| [carried-ideas.md](carried-ideas.md) | a triage - research directions from earlier work elsewhere, graded against what has since been measured here |
