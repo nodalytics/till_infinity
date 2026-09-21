@@ -133,6 +133,33 @@ square root. So `m` must grow faster than the financing over the same period, wh
 useful horizon from above while the detection floor in `power-and-sizing.md` bounds the sample from
 below.
 
+## One more thing (6) gives, combined with the square-root impact law
+
+The square-root law of market impact - `I(Q) ~ k Q^(1/2)`, confirmed on complete Tokyo Stock
+Exchange data and holding across stocks and across individual accounts - composes with (6) to give a
+capacity result, and the result is sharper than expected.
+
+Gross profit on size `Q` is linear in size, `Q m`. Impact cost is `Q` units each paying `k Q^(1/2)`,
+so total cost is `k Q^(3/2)`. Net:
+
+    N(Q) = Q m - k Q^(3/2)
+
+Maximising, `dN/dQ = m - (3/2) k Q^(1/2) = 0`, so
+
+    **Q* = (2 m / 3 k)^2**          and          **N(Q*) = 4 m^3 / (27 k^2)**
+
+**Capacity-limited profit is cubic in the edge.** Halving `m` does not halve the money, it divides it
+by eight. That is a much harsher penalty on a small edge than the linear intuition, and it composes
+badly with the two bounds already measured here: `power-and-sizing.md` puts the detection floor near
+two points and `costs.md` puts the cost hurdle near two points, so any edge this programme could both
+*find* and *pay for* sits at the very bottom of the `m^3` curve.
+
+**The honest scope limit.** This account trades broker-quoted synthetics and retail FX, where a lot
+size moves no book and `k` is effectively zero - so impact does not bind here, and the binding costs
+remain spread and carry. The capacity result is therefore a reason a found edge could not be *scaled*,
+not a reason it does not exist. It becomes the binding constraint only at size, and it is worth having
+written down before that rather than after.
+
 **A note on where this came from.** The derivation is one physical idea - a conserved quantity under
 an arbitrary stopping rule - combined with Wald's identity, the Lévy overshoot, and a slippage
 figure measured from 305 live fills. None of those four is finance; three are not even probability
