@@ -43,6 +43,7 @@ from . import spreadquotes as sq
 from . import zma as zm
 from .config import DEFAULT_FORMATION
 from .context import sessions
+from .context.character import Character
 from .drawing import (
     confluence,
     equals,
@@ -1296,13 +1297,45 @@ class Engine:
         step = float(closes[-1]) - float(closes[-2])
         was_up, was_down = stamps.get(key, (0.0, 0.0))
         up, down = pair
-        if up.update(step, scale=unit):
+        up_fired = bool(up.update(step, scale=unit))
+        if up_fired:
             up.reset()
             was_up = self._now
-        if down.update(step, scale=unit):
+        down_fired = bool(down.update(step, scale=unit))
+        if down_fired:
             down.reset()
             was_down = self._now
         stamps[key] = (was_up, was_down)
+        self._note_character(feed, interval, up_fired, down_fired)
+
+    def _note_character(self, feed: str, interval: str, up_fired: bool, down_fired: bool) -> None:
+        """Is this instrument still behaving like itself?
+
+        A monitor, not a signal - see `structures-context-character.md`. Kept in its own
+        method so a fault in it cannot reach the detectors above, and `getattr`-guarded
+        for the same reason `_changes` is: the engine is persisted whole and is not a
+        `Restorable` dataclass, so nothing fills in a new attribute on restore and this
+        runs on the first bar after a deploy.
+        """
+        held = getattr(self, "_character", None)
+        if held is None:
+            held = self._character = {}
+        key = (feed, interval)
+        watch = held.get(key)
+        if watch is None:
+            watch = held[key] = Character()
+        watch.observe(up_fired, down_fired)
+        for said in watch.alarms():
+            # A warning, because it needs a person and there is nothing to do
+            # automatically: whether a changed instrument should still be traded is not
+            # a decision this process is entitled to make.
+            log.warning("structures: %s %s - %s", feed, interval, said)
+
+    def character(self, feed: str, interval: str) -> dict:
+        """This series' character reading, or an empty dict if it has none yet."""
+        held = getattr(self, "_character", None)
+        watch = held.get((feed, interval)) if held else None
+        return watch.to_dict() if watch is not None else {}
 
     def _learn_vol(
         self,
