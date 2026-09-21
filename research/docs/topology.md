@@ -7,7 +7,7 @@ order is the argument. Each failed for a reason that motivated the next.
 |---------|----------------|-----------------|---------|
 | `motifs.py` | raw candle windows, k-means | fixed-length pixel patterns | died on its own bootstrap |
 | `tda.py` | persistence **scalars** | how much structure, not which | loses to 6 trailing-vol ratios |
-| `shapes.py` | persistence **images** | which shape, warp-invariant | chance, at the wrong embedding |
+| `shapes.py` | persistence **images** | which shape, warp-invariant | chance, at both embeddings |
 | `embed.py` | - | the embedding itself | **lag 4, dimension 6 - not 1 and 3** |
 
 ## What clustering raw windows found, and why it does not count
@@ -166,11 +166,12 @@ chance.
 
 ### What this rules out, and what it does not
 
-It rules out the specific claim the harness was built for: that clustering warp-invariant
-topological signatures of 40-bar windows finds shapes followed by a directional edge. On
-this instrument set, at this window and horizon, with these controls, it does not - and
-the `undiscovered` column being no better than the named one is the cleanest part of the
-answer.
+It rules out the specific claim the harness was built for: that clustering
+warp-invariant topological signatures finds shapes followed by a directional edge. On
+this instrument set, at two different embeddings - one arbitrary, one measured - with
+these controls, it does not. The `undiscovered` column being no better than the named
+one is the cleanest part of the answer, because that column was the entire reason for
+preferring discovery over the textbook list.
 
 It does not rule out shapes in general, and one of the reasons turned out to be real
 rather than rhetorical.
@@ -201,8 +202,21 @@ A small structural detail worth keeping: every real instrument needs dimension *
 while both synthetics settle at **5**. The generated processes are genuinely simpler.
 
 So the `shapes.py` result above was measured at the wrong embedding, and the obvious
-objection to it - "your embedding was bad" - was correct. It is re-run at lag 4,
-dimension 6, window 64.
+objection to it - "your embedding was bad" - was correct. Re-running at lag 4, dimension
+6, window 64 gives **the same answer**: 77,169 windows, 19 shapes, **1 clears its
+bootstrap band against about 1.0 expected by chance**.
+
+And the detail that settles it: **the survivor changed identity.** At lag 1 and
+dimension 3 it was shape 13 at +1.7%; at lag 4 and dimension 6 it is shape 19 at
+-3.4% - a different cluster, with the opposite sign. A real effect keeps its identity
+when the representation improves. A coin flip does not. The count sitting exactly on its
+expectation while the winner moves is what chance looks like from two angles.
+
+The `undiscovered` clusters again did no better than the named ones. The largest gap in
+the whole table belongs to one of them - shape 10 at +4.4% - and its band is +/-5.9%.
+
+So the negative result is now robust to the objection that motivated the re-run, which
+makes it worth considerably more than it was an hour earlier.
 
 **This affects the two harnesses differently.** The shape search is provisional until
 the re-run. The `tda.py` conclusion is far more robust to it: a better embedding would
