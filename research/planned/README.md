@@ -27,3 +27,4 @@ document later.
 | [local-models.md](local-models.md) | not built - the host exists (64 cores, 125GB) and has no GPU, which is fine for `agents` and rules out `council` |
 | [ensembles.md](ensembles.md) | not built - individual signals are weak; when combining them helps, when it cannot, and why the power audit makes this the best experiment left |
 | [carried-ideas.md](carried-ideas.md) | a triage - research directions from earlier work elsewhere, graded against what has since been measured here |
+| [more-mathematics.md](more-mathematics.md) | a triage - Catalan numbers, quantum mechanics with algebraic topology, and why a new formalism on the same close prices cannot add information |
