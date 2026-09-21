@@ -72,8 +72,13 @@ import changepoint  # noqa: E402
 import imbalance  # noqa: E402
 from net_edge import ANNUAL_SWAP, SPREAD_R  # noqa: E402
 
-#: Holding periods, in bars. One hour to four days.
+#: Holding periods, in bars. One bar to four days at hourly resolution.
 HORIZONS = (1, 2, 3, 6, 12, 24, 48, 96)
+
+#: Hours one bar covers, per interval. **Carry is charged per hour, not per bar**, so
+#: without this a 5m run would be billed twelve times its real financing - which would
+#: bury exactly the effect finer bars were downloaded to measure.
+BAR_HOURS = {"1m": 1 / 60, "5m": 1 / 12, "15m": 0.25, "30m": 0.5, "1h": 1.0, "4h": 4.0}
 
 #: Limit target for the "target or time" style, in true ranges.
 TARGET = 1.0
@@ -194,6 +199,7 @@ def main() -> int:
     )
     ap.add_argument("--where", default=os.environ.get("WHERE", ".secrets/broker-deep"))
     ap.add_argument("--style", default="time", choices=["time", "target or time"])
+    ap.add_argument("--interval", default=os.environ.get("INTERVAL", "1h"))
     args = ap.parse_args()
 
     print(
@@ -206,7 +212,9 @@ def main() -> int:
     )
 
     for symbol in args.symbols:
-        found = sorted(Path(args.where).expanduser().glob(f"{symbol}_1h_broker.csv.gz"))
+        found = sorted(
+            Path(args.where).expanduser().glob(f"{symbol}_{args.interval}_broker.csv.gz")
+        )
         if not found:
             print(f"{symbol:<22} no file")
             continue
@@ -234,7 +242,8 @@ def main() -> int:
                 got = returns(bars, tr, where, side, horizon, args.style)
                 if len(got) < 200:
                     continue
-                charge = cost + carry_day * horizon / 24.0
+                hours = horizon * BAR_HOURS.get(args.interval, 1.0)
+                charge = cost + carry_day * hours / 24.0
                 gross = float(got.mean())
                 net = gross - charge
                 err = block_error(got, horizon)

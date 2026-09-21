@@ -122,9 +122,9 @@ resolution, there is no directional signal to collect.**
 
 Three things remain genuinely untested, and they are cheap:
 
-* **Resolution.** Spread is per-trade, carry per-time. At five minutes the same signal pays the
-  same spread and a twelfth of the carry, and `fade ON spike` would have twelve times the
-  sample. No synthetic data below one hour has ever been downloaded.
+* ~~**Resolution.**~~ **Settled 2026-09-21, and both halves of the argument were wrong.**
+  5m and 15m bars for the Boom/Crash family were downloaded and the hypothesis is refuted -
+  see the addendum below.
 * **Position sizing.** Every number in this repository is per-trade expectancy. With p01 at
   −2.17 TR and no stop, sizing decides survival, and no Kelly fraction or drawdown estimate has
   ever been computed.
@@ -132,3 +132,62 @@ Three things remain genuinely untested, and they are cheap:
   past "nulls" - the spike rules above most clearly - are underpowered rather than negative, and
   an experiment whose detectable effect exceeds its cost hurdle cannot succeed whatever it
   returns.
+
+
+## Addendum, 2026-09-21: the finer bars settle it, and correct two claims
+
+`fade ON spike` was the one hypothesis this document left open. 5m and 15m bars for the
+Boom/Crash family were downloaded to resolve it. It is refuted, and the reasoning that made
+finer resolution look attractive was wrong twice over.
+
+### The hypothesis fails on its own mirror symmetry
+
+What made fading a spike interesting was that it was directionally consistent everywhere. At
+5m it is not:
+
+| rule, one bar held | at 1h | at 5m |
+|---|---|---|
+| Boom, `fade ON spike` | +0.031 | **−0.030** |
+| Crash, `fade OFF spike` | −0.006 | **+0.085** |
+
+**Each instrument flips sign between resolutions, and they flip in opposite directions.** Only
+the Crash 5m cell clears its error bar, at +0.085 against ±0.079, on n=404 - one marked cell
+out of dozens, and its mirror on Boom is negative. A structural effect on a pair of
+deliberately mirrored instruments does not behave this way; noise does.
+
+### Correction one: the sample barely grew
+
+The expectation was twelve times the events. It was **1.6 times** - 404 against 247.
+
+`MaxBars` caps the bridge at 100,000 bars per symbol, so 5m buys about **347 days** where 1h
+buys 7.4 years. Finer resolution does not buy more history, it re-slices less of it. To get
+more spike events the lever is the detector's set point - `TARGET_RATE` in `changepoint.py`,
+which is an explicit research budget - not the bar size.
+
+### Correction two: carry gets worse at finer resolution, not better
+
+This document said 5m "pays the same spread and a twelfth of the carry". The first half is
+right and the second is backwards.
+
+Carry is charged per unit of *time* but measured here in true ranges, and **one true range
+shrinks faster than the clock does**:
+
+| carry, in TR per day | 1h | 5m | ratio |
+|---|---|---|---|
+| Boom 1000 | 0.321 | **1.940** | 6.0x |
+| Crash 1000 | 0.161 | **0.974** | 6.0x |
+
+So per hour held, financing costs **six times more** of a risk unit at 5m than at 1h. Per
+*bar* held it is about half, because twelve bars fit in the hour - which is the grain of truth
+the original claim was built on, and it only helps a strategy whose holding period shrinks in
+proportion to the bar size.
+
+The general form is worth keeping: a cost charged per unit of time, expressed in a risk unit
+that scales with the square root of time, **gets relatively worse the finer you go**. Moving to
+a faster timeframe to escape financing is moving the wrong way.
+
+### What is left
+
+Nothing. Every hypothesis this research opened is now either measured null or refuted, and the
+cost structure is understood well enough to say why: the effects are around 0.03-0.08 TR and
+the costs are 0.08 TR and up.
