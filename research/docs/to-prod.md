@@ -4,17 +4,39 @@ Written after `costs.md`, `stop-free.md`, `detectors.md` and `breakout-runs.md`.
 answer to a direct question: from all of it, what goes to prod?
 
 **No signal.** Nothing cleared its own error bar and its cost line together. What follows is
-corrections and guardrails, ranked by expected value, and the first one is measured, one line,
-and currently wrong.
+corrections and guardrails, ranked by expected value.
 
-## A. `TRADING_STOP_SLIPPAGE` is 0.0 and should not be
+Read A first as a method warning rather than an action: its original recommendation was wrong
+because it compared against the repository's stale copy of the production environment instead
+of the instance.
+
+## A. `TRADING_STOP_SLIPPAGE` — already set, already right
+
+> **Corrected 2026-09-21, same day.** This section originally claimed the knob was unset and
+> that prod was sizing every position about 20% too large. **Both claims were wrong.** The
+> live `till.env` on the instance carries `TRADING_STOP_SLIPPAGE=0.09` and the running
+> container sees it. The mistake was reading the repository's local `.secrets/prod-till.env`
+> and treating it as the live environment; the local copy is stale.
+>
+> Measured against real fills rather than bars - 305 stop-outs from the journal's `outcome`
+> entries - the **mean overshoot is 0.0633 of one stop**, with a median of 0.0030, 61.6% of
+> stop-outs landing below −1.0 R and a worst single fill at −2.879. So prod's 0.09 sits just
+> above the measured mean, which is the correct side of it given that tail.
+>
+> **There is nothing to change here.** The value was well chosen before this research
+> started. What the research adds is the number that justifies it, and the confirmation that
+> the bar-derived 0.24-0.29 figures below are loose upper bounds rather than the cost.
+>
+> The lesson worth keeping: **the repository's copy of the production environment is not the
+> production environment.** Any claim about a live setting has to be read off the instance.
+
+The reasoning below is retained because the mechanism and the measurement are still correct -
+only the conclusion about prod's configuration was wrong.
 
 The knob already exists in `trading/config.py` and its own docstring describes exactly what
 this research measured: *"a broker stop fills through the spread and the money that leaves the
 account is what a risk budget is about."* It inflates the stop distance used for sizing, so
 positions come out smaller.
-
-`TRADING_STOP_SLIPPAGE` is unset in the live environment, so it defaults to `0.0`.
 
 Measured stop overshoot, as a share of a 1 TR stop, from 65,000 hourly bars per instrument:
 
@@ -26,19 +48,18 @@ Measured stop overshoot, as a share of a 1 TR stop, from 65,000 hourly bars per 
 | Boom 1000 | 0.236 |
 | Volatility 75 | 0.166 |
 
-**Prod is therefore sizing every position roughly 20% too large**, and the error is worst on
-gold and EURUSD rather than on the synthetics, which is the opposite of what anyone assumed.
-This reduces risk rather than chasing return, which is why it is first.
+Those are **upper bounds**, not costs: a bar extreme is the worst price printed in the hour
+while a stop fills somewhere between the trigger and that extreme. `costs.md` bracketed the
+truth at `0.04 <= slippage <= 0.24` by deriving the lower end from the price path.
 
-Caveat on the number: the bar extreme is the *worst* price printed in the hour, so 0.24-0.29
-is an upper bound and the truth is bracketed at `0.04 <= slippage <= 0.24` - see `costs.md`
-for how the lower bound is derived from the price path. A value near the bottom of the bracket
-is the conservative choice to ship; the bracket only narrows with tick data.
+**The journal settles it, and the answer is near the bottom of the bracket.** 305 stop-outs
+from live `outcome` entries give a mean overshoot of **0.0633** of one stop and a median of
+**0.0030** - most stops fill essentially clean and a thin tail carries the whole cost. The
+bar-derived figures are about four times the realised number.
 
-Independent corroboration: `excursion.md` recorded live losers at a p90 adverse excursion of
-**1.267 R against 1.0 R stops** - overshoot of about 0.27 R from real fills, at the top of the
-bracket. That reading could also come from stops being moved mid-trade, which the journal's
-per-ticket history would settle and nobody has checked.
+The direction of the error is worth noting for future harnesses: measuring slippage from bar
+extremes overstates it badly, and every conclusion drawn from the 0.24 figure - including this
+document's own first version - should be re-read with 0.063 in its place.
 
 ## B. Be flat at rollover
 

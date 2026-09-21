@@ -109,7 +109,25 @@ Charging it turns every positive cell negative: Boom 1000 goes from +0.041 R to 
 R**, Crash 1000 from +0.058 R to -0.181 R. And that accounting now agrees with the price
 series, which is the point of it.
 
-## What is actually known, stated as a bracket
+## Settled since, from live fills
+
+**The bracket below has been closed by the journal and the answer is near its bottom.** 305
+stop-outs from live `outcome` entries give a **mean overshoot of 0.0633** of one stop, median
+0.0030, with 61.6% of stop-outs landing below −1.0 R and a worst single fill at −2.879. Most
+stops fill essentially clean; a thin tail carries the entire cost.
+
+So the bar-derived figures in this document are roughly **four times** the realised cost. The
+reconciliation argument below, which predicted at least 0.04 from the price path alone, was
+close; the bar-extreme upper bound was loose. Every conclusion drawn from 0.24 here should be
+re-read with 0.063 in its place - which does not revive the Boom result, because 0.063 still
+exceeds the 0.041 R net it was left with, but it changes the margin from three times over to
+about half again.
+
+The general lesson for future harnesses: **measuring slippage from bar extremes overstates it
+badly**, because a bar's extreme is the worst price in the hour and a stop fills at the first
+price after its trigger. Where a journal exists, read the fills.
+
+## What was knowable from bars alone, stated as a bracket
 
 The bar extreme is the **worst** price printed in that hour, and a stop fills somewhere
 between the stop and that extreme, so 0.24 R is an upper bound and not an estimate.
