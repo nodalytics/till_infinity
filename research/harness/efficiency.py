@@ -160,7 +160,15 @@ def block_error(values: np.ndarray, hold: int, seed: int = 0) -> float:
     return float(means.std())
 
 
-def study(bars: np.ndarray, tally: dict) -> int:
+def study(bars: np.ndarray, tally: dict, stride: int = 1) -> int:
+    """`stride > 1` samples entries further apart.
+
+    Set to `max(window, hold)` it makes the observations **non-overlapping**: neither the
+    measurement window nor the holding period is shared between consecutive rows. The block
+    bootstrap then has nothing to correct for, and the error bar is the plain one - which is
+    the cheapest way to find out whether the overlapping ladder was real or an artefact of
+    counting the same move many times.
+    """
     tr = candles.true_range(bars)
     close = bars[:, 4]
     counted = 0
@@ -172,7 +180,8 @@ def study(bars: np.ndarray, tally: dict) -> int:
             continue
         edges = np.quantile(finite, np.linspace(0.0, 1.0, 11))
         for hold in HOLDS:
-            for at in range(window, len(bars) - hold):
+            step = max(window, hold) if stride > 1 else 1
+            for at in range(window, len(bars) - hold, step):
                 if not np.isfinite(de[at]) or side[at] == 0:
                     continue
                 unit = tr[at] * max(close[at], 1e-12)
@@ -197,6 +206,12 @@ def main() -> int:
     )
     ap.add_argument("--where", default=os.environ.get("WHERE", ".secrets/broker-deep"))
     ap.add_argument("--interval", default="1h")
+    ap.add_argument(
+        "--stride",
+        type=int,
+        default=int(os.environ.get("STRIDE", "1")),
+        help="1 overlaps every bar; >1 makes observations non-overlapping",
+    )
     args = ap.parse_args()
 
     tally: dict[tuple, list] = defaultdict(list)
@@ -212,12 +227,13 @@ def main() -> int:
         tr = candles.true_range(bars)
         tr_frac = float(np.median(tr[np.isfinite(tr) & (tr > 0)]))
         cost_of[symbol] = spread_for(symbol) + carry_for(symbol, tr_frac) / 24.0
-        n = study(bars, tally)
+        n = study(bars, tally, stride=args.stride)
         print(f"  {symbol:<26}{n:>10,} observations")
 
     cost = float(np.mean(list(cost_of.values()))) if cost_of else 0.02
     print(
-        "\nmean return in true ranges, market exit, no stop - so (6) applies and this is m\n"
+        f"\nmean return in true ranges, market exit, no stop - so (6) applies and this is m\n"
+        f"sampling: {'non-overlapping' if args.stride > 1 else 'every bar (overlapping)'}\n"
         f"pooled cost: {cost:.4f} TR of spread plus one hour of carry; longer holds pay more\n"
         f"\n  {'win':>4}{'hold':>6}{'top decile':>12}{'bottom':>9}{'top-bottom':>12}"
         f"{'+/-':>8}{'uncond':>9}{'net top':>9}{'n':>10}"

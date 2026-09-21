@@ -129,9 +129,53 @@ exactly:
 predicts reversal, and both grow monotonically with holding period.** This is the first non-flat
 structure found here and it is in the right variable.
 
-**And none of it clears its bootstrap bar.** +0.0326 against ±0.0941. The windows overlap heavily,
-so the block bootstrap cuts the effective sample far below the 37,905 rows; a naive standard error
-would have called this significant, which is what it is there to prevent.
+### Rerun properly: non-overlapping, all 38 instruments
+
+The table above overlaps every bar, so it was rerun with **non-overlapping** sampling - neither the
+measurement window nor the holding period shared between rows - across all 38 instruments:
+
+| DE window | hold | top | bottom | top − bottom | bootstrap ± | net of cost | n |
+|---|---|---|---|---|---|---|---|
+| 20 | 6 | +0.0547 | +0.0079 | **+0.0468** | 0.0388 | +0.0338 | 8,033 |
+| 20 | 12 | +0.0656 | +0.0024 | **+0.0631** | 0.0561 | +0.0404 | 8,030 |
+| 20 | 24 | +0.0898 | -0.0063 | **+0.0961** | 0.0824 | +0.0563 | 6,705 |
+| 50 | 12 | -0.0656 | +0.0485 | **-0.1141** | 0.0931 | -0.0907 | 3,241 |
+
+Monotone in holding period, net positive after measured costs, on independent observations. **This
+is the only thing in this repository that has ever cleared a per-cell error bar in the drift
+variable.**
+
+### And three reasons not to believe it yet
+
+**It fails multiple-comparison correction.** Eighteen cells were scored, so the honest alpha is
+0.05/18, taking `z` from 1.96 to 2.99 and widening every bar by about 1.53x. At hold 12 that is
++0.0631 against 0.086; at hold 6, +0.0468 against 0.059; at hold 24, +0.0961 against 0.126.
+**None of the three survives.** By the standard `power.py` applies to everything else here, this
+is not yet a result.
+
+**The error bar shown is the lenient one.** It is the bootstrap standard error of the *top decile*
+mean, not of the top-minus-bottom difference, which is larger. Quoting the difference against the
+single-arm error overstates the significance, and the correct version has not been computed.
+
+**The prediction recorded beforehand was wrong.** It said a small positive at one to three bars and
+nothing beyond, on the strength of the flat reversal hazard. The effect appears at six to
+twenty-four bars and is larger. Right variable, wrong shape - which is a weaker kind of support
+than a confirmed prediction, and is worth distinguishing.
+
+**A mechanism is missing for the window-50 reversal.** Efficiency over 20 bars predicting
+continuation while efficiency over 50 predicts reversal is a coherent story only if something
+distinguishes the two horizons. Nothing here does, and a variable that flips sign with its own
+lookback is as easily a fitting artefact as a crossover.
+
+### What would settle it, and it is one run
+
+One **pre-registered** cell - window 20, hold 12 - on instruments held out from the search, with
+the error bar computed on the difference and no other cell scored. That is a single hypothesis, so
+no correction applies, and `power.py` says about 5,000 non-overlapping observations suffice at this
+effect size. The held-out half of 38 instruments provides them.
+
+Until that runs, the honest status is: **a monotone, cost-clearing, theoretically-indicated
+candidate that has not survived correction.**
 
 ## 8. The theory, in one paragraph
 
@@ -157,5 +201,6 @@ one the measurements support.
    not signal.
 3. **The event and news store this codebase already has**, which no study has touched. It is a
    second sensor sitting unused.
-4. **Non-overlapping samples for the DE ladder** — the cheapest way to find out whether §7 is real,
-   and the only open question in this document.
+4. **A pre-registered, held-out test of the window-20 efficiency ladder** — §7 now has a candidate
+   that clears per-cell bars and fails correction, which makes one clean confirmatory run the
+   highest-value experiment available. It is also the only open question in this document.
