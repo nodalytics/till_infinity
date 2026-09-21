@@ -261,3 +261,57 @@ class TestCandleShapeIsScaleFree:
         two, _p2 = candles.sequences([big], family="banded", horizon=5, band=1.0)
         assert one.shape == two.shape
         assert np.allclose(one, two, atol=1e-3), "the shape changed when only the scale did"
+
+
+class TestGapsAreLevelsUntilPriceReturns:
+    """The operator's reading of a fair value gap, which is not an event.
+
+    A gap matters because price may come back to it later and react from the
+    edge - and that edge is a **wick**, the low of the candle that opened a
+    bullish gap. So the feature is a standing level with a distance, an age and
+    the size of the origin wick, not a flag on one bar.
+    """
+
+    @staticmethod
+    def _with_a_bullish_gap() -> np.ndarray:
+        # Bar 2's low (105) sits above bar 0's high (101), so the band was
+        # traded only by bar 1 - the classic three-candle gap at span 2.
+        rows = [(100, 101, 99, 100), (100, 110, 100, 109), (109, 112, 105, 111)]
+        rows += [(111, 113, 108, 112)] * 37  # price never returns to 105
+        return np.array(
+            [(i * 3600, o, h, low, c) for i, (o, h, low, c) in enumerate(rows)], dtype=float
+        )
+
+    def test_an_untouched_gap_stands_and_is_measured_from_its_wick(self):
+        bars = self._with_a_bullish_gap()
+        standing = candles.standing_gaps(bars, candles.true_range(bars))
+        distance, age, wick = standing[20, :3]
+        assert distance > 0, "an untouched gap should still be a level twenty bars later"
+        assert 0 < age < 1, age
+        assert wick > 0, "the origin candle's lower wick defines the edge"
+
+    def test_price_returning_to_it_ends_it(self):
+        """**The whole point.** A filled gap is not a level any more, and a
+        feature that kept reporting one would be describing history."""
+        bars = self._with_a_bullish_gap()
+        filled = bars.copy()
+        filled[10, 3] = 104.0  # a low that trades into the band
+        filled[10, 4] = 106.0
+        standing = candles.standing_gaps(filled, candles.true_range(filled))
+        assert standing[20, 0] == 0.0, "a filled gap must stop counting"
+
+    def test_the_formation_bar_is_not_yet_a_level(self):
+        """Causality, and the reason both feature families exist. At the bar the
+        gap forms there is nothing to come back to yet, so `standing_gaps` reports
+        nothing and the instantaneous `gap_2_tr` feature carries formation."""
+        bars = self._with_a_bullish_gap()
+        standing = candles.standing_gaps(bars, candles.true_range(bars))
+        assert standing[2, 0] == 0.0
+
+    def test_size_and_shape_are_both_present(self):
+        """A doji and a huge indecisive bar have identical shape fractions, so
+        size in true ranges has to be carried separately or the operator's
+        long-candle rule cannot be expressed at all."""
+        for name in ("body_frac", "body_tr", "upper_wick", "upper_wick_tr"):
+            assert name in candles.FEATURE_NAMES, name
+        assert len(candles.FEATURE_NAMES) == 34, len(candles.FEATURE_NAMES)

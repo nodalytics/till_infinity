@@ -3,10 +3,12 @@
 The claim, as put by the operator: **4h rules.** A signal on a timeframe above or
 below it that disagrees with 4h is likely to lose.
 
-Measured on roughly 525,000 hourly trades per cell across six instruments,
-2010-2026, from the broker's own bars. **It does not hold.** What the same sweep did
-find is that the way a timeframe is *read* separates far more than which timeframe
-it is - and that one reading, the desk's own `Zma`, is worth a proper test.
+Measured twice - six instruments and then nine, the second set including
+synthetics - on roughly 650,000 hourly trades per cell, 2010-2026, from the broker's
+own bars. **It does not hold**, and neither does the one alternative the sweep threw
+up: a `zma` context filter looked consistent on the narrower panel, then lost two
+thirds of its size out of sample and was beaten by its own block-shuffled null 29%
+of the time.
 
 Harness: `research/harness/anchor.py`.
 
@@ -95,41 +97,48 @@ impression of reliability to form that half a million trades does not support.
 (Also visible in that tally: `daily`/`1d` and `weekly`/`1w` both appear as separate
 labels for the same timeframe, which will split any per-timeframe count.)
 
-## The finding nobody was looking for: the reading beats the timeframe
+## The one candidate, and how it died
 
-Every one of the top ten cells is `zma`, `momentum`, or `pivot/3d`. Every one of the
-worst ten is `trend` or a short-anchor `pivot`. `zma` is positive at eight of its ten
-anchors; `trend` is negative at seven of ten.
+On the first panel - six instruments, all FX and metals plus one micro duplicate -
+`zma/8h` (+0.0139R) and `zma/6h` (+0.0103R) were the only two cells agreeing across
+every instrument, and this document originally wrote them up as a live hypothesis.
+They were interesting because `structures/zma.py` records the same indicator at AUC
+0.485-0.515 as an *entry signal* on these instruments: slower-timeframe **context**
+is a different job from entry timing, and this looked like where it might earn
+something.
 
-The only two cells consistent across **all six** instruments:
+It did not survive either of the two tests it was given.
 
-| cell     | mean gap | instruments |
-|----------|---------:|------------:|
-| `zma/8h` | +0.0139R |         6/6 |
-| `zma/6h` | +0.0103R |         6/6 |
+**Out of sample.** Rerun on nine instruments including Boom, Crash and the
+volatility indices - generated processes with no macro driver, so agreement across
+them is much harder to explain away - both cells lost two thirds of their size:
 
-That is worth noticing because `structures/zma.py` records the same indicator at AUC
-0.485-0.515 as an *entry signal* on these instruments, and at 37.6-46.1% hit on Boom
-and Crash - reliably wrong. Slower-timeframe **context** is a different job from
-entry timing. This is the first measurement here suggesting that is where it earns
-anything.
+| cell     | 6 FX/metals | 9 incl. synthetics |
+|----------|------------:|-------------------:|
+| `zma/8h` |    +0.0139R |            +0.0039R |
+| `zma/6h` |    +0.0103R |            +0.0063R |
 
-## Why that is a hypothesis and not a result
+And the *winner moved*, to `zma/1h` at +0.0084R. A leader that changes between
+samples is the signature of the best of forty rather than of an effect. The spread
+across all cells fell from 0.0358R to 0.0179R, and no cell reached 9/9.
 
-Three reasons, and all three have to be cleared before anyone sizes a position on it:
+**Against its own null.** 200 block-shuffled repetitions per cell per instrument -
+1,800 in total - permuting the anchor reading in blocks long enough to keep its runs
+of up and down intact, so only the alignment with what price did next is destroyed:
 
-1. **It is the best of forty cells.** Under a null, forty cells produce about 0.6
-   six-of-six agreements by chance, and observing two is roughly a 13% event. Two
-   perfect cells is what forty cells look like when nothing is there.
-2. **No standard errors are computed.** Sign consistency across six instruments is
-   what is claimed, and that is all.
-3. **Every bar is a trade, so the windows overlap heavily.** The effective sample is
-   far below 525,000 and no clustering has been applied.
+| cell     | mean gap | shuffles matching or beating it |
+|----------|---------:|--------------------------------:|
+| `zma/1h` | +0.0084R |            530/1800 = **29.4%** |
+| `zma/6h` | +0.0063R |                645/1800 = 35.8% |
+| `zma/8h` | +0.0039R |                671/1800 = 37.3% |
 
-The next step is the machinery that already exists: point
-`research/training/splits.py` at exactly `zma/6h` and `zma/8h` - block-shuffled null,
-leave-one-instrument-out, clustered errors - rather than widening the sweep, which
-would only add cells for the best of N to exploit.
+A real effect is beaten by its null a few percent of the time. These are beaten a
+third of the time. **There is nothing here.**
+
+What remains true, and much weaker than it first looked: `zma` cells are positive at
+six of ten anchors while `trend` is negative at eight of ten, so *how* a timeframe is
+read still separates more than *which* timeframe it is. That is a statement about the
+shape of the noise until something clears a null.
 
 ## A defect found while writing this, worth recording
 

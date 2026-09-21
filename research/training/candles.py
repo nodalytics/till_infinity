@@ -79,6 +79,11 @@ TR_ALPHA = 1.0 / 14.0
 #: Lookbacks for the return features, in bars.
 SPANS = (1, 2, 3, 5, 10, 20, 60)
 
+#: Spans for the untraded-gap features, in bars back. 2 is the classic
+#: three-candle fair value gap; the rest are the same idea over more candles,
+#: which asks about displacement rather than a single-bar imbalance.
+GAPS = (2, 3, 5, 8)
+
 #: Bars of history a row needs before its features are all defined. The longest
 #: span plus room for the EWMA to settle.
 WARMUP = 120
@@ -90,6 +95,13 @@ INTENT = 1.0
 
 #: Shortest run of same-coloured candles that counts as consistent.
 RUN_MIN = 2
+
+#: How far back a standing gap stays interesting, in bars, and the span used to
+#: find one. Only the classic three-candle span is scanned: the standing-gap
+#: search costs `LOOKBACK` operations per bar, so one span is about five seconds
+#: per instrument and four spans is half a minute for a weaker question.
+GAP_LOOKBACK = 60
+GAP_SPAN = 2
 
 
 @dataclass
@@ -231,8 +243,8 @@ def features(bars: np.ndarray, tr: np.ndarray, at: int) -> list[float]:
         top, bottom = window[:, 2].max(), window[:, 3].min()
         out.append((here - bottom) / (top - bottom) if top > bottom else 0.5)
 
-    # Body and wicks as fractions of the bar, which is the candle's shape without
-    # its size - the part a shape model is supposed to read.
+    # Body and wicks as fractions of the bar, which is the candle's **shape**
+    # without its size - the part a pattern model is supposed to read.
     o, h, low = bars[at, 1], bars[at, 2], bars[at, 3]
     reach = max(h - low, 1e-12)
     out.append((here - o) / reach)
@@ -240,7 +252,45 @@ def features(bars: np.ndarray, tr: np.ndarray, at: int) -> list[float]:
     out.append((min(o, here) - low) / reach)
     out.append((h - low) / max(here * max(tr[at], 1e-9), 1e-12))
 
+    # The same three again as **sizes**, in true ranges. Shape and size are
+    # different questions and the fractions above deliberately throw size away: a
+    # doji and a huge indecisive bar have identical fractions. The operator's
+    # consistency rule is about size - "a long candle that signifies strong
+    # intent" - so a model reading only shape cannot express it.
+    unit = max(tr[at] * here, 1e-12)
+    out.append((here - o) / unit)
+    out.append((h - max(o, here)) / unit)
+    out.append((min(o, here) - low) / unit)
+
+    # Untraded gaps, in true ranges, signed: positive is a bullish imbalance.
+    #
+    # The three-candle fair value gap is `high[at-2] < low[at]` - a band that only
+    # the middle candle ever traded through. Nothing about that needs the number
+    # three, so `GAPS` carries the span and the classic case is N=2. A wider span
+    # is a weaker claim about imbalance and a stronger one about displacement, and
+    # which of those pays is exactly what a model is for.
+    for span in GAPS:
+        before = bars[at - span]
+        up = low - before[2]  # this low against the older high
+        down = before[3] - h  # the older low against this high
+        out.append((up if up > 0 else (-down if down > 0 else 0.0)) / unit)
+
+    # The overnight gap: this bar's open against the previous close. A different
+    # thing from the above - it is a gap in *quoting* rather than an imbalance
+    # inside a move - and on this broker it is where the rollover artifact lives.
+    out.append((o - close[at - 1]) / unit)
+
     return out
+
+
+GAP_NAMES = [
+    "bull_gap_dist",
+    "bull_gap_age",
+    "bull_gap_wick",
+    "bear_gap_dist",
+    "bear_gap_age",
+    "bear_gap_wick",
+]
 
 
 FEATURE_NAMES = (
@@ -248,8 +298,76 @@ FEATURE_NAMES = (
     + ["vol_ratio_20_60", "vol_log_gap"]
     + [f"range_pos_{s}" for s in (10, 20, 60)]
     + ["body_frac", "upper_wick", "lower_wick", "range_over_tr"]
+    + ["body_tr", "upper_wick_tr", "lower_wick_tr"]
+    + [f"gap_{s}_tr" for s in GAPS]
+    + ["open_gap_tr"]
+    + GAP_NAMES
     + ["run_signed", "run_has_intent", "dow", "month"]
 )
+
+
+def standing_gaps(bars: np.ndarray, tr: np.ndarray) -> np.ndarray:
+    """Unfilled gaps as **standing levels**, not as events on one bar.
+
+    A gap is only interesting while price has not come back to it. The three
+    features in `features` say whether a gap formed *at this bar*, which is a fact
+    about one candle; this says there is an untouched imbalance at a particular
+    price, how far away it is, and how long it has stood - which is the thing an
+    operator actually watches, because price may return to that point later and
+    react from it.
+
+    **The edge is a wick, not a body.** The level is `low[j]` of the candle that
+    opened a bullish gap and `high[j]` of the one that opened a bearish gap, so
+    the origin candle's wick is exactly what defines the boundary. Its size is
+    reported alongside, because a gap opened by a long wick is a different claim
+    from one opened by a rejection of a few points.
+
+    Returns, per bar, six columns:
+
+        0  distance from close up to the nearest unfilled bullish edge, in TR
+        1  bars since that gap formed, over `GAP_LOOKBACK`
+        2  the origin candle's lower wick, in TR
+        3-5  the same for the nearest unfilled bearish gap
+
+    Zero means "none found inside the lookback", which is a real answer rather
+    than a missing value: most bars have no live gap near them.
+
+    Causal by construction - the scan only ever looks backwards from `at`, and
+    "unfilled" is decided by the bars between the gap and `at`, all of which have
+    closed.
+    """
+    n = len(bars)
+    out = np.zeros((n, 6), dtype=float)
+    if n < GAP_SPAN + 2:
+        return out
+    high, low, close = bars[:, 2], bars[:, 3], bars[:, 4]
+    span = GAP_SPAN
+
+    for at in range(GAP_SPAN + 1, n):
+        unit = max(tr[at] * close[at], 1e-12)
+        # Running extremes of everything strictly after the candidate gap, so
+        # "has price been back" is answered without a second pass.
+        seen_low, seen_high = np.inf, -np.inf
+        found_bull = found_bear = False
+        for j in range(at - 1, max(at - GAP_LOOKBACK, span) - 1, -1):
+            # A bullish gap at j: the band between high[j-span] and low[j] was
+            # skipped. It is still standing if nothing since has traded down into
+            # it, which means no later low reached low[j].
+            if not found_bull and high[j - span] < low[j] and seen_low > low[j]:
+                out[at, 0] = (close[at] - low[j]) / unit
+                out[at, 1] = (at - j) / GAP_LOOKBACK
+                out[at, 2] = (min(bars[j, 1], close[j]) - low[j]) / unit
+                found_bull = True
+            if not found_bear and low[j - span] > high[j] and seen_high < high[j]:
+                out[at, 3] = (high[j] - close[at]) / unit
+                out[at, 4] = (at - j) / GAP_LOOKBACK
+                out[at, 5] = (high[j] - max(bars[j, 1], close[j])) / unit
+                found_bear = True
+            if found_bull and found_bear:
+                break
+            seen_low = min(seen_low, low[j])
+            seen_high = max(seen_high, high[j])
+    return out
 
 
 def build(
@@ -292,6 +410,7 @@ def build(
         repairs[name] = repaired
         tr = true_range(bars)
         run, strong = consistency(bars, tr)
+        standing = standing_gaps(bars, tr)
         y, ret, valid, names = make(bars, tr, horizon, band)
         classes = classes or list(names)
 
@@ -301,6 +420,7 @@ def build(
                 continue
             row = features(bars, tr, at)
             stamp = dt.datetime.fromtimestamp(bars[at, 0], dt.UTC)
+            row += list(standing[at])
             row += [run[at], strong[at], float(stamp.weekday()), float(stamp.month)]
             if not all(math.isfinite(v) for v in row):
                 continue

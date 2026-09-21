@@ -280,12 +280,45 @@ def mean_r(taken: np.ndarray, cost_r: float) -> tuple[float, int]:
     return float(taken[resolved].astype(float).mean() - cost_r), count
 
 
+def block_shuffle(side: np.ndarray, block: int, rng: np.random.Generator) -> np.ndarray:
+    """Permute an anchor reading in contiguous blocks.
+
+    An element-wise shuffle would destroy the anchor's persistence, and a
+    persistent reading is *supposed* to be persistent - so the null would be far
+    easier to beat than the real thing and every cell would look significant.
+    Shuffling whole blocks keeps the runs of up and down intact and removes only
+    their alignment with what price did next, which is the thing being tested.
+
+    The block is at least one anchor bar long, so a run is never cut in half.
+    """
+    order = np.arange(len(side))
+    chunks = [order[i : i + block] for i in range(0, len(order), block)]
+    rng.shuffle(chunks)
+    return side[np.concatenate(chunks)] if chunks else side
+
+
+def gap_of(result: np.ndarray, side: np.ndarray, cost_r: float) -> tuple[float, int]:
+    """The aligned-minus-opposed gap for one reading, and the count behind it."""
+    up, down = side == 1, side == -1
+    aligned = np.concatenate([result[up], -result[down]])
+    aligned_r, aligned_n = mean_r(aligned, cost_r)
+    opposed_r, _ = mean_r(-aligned, cost_r)
+    return aligned_r - opposed_r, aligned_n
+
+
 def load(where: str, symbol: str, interval: str) -> tuple[np.ndarray, int] | None:
     found = sorted(Path(where).glob(f"{symbol}_{interval}_*.csv.gz"))
     return candles.read(found[0]) if found else None
 
 
-def measure(symbol: str, args: argparse.Namespace, horizon: int, gathered: dict) -> None:
+def measure(
+    symbol: str,
+    args: argparse.Namespace,
+    horizon: int,
+    gathered: dict,
+    readings: dict,
+    anchors: tuple,
+) -> None:
     """Report one symbol across every reading and anchor, and bank the gaps."""
     got = load(args.where, symbol, args.signal)
     if got is None:
@@ -311,24 +344,28 @@ def measure(symbol: str, args: argparse.Namespace, horizon: int, gathered: dict)
     )
     print(
         f"           {'anchor':<7}"
-        + "".join(f"{name:>11}" for name in READINGS)
+        + "".join(f"{name:>11}" for name in readings)
         + "     gap = aligned minus opposed"
     )
 
-    for label, seconds in ANCHORS:
+    for label, seconds in anchors:
         if spacing and seconds < spacing:
             print(f"           {label:<7} skipped - finer than the {args.anchor_from} source")
             continue
         folded = resample(fine, seconds)
         cells = []
-        for name, reader in READINGS.items():
+        # One anchor bar, in signal bars - the smallest block that cannot cut a
+        # run of the reading in half.
+        block = max(int(seconds // max(spacing, 1.0)), 1) * 4
+        rng = np.random.default_rng(0)
+        for name, reader in readings.items():
             side = settle(folded, reader(folded), bars[:, 0])
-            up, down = side == 1, side == -1
-            aligned = np.concatenate([result[up], -result[down]])
-            aligned_r, aligned_n = mean_r(aligned, args.cost)
-            opposed_r, _ = mean_r(-aligned, args.cost)
-            gap = aligned_r - opposed_r
-            gathered.setdefault((name, label), []).append((gap, aligned_n))
+            gap, aligned_n = gap_of(result, side, args.cost)
+            beaten = 0
+            for _ in range(args.null):
+                shuffled, _ = gap_of(result, block_shuffle(side, block, rng), args.cost)
+                beaten += shuffled >= gap
+            gathered.setdefault((name, label), []).append((gap, aligned_n, beaten, args.null))
             cells.append(f"{gap:>+11.4f}")
         print(f"           {label:<7}" + "".join(cells))
     print()
@@ -337,8 +374,10 @@ def measure(symbol: str, args: argparse.Namespace, horizon: int, gathered: dict)
 def summarise(gathered: dict) -> None:
     rows = []
     for (name, label), seen in gathered.items():
-        gaps = [g for g, _n in seen]
+        gaps = [row[0] for row in seen]
         if gaps:
+            beaten = sum(row[2] for row in seen)
+            tries = sum(row[3] for row in seen)
             rows.append(
                 (
                     float(np.mean(gaps)),
@@ -346,16 +385,20 @@ def summarise(gathered: dict) -> None:
                     label,
                     sum(1 for g in gaps if g > 0),
                     len(gaps),
-                    sum(n for _g, n in seen),
+                    sum(row[1] for row in seen),
+                    beaten,
+                    tries,
                 )
             )
     if not rows:
         return
 
     print(f"=== all {len(rows)} cells, ranked. The winner is the best of {len(rows)}.")
-    print(f"  {'reading':<9} {'anchor':<7} {'mean gap':>10} {'+ve':>8} {'n':>12}")
-    for mean, name, label, wins, count, total in sorted(rows, reverse=True):
-        print(f"  {name:<9} {label:<7} {mean:>+10.4f} {wins:>4}/{count:<3} {total:>12,}")
+    header = f"  {'reading':<9} {'anchor':<7} {'mean gap':>10} {'+ve':>8} {'n':>12}"
+    print(header + ("   null beaten" if rows and rows[0][7] else ""))
+    for mean, name, label, wins, count, total, beaten, tries in sorted(rows, reverse=True):
+        null = f"   {beaten}/{tries}" if tries else ""
+        print(f"  {name:<9} {label:<7} {mean:>+10.4f} {wins:>4}/{count:<3} {total:>12,}{null}")
 
     best = max(rows)
     spread = best[0] - min(r[0] for r in rows)
@@ -370,7 +413,7 @@ def summarise(gathered: dict) -> None:
     # 4h against the neighbours that would have to be worse if it were special.
     print("\n  4h against its neighbours, per reading:")
     print(f"    {'reading':<9}" + "".join(f"{lab:>10}" for lab in ("2h", "3h", "4h", "6h", "8h")))
-    for name in READINGS:
+    for name in sorted({r[1] for r in rows}):
         cells = []
         for lab in ("2h", "3h", "4h", "6h", "8h"):
             hit = [r for r in rows if r[1] == name and r[2] == lab]
@@ -393,12 +436,36 @@ def main() -> int:
         help="interval the anchors are folded from; must be finer than the anchors",
     )
     ap.add_argument(
+        "--readings",
+        default="",
+        help="comma separated subset of readings; empty means all of them",
+    )
+    ap.add_argument(
+        "--anchors",
+        default="",
+        help="comma separated subset of anchors; empty means all of them",
+    )
+    ap.add_argument(
+        "--null",
+        type=int,
+        default=0,
+        help="block-shuffled repetitions per cell; 0 is off, 200 is a real test",
+    )
+    ap.add_argument(
         "--cost",
         type=float,
         default=0.03,
         help="round-trip cost as a fraction of R; it cancels in every gap",
     )
     args = ap.parse_args()
+
+    want_r = [r.strip() for r in args.readings.split(",") if r.strip()]
+    want_a = [a.strip() for a in args.anchors.split(",") if a.strip()]
+    readings = {k: v for k, v in READINGS.items() if not want_r or k in want_r}
+    anchors = tuple((lab, s) for lab, s in ANCHORS if not want_a or lab in want_a)
+    if not readings or not anchors:
+        print("nothing selected - check --readings and --anchors")
+        return 1
 
     horizon = HORIZON[args.signal]
     print(
@@ -407,7 +474,7 @@ def main() -> int:
     )
     gathered: dict[tuple[str, str], list[tuple[float, int]]] = {}
     for symbol in args.symbols:
-        measure(symbol, args, horizon, gathered)
+        measure(symbol, args, horizon, gathered, readings, anchors)
     summarise(gathered)
     return 0
 
