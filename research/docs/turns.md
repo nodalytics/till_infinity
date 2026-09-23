@@ -9,6 +9,17 @@ a confident-looking number from anything.
 
 **The answer is yes, weakly - and it took doubling the cross-section to see it.**
 
+> **Read [`turns-fast.md`](turns-fast.md) before building on this.** Ported to an hourly clock on
+> seven instruments, the effect does not reproduce - mean AUC 0.5457, 2 of 7 intervals excluding
+> 0.5 - and the reason found on the way reaches back here. The drop threshold is a **fixed**
+> distance, 20 times a per-instrument median move unit, so current volatility predicts reaching it
+> almost by construction. On that specification `vol` **alone** scores 0.608 to 0.679 on all seven
+> instruments and beats the full model on all seven; `auditing.md` records `vol` alone at **0.604**
+> on this page's own scan, which is the same number in the same place. Scaling the threshold by
+> *trailing* volatility instead drops the effect to 0.5457. This does not refute the result below -
+> different clock, gate and normalisation - but the 0.595 should not be built on until it has been
+> re-run with a contemporaneous threshold, which is one line in this harness.
+
 > **Re-measured on 2026-08-15.** The first reading of this document said no: on
 > six instruments the purged walk-forward gave AUC 0.559 with an interval of
 > 0.462-0.661, which contains 0.5. It also said the one cheap lever was to
