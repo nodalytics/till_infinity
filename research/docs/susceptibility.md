@@ -14,6 +14,7 @@ positive result; the other is refuted in the direction it was stated.
 | `chi` predicts *which side* the volatility lands on | **null** |
 | trend up + expected volatility resolves **downward** | **null** |
 | "fatigue": more touches means readier to break | **refuted** - monotone in the opposite direction, 5x |
+| and its **decayed** refinement, once the join made it testable | **worse than the raw count** at every cut |
 
 ## The quantity, and why it deserved a harness
 
@@ -167,8 +168,42 @@ needs a level identifier, and the journal's `outcome` entries do not carry one -
 `price` are both absent from all 323,712 rows. It would need a join to the level-call entries through
 the `_awaiting` reference, which is a larger extraction than this study warranted.
 
-Recorded so that whoever tries it knows the shape of the disagreement: the raw count settles the
-sign, the decay is a different question, and the data to ask it has to be assembled first.
+### The decayed variant, measured - 2026-09-23
+
+**It was testable after all, and it is worse than the raw count.**
+
+The blocker was that outcome rows carry no level identifier. They carry a **parent**, every one of
+them, and the parent observation carries `level` - the price. Joining the two gives 324,798
+resolutions with a level to group by, 281,926 distinct levels, and 8,425 with three or more touches.
+
+Walking those in time order and keeping the borrowed recursion per level - `score = score * 0.95 +
+1`, with the decay applied per **bar of the level's own timeframe** so it means the same thing on
+1m and 1h:
+
+| sample | n | decayed fatigue | raw `own_touches` |
+| --- | ---: | ---: | ---: |
+| all touches | 321,874 | 0.531 | **0.655** |
+| levels with 3+ touches | 37,634 | 0.612 | **0.678** |
+| levels with 5+ touches | 18,376 | 0.659 | **0.694** |
+
+AUCs read the right way round, since both run the same direction as `experience`: **more touches
+means fewer breaks**, which is the opposite of the borrowed claim, at every cut.
+
+**And the decay is a downgrade at every cut.** The raw count beats the recency-weighted one on all
+three samples, by 12 points on the full population. Weighting recent touches more *destroys*
+information here rather than adding it, which answers the question this page left open: the decayed
+variant is not merely unsupported, it is strictly worse than the count it was meant to improve on.
+
+Its quartiles are non-monotone too - 4.0%, 9.9%, 3.6%, 1.0% - where the raw count was monotone
+across all five quintiles at 15.0% down to 2.9%.
+
+**One caveat, and it cuts against the two lower rows.** The 3+ and 5+ subsets are selected on a
+level's *total* touch count, which is partly forward-looking: a level only accumulates five touches
+if it survived four. The uncontaminated row is the first, and it says the same thing - 0.531 against
+0.655.
+
+So the disagreement with the borrowed suite is settled in both directions: the sign is opposite, and
+the refinement is negative.
 
 ## Two concepts noted and not tested
 
