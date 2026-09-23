@@ -26,11 +26,28 @@ from pathlib import Path
 #: `OperationalError: database is locked`, a failing health check 157 times over - while
 #: `structures` went 2.5 hours without a decision and `trading` over a day.
 #:
-#: The mechanism is not a failure to checkpoint. `wal_autocheckpoint` defaults to 1,000 pages and
-#: was doing its job; what it does **not** do is shrink the file. `journal_size_limit` defaults to
-#: -1, meaning no limit, so SQLite reuses WAL space after a checkpoint and leaves the file at its
-#: high-water mark for ever. One write burst sets that mark and every connection afterwards pays
-#: to open it - the `-shm` index alone had reached 25 MB.
+#: **This limit is necessary and it is not sufficient. Corrected 2026-09-23, same day, after
+#: measuring it on production rather than reasoning about it.** An earlier version of this comment
+#: claimed the mechanism was purely cosmetic - that `wal_autocheckpoint` was doing its job and only
+#: the *file* failed to shrink. That is wrong. After the reclaim took the database from 27.75 GiB to
+#: 5.52 GiB, with this limit live in the deployed image, the log grew 83 -> 164 MB in fifteen
+#: minutes and a hand checkpoint reported:
+#:
+#:     pragma wal_checkpoint(PASSIVE) -> (0, 41764, 11085)
+#:
+#: Read that as: not blocked (0), 41,764 frames in the log, **11,085 reclaimed**. Checkpoints are
+#: completing only partially, so frames accumulate. And `journal_size_limit` truncates only after a
+#: checkpoint reclaims the whole log - so while that is happening, the limit is inert. It cannot
+#: cap a log that the checkpointer cannot drain.
+#:
+#: The cause of the partial drain is continuous read pressure: a passive checkpoint stops at the
+#: oldest frame any live reader still needs, and `structures` reads this database without pause, so
+#: a new snapshot opens before the last one is done with. That much is mechanism. **What is not
+#: established** is whether it is a backfill-only condition. The reading above was taken while
+#: `structures` was warming at 91% CPU on two cores; steady state may drain fine, and the 13 GB log
+#: may have needed the 29.5 GB database to make each read slow enough to hold its snapshot open.
+#: That is a prediction with a measurement attached - see `docs/recovering-a-grown-wal.md` - and
+#: until it is checked, **the log size under load is the thing to watch, not this constant.**
 #:
 #: 64 MiB is large enough for a burst across thirty-odd symbols and several intervals, and small
 #: enough that opening it costs nothing on a 3 GB box. It takes effect on the next checkpoint
