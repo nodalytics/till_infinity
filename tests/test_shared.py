@@ -99,6 +99,24 @@ def test_a_connection_carries_the_settled_pragmas(tmp_path):
     conn.close()
 
 
+def test_the_write_ahead_log_is_capped(tmp_path):
+    """**Without this the log file only ever grows, and it cost the desk a day.**
+
+    `prices.db-wal` reached 13.07 GB beside a 29.5 GB database on a box with 3 GB of memory, and
+    the prices service then died in a loop on `database is locked` - 157 failing health checks -
+    while `structures` went 2.5 hours without a decision.
+
+    The cause is not a failure to checkpoint: `wal_autocheckpoint` defaults to 1,000 pages and was
+    working. It is that `journal_size_limit` defaults to **-1**, so SQLite reuses WAL space after a
+    checkpoint and leaves the file at its high-water mark for ever. One burst sets the mark and
+    every connection afterwards pays to open it.
+    """
+    conn = db.connect(tmp_path / "capped.db")
+    assert conn.execute("PRAGMA journal_size_limit").fetchone()[0] == db.WAL_LIMIT
+    assert 0 < db.WAL_LIMIT <= 256 * 1024 * 1024, "large enough for a burst, small enough to open"
+    conn.close()
+
+
 def test_the_parent_directory_is_made(tmp_path):
     target = tmp_path / "a" / "b" / "test.db"
 
