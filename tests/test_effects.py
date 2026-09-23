@@ -109,6 +109,7 @@ def test_the_declared_clock_starts_at_declaration_not_at_first_firing():
         ("till_infinity.trading.service", "trading.reachable_check"),
         ("till_infinity.structures.vol.har", "structures.stated_forecast"),
         ("till_infinity.notifications.service", "notifications.delivered"),
+        ("till_infinity.trading.scaling", "trading.spike_switch"),
     ],
 )
 def test_each_site_declares_and_fires(module: str, name: str):

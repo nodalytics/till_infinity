@@ -155,6 +155,11 @@ class Volatility(Restorable):
         default_factory=lambda: stats.RollingQuantile(q=REGIME_HIGH, window_size=REGIME_WINDOW)
     )
     _history: list[float] = field(default_factory=list)
+    #: The same window of `ewma_tr_bps`, one reading per closed bar, for
+    #: `tr_percentile`. Kept apart from `_history` because that one is fed by
+    #: every `update` - ticks included on the tick-level key - and this answers a
+    #: question about bars.
+    _tr_history: list[float] = field(default_factory=list)
     #: The smallest non-zero price change seen - the venue's tick, measured
     #: rather than configured. See `tick`.
     _tick: float = 0.0
@@ -287,6 +292,9 @@ class Volatility(Restorable):
         same measure, as `garch`, `range` and `har` are.
         """
         self._ranges.observe(open_, high, low, close)
+        self._tr_history.append(self._ranges.ewma_tr_bps)
+        if len(self._tr_history) > REGIME_WINDOW:
+            del self._tr_history[: len(self._tr_history) - REGIME_WINDOW]
         # One bar's own realised reading, not the windowed one: the forecaster
         # builds its own horizons and feeding it a smoothed series would give
         # it three averages of an average.
@@ -415,6 +423,28 @@ class Volatility(Restorable):
         current = self.bps
         below = sum(1 for value in self._history if value < current)
         return below / len(self._history)
+
+    @property
+    def tr_percentile(self) -> float:
+        """Where `ewma_tr_bps` sits in its own last `REGIME_WINDOW` bars, in [0, 1].
+
+        **The risk switch's input.** `regime` answers the same question for `bps`,
+        whose half-life is 60 bars; this one reads the 14-bar true-range average,
+        and the difference is measured: halving size in the top fifth of *this*
+        percentile cut the 1% tail of a held position by 10-14% at 15m, 1h and 1d
+        and halved the worst outcome at 1h, where the 60-bar version managed 4-9%
+        and never moved the worst. In the top fifth a bar beyond 4x the trailing
+        mean |return| is 2.2-2.5 times as likely. See
+        `research/docs/crash-timing.md`.
+
+        Returns 0.5 before there is enough history to place anything, which no
+        sensible threshold reads as high.
+        """
+        if len(self._tr_history) < self.warmup:
+            return 0.5
+        current = self._ranges.ewma_tr_bps
+        below = sum(1 for value in self._tr_history if value < current)
+        return below / len(self._tr_history)
 
     @property
     def calm(self) -> bool:

@@ -45,7 +45,7 @@ from ..book import Book, Seen
 from ..models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
 from ..sizing import lots, price_distance, respects_stops_level, stop_for
 from .scalper import Aim, LevelStrategy, _confluence, _features, _number
-from .strategy import register
+from .strategy import register, spike_scale
 
 log = get_logger(__name__)
 
@@ -1067,6 +1067,7 @@ class FadeToValue(LevelStrategy):
                 settings.risk_fraction
                 * self.trend_scale(features)
                 * self.momentum_scale(features, side)
+                * spike_scale(features, settings)
             ),
             stop_distance=abs(entry - stop),
             max_risk_money=settings.max_risk_money,

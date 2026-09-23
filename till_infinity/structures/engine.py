@@ -872,6 +872,11 @@ class Call(Restorable):
                 # against return variance, its own quantity. See
                 # `research/docs/volatility-estimators.md` and `ranges.TR_ALPHA`.
                 "ewma_tr_bps": vol.ewma_tr_bps,
+                # Where that average sits in this instrument's own last 1,500
+                # bars. What `trading.scaling.by_spike` sizes down on: the top
+                # fifth carries 2.2-2.5x the chance of a 4x bar. See
+                # `research/docs/crash-timing.md`.
+                "tr_percentile": vol.tr_percentile,
                 "forecast_bps": vol.forecast_bps,
                 "forecast_ratio": vol.forecast_ratio,
                 # Recorded so the directional question can be settled from the

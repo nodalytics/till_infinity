@@ -37,7 +37,13 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
+from ..shared import effects
 from . import exposure as ex
+
+#: **Halving into a likely large bar.** Declared off here and re-declared by the
+#: trader with the configured flag, so an enabled switch that never reduces a
+#: trade is reported rather than assumed to be working.
+effects.declare("trading.spike_switch", enabled=False)
 
 #: Below this a multiplier is not worth applying - the broker's volume step
 #: will round it away, and a position sized to nothing is a refusal wearing a
@@ -103,6 +109,19 @@ def by_regime(ratio: float | None, width: float, floor: float = 0.5) -> float:
         return 1.0
     over = (drift - width) / width
     return max(floor, min(1.0, 1.0 - over * (1.0 - floor)))
+
+
+def by_spike(percentile: float | None, above: float, floor: float = 0.5) -> float:
+    """Halve into the windows where a large bar is likely.
+
+    See `trading-scaling.md` in research/docs.
+    """
+    if above <= 0 or percentile is None:
+        return 1.0
+    if float(percentile) < above:
+        return 1.0
+    effects.fired("trading.spike_switch")
+    return max(FLOOR, min(1.0, floor))
 
 
 def by_edge(edge_vol: float | None, full_at: float) -> float:

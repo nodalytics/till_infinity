@@ -71,7 +71,7 @@ from pydantic import BaseModel, Field
 from ...logging import get_logger
 from ..models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
 from ..sizing import lots, respects_stops_level
-from .strategy import Strategy, register
+from .strategy import Strategy, register, spike_scale
 
 log = get_logger(__name__)
 
@@ -456,7 +456,7 @@ class CouncilStrategy(Strategy):
         sized = lots(
             spec,
             equity=equity,
-            risk_fraction=settings.risk_fraction,
+            risk_fraction=settings.risk_fraction * spike_scale(payload.get("features"), settings),
             stop_distance=abs(entry - stop),
             max_risk_money=settings.max_risk_money,
             slippage=settings.stop_slippage,

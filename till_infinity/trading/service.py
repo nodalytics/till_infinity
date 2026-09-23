@@ -421,6 +421,9 @@ class Trader:
     ) -> None:
         self.bus = bus
         self.settings = settings or Settings.from_env()
+        # The flag is read here, so the switch is declared here: on and never
+        # reducing a trade is then reported rather than assumed to be working.
+        effects.declare("trading.spike_switch", enabled=self.settings.spike_above > 0)
         self.journal = journal
         self.plan = plans.apply(self.settings)
         self.broker = broker or build(self.settings)
@@ -1088,7 +1091,11 @@ class Trader:
                 sized = lots(
                     spec,
                     equity=self.equity,
-                    risk_fraction=self.settings.risk_fraction,
+                    # Re-sized flat, as before - except for the risk switch, which
+                    # is about the instrument's state rather than the strategy's
+                    # view and so must not vanish because two strategies agreed.
+                    risk_fraction=self.settings.risk_fraction
+                    * strategy.spike_scale(payload.get("features"), self.settings),
                     stop_distance=abs(verdict.entry - verdict.stop),
                     max_risk_money=self.settings.max_risk_money,
                 )
@@ -1218,7 +1225,10 @@ class Trader:
             sized = lots(
                 spec,
                 equity=self.equity,
-                risk_fraction=self.settings.risk_fraction,
+                # Flat by design in parallel mode, bar the risk switch - see `_agree`'s
+                # sizing above for why that one survives.
+                risk_fraction=self.settings.risk_fraction
+                * strategy.spike_scale(payload.get("features"), self.settings),
                 stop_distance=abs(wanted.entry - wanted.stop),
                 max_risk_money=self.settings.max_risk_money,
             )
@@ -2098,7 +2108,10 @@ class Trader:
             return
         made = await self.replicator.copy(
             intent,
-            risk_fraction=self.settings.risk_fraction,
+            # Followers mirror the leader's risk switch: a copied account at full
+            # size into a likely large bar is the risk the leader just declined.
+            risk_fraction=self.settings.risk_fraction
+            * strategy.spike_scale(intent.features, self.settings),
             magic=magic_for(self.settings.magic, by),
             by=by,
             max_risk_money=self.settings.max_risk_money,

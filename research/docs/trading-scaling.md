@@ -81,6 +81,53 @@ that way. Nothing was discarded.
     gets full size; it never gets more than full.
 
 
+## `by_spike`
+
+    `percentile` is `tr_percentile` off the call: where the 14-bar true-range
+    average (`ewma_tr_bps`, the figure `by_volatility` sizes on) sits within this
+    instrument's own last 1,500 bars. `above` is `TRADING_SPIKE_ABOVE` and
+    `floor` is `TRADING_SPIKE_FLOOR`.
+
+    **A different question from `by_volatility` and `by_regime`.** Those size by
+    how big volatility is and where it is heading. This one asks how likely a
+    *large bar* is inside the hold, because that is what takes a stop out past its
+    level and what makes up the tail of a position's outcomes. Measured in
+    `research/docs/crash-timing.md` on 14 real instruments at 15m and 1h and 9 at
+    1d: in the top fifth of this percentile a bar beyond 4x the trailing mean
+    |return| is **2.2-2.5 times as likely** (22.0% against 10.1% at 15m, 19.3%
+    against 7.9% at 1h, 12.6% against 5.6% on daily). Halving size there, on two
+    positions that knew nothing about the reading:
+
+    | | 1% tail flat -> switched | worst | return per unit of risk |
+    | --- | --- | --- | --- |
+    | 15m long | -4.05 -> -3.47 | -38.3 -> -19.2 | 0.020 -> 0.023 |
+    | 1h long | -4.20 -> -3.77 | -28.3 -> **-14.1** | 0.011 -> 0.012 |
+    | 1d long | -3.69 -> -3.21 | -11.0 -> -11.0 | 0.050 -> 0.047 |
+
+    A gradient-boosted big-move model does somewhat better at 15m (-2.96) and has
+    to be fit and kept fit; this is a percentile of a number already published,
+    with nothing to train. The 60-bar version of the same percentile (`regime`)
+    managed 4-9% on the tail and never moved the worst outcome, which is why this
+    reads the 14-bar average.
+
+    **It cannot be a signal.** The same state predicts melt-ups as well as crashes
+    - a crash model built on it scored AUC 0.78 on melt-ups against 0.81 on
+    crashes at 15m - and shorting it lost on daily bars. So it sizes down and
+    never picks a side.
+
+    **Every sizing path reads it.** `risk_scale` covers the level strategies;
+    FadeToValue and Council, which size without `risk_scale`, apply it directly;
+    and the trader's own re-sizing in the consensus path, in parallel mode and
+    onto follower accounts - all of which size at the flat fraction and discard
+    every other multiplier - apply it too, through one function
+    (`strategy.spike_scale`) so the paths cannot disagree. It is about the
+    instrument's state, not a strategy's view, and it would be inert in exactly
+    the modes that take the most trades if it lived only in `risk_scale`.
+
+    Off at 0; 0.8 is the measured setting. Before 20 bars of history the
+    percentile reads 0.5, which no sensible threshold treats as high.
+
+
 ## `by_edge`
 
     `edge_vol` is the instrument's net edge per touch in volatility units, from

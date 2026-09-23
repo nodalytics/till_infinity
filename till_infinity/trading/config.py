@@ -580,6 +580,18 @@ class Settings:
     #: not justify a veto.
     regime_floor: float = 0.5
 
+    #: **The risk switch.** Size is cut to `spike_floor` when this instrument's
+    #: 14-bar true-range average sits at or above this percentile of its own last
+    #: 1,500 bars (`tr_percentile`). Zero is off. **0.8 is the measured setting**:
+    #: the top fifth carries 2.2-2.5x the chance of a bar beyond 4x the trailing
+    #: mean |return|, and halving there cut the 1% tail of a held position 10-14%
+    #: at 15m, 1h and 1d at unchanged return per unit of risk. It knows *when*,
+    #: not *which way* - the same score ranks melt-ups as well as crashes - so it
+    #: only ever sizes down. See `research/docs/crash-timing.md`.
+    spike_above: float = 0.0
+    #: What the switch sizes to. Half is what was measured.
+    spike_floor: float = 0.5
+
     edge_full_at: float = 0.0
 
     #: What a stop actually costs on an instrument, in R, as `feed=multiple`
@@ -1305,6 +1317,8 @@ class Settings:
             volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),
             regime_band=_float("TRADING_REGIME_BAND", 0.0),
             regime_floor=_float("TRADING_REGIME_FLOOR", 0.5),
+            spike_above=_float("TRADING_SPIKE_ABOVE", 0.0),
+            spike_floor=_float("TRADING_SPIKE_FLOOR", 0.5),
             edge_full_at=_float("TRADING_EDGE_FULL_AT", 0.0),
             drawdown_halt_at=_float("TRADING_DRAWDOWN_HALT_AT", 0.0),
             # `or` the default, like `formation` above: an unset variable means

@@ -58,6 +58,21 @@ RISK_SHARE_BY_STYLE: dict[str, float] = {
 }
 
 
+def spike_scale(features: object, settings: object) -> float:
+    """The risk switch for one signal's features. One function so the three places
+    that size a trade - `risk_scale`, the consensus path and parallel mode - cannot
+    disagree about it. See `scaling.by_spike`."""
+    from .. import scaling
+
+    readings = features if isinstance(features, dict) else {}
+    found = readings.get("tr_percentile")
+    return scaling.by_spike(
+        float(found) if isinstance(found, int | float) else None,
+        float(getattr(settings, "spike_above", 0.0) or 0.0),
+        float(getattr(settings, "spike_floor", 0.5) or 0.5),
+    )
+
+
 class Strategy(ABC):
     """One way of turning signals into intents."""
 
@@ -304,6 +319,9 @@ class Strategy(ABC):
             scaling.by_regime(
                 features.get("forecast_ratio"), settings.regime_band, settings.regime_floor
             ),
+            # How likely a large bar is inside the hold. Knows when, not which
+            # way, so it can only shrink - see `scaling.by_spike`.
+            spike_scale(features, settings),
             scaling.by_edge(features.get("net_edge_vol"), settings.edge_full_at),
             scaling.by_drawdown(peak, equity, settings.drawdown_halt_at),
             scaling.by_slippage(scaling.overshoot_for(settings.stop_overshoot, feed, side)),
