@@ -113,7 +113,7 @@ before a print and 2.42x on it, `news-volatility.md` - and does not move the pro
 level gives way. Those are different questions and this is the evidence that they are, which is
 the same lesson `breaking.py` opens with about direction and breaking.
 
-## The clock, and the part that is not shipped
+## The clock, and where it is used
 
 The largest effect measured this session is `P(break | still open at t)`, running 14.4% to 77.8%
 and crossing even money at four to seven bars of the level's own timeframe. **It is not in
@@ -121,16 +121,21 @@ and crossing even money at four to seven bars of the level's own timeframe. **It
 and never mutated - deliberately, because a feature that changes under a model is how look-ahead
 gets in.
 
-`registry.aged()` is the arithmetic that makes it usable, and it is implemented and tested:
+Two ways of using it were written. **Only the second is in the production path**, and the reason
+is in the fix section below.
+
+`registry.aged()` combines the clock with a fitted probability in log-odds:
 
     logit(out) = logit(model) + logit(clock at t) − logit(clock at 0)
 
-with the final subtraction doing the work - a fresh touch gets its model probability back
-unchanged, and the clock only ever contributes what it has learned *since*. From a 20% prior it
-reads 0.28 at one bar, 0.42 at two, 0.70 at five, 0.95 at twenty.
+The final subtraction does the work - a fresh touch gets its model probability back unchanged, and
+the clock only contributes what it has learned *since*. From a 20% prior it reads 0.28 at one bar,
+0.42 at two, 0.70 at five, 0.95 at twenty. It is implemented and tested, and it is **not** what the
+gate uses: adding log-odds assumes the two estimates are conditionally independent, and they are not.
 
-**What is not done is wiring it to a consumer, and the reason is worth recording.** Two seams
-exist and both are load-bearing:
+`registry.clock_odds()` is the hazard on its own, and that is what the fix applies - as a floor.
+
+**Two consumers exist and both are load-bearing:**
 
 * the engine's per-quote carry loop sees every open touch and its age, but runs on every quote for
   every level - a probability recomputed there is a hot path, and the measured rule is a single
@@ -139,7 +144,57 @@ exist and both are load-bearing:
 * `max_break_risk` gates orders on `break_probability`, and the live instance has it set at
   **0.35**. But that number is computed when the touch opens and carried on the signal, so a
   **parked signal is gated on a stale probability** - and the clock says staleness is exactly when
-  it is most wrong. That is a real defect and the natural consumer, and it is in the order path.
+  it is most wrong.
 
-Both are behavioural changes to live gating rather than additive features, which is why the
-arithmetic ships and the wiring is written down instead.
+The first is still open. **The second is fixed** - below.
+
+## The parked-signal fix
+
+`Trader._age_break_risk`, called from `_arrived`, which is the one place a signal's age is known at
+decision time. `Settings.age_break_risk`, on by default, `TRADING_AGE_BREAK_RISK=0` to disable.
+
+`_arrived` already had the precedent and states the principle: it sets `after_pullback = 1.0` on
+wake because *"the same momentum reading means 'arriving at the level' before the wait and 'the
+fall has not finished' after it."* A stale break probability is the same thing with money on it.
+
+### A floor, not a compounded estimate
+
+The first version added the clock to the model in log-odds. **That was wrong**: log-odds addition
+assumes the two estimates are conditionally independent, and they are not - both describe the same
+touch. It took a 20% prior to **87%** after ten bars, and since `pullback_bars` is 10.0 it would
+have refused essentially every parked entry.
+
+The clock is applied as a **lower bound** instead. The gate may not see a break risk below what
+elapsed time alone implies, and nothing is multiplied by anything:
+
+| wait, in bars of the level's own timeframe | at open | after | against a 0.35 ceiling |
+| ---: | ---: | ---: | --- |
+| 0 | 0.20 | 0.200 | passes |
+| 1 | 0.20 | 0.200 | passes |
+| 2 | 0.20 | 0.279 | passes |
+| 3 | 0.20 | **0.385** | **refused** |
+| 5 | 0.20 | 0.560 | refused |
+| 10 | 0.20 | 0.787 | refused |
+
+A model already more worried than the clock keeps its own number, and the correction is
+one-directional by construction - a gate that loosens while a setup ages is the failure this exists
+to prevent.
+
+### The effect is large, and that is the finding rather than a side effect
+
+Against the live 0.35 ceiling this refuses a parked entry once the wait passes about **three** bars,
+and the window is ten. **So the ceiling itself now wants re-tuning**, because 0.35 was chosen while
+the input was stale - the gate was calibrated against a number that understated the risk it was
+gating on.
+
+It only bites where `max_break_risk` is set, since nothing else reads the value.
+
+### One extrapolation, stated
+
+The hazard was measured over **all** touches by elapsed time. A parked signal is a *selected*
+subpopulation - price came back to a trigger - and that conditioning is not what the table measured.
+The floor is the conservative reading of an estimate that does not strictly apply.
+
+Which is why the original is kept as `break_probability_at_open`, beside `break_age_bars`: the
+journal now carries both, so whether the correction was right becomes a query over live fills
+rather than an argument.

@@ -9262,3 +9262,113 @@ class TestTheRecordedProfitIncludesWhatWasActuallyPaid:
         from till_infinity.trading.venues.broker import Broker
 
         assert await Broker.closed_deal(object(), 1) is None
+
+
+# ------------------------------------- a parked signal is gated on a current break probability
+
+
+def _payload_at(started, interval="15m", probability=0.20):
+    return (
+        {"feed": "gold", "interval": interval, "time": started},
+        {"break_probability": probability},
+    )
+
+
+def test_a_parked_signal_that_waited_is_gated_on_a_higher_break_risk():
+    """**The defect this closes.** `break_probability` is scored from `Features`, built once when
+    the touch opens and never mutated. `max_break_risk` then gates orders on it - at 0.35 on the
+    live instance - so a signal that waited many bars is refused or allowed on a number about a
+    moment that has passed.
+
+    Measured over 312,420 resolutions, P(break | still open at t) runs 14.4% to 77.8% and crosses
+    even money at four to seven bars of the level's own timeframe, so the frozen number understates
+    the risk and understates it worst where the wait was longest.
+    """
+    now = time.time()
+    payload, features = _payload_at(now - 10 * 900)  # ten 15m bars ago
+    Trader._age_break_risk(payload, features, now)
+    assert features["break_probability"] > 0.20
+    assert features["break_probability_at_open"] == 0.20, "the original has to stay readable"
+    assert features["break_age_bars"] == pytest.approx(10.0, abs=0.01)
+    # Past five of its own bars the break is the majority outcome, from a 20% prior.
+    assert features["break_probability"] > 0.5
+
+
+def test_a_signal_taken_immediately_is_left_alone():
+    """For a trade taken at once the frozen number is the right number, and rewriting it would
+    be inventing a correction where there is nothing to correct."""
+    now = time.time()
+    payload, features = _payload_at(now)
+    Trader._age_break_risk(payload, features, now)
+    assert features == {"break_probability": 0.20}
+
+
+def test_the_wake_never_lowers_the_break_risk():
+    """A gate that loosens while a setup ages is the failure this exists to prevent, so the
+    correction is one-directional by construction."""
+    now = time.time()
+    for bars in (0.0, 0.01, 0.5, 1.0, 3.0, 50.0):
+        payload, features = _payload_at(now - bars * 900, probability=0.9)
+        before = features["break_probability"]
+        Trader._age_break_risk(payload, features, now)
+        assert features["break_probability"] >= before
+
+
+def test_it_says_nothing_when_it_has_nothing_to_go_on():
+    now = time.time()
+    # No probability to age.
+    payload, features = _payload_at(now - 9000)
+    features.pop("break_probability")
+    Trader._age_break_risk(payload, features, now)
+    assert features == {}
+    # An interval the clock has no bar length for.
+    payload, features = _payload_at(now - 9000, interval="weird")
+    Trader._age_break_risk(payload, features, now)
+    assert features == {"break_probability": 0.20}
+    # No signal time.
+    payload, features = _payload_at(now - 9000)
+    payload.pop("time")
+    Trader._age_break_risk(payload, features, now)
+    assert features == {"break_probability": 0.20}
+    # A clock that runs backwards.
+    payload, features = _payload_at(now + 9000)
+    Trader._age_break_risk(payload, features, now)
+    assert features == {"break_probability": 0.20}
+
+
+def test_the_wake_path_calls_it():
+    """The check this repository keeps failing: computed correctly, wired nowhere. `_arrived` is
+    the only place a signal's age is known at decision time."""
+    import inspect
+
+    assert "_age_break_risk" in inspect.getsource(Trader._arrived)
+
+
+def test_ageing_the_break_risk_is_on_by_default_and_can_be_turned_off():
+    """On by default because a stale number in a live gate is the defect. Overridable without a
+    deploy because the effect is large: against a 0.35 ceiling a 20% reading at open is refused
+    once the wait passes about three bars, and `pullback_bars` is 10.0 - so the ceiling itself
+    wants re-tuning against the corrected input."""
+    import inspect
+
+    assert settings().age_break_risk is True
+    assert settings(age_break_risk=False).age_break_risk is False
+    # And the wake path honours it rather than correcting unconditionally.
+    assert "age_break_risk" in inspect.getsource(Trader._arrived)
+
+
+def test_the_floor_never_compounds_the_two_estimates():
+    """The first version added the clock to the model in log-odds, which assumes they are
+    conditionally independent - and they are not, since both describe the same touch. It took a
+    20% prior to 87% at ten bars. A floor assumes nothing: the result is either the model's own
+    number or the clock's, never a product of both."""
+    from till_infinity.structures.context.registry import clock_odds
+
+    now = time.time()
+    payload, features = _payload_at(now - 10 * 900)
+    Trader._age_break_risk(payload, features, now)
+    assert features["break_probability"] == pytest.approx(round(clock_odds(10.0), 5))
+    # A model already more worried than the clock keeps its own reading.
+    payload, features = _payload_at(now - 10 * 900, probability=0.95)
+    Trader._age_break_risk(payload, features, now)
+    assert features == {"break_probability": 0.95}

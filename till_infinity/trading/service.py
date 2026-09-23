@@ -46,6 +46,7 @@ from ..structures.codec import pack, registry, unpack
 from ..structures.context.cusum import Cusum, Ensemble, adaptive_threshold
 from ..structures.context.holds import Book as HoldBook
 from ..structures.context.reach import Reaches
+from ..structures.context.registry import clock_odds
 from ..structures.context.trend import Trend
 from ..structures.learning.focus import Focus
 from ..structures.levels import SECONDS
@@ -2021,7 +2022,72 @@ class Trader:
         woken = held.payload.setdefault("features", {})
         if isinstance(woken, dict):
             woken["after_pullback"] = 1.0
+            if self.settings.age_break_risk:
+                self._age_break_risk(held.payload, woken, tick.time)
         return await self.on_signal(held.payload, observe=False, park=False)
+
+    @staticmethod
+    def _age_break_risk(payload: dict[str, Any], features: dict[str, Any], now: float) -> None:
+        """Bring `break_probability` up to date before the gate reads it.
+
+        **The defect this closes.** `structures/breaking.py` scores a touch from `Features`, which
+        is built once when the touch *opens* and never mutated - deliberately, because a feature
+        that changes under a model is how look-ahead gets in. So `break_probability` is a number
+        about the moment the level was first touched. `max_break_risk` then gates orders on it, and
+        on the live instance that gate is set at **0.35**.
+
+        For a signal taken immediately that is the right number. For a **parked** one it is not:
+        the trade is decided when price comes back, which can be many bars later, and the chance
+        the level gives way has moved by then. Measured over 312,420 journal resolutions,
+        `P(break | the touch is still open at t)` runs from 14.4% to 77.8% and crosses even money
+        at four to seven bars of the level's own timeframe - so the older the wait, the more the
+        frozen number understates the risk, and it understates it worst exactly where it matters.
+
+        This is the same argument the line above it makes for `after_pullback`: *"the same momentum
+        reading means 'arriving at the level' before the wait and 'the fall has not finished'
+        after it."* A stale probability is that, with money on it.
+
+        **A floor, not a compounded estimate, and that choice is the careful part.** The first
+        version of this added the clock to the model in log-odds, which assumes the two are
+        conditionally independent - and they are not, because both describe the same touch. It took
+        a 20% prior to 87% after ten bars and would have refused essentially every parked signal,
+        since `pullback_bars` is 10.0. So the clock is applied as a **lower bound** instead: the
+        gate may not see a break risk below what elapsed time alone implies, and nothing is
+        multiplied by anything.
+
+        **One extrapolation is stated rather than hidden.** The hazard was measured over *all*
+        touches by elapsed time. A parked signal is a selected subpopulation - price came back to a
+        trigger - and that conditioning is not what the table measured. The floor is the
+        conservative reading of an estimate that does not strictly apply, which is why the original
+        is kept as `break_probability_at_open`: the journal carries both, and whether the
+        correction was right becomes a query rather than an argument. See
+        research/docs/break-features.md.
+        """
+        current = features.get("break_probability")
+        if not isinstance(current, (int, float)):
+            return
+        interval = str(payload.get("interval") or "")
+        span = SECONDS.get(interval, 0.0)
+        started = payload.get("time")
+        if span <= 0.0 or not isinstance(started, (int, float)) or now <= started:
+            return
+        bars = (float(now) - float(started)) / span
+        moved = clock_odds(bars)
+        if moved <= current:
+            # Never *lower* the risk on a wake. The clock is monotone in age, so a fall here
+            # would mean the inputs are wrong, and a gate that loosens while a setup ages is
+            # the failure this exists to prevent.
+            return
+        features["break_probability_at_open"] = round(float(current), 5)
+        features["break_probability"] = round(moved, 5)
+        features["break_age_bars"] = round(bars, 3)
+        log.info(
+            "trading: %s waited %.1f bars - break risk %.0f%% to %.0f%%",
+            payload.get("feed") or "?",
+            bars,
+            100.0 * float(current),
+            100.0 * moved,
+        )
 
     async def _copy_to_followers(self, intent: Intent, by: str) -> None:
         """Replicate a filled decision onto every other terminal.

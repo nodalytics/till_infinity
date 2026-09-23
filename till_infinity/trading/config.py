@@ -985,6 +985,25 @@ class Settings:
     #: instead of 32.3%. See research/force.md.
     max_break_risk: float = 0.0
 
+    #: Bring `break_probability` up to date before `max_break_risk` reads it, on a signal that
+    #: waited. **On by default, because a stale number in a live gate is the defect** - see
+    #: `Trader._age_break_risk`.
+    #:
+    #: `structures/breaking.py` scores a touch when it *opens* and `Features` is never mutated, so
+    #: a parked signal is gated on a probability about a moment that has passed. Measured over
+    #: 312,420 resolutions, `P(break | the touch is still open at t)` runs 14.4% to 77.8% and
+    #: crosses even money at four to seven bars of the level's own timeframe.
+    #:
+    #: **The effect is large and worth knowing before this is trusted.** `pullback_bars` is 10.0,
+    #: and against a 0.35 ceiling a 20% reading at open is refused once the wait passes about
+    #: **three** bars - so this will refuse most parked entries until the ceiling is re-tuned
+    #: against the corrected input. That is the point rather than a side effect: the ceiling was
+    #: chosen while the input was stale.
+    #:
+    #: It only bites where `max_break_risk` is already set, since nothing else gates on the
+    #: number. Off restores the old behaviour exactly.
+    age_break_risk: bool = True
+
     parked_stop_vol: float = 0.0
 
     #: Refuse a trade when the market around this level is choppier than this.
@@ -1313,6 +1332,7 @@ class Settings:
             hold_max_spread=_float("TRADING_HOLD_MAX_SPREAD", 0.0),
             parked_stop_vol=_float("TRADING_PARKED_STOP_VOL", 0.0),
             max_break_risk=_float("TRADING_MAX_BREAK_RISK", 0.0),
+            age_break_risk=_flag("TRADING_AGE_BREAK_RISK", True),
             min_efficiency=_float("TRADING_MIN_EFFICIENCY", 0.0),
             trend_sizing=_float("TRADING_TREND_SIZING", 0.0),
             max_against_vol=_float("TRADING_MAX_AGAINST_VOL", 0.0),
