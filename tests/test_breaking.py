@@ -24,6 +24,9 @@ class Touch:
         slope=0.0,
         prior_slope=0.0,
         interval_log=0.0,
+        experience=0.0,
+        strength=0.0,
+        up_rate=0.5,
     ):
         self.approach_vol = approach_vol
         self.depth_vol = depth_vol
@@ -31,6 +34,9 @@ class Touch:
         self.slope = slope
         self.prior_slope = prior_slope
         self.interval_log = interval_log
+        self.experience = experience
+        self.strength = strength
+        self.up_rate = up_rate
 
 
 def teach(model, n=400, seed=3):
@@ -53,6 +59,13 @@ def test_it_reads_the_features_that_separate():
 
     The two slope terms were added on the same argument and a measured lift:
     0.6104 to 0.6408 AUC, out of sample, over 5,452 five-minute touches.
+
+    `experience` and `strength` were added 2026-09-23 on the opposite argument -
+    not orthogonality but raw strength. On the **unconditional** population they
+    are the two best single separators here, AUC 0.6272 and 0.6076 read the right
+    way round over 320,811 touches, and they were missing because force.md
+    measured them inside the 300-1,800s band where the sign reverses. See
+    research/break-trade.md.
     """
     assert NAMES == (
         "approach_vol",
@@ -61,6 +74,9 @@ def test_it_reads_the_features_that_separate():
         "slope",
         "prior_slope",
         "interval_log",
+        "experience",
+        "strength",
+        "conviction",
     )
 
 
@@ -73,8 +89,12 @@ def test_it_takes_a_plain_dictionary_too():
         "slope": 0.2,
         "prior_slope": 0.4,
         "interval_log": 6.8,
+        "experience": 1.1,
+        "strength": 0.7,
+        "up_rate": 0.9,
     }
-    assert Breaks.inputs(got) == [1.5, 0.5, 0.8, 0.2, 0.4, 6.8]
+    # The last entry is `conviction` - |up_rate - 0.5| - derived rather than carried.
+    assert Breaks.inputs(got) == [1.5, 0.5, 0.8, 0.2, 0.4, 6.8, 1.1, 0.7, 0.4]
     assert Breaks.inputs(
         Touch(
             approach_vol=1.5,
@@ -83,12 +103,15 @@ def test_it_takes_a_plain_dictionary_too():
             slope=0.2,
             prior_slope=0.4,
             interval_log=6.8,
+            experience=1.1,
+            strength=0.7,
+            up_rate=0.9,
         )
-    ) == [1.5, 0.5, 0.8, 0.2, 0.4, 6.8]
+    ) == [1.5, 0.5, 0.8, 0.2, 0.4, 6.8, 1.1, 0.7, 0.4]
 
 
 def test_a_missing_feature_reads_as_zero_rather_than_shortening_the_vector():
-    assert Breaks.inputs({}) == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    assert Breaks.inputs({}) == [0.0] * len(NAMES)
 
 
 def test_the_slope_is_read_as_a_magnitude():
@@ -423,15 +446,19 @@ def test_the_engine_publishes_the_slope_onto_the_touch():
     import inspect
 
     from till_infinity.structures import reactions
-    from till_infinity.structures.learning.breaking import NAMES
+    from till_infinity.structures.learning.breaking import DERIVED, NAMES
 
+    # A derived input is satisfied through its source: `conviction` is |up_rate - 0.5| and it is
+    # `up_rate` that has to be carried and published. The invariant is unchanged - nothing in
+    # NAMES may score zero forever because it never reaches the signal.
+    needed = {DERIVED.get(name, name) for name in NAMES}
     carried = {f.name for f in dataclasses.fields(reactions.Features)}
-    for name in NAMES:
-        assert name in carried, f"{name} is in NAMES and not on the features"
+    for name in needed:
+        assert name in carried, f"{name} is needed by NAMES and not on the features"
 
     # And published, not merely held: `Breaks` reads a signal's dictionary.
     published = inspect.getsource(reactions.Features.to_dict)
-    for name in NAMES:
+    for name in needed:
         assert f'"{name}"' in published, f"{name} never reaches the signal"
 
     # And threaded through the builder the engine calls.
@@ -605,8 +632,8 @@ def test_lengthening_the_vector_bumps_the_recipe():
     research/inert.md, and the recipe is what avoids walking into it."""
     from till_infinity.structures.learning.breaking import NAMES, RECIPE
 
-    assert len(NAMES) == 6
-    assert "interval_log" in RECIPE
+    assert len(NAMES) == 9
+    assert "conviction" in RECIPE
 
 
 def test_the_learning_rate_favours_a_stable_gate():
@@ -624,3 +651,35 @@ def test_the_learning_rate_favours_a_stable_gate():
     model.recipe = "something older"
     model.observe(Touch(approach_vol=1.0), "reject")
     assert model.model.rate == RATE
+
+
+def test_conviction_is_the_records_magnitude_and_not_its_direction():
+    """**The reason `up_rate` was excluded and the reason this is not.**
+
+    A linear model cannot represent `|x - 0.5|` from `x`, so the raw record scored AUC 0.4892 here
+    and was dropped. Measured over 293,252 journal touches the direction really is worthless
+    (0.5005) and the *conviction* is one of the best features in the set (0.6006 read the right
+    way round) - hold rate 83.8%, 88.2%, 92.0%, 92.8% across its quartiles.
+
+    So a level whose same-side touches all went one way and one whose all went the other must read
+    **identically**, and a level with a split record must read zero.
+    """
+    from till_infinity.structures.learning.breaking import NAMES
+
+    at = NAMES.index("conviction")
+    all_up = Breaks.inputs({"up_rate": 1.0})[at]
+    all_down = Breaks.inputs({"up_rate": 0.0})[at]
+    split = Breaks.inputs({"up_rate": 0.5})[at]
+    assert all_up == all_down == 0.5, "direction must not survive; magnitude must"
+    assert split == 0.0
+    assert Breaks.inputs({"up_rate": 0.9})[at] == pytest.approx(0.4)
+
+
+def test_a_level_with_no_record_reads_as_no_conviction():
+    """`up_rate` is 0.5 for "no history", which is different from an even split only in how much
+    evidence sits behind it - and `experience` is the feature that carries that."""
+    from till_infinity.structures.learning.breaking import NAMES
+
+    at = NAMES.index("conviction")
+    assert Breaks.inputs({})[at] == 0.0
+    assert Breaks.inputs({"up_rate": None})[at] == 0.0

@@ -161,3 +161,45 @@ def test_the_registry_holds_nothing_with_a_length_that_could_come_back_uncapped(
     for score in book.scores.values():
         for slot in score.__slots__:
             assert isinstance(getattr(score, slot), float)
+
+
+# ------------------------------------------------ the clock applied to a fitted probability
+
+
+def test_a_fresh_touch_gets_its_model_probability_back_unchanged():
+    """**The subtraction is the whole design.** The clock enters as a shift from its own
+    unconditional rate, not as a second opinion - otherwise a just-opened touch would be moved by
+    a base rate the fitted model has already priced."""
+    from till_infinity.structures.context.registry import aged
+
+    for p in (0.05, 0.2, 0.5, 0.9):
+        assert abs(aged(p, 0.0) - p) < 1e-9
+
+
+def test_the_clock_raises_a_probability_monotonically_as_the_touch_ages():
+    from till_infinity.structures.context.registry import aged
+
+    seen = [aged(0.20, b) for b in (0, 1, 2, 5, 10, 20, 100)]
+    assert seen == sorted(seen)
+    assert all(0.0 <= v <= 1.0 for v in seen)
+    # Past five of its own bars the break is the majority outcome even from a 20% prior.
+    assert aged(0.20, 5) > 0.5
+
+
+def test_it_cannot_leave_the_unit_interval_at_any_age_or_prior():
+    from till_infinity.structures.context.registry import aged
+
+    for p in (1e-9, 0.001, 0.5, 0.999, 1 - 1e-9):
+        for bars in (0.0, 1e-6, 1e6):
+            got = aged(p, bars)
+            assert got is not None
+            assert 0.0 <= got <= 1.0
+
+
+def test_a_missing_model_or_a_missing_age_says_nothing_new():
+    """ "No opinion" and "an even chance" are different claims - the contract `predict` keeps."""
+    from till_infinity.structures.context.registry import aged
+
+    assert aged(None, 5.0) is None
+    assert aged(0.3, None) == 0.3
+    assert aged(0.3, float("nan")) == 0.3

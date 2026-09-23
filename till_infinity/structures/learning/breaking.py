@@ -124,6 +124,35 @@ from .online import Logistic
 #: falls only from 41.0% at one timeframe to 29.5% at five, and adding that
 #: count on top of the interval moves AUC by +0.001. The per-touch timeframe is
 #: the signal; what else names the price is nearly nothing.
+#:
+#: `experience` and `strength` were added 2026-09-23, and the reason they were **missing** is
+#: the more useful half of the story.
+#:
+#: research/force.md measured both inside the 300-1,800s horizon band, found them leaning the
+#: wrong way - stronger and better-tested levels breaking *more*, at AUC 0.54 - and recorded that
+#: as "likely a confound rather than a finding". So they were left out.
+#:
+#: **On the unconditional population the sign reverses and they are the two strongest single
+#: separators this book has.** Over 320,811 resolved touches from the journal:
+#:
+#: | feature | AUC on break | read the right way round |
+#: | --- | ---: | ---: |
+#: | `experience` | 0.3728 | **0.6272** |
+#: | `strength` | 0.3924 | **0.6076** |
+#:
+#: and `experience` is monotone across all five quintiles - break rate 15.0%, 12.1%, 11.3%, 8.8%,
+#: **2.9%**, a fivefold spread. Both beat every feature already in this list.
+#:
+#: The band is why they looked useless. It keeps only resolutions lasting five minutes or more,
+#: and the median 1m touch resolves in **120 seconds** - so the cut discards most of the
+#: population and discards it non-randomly, because slow touches are the ones that break. That
+#: is Simpson's paradox, and research/README.md now records it as the fourth instance in this
+#: folder. The features were never the confound; the conditioning was.
+#:
+#: The mechanism is survivorship and it does not undermine the prediction: **a level accrues
+#: touches only by holding**, so a high count is selected on not having broken yet. That is a
+#: statement about why the sign is negative, not a reason the count is unusable - it is known at
+#: decision time, which is all a feature has to be. See research/break-trade.md.
 NAMES: tuple[str, ...] = (
     "approach_vol",
     "depth_vol",
@@ -131,7 +160,60 @@ NAMES: tuple[str, ...] = (
     "slope",
     "prior_slope",
     "interval_log",
+    "experience",
+    "strength",
+    "conviction",
 )
+
+#: `conviction` is `|up_rate - 0.5|`, derived in `inputs` because `Features` does not carry it -
+#: and the derivation is the whole point.
+#:
+#: `up_rate` is the level's record of which way its same-side touches went, and this model
+#: **excluded it** on a measured AUC of 0.4892 - nothing. That measurement was right and the
+#: conclusion drawn from it was not, because a linear model cannot represent `|x - 0.5|` from `x`.
+#: The record's *direction* says nothing about breaking; its **conviction** says a great deal, and
+#: only the second survives a linear fit.
+#:
+#: This is the same failure mode the `ABSOLUTE` note below describes for the slope - "the one shape
+#: it cannot represent" - arriving a second time on a different feature. Measured over 293,252
+#: journal touches:
+#:
+#: | reading | AUC on break |
+#: | --- | ---: |
+#: | raw `up_rate` | 0.5005 - confirms the exclusion |
+#: | `\|up_rate - 0.5\|` | 0.3994, or **0.6006** read the right way round |
+#:
+#: Hold rate rises monotonically with conviction: **83.8%, 88.2%, 92.0%, 92.8%**.
+#:
+#: **And it is not a restatement of `experience`**, despite correlating +0.573 with it. Break rate
+#: in a grid of the two, low conviction to high, within each experience quartile:
+#:
+#: | | conv q1 | conv q2 | conv q3 |
+#: | --- | ---: | ---: | ---: |
+#: | exp q1 | 15.5% | 18.0% | 11.2% |
+#: | exp q2 | 18.4% | 15.1% | 10.2% |
+#: | exp q3 | 17.2% | 13.1% | 7.5% |
+#: | exp q4 | 17.9% | 8.9% | **3.1%** |
+#:
+#: Conviction separates inside every experience quartile and the effect *strengthens* with
+#: experience - 4.3 points at the bottom, 14.8 at the top. The joint span is **3.1% against 18.4%**,
+#: a sixfold difference, and neither feature reaches it alone.
+#:
+#: It also resolves a standing contradiction between two documents. `strength.md` measured the
+#: same-side record separating hold from break by **+32.8 points** while `breaking.py` had it at
+#: AUC 0.4892 and excluded it. Both are correct: the record separates, its *direction* does not,
+#: and the disagreement was about which reading of one feature was being scored.
+#:
+#: `up_rate` is 0.5 when there is no history rather than an even split, so a level with no record
+#: lands at zero conviction - which is the honest place for it, and `experience` is what tells the
+#: model how much evidence is behind the reading.
+#:
+#: Inputs computed in `inputs` from a feature that *is* carried, rather than read straight off
+#: the features object. Declared rather than hidden in the function, so `test_breaking.py` can
+#: check the **source** is carried and published - the invariant it exists to protect is "nothing
+#: in NAMES scores zero forever because it never reaches the signal", and a derived input satisfies
+#: that through its source or not at all.
+DERIVED: dict[str, str] = {"conviction": "up_rate"}
 
 #: Features read as magnitudes rather than signed values. The slope's sign says
 #: which way price is going, which is a different question from whether the
@@ -189,7 +271,7 @@ log = get_logger(__name__)
 #: input means, so the standardiser's statistics stay valid.
 RATE = 0.02
 
-RECIPE = "2026-09-03 interval_log added"
+RECIPE = "2026-09-23 experience, strength and conviction added"
 
 
 @dataclass(slots=True)
@@ -238,11 +320,21 @@ class Breaks(Restorable):
 
         See `structures-learning-breaking.md` in research/docs.
         """
-        if isinstance(features, dict):
-            raw = [float(features.get(name) or 0.0) for name in NAMES]
-        else:
-            raw = [float(getattr(features, name, 0.0) or 0.0) for name in NAMES]
-        return [abs(v) if name in ABSOLUTE else v for name, v in zip(NAMES, raw, strict=True)]
+        read = (
+            features.get if isinstance(features, dict) else (lambda n: getattr(features, n, None))
+        )
+
+        def value(name: str) -> float:
+            # A derived input reads its source and transforms it: see the note on NAMES for why
+            # the raw `up_rate` behind `conviction` is worthless to a linear model and this is not.
+            source = DERIVED.get(name)
+            if source is not None:
+                got = read(source)
+                return abs(float(got) - 0.5) if isinstance(got, (int, float)) else 0.0
+            got = read(name)
+            return float(got) if isinstance(got, (int, float)) else 0.0
+
+        return [abs(value(n)) if n in ABSOLUTE else value(n) for n in NAMES]
 
     def predict(self, features: object) -> float | None:
         """P(break), or None while there is not enough behind it.

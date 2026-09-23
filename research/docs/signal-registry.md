@@ -81,7 +81,8 @@ reason rather than on taste.
 | --- | ---: | --- |
 | constructed cross-venue spread | **AUC 0.70** | **unreachable.** Needs an account at each venue; this desk has one broker. And the deviation has a **sub-second half-life** |
 | `turns.md` trend exhaustion | AUC 0.595 [0.540, 0.654] | **real but unbuilt, and on the wrong clock.** Daily bars, horizon of weeks, against a desk that now trades 1m-1h. The audit also notes `vol` alone at 0.604 is the top of a ten-signal scan and **two of fourteen instruments score below 0.5** |
-| `strength.md` level record | +32.8 points, survived a pre-registered gap test | **measured with a broken denominator.** `vol.bps` was divided by the venue count when this ran - two to four times per instrument - and volatility units decide which levels exist and which touches resolve, so **the labels are affected, not only the covariates** |
+| `strength.md` same-side record | **+32.8 points on the corrected code** | not excluded on the denominator - **corrected 2026-09-23, see below.** It is in the *direction* model and not in `Breaks`, and the two disagree about it |
+| `strength.md` `Level.strength` itself | +6.1 points corrected, flat until the top quartile | the blend is much weaker than the record inside it. `strength` is now in `Breaks` on a *separate* measurement (AUC 0.6076 unconditional) rather than on this one |
 | sequence models on the Volatility family | AUC 0.5310, 0.5801 | **provably null.** `deriving.md` proves `E[net] = -(c/2) x turnover` on a martingale and a Volatility index is GBM at a published constant sigma, so anything above 0.50 on direction is first a bug. The one positive symbol was the mirror of the one that could not be pulled |
 | echo state networks, same family | 0.5743 | same reason - "highest AUC in the family" on a constant-sigma synthetic |
 | `controls.md` AUC deviation | 0.5889 | that number **is** the null calibration spread, not a signal |
@@ -89,6 +90,37 @@ reason rather than on taste.
 | banded "is a move coming" | AUC 0.573 | **not direction.** It forecasts whether a move is large enough to pay, which buys sizing and not a filter - filtering a coin flip leaves a coin flip. And 86.0% of 1m calls never clear a 4bp band |
 | analogue / similarity twins | 50.0-50.6% | **below the bar.** Four distance metrics within 0.8 points of each other; the envelope is wider than a trailing sigma at equal coverage |
 | `losing.md` 52% | — | an identity: hit rate falls exactly as fast as payoff rises |
+
+## A correction to this page, 2026-09-23
+
+An earlier version of the table above excluded `strength.md`'s +32.8 points as *"measured with a
+broken denominator"*. **That was wrong and the direction was backwards.**
+
+`strength.md` already carries a corrected-code run - same six instruments, 2,864 decisive
+interactions on the fixed `vol.bps` - and **+32.8 is the corrected number.** The pre-fix figure was
++15.6. The same-side record signal *survives and strengthens* through the fix; what the fix
+**weakens** is everything else on that page:
+
+| signal | pre-fix | corrected |
+| --- | ---: | ---: |
+| same-side record, worst to best bucket | +15.6 | **+32.8** |
+| `experience`, q1 to q4 | +14.9 | +5.8, flat until the top |
+| `Level.strength`, q1 to q4 | +12.2 | +6.1, flat until the top |
+| instrument spread | 19.0 points | 7.0 points |
+| origin ordering | pip best | **inverts** - run-only best |
+
+So the denominator caveat belongs on the *weak* rows, not on the strong one. What remains genuinely
+open is the sample: 2,864 decisive interactions over 800 bars, against the 320,811 resolutions the
+journal now holds.
+
+### And a contradiction the correction exposes
+
+`strength.md` says the **same-side record** separates hold from break by **32.8 points**.
+`breaking.py` says `up_rate` - which *is* the same-side record - predicts a break at **AUC 0.4892**,
+and excludes it on that basis.
+
+Both cannot be right, and they are measured on different samples with different labels. Resolving it
+is the first thing to run on the journal rather than on stored history.
 
 ## The one live defect this audit turned up
 

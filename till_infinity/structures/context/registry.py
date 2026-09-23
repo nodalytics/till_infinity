@@ -317,3 +317,42 @@ class Registry(Restorable):
             out[f"{name}_drift"] = round(score.live - claim, 4)
             out[f"{name}_weight"] = round(score.weight, 4)
         return out
+
+
+def aged(probability: float | None, age_bars: float | None) -> float | None:
+    """`Breaks`'s probability, updated for how long the touch has actually been open.
+
+    **This is the piece `Breaks` structurally cannot have.** Its inputs come from `Features`, built
+    once by `features_for` when the touch opens and never mutated - deliberately, because a feature
+    that changes under a model is how look-ahead gets in. So the fitted model scores a touch at
+    birth and has no way to notice that it is still unresolved twenty minutes later.
+
+    The clock does notice, and it is the largest effect in the book: `P(break | still open at t)`
+    runs 14.4% to 77.8% on 1m and crosses even money at four to seven bars of the level's own
+    timeframe, on every timeframe from 1m to 30m. See research/break-trade.md.
+
+    Combined in **log-odds**, which is the only form in which two probabilities about the same
+    event compose without leaving [0, 1], and with the clock entered as a *shift* from its own
+    unconditional rate rather than as a second opinion:
+
+        logit(out) = logit(model) + logit(clock at t) - logit(clock at 0)
+
+    So a touch that has just opened gets its model probability back unchanged, and the clock only
+    ever contributes what it has learned *since*. Without that subtraction a fresh touch would be
+    shifted by the clock's base rate, which the model has already priced.
+
+    Returns `None` when either input is missing - "no opinion" and "an even chance" are different
+    claims, which is the contract `Breaks.predict` already keeps.
+    """
+    if probability is None or age_bars is None or not math.isfinite(age_bars):
+        return probability
+    edge = 1e-6
+    base = min(max(probability, edge), 1.0 - edge)
+    now = min(max(clock_odds(age_bars), edge), 1.0 - edge)
+    start = min(max(clock_odds(0.0), edge), 1.0 - edge)
+
+    def logit(value: float) -> float:
+        return math.log(value / (1.0 - value))
+
+    shifted = logit(base) + logit(now) - logit(start)
+    return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, shifted))))
