@@ -52,10 +52,45 @@ compare without per-instrument tuning - and "how far from fair value" means
 the same thing everywhere.
 
 Two things have been tested rather than asserted. **A level's own record
-predicts the next turn**: hold rate on the arriving side separates 59% to 92%
-across four bands, AUC 0.648. **Price is not drawn to a level**: reached within
-twenty bars 44.9% of the time against 49.5% for an arbitrary price the same
-distance away. So the distance is an *opportunity*, not a magnet.
+predicts whether it holds** - hold rate on the arriving side separates 59% to
+92% across four bands - though it is the record's *conviction* that carries
+this and not its direction: over 293,252 live resolutions the raw reading scores
+AUC 0.5005 and `|record - 0.5|` scores **0.6006**. **Price is not drawn to a
+level**: reached within twenty bars 44.9% of the time against 49.5% for an
+arbitrary price the same distance away. So the distance is an *opportunity*, not
+a magnet.
+
+### What it forecasts, and what it does not
+
+The valuation fixes the side by arithmetic. On top of that sit two families that
+genuinely predict, both measured on the desk's own record rather than on stored
+history:
+
+**Whether a level gives way.** `structures/learning/breaking.py` fits nine
+inputs online and reaches **AUC 0.658**; the live instance refuses a call above
+a 35% break risk. The largest single effect is free: `P(break | the touch is
+still open at t)` runs from **14.4% to 77.8%** and crosses even money at **four
+to seven bars of the level's own timeframe**, on every timeframe from 1m to 30m
+- a thirtyfold span, so the rule is scale-free with one parameter.
+
+**How volatile the next stretch is.** A trailing standard deviation is the
+baseline, and it has beaten a three-state HMM, a fifty-neighbour analogue on 0
+of 20 window-by-horizon cells, and an Ising susceptibility. What does add to it
+is the calendar: net of the hour of the day, volatility runs **0.79x in the two
+hours before a scheduled release and 2.42x on the print itself**, decaying to
+0.92x - *below* normal - four hours later. A release time is published days
+ahead, so that forecast needs no model of the future at all.
+
+**Direction is still not forecast**, and that is a finding rather than a gap.
+Every directional candidate here has died on measurement, most recently a
+momentum-trajectory model whose velocity term prices at -0.00006 out of sample.
+Hit rates land between 49% and 51% and the round trip costs 4bp. The two
+families above work because they answer questions the data can answer: a
+*magnitude* and a *conditional probability*, not a sign.
+
+Every one of them is scored **live against the backtest that claimed it**
+(`structures/context/registry.py`), because the record here is that point
+estimates from backtests decay and nothing was previously arranged to notice.
 
 ### The parts
 

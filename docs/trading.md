@@ -1842,6 +1842,80 @@ deploy is a decision taken and silently dropped.
   keep trading, which is the line `structures` already takes on its own state -
   and a file from an older build is missing keys rather than wrong.
 
+## The tunnel has no supervisor, and the desk stops silently without it
+
+`deploy.sh` passes `--add-host=host.docker.internal:host-gateway` so the container can reach a
+service on the host, and its comment says why: MetaTrader 5 is an x86-64 Windows binary, the box is
+aarch64, so **the terminal runs elsewhere and is reached through an SSH tunnel bound to the docker
+bridge.**
+
+Nothing creates or supervises that tunnel. `--add-host` only makes the host *resolvable*; the
+forward itself was started by hand, and a hand-started `ssh -L` dies with its session.
+
+**What that looks like when it happens**, observed 2026-09-23:
+
+```
+trading: no health route answered on http://host.docker.internal:8000
+trading: cannot attach (the bridge at http://host.docker.internal:8000 has no
+         terminal attached) - attempt 38, retrying in 60s
+```
+
+with `TRADING_LIVE=1` set, nothing listening on the host's port 8000, no tunnel process, and no
+systemd unit. The desk was armed, refusing every trade, and retrying once a minute - for over a day.
+Refusing is the right failure, but it is a **quiet** one: the container stays `healthy`, because
+health is about the seven services running rather than about whether a broker is attached.
+
+Diagnosing it needs two probes and they answer different questions:
+
+```bash
+ss -ltn | grep :8000                          # is the tunnel up on this host?
+timeout 5 bash -c '</dev/tcp/<lab>/8000'      # is the bridge up on the other end?
+timeout 5 bash -c '</dev/tcp/<lab>/22'        # is the other end reachable at all?
+```
+
+On that date all three were negative, so the terminal host itself was off or off-network - which no
+amount of restarting the container fixes, and is why the second probe matters. A previous incident
+had port 22 dead while the bridge still answered 200, so **check the bridge separately from SSH**.
+
+### Supervise it
+
+A unit, so it comes back with the box and restarts when the link drops:
+
+```ini
+# ~/.config/systemd/user/mt5-tunnel.service
+[Unit]
+Description=SSH tunnel to the MT5 bridge
+After=network-online.target
+
+[Service]
+# Bound to the docker bridge, not to localhost: the container reaches the host at
+# 172.17.0.1, and a tunnel on 127.0.0.1 is invisible to it.
+ExecStart=/usr/bin/ssh -N -T \
+  -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  -o StrictHostKeyChecking=accept-new \
+  -i %h/.ssh/lab.pem \
+  -L 172.17.0.1:8000:127.0.0.1:8000 \
+  <user>@<lab>
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now mt5-tunnel
+loginctl enable-linger "$USER"     # so it survives logout
+```
+
+`ExitOnForwardFailure=yes` is the part that matters: without it `ssh` stays up having failed to bind
+the forward, `Restart=always` never fires, and the tunnel is dead while the unit reads as active -
+which is the same silent failure one layer up.
+
+**And the desk should say so.** `trading` logs the retry but nothing alarms on it, so a bridge that
+never attaches looks like a quiet day. The retry counter reaching some threshold is a notification
+worth having, and it does not exist yet.
+
 ## What this does not claim
 
 No strategy here has been evaluated against its own outcomes. The signal they

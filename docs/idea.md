@@ -210,7 +210,7 @@ all. That is checkable with what is already stored, and it has not been checked
 - `research/catalogue.md` compares what they cost to trade, not what their
 levels are worth. It is the most load-bearing untested claim in this document.
 
-## Once there is a valuation the side is arithmetic, which is why nothing here forecasts
+## Once there is a valuation the side is arithmetic, which is why nothing here forecasts a direction
 
 That is the estimate. Everything from here is what follows from having one.
 
@@ -218,6 +218,13 @@ The system never answers "which way will price go". It answers "what is this
 worth, and where is it trading" - and the side follows arithmetically. That is
 a valuation, not a prediction, and it is the constraint the rest of the
 architecture exists to protect.
+
+> **Sharpened 2026-09-23.** This section used to say "nothing here forecasts",
+> and that has become too strong. Two things now do, and both were reached by
+> the discipline described here rather than in spite of it: **whether a level
+> gives way**, and **how volatile the next stretch is**. Neither is a direction.
+> The constraint was never "forecast nothing" - it was "forecast no direction",
+> and the difference is the whole of [what is now forecast](#what-is-now-forecast-and-why-these-two).
 
 The distinction is not word-play. A forecast is scored on whether the future
 matched it, and can only be improved by forecasting better. A valuation is
@@ -232,6 +239,83 @@ measured as *direction predictors* they land at a coin flip, in this project
 and in others. That is not a failure of the observations. It is a failure of
 the question being asked of them. The same observations, read as evidence about
 where fair value sits and how firmly it is held, have somewhere to go.
+
+## What is now forecast, and why these two
+
+The valuation fixes the side. Two questions sit on top of it that the valuation
+does not answer and the data turns out to support, and it is worth being precise
+about why *these* two and not others.
+
+### Whether the level gives way
+
+A level can be perfectly valid and still fail. That is a different question from
+which way price goes, and `learning/breaking.py` now fits nine inputs online to
+answer it, reaching **AUC 0.658**. The live desk refuses a call whose break risk
+exceeds 35%.
+
+The evidence that it is genuinely a separate question rather than direction in
+disguise is the level's own record. `up_rate` - which way this side's previous
+touches went - is the **strongest direction feature** the project has, at weight
++2.29 against nothing else above 0.22. Asked about breaking it scores **0.5005**
+over 293,252 live resolutions: nothing at all. But its *conviction*,
+`|up_rate - 0.5|`, scores **0.6006**. One feature, two readings, two different
+questions - and only the magnitude answers this one, because a linear model
+cannot represent `|x - 0.5|` from `x`.
+
+The largest single effect here costs nothing to observe. `P(break | the touch is
+still open at t)` runs from **14.4% at open to 77.8% at ten bars**, and crosses
+even money at **four to seven bars of the level's own timeframe** on every
+timeframe from 1m to 30m. A thirtyfold span with one parameter: *a level that has
+not resolved within about five of its own bars is more likely to break than to
+hold.* "Resolution took at least t" and "still open at t" are the same event, so
+a table built on finished touches is one a live clock can act on - which is what
+separates it from every other conditional in the research folder, all of which
+need to know how the touch ended.
+
+### How volatile the next stretch is
+
+This is the half the width already needed, and it has a baseline that is very
+hard to beat: a trailing standard deviation. Measured against it, a three-state
+Gaussian HMM loses by 3% to 72%, a fifty-neighbour analogue loses on **0 of 20**
+window-by-horizon cells, an Ising susceptibility loses by a factor of two to
+five, and persistence landscapes lose. The honest summary is that a hundred bars
+of arithmetic is the state of the art here.
+
+What does add to it is the one input that needs no model of the future at all:
+**a scheduled release time is published days ahead.** Net of the hour of the day
+- and that control is the whole study, because 61 of 161 high-importance events
+land in the 12:30 UTC hour, which is also the London/New York overlap -
+volatility runs **0.79x in the two hours before a print and 2.42x on the print
+itself**, decaying through 1.35x at an hour to **0.92x at four hours**, which is
+*below* normal. Every interval excludes 1.0 and both halves of the sample agree
+at every horizon.
+
+The lull is the part worth having: least obvious, knowable furthest ahead, and a
+21% change in a volatility-scaled sizing input.
+
+### And why direction still is not
+
+Not for want of trying, and the failures are specific. Momentum trajectory -
+velocity and acceleration of a normalised momentum - prices at **-0.00006** on
+the step that adds velocity, out of sample, across four instruments and three
+horizons. Similarity twins land at 50.0-50.6%. Sequence models on the synthetics
+are provably null. Trend exhaustion does not survive a change of clock, and the
+daily result it came from now looks like a volatility proxy.
+
+The pattern across all of them is the same: hit rates between 49% and 51%
+against a round trip that costs 4bp. **The two families above work because they
+answer a magnitude and a conditional probability rather than a sign**, and those
+are the questions this data can answer.
+
+### All of it is scored live against its own claim
+
+Every one of these arrives with the number its backtest promised and is then
+scored on **live** resolutions, with ensemble weight coming from the live
+separation rather than the claim
+([`structures/context/registry.py`](../till_infinity/structures/context/registry.py)).
+The reason is this folder's own record: point estimates from backtests decay
+here, repeatedly, and nothing was previously arranged to notice. A signal that
+stops separating now loses its vote without anyone editing a table.
 
 ## Why the width is the part worth modelling at all
 

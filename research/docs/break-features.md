@@ -189,6 +189,31 @@ gating on.
 
 It only bites where `max_break_risk` is set, since nothing else reads the value.
 
+### The ceiling and the park window are now measurably inconsistent
+
+Asked to re-tune `max_break_risk` against the corrected input, the measurement narrows it to a
+constraint rather than a preference - and surfaces something larger than the ceiling.
+
+Over **310,434 resolved touches**, a touch lives a median of **1.33 of its own bars**: p75 3.33,
+p90 7.00, p99 12.80. Against that the clock floor reads 0.120 at zero bars, 0.279 at two, **0.385 at
+three**, 0.560 at five, 0.787 at ten.
+
+So the live 0.35 ceiling refuses a parked entry past about **three** bars - p75 of touch age, the
+slowest quarter of touches. Keeping the full ten-bar `pullback_bars` window passable would need a
+ceiling of **0.787**, at which point a break-risk gate is not gating.
+
+Two coherent resolutions, and the second is better founded:
+
+* **raise the ceiling** to the wait worth tolerating - 0.56 for five bars, 0.72 for eight -
+  accepting that a gate above one half is mostly decoration;
+* **shorten `pullback_bars`.** Three to five bars covers 75-85% of touch lifetimes, and **a signal
+  parked for ten bars is waiting for a retracement on a touch that has usually already resolved.**
+  That is a deeper problem than a stale probability and neither number fixes it.
+
+Both settings now carry the measurement and a pointer to the other, so whoever moves one sees the
+coupling. It is left unchanged here because the trade-off - refusing slow entries against taking
+them on aged information - is a decision the measurement informs rather than settles.
+
 ### One extrapolation, stated
 
 The hazard was measured over **all** touches by elapsed time. A parked signal is a *selected*
