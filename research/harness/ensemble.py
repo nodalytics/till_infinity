@@ -88,6 +88,7 @@ Run from the repository root:  .venv-research/bin/python research/harness/ensemb
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -413,6 +414,14 @@ def run(interval, universe, rows):
             signals.append(col)
             names.append(f"pair@{h}")
     Sall = np.column_stack(signals)
+    # every signal, its name and the time blocks, for `components.py` to take apart
+    out = Path(".data/research") / f"signals_{interval}.npz"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    Rl_, Rs_ = d[f"R@{TRADE_H[interval]}"].to_numpy(), d[f"Rs@{TRADE_H[interval]}"].to_numpy()
+    np.savez_compressed(out, S=Sall, names=np.array(names), fit=fit_block, val=val, test=te,
+                        value=(Rl_ - Rs_) / 2, ticker=d.ticker.to_numpy().astype(str), ts=d.ts.to_numpy())
+    if os.environ.get("ENSEMBLE_DUMP_ONLY"):
+        return
     print(f"\n{'#' * 110}\n{interval}: bank {n_bank} signals, event-conditioned {n_ev - n_bank}, "
           f"pair-spread {len(names) - n_ev}")
     evaluate(interval, "bank", d, Sg, names[:n_bank], fit_block, val, te, H, rows)

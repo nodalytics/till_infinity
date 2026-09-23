@@ -89,7 +89,23 @@ def run(interval, universe):
     hi = p >= np.quantile(p[tr], 0.8)
     inv = 1 / e
     inv = inv / np.nanmean(inv[tr])
-    sizes = {"flat": np.ones(len(d)), "halve": np.where(hi, 0.5, 1.0), "inverse": inv}
+    # The deployable rules: what the live `Volatility` already publishes. `regime` is the percentile
+    # of an EWMA of |r| (half-life 60 bars) within its own last 1500 readings; the fast variant
+    # uses a 14-bar EWMA, the span of `ewma_tr_bps`. No model, no fit - a percentile of itself.
+    live = {}
+    for name, alpha in (("regime", 1 - 0.5 ** (1 / 60)), ("fast", 1 / 14)):
+        pct = np.full(len(d), np.nan)
+        for _, g in d.groupby("ticker"):
+            ew = g["_lc"].diff().abs().ewm(alpha=alpha, adjust=False).mean()
+            pct[g.index.to_numpy()] = ew.rolling(1500, min_periods=100).rank(pct=True).to_numpy()
+        live[name] = pct
+    sizes = {"flat": np.ones(len(d)), "halve": np.where(hi, 0.5, 1.0), "inverse": inv,
+             "halve@regime>=.8": np.where(live["regime"] >= 0.8, 0.5, 1.0),
+             "halve@fast>=.8": np.where(live["fast"] >= 0.8, 0.5, 1.0)}
+    for name, pct in live.items():
+        top = pct[slot] >= 0.8
+        print(f"live rule {name} >= 0.8: P(4x bar) {big[slot][top].mean():.1%} when on vs "
+              f"{big[slot][~top].mean():.1%} off; model top-20% agrees on {np.mean(hi[slot][top]):.0%} of its bars")
     mom = np.sign(d.mom20.to_numpy())
     print(f"\n{'position':<9} {'policy':<8} {'mean':>7} {'sd':>6} {'sharpe':>7} {'1% tail':>8} {'worst':>7} {'max dd':>7}")
     out = []

@@ -18,6 +18,7 @@ calendar.
 | [`questions.py`](../harness/questions.py) | six sharper questions, each scored against the rule a trader would try first |
 | [`dailylong.py`](../harness/dailylong.py) | the stress test of the daily long lead - rules, regimes, rolling refits |
 | [`ensemble.py`](../harness/ensemble.py) | many weak models, their covariance and eigenvalues, six ways to combine them |
+| [`components.py`](../harness/components.py) | the ensemble's independent components, varimax-rotated and named |
 | [`bars.py`](../harness/bars.py) | the shared barrier race, resolved on wicks |
 
 ## The label: a race over a period, not the next bar
@@ -137,6 +138,60 @@ Fit on the first 40% of each series, covariance and information coefficients (IC
 The views are genuinely different - 15 to 22 components carry structure beyond noise and the
 signals form 48-68 clusters - so this is not ten copies of one model. And the best validation
 ICs are 2.3 to 3.6 standard errors, which is roughly the maximum of 60-90 draws of nothing.
+
+### The components, named
+
+Raw eigenvectors are hard to name: the first is a blend of everything and each later one is
+forced orthogonal to it. [`components.py`](../harness/components.py) varimax-rotates the
+components above the noise edge. That is the same subspace, turned so each component loads on
+a few signals. **Every rotated component turns out to be one source of information across all
+of its horizons.** The 4-, 8- and 20-bar VIX models are one view, not three; so are the 1-24h
+flow models. So the independent views are the sources, and horizon adds almost nothing
+independent.
+
+IC is each component's correlation with the realised long-minus-short payoff; its standard
+error is about 0.02 at 15m and 1h and 0.025 on daily. The loadings are in
+`.data/research/components_{interval}.csv`.
+
+| source (the component) | 15m: variance / IC val / IC test | 1h | 1d |
+| --- | --- | --- | --- |
+| **vix** (with calendar at 15m) | 5.9% / +0.039 / -0.016 | 3.7% / **+0.061 / -0.009** | 3.4% / **+0.060 / -0.008** |
+| **calendar** (with the all-features model at 1h) | *(inside vix)* | 3.6% / +0.046 / +0.014 | 3.3% / +0.010 / +0.006 |
+| **borrowed fields** (with all-features) | 5.1% / +0.012 / +0.047 | 3.5% / -0.030 / -0.013 | 6.7% / +0.011 / +0.012 |
+| **volatility** | 3.7% / +0.043 / +0.011 | 3.1% / +0.012 / +0.011 | *(inside borrowed, bar)* |
+| **dollar** | 3.7% / +0.003 / -0.048 | 3.3% / +0.026 / -0.022 | 3.3% / +0.000 / -0.024 |
+| **order flow** | 3.1% / **+0.024 / +0.039** | 2.8% / **+0.031 / +0.009** | 3.8% / **+0.003 / +0.015** |
+| **fair value gaps** (with technical on daily) | 3.3% / +0.011 / +0.017 | 2.9% / -0.001 / -0.026 | 4.2% / +0.003 / +0.018 |
+| **technical** | 3.3% / +0.027 / +0.004 | 2.6% / -0.036 / +0.018 | *(inside fvg)* |
+| **bar shape** | 2.8% / -0.019 / -0.002 | 2.6% / +0.007 / +0.003 | 5.5% / +0.011 / +0.016 |
+| **cross-asset** | 3.2% / -0.001 / -0.011 | 2.5% / +0.009 / -0.019 | 3.2% / +0.021 / +0.004 |
+| **pair spreads** | 3.3% / -0.001 / +0.002 | 2.7% / -0.007 / -0.009 | 3.3% / -0.008 / +0.001 |
+| event: **4x shock down** (with new low on daily) | 3.1% / -0.005 / +0.000 | 2.8% / +0.020 / +0.012 | 3.4% / -0.003 / +0.001 |
+| event: **4x shock up** | 3.1% / +0.015 / -0.008 | 2.5% / +0.019 / +0.009 | - |
+| event: **new 50-bar low** | 3.6% / +0.004 / -0.004 | 2.4% / +0.016 / -0.008 | *(with shock down)* |
+| event: **new 50-bar high** (with breakout up at 15m) | 2.9% / +0.013 / -0.001 | 2.6% / -0.019 / +0.002 | 3.3% / +0.025 / -0.000 |
+| event: **volatility alarm** | 3.2% / +0.008 / +0.015 | 2.7% / +0.009 / +0.008 | 4.3% / +0.013 / +0.017 |
+| event: **breakout down** | 2.9% / +0.009 / +0.007 | 2.2% / -0.001 / +0.008 | - |
+| event: **breakout up** | *(with new high)* | 1.8% / +0.024 / +0.017 | 2.8% / +0.005 / -0.006 |
+| event: **London open** | 3.1% / -0.017 / +0.004 | 2.2% / -0.022 / +0.008 | - |
+| event: **New York open** | 2.8% / +0.011 / +0.015 | 2.3% / +0.016 / +0.004 | - |
+| event: **near an unfilled bullish FVG** | 2.3% / +0.009 / +0.004 | 2.4% / -0.005 / +0.005 | 3.0% / -0.024 / +0.005 |
+| event: **near an unfilled bearish FVG** | 2.6% / -0.006 / +0.008 | 2.1% / +0.005 / -0.004 | 2.8% / +0.001 / +0.007 |
+| **components above the noise edge** | **20** | **22** | **15** |
+
+Three readings:
+
+* **These are the sources of information the ensemble was built from, recovered blind.** The
+  rotation was not told the families; it found them from the correlations alone. The 15-22
+  count is simply how many distinct sources there are. Where two sources merge (VIX with
+  calendar at 15m, FVG with technical on daily), they carry overlapping information on that
+  timeframe.
+* **VIX is the best-validated source and does not hold.** It posts the highest validation IC at
+  every interval (+0.04 to +0.06) and is negative on test at all three. VIX's information is
+  about size (see [`implied.md`](implied.md)), and here it is being asked for a sign.
+* **Order flow is the only source positive on both blocks at all three intervals**, at +0.003 to
+  +0.039. That is at most two standard errors in any one cell. It is the one source worth
+  watching as more data accrues, and it is not a signal today.
 
 ### Six ways to combine them, net R per trade on the test block
 
