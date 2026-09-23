@@ -360,16 +360,27 @@ def test_the_swing_ceiling_falls_back_to_the_scalp_one():
     assert _engine("swing-level", max_hold_swing=0.0).ceiling == 1_800.0
 
 
-def test_every_swing_entry_is_a_higher_timeframe():
-    """The split is by declared style rather than by name, and this is what
-    says the two agree: `approach-scalp` and `fade-to-value` are named like
-    scalps and classed as swings because of what they hold."""
+def test_every_swing_enters_strictly_below_the_frame_that_judges_it():
+    """**This asserted a 15m floor on swing entries until 2026-09-22.**
+
+    The floor is gone - the break-rate figure behind it was a selection effect,
+    see research/break-trade.md - but the invariant that replaced it is the one
+    that was doing the real work all along: a swing's trigger has to sit
+    strictly below every timeframe in its `context`, or the gap that makes it a
+    swing rather than a fast trade wearing a swing's patience has collapsed.
+
+    That is also why the band stops at 30m and not at 1h: swing context starts
+    at 1h, so a 1h entry would tie rather than clear.
+    """
     import till_infinity.trading as td
+    from till_infinity.structures.levels import SECONDS
 
     for name, cls in td.STRATEGIES.items():
-        if cls.style != "swing" or not cls.entries:
+        if cls.style != "swing" or not cls.entries or not cls.context:
             continue
-        assert set(cls.entries) <= {"15m", "30m", "1h", "2h", "4h", "1d", "1w"}, name
+        slowest_trigger = max(SECONDS[e] for e in cls.entries)
+        fastest_judge = min(SECONDS[c] for c in cls.context)
+        assert slowest_trigger < fastest_judge, name
 
 
 # ------------------------------------- a close with no decision behind it
@@ -583,20 +594,30 @@ def test_opportunity_has_no_clock_of_its_own():
     assert engine.hold_for("4h") == engine.ceiling
 
 
-def test_opportunity_will_not_trigger_below_fifteen_minutes():
-    """A floor on the level, not on the trade. How long it is *held* is still
-    left to the barriers - `hold_seconds` is 0. Which timeframe **drew** the
-    level is a different question, and the largest quality signal on the book:
-    1m levels break 57.9% of the time against 1.4% at 1h."""
+def test_opportunity_triggers_across_the_fast_band_but_not_at_the_hour():
+    """**The 15m floor was removed on 2026-09-22.**
+
+    Its stated reason was "1m levels break 57.9% of the time against 1.4% at
+    1h". That ladder was measured only on resolutions lasting five minutes or
+    more, and the median 1m touch resolves in 120 seconds - unconditionally the
+    1m rate is 13.4%. The ordering survives; the level of it does not, and it
+    was the level that justified refusing the timeframe. See
+    research/break-trade.md.
+
+    The trade is now braked instead of refused, by `Settings.interval_weight`.
+    What still holds: the trigger stays below the hour, because 1h is where
+    this strategy's analysis frame starts.
+    """
     import till_infinity.trading as td
     from till_infinity.trading.config import Settings
 
     made = Settings(intervals=("1m", "5m", "15m", "30m", "1h", "1d"))
     engine = td.STRATEGIES["opportunity"](made)
-    assert "1m" not in engine.intervals
-    assert "5m" not in engine.intervals
-    # Entry below the hour: the trigger fixes the stop, the analysis does not.
-    assert engine.intervals == ("15m", "30m")
+    assert "1m" in engine.intervals
+    assert "5m" in engine.intervals
+    # Still below the hour: the trigger fixes the stop, the analysis does not.
+    assert "1h" not in engine.intervals
+    assert "1d" not in engine.intervals
     # The hold is untouched: seconds to days, decided by the barriers.
     assert engine.hold_seconds == 0.0
 
@@ -948,10 +969,32 @@ def test_the_interval_weight_never_enlarges():
     assert scaling.by_interval("1m", (("1m", -2.0),)) == scaling.FLOOR
 
 
-def test_it_is_off_until_somebody_sets_it():
-    from till_infinity.trading.config import Settings
+def test_it_now_carries_a_measured_default_that_brakes_without_blocking():
+    """**It was off until 2026-09-22 and is now on**, because every strategy's
+    entries were widened down to 1m and the *live* record for that band is
+    -821.75 over 129 closes. Widening without the brake would have put six more
+    strategies into the worst band on the book at full size.
 
-    assert Settings().interval_weight == ()
+    The values are gentle for a measured reason rather than a timid one: at 0.4
+    the brake stopped shrinking positions and started **refusing** them - 0.4 of
+    the risk budget no longer covers the broker's minimum 0.01 lot. A refusal is
+    a different policy, and a biased one, since it lands on exactly the marginal
+    trades and skews the sample the brake exists to protect.
+    """
+    from till_infinity.trading.config import Settings
+    from till_infinity.trading.scaling import by_interval
+
+    weights = Settings().interval_weight
+    assert weights, "the default was emptied without a note"
+    held = dict(weights)
+    # A real reduction on the band the live record condemns...
+    assert held["1m"] < 1.0
+    assert held["5m"] < 1.0
+    # ...and nothing at or above 30m is touched.
+    assert by_interval("30m", weights) == 1.0
+    assert by_interval("1h", weights) == 1.0
+    # Gentle enough that a position shrinks rather than vanishing.
+    assert min(held.values()) >= 0.5
 
 
 def test_the_strategy_passes_the_interval_through():
@@ -1157,10 +1200,12 @@ def test_every_swing_analyses_slow_and_enters_fast():
         if cls.style != "swing":
             continue
         engine = cls(made)
-        assert engine.entries == ("15m", "30m"), name
+        # Widened below 15m on 2026-09-22 - see research/break-trade.md - and
+        # still stopping short of the hour, which is where `context` begins.
+        assert engine.entries == ("1m", "3m", "5m", "15m", "30m"), name
         assert engine.context == ("1h", "2h", "4h"), name
-        # Nothing enters at or above the hour any more.
-        assert all(iv in ("15m", "30m") for iv in engine.entries), name
+        # Nothing enters at or above the hour.
+        assert all(iv in ("1m", "3m", "5m", "15m", "30m") for iv in engine.entries), name
         # And the exit horizon stays at an hour or more.
         assert engine.hold_for("15m") >= 3600.0, name
 

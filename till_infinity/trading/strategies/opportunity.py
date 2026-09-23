@@ -310,10 +310,17 @@ class Opportunity(LevelStrategy):
     #: on 1m and 3m and scored **-0.450R** on the common stream, last of four
     #: arms and widening as its sample grew. A 15m level can still produce a
     #: trade that lasts seconds or days; a 1m level breaks under it.
-    #: Entry below the hour, floored at 15m. The trigger fixes the stop, and
-    #: a stop measured on 15m is a fraction of one measured on 4h for the same
-    #: idea. Judged on 1h-4h through `context` below.
-    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
+    #: Entry from **1m to 1h**, widened from a 15m floor on 2026-09-22. The
+    #: trigger fixes the stop, and a stop measured on 15m is a fraction of one
+    #: measured on 4h for the same idea. Judged on 1h-4h through `context`.
+    #:
+    #: The "fortyfold" break-rate ladder above was measured on resolutions
+    #: lasting five minutes or more; unconditionally it is 13.4% at 1m against
+    #: 4.5% at 15m - a third of that gap. The **live** -0.450R this strategy
+    #: scored on its own 1m and 3m trades is not corrected by that and is why
+    #: `Settings.interval_weight` now de-sizes the band rather than the floor
+    #: excluding it. See research/break-trade.md.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m")
 
     #: **Analysis on 1h-4h**, which is where a level is judged rather than
     #: triggered. Narrower than "anywhere else agrees", because agreement was

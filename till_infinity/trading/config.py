@@ -591,7 +591,52 @@ class Settings:
     #: Anything unlisted sizes at full. See `scaling.by_interval` for the
     #: measured table this comes from - sub-15m is -821.75 over 129 closes
     #: against +35.03 over 21 at 15m and above.
-    interval_weight: tuple[tuple[str, float], ...] = ()
+    #:
+    #: **A default was added 2026-09-22, and the reason is a widening.** Every
+    #: strategy's `entries` now reaches down to 1m, because the break-rate
+    #: figure that justified a 15m floor turned out to be a selection effect -
+    #: 57.9% was measured on resolutions lasting five minutes or more, and
+    #: unconditionally it is 13.4% (research/break-trade.md).
+    #:
+    #: **That correction does not touch the live loss.** The per-close record
+    #: below is realised money, not a backtest, and it stands:
+    #:
+    #: | interval | closes | per close | t |
+    #: | --- | ---: | ---: | ---: |
+    #: | 1m | 47 | -7.75 | **-2.29** |
+    #: | 3m | 34 | -4.80 | -1.53 |
+    #: | 5m | 48 | -6.13 | **-2.55** |
+    #: | 15m | 15 | -2.46 | -0.49 |
+    #: | 30m | 2 | +3.71 | |
+    #: | 1h | 3 | +18.67 | +1.83 |
+    #:
+    #: So the fast band is entered at reduced size rather than refused.
+    #:
+    #: **These are a brake, not an estimate.** No fitted weight is honest on 47
+    #: closes, and the three fast bands' t-statistics do not separate them
+    #: enough to justify three different numbers - so they get one.
+    #:
+    #: **Why the brake is gentle, which is the part worth reading.** The first
+    #: version of this used 0.4 on the fast bands, and it did not make those
+    #: trades smaller: it made 5 of the suite's sizing cases **refuse
+    #: outright**, because 0.4 of the risk budget no longer covers the broker's
+    #: minimum 0.01 lot - "10.00 does not cover the minimum 0.01 lot, which
+    #: risks 13.70". A weight that refuses is not a smaller position, it is a
+    #: different policy, and it is a **biased** one: the refusals land on
+    #: exactly the marginal trades, so the sample left behind is skewed toward
+    #: the large-risk setups and the re-measurement this brake exists to
+    #: protect is corrupted at the source.
+    #:
+    #: So the weight is the gentlest one that is still a real reduction and
+    #: still clears the lot floor. The figure to re-read it against is the same
+    #: per-close record, once the widened band has produced a comparable sample
+    #: of its own - which is the only thing that can settle the multiplier.
+    interval_weight: tuple[tuple[str, float], ...] = (
+        ("1m", 0.8),
+        ("3m", 0.8),
+        ("5m", 0.8),
+        ("15m", 0.95),
+    )
 
     #: Drawdown from the equity peak at which size reaches its floor. Zero is
     #: off.

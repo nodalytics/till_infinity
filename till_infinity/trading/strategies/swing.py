@@ -107,11 +107,32 @@ class ApproachScalp(LevelStrategy):
     #: measured on 15m is a fraction of one measured on 4h for the identical
     #: idea - that is risk reduction, not a different trade.
     #:
-    #: Floored at 15m rather than open, because the timeframe that draws a
-    #: level is the largest quality signal on this book: 1m levels break 57.9%
-    #: of the time against 12.8% at 15m, and sub-15m trading is -821.75 over
-    #: 129 closes against +35.03 over 21 above it.
-    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
+    #: **Widened from a 15m floor on 2026-09-22**, to 1m-1h, on the desk's
+    #: instruction and on a correction to the number the floor rested on.
+    #:
+    #: The floor cited "1m levels break 57.9% of the time against 12.8% at
+    #: 15m". **That figure is a selection effect.** It was measured on
+    #: resolutions lasting five minutes or more, and the median 1m touch
+    #: resolves in **120 seconds** - so the cut discards most of the
+    #: population, and discards it non-randomly, because the slow touches are
+    #: the ones that break. Over all 312,420 journal resolutions the 1m break
+    #: rate is **13.4%** against 4.5% at 15m: still ordered, a third of the
+    #: published gap, and no longer a reason to refuse the timeframe. See
+    #: research/break-trade.md.
+    #:
+    #: **The other half of the floor's case stands.** Sub-15m is -821.75 over
+    #: 129 *live* closes against +35.03 over 21 above it, and nothing in that
+    #: correction touches it - a live loss is a live loss. So the fast band is
+    #: entered at reduced size rather than trusted: see
+    #: `Settings.interval_weight`, which carries the measured default that
+    #: makes this widening survivable.
+    #:
+    #: **It stops at 30m, not 1h**, though the desk's band is 1m-1h. The
+    #: trigger has to sit strictly below every timeframe that judges it and
+    #: `context` starts at 1h, so a 1h entry would collapse the gap that makes
+    #: this a swing at all. The 1h end of the band is `cycle-turn`, which
+    #: already enters there and carries no 1h context.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m")
     needs_context: ClassVar[bool] = True
 
     #: The rejection has to show on 4h. A pin bar there is a claim that several
@@ -266,11 +287,32 @@ class Runner(LevelStrategy):
     #: measured on 15m is a fraction of one measured on 4h for the identical
     #: idea - that is risk reduction, not a different trade.
     #:
-    #: Floored at 15m rather than open, because the timeframe that draws a
-    #: level is the largest quality signal on this book: 1m levels break 57.9%
-    #: of the time against 12.8% at 15m, and sub-15m trading is -821.75 over
-    #: 129 closes against +35.03 over 21 above it.
-    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
+    #: **Widened from a 15m floor on 2026-09-22**, to 1m-1h, on the desk's
+    #: instruction and on a correction to the number the floor rested on.
+    #:
+    #: The floor cited "1m levels break 57.9% of the time against 12.8% at
+    #: 15m". **That figure is a selection effect.** It was measured on
+    #: resolutions lasting five minutes or more, and the median 1m touch
+    #: resolves in **120 seconds** - so the cut discards most of the
+    #: population, and discards it non-randomly, because the slow touches are
+    #: the ones that break. Over all 312,420 journal resolutions the 1m break
+    #: rate is **13.4%** against 4.5% at 15m: still ordered, a third of the
+    #: published gap, and no longer a reason to refuse the timeframe. See
+    #: research/break-trade.md.
+    #:
+    #: **The other half of the floor's case stands.** Sub-15m is -821.75 over
+    #: 129 *live* closes against +35.03 over 21 above it, and nothing in that
+    #: correction touches it - a live loss is a live loss. So the fast band is
+    #: entered at reduced size rather than trusted: see
+    #: `Settings.interval_weight`, which carries the measured default that
+    #: makes this widening survivable.
+    #:
+    #: **It stops at 30m, not 1h**, though the desk's band is 1m-1h. The
+    #: trigger has to sit strictly below every timeframe that judges it and
+    #: `context` starts at 1h, so a 1h entry would collapse the gap that makes
+    #: this a swing at all. The 1h end of the band is `cycle-turn`, which
+    #: already enters there and carries no 1h context.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m")
     needs_context: ClassVar[bool] = True
 
     #: The rejection has to show on 4h. A pin bar there is a claim that several
@@ -336,11 +378,32 @@ class SwingLevel(LevelStrategy):
     #: measured on 15m is a fraction of one measured on 4h for the identical
     #: idea - that is risk reduction, not a different trade.
     #:
-    #: Floored at 15m rather than open, because the timeframe that draws a
-    #: level is the largest quality signal on this book: 1m levels break 57.9%
-    #: of the time against 12.8% at 15m, and sub-15m trading is -821.75 over
-    #: 129 closes against +35.03 over 21 above it.
-    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
+    #: **Widened from a 15m floor on 2026-09-22**, to 1m-1h, on the desk's
+    #: instruction and on a correction to the number the floor rested on.
+    #:
+    #: The floor cited "1m levels break 57.9% of the time against 12.8% at
+    #: 15m". **That figure is a selection effect.** It was measured on
+    #: resolutions lasting five minutes or more, and the median 1m touch
+    #: resolves in **120 seconds** - so the cut discards most of the
+    #: population, and discards it non-randomly, because the slow touches are
+    #: the ones that break. Over all 312,420 journal resolutions the 1m break
+    #: rate is **13.4%** against 4.5% at 15m: still ordered, a third of the
+    #: published gap, and no longer a reason to refuse the timeframe. See
+    #: research/break-trade.md.
+    #:
+    #: **The other half of the floor's case stands.** Sub-15m is -821.75 over
+    #: 129 *live* closes against +35.03 over 21 above it, and nothing in that
+    #: correction touches it - a live loss is a live loss. So the fast band is
+    #: entered at reduced size rather than trusted: see
+    #: `Settings.interval_weight`, which carries the measured default that
+    #: makes this widening survivable.
+    #:
+    #: **It stops at 30m, not 1h**, though the desk's band is 1m-1h. The
+    #: trigger has to sit strictly below every timeframe that judges it and
+    #: `context` starts at 1h, so a 1h entry would collapse the gap that makes
+    #: this a swing at all. The 1h end of the band is `cycle-turn`, which
+    #: already enters there and carries no 1h context.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m")
     needs_context: ClassVar[bool] = True
 
     #: **1h to 4h, coarsest first.** A 4h pin bar is the strongest version of
@@ -587,11 +650,32 @@ class OriginSwing(LevelStrategy):
     #: measured on 15m is a fraction of one measured on 4h for the identical
     #: idea - that is risk reduction, not a different trade.
     #:
-    #: Floored at 15m rather than open, because the timeframe that draws a
-    #: level is the largest quality signal on this book: 1m levels break 57.9%
-    #: of the time against 12.8% at 15m, and sub-15m trading is -821.75 over
-    #: 129 closes against +35.03 over 21 above it.
-    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
+    #: **Widened from a 15m floor on 2026-09-22**, to 1m-1h, on the desk's
+    #: instruction and on a correction to the number the floor rested on.
+    #:
+    #: The floor cited "1m levels break 57.9% of the time against 12.8% at
+    #: 15m". **That figure is a selection effect.** It was measured on
+    #: resolutions lasting five minutes or more, and the median 1m touch
+    #: resolves in **120 seconds** - so the cut discards most of the
+    #: population, and discards it non-randomly, because the slow touches are
+    #: the ones that break. Over all 312,420 journal resolutions the 1m break
+    #: rate is **13.4%** against 4.5% at 15m: still ordered, a third of the
+    #: published gap, and no longer a reason to refuse the timeframe. See
+    #: research/break-trade.md.
+    #:
+    #: **The other half of the floor's case stands.** Sub-15m is -821.75 over
+    #: 129 *live* closes against +35.03 over 21 above it, and nothing in that
+    #: correction touches it - a live loss is a live loss. So the fast band is
+    #: entered at reduced size rather than trusted: see
+    #: `Settings.interval_weight`, which carries the measured default that
+    #: makes this widening survivable.
+    #:
+    #: **It stops at 30m, not 1h**, though the desk's band is 1m-1h. The
+    #: trigger has to sit strictly below every timeframe that judges it and
+    #: `context` starts at 1h, so a 1h entry would collapse the gap that makes
+    #: this a swing at all. The 1h end of the band is `cycle-turn`, which
+    #: already enters there and carries no 1h context.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m")
 
     #: The rejection has to show on 4h - several hours of auction failing at
     #: this price, rather than one hour's worth on the entry bar.
@@ -806,11 +890,32 @@ class FadeToValue(LevelStrategy):
     #: measured on 15m is a fraction of one measured on 4h for the identical
     #: idea - that is risk reduction, not a different trade.
     #:
-    #: Floored at 15m rather than open, because the timeframe that draws a
-    #: level is the largest quality signal on this book: 1m levels break 57.9%
-    #: of the time against 12.8% at 15m, and sub-15m trading is -821.75 over
-    #: 129 closes against +35.03 over 21 above it.
-    entries: ClassVar[tuple[str, ...]] = ("15m", "30m")
+    #: **Widened from a 15m floor on 2026-09-22**, to 1m-1h, on the desk's
+    #: instruction and on a correction to the number the floor rested on.
+    #:
+    #: The floor cited "1m levels break 57.9% of the time against 12.8% at
+    #: 15m". **That figure is a selection effect.** It was measured on
+    #: resolutions lasting five minutes or more, and the median 1m touch
+    #: resolves in **120 seconds** - so the cut discards most of the
+    #: population, and discards it non-randomly, because the slow touches are
+    #: the ones that break. Over all 312,420 journal resolutions the 1m break
+    #: rate is **13.4%** against 4.5% at 15m: still ordered, a third of the
+    #: published gap, and no longer a reason to refuse the timeframe. See
+    #: research/break-trade.md.
+    #:
+    #: **The other half of the floor's case stands.** Sub-15m is -821.75 over
+    #: 129 *live* closes against +35.03 over 21 above it, and nothing in that
+    #: correction touches it - a live loss is a live loss. So the fast band is
+    #: entered at reduced size rather than trusted: see
+    #: `Settings.interval_weight`, which carries the measured default that
+    #: makes this widening survivable.
+    #:
+    #: **It stops at 30m, not 1h**, though the desk's band is 1m-1h. The
+    #: trigger has to sit strictly below every timeframe that judges it and
+    #: `context` starts at 1h, so a 1h entry would collapse the gap that makes
+    #: this a swing at all. The 1h end of the band is `cycle-turn`, which
+    #: already enters there and carries no 1h context.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m")
     needs_context: ClassVar[bool] = True
 
     #: The rejection has to show on 4h. A pin bar there is a claim that several
