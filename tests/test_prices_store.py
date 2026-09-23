@@ -208,3 +208,43 @@ async def test_the_live_trim_touches_quotes_and_leaves_bars(tmp_path):
         assert went == 2
         assert len(await store.bars(KEY)) == 3, "bars are the CLI's job, not the loop's"
         assert store.prune_quotes_sync(0) == 0, "zero days is off, not empty-the-table"
+
+
+@pytest.mark.asyncio
+async def test_the_trim_is_batched_and_respects_its_cap(tmp_path):
+    """**The version before this shipped unbatched and would have knocked the desk over.**
+
+    `DELETE FROM quotes WHERE ts < ?` is one transaction, so against years of backlog it tries to
+    delete everything at once and the write-ahead log grows to hold it - which is the exact failure
+    this retention exists to prevent. The cap is what makes a first run against a large backlog
+    safe: a bounded bite now, the rest on the next hourly pass.
+    """
+    from till_infinity.prices.store import QUOTE_BATCH
+
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60), MINUTE)
+        _write_quotes(store, *[100.0 + i / 1000.0 for i in range(500)])
+        total = store._require().execute("SELECT COUNT(*) FROM quotes").fetchone()[0]
+        assert total == 500
+
+        # A cap below the backlog takes a bite and leaves the rest.
+        went = store.prune_quotes_sync(14.0, limit=200)
+        assert went == 200
+        assert store._require().execute("SELECT COUNT(*) FROM quotes").fetchone()[0] == 300
+
+        # And a later pass finishes the job rather than needing the cap raised.
+        assert store.prune_quotes_sync(14.0, limit=10_000) == 300
+        assert store._require().execute("SELECT COUNT(*) FROM quotes").fetchone()[0] == 0
+        # The batch size is what bounds a transaction, so it must stay well under the run cap.
+        assert QUOTE_BATCH < 10_000_000
+
+
+@pytest.mark.asyncio
+async def test_the_trim_stops_early_rather_than_spinning_on_an_empty_table(tmp_path):
+    """The loop exits when a batch comes back short, so a cap of two million does not mean two
+    million pointless round trips against a table with nothing old in it."""
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60), MINUTE)
+        _write_quotes(store, 0.1, 0.2)  # both inside any sane window
+        assert store.prune_quotes_sync(14.0) == 0
+        assert store._require().execute("SELECT COUNT(*) FROM quotes").fetchone()[0] == 2

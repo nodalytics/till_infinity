@@ -115,7 +115,29 @@ WHERE bars.closed = 0
 #: A count per series would also keep for ever whatever a dead series last said, which is exactly
 #: the wrong way round - and quotes accumulate far faster than bars, at one row per poll per venue
 #: per symbol.
-_PRUNE_QUOTES = "DELETE FROM quotes WHERE ts < ?"
+#: **Batched, and that is not a refinement.** A bare `DELETE FROM quotes WHERE ts < ?` is one
+#: transaction, so on a file with years of backlog it tries to delete the whole thing at once and
+#: the write-ahead log grows to hold it - which is the exact failure this retention exists to
+#: prevent. The first version of this shipped unbatched and would have knocked the desk over on its
+#: first run against production.
+#:
+#: The key tuple rather than a rowid because `quotes` is `WITHOUT ROWID`, and a `LIMIT` inside the
+#: subselect because SQLite's `DELETE ... LIMIT` needs a compile-time option that cannot be relied
+#: on. SQLite stops the inner scan once `LIMIT` rows are found, so where old quotes are plentiful -
+#: the case that matters - this finds a batch immediately.
+_PRUNE_QUOTES = """
+DELETE FROM quotes WHERE (source, feed, venue, ticker, ts) IN (
+    SELECT source, feed, venue, ticker, ts FROM quotes WHERE ts < ? LIMIT ?
+)
+"""
+
+#: Rows per transaction, and the most one call will remove.
+#:
+#: The cap is what makes the first run against a large backlog safe: it takes a bounded bite,
+#: returns, and the hourly timer takes the next one. A backlog of a hundred million quotes drains
+#: over a couple of days instead of in one transaction that stops the desk.
+QUOTE_BATCH = 50_000
+QUOTE_MAX_PER_RUN = 2_000_000
 
 _PRUNE_BARS = """
 DELETE FROM bars
@@ -144,7 +166,11 @@ class Store(ABC):
     async def close(self) -> None:
         return None
 
-    def prune_quotes_sync(self, days: float) -> int:  # noqa: ARG002 - the base keeps no quotes
+    def prune_quotes_sync(
+        self,
+        days: float,  # noqa: ARG002 - the base keeps no quotes
+        limit: int = 0,  # noqa: ARG002
+    ) -> int:
         """Drop quotes older than `days`. Returns how many went.
 
         Concrete and zero on the base rather than abstract: a backend that keeps no quotes has
@@ -293,15 +319,13 @@ class SqliteStore(Store):
             conn.execute(_PRUNE_BARS, (keep,))
         after = conn.execute("SELECT COUNT(*) FROM bars").fetchone()[0]
 
-        quotes_before = quotes_after = 0
+        quotes_deleted = quotes_kept = 0
         if quote_days > 0:
-            # `ts` is epoch **milliseconds** on this table, unlike `bars.ts` - getting that wrong
-            # by a factor of a thousand would either delete the whole table or none of it.
-            cutoff = int((time.time() - quote_days * 86_400.0) * 1000.0)
-            quotes_before = conn.execute("SELECT COUNT(*) FROM quotes").fetchone()[0]
-            with conn:
-                conn.execute(_PRUNE_QUOTES, (cutoff,))
-            quotes_after = conn.execute("SELECT COUNT(*) FROM quotes").fetchone()[0]
+            # Delegated rather than repeated, so the CLI gets the same batching the collector does.
+            # The limit is lifted because this runs in a maintenance window and is expected to
+            # finish the job, where the hourly pass deliberately takes a bounded bite.
+            quotes_deleted = self.prune_quotes_sync(quote_days, limit=2**62)
+            quotes_kept = conn.execute("SELECT COUNT(*) FROM quotes").fetchone()[0]
 
         if vacuum:
             # Outside the transaction: VACUUM cannot run inside one.
@@ -310,11 +334,11 @@ class SqliteStore(Store):
             deleted=before - after,
             kept=after,
             vacuumed=vacuum,
-            quotes_deleted=quotes_before - quotes_after,
-            quotes_kept=quotes_after,
+            quotes_deleted=quotes_deleted,
+            quotes_kept=quotes_kept,
         )
 
-    def prune_quotes_sync(self, days: float) -> int:
+    def prune_quotes_sync(self, days: float, limit: int = QUOTE_MAX_PER_RUN) -> int:
         """Drop quotes older than `days`, without touching bars and without a VACUUM.
 
         The space is freed for reuse inside the file rather than returned to the filesystem, which
@@ -329,10 +353,19 @@ class SqliteStore(Store):
         # seconds is a thousand times too small, every quote looks newer than it, and the prune
         # reports success having deleted nothing.
         cutoff = int((time.time() - days * 86_400.0) * 1000.0)
-        before = conn.total_changes
-        with conn:
-            conn.execute(_PRUNE_QUOTES, (cutoff,))
-        return conn.total_changes - before
+        removed = 0
+        while removed < limit:
+            batch = min(QUOTE_BATCH, limit - removed)
+            before = conn.total_changes
+            # One transaction per batch, so the log can be checkpointed between them rather than
+            # having to hold the whole backlog.
+            with conn:
+                conn.execute(_PRUNE_QUOTES, (cutoff, batch))
+            went = conn.total_changes - before
+            removed += went
+            if went < batch:
+                break  # nothing older than the cutoff is left
+        return removed
 
     async def reindex(self, only: str | None = None) -> ReindexResult:
         """Check this file's indexes and rebuild any that complain.

@@ -43,6 +43,25 @@ what the writer then reports as a locked database.
 `shared/db.py` now sets `journal_size_limit`, so a *new* database cannot reach this state. The pragma
 takes effect at the next checkpoint and does not shrink a log that is already large.
 
+## It may recover on its own, and that changes what to do
+
+On 2026-09-23 it did: five hours after the failing streak hit 157, the container was `healthy`, all
+seven services were running, and the log had checkpointed itself from **13.07 GB down to 2.77 GB**
+with no intervention. A reader eventually let go, the backlog drained, and the desk came back.
+
+So **check before acting**. The sequence below stops a healthy desk, and that is the wrong trade if
+the acute problem has already passed:
+
+```bash
+docker inspect till-infinity --format '{{.State.Health.Status}} {{.State.Health.FailingStreak}}'
+ls -la ~/till-data/prices/
+```
+
+A `healthy` container with a shrinking log needs no outage. What it still has is an oversized
+*database*, and reclaiming that is planned maintenance to be scheduled rather than an incident to be
+fought. The collector's hourly trim keeps the table from growing in the meantime, so waiting costs
+little.
+
 ## Recovery
 
 Read the whole sequence before starting. Steps 1 and 2 are what make step 3 safe, and step 3 is the
