@@ -43,6 +43,12 @@ what the writer then reports as a locked database.
 `shared/db.py` now sets `journal_size_limit`, so a *new* database cannot reach this state. The pragma
 takes effect at the next checkpoint and does not shrink a log that is already large.
 
+**It is per-connection and not stored in the file**, which is easy to misread: opening the database
+read-only afterwards reports `-1` however many times it has been set elsewhere. That is why it
+belongs in `PRAGMAS` - applied on every connection the services open - rather than being set once by
+hand. The check that it is working is the log's size under load, not the pragma's value on some
+other connection.
+
 ## It may recover on its own, and that changes what to do
 
 On 2026-09-23 it did: five hours after the failing streak hit 157, the container was `healthy`, all
