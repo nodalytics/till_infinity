@@ -268,10 +268,19 @@ class PruneResult:
     deleted: int = 0
     kept: int = 0
     vacuumed: bool = False
+    #: Quotes are reported separately because they are cut by **age** where bars are cut by
+    #: count, and pooling the two numbers would hide which policy did the work.
+    quotes_deleted: int = 0
+    quotes_kept: int = 0
 
     def __str__(self) -> str:
         rebuilt = ", file rebuilt" if self.vacuumed else ", file not shrunk (pass --vacuum)"
-        return f"dropped {self.deleted:,} bars, kept {self.kept:,}{rebuilt}"
+        quotes = (
+            f"; dropped {self.quotes_deleted:,} quotes, kept {self.quotes_kept:,}"
+            if self.quotes_deleted or self.quotes_kept
+            else ""
+        )
+        return f"dropped {self.deleted:,} bars, kept {self.kept:,}{quotes}{rebuilt}"
 
 
 @dataclass(frozen=True, slots=True)

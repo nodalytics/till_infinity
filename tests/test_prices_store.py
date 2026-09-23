@@ -123,3 +123,88 @@ async def test_jsonl_series_recovers_venue_with_underscores(tmp_path):
         (info,) = await store.series()
     assert info.key.symbol == Symbol("FX_IDC", "EURUSD")
     assert info.bars == 2
+
+
+# --------------------------------------------------------------- quote retention
+
+
+def _write_quotes(store, *ages_in_days: float) -> None:
+    """One quote per age, written straight to the table - `ts` is epoch **milliseconds**."""
+    import time
+
+    now = time.time()
+    conn = store._require()
+    with conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO quotes (source, feed, venue, ticker, ts, bid, ask)"
+            " VALUES ('tradingview','gold','OANDA','XAUUSD',?,1.0,2.0)",
+            [(int((now - age * 86_400.0) * 1000.0),) for age in ages_in_days],
+        )
+
+
+@pytest.mark.asyncio
+async def test_quotes_are_left_alone_unless_a_window_is_asked_for(tmp_path):
+    """**This is how a production file reached 29.5 GB.** `prune` applied its retention to `bars`
+    and touched `quotes` not at all, so the default has to stay "leave them" for any caller that
+    has not opted in - and the opt-in has to exist."""
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60, 120), MINUTE)
+        _write_quotes(store, 400.0, 0.1)
+        result = await store.prune(1)
+        assert result.quotes_deleted == 0
+        assert store._require().execute("SELECT COUNT(*) FROM quotes").fetchone()[0] == 2
+
+
+@pytest.mark.asyncio
+async def test_quotes_older_than_the_window_go_and_newer_ones_stay(tmp_path):
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60, 120), MINUTE)
+        _write_quotes(store, 40.0, 20.0, 13.9, 1.0, 0.0)
+        result = await store.prune(1, quote_days=14.0)
+        assert result.quotes_deleted == 2, "the 40-day and 20-day quotes"
+        assert result.quotes_kept == 3
+        assert "quotes" in str(result)
+
+
+@pytest.mark.asyncio
+async def test_the_cutoff_is_in_milliseconds_not_seconds(tmp_path):
+    """`quotes.ts` is epoch **milliseconds** where `bars.ts` is seconds. A cutoff computed in
+    seconds is a thousand times too small, so every quote looks newer than it and **nothing** is
+    deleted - a prune that reports success and reclaims nothing, which is the failure mode this
+    whole exercise was chasing."""
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60), MINUTE)
+        _write_quotes(store, 365.0)
+        result = await store.prune(1, quote_days=1.0)
+        assert result.quotes_deleted == 1, "a year-old quote must not survive a one-day window"
+
+
+@pytest.mark.asyncio
+async def test_pruning_quotes_never_empties_the_bars_policy(tmp_path):
+    """The two tables are cut by different policies and neither may stand in for the other."""
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60, 120, 180), MINUTE)
+        _write_quotes(store, 99.0)
+        result = await store.prune(2, quote_days=14.0)
+        assert (result.deleted, result.kept) == (1, 2)
+        assert (result.quotes_deleted, result.quotes_kept) == (1, 0)
+
+
+@pytest.mark.asyncio
+async def test_a_backend_with_no_quotes_says_nothing_rather_than_raising(tmp_path):
+    """The collector calls this on a timer, and an `AttributeError` in a loop that must not stop
+    collecting is worse than a backend admitting it has nothing to trim."""
+    async with JsonlStore(tmp_path) as store:
+        assert store.prune_quotes_sync(14.0) == 0
+
+
+@pytest.mark.asyncio
+async def test_the_live_trim_touches_quotes_and_leaves_bars(tmp_path):
+    """What the collector runs every hour: quotes only, no VACUUM, nothing held for a rebuild."""
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60, 120, 180), MINUTE)
+        _write_quotes(store, 90.0, 30.0, 0.5)
+        went = store.prune_quotes_sync(14.0)
+        assert went == 2
+        assert len(await store.bars(KEY)) == 3, "bars are the CLI's job, not the loop's"
+        assert store.prune_quotes_sync(0) == 0, "zero days is off, not empty-the-table"

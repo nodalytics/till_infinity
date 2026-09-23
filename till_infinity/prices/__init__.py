@@ -15,6 +15,7 @@ async with SqliteStore(settings.database) as store:
 
 from .config import (
     DEFAULT_RETAIN_BARS,
+    DEFAULT_RETAIN_QUOTE_DAYS,
     DEFAULT_SOURCES,
     DEFAULT_SYMBOLS,
     FEEDS,
@@ -93,6 +94,7 @@ __all__ = [
     "DEFAULT_INTERVALS",
     "DEFAULT_QUOTE_SOURCES",
     "DEFAULT_RETAIN_BARS",
+    "DEFAULT_RETAIN_QUOTE_DAYS",
     "DEFAULT_SOURCES",
     "DEFAULT_SYMBOLS",
     "FEEDS",

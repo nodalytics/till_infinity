@@ -21,7 +21,7 @@
 | [edge.md](edge.md) | **measured** - the 0.08 alert gate sits in a flat region and should be 0.11; a rolling quantile is worse than a constant, and why |
 | [deployment.md](deployment.md) | running it - one process, compose, or CI to a server |
 | [logging.md](logging.md) | project logging: levels, JSON log files, adding a logger to a module |
-| [recovering-a-grown-wal.md](recovering-a-grown-wal.md) | the one-off recovery when a write-ahead log has already outgrown its box - 13 GB beside a 29.5 GB database took the desk out for a day, and `journal_size_limit` is why it could |
+| [recovering-a-grown-wal.md](recovering-a-grown-wal.md) | the one-off recovery when the prices file has outgrown its box - 29.5 GB with a 13 GB write-ahead log took the desk out for a day; three omissions let it happen and all three are now closed |
 
 Notes on what is *not* obvious about the data - which venues are missing from
 which endpoint, where Yahoo's history stops, why a bar is or is not stored -

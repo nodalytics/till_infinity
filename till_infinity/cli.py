@@ -375,9 +375,17 @@ def bars_command(
     is_flag=True,
     help="Rebuild the file afterwards to actually reclaim the space. Needs room for a second copy.",
 )
+@click.option(
+    "--quote-days",
+    type=float,
+    default=px.DEFAULT_RETAIN_QUOTE_DAYS,
+    show_default=True,
+    help="Days of quotes to keep. 0 leaves them alone - which is what every release before "
+    "2026-09-23 did, and how a file reached 29.5 GB.",
+)
 @click.option("--yes", is_flag=True, help="Skip the confirmation.")
-def prune(db, data_dir, keep, vacuum, yes):
-    """Drop old bars, keeping the most recent `--keep` of every series.
+def prune(db, data_dir, keep, vacuum, quote_days, yes):
+    """Drop old bars and quotes: the most recent `--keep` bars per series, `--quote-days` of quotes.
 
     See `cli-notes.md` in research/docs.
     """
@@ -394,12 +402,18 @@ def prune(db, data_dir, keep, vacuum, yes):
                 f"[bold]{target}[/]: {len(rows)} series, {sum(s.bars for s in rows):,} bars. "
                 f"{len(over)} series over {keep:,}, [yellow]{doomed:,} bars would go[/]."
             )
-            if not doomed:
+            if quote_days > 0:
+                console.print(
+                    f"quotes older than [bold]{quote_days:g}[/] days will also go "
+                    "(counted during the delete - counting them first means scanning the table "
+                    "twice)"
+                )
+            if not doomed and quote_days <= 0:
                 return px.PruneResult()
             if not yes and not click.confirm("delete them?", default=False):
                 console.print("nothing deleted")
                 return px.PruneResult()
-            return await store.prune(keep, vacuum=vacuum)
+            return await store.prune(keep, vacuum=vacuum, quote_days=quote_days)
 
     console.print(str(run(go())))
 

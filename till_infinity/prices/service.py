@@ -428,6 +428,10 @@ async def collect(
     # costs a full pass over a 23GB table; run inline, that pass held the loop
     # and the desk wrote no quotes while it ran.
     spreads = await asyncio.to_thread(spread_catalogue, settings)
+    # Trimmed on a slow timer rather than every cycle, and the first pass runs immediately: a
+    # collector that has been down for a week should not wait an hour before it stops the table
+    # growing again.
+    trimmed_at = 0.0
     while cycles is None or cycle < cycles:
         started = time.monotonic()
         summary = await sweep(
@@ -453,6 +457,24 @@ async def collect(
                 bars=window,
                 bus=bus,
             )
+        days = settings.retain_quote_days
+        every = settings.retain_every_seconds
+        if days > 0 and every > 0 and time.monotonic() - trimmed_at >= every:
+            trimmed_at = time.monotonic()
+            # In a thread for the same reason the census above is: this reads and writes the
+            # store, and run inline it would hold the loop while the desk wrote no quotes.
+            #
+            # **Quotes only and never a VACUUM.** The space is freed for reuse rather than
+            # returned to the filesystem, which is what keeps this out of an outage window - see
+            # `Settings.retain_quote_days`. A failure here must not stop collecting: the table
+            # growing is a slow problem and not collecting is an immediate one.
+            try:
+                trimmed = await asyncio.to_thread(store.prune_quotes_sync, days)
+                if trimmed:
+                    log.info("prices: trimmed %d quotes older than %g days", trimmed, days)
+            except Exception:
+                log.exception("prices: could not trim quotes - collecting anyway")
+
         cycle += 1
         if on_cycle is not None:
             on_cycle(cycle, summary)

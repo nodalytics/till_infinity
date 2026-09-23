@@ -105,6 +105,18 @@ WHERE bars.closed = 0
 #: Retention, per series. `bars` is WITHOUT ROWID, so rows are addressed by the
 #: primary key rather than by rowid - hence the row-value `IN`, which SQLite has
 #: supported since 3.15.
+#: Quotes are cut by **age**, not by a count per series, and the asymmetry with bars is deliberate.
+#:
+#: `bars` are pruned by count because the models consume a window of *bars* - `Engine.seed` reads
+#: `bars * 8` rows per series - so a count is the quantity that keeps them fed. Nothing consumes a
+#: window of quotes: they serve the current price and the spread book, both of which want *recent*
+#: observations and have no use for the thousandth-newest tick on a series that stopped quoting.
+#:
+#: A count per series would also keep for ever whatever a dead series last said, which is exactly
+#: the wrong way round - and quotes accumulate far faster than bars, at one row per poll per venue
+#: per symbol.
+_PRUNE_QUOTES = "DELETE FROM quotes WHERE ts < ?"
+
 _PRUNE_BARS = """
 DELETE FROM bars
 WHERE (source, feed, venue, ticker, interval, ts) IN (
@@ -131,6 +143,20 @@ class Store(ABC):
 
     async def close(self) -> None:
         return None
+
+    def prune_quotes_sync(self, days: float) -> int:  # noqa: ARG002 - the base keeps no quotes
+        """Drop quotes older than `days`. Returns how many went.
+
+        Concrete and zero on the base rather than abstract: a backend that keeps no quotes has
+        nothing to trim and should say so by returning nothing, not by being missing. The
+        collector calls this on a timer and a missing method there would be an `AttributeError`
+        in a loop that must not stop collecting.
+
+        **Synchronous on purpose.** The caller runs it in a thread, the way the series census is
+        run, because this touches the store and holding the event loop is what stopped the desk
+        writing quotes once already.
+        """
+        return 0
 
     async def __aenter__(self) -> Self:
         await self.open()
@@ -243,15 +269,22 @@ class SqliteStore(Store):
         inserted = sum(1 for bar in bars if bar.time not in existing)
         return WriteResult(inserted=inserted, updated=max(0, touched - inserted))
 
-    async def prune(self, keep: int, *, vacuum: bool = False) -> PruneResult:
+    async def prune(
+        self, keep: int, *, vacuum: bool = False, quote_days: float = 0.0
+    ) -> PruneResult:
         """Keep the most recent `keep` bars of every series, drop the rest.
+
+        `quote_days` also cuts `quotes` older than that many days. **Zero leaves them alone**,
+        which is what this did for every release before 2026-09-23 - and is how a production file
+        reached 29.5 GB with a retention policy that was only ever applied to one of its two
+        tables.
 
         See `prices-store.md` in research/docs.
         """
         async with self._lock:
-            return await asyncio.to_thread(self._prune, keep, vacuum)
+            return await asyncio.to_thread(self._prune, keep, vacuum, quote_days)
 
-    def _prune(self, keep: int, vacuum: bool) -> PruneResult:
+    def _prune(self, keep: int, vacuum: bool, quote_days: float = 0.0) -> PruneResult:
         conn = self._require()
         if keep < 1:
             raise ValueError("keep must be at least 1 - prune does not empty the table")
@@ -259,10 +292,47 @@ class SqliteStore(Store):
         with conn:
             conn.execute(_PRUNE_BARS, (keep,))
         after = conn.execute("SELECT COUNT(*) FROM bars").fetchone()[0]
+
+        quotes_before = quotes_after = 0
+        if quote_days > 0:
+            # `ts` is epoch **milliseconds** on this table, unlike `bars.ts` - getting that wrong
+            # by a factor of a thousand would either delete the whole table or none of it.
+            cutoff = int((time.time() - quote_days * 86_400.0) * 1000.0)
+            quotes_before = conn.execute("SELECT COUNT(*) FROM quotes").fetchone()[0]
+            with conn:
+                conn.execute(_PRUNE_QUOTES, (cutoff,))
+            quotes_after = conn.execute("SELECT COUNT(*) FROM quotes").fetchone()[0]
+
         if vacuum:
             # Outside the transaction: VACUUM cannot run inside one.
             conn.execute("VACUUM")
-        return PruneResult(deleted=before - after, kept=after, vacuumed=vacuum)
+        return PruneResult(
+            deleted=before - after,
+            kept=after,
+            vacuumed=vacuum,
+            quotes_deleted=quotes_before - quotes_after,
+            quotes_kept=quotes_after,
+        )
+
+    def prune_quotes_sync(self, days: float) -> int:
+        """Drop quotes older than `days`, without touching bars and without a VACUUM.
+
+        The space is freed for reuse inside the file rather than returned to the filesystem, which
+        is precisely what makes this safe to run while the desk is up - see
+        `Settings.retain_quote_days`. `prices prune --vacuum` is the one that shrinks the file, and
+        that belongs in a window.
+        """
+        if days <= 0:
+            return 0
+        conn = self._require()
+        # `quotes.ts` is epoch **milliseconds** where `bars.ts` is seconds. A cutoff computed in
+        # seconds is a thousand times too small, every quote looks newer than it, and the prune
+        # reports success having deleted nothing.
+        cutoff = int((time.time() - days * 86_400.0) * 1000.0)
+        before = conn.total_changes
+        with conn:
+            conn.execute(_PRUNE_QUOTES, (cutoff,))
+        return conn.total_changes - before
 
     async def reindex(self, only: str | None = None) -> ReindexResult:
         """Check this file's indexes and rebuild any that complain.

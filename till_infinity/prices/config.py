@@ -565,6 +565,18 @@ DEFAULT_SOURCES: tuple[str, ...] = (TRADINGVIEW, YAHOO)
 #: seventeen hours of 1m and about nineteen years of 1w.
 DEFAULT_RETAIN_BARS = 1_000
 
+#: Days of `quotes` kept. **Zero before 2026-09-23, meaning for ever.**
+#:
+#: `prune` applied `DEFAULT_RETAIN_BARS` to `bars` and touched `quotes` not at all, and nothing on
+#: a schedule called it even for the table it did cover. A production file reached **29.5 GB** that
+#: way, on a box with 3 GB of memory, and took the desk out when its write-ahead log grew with it.
+#:
+#: Fourteen days rather than a bar count, for the reason `_PRUNE_QUOTES` gives: nothing consumes a
+#: *window* of quotes. They serve the current price and the spread book, and `spreads.py` buckets
+#: them over days. Fourteen leaves a fortnight of spread history, which is more than any consumer
+#: reads and a small multiple of what the slowest of them needs.
+DEFAULT_RETAIN_QUOTE_DAYS = 14.0
+
 #: Tracked unless the caller names something else.
 DEFAULT_SYMBOLS: tuple[str, ...] = (
     "eurusd",
@@ -986,6 +998,20 @@ class Settings:
     yahoo_concurrency: int = 4
     yahoo_request_gap: float = 0.2
 
+    #: Days of quotes the collector trims to as it runs, and how often it bothers.
+    #:
+    #: **Quotes only, and no VACUUM.** The delete is a range scan over an index and costs little;
+    #: reclaiming the space it frees means rewriting a 29 GB file, which is an outage and belongs
+    #: in `prices prune --vacuum` during a window rather than in a loop. So this stops the table
+    #: growing without ever stopping the desk - the file does not shrink until somebody vacuums it,
+    #: and that is the honest division.
+    #:
+    #: Bars are left to the CLI: their retention is a window function over every series, far
+    #: heavier than this, and they are already bounded per series by construction where quotes
+    #: were bounded by nothing at all.
+    retain_quote_days: float = DEFAULT_RETAIN_QUOTE_DAYS
+    retain_every_seconds: float = 3_600.0
+
     # Realtime bid/ask polling
     quote_poll_seconds: float = 15.0
     quote_concurrency: int = 8
@@ -1025,6 +1051,8 @@ class Settings:
             backfill_bars=_env_int(5_000, "PRICES_BACKFILL_BARS"),
             live_bars=_env_int(300, "PRICES_LIVE_BARS"),
             cycle_seconds=_env_float(60.0, "PRICES_CYCLE_S"),
+            retain_quote_days=_env_float(DEFAULT_RETAIN_QUOTE_DAYS, "PRICES_RETAIN_QUOTE_DAYS"),
+            retain_every_seconds=_env_float(3_600.0, "PRICES_RETAIN_EVERY_S"),
             spreads=_env_flag("PRICES_SPREADS", False),
             spread_kinds=tuple(
                 part.strip().lower()
