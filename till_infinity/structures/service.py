@@ -46,6 +46,8 @@ from . import zma as zm
 from .config import DRIFT_INTERVALS, Settings
 from .context.activity import Book as ActivityBook
 from .context.macro import Macro, since_default, stored
+from .context.registry import Registry
+from .context.releases import Releases, upcoming
 from .context.sessions import Clock
 from .drawing import confluence as cf
 from .drawing.level_range import ANCHOR, between_origins, level_range_of
@@ -56,6 +58,7 @@ from .learning.baseline import vector as bench_vector
 from .learning.breaking import Breaks
 from .learning.drift import Drift
 from .learning.racing import Races
+from .levels import SECONDS
 from .models import Shape, Signal
 from .vol import implied
 
@@ -65,6 +68,29 @@ from .vol import implied
 LIVENESS_WINDOW = 2_000
 
 log = get_logger(__name__)
+
+#: Only a clean break counts as a break for the registry. **A trap is a failed break** -
+#: price gets through, traps whoever followed it, and comes back - so the level held. Grouping
+#: it with breaks put the base rate at 55.6% instead of 32.3% in every number `force.md` first
+#: published, which is the correction this constant exists to keep made.
+_REGISTRY_BROKE = frozenset({"break"})
+
+
+def _age_bars(touch: object) -> float | None:
+    """How long a touch lasted, in bars of the level's **own** timeframe.
+
+    Bars rather than seconds because the break hazard is scale-free in them: it crosses even
+    money at four to seven bars on every timeframe from 1m to 30m, a span of thirty. Seconds
+    would need a table per interval and would say nothing about a timeframe not in it.
+    """
+    interval = str(getattr(touch, "interval", "") or "")
+    span = SECONDS.get(interval, 0.0)
+    started = float(getattr(touch, "started", 0.0) or 0.0)
+    resolved = float(getattr(touch, "resolved", 0.0) or 0.0)
+    if span <= 0.0 or started <= 0.0 or resolved < started:
+        return None
+    return (resolved - started) / span
+
 
 #: `MACRO` is a notice with a count in it, not the data - see `bus.py`. The
 #: series are read from the store when it arrives, which is the contract the
@@ -519,6 +545,12 @@ class Watcher:
         #: service has collected something, and silent while empty - a level
         #: call is correct without it.
         self.macro = Macro()
+        #: The economic calendar as an expected volatility multiple. The only input in this
+        #: service that needs no estimation at all - a release time is published days ahead -
+        #: and measured net of the hour of day, which is the confound that decides it: 61 of
+        #: 161 high-importance prints land in the 12:30 UTC hour. Publishes and decides
+        #: nothing. See `context/releases.py` and research/news-volatility.md.
+        self.releases = Releases()
         #: Every model that could replace the kNN, scored beside it on the same
         #: touches. Decides nothing - the whole point is that "the kNN works"
         #: has never been distinguished from "the features work and any model
@@ -532,6 +564,11 @@ class Watcher:
         #: 0.658. See research/force.md. Publishes a number and decides
         #: nothing.
         self.breaks = Breaks()
+        #: Every measured signal at or above 51%, scored live against the backtest that
+        #: claimed it. Carries `clock` - the elapsed-time break hazard, which is the only
+        #: one whose input is free and the largest effect in the book. Publishes numbers
+        #: and gates nothing; see `context/registry.py` and research/break-trade.md.
+        self.registry = Registry()
         #: Which wall price reaches first. Fed from the quote stream, so a
         #: race resolves on the tick that touches a bound rather than on the
         #: next call - resolving on calls would only ever see feeds that are
@@ -1254,6 +1291,15 @@ class Watcher:
             # Predict-then-learn, like everything else here: `observe` returns
             # what it said before it was told.
             self.breaks.observe(touch.features, str(touch.outcome))
+            # And the registry, against the same resolution. `clock` is scored on how long
+            # the touch actually took, in bars of its own timeframe, which is exactly the
+            # conditional the hazard table measures - "resolution took at least t" and
+            # "still open at t" are the same event.
+            self.registry.observe(
+                touch.features,
+                str(touch.outcome) in _REGISTRY_BROKE,
+                _age_bars(touch),
+            )
 
             ref = self._awaiting.pop((level.feed, round(touch.level_price, 8)), None)
             if ref is None:
@@ -1451,6 +1497,13 @@ class Watcher:
         of the same file and two chances for them to disagree about what the
         rate differential is.
         """
+        # The calendar first and **ungated by `settings.macro`**: release proximity is a
+        # separate consumer of the same file, and tying it to the policy switch would make a
+        # volatility feature disappear because somebody turned off interest-rate features.
+        events = await asyncio.to_thread(upcoming, self.settings.news_db)
+        if events:
+            self.releases.note(events)
+
         if not self.settings.macro:
             return []
         since = self._macro_since or since_default()
@@ -1483,6 +1536,10 @@ class Watcher:
         if not worth:
             return []
 
+        # Read once per batch rather than per call. Release proximity is measured in minutes and
+        # a batch takes milliseconds, so one reading is the same answer for every call in it and
+        # a clock call per call would be waste.
+        now = time.time()
         best: dict[object, tuple[float, Signal]] = {}
         loners: list[Signal] = []
         # Grouped once per instrument per batch, not once per call: a busy
@@ -1535,12 +1592,20 @@ class Watcher:
             # `None` rather than 0.5 while cold - "no opinion" and "an even
             # chance" are different claims.
             extra.update(self.breaks.reading(getattr(call, "features", None) or {}))
+            # What each measured signal is worth *now*, beside what its backtest claimed.
+            # The gap between the two is the quantity nothing here was previously arranged
+            # to notice, and it is how a decayed signal loses its vote without an edit.
+            extra.update(self.registry.reading())
             # Policy folded on here rather than inside `to_signal`, for the
             # same reason the regime label is: it is one model across the whole
             # book and a Call has no business holding it. Empty until the news
             # service has collected something, so this is a no-op on a
             # deployment without one rather than a missing key downstream.
             extra.update(self.macro.features(call.feed))
+            # Release proximity, from the same calendar the news service already collects.
+            # Empty unless an important print is within four hours, so this is a no-op on a
+            # deployment without a news service rather than a missing key downstream.
+            extra.update(self.releases.features(call.feed, now))
             signal = replace(signal, features={**signal.features, **extra})
             if call.feed not in grouped:
                 grouped[call.feed] = self._zones(call.feed)
