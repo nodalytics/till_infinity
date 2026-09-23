@@ -248,3 +248,39 @@ async def test_the_trim_stops_early_rather_than_spinning_on_an_empty_table(tmp_p
         _write_quotes(store, 0.1, 0.2)  # both inside any sane window
         assert store.prune_quotes_sync(14.0) == 0
         assert store._require().execute("SELECT COUNT(*) FROM quotes").fetchone()[0] == 2
+
+
+@pytest.mark.asyncio
+async def test_vacuum_actually_runs_after_a_prune(tmp_path):
+    """A 50-minute maintenance window ended here on 2026-09-23: the deletes committed, the log
+    checkpointed down from 10.5 GB, and then `conn.execute("VACUUM")` raised `OperationalError:
+    database is locked` and reclaimed nothing - a 29.8 GB file left 29.8 GB with 21.5 GB free
+    *inside* it.
+
+    **This test does not reproduce that failure and is not claimed to.** `lsof` showed the cause
+    was the service container holding the file after a deploy restarted it mid-window, which no
+    unit test can stage and no change in this method could have prevented.
+
+    What it does guard is narrower and still worth having: that the prune's own code path reaches
+    VACUUM and returns, with the connection usable afterwards. Both were true before the defensive
+    commit was added, which is precisely why the comment there says it is not the fix.
+    """
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60, 120, 180, 240), MINUTE)
+        _write_quotes(store, 90.0, 0.5)
+        result = await store.prune(1, vacuum=True, quote_days=14.0)
+        assert result.vacuumed is True
+        assert result.deleted == 3
+        assert result.quotes_deleted == 1
+        # And the connection is still usable afterwards, with its isolation level restored.
+        assert len(await store.bars(KEY)) == 1
+
+
+@pytest.mark.asyncio
+async def test_vacuum_survives_the_quote_prune_being_skipped(tmp_path):
+    """The same path with no quote window, since the two branches reach VACUUM differently."""
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60, 120), MINUTE)
+        result = await store.prune(1, vacuum=True)
+        assert result.vacuumed is True
+        assert result.deleted == 1

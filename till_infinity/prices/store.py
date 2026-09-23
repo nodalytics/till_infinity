@@ -328,8 +328,25 @@ class SqliteStore(Store):
             quotes_kept = conn.execute("SELECT COUNT(*) FROM quotes").fetchone()[0]
 
         if vacuum:
-            # Outside the transaction: VACUUM cannot run inside one.
-            conn.execute("VACUUM")
+            # VACUUM needs the database to itself, and this line raised `OperationalError:
+            # database is locked` on 2026-09-23 after a 50-minute run - the deletes committed, the
+            # log checkpointed down from 10.5 GB, and nothing was reclaimed.
+            #
+            # **The cause was another process, not this one.** `lsof` showed the service container
+            # holding the file: a deploy had recreated and restarted it midway through the
+            # maintenance window. No change here could have prevented that, and the runbook now
+            # says to check `docker ps` again after a long prune for exactly this reason.
+            #
+            # The two lines below are defensive rather than demonstrated. Ending the implicit
+            # transaction the deletes opened, and stopping the driver opening another around the
+            # VACUUM, are both things that *can* hold a lock here - but the tests pass without
+            # them, so they are not what failed that day and should not be read as the fix.
+            conn.commit()
+            held, conn.isolation_level = conn.isolation_level, None
+            try:
+                conn.execute("VACUUM")
+            finally:
+                conn.isolation_level = held
         return PruneResult(
             deleted=before - after,
             kept=after,

@@ -138,6 +138,42 @@ tail -f ~/wal-truncate.log
 watch -n 10 'ls -la ~/till-data/prices/prices.db-wal'
 ```
 
+### Check the container again before the VACUUM
+
+**A deploy will recreate and start the container**, and `deploy.yml` runs on every push to `main`.
+On 2026-09-23 that happened partway through a prune: the deletes committed, the log checkpointed
+from 10.5 GB down to 0.28 GB, and then `VACUUM` failed with `database is locked` because the
+container was back and holding the file. Fifty minutes of I/O, nothing reclaimed.
+
+```bash
+docker ps --format '{{.Names}} | {{.Status}}' | grep till     # expect nothing
+sudo lsof ~/till-data/prices/prices.db | head                 # expect nothing
+```
+
+If the deletes are already done, only the reclaim is left, and it is one statement. Put it in a
+file rather than a heredoc, and note `isolation_level=None` so the driver opens no transaction of
+its own around it:
+
+```python
+# /tmp/vac.py
+import sqlite3, time
+t = time.time()
+c = sqlite3.connect("/home/ubuntu/till-data/prices/prices.db", timeout=1800, isolation_level=None)
+print("checkpoint:", c.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone(), flush=True)
+print("freelist:", c.execute("PRAGMA freelist_count").fetchone(), flush=True)
+c.execute("VACUUM")
+print(f"vacuum ok in {time.time() - t:.0f}s", flush=True)
+c.close()
+```
+
+```bash
+SQLITE_TMPDIR=$HOME/till-data/prices nohup python3 /tmp/vac.py > ~/vacuum.log 2>&1 &
+```
+
+`freelist_count` is the number worth reading before it starts: **5,237,490 pages at 4 KiB is
+21.5 GB free inside the file**, which is exactly what the VACUUM returns. And the checkpoint's
+first field must be `0`; a `1` means something still holds the log.
+
 **4. Confirm before restarting.**
 
 ```bash
