@@ -26,8 +26,10 @@ Run from the repository root:  .venv-research/bin/python research/harness/spiker
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -65,7 +67,19 @@ FEATURES = ["short", "shock", "season", "drawdown"]
 
 def load(conn, ticker, venue, interval):
     """OHLC, oldest first. The bar is repaired to contain its own open and close: yahoo's daily
-    FX and gold carry 1-2% of bars whose high sits below the close or low above the open."""
+    FX and gold carry 1-2% of bars whose high sits below the close or low above the open.
+
+    Venue "SEQLAB" reads the lab's broker bars instead - `$SEQLAB/<TICKER>.<interval>.npz`
+    - so a harness can run unchanged on instruments the local database does not hold."""
+    if venue == "SEQLAB":
+        z = np.load(Path(os.environ.get("SEQLAB", ".data/seqlab")) / f"{ticker}.{interval}.npz")
+        df = pd.DataFrame({"ts": z["time"].astype(np.int64), "open": z["open"], "high": z["high"],
+                           "low": z["low"], "close": z["close"], "volume": z["volume"]})
+        df = df.drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
+        df["high"] = df[["open", "high", "close"]].max(axis=1)
+        df["low"] = df[["open", "low", "close"]].min(axis=1)
+        leak_check(df, f"{ticker}/{venue}/{interval}")
+        return df
     rows = conn.execute(
         "select ts, open, high, low, close, volume from bars where ticker=? and venue=? and interval=?"
         " and closed=1 order by ts",

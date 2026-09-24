@@ -122,7 +122,7 @@ Sharpe per trade is unchanged or better at 15m and 1d and **worse at 1h**, where
 high-score bars were also the ones that paid - so this is tail insurance at roughly neutral
 cost, not free return, and at 1h it has a price.
 
-### Stops: the wick decides, and the score says when
+### Stops: the wick decides, and the score does not
 
 Equal money at risk - a 1U stop at size 1 against a 2U stop at size 0.5 - split by score, and
 run two ways: as a **resting stop order**, taken the moment a low touches it and filled at the
@@ -142,10 +142,10 @@ Three things, all of which hold at 1h and 1d:
 * **A close-based exit has no floor.** It fills wherever the close lands, and its 1% tail is
   -2.0 to -3.9R; the resting stop's is -1.0R except on a gap.
 * **In a high-score window a 1U stop is hit six times in ten.** Widening to 2U at half size
-  halves that for the same money at risk. The score is the measured reason to set stop width
-  by the state rather than by a constant - and [`giveback.md`](giveback.md) found the live
-  exit's break-even and trail unreachable on nine trades in ten, which is the same mismatch
-  between a fixed distance and a moving scale.
+  halves that for the same money at risk. **But see [`stop-width.md`](stop-width.md), which
+  corrects the conclusion drawn here:** across a 402-rule grid on 83 series, wide-and-small
+  thins the tail about as much in the calm state as in the hot one, so the score is *not* a
+  reason to set stop width by state. Widen in every state, or not at all.
 
 ## The leak, and a guard against the next one
 
@@ -176,6 +176,9 @@ the one the stop table describes: a stop on the spike side fills 10 to 19R past 
   `release_vol_multiple` from [`news-volatility.md`](news-volatility.md), which covers the
   scheduled half of the same question, and let sizing and stop width read it. Deciding
   nothing, like `releases.py`.
+* **Stop width is not a job for this score** - [`stop-width.md`](stop-width.md). The spike
+  switch cuts the tail of an *unstopped* position; once a stop is in place, the stop already
+  removes that part of the tail.
 * **Back-test stops on wicks.** Anything in this repository that resolves a stop on closes
   understates how often it is hit and misstates what it costs.
 * **Do not short on the alarm.** Every version measured is null intraday and wrong-signed on
