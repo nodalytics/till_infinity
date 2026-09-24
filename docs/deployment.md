@@ -235,6 +235,40 @@ Then revisit
 alongside the service; it was true of the old hardware and is the reason
 several diagnostics this project needs have never been run.
 
+## The Deribit option-surface recorder
+
+**It runs on the research machine and never on the instance.** Production has two
+cores and a 2.6 GB container limit, and running research there OOM-killed the live
+desk three times on 2026-09-10. This is a collector rather than a study, but it is
+still research and it belongs on the box that cannot take the desk down with it.
+
+**It cannot trade.** Two public endpoints, `get_instruments` and
+`get_book_summary_by_currency`, no authentication and no `app_id`. There is no
+`private/` route in the file and `tests/test_deribit_recorder.py` asserts that
+against the module's string literals through the AST - not its raw text, which
+cannot tell a call from a mention.
+
+```bash
+./.secrets/lab.sh sync
+./.secrets/lab.sh run research/harness/deribit_recorder.py OUT=/home/<user>/options-data
+./.secrets/lab.sh log deribit_recorder     # sweeps, one every five minutes
+./.secrets/lab.sh done deribit_recorder    # "running", or done if it stopped
+```
+
+A healthy sweep line reads `sweep N: ~1450 rows`. **Zero rows is the failure to
+look for**, and it is not an outage: Deribit answers HTTP 200 with a JSON-RPC error
+body, so the collector cannot distinguish a refusal from an empty market without
+checking, and it writes **no file** rather than a header with nothing under it. A
+sweep reporting far fewer rows than usual means the instrument join is dropping
+them - roughly a quarter of listed strikes have no book at all and are dropped by
+design, so expect about 1,450 of 1,900.
+
+**A week of this is the input to `implied_vs_ours.py`**, which is the gate for the
+whole options programme: if our volatility forecasts cannot beat `mark_iv` by more
+than the recorded bid/ask cost, no execution path gets built. That harness refuses
+to score until enough has been recorded for the option windows to have closed, and
+says so rather than reporting a number from nothing.
+
 ## Notes moved out of the deploy files
 
 Condensed on 2026-09-19. Each passage below stood in the file named, at
