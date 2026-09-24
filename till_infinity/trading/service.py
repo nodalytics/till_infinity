@@ -424,6 +424,7 @@ class Trader:
         # The flag is read here, so the switch is declared here: on and never
         # reducing a trade is then reported rather than assumed to be working.
         effects.declare("trading.spike_switch", enabled=self.settings.spike_above > 0)
+        effects.declare("trading.release_in_hold", enabled=self.settings.release_in_hold)
         self.journal = journal
         self.plan = plans.apply(self.settings)
         self.broker = broker or build(self.settings)
@@ -1055,6 +1056,12 @@ class Trader:
                 risk_of={t: live.intent.risk_money for t, live in self.open.items()},
                 feed_of=self._feed_of,
                 limits=engine.limits,
+                # The strategy's own planned hold, for `release_in_hold`. Asked
+                # of the engine rather than the settings because the ceiling
+                # depends on its style - see `Strategy.hold_for`, which dropped
+                # its ceiling argument precisely because callers passed the
+                # wrong one.
+                hold=engine.hold_for(verdict.interval),
             )
             if stopped is not None:
                 self.refused += 1
@@ -1214,6 +1221,7 @@ class Trader:
                 risk_of={t: live.intent.risk_money for t, live in self.open.items()},
                 feed_of=self._feed_of,
                 limits=engine.limits,
+                hold=engine.hold_for(wanted.interval),
             )
             if stopped is not None:
                 self.refused += 1

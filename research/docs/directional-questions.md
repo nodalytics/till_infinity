@@ -229,6 +229,48 @@ single cell is significant; the consistency is the finding. It is the direction
 [`news-volatility.md`](news-volatility.md) predicts - a release is a volatility event, and a
 stop-and-target race with a fixed width is on the wrong side of one.
 
+#### Shipped, 2026-09-24: `release_in_hold`
+
+This is now a gate in production, off by default, as `TRADING_RELEASE_IN_HOLD`.
+
+**It exists because the gate already there could not see this.** `news_before`
+and `news_after` refuse entries from 10 minutes before a print to 15 after, and
+both are windows around the **entry**. A trade has a duration. A 15m signal whose
+planned hold is two hours can open 11 minutes ahead of a release - clearing the
+blackout by one minute - and hold straight through it, which is exactly the
+population measured above. So the study's finding was not implementable by
+widening `news_before`: a window wide enough to catch a two-hour hold would
+refuse two hours of entries for every print, including the trades that close
+before it lands.
+
+What shipped instead compares the release against the **trade's own planned
+hold**, taken from the strategy's `hold_for(interval)` rather than from a
+setting, because the ceiling depends on the strategy's style and every caller
+that thought it knew better has been wrong. `Context.ahead(feed, horizon)`
+answers "is a high-importance print coming within `horizon` seconds", which is a
+different question from `blackout`'s "am I inside a window", and is strictly
+forward-looking - what is behind us stays `news`'s business.
+
+`TRADING_RELEASE_HOLD_CAP_S` bounds how far ahead it looks, at four hours by
+default - the window [`news-volatility.md`](news-volatility.md) measured the
+release effect over. Without a cap a daily swing with a five-day ceiling would be
+refused for a print two days out, which is past any measurement here.
+
+**It refuses rather than shrinks, and it is off by default**, and the reason is
+what the number above is: 32 of 36 rows agreeing in **direction** is the strong
+part, while 0.19R is a **median across rows** with 8-60 release trades each, not
+a calibrated per-trade cost. A multiplier derived from it would present a summary
+statistic as a calibration. A gate that can be switched off is the honest shape.
+
+It declares an effect (`trading.release_in_hold`), so a gate that is switched on
+and refuses nothing gets reported rather than assumed to be working - see
+[`shared/effects.py`](../../till_infinity/shared/effects.py), which exists
+because that failure happened six times in a week.
+
+**Deliberately not done**: closing positions that were already open before a
+release. That is an exit-side change with its own failure modes, and the evidence
+above is about entries.
+
 ## What this closes, and what it leaves
 
 * **Directional prediction from bars, their volume, their calendar, VIX, the dollar, pairs,

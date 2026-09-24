@@ -218,6 +218,44 @@ class Context:
                 return release
         return None
 
+    def ahead(self, feed: str, horizon: float, now: float | None = None) -> Release | None:
+        """The first release for this instrument's currencies inside `horizon`.
+
+        `blackout` asks whether we are inside a window *around* a print. This
+        asks a different question: is one **coming**, within the next `horizon`
+        seconds. The gap between the two is a real one and it cost trades.
+
+        `blackout` refuses entries from 10 minutes before a print to 15 after.
+        A 15-minute signal whose planned hold is two hours can open 11 minutes
+        before the print - cleanly outside the blackout - and then sit straight
+        through it. Research found those held-through trades were the ones that
+        did worse, so the window that matters is not "am I near a print" but
+        "will a print land before I mean to be out".
+
+        Strictly forward-looking: a release that has already happened is
+        `blackout`'s business, not this one. `_events` holds only importance at
+        or above `HIGH` - `observe_event` drops the rest - so there is no
+        importance test here, and adding one would silently do nothing.
+
+        Returns the **earliest** qualifying release rather than any, because the
+        caller wants to know how much room it actually has.
+        """
+        when = now if now is not None else time.time()
+        if horizon <= 0:
+            return None
+        currencies = set(ex.legs(feed))
+        if not currencies or currencies == {""}:
+            return None
+        soonest: Release | None = None
+        for release in self._events.values():
+            if release.currency not in currencies:
+                continue
+            if not (when < release.when <= when + horizon):
+                continue
+            if soonest is None or release.when < soonest.when:
+                soonest = release
+        return soonest
+
     def consensus(self, feed: str, now: float | None = None) -> tuple[float, float, int]:
         """Median mid, median spread and venue count. Zeros when too thin."""
         when = now if now is not None else time.time()

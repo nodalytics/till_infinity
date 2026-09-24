@@ -32,12 +32,20 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from ..logging import get_logger
+from ..shared import effects
 from . import exposure as ex
 from .config import Settings
 from .context import Context
 from .models import Intent, Position, Refusal, Tick, money
 
 log = get_logger(__name__)
+
+#: Declared off and re-declared from the live setting in `trading.service`, the
+#: same shape `trading.spike_switch` uses. The point of declaring it at all is
+#: that a gate which is switched on and refuses nothing looks exactly like a
+#: gate that works - see `shared/effects.py`, which exists because that happened
+#: six times in a week.
+effects.declare("trading.release_in_hold", enabled=False)
 
 
 def _day(when: float) -> str:
@@ -264,6 +272,7 @@ class Guard:
         risk_of: dict[int, float] | None = None,
         feed_of: dict[str, str] | None = None,
         limits: Limits | None = None,
+        hold: float = 0.0,
     ) -> Refusal | None:
         """None if this trade may go ahead, else the gate that stopped it.
 
@@ -308,6 +317,27 @@ class Guard:
                     intent.feed,
                     f"{release.currency} {release.title or 'high-impact release'} {due}",
                 )
+
+            # **The gap `news` cannot see.** That gate is a window around the
+            # print; this one is about the trade's own duration. An entry 11
+            # minutes before a release clears the 10-minute blackout by a minute
+            # and then holds through it for two hours. Ordered after `news`
+            # because when both apply, being *inside* the window is the more
+            # specific thing to say.
+            if self.settings.release_in_hold and hold > 0:
+                reach = min(hold, self.settings.release_hold_cap_s)
+                coming = self.context.ahead(intent.feed, reach, when)
+                if coming is not None:
+                    effects.fired("trading.release_in_hold")
+                    into = (coming.when - when) / 60.0
+                    return self._no(
+                        "release_in_hold",
+                        intent.feed,
+                        f"{coming.currency} {coming.title or 'high-impact release'} "
+                        f"lands in {into:.0f}m, inside the {hold / 60.0:.0f}m this "
+                        f"trade means to be held"
+                        + (f" (looked {reach / 60.0:.0f}m ahead)" if reach < hold else ""),
+                    )
 
             paused = self.context.drifting(intent.feed, when)
             if paused > 0:

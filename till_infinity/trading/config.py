@@ -1050,6 +1050,36 @@ class Settings:
     #: research/docs/break-features.md.
     age_break_risk: bool = True
 
+    #: Refuse an entry when a high-importance release lands inside the trade's
+    #: **planned hold**, rather than only inside a window around the print.
+    #:
+    #: `news_before`/`news_after` already refuse entries from 10 minutes before a
+    #: release to 15 after. They cannot see the gap this closes: a 15m signal
+    #: meant to be held two hours can open 11 minutes ahead of a print - outside
+    #: the blackout by a minute - and hold straight through it. Research found
+    #: those held-through trades were the ones that did worse, consistently:
+    #: **32 of 36 ensemble rows, by a median 0.19R.**
+    #:
+    #: **Off by default**, like every gate here. The reason is what that figure
+    #: is and is not: 32 of 36 rows agreeing in *direction* is the strong part,
+    #: and 0.19R is a **median across rows**, not a calibrated per-trade cost.
+    #: So it refuses rather than shrinks - a multiplier derived from a median of
+    #: medians would dress a summary statistic up as a calibration, and a gate
+    #: you can switch off is the honest shape for evidence like this.
+    #:
+    #: The finding is in research/docs/directional-questions.md, where it is the
+    #: **only** input in that study that changed outcomes at all.
+    release_in_hold: bool = False
+
+    #: How far ahead `release_in_hold` will look, in seconds. Four hours.
+    #:
+    #: The cap is what stops the gate being absurd on long holds: a daily swing
+    #: with a 5-day ceiling would otherwise be refused for a print two days out,
+    #: and at that range the release is not what decides the trade. Four hours is
+    #: the window news-volatility.md measured the release effect over, so beyond
+    #: it there is no measurement to act on.
+    release_hold_cap_s: float = 14400.0
+
     parked_stop_vol: float = 0.0
 
     #: Refuse a trade when the market around this level is choppier than this.
@@ -1381,6 +1411,8 @@ class Settings:
             parked_stop_vol=_float("TRADING_PARKED_STOP_VOL", 0.0),
             max_break_risk=_float("TRADING_MAX_BREAK_RISK", 0.0),
             age_break_risk=_flag("TRADING_AGE_BREAK_RISK", True),
+            release_in_hold=_flag("TRADING_RELEASE_IN_HOLD"),
+            release_hold_cap_s=_float("TRADING_RELEASE_HOLD_CAP_S", 14400.0),
             min_efficiency=_float("TRADING_MIN_EFFICIENCY", 0.0),
             trend_sizing=_float("TRADING_TREND_SIZING", 0.0),
             max_against_vol=_float("TRADING_MAX_AGAINST_VOL", 0.0),
