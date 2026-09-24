@@ -43,11 +43,18 @@ from pathlib import Path
 #: The cause of the partial drain is continuous read pressure: a passive checkpoint stops at the
 #: oldest frame any live reader still needs, and `structures` reads this database without pause, so
 #: a new snapshot opens before the last one is done with. That much is mechanism. **What is not
-#: established** is whether it is a backfill-only condition. The reading above was taken while
-#: `structures` was warming at 91% CPU on two cores; steady state may drain fine, and the 13 GB log
-#: may have needed the 29.5 GB database to make each read slow enough to hold its snapshot open.
-#: That is a prediction with a measurement attached - see `docs/recovering-a-grown-wal.md` - and
-#: until it is checked, **the log size under load is the thing to watch, not this constant.**
+#: established** was whether it is a backfill-only condition. **It is - measured the same evening.**
+#: Sampling every two minutes for 45 minutes, the log climbed 173 -> 294 MB with the reclaim point
+#: pinned at frame 11,085 the whole way, and then in a single sample:
+#:
+#:     21:32  wal=294MB  ckpt=0/74821/11085  journal 189.4 min stale
+#:     21:34  wal= 64MB  ckpt=0/18/18        journal   0.2 min stale
+#:
+#: One cause, both symptoms. `structures` finished warming, the read pressure fell, the pinned
+#: snapshot released, a checkpoint drained the whole log, and this limit truncated it to exactly
+#: 64 MiB - where it has stayed. So the limit is the fix; it simply cannot act until a checkpoint
+#: completes, and during a cold backfill that can be three hours. **Expect a large log while
+#: `structures` warms and judge it only once the journal is current.**
 #:
 #: 64 MiB is large enough for a burst across thirty-odd symbols and several intervals, and small
 #: enough that opening it costs nothing on a 3 GB box. It takes effect on the next checkpoint
