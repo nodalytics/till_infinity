@@ -91,7 +91,10 @@ feeds a week in date order and asserts the gate fires before a print.
 ## What follows
 
 * **Fix the calendar pruning before relying on either news gate.** It is the only item here
-  that changes live behaviour today.
+  that changes live behaviour today. **Fixed 2026-09-24**: `observe_event` no longer prunes,
+  and `blackout`, `ahead` and `upcoming` prune against the time they are asked about;
+  `tests/test_calendar_order.py` feeds a week in date order and asserts both gates fire
+  before the print (all six fail on the old code).
 * **Turn on the spike switch** (`TRADING_SPIKE_ABOVE=0.8`): nothing on the live book argues
   against it, and the research does not change.
 * **The release gate is low-stakes on this book** - 5 of 317 trades. Worth enabling once the

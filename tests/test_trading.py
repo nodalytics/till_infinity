@@ -922,6 +922,9 @@ def test_the_calendar_does_not_grow_without_bound():
     for index in range(50):
         context.observe_event(release(id=f"old-{index}", when=NOW - 86_400))
     context.observe_event(release(id="new", when=NOW + 600))
+    # Pruned when a question is asked, against the time asked about - not when a row is
+    # stored, which let a week's last release delete the rest (see test_calendar_order.py).
+    context.blackout("gold", now=NOW)
     assert len(context._events) == 1
 
 

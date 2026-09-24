@@ -137,7 +137,13 @@ class Context:
             when=float(when),
             importance=int(importance),
         )
-        self._forget(float(when))
+        # **No pruning here.** This once called `_forget(when)` with the *stored* row's time
+        # as "now", and both calendar providers publish the week ahead in date order - so
+        # the furthest-out release arrived last and deleted every release before it. Fed one
+        # real week, 1 of 27 survived and neither `blackout` nor `ahead` fired ten minutes
+        # before Non-Farm Payrolls; only the window *after* a print worked, because a release
+        # is republished when it prints. Pruning belongs to the questions, which know the
+        # time being asked about. See research/docs/leads-and-live-book.md.
 
     def observe_quote(self, payload: dict[str, Any]) -> None:
         """Take one venue's quote, for the consensus our broker is judged against."""
@@ -203,6 +209,7 @@ class Context:
         than that in the first second.
         """
         when = now if now is not None else time.time()
+        self._forget(when)
         currencies = set(ex.legs(feed))
         if not currencies or currencies == {""}:
             return None
@@ -241,6 +248,7 @@ class Context:
         caller wants to know how much room it actually has.
         """
         when = now if now is not None else time.time()
+        self._forget(when)
         if horizon <= 0:
             return None
         currencies = set(ex.legs(feed))
@@ -349,7 +357,13 @@ class Context:
     # ---------------------------------------------------------------- inside
 
     def _forget(self, now: float) -> None:
-        """Drop rows whose window has closed, so the calendar cannot grow."""
+        """Drop rows whose window has closed, so the calendar cannot grow.
+
+        `now` is the time a question is being asked about - the wall clock live, a replayed
+        moment in research - never the time of a row being stored. A calendar arrives as the
+        week ahead in date order, and measuring staleness against its last row deletes
+        everything before it.
+        """
         cutoff = now - self.after - 3_600
         stale = [key for key, release in self._events.items() if release.when < cutoff]
         for key in stale:
@@ -357,6 +371,7 @@ class Context:
 
     def upcoming(self, now: float | None = None) -> list[Release]:
         when = now if now is not None else time.time()
+        self._forget(when)
         return sorted((r for r in self._events.values() if r.when >= when), key=lambda r: r.when)
 
 
