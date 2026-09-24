@@ -46,6 +46,39 @@ alignment. Same answer, 916,248 comparisons later - and the reason is there too:
 the volatility indices are exact geometric Brownian motions, so there is no
 clustering and no tail for a twin to share.
 
+### Not even for a while - measured 2026-09-24
+
+The objection to a full-sample average is fair: two instruments could move
+together for an afternoon, that would be a regime too, and 60 days of averaging
+would bury it. So the question was asked window by window
+([`comovement.py`](../harness/comovement.py), run on the lab over its `seqlab`
+bars): **64 synthetics and the 20 Volatility indices alone, at 3m, 15m and 1h,
+up to 49,000 aligned bars, in non-overlapping windows of 50 and 200 bars.** Per
+window, the largest eigenvalue of the correlation matrix and the strongest pair,
+each against a null that circularly shifts every series by its own random offset
+- same volatility, same jumps, same autocorrelation, no alignment. Then the part
+a trade needs: whether a pair's correlation in one window predicts the next.
+
+The **real FX majors in the same files are the positive control**, and they show
+what a shared driver looks like:
+
+| | FX majors | 20 Volatility indices | all 64 synthetics |
+| --- | --- | --- | --- |
+| largest eigenvalue, 50-bar window, real vs null | **5.8-6.6 vs 2.0** | 2.33 vs 2.33 | 4.17-4.19 vs 4.18-4.19 |
+| windows beyond the null's 99th percentile (chance: 1%) | **100%** | 0.9-2.7% | 0-1.2% |
+| a pair's r in window w predicting window w+1 | **+0.82 to +0.93** | -0.013 to +0.006 | -0.0004 to +0.009 |
+| top 1% of pairs (r about 0.40): same-sign r kept next window | **+0.84** | -0.010 to +0.005 | +0.001 to +0.003 |
+| strongest full-sample pair | 0.78-0.86 | 0.012-0.043 | 0.019-0.061, inside the null's 0.071-0.092 |
+
+**The short-lived co-movement is real to the eye and is exactly chance.** The
+top 1% of synthetic pairs reach r of about 0.40 over 50 bars in every run - that
+is what makes it look like a regime - and 64 independent walks produce that as
+often, as strongly, when their alignment is scrambled. A pair at 0.40 in one
+window averages +0.001 in the next. There is nothing to persist, so there is
+nothing to trade, and pairs trading on the synthetics is closed at every
+timeframe held. The same machinery finds the dollar in FX at once, which is what
+makes this a null rather than a blind test.
+
 ## Two: FOCuS detections and origins are independent events
 
 `focus.THRESHOLD` is 12.0 nats and `_note_change` *adds* to it on faster rungs,
