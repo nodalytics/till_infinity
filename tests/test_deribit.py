@@ -75,3 +75,25 @@ def test_fields_matches_the_dataclass():
     assert FIELDS[0] == "instrument"
     assert "expiry" in FIELDS
     assert len(FIELDS) == 13
+
+
+def test_a_zero_bid_or_ask_is_dropped_too_not_only_a_missing_one():
+    """The other half of "absent or zero", which the first version of this missed.
+
+    `_number(0.0)` is a perfectly good float, so a book quoted at zero on both sides
+    survived as a row and produced a cost of exactly zero. That is not harmless: it
+    is the detection floor the whole phase is gated on, and mixing fifty empty books
+    into fifty real ones halves the median. Deribit sends `null` today, so this was
+    latent rather than live - which is the only reason it shipped.
+    """
+    for bid, ask in ((0.0, 0.0), (0.0, 0.0126), (0.0120, 0.0)):
+        thin = dict(SUMMARY, bid_price=bid, ask_price=ask)
+        rows = parse_summary({"result": [thin]}, instruments=LISTING, at=1790233483.0)
+        assert rows == [], f"bid={bid} ask={ask} should not be recorded"
+
+
+def test_a_zero_mark_is_dropped():
+    """The floor divides by mark, so a zero there has no cost fraction at all."""
+    thin = dict(SUMMARY, mark_price=0.0)
+    rows = parse_summary({"result": [thin]}, instruments=LISTING, at=1790233483.0)
+    assert rows == []

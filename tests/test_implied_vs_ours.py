@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import numpy as np
 
-from research.harness.implied_vs_ours import annualise, horizon_bars, qlike, realised_vol
+from research.harness.implied_vs_ours import (
+    JOIN_IS_UNWRITTEN,
+    annualise,
+    horizon_bars,
+    qlike,
+    realised_vol,
+    score,
+)
 
 HOUR = 3600.0
 
@@ -97,3 +104,66 @@ def test_qlike_is_nan_on_a_thin_sample():
     """A thin cell must read as thin, not as a result."""
     a = np.full(10, 0.01)
     assert np.isnan(qlike(a, a))
+
+
+def test_score_squares_its_inputs_because_the_folder_scores_variances():
+    """The convention, made impossible to get wrong at the call site.
+
+    `similarity_grid.py`, `regimes.py` and `susceptibility.py` all pass **variances**
+    to `qlike` - `susceptibility.py:197` is `base = x_trail**2 * horizon`, and the
+    `np.sqrt` on line 176 is an intermediate that line squares back. An earlier
+    version of this module claimed the opposite and passed standard deviations.
+
+    `realised_vol` returns a sigma, so the natural composition lands on the wrong
+    side. `score` exists so the join cannot.
+    """
+    actual = np.full(500, 0.010)
+    forecast = np.full(500, 0.015)
+    assert np.isclose(score(actual, forecast), qlike(actual**2, forecast**2))
+
+
+def test_the_convention_is_load_bearing_not_cosmetic():
+    """Why the one above is worth a function: the two conventions rank differently.
+
+    Actual sigma 0.010, one forecast 50% high and one 30% low. On sigmas the low
+    forecast wins; on variances the high one does. If those are `mark_iv` and ours,
+    the phase-0 verdict depends on the convention alone.
+    """
+    actual = np.full(500, 0.010)
+    high = np.full(500, 0.015)
+    low = np.full(500, 0.007)
+    on_sigma = (qlike(actual, high), qlike(actual, low))
+    on_variance = (score(actual, high), score(actual, low))
+    assert on_sigma[0] > on_sigma[1]  # sigmas prefer the low forecast
+    assert on_variance[0] < on_variance[1]  # variances prefer the high one
+
+
+def test_the_unwritten_join_is_announced_however_much_is_recorded(tmp_path, capsys):
+    """The safeguard the operator needs precisely when the wait is over.
+
+    An earlier version printed "not enough to score" only when under five days were
+    recorded. After the week the plan gates on, it printed a floor and exited 0 - a
+    clean successful-looking run with no score and no warning, at the one moment
+    somebody would come back to check.
+    """
+    import gzip
+
+    # FIELDS comes from the real schema, so this fixture cannot drift from what the
+    # recorder actually writes.
+    from research.harness.deribit import FIELDS
+    from research.harness.implied_vs_ours import main
+
+    header = ",".join(FIELDS)
+    # Nine days of span: past the five-day gate the old version used.
+    rows = [
+        f"BTC-X-{i}-C,BTC,call,71000,{2_000_000 + i * 90_000},40.6,0.0123,"
+        f"0.0120,0.0126,84000,12,958,{1_000_000 + i * 86_400}"
+        for i in range(10)
+    ]
+    with gzip.open(tmp_path / "deribit_2026-09-24.csv.gz", "wt") as handle:
+        handle.write(header + "\n" + "\n".join(rows) + "\n")
+
+    rc = main(["--surface", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert JOIN_IS_UNWRITTEN in out, "a long recording must still say the join is missing"
+    assert rc != 0, "no score available should not look like a successful run"

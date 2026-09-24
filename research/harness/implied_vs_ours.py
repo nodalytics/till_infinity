@@ -27,12 +27,23 @@ QLIKE rather than squared error because variance loss is asymmetric and squared
 error on a variance rewards under-forecasting. It is the loss
 `similarity_grid.py`, `regimes.py` and `susceptibility.py` all use.
 
-**On units.** Those harnesses pass **standard deviations** to `qlike`, not
-variances, and this one does the same. The textbook QLIKE is defined on variances;
-matching the folder matters more here, because the entire point of reusing the loss
-is that the numbers are comparable with the nulls already recorded. The convention
-is stated rather than assumed because a reader who plugs variances in will get a
-different number and no warning.
+**On units, corrected 2026-09-24 after review.** Those harnesses pass
+**variances** to `qlike`. An earlier version of this docstring claimed they pass
+standard deviations, on a misreading of `susceptibility.py:176` - that line is a
+`np.sqrt` intermediate which line 197 squares back (`base = x_trail**2 * horizon`)
+before anything reaches the loss. `regimes.py:340` and `similarity_grid.py:207` pass
+variances too.
+
+The correction matters because **the convention can flip the ranking, not just the
+scale**. With an actual sigma of 0.010, a forecast 50% high and one 30% low:
+
+    on standard deviations:  high 0.07213   low 0.07190   -> low wins
+    on variances:            high 0.25537   low 0.32747   -> high wins
+
+If those are `mark_iv` and ours, the phase-0 verdict depends on the convention
+alone. And `realised_vol` returns a **sigma**, so the natural composition lands on
+the wrong side of it. `score` exists so the bar join cannot make that mistake:
+it takes sigmas, squares them, and calls `qlike`. Use `score`, not `qlike`.
 
 **Walk-forward, and the floor first.** `implied_floor.floor` is printed before any
 score, and a win smaller than it is reported as a null.
@@ -48,8 +59,6 @@ instruments IBKR would reach. That asymmetry belongs in the write-up.
 from __future__ import annotations
 
 import argparse
-import csv
-import gzip
 import math
 import sys
 from pathlib import Path
@@ -58,12 +67,22 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from research.harness.deribit_recorder import read_surface_safe
 from research.harness.implied_floor import floor
 
 #: Seconds in a year, calendar. Crypto trades continuously, so a 252-day trading
 #: year would overstate annualised sigma by about 1.9x and make every comparison
 #: wrong in the same direction.
 YEAR_SECONDS = 365.0 * 24.0 * 3600.0
+
+#: Said on every run until the bar join exists, and the exit status says it too.
+#:
+#: An earlier version printed this only when under five days were recorded, so after
+#: the week the plan gates on it printed a floor and exited 0 - a clean
+#: successful-looking run with no score, at exactly the moment somebody comes back
+#: to read one. A script that has not done the thing it is named after should be
+#: impossible to mistake for one that has.
+JOIN_IS_UNWRITTEN = "the bar join is not implemented yet, so nothing has been scored"
 
 #: Fewest paired observations before a QLIKE is reported. The same 200 the other
 #: harnesses use, so a thin cell reads as thin rather than as a result.
@@ -118,8 +137,10 @@ def realised_vol(closes: np.ndarray, bars: int) -> np.ndarray:
 def qlike(actual: np.ndarray, forecast: np.ndarray) -> float:
     """Variance loss: `a/f - log(a/f) - 1`. Lower is better, zero is perfect.
 
-    Both arguments are **standard deviations**, matching the other harnesses in
-    this folder - see the module docstring on why that convention is kept.
+    Both arguments are **variances**, which is what the other harnesses in this
+    folder pass and what the loss is defined on. Prefer `score` below, which takes
+    the sigmas everything here actually computes and squares them for you - see the
+    module docstring on how getting this backwards flips the ranking.
     """
     ok = (actual > 0) & (forecast > 0) & np.isfinite(actual) & np.isfinite(forecast)
     if ok.sum() < MIN_PAIRS:
@@ -128,21 +149,37 @@ def qlike(actual: np.ndarray, forecast: np.ndarray) -> float:
     return float(np.mean(ratio - np.log(ratio) - 1.0))
 
 
-def read_surface(directory: Path) -> list[dict]:
-    """Every recorded sweep, oldest file first."""
-    rows: list[dict] = []
-    for path in sorted(directory.glob("deribit_*.csv.gz")):
-        with gzip.open(path, "rt", newline="") as handle:
-            rows.extend(csv.DictReader(handle))
-    return rows
+def score(actual_sigma: np.ndarray, forecast_sigma: np.ndarray) -> float:
+    """QLIKE on two **standard deviations**, squared to variances first.
+
+    The one function the bar join should call. `realised_vol` returns a sigma and
+    `mark_iv` is quoted as one, so every input here is a sigma while the loss is
+    defined on variances - and passing sigmas straight through does not merely
+    rescale the answer, it can reverse which forecast wins.
+    """
+    return qlike(np.asarray(actual_sigma) ** 2, np.asarray(forecast_sigma) ** 2)
 
 
-def main() -> int:
+def read_surface(directory: Path) -> tuple[list[dict], list[Path]]:
+    """Every recorded sweep, oldest file first, plus any archive that would not read.
+
+    Delegates to the recorder's `read_surface_safe` rather than reimplementing the
+    read: a truncated gzip member raises `EOFError` naming no file, and one
+    interrupted write should not make a month of recording unreadable.
+    """
+    return read_surface_safe(directory)
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--surface", required=True, help="where the recorder wrote")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    rows = read_surface(Path(args.surface).expanduser())
+    rows, broken = read_surface(Path(args.surface).expanduser())
+    if broken:
+        print(f"skipped {len(broken)} unreadable archive(s):", file=sys.stderr)
+        for path in broken:
+            print(f"  {path}", file=sys.stderr)
     if not rows:
         print("no recorded surface - run the recorder first", file=sys.stderr)
         return 1
@@ -151,9 +188,15 @@ def main() -> int:
     bar = floor(rows)
     print("\n=== the floor, before any score")
     print(f"  {bar['n']:,} quotes with a usable book")
-    print(f"  median round-trip cost: {100 * bar['median_cost']:.2f}% of premium")
+    print(f"  median round-trip cost: {bar['cost_percent_of_premium']:.2f}% of premium")
     print(f"  mean {100 * bar['mean_cost']:.2f}%, 90th percentile {100 * bar['p90_cost']:.2f}%")
-    print(f"  which is about {bar['iv_points_needed']:.2f} volatility points")
+    # Two units, two numbers. They differ by roughly the median mark_iv, and an
+    # earlier version printed the same digits under both labels.
+    points = bar["iv_points_needed"]
+    if not math.isnan(points):
+        print(f"  in the units mark_iv is quoted in: {points:.2f} volatility points")
+    else:
+        print("  volatility points: unavailable, no row carried a mark_iv")
     print("  a win smaller than this is a null, whatever its sign")
 
     expiries = sorted({float(row["expiry"]) for row in rows})
@@ -162,14 +205,20 @@ def main() -> int:
     print(f"  {len(expiries)} distinct expiries, {len(stamps)} distinct sweep instants")
     span = (stamps[-1] - stamps[0]) / 86400.0 if len(stamps) > 1 else 0.0
     print(f"  spanning {span:.2f} days")
+
+    print(f"\n  {JOIN_IS_UNWRITTEN}.")
+    print(
+        "  It needs the underlying's bars over each option's remaining life, joined to"
+        "\n  these quotes, and scored with `score` - not `qlike` - because the loss takes"
+        "\n  variances and everything here is a sigma."
+    )
     if span < 5.0:
         print(
-            "\n  Not enough to score. The comparison needs the underlying's bars over each"
-            "\n  option's remaining life, and with under five days recorded almost every"
-            "\n  window is still open - there is nothing realised to compare against yet."
-            "\n  Keep the recorder running; the bar join goes here."
+            f"  Under five days recorded ({span:.2f}), so most option windows are still"
+            "\n  open and there would be little realised volatility to score against yet."
         )
-    return 0
+    # Non-zero, because no score is not a success. See JOIN_IS_UNWRITTEN.
+    return 2
 
 
 if __name__ == "__main__":

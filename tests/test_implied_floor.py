@@ -57,7 +57,40 @@ def test_the_floor_reports_a_median_and_a_count():
     got = floor(rows)
     assert got["n"] == 2
     assert got["median_cost"] > 0
-    assert math.isclose(got["iv_points_needed"], got["median_cost"] * 100.0)
+
+
+def test_volatility_points_use_mark_iv_and_not_a_bare_hundred():
+    """The key has to implement its own stated derivation.
+
+    It claimed to convert a cost fraction into the volatility points `mark_iv` is
+    quoted in, using `points = c * mark_iv`, and then returned `c * 100` - which
+    never reads `mark_iv` at all and was 1.9x off on real data. Worse, `main` printed
+    the same digits twice under two different labels, once as a percentage of premium
+    and once as volatility points, which is the tell.
+    """
+    rows = [
+        {"bid_price": 0.010, "ask_price": 0.012, "mark_price": 0.011, "mark_iv": 50.0},
+        {"bid_price": 0.020, "ask_price": 0.024, "mark_price": 0.022, "mark_iv": 50.0},
+    ]
+    got = floor(rows)
+    assert math.isclose(got["iv_points_needed"], got["median_cost"] * 50.0, rel_tol=1e-9)
+    # And the two are genuinely different numbers, so the mistake cannot recur silently.
+    assert not math.isclose(got["iv_points_needed"], got["median_cost"] * 100.0)
+
+
+def test_volatility_points_are_nan_without_a_mark_iv():
+    """Analysis feeds this by hand, and a column that is absent is not a 100."""
+    rows = [{"bid_price": 0.010, "ask_price": 0.012, "mark_price": 0.011}]
+    got = floor(rows)
+    assert got["n"] == 1
+    assert math.isnan(got["iv_points_needed"])
+
+
+def test_the_cost_percentage_is_reported_under_its_own_name():
+    """`main` printed one number as two units; each now has a key of its own."""
+    rows = [{"bid_price": 0.010, "ask_price": 0.012, "mark_price": 0.011, "mark_iv": 50.0}]
+    got = floor(rows)
+    assert math.isclose(got["cost_percent_of_premium"], got["median_cost"] * 100.0)
 
 
 def test_the_floor_reads_strings_because_the_store_is_csv():

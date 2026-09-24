@@ -24,11 +24,22 @@ same shape as `payout_logger.py`, and for the same reason: a research collector
 that needs a schema migration to add a column is a collector that stops
 collecting.
 
-Failures do not stop it. The one thing that must not happen is an empty
-successful-looking sweep: Deribit answers **HTTP 200 with a JSON-RPC error body**,
-so a naive reader records a quiet market when the venue actually refused. `_get`
-is where that is caught, and an empty sweep writes **no file** rather than a
-header with no rows under it.
+Failures do not stop it, and that sentence has to be earned rather than asserted -
+an earlier version made the claim with no `try` around the sweep at all, so a disk
+full or an unexpected body shape would end a week-long detached run. Three layers:
+
+* `_get` returns `{}` on a transport error, a non-200, unparseable JSON, a JSON-RPC
+  error body, **and a `result` that is not a list** - Deribit answers HTTP 200 with
+  `{"error": ...}`, so a status check alone records a quiet market when the venue
+  actually refused;
+* `main` catches anything a single currency's sweep or write raises, prints it, and
+  goes on to the next one;
+* an empty sweep writes **no file** rather than a header with no rows under it.
+
+And on the read side, `read_surface_safe` skips a truncated archive **and names
+it**. A SIGKILL, OOM or reboot mid-write leaves one bad gzip member, `gzip` raises
+`EOFError` naming no file, and without this one interrupted write makes a whole
+month of recording unreadable.
 """
 
 from __future__ import annotations
@@ -85,7 +96,13 @@ def _get(client: httpx.Client, path: str, params: dict) -> dict:
         body = reply.json()
     except ValueError:
         return {}
-    return {} if "error" in body else body
+    if not isinstance(body, dict) or "error" in body:
+        return {}
+    # `result` must be a list. A dict or a string here is not an error body and not
+    # an empty market, and passing it on raised `AttributeError` three frames deep.
+    if not isinstance(body.get("result"), list):
+        return {}
+    return body
 
 
 def sweep(client: httpx.Client, currency: str, at: float) -> list[deribit.Row]:
@@ -105,6 +122,35 @@ def sweep(client: httpx.Client, currency: str, at: float) -> list[deribit.Row]:
         {"currency": currency, "kind": "option"},
     )
     return deribit.parse_summary(book, instruments=instruments, at=at)
+
+
+def read_surface_safe(directory: Path) -> tuple[list[dict], list[Path]]:
+    """Every recorded row, plus the archives that could not be read.
+
+    Returns `(rows, broken)` rather than raising, because one interrupted write
+    should cost one file and not a month. `gzip` raises `EOFError` on a truncated
+    member and names nothing, so the caller is told which paths to look at.
+
+    A file that fails contributes **nothing**, not its readable prefix. That
+    distinction is the whole reason this reads into a local list first.
+    """
+    rows: list[dict] = []
+    broken: list[Path] = []
+    for path in sorted(directory.glob("deribit_*.csv.gz")):
+        # Into a local list first, and committed only on a clean read. `extend` on
+        # a generator that raises part way keeps everything it already yielded, so
+        # a corrupt archive would contribute its readable prefix to the analysis
+        # *and* be reported as broken - which is worse than either alone, because
+        # the partial data is silent.
+        here: list[dict] = []
+        try:
+            with gzip.open(path, "rt", newline="") as handle:
+                here.extend(csv.DictReader(handle))
+        except (OSError, EOFError, UnicodeDecodeError):
+            broken.append(path)
+            continue
+        rows.extend(here)
+    return rows, broken
 
 
 def writer(out_dir: Path) -> Callable[[list[deribit.Row]], None]:
@@ -156,9 +202,15 @@ def main() -> int:
         while not stopping and (args.sweeps is None or done < args.sweeps):
             got = 0
             for currency in CURRENCIES:
-                rows = sweep(client, currency, at=time.time())
-                write(rows)
-                got += len(rows)
+                # One currency's failure must not end the run. A detached collector
+                # that dies on a full disk or an unfamiliar body shape has silently
+                # stopped being a collector, and nobody finds out for days.
+                try:
+                    rows = sweep(client, currency, at=time.time())
+                    write(rows)
+                    got += len(rows)
+                except Exception as exc:  # a collector outlives anything one currency does
+                    print(f"  {currency}: {type(exc).__name__}: {exc}", flush=True)
                 time.sleep(REQUEST_PAUSE)
             done += 1
             print(f"{datetime.now(UTC):%H:%M:%S} sweep {done}: {got} rows", flush=True)

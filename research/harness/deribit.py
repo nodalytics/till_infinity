@@ -83,8 +83,12 @@ def parse_summary(payload: dict, *, instruments: dict[str, dict], at: float) -> 
     everything downstream.
 
     A row missing anything the comparison needs is **dropped rather than
-    defaulted**. A strike with no book has no bid, and a zero bid would be
-    recorded as a free option.
+    defaulted**, and "missing" includes **zero**. Deribit sends `null` for a strike
+    with no book today, so an earlier version that only refused `None` looked
+    correct - but `_number(0.0)` is a perfectly good float, so a book quoted at zero
+    would have survived and produced a cost of exactly zero. That is not harmless:
+    the detection floor this feeds is what the whole phase is gated on, and mixing
+    empty books into real ones drags its median down by half.
     """
     out: list[Row] = []
     for entry in payload.get("result") or []:
@@ -98,9 +102,13 @@ def parse_summary(payload: dict, *, instruments: dict[str, dict], at: float) -> 
         mark = _number(entry.get("mark_price"))
         bid = _number(entry.get("bid_price"))
         ask = _number(entry.get("ask_price"))
-        if expiry_ms is None or strike is None or mark_iv is None or mark is None:
+        if expiry_ms is None or strike is None or mark_iv is None:
             continue
-        if bid is None or ask is None:
+        # Zero is refused as firmly as absent, for all three prices. `mark` is what
+        # the cost fraction divides by; `bid` and `ask` are the spread it measures.
+        if mark is None or mark <= 0.0:
+            continue
+        if bid is None or ask is None or bid <= 0.0 or ask <= 0.0:
             continue
         out.append(
             Row(

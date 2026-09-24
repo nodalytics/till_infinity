@@ -25,9 +25,13 @@ and the write-up must say so rather than imply a cleaner experiment than was run
 
 **And the floor it produces is optimistic**, which is the more important caveat.
 `deribit.parse_summary` drops any strike with no book at all - 492 of 1,894 on the
-first live sweep, 26%. Those are precisely the widest spreads, so every number here
-is computed over the liquid subset and understates what trading the whole surface
-would cost.
+first live sweep, 26% - refusing a zero bid, ask or mark as firmly as a missing one.
+Those are precisely the widest spreads, so every number here is computed over the
+liquid subset and understates what trading the whole surface would cost.
+
+That the recorder refuses zeros is worth stating here rather than assumed, because
+this function is also fed by hand during analysis, where nothing has filtered the
+rows first. Hence `cost_fraction` refuses them again.
 
 ## Reading recorded rows
 
@@ -72,28 +76,45 @@ def cost_fraction(bid: float, ask: float, mark: float) -> float | None:
 def floor(rows: Iterable[dict]) -> dict[str, float]:
     """The floor over a recorded surface.
 
-    `iv_points_needed` converts the median cost into volatility points, the units
-    `mark_iv` is quoted in, using the crude local approximation that a relative
-    change in premium of `c` needs a relative change in implied volatility of about
-    `c` near the money. It is a scale, not a pricing model, and it is here so the
-    floor can be stated in the same units as the thing it gates.
+    Three numbers, in three units, each under its own name - because an earlier
+    version reported `median_cost * 100` as **volatility points** while its own
+    docstring derived them as `cost * mark_iv`. Those differ by 1.9x on real data,
+    and `main` printed the same digits under both labels.
+
+    * `median_cost` - a fraction of premium;
+    * `cost_percent_of_premium` - the same thing as a percentage, which is what the
+      1.89% figure is;
+    * `iv_points_needed` - volatility points, the units `mark_iv` is quoted in,
+      as `median_cost * median(mark_iv)`. The approximation is the crude local one
+      that a relative change in premium of `c` needs a relative change in implied
+      volatility of about `c` near the money. It is a scale, not a pricing model,
+      and it is `nan` when no row carries a `mark_iv` - because a missing column is
+      not a 100.
     """
+    nan = float("nan")
     costs: list[float] = []
+    ivs: list[float] = []
     for row in rows:
         cost = cost_fraction(
             _as_float(row.get("bid_price")),
             _as_float(row.get("ask_price")),
             _as_float(row.get("mark_price")),
         )
-        if cost is not None:
-            costs.append(cost)
+        if cost is None:
+            continue
+        costs.append(cost)
+        # Only from rows that contribute a cost, so the two medians describe the
+        # same population.
+        iv = _as_float(row.get("mark_iv"))
+        if math.isfinite(iv) and iv > 0.0:
+            ivs.append(iv)
     if not costs:
-        nan = float("nan")
         return {
             "n": 0,
             "median_cost": nan,
             "mean_cost": nan,
             "p90_cost": nan,
+            "cost_percent_of_premium": nan,
             "iv_points_needed": nan,
         }
     costs.sort()
@@ -103,5 +124,6 @@ def floor(rows: Iterable[dict]) -> dict[str, float]:
         "median_cost": median,
         "mean_cost": statistics.fmean(costs),
         "p90_cost": costs[min(len(costs) - 1, int(0.90 * len(costs)))],
-        "iv_points_needed": median * 100.0,
+        "cost_percent_of_premium": median * 100.0,
+        "iv_points_needed": median * statistics.median(ivs) if ivs else nan,
     }

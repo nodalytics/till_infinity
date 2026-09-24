@@ -15,7 +15,7 @@ from pathlib import Path
 
 import httpx
 
-from research.harness.deribit_recorder import sweep, writer
+from research.harness.deribit_recorder import read_surface_safe, sweep, writer
 
 INSTRUMENTS = [
     {
@@ -138,3 +138,53 @@ def test_there_is_no_private_endpoint_anywhere_in_this_file():
     for text in literals:
         assert "private/" not in text
         assert "api_key" not in text.lower()
+
+
+def test_a_result_that_is_not_a_list_does_not_crash_the_sweep():
+    """Review Focus 3 is about an empty *or error* result, and a dict is neither.
+
+    Verified before the fix: parse_summary raised
+    `AttributeError: 'str' object has no attribute 'get'`, which in a detached
+    week-long run means the collector is simply gone.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "get_instruments" in request.url.path:
+            return httpx.Response(200, json={"result": INSTRUMENTS})
+        return httpx.Response(200, json={"result": {"unexpected": "shape"}})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert sweep(client, "BTC", at=1790233483.0) == []
+
+
+def test_a_result_that_is_a_string_does_not_crash_the_sweep():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"result": "nope"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert sweep(client, "BTC", at=1790233483.0) == []
+
+
+def test_a_truncated_archive_is_skipped_rather_than_ending_the_analysis(tmp_path):
+    """One SIGKILL mid-write must not make a whole week unreadable.
+
+    `gzip` raises EOFError on a truncated member, and the message names no file, so
+    the analysis dies with no indication which of thirty archives to delete.
+    """
+    good = tmp_path / "deribit_2026-09-24.csv.gz"
+    with gzip.open(good, "wt", newline="") as handle:
+        handle.write("instrument,mark_iv\nBTC-A-C,40.6\n")
+
+    # Big enough that gzip's buffered reads reach the truncation. A one-row archive
+    # fits inside a single internal read, so it decompresses whole and raises
+    # nothing - which is how the first version of this test passed against the
+    # unfixed code and proved nothing.
+    bad = tmp_path / "deribit_2026-09-25.csv.gz"
+    with gzip.open(bad, "wt", newline="") as handle:
+        handle.write("instrument,mark_iv\n" + "".join(f"BTC-{i}-C,4{i}.0\n" for i in range(200)))
+    bad.write_bytes(bad.read_bytes()[:-8])  # lop off the end-of-stream marker
+
+    rows, broken = read_surface_safe(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["instrument"] == "BTC-A-C"
+    assert [p.name for p in broken] == ["deribit_2026-09-25.csv.gz"]
