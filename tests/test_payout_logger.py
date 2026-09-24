@@ -5,6 +5,10 @@ the collector was verified against an outage and not against a quote. **Code tha
 outage to end is exactly the code that fails silently when the moment comes**, so the parsing and
 arithmetic are pinned here with a fake socket instead.
 
+That caution was justified and the diagnosis was not: the endpoint had been **retired**, not
+broken, and the collector was pointed at a dead host for three days. It now collects - 54 of 54
+quotes on the first live sweep - and `research/docs/deriv-payouts.md` holds the result.
+
 The one number that matters is `implied = stake / payout`, because every downstream comparison -
 margin, calibration, skew - is built on it.
 """
@@ -14,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from research.harness.payout_logger import STAKE, quote
+from research.harness.payout_logger import DURATIONS, STAKE, SYMBOLS, cells, quote, wanted
 
 
 class FakeSocket:
@@ -117,3 +121,57 @@ def test_unrelated_messages_are_skipped_until_the_proposal_arrives():
 def test_a_silent_server_is_recorded_not_hung():
     _ws, row = _run([{"ping": 1}] * 6)
     assert row["error"] == "no_proposal"
+
+
+# ------------------------------------------------- which cells are even asked
+
+
+def test_a_symbol_is_never_asked_below_its_floor():
+    """The venue refuses those, and a refusal in the log must mean something changed.
+
+    The module writes failures in as rows rather than skipping them, so an outage shows up as an
+    outage. Thousands of rows refusing a combination known to be impossible would bury that.
+    """
+    floors = dict(SYMBOLS)
+    for symbol, minutes in cells():
+        assert minutes >= floors[symbol]
+
+
+def test_every_symbol_gets_at_least_one_duration():
+    """A floor above every duration would silently drop the symbol entirely."""
+    asked = {symbol for symbol, _ in cells()}
+    assert asked == set(dict(SYMBOLS))
+
+
+def test_every_duration_clearing_a_floor_is_asked():
+    """The pairing narrows the grid and must not otherwise lose a cell."""
+    expected = {(symbol, d) for symbol, floor in SYMBOLS for d in DURATIONS if d >= floor}
+    assert set(cells()) == expected
+
+
+def test_the_denominator_counts_both_directions():
+    """`wanted()` is what a sweep prints against, so it has to be reachable.
+
+    Reporting `54/80` when 26 of the 80 were never possible reads as a broken collector, which is
+    the kind of number that gets a healthy run investigated and an unhealthy one ignored.
+    """
+    assert wanted() == len(cells()) * 2
+
+
+def test_boom_and_crash_are_not_asked():
+    """Measured: both are listed as tradable and quote no option at any duration.
+
+    Pinned so that re-adding them is a deliberate act with a measurement behind it rather than an
+    accident that fills the log with refusals.
+    """
+    named = set(dict(SYMBOLS))
+    assert "BOOM1000" not in named
+    assert "CRASH1000" not in named
+
+
+def test_the_request_names_the_field_the_venue_accepts():
+    """`symbol` was renamed to `underlying_symbol`, and the old name is rejected outright."""
+    ws, _row = _run([{"proposal": {"payout": 20.0, "spot": 1}}])
+    sent = ws.sent[0]
+    assert "underlying_symbol" in sent
+    assert "symbol" not in sent

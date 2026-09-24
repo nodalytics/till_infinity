@@ -88,29 +88,63 @@ import sys
 from pathlib import Path
 
 #: Deriv's public endpoints, tried in order. A registered `app_id` belongs in `DERIV_APP_ID`.
+#:
+#: **Corrected 2026-09-24. The first three were not an outage - they were retired.** This file
+#: shipped believing Deriv's API was down, because every `/websockets/v3` host answered HTTP 520
+#: from several networks for days. They still do. What actually happened is a migration: the
+#: options API now lives on a different host, under a different path, and answers immediately.
+#:
+#: The lesson is worth keeping next to the list. A 520 from Cloudflare was read as "their origin
+#: is broken" when it equally means "nothing is served here any more", and three days were spent
+#: waiting for a recovery that was never coming. Two checks would have separated them: an actual
+#: WebSocket handshake rather than a plain GET, and a look at the current documentation for the
+#: endpoint the docs recommend today.
+#:
+#: The retired hosts are kept, last, and deliberately. If the new endpoint is itself transitional
+#: then the old ones coming back is a thing worth noticing rather than a thing to have deleted.
 ENDPOINTS = (
+    "wss://api.derivws.com/trading/v1/options/ws/public",
     "wss://ws.derivws.com/websockets/v3?app_id={app_id}",
     "wss://ws.binaryws.com/websockets/v3?app_id={app_id}",
     "wss://green.derivws.com/websockets/v3?app_id={app_id}",
 )
 
-#: Symbols to quote, as Deriv names them. The volatility indices are the ones this desk has the
-#: deepest bar history for, which is what the outcome will be recovered from.
-SYMBOLS = (
-    "R_10",
-    "R_25",
-    "R_50",
-    "R_75",
-    "R_100",
-    "BOOM1000",
-    "CRASH1000",
-    "frxEURUSD",
-    "frxGBPUSD",
-    "frxXAUUSD",
+#: Symbols to quote, with the shortest duration in minutes each one will actually accept.
+#:
+#: **Measured against the venue on 2026-09-24, not assumed.** The pairing matters because a
+#: request below a symbol's floor is refused, and a refusal written into the log is supposed to
+#: mean *something changed* - see the module docstring on failures-as-rows. Thousands of rows
+#: saying `ContractValidationError` for a combination known to be impossible would destroy that
+#: signal, which is the one thing this file's error handling is for.
+#:
+#: The volatility indices carry every duration and are also the ones this desk has the deepest bar
+#: history for, which is what the outcome is recovered from.
+#:
+#: **Boom and Crash are absent, and that is a finding rather than an omission.** Both are listed as
+#: tradable on the venue and neither quotes a CALL at any duration tried - 1m, 5m, 15m, 60m or 1d.
+#: They are the two synthetics with a *designed* asymmetry, which `susceptibility.md` recovered at
+#: +0.136 and -0.136 through realised semivariance, so they were the interesting ones to price. The
+#: venue does not sell the option. Re-check before concluding anything from their absence here.
+SYMBOLS: tuple[tuple[str, int], ...] = (
+    ("R_10", 1),
+    ("R_25", 1),
+    ("R_50", 1),
+    ("R_75", 1),
+    ("R_100", 1),
+    # Gold takes 5m; the two pairs will not go below 15m. No reason for the difference is
+    # published, and guessing at one would be worse than recording the floor.
+    ("frxXAUUSD", 5),
+    ("frxEURUSD", 15),
+    ("frxGBPUSD", 15),
 )
 
 #: Durations in minutes. Short, because that is where bar data can settle the outcome precisely
 #: and where the carry that kills everything else does not have time to accumulate.
+#:
+#: Each is asked of a symbol only if it clears that symbol's floor above. **60m is not dropped for
+#: the pairs**: it clears, and an intraday option on a real instrument is the interesting cell -
+#: the desk's own forecasts work at 1m to 1h, so a venue that would only sell days would have been
+#: the end of the question.
 DURATIONS = (1, 5, 15, 60)
 
 #: Stake used for every quote. Fixed, so `implied = stake / payout` is comparable across rows.
@@ -177,7 +211,10 @@ async def quote(ws, symbol: str, minutes: int, contract: str) -> dict:
         "currency": "USD",
         "duration": minutes,
         "duration_unit": "m",
-        "symbol": symbol,
+        # **`underlying_symbol`, not `symbol`.** The migrated endpoint renamed it and rejects the
+        # old spelling outright with `Properties not allowed: symbol` - which is a good failure,
+        # since a silently ignored field would have logged a quote for the wrong instrument.
+        "underlying_symbol": symbol,
     }
     try:
         await ws.send(json.dumps(request))
@@ -207,16 +244,30 @@ async def quote(ws, symbol: str, minutes: int, contract: str) -> dict:
     return base
 
 
+def cells() -> list[tuple[str, int]]:
+    """Every (symbol, duration) this venue will actually quote.
+
+    Computed rather than written out so `SYMBOLS` and `DURATIONS` stay the only two things to
+    edit, and so `wanted()` below reports a denominator that means something - a sweep printing
+    `48/80 quoted` when 32 of those 80 were never possible reads as a broken collector.
+    """
+    return [(sym, d) for sym, floor in SYMBOLS for d in DURATIONS if d >= floor]
+
+
+def wanted() -> int:
+    """How many rows a healthy sweep produces. Both directions on every cell."""
+    return len(cells()) * 2
+
+
 async def sweep(ws, write) -> int:
-    """One pass over every symbol and duration, both directions, same instant."""
+    """One pass over every quotable symbol and duration, both directions, same instant."""
     rows: list[dict] = []
-    for symbol in SYMBOLS:
-        for minutes in DURATIONS:
-            # CALL and PUT back to back, so the pair shares a quoting instant as closely as
-            # the API allows. Their implied probabilities are what separate margin from skew.
-            for contract in ("CALL", "PUT"):
-                rows.append(await quote(ws, symbol, minutes, contract))
-                await asyncio.sleep(REQUEST_PAUSE)
+    for symbol, minutes in cells():
+        # CALL and PUT back to back, so the pair shares a quoting instant as closely as
+        # the API allows. Their implied probabilities are what separate margin from skew.
+        for contract in ("CALL", "PUT"):
+            rows.append(await quote(ws, symbol, minutes, contract))
+            await asyncio.sleep(REQUEST_PAUSE)
     write(rows)
     return sum(1 for r in rows if not r["error"])
 
@@ -260,7 +311,7 @@ async def run(out_dir: Path, sweeps: int | None) -> int:
                         done += 1
                         print(
                             f"{dt.datetime.now(dt.UTC):%H:%M:%S} sweep {done}: "
-                            f"{good}/{len(SYMBOLS) * len(DURATIONS) * 2} quoted",
+                            f"{good}/{wanted()} quoted",
                             flush=True,
                         )
                         if sweeps is not None and done >= sweeps:
