@@ -1,9 +1,9 @@
 # Options trading: a design
 
-**Status**: proposed, 2026-09-24. Approved shape: a sibling contract beside `Broker` plus a quote
-recorder as a collector. Everything below the architecture section changed after the day's
-measurements and should be read as the reason the scope is smaller and the venue list longer than
-when this was first sketched.
+**Status**: **approved 2026-09-24.** A sibling contract beside `Broker` plus a quote recorder as a
+collector, in a new top-level `till_infinity/options/` package. Everything below the architecture
+section changed after the day's measurements and should be read as the reason the scope is smaller
+and the venue list longer than when this was first sketched.
 
 ## What this is for
 
@@ -111,13 +111,11 @@ on.
 So: a **new package** `till_infinity/options/`, with its own contract, its own venues and its own
 paper book, sharing the bus, the journal, the `Guard`'s day state and `shared/effects.py`.
 
-**This is a change from the shape that was approved**, and it should be agreed before anything is
-built. The approved sketch put the sibling contract inside `trading/`. A top-level package is
-proposed instead because the recorder needs its own store and its own loop, and because an options
-position's lifecycle - it expires - has no counterpart in `trading/`, whose every exit is a decision.
-Keeping it under `trading/` would work; it would just mean one package with two unrelated position
-models in it. If you would rather it lived at `trading/options/`, nothing else in this document
-changes.
+**This differed from the first sketch and was agreed on 2026-09-24.** That sketch put the sibling
+contract inside `trading/`. A top-level package won because the recorder needs its own store and its
+own loop, and because an options position's lifecycle - it expires - has no counterpart in
+`trading/`, where every exit is a decision. Keeping it under `trading/` would have worked; it would
+have meant one package holding two unrelated position models.
 
 ### The contract model
 
