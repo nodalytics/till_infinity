@@ -147,6 +147,41 @@ SYMBOLS: tuple[tuple[str, int], ...] = (
 #: the end of the question.
 DURATIONS = (1, 5, 15, 60)
 
+#: Prefixes Deriv gives instruments it did **not** generate itself. The whole
+#: accumulator question turns on this distinction: `accumulators.md` found ACCU on
+#: 27 of 89 instruments and every one synthetic, where sigma is a published constant
+#: and there is nothing to forecast, while the `chi` signal that would time it reads
+#: -1.1% to +0.3% there against +5 to +9 points on real markets. One of these
+#: prefixes appearing with an accumulator is the event that reopens the study.
+REAL_PREFIXES: tuple[str, ...] = ("frx", "cry")
+
+#: Break-even barrier in per-tick sigmas at `g=0.03`, derived in `accumulators.md`:
+#: stake grows by `g` per surviving tick and a breach pays zero, so `p*(1+g) = 1`,
+#: the fair per-tick survival is `1/(1+g)`, and a two-sided barrier at `x` sigmas
+#: survives with probability `2*Phi(x) - 1`. Solving gives 2.18.
+#:
+#: Deriv quoted **2.132** on 2026-09-24 - constant to 0.0008 across five indices
+#: spanning a tenfold range of sigma, so it is a set price rather than an accident.
+#: Past 2.18 the arithmetic flips with no signal required, which is the second thing
+#: worth watching for.
+BREAK_EVEN_SIGMAS = 2.18
+
+
+def is_real(symbol: str) -> bool:
+    """Is this a market Deriv did not generate?
+
+    Prefix rather than a list, because the list changes and the prefixes have not.
+    Everything else - `R_*`, `1HZ*`, `BOOM*`, `CRASH*`, `JD*`, `stpRNG*`, `RB*` -
+    is one of Deriv's own processes.
+    """
+    return symbol.startswith(REAL_PREFIXES)
+
+
+def barrier_favourable(sigmas: float) -> bool:
+    """Would an accumulator at this barrier pay, before any signal is applied?"""
+    return sigmas > BREAK_EVEN_SIGMAS
+
+
 #: Stake used for every quote. Fixed, so `implied = stake / payout` is comparable across rows.
 STAKE = 10.0
 

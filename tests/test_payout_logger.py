@@ -175,3 +175,61 @@ def test_the_request_names_the_field_the_venue_accepts():
     sent = ws.sent[0]
     assert "underlying_symbol" in sent
     assert "symbol" not in sent
+
+
+# ------------------------------------------- the two triggers that would reopen it
+
+
+def test_a_real_instrument_is_told_from_a_generated_one():
+    """The one distinction the accumulator question turns on.
+
+    `accumulators.md` found ACCU on 27 of 89 instruments and every one synthetic -
+    where sigma is a published constant and there is nothing to forecast. The signal
+    that would time it works only on real markets. So an accumulator appearing on a
+    real instrument is the event that reopens the study, and telling the two apart
+    has to be exact.
+    """
+    from research.harness.payout_logger import is_real
+
+    assert is_real("frxEURUSD")
+    assert is_real("frxXAUUSD")
+    assert is_real("cryBTCUSD")
+    assert not is_real("R_100")
+    assert not is_real("1HZ100V")
+    assert not is_real("BOOM1000")
+    assert not is_real("JD100")
+    assert not is_real("stpRNG")
+
+
+def test_a_widened_barrier_is_flagged():
+    """The second trigger: past break-even the contract pays with no signal at all."""
+    from research.harness.payout_logger import BREAK_EVEN_SIGMAS, barrier_favourable
+
+    assert not barrier_favourable(2.132)  # as Deriv quoted it on 2026-09-24
+    assert not barrier_favourable(BREAK_EVEN_SIGMAS)
+    assert barrier_favourable(BREAK_EVEN_SIGMAS + 0.01)
+
+
+def test_the_break_even_barrier_matches_the_derivation():
+    """2.18 sigmas is derived, not copied - so it is checked against its derivation.
+
+    `accumulators.md`: stake grows by `g` per surviving tick and a breach pays zero,
+    so `p*(1+g) = 1` and the fair per-tick survival is `1/(1+g)`. A two-sided barrier
+    at `x` sigmas survives with probability `2*Phi(x) - 1`, so the fair barrier solves
+    `2*Phi(x) - 1 = 1/(1+g)`.
+    """
+    import math
+
+    from research.harness.payout_logger import BREAK_EVEN_SIGMAS
+
+    g = 0.03
+    p_fair = 1.0 / (1.0 + g)
+    # Phi(x) = (1 + p_fair) / 2, inverted by bisection.
+    lo, hi = 0.0, 10.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if 0.5 * (1.0 + math.erf(mid / math.sqrt(2.0))) < (1.0 + p_fair) / 2.0:
+            lo = mid
+        else:
+            hi = mid
+    assert math.isclose(BREAK_EVEN_SIGMAS, 0.5 * (lo + hi), abs_tol=0.005)
