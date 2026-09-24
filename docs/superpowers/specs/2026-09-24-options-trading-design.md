@@ -57,7 +57,7 @@ keeps a recorder and gets no execution path.
 
 | venue | instrument | publishes IV? | paper? | gateway needed? | verdict |
 | --- | --- | --- | --- | --- | --- |
-| **Deribit** | BTC/ETH options | **yes** - `mark_iv`, `bid_iv`, `ask_iv` | **testnet** | no | **primary research target** |
+| **Deribit** | BTC/ETH options | **yes** - `mark_iv` surface-wide in one call | **testnet** | no | **primary research target** |
 | **IBKR** | equity, index, FX options | via the API | **yes**, paper accounts | **yes** | production target, highest cost |
 | **Deriv** | binaries, accumulators, multipliers | no - fixed payouts | n/a | no | **monitor only** |
 
@@ -65,7 +65,21 @@ keeps a recorder and gets no execution path.
 the comparison this whole design exists to make - *do our volatility forecasts beat the market's* -
 becomes a measurement against recorded data with **no execution, no credentials and no capital**.
 Measured 2026-09-24: `test.deribit.com` and `www.deribit.com` both answer, **1,050 live BTC options
-on testnet quoting a `mark_iv`**, public market data unauthenticated, tick size 0.0001.
+on testnet, all 1,050 quoting a `mark_iv`**, public market data unauthenticated, tick size 0.0001.
+
+**Corrected after a closer look, and it shapes the recorder.** An earlier reading of this said
+Deribit publishes `mark_iv`, `bid_iv` and `ask_iv`. It does not, not from one endpoint.
+`get_book_summary_by_currency` returns the **entire surface in a single REST call** - 1,050 rows -
+and carries `mark_iv`, `mark_price`, `bid_price`, `ask_price`, `mid_price`, `underlying_price`,
+`open_interest`, `volume` and `interest_rate`. It carries **no** `bid_iv` or `ask_iv`; those come
+from `get_order_book`, which is **one call per instrument**. The first probe printed them as `None`
+and that was misread as "sometimes absent" when the fields are simply not in that response.
+
+Two consequences. The **surface is nearly free** - one HTTP GET per currency, so the subscription
+budget the first draft worried about does not apply to it at all. And the **cost side is not free**:
+quoting the bid/ask spread in volatility terms needs 1,050 calls, so phase 0 measures cost in
+**price** terms from `bid_price`/`ask_price`, which is what is actually paid, and treats an IV-space
+spread as a later refinement on a bounded sample.
 
 Example rows, which is what a recorder would be storing:
 
@@ -222,9 +236,10 @@ with the venue's IV as just another member of `consensus_vol.Ensemble`. If our f
 `mark_iv`, there is no options edge and phases 1-3 should not be built. **This is the gate for the
 whole programme**, and it costs a recorder.
 
-Detection floor, stated now: the spread between `bid_iv` and `ask_iv` is the cost. A forecast must
-beat `mark_iv` by more than half that spread to be worth anything, and the floor is computed from
-recorded data before the comparison is run.
+Detection floor, stated now: the cost is half the bid/ask spread, taken in price terms from
+`bid_price` and `ask_price` as a fraction of `mark_price`. A forecast must beat `mark_iv` by more
+than that to be worth anything, and the floor is computed from recorded data **before** the
+comparison is run.
 
 ### Phase 1 - Deriv recorder, reduced to monitoring
 
@@ -291,6 +306,12 @@ Following the repository's existing shape rather than inventing one:
    therefore on the underlyings where our forecasts are least proven, which weakens what a positive
    result would mean and should be said out loud when one arrives.
 3. **Is `mark_iv` the right opponent?** It is Deribit's mark, not a tradable price. The honest
-   comparison is against `ask_iv` for buying and `bid_iv` for selling, and the recorder must capture
-   all three - two of the four rows sampled today had `bid_iv`/`ask_iv` null, so how often they are
-   present is itself a phase 0 measurement.
+   comparison would be against `ask_iv` when buying and `bid_iv` when selling, and neither is in the
+   surface call - they need `get_order_book` per instrument. Phase 0 therefore scores against
+   `mark_iv` and subtracts a price-terms cost, which is a weaker test than the ideal one and should
+   be reported as such. Whether the IV-space spread is worth 1,050 calls is a decision for after the
+   first result, not before it.
+4. **Milliseconds.** Every Deribit timestamp is in milliseconds - `expiration_timestamp` reads
+   1790236800000. `prices` already carries one of these traps (`bars.ts` in seconds beside
+   `quotes.ts` in milliseconds), and the recorder should normalise at the boundary rather than
+   propagate it.
