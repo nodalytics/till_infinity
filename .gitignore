@@ -55,3 +55,6 @@ logs/
 .claude/
 __pycache__/
 .venv-research/
+
+# Recorded option surfaces. Market data, never committed.
+options-data/
