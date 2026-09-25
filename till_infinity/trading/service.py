@@ -209,6 +209,14 @@ class Live:
     #: True once part of this position has been banked, so the scale-out
     #: happens once rather than on every pass of the manage loop.
     scaled: bool = False
+    #: What `_quotes_seen` read for this feed when the position was noticed.
+    #:
+    #: Only the diagnostic uses it, and it exists because the diagnostic was
+    #: misleading without it: `_quotes_seen` is a lifetime counter that is never
+    #: reset, so a feed that quoted busily this morning and has since gone silent
+    #: reported thousands of quotes beside two identical symbols - which reads as
+    #: "quotes arrived and the symbol did not match" and is false.
+    quotes_at_open: int = 0
     #: The signal that produced this trade, kept so a stopped-out setup can be
     #: put back through the strategies rather than resurrected as a stale
     #: intent. Empty for adopted positions, which therefore never re-arm -
@@ -2921,15 +2929,26 @@ class Trader:
                 skipped[f"no spec for {live.intent.feed!r}"] += 1
                 continue
             if best is None:
-                # Not just *that* it is untracked, but which half failed:
-                # a feed with no quotes never reached `_mark_best`, and a
-                # feed with quotes reached it and did not match the symbol.
-                skipped[
-                    f"no best for {live.intent.feed}: position "
-                    f"{live.position.symbol!r} vs mapped "
-                    f"{self._symbol_of.get(live.intent.feed)!r}, "
-                    f"{self._quotes_seen.get(live.intent.feed, 0)} quotes"
-                ] += 1
+                # Not just *that* it is untracked, but **which** of three causes,
+                # because they need different fixes and the first version of this
+                # conflated them. See `trading-service.md` in research/docs.
+                feed = live.intent.feed
+                mapped = self._symbol_of.get(feed)
+                total = self._quotes_seen.get(feed, 0)
+                since = total - live.quotes_at_open
+                if mapped is None:
+                    why = "the feed maps to no symbol, so no quote could ever match"
+                elif mapped != live.position.symbol:
+                    why = f"position {live.position.symbol!r} did not match mapped {mapped!r}"
+                else:
+                    # The symbols agree, so the quotes are the missing half. The
+                    # count that matters is since this position opened, not the
+                    # feed's lifetime - a busy morning proves nothing about now.
+                    why = (
+                        f"{mapped!r} has quoted {since} times since this position "
+                        f"opened ({total} in this process)"
+                    )
+                skipped[f"no best for {feed}: {why}"] += 1
                 continue
             banked = False
             if not live.scaled:
@@ -3804,6 +3823,7 @@ class Trader:
                 signal=signal,
                 attempt=int(signal.get(ATTEMPT, 0) or 0),
                 seen=float(opened) if opened > 0 else time.time(),
+                quotes_at_open=self._quotes_seen.get(str(signal.get("feed") or intent.feed), 0),
             )
             if ref:
                 self._refs[ticket] = ref
