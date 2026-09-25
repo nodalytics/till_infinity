@@ -7036,6 +7036,69 @@ def test_the_excursion_is_forgotten_when_the_trade_closes():
     assert live.position.ticket not in trader._worst
 
 
+async def test_only_the_brokers_own_quote_sets_the_high_water_mark():
+    """A trailing stop cannot be measured against a price we cannot trade on.
+
+    `_quote`'s docstring has always said every venue feeds the consensus but "only
+    our own broker's fills anything else", and the code did not honour it: it
+    resolved the symbol from the feed alone and fed `_mark_best` from all six
+    TradingView venues. Measured on the live desk over 30 minutes of btc: 1,525
+    quotes from TradingView's view of DERIV, 620 from COINBASE, 533 BINANCE, 506
+    KRAKEN, 479 BYBIT, 299 BITSTAMP - and **zero** from the broker. So the
+    high-water mark behind every break-even and trailing decision was Coinbase's
+    price, not the account's.
+    """
+    trader = Trader(Bus(), settings=settings(break_even_at=1.0))
+    await trader.start()
+    live = _live(position=position(volume=1.0, symbol="XAUUSD"))
+    trader.open[live.position.ticket] = live
+
+    # Another venue's view of the same instrument, well above our broker's price.
+    await trader.handle(
+        Message(
+            topic=QUOTES,
+            payload={
+                "feed": "gold",
+                "source": "tradingview",
+                "venue": "COINBASE",
+                "bid": 9_999.0,
+                "ask": 9_999.5,
+            },
+        )
+    )
+    assert live.position.ticket not in trader._best, "a foreign venue set the mark"
+
+    # Our own broker's quote.
+    await trader.handle(
+        Message(
+            topic=QUOTES,
+            payload={
+                "feed": "gold",
+                "source": "broker",
+                "venue": "BROKER",
+                "bid": 4_399.5,
+                "ask": 4_400.5,
+            },
+        )
+    )
+    assert trader._best[live.position.ticket] == 4_399.5
+
+
+async def test_a_quote_with_no_source_still_marks():
+    """Compatibility, and deliberate. Every payload `prices` publishes carries a
+    source; the tests that predate this predicate do not, and a payload naming no
+    source at all is not evidence of a foreign venue."""
+    trader = Trader(Bus(), settings=settings(break_even_at=1.0))
+    await trader.start()
+    live = _live(position=position(volume=1.0, symbol="XAUUSD"))
+    trader.open[live.position.ticket] = live
+
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4_399.5, "ask": 4_400.5})
+    )
+    assert trader._best[live.position.ticket] == 4_399.5
+
+
 async def _skip_said(trader, live, caplog):
     """Run one `_manage` pass over an open position and return what it logged."""
     import logging

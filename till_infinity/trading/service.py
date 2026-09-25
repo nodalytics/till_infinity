@@ -41,6 +41,12 @@ from .. import trading
 from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
+
+# The wire name `prices` gives its own broker connection's quotes, as opposed to
+# the six venues it scrapes through TradingView. Imported rather than repeated:
+# `trading.config` already depends on `prices.models`, so the direction is settled,
+# and a duplicated string would drift silently.
+from ..prices.config import BROKER as BROKER_SOURCE
 from ..shared import effects
 from ..structures.codec import pack, registry, unpack
 from ..structures.context.cusum import Cusum, Ensemble, adaptive_threshold
@@ -614,10 +620,15 @@ class Trader:
         #: across closes. Its headline is `gained_r_per_trade`, which is the
         #: whole question and stays `nan` until something has been scored.
         self._best, self._bank_due, self._turns = {}, set(), turning.TurnTally()
-        #: feed -> how many quotes `_quote` has resolved a symbol for. Only
-        #: read by the `_manage` skip diagnostic, which cannot otherwise
-        #: distinguish "no quote ever arrived for this feed" from "quotes
+        #: feed -> how many of **our broker's own** quotes `_quote` has resolved a
+        #: symbol for. Only read by the `_manage` skip diagnostic, which cannot
+        #: otherwise distinguish "no quote ever arrived for this feed" from "quotes
         #: arrived and `_mark_best` did not match them to the position".
+        #:
+        #: Broker-only since 2026-09-26, and the narrowing is the point: it used to
+        #: count all six TradingView venues, so it read in the thousands for an
+        #: instrument our broker was not quoting at all, which is what made the
+        #: diagnostic misleading. See `_ours`.
         self._quotes_seen: Counter[str] = Counter()
         #: The worst price each open trade has seen. The mirror of `_best`, and
         #: it was missing: the trailing rules need the favourable extreme so
@@ -948,6 +959,24 @@ class Trader:
             observed = getattr(venue, "observe", None)
             if observed is not None:
                 observed(tick)
+        # **Only our own broker's price may move the high-water mark.** This is
+        # what the docstring above has always claimed and what the code did not do:
+        # `symbol` is resolved from the feed alone, so every venue's quote reached
+        # `_mark_best` and a Deriv position's trailing mark was set by whichever
+        # exchange ticked last.
+        #
+        # Measured on the live desk, btc over thirty minutes: 1,525 quotes from
+        # TradingView's view of DERIV, 620 COINBASE, 533 BINANCE, 506 KRAKEN, 479
+        # BYBIT, 299 BITSTAMP - and **none** from the broker. So a break-even or
+        # trailing decision was being taken against a price the account cannot
+        # deal on, and by a basis that is not small on crypto.
+        #
+        # A payload naming **no** source is accepted. Every payload `prices`
+        # publishes carries one, so absence means a caller that predates this
+        # predicate rather than a foreign venue - and refusing it would turn a
+        # compatibility question into a silent loss of stop management.
+        if not _ours(payload):
+            return
         self._quotes_seen[feed] += 1
         self._mark_best(symbol, float(bid), float(ask))
 
@@ -4413,6 +4442,22 @@ def _intent_from(position: Position, feed_of: dict[str, str] | None = None) -> I
         target=position.target,
         reason="adopted on start-up; opened before this process was running",
     )
+
+
+def _ours(payload: dict[str, Any]) -> bool:
+    """Did this quote come from the account we trade on?
+
+    `prices` labels the broker connection's own quotes `source="broker"` and
+    everything it scrapes through TradingView `source="tradingview"`, whatever
+    venue those describe. Only the first is a price we can deal at.
+
+    `None` and `""` are treated as ours - see the caller on why absence is not
+    evidence of a foreign venue.
+    """
+    source = payload.get("source")
+    if source is None or source == "":
+        return True
+    return str(source) == BROKER_SOURCE
 
 
 class _Intake:
