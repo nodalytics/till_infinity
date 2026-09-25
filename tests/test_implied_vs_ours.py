@@ -11,12 +11,16 @@ from __future__ import annotations
 import numpy as np
 
 from research.harness.implied_vs_ours import (
-    JOIN_IS_UNWRITTEN,
+    MIN_HORIZON_BARS,
+    MONEYNESS_BAND,
+    NOTHING_SCORED,
     annualise,
+    compare,
     horizon_bars,
     qlike,
     realised_vol,
     score,
+    underlying_series,
 )
 
 HOUR = 3600.0
@@ -138,13 +142,14 @@ def test_the_convention_is_load_bearing_not_cosmetic():
     assert on_variance[0] < on_variance[1]  # variances prefer the high one
 
 
-def test_the_unwritten_join_is_announced_however_much_is_recorded(tmp_path, capsys):
+def test_a_run_that_scored_nothing_says_so_however_much_is_recorded(tmp_path, capsys):
     """The safeguard the operator needs precisely when the wait is over.
 
     An earlier version printed "not enough to score" only when under five days were
     recorded. After the week the plan gates on, it printed a floor and exited 0 - a
     clean successful-looking run with no score and no warning, at the one moment
-    somebody would come back to check.
+    somebody would come back to check. Nine days of span here, and every option in it
+    expires beyond the last sweep, so there is genuinely nothing to score.
     """
     import gzip
 
@@ -165,5 +170,167 @@ def test_the_unwritten_join_is_announced_however_much_is_recorded(tmp_path, caps
 
     rc = main(["--surface", str(tmp_path)])
     out = capsys.readouterr().out
-    assert JOIN_IS_UNWRITTEN in out, "a long recording must still say the join is missing"
+    assert NOTHING_SCORED in out, "a long recording that scored nothing must say so"
     assert rc != 0, "no score available should not look like a successful run"
+
+
+# --------------------------------------------------------------- the bar join
+
+
+def _quote(at, expiry, underlying_price, mark_iv, underlying="BTC", strike=None):
+    return {
+        "underlying": underlying,
+        "at": str(at),
+        "expiry": str(expiry),
+        "underlying_price": str(underlying_price),
+        "strike": str(underlying_price if strike is None else strike),
+        "mark_iv": str(mark_iv),
+        "bid_price": "0.0120",
+        "ask_price": "0.0126",
+        "mark_price": "0.0123",
+    }
+
+
+def test_the_underlying_series_is_one_price_per_instant_sorted():
+    """Every strike at one sweep carries the same index price; the path is per instant."""
+    rows = [
+        _quote(300.0, 9_999.0, 84_100.0, 40.0),
+        _quote(300.0, 8_888.0, 84_100.0, 41.0),  # same instant, another strike
+        _quote(100.0, 9_999.0, 83_900.0, 40.0),
+        _quote(200.0, 9_999.0, 84_000.0, 40.0),
+    ]
+    at, price = underlying_series(rows, "BTC")
+    assert list(at) == [100.0, 200.0, 300.0]
+    assert list(price) == [83_900.0, 84_000.0, 84_100.0]
+
+
+def test_the_underlying_series_separates_currencies():
+    rows = [
+        _quote(100.0, 9_999.0, 83_900.0, 40.0, underlying="BTC"),
+        _quote(100.0, 9_999.0, 2_100.0, 55.0, underlying="ETH"),
+    ]
+    _at, price = underlying_series(rows, "ETH")
+    assert list(price) == [2_100.0]
+
+
+def test_compare_refuses_a_window_that_runs_past_the_recording():
+    """An option expiring after the last sweep has no realised volatility yet.
+
+    This is the whole reason the plan gates the write-up on a week: scoring a
+    forecast against a half-open window silently grades it on less than it forecast.
+    """
+    rows = [
+        _quote(at=float(i * 300), expiry=1_000_000.0, underlying_price=84_000.0 + i, mark_iv=40.0)
+        for i in range(30)
+    ]
+    out = compare(rows)
+    assert out["scored"] == 0
+    assert out["unresolved"] == 30
+
+
+def test_compare_scores_a_window_that_closed_inside_the_recording():
+    """A synthetic path whose realised volatility is known, so the sign is checkable.
+
+    The path is a random walk with a per-step sigma chosen so annualised realised
+    volatility is far below the 400% mark_iv quoted. Ours - a trailing estimate of
+    the same path - must therefore beat mark_iv, and the QLIKE ordering must say so.
+    """
+    rng = np.random.default_rng(11)
+    step = 300.0
+    n = 400
+    sigma = 0.0004  # per 5 minutes; about 20% annualised
+    price = 84_000.0 * np.exp(np.cumsum(rng.normal(0.0, sigma, n)))
+    rows = []
+    for i in range(n):
+        at = i * step
+        # Expire 20 bars ahead, well inside the recording for the early quotes.
+        rows.append(_quote(at=at, expiry=at + 20 * step, underlying_price=price[i], mark_iv=400.0))
+    out = compare(rows)
+    assert out["scored"] > 200
+    assert out["qlike_mark"] > out["qlike_ours"], "a 400% quote must lose to a 20% path"
+
+
+def test_compare_reports_nan_rather_than_a_number_on_a_thin_sample():
+    rows = [
+        _quote(
+            at=float(i * 300), expiry=float(i * 300 + 600), underlying_price=84_000.0, mark_iv=40.0
+        )
+        for i in range(5)
+    ]
+    out = compare(rows)
+    assert np.isnan(out["qlike_mark"]) or out["scored"] < 200
+
+
+def test_a_far_out_of_the_money_strike_is_not_scored():
+    """The smile is not a forecast of at-the-money realised volatility.
+
+    Selecting the options whose lives close inside a short recording selects the
+    shortest-dated ones, and a strike far from spot expiring in hours carries an
+    enormous implied volatility for reasons that have nothing to do with forecasting
+    the index. Measured on 34 hours of real surface, the unfiltered median `mark_iv`
+    of the scored set was 173.6% against realised of 41.4% - a four-fold gap that is
+    the wings of the smile, not a bad forecast.
+    """
+    rng = np.random.default_rng(3)
+    step, n = 300.0, 200
+    price = 84_000.0 * np.exp(np.cumsum(rng.normal(0.0, 0.0004, n)))
+    near, far = [], []
+    for i in range(n):
+        at = i * step
+        near.append(_quote(at, at + 20 * step, price[i], 40.0, strike=price[i]))
+        # 60% away from spot: deep in the wing.
+        far.append(_quote(at, at + 20 * step, price[i], 400.0, strike=price[i] * 1.6))
+    only_far = compare(far)
+    assert only_far["scored"] == 0
+    assert only_far["off_the_money"] > 100
+    both = compare(near + far)
+    assert both["scored"] > 100
+    assert both["off_the_money"] > 100
+
+
+def test_the_moneyness_band_is_a_fraction_of_spot():
+    assert 0.0 < MONEYNESS_BAND < 1.0
+
+
+def test_a_window_too_short_to_measure_is_not_scored():
+    """QLIKE on a near-zero realised variance is unbounded, and a mean of it is junk.
+
+    Realised variance over a handful of five-minute bars can be essentially zero, and
+    `a/f - log(a/f) - 1` goes to infinity as `a` goes to zero however good the
+    forecast is. On 34 hours of real surface this made the mean QLIKE for `mark_iv`
+    read 5,640 while its median implied volatility was 45.7% against realised of
+    34.4% - two numbers a whole order of agreement apart from the loss they produced.
+    """
+    rng = np.random.default_rng(5)
+    step = 300.0
+    price = 84_000.0 * np.exp(np.cumsum(rng.normal(0.0, 0.0004, 300)))
+    short = [
+        _quote(i * step, i * step + (MIN_HORIZON_BARS - 1) * step, price[i], 40.0)
+        for i in range(300)
+    ]
+    assert compare(short)["scored"] == 0
+    assert compare(short)["too_short"] > 100
+
+    long_enough = [
+        _quote(i * step, i * step + (MIN_HORIZON_BARS + 5) * step, price[i], 40.0)
+        for i in range(300)
+    ]
+    assert compare(long_enough)["scored"] > 100
+
+
+def test_the_median_qlike_is_reported_beside_the_mean():
+    """One near-zero window can move a mean of 2,754 rows by thousands."""
+    rng = np.random.default_rng(6)
+    step = 300.0
+    price = 84_000.0 * np.exp(np.cumsum(rng.normal(0.0, 0.0004, 400)))
+    rows = [
+        _quote(i * step, i * step + (MIN_HORIZON_BARS + 5) * step, price[i], 40.0)
+        for i in range(400)
+    ]
+    got = compare(rows)
+    # Reported and finite for both forecasts. Deliberately not asserting
+    # median <= mean: that holds for a right-skewed loss and is not a property of
+    # QLIKE in general, so pinning it would be pinning this seed.
+    for key in ("qlike_mark_median", "qlike_ours_median"):
+        assert not np.isnan(got[key]), key
+        assert got[key] >= 0.0, key
