@@ -141,10 +141,11 @@ to be re-plumbed for each new one. Deriv's own API already demonstrates the unif
 @dataclass(frozen=True, slots=True)
 class Contract:
     """What we want to buy, in terms every venue can express."""
-    venue: str            # "deribit" | "ibkr" | "deriv"
-    underlying: str       # our feed name, not the venue's symbol
-    kind: ContractKind    # CALL | PUT | BINARY_UP | BINARY_DOWN | ACCUMULATOR | ...
-    stake: float          # what we risk, in account currency
+
+    venue: str  # "deribit" | "ibkr" | "deriv"
+    underlying: str  # our feed name, not the venue's symbol
+    kind: ContractKind  # CALL | PUT | BINARY_UP | BINARY_DOWN | ACCUMULATOR | ...
+    stake: float  # what we risk, in account currency
     #: None where the product has no expiry - accumulators and multipliers.
     expiry: float | None
     #: None for a binary priced at the money; a price for a vanilla or barrier.
@@ -164,7 +165,7 @@ Quotes carry what a decision needs and, critically, **what a fair-value comparis
 @dataclass(frozen=True, slots=True)
 class Quote:
     contract: Contract
-    ask: float            # what it costs
+    ask: float  # what it costs
     #: The venue's own implied volatility where it publishes one - Deribit does,
     #: Deriv does not. None is not zero, and the difference is the whole study.
     implied_vol: float | None
@@ -188,6 +189,7 @@ class OptionsVenue(ABC):
     async def buy(self, contract: Contract, quote: Quote) -> Fill | None: ...
     async def positions(self) -> list[OpenContract]: ...
     async def close(self, ref: str) -> Fill | None: ...
+
 
 # `Fill` and `OpenContract` are not sketched here on purpose: their fields follow from the
 # settlement work in phase 2, and guessing them now would fix a shape before the thing that

@@ -95,15 +95,19 @@ SUMMARY = {
 
 
 def test_the_expiry_is_seconds_not_milliseconds():
-    rows = parse_summary({"result": [SUMMARY]}, instruments={
-        "BTC-24SEP26-71000-C": {
-            "instrument_name": "BTC-24SEP26-71000-C",
-            "expiration_timestamp": 1790236800000,
-            "strike": 71000.0,
-            "option_type": "call",
-            "base_currency": "BTC",
-        }
-    }, at=1790233483.0)
+    rows = parse_summary(
+        {"result": [SUMMARY]},
+        instruments={
+            "BTC-24SEP26-71000-C": {
+                "instrument_name": "BTC-24SEP26-71000-C",
+                "expiration_timestamp": 1790236800000,
+                "strike": 71000.0,
+                "option_type": "call",
+                "base_currency": "BTC",
+            }
+        },
+        at=1790233483.0,
+    )
     assert len(rows) == 1
     # 1790236800000 ms is 1790236800 s. Read as seconds it would be 20,699,613
     # days away, which is the shape of the mistake.
@@ -192,9 +196,7 @@ def _number(value: object) -> float | None:
     return out if out == out and abs(out) != float("inf") else None
 
 
-def parse_summary(
-    payload: dict, *, instruments: dict[str, dict], at: float
-) -> list[Row]:
+def parse_summary(payload: dict, *, instruments: dict[str, dict], at: float) -> list[Row]:
     """Rows from a `get_book_summary_by_currency` payload.
 
     `instruments` is the `get_instruments` listing keyed by name, because the
@@ -253,15 +255,19 @@ Expected: PASS, 1 test.
 def test_a_strike_with_no_book_is_dropped_not_zeroed():
     """A zero bid recorded as a number is an option that looks free."""
     thin = dict(SUMMARY, bid_price=None, ask_price=None)
-    rows = parse_summary({"result": [thin]}, instruments={
-        "BTC-24SEP26-71000-C": {
-            "instrument_name": "BTC-24SEP26-71000-C",
-            "expiration_timestamp": 1790236800000,
-            "strike": 71000.0,
-            "option_type": "call",
-            "base_currency": "BTC",
-        }
-    }, at=1790233483.0)
+    rows = parse_summary(
+        {"result": [thin]},
+        instruments={
+            "BTC-24SEP26-71000-C": {
+                "instrument_name": "BTC-24SEP26-71000-C",
+                "expiration_timestamp": 1790236800000,
+                "strike": 71000.0,
+                "option_type": "call",
+                "base_currency": "BTC",
+            }
+        },
+        at=1790233483.0,
+    )
     assert rows == []
 
 
@@ -275,7 +281,8 @@ def test_an_error_body_yields_no_rows_and_does_not_raise():
     """Deribit answers 200 with a JSON-RPC error. That must not look like a quiet market."""
     rows = parse_summary(
         {"error": {"code": 10028, "message": "too_many_requests"}},
-        instruments={}, at=1790233483.0,
+        instruments={},
+        at=1790233483.0,
     )
     assert rows == []
 
@@ -377,6 +384,7 @@ def test_a_good_sweep_returns_rows():
 
 def test_an_error_body_returns_no_rows_rather_than_raising():
     """200 with a JSON-RPC error. The recorder must survive and say nothing was got."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"error": {"code": 10028, "message": "no"}})
 
@@ -487,9 +495,7 @@ def sweep(client: httpx.Client, currency: str, at: float) -> list[deribit.Row]:
         "public/get_instruments",
         {"currency": currency, "kind": "option", "expired": "false"},
     )
-    instruments = {
-        str(row.get("instrument_name")): row for row in (listing.get("result") or [])
-    }
+    instruments = {str(row.get("instrument_name")): row for row in (listing.get("result") or [])}
     if not instruments:
         return []
     time.sleep(REQUEST_PAUSE)
@@ -1188,7 +1194,7 @@ def test_a_widened_barrier_is_flagged():
     """The second trigger: past break-even the contract pays with no signal."""
     from research.harness.payout_logger import BREAK_EVEN_SIGMAS, barrier_favourable
 
-    assert not barrier_favourable(2.132)   # as measured 2026-09-24
+    assert not barrier_favourable(2.132)  # as measured 2026-09-24
     assert barrier_favourable(BREAK_EVEN_SIGMAS + 0.01)
 ```
 

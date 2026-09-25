@@ -163,6 +163,7 @@ its own around it:
 ```python
 # /tmp/vac.py
 import sqlite3, time
+
 t = time.time()
 c = sqlite3.connect("/home/ubuntu/till-data/prices/prices.db", timeout=1800, isolation_level=None)
 print("checkpoint:", c.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone(), flush=True)
