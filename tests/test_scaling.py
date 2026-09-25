@@ -1280,15 +1280,21 @@ def test_the_manage_loop_says_why_it_skipped_a_position():
     # The two guards report separately - "no spec" and "no best" need different
     # fixes, and one message for both would not distinguish them.
     assert 'skipped[f"no spec for {live.intent.feed!r}"]' in source
-    # "no best" turned out to have two causes that need opposite fixes - no
-    # quote ever reached `_mark_best` for that feed, or quotes did reach it and
-    # the symbol did not match - and the first version of this counter could
-    # not tell them apart across 249 skips. So the message carries the three
-    # facts that separate them. See
-    # `test_a_skipped_position_says_whether_quotes_arrived`.
+    # "no best" turned out to have **three** causes that need different fixes, and
+    # the first version of this counter could not tell them apart across 249 skips:
+    # the feed maps to no symbol at all, the mapped symbol disagrees with the
+    # position's, or the symbols agree and no quote has arrived since the position
+    # opened. The last was the one misread live on 2026-09-25, because the message
+    # printed a lifetime quote count next to two identical symbols. So the branch
+    # names the cause rather than printing three numbers and leaving it to be
+    # inferred. See `test_a_stale_feed_is_not_blamed_on_the_symbol_either`.
     assert "no best for" in source
-    assert "self._symbol_of.get(live.intent.feed)" in source
-    assert "self._quotes_seen.get(live.intent.feed" in source
+    assert "mapped = self._symbol_of.get(feed)" in source
+    assert "total = self._quotes_seen.get(feed, 0)" in source
+    assert "since = total - live.quotes_at_open" in source
+    assert "maps to no symbol" in source
+    assert "did not match mapped" in source
+    assert "since this position opened" in source
     # And a loop that reached `advance` and moved nothing says so too, which is
     # the third possibility and the one a guard count alone would hide.
     assert "managed nothing across" in source

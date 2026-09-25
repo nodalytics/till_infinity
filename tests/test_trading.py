@@ -7068,18 +7068,54 @@ async def test_a_skipped_position_says_whether_quotes_arrived(caplog):
     assert "no best for gold" in said
     assert "XAUUSD.raw" in said  # what the position carries
     assert repr(trader._symbol_of.get("gold")) in said  # what the feed maps to
-    assert "42 quotes" in said  # and that quotes were not the missing half
+    # And it says which of the three causes this is, rather than printing three
+    # numbers and leaving the reader to infer one.
+    assert "did not match" in said
+
+
+async def test_a_stale_feed_is_not_blamed_on_the_symbol_either(caplog):
+    """The third cause, which the message used to misattribute to a mismatch.
+
+    `_quotes_seen` is a **lifetime** counter and is never reset, so a position on a
+    feed that quoted busily this morning and has since gone quiet - a closed session,
+    a dropped subscription - reported thousands of quotes beside two identical
+    symbols. Read together those say "quotes arrived and the symbol did not match",
+    which is false and sends the reader hunting a mapping bug that is not there.
+
+    Observed live on 2026-09-25: four positions unmanaged, one of them
+    `position 'BTCUSD' vs mapped 'BTCUSD', 3227 quotes` on an instrument that
+    trades continuously.
+    """
+    trader = Trader(Bus(), settings=settings(break_even_at=1.0))
+    await trader.start()
+    live = _live(position=position(volume=1.0, symbol="XAUUSD"))
+    # Busy earlier, silent since this position opened.
+    trader._quotes_seen["gold"] = 3227
+    live.quotes_at_open = 3227
+
+    said = await _skip_said(trader, live, caplog)
+
+    assert "no best for gold" in said
+    assert "quoted 0 times since this position opened" in said
+    # And it must not present the symbols as the culprit when they agree.
+    assert "did not match" not in said
 
 
 async def test_a_feed_that_never_quoted_is_not_blamed_on_the_symbol(caplog):
-    """The other half of the same message, and the opposite fix."""
+    """The other half of the same message, and the opposite fix.
+
+    A feed that has never quoted at all and one that has gone quiet since the
+    position opened land in the same branch, and the two counts tell them apart:
+    `0 in this process` is the first, a large number is the second.
+    """
     trader = Trader(Bus(), settings=settings(break_even_at=1.0))
     await trader.start()
 
     said = await _skip_said(trader, _live(), caplog)
 
     assert "no best for gold" in said
-    assert "0 quotes" in said
+    assert "0 in this process" in said
+    assert "did not match" not in said
 
 
 async def test_a_quote_on_the_bus_is_enough_to_manage_a_position(caplog):
