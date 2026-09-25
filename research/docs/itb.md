@@ -1,4 +1,4 @@
-# What intelligent-trading-bot does differently - four nulls and one candidate: hold until the opposite signal, 15m FX
+# What intelligent-trading-bot does differently - five nulls, and a candidate that did not survive its walk-forward
 
 Measured 2026-09-25 on the lab, with [`itb.py`](../harness/itb.py), on every real instrument in
 the lab's broker bars: 15 FX pairs, XAU, XAG, BTC, ETH and SOL, at 15m and 1h (and 3m crypto).
@@ -28,7 +28,7 @@ differently had not been. House rules throughout:
 | **D** | smoothing the score | race trades: smoothing cuts trade count by up to a third and leaves net unchanged (-0.030 to -0.052R) | **null** for fixed-horizon trades |
 | **E** | ITB's own setting: crypto, +2% before -0.4% within two hours | -0.38 to -0.60R at a 0.1%-per-side taker fee (the fee alone is half the stop); -0.01 to -0.22R at house spread | **null**. ITB's optimistic tie rule changed nothing on 3m bars: no race had a first bar touching both levels |
 
-## One candidate: ITB's two-state machine on 15m FX
+## The candidate: ITB's two-state machine on 15m FX, on one split
 
 **C** is ITB's trading rule, not its label:
 - the score is P(up) - P(down) from the same two gradient-boosted race models `horizons.py` uses (2-hour race, 54 features);
@@ -38,7 +38,7 @@ differently had not been. House rules throughout:
 The models are fit on the first 40% of each series, the two thresholds are chosen on the next
 20% (from 20 quantile pairs), and the last 40% is the test.
 
-On 15m FX it makes money after costs, and it survived every check applied:
+On 15m FX, on the single split, it made money after costs and survived every check applied to it:
 
 | check | result |
 | --- | --- |
@@ -62,8 +62,49 @@ On 15m FX it makes money after costs, and it survived every check applied:
 - The thresholds were chosen on 20 combinations of validation data.
 - This page ran five tests, and C with its variants is several cells. The correlation-aware z of 4-5 is well beyond what that search produces by chance, but it is one number, not a replication.
 
+## The walk-forward, and why C is closed
+
+`itb.py` `PART=F`, 15m FX, monthly. Each test month:
+- both models are fit on the trailing six months, ending two months before the month, less a purge;
+- the thresholds are chosen on those two months with the same grid;
+- the month is traded from a flat start, one and two bars late, at 1x and 2x cost.
+
+Nothing about a month is seen before it is traded. The months before November 2025 were never in
+the single-split test that selected C, so they are the only new evidence:
+
+| | months | long-only, delay 1, 1x cost | long/short, delay 1, 1x cost | long/short, delay 2, 2x cost |
+| --- | ---: | --- | --- | --- |
+| **May-Oct 2025 - new evidence** | 6 | +0.214, 5/6 positive; **holding long made +0.41** | **+0.048, 3/6 positive** | -0.530, 1/6 |
+| Nov 2025-Sep 2026 - overlaps the split that picked C | 11 | +0.790, 9/11 | +1.447, 10/11 | +0.283, 5/11 |
+| all | 17 | +1.004, 14/17 | +1.495, 13/17 | -0.246, 6/17 |
+
+**On the months that could not have influenced its selection, C is flat: long/short +0.05 over
+six months, and long-only earns half what holding long did.** Nearly all of the walk-forward's
+money is in the very period that picked it. That is the signature of selection - the result
+found the period, not an edge - and it fails the cost and latency margin the single split
+appeared to have. **C is closed.** It is recorded here with every check it passed, because
+passing them all was not enough, and that is the finding worth keeping: a
+correlation-aware z of 4-5, a random-walk control, 2x costs and 9 of 11 months can all hold on
+one period and still not replicate on the next.
+
+## The Deriv synthetics
+
+`PART=Y`: the same machine on every synthetic family the lab holds - Volatility, Boom, Crash,
+Jump, Step and Multi Step, Range Break, DEX, Drift Switch, Skew Step - fit and thresholded per
+family, at 15m and 1h, costs from `catalogue.md` (0.2 where it did not measure).
+`Drift_Switch_Index_20` at 15m failed the leak check and was skipped.
+
+**Null in every family, at both intervals: the common-offset z runs from -1.3 to +1.4.** Several
+raw totals are positive - Boom long/short +1.66 at 15m, Volatility long/short +4.21 at 1h - and
+the shifted null earns the same from the same exposure: they are the instruments' own drift
+(Boom grinds down, so a standing short pays), not timing. This agrees with `generated.md`,
+`spiking.md` and `twins.md`: these are generated processes whose next move does not depend on
+the past, so there is nothing for a timing rule to find.
+
 ## What follows
 
-* **Walk it forward before anything else.** Refit the models and re-choose the thresholds monthly, on 15m FX only, and score each month on data after its fit. That is the replication the single split cannot give.
-* **Paper-trade it live** on the desk's own feed, recorded and never sized, for a few weeks. The broker's real fills and spreads - including rollover and news widening - are the test the bars cannot run.
-* **A through E stay closed** - including ITB's labels, its rolling retrain on race trades, and its crypto setting.
+* **A through E and the synthetics stay closed** - ITB's labels, its rolling retrain, its
+  smoothing, its crypto setting and its two-state machine.
+* **The method note is the durable result.** A single split, however well controlled, is one
+  period. The walk-forward's split into "before the choice" and "after" is what exposed this, and
+  it is cheap: any future candidate here should report it before anything else.

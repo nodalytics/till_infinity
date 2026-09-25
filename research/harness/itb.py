@@ -448,6 +448,158 @@ def part_fx15():
         print(f"  months positive {pos_m}/{len(monthly)}: " + " ".join(f"{k[2:]} {v:+.2f}" for k, v in sorted(monthly.items())))
 
 
+def part_walk():
+    """C on 15m FX, walked forward. Each test month m: both race models fit on the trailing six
+    months ending two months before m (less a purge of H bars); the two thresholds chosen on
+    those two months by the same 20-pair grid, with a one-bar delay; then m traded at one- and
+    two-bar delays and 1x/2x cost, from a flat start. Nothing about month m is seen before it is
+    traded. Months before 2025-11 were never in the single-split test that picked C, so they
+    are reported apart: they are the part of this that is genuinely new evidence."""
+    interval = "15m"
+    d, cols = frame(interval, {"fx": REAL["fx"]})
+    h = H[interval]
+    X = d[cols].to_numpy(float)
+    ts = d.ts.to_numpy()
+    month = pd.to_datetime(ts, unit="s").to_period("M")
+    months = sorted(month.unique())
+    cost = d.family.map(questions.COST_V).to_numpy() * d["_base"].to_numpy() / np.sqrt(
+        questions.MINUTES[interval] / 5)
+    purge = h * SECONDS[interval]
+    ys = {lab: d[f"{lab}@{h}"].to_numpy() for lab in ("tb_up", "tb_dn")}
+    rows = []
+    print(f"\n{'=' * 110}\nWALK 15m FX: {d.ticker.nunique()} pairs, months {months[0]} to {months[-1]}")
+    for i in range(8, len(months)):
+        m = months[i]
+        test = np.asarray(month == m)
+        val_start = months[i - 2].start_time.timestamp()
+        fit_start = months[i - 8].start_time.timestamp()
+        fit = (ts >= fit_start) & (ts < val_start - purge)
+        val = (ts >= val_start) & (ts < m.start_time.timestamp())
+        probs = []
+        for lab in ("tb_up", "tb_dn"):
+            ok = fit & ~np.isnan(ys[lab])
+            probs.append(Fitted(horizons.gbm(), X[ok], ys[lab][ok]).predict_proba(X)[:, 1])
+        score = probs[0] - probs[1]
+        for long_short in (False, True):
+            best = None
+            for qb in (0.7, 0.8, 0.9, 0.95):
+                for qs in (0.05, 0.1, 0.2, 0.3, 0.5):
+                    b, s_ = np.quantile(score[val], qb), np.quantile(score[val], qs)
+                    tot, _, _, _ = run_machine_delay(d, score, b, s_, long_short, val, cost, 1)
+                    if best is None or tot > best[0]:
+                        best = (tot, b, s_)
+            _, b, s_ = best
+            row = dict(month=str(m), mode="long/short" if long_short else "long-only")
+            for delay in (1, 2):
+                for mult in (1, 2):
+                    tot, _, trades, per = run_machine_delay(d, score, b, s_, long_short, test, cost * mult, delay)
+                    row[f"d{delay}x{mult}"] = tot
+                    row["trades"] = trades
+            lc = d["_lc"].to_numpy()
+            row["always_long"] = sum(np.nansum(np.diff(lc[g.index.to_numpy()])) for _, g in d[test].groupby("ticker"))
+            rows.append(row)
+            print(f"  {m} {row['mode']:<10} delay1 x1 {row['d1x1']:+.3f} x2 {row['d1x2']:+.3f} | delay2 x1 "
+                  f"{row['d2x1']:+.3f} x2 {row['d2x2']:+.3f} | always long {row['always_long']:+.3f} | trades {trades}")
+    t = pd.DataFrame(rows)
+    for mode, g in t.groupby("mode"):
+        for label, k in (("all months", np.ones(len(g), bool)),
+                         ("before 2025-11 (new evidence)", (g.month < "2025-11").to_numpy()),
+                         ("2025-11 on (overlaps the single split)", (g.month >= "2025-11").to_numpy())):
+            s = g[k]
+            if not len(s):
+                continue
+            col = s["d1x1"]
+            se = col.std(ddof=1) / np.sqrt(len(col)) if len(col) > 1 else np.nan
+            print(f"  {mode:<10} {label:<40} months {len(s):>2}: delay1 x1 total {col.sum():+.3f}, "
+                  f"mean/month {col.mean():+.3f} +- {se:.3f}, positive {int((col > 0).sum())}/{len(s)}; "
+                  f"delay2 x2 total {s['d2x2'].sum():+.3f}, positive {int((s['d2x2'] > 0).sum())}/{len(s)}")
+    Path("results").mkdir(exist_ok=True)
+    t.to_csv("results/itb_walk.csv", index=False)
+
+
+SYNTH = {
+    "volatility": ["Volatility_10_Index", "Volatility_25_Index", "Volatility_50_Index", "Volatility_75_Index",
+                   "Volatility_100_Index", "Volatility_10_1s_Index", "Volatility_25_1s_Index",
+                   "Volatility_50_1s_Index", "Volatility_75_1s_Index", "Volatility_100_1s_Index"],
+    "boom": ["Boom_300_Index", "Boom_500_Index", "Boom_600_Index", "Boom_900_Index", "Boom_1000_Index"],
+    "crash": ["Crash_300_Index", "Crash_500_Index", "Crash_600_Index", "Crash_900_Index", "Crash_1000_Index"],
+    "jump": ["Jump_10_Index", "Jump_25_Index", "Jump_50_Index", "Jump_75_Index", "Jump_100_Index"],
+    "step": ["Step_Index", "Step_Index_200", "Multi_Step_2_Index", "Multi_Step_3_Index", "Multi_Step_4_Index"],
+    "range_break": ["Range_Break_100_Index", "Range_Break_200_Index"],
+    "dex": ["DEX_600_UP_Index", "DEX_600_DOWN_Index", "DEX_900_UP_Index", "DEX_900_DOWN_Index",
+            "DEX_1500_UP_Index", "DEX_1500_DOWN_Index"],
+    "drift_switch": ["Drift_Switch_Index_10", "Drift_Switch_Index_20", "Drift_Switch_Index_30"],
+    "skew_step": ["Skew_Step_Index_4_Up", "Skew_Step_Index_4_Down", "Skew_Step_Index_5_Up",
+                  "Skew_Step_Index_5_Down"],
+}
+#: Round-trip spread in M5-volatility units, from `catalogue.md` where it measured the family
+#: (0.075-0.20v across the synthetics) and 0.2 where it did not (DEX, Drift Switch, Skew Step).
+SYNTH_COST = {"volatility": 0.17, "boom": 0.14, "crash": 0.16, "jump": 0.12, "step": 0.10,
+              "range_break": 0.15, "dex": 0.20, "drift_switch": 0.20, "skew_step": 0.20}
+
+
+def part_synth(interval):
+    """C on the Deriv synthetics, family by family: the same machine, fit and thresholds per
+    family, one- and two-bar delay, the common-offset null, month by month. Most of these are
+    generated processes whose next move is independent of the past by construction
+    (`generated.md`, `spiking.md`), so C is expected to be null here, and a win would need
+    explaining before it could be believed."""
+    import sqlite3 as _sq
+    conn = _sq.connect(":memory:")
+    print(f"\n{'=' * 110}\nSYNTH {interval}")
+    for family, names in SYNTH.items():
+        usable = []
+        for n in names:
+            try:
+                spikerisk.load(conn, n, "SEQLAB", interval)
+                usable.append((n, "SEQLAB"))
+            except (ValueError, FileNotFoundError) as exc:
+                print(f"  skip {n}: {str(exc)[:90]}")
+        if len(usable) < 2:
+            continue
+        questions.COST_V[family] = SYNTH_COST[family]
+        d, cols = frame(interval, {family: usable})
+        h = H[interval]
+        fit, val, te = blocks(d)
+        score = score_models(d, cols, h, fit)
+        cost = SYNTH_COST[family] * d["_base"].to_numpy() / np.sqrt(questions.MINUTES[interval] / 5)
+        lc, ts = d["_lc"].to_numpy(), d.ts.to_numpy()
+        always = sum(np.nansum(np.diff(lc[g.index.to_numpy()])) for _, g in d[te].groupby("ticker"))
+        for long_short in (False, True):
+            best = None
+            for qb in (0.7, 0.8, 0.9, 0.95):
+                for qs in (0.05, 0.1, 0.2, 0.3, 0.5):
+                    b, s_ = np.quantile(score[val], qb), np.quantile(score[val], qs)
+                    tot, _, _, _ = run_machine_delay(d, score, b, s_, long_short, val, cost, 1)
+                    if best is None or tot > best[0]:
+                        best = (tot, b, s_)
+            _, b, s_ = best
+            out = []
+            for delay in (1, 2):
+                tot, _, trades, per = run_machine_delay(d, score, b, s_, long_short, te, cost, delay)
+                rng = np.random.default_rng(5)
+                null = []
+                for _ in range(300):
+                    f = rng.uniform(0.1, 0.9)
+                    null.append(sum((np.roll(p, int(f * len(p))) * r
+                                     - np.abs(np.diff(np.roll(p, int(f * len(p))), prepend=0.0)) * c / 2).sum()
+                                    for p, r, c in per.values()))
+                null = np.array(null)
+                out.append(f"delay {delay}: net {tot:+7.3f} z {(tot - null.mean()) / max(null.std(), 1e-12):+.1f}")
+                if delay == 1:
+                    monthly = {}
+                    for t, (p, r, c) in per.items():
+                        idx = d[te & (d.ticker == t).to_numpy()].index.to_numpy()
+                        pnl = p * r - np.abs(np.diff(p, prepend=0.0)) * c / 2
+                        for m_, v in pd.Series(pnl, index=pd.to_datetime(ts[idx], unit="s").to_period("M")) \
+                                .groupby(level=0).sum().items():
+                            monthly[str(m_)] = monthly.get(str(m_), 0.0) + v
+                    pos_m = f"{sum(v > 0 for v in monthly.values())}/{len(monthly)}"
+                    n_trades = trades
+            print(f"  {family:<12} {len(usable):>2} series {'long/short' if long_short else 'long-only ':<10} "
+                  f"{' | '.join(out)} | months positive {pos_m} | always long {always:+.3f} | trades {n_trades}")
+
+
 def part_spread():
     """The cost assumption against the broker's own spreads. `questions.COST_V` charges FX 0.8
     M5-volatility units, from one EURUSD measurement at the worst hour of the day; crosses are
@@ -480,6 +632,11 @@ if __name__ == "__main__":
             part_cd(iv, part)
     elif part == "E":
         part_e()
+    elif part == "Y":
+        for iv in ("15m", "1h"):
+            part_synth(iv)
+    elif part == "F":
+        part_walk()
     elif part == "W":
         part_fx15()
     elif part == "S":
