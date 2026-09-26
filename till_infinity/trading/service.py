@@ -3911,10 +3911,25 @@ class Trader:
             try:
                 await self._settle(live, price, why, profit)
             finally:
-                self._best.pop(ticket, None)
-                self._worst.pop(ticket, None)
-                self._bank_due.discard(ticket)
+                self._forget_path(ticket)
         return settled
+
+    def _forget_path(self, ticket: int) -> None:
+        """Drop everything this ticket's excursion tracking held.
+
+        Called after the outcome is written, never before - `_settle` reads all four
+        of these and they return zero for a ticket they cannot find, which is how
+        every close in the book's history once recorded `best_r` of exactly 0.000.
+
+        The two timestamps used to be left behind. They were written on every marked
+        tick and popped nowhere, so they grew by one entry per trade for the life of
+        the process, on a box with 2.6 GiB for seven services.
+        """
+        self._best.pop(ticket, None)
+        self._worst.pop(ticket, None)
+        self._best_at.pop(ticket, None)
+        self._worst_at.pop(ticket, None)
+        self._bank_due.discard(ticket)
 
     def _unattributed_context(self, live: Live, price: float, why: str) -> dict[str, Any]:
         """What a close knows about itself when no decision is on record.
@@ -4089,6 +4104,30 @@ class Trader:
                     # of what it could be. See research/stops.md.
                     "adverse_r": round(self._heat(live), 3),
                     "adverse_vol": self._heat_vol(live),
+                    # **Seconds from the open to each extreme, so the shape is
+                    # recoverable.** The two numbers above say how far the trade
+                    # went each way and not in what order, and the order is the
+                    # whole question for a break-even rule: a dip before the peak
+                    # is harmless, a dip after it is the winner being cut.
+                    #
+                    # `_unattributed_context` has carried these for that reason
+                    # and this path did not, so across 1,202 closed trades in the
+                    # live journal not one record carried either - and a study of
+                    # break-even triggers could only produce a bound spanning
+                    # zero. See research/docs/breakeven.md.
+                    #
+                    # Zero when the extreme was never marked: an absence, not an
+                    # event at the open.
+                    "best_after": round(
+                        max(0.0, self._best_at.get(position.ticket, 0.0) - live.seen), 1
+                    )
+                    if self._best_at.get(position.ticket)
+                    else 0.0,
+                    "worst_after": round(
+                        max(0.0, self._worst_at.get(position.ticket, 0.0) - live.seen), 1
+                    )
+                    if self._worst_at.get(position.ticket)
+                    else 0.0,
                     # What was asked for against what the terminal actually
                     # filled at. `position.price_open` is the broker's own
                     # See `trading-service.md` in research/docs.

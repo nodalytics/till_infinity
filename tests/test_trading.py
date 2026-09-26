@@ -796,6 +796,87 @@ async def test_a_trade_that_was_in_profit_and_stopped_says_so(tmp_path):
         assert best > 0.0, f"a trade that reached 4406 recorded best_r {best}"
 
 
+async def test_the_extremes_timing_is_forgotten_when_the_trade_closes(tmp_path):
+    """It runs forever; a per-ticket dict that is never cleaned is a leak.
+
+    `_best` and `_worst` are popped once the outcome is written and their two
+    timestamp companions were not, so `_best_at` and `_worst_at` grew by one entry
+    per trade for the life of the process. On a box with 2.6 GiB for seven services
+    that is not free, and it is the same defect the sibling dicts already have a
+    test against.
+    """
+    bus = Bus()
+    async with Journal(tmp_path / "journal.db") as book:
+        trader = Trader(bus, settings=settings(), journal=book)
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        await trader.handle(Message(topic=SIGNALS, payload=signal()))
+        ticket = next(iter(trader.open))
+
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4406.0, "ask": 4407.0})
+        )
+        assert ticket in trader._best_at, "nothing was marked, so the test proves nothing"
+
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4395.0, "ask": 4396.0})
+        )
+        await trader.sweep()
+        assert not trader.open
+
+        assert ticket not in trader._best_at
+        assert ticket not in trader._worst_at
+
+
+async def test_a_close_records_when_each_extreme_came_not_only_how_far(tmp_path):
+    """The ordering, without which a break-even trigger cannot be evaluated.
+
+    `best_r` and `adverse_r` say how far a trade went each way and not in what
+    order, and the order is the whole question for a break-even rule: a dip before
+    the peak is harmless, a dip after it is the winner being cut.
+
+    `_unattributed_context` has carried `best_after` and `worst_after` for exactly
+    this reason. The **ordinary** close path did not, so across 1,202 closed trades
+    in the live journal not one record carried either field, and a study of
+    break-even triggers could only produce a bound spanning zero.
+    """
+    bus = Bus()
+    async with Journal(tmp_path / "journal.db") as book:
+        trader = Trader(bus, settings=settings(), journal=book)
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        await trader.handle(Message(topic=SIGNALS, payload=signal()))
+        assert len(trader.open) == 1
+
+        # In front first, then all the way back through the stop - so the adverse
+        # extreme is strictly later than the favourable one.
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4406.0, "ask": 4407.0})
+        )
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4395.0, "ask": 4396.0})
+        )
+        await trader.sweep()
+        assert not trader.open
+
+        outcomes = [
+            e.context
+            for e in read(tmp_path / "journal.db")
+            if isinstance(getattr(e, "context", None), dict) and "best_r" in e.context
+        ]
+        assert outcomes, "no outcome carried best_r"
+        carried = [c for c in outcomes if "best_after" in c and "worst_after" in c]
+        assert carried, "an ordinary close recorded neither extreme's timing"
+        got = carried[0]
+        assert float(got["worst_after"]) >= float(got["best_after"]), (
+            "this path went up then down, so the adverse extreme is the later one"
+        )
+
+
 async def test_the_second_call_on_the_same_instrument_is_refused_and_journalled(tmp_path):
     bus = Bus()
     async with Journal(tmp_path / "journal.db") as book:
