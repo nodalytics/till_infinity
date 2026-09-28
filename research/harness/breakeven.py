@@ -65,6 +65,15 @@ from pathlib import Path
 #: Triggers to test, in R. 1.0 is what production runs today.
 TRIGGERS = (0.25, 0.5, 0.75, 1.0, 1.5)
 
+#: Largest credible maximum excursion, in R. Anything above this is a broken input,
+#: not a trade that went 1,771 times its risk in front - which is the actual maximum
+#: on the record, from a malformed target `test_basket.py` already documents. Four
+#: trades exceed 10R and one exceeds 100R, and since a trade is *armed* on `best_r`,
+#: an inflated value arms a trade that never qualified. Excluding them moves the
+#: headline from 68 give-backs at -53.4R to 66 at -51.3R, so this is a guard rather
+#: than a rescue.
+MAX_CREDIBLE_BEST_R = 10.0
+
 #: Fewest trades before a cell is reported. A payoff ratio on a handful of trades is
 #: an anecdote, and this folder has retracted enough of those.
 MIN_TRADES = 100
@@ -85,7 +94,7 @@ def usable(row: dict) -> bool:
         value = row.get(key)
         if not isinstance(value, int | float) or not math.isfinite(value):
             return False
-    return True
+    return float(row["best_r"]) <= MAX_CREDIBLE_BEST_R
 
 
 def payoff(rs: list[float]) -> tuple[float, float, float, float]:
