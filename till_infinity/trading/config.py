@@ -582,12 +582,16 @@ class Settings:
 
     #: **The risk switch.** Size is cut to `spike_floor` when this instrument's
     #: 14-bar true-range average sits at or above this percentile of its own last
-    #: 1,500 bars (`tr_percentile`). Zero is off. **0.8 is the measured setting**:
-    #: the top fifth carries 2.2-2.5x the chance of a bar beyond 4x the trailing
-    #: mean |return|, and halving there cut the 1% tail of a held position 10-14%
-    #: at 15m, 1h and 1d at unchanged return per unit of risk. It knows *when*,
-    #: not *which way* - the same score ranks melt-ups as well as crashes - so it
-    #: only ever sizes down. See `research/docs/crash-timing.md`.
+    #: 1,500 bars (`tr_percentile`). Zero is off, and **off is the measured
+    #: setting.** The top fifth does carry 2.2-2.5x the chance of a bar beyond 4x
+    #: the trailing mean |return|, and on *fixed-size* positions halving there cut
+    #: the 1% tail 10-14% (`research/docs/crash-timing.md`). But this desk's stops
+    #: are set in multiples of `ewma_tr_bps`, so a position opened into high
+    #: volatility is already small. Measured in that R, halving on the switch
+    #: beats halving a random fifth of positions in 1 of 18 cells unstopped and 0
+    #: of 18 with a stop, and a uniform cut in risk per trade beats it everywhere.
+    #: At 3m it is also mostly the session clock: the hour explains 17-40% of when
+    #: it fires. See `research/docs/session-switch.md`.
     spike_above: float = 0.0
     #: What the switch sizes to. Half is what was measured.
     spike_floor: float = 0.5

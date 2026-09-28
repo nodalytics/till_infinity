@@ -58,3 +58,8 @@ __pycache__/
 
 # Recorded option surfaces. Market data, never committed.
 options-data/
+
+# A PyObjC artifact - a dump of Apple Foundation/AppKit class metadata that lands
+# in the working directory when PyObjC scans Objective-C frameworks. Nothing here
+# uses it, nothing references it, and it got staged once by an accidental add -A.
+NewClasses.plist
