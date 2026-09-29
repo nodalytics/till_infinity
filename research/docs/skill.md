@@ -71,6 +71,25 @@ The real-minus-random differences are small and mostly the size of what separate
 1.3-point higher hold rate, +0.024 of skill against the base rate, and +0.023 of `expected_push`
 rank correlation on size. None of them is a direction.
 
+## A learned model on the same features learns more geometry, equally on both
+
+`PART=ml`: gradient boosting on each touch's own features (`approach_vol`, `depth_vol`, `strength`,
+`run_vol`, `experience`, `pivot`, `backcheck`, `regime`, `up_rate`, `slowing`, `slope`,
+`prior_slope`, `interval_log`, and side). It is fit on the first 60% of touches by time and scored
+on the last 40%.
+
+| | real markets | random walks |
+| --- | --- | --- |
+| P(up) GBM: skill vs the side rule (log loss) | +0.021 (+0.023) | +0.019 (+0.015) |
+| P(up) engine: skill vs the side rule | -0.155 | -0.124 |
+| P(up) GBM: AUC within side | 0.815 / 0.821 | 0.821 / 0.845 |
+| P(break) GBM: AUC, skill vs running rate | 0.817, +0.132 | 0.825, +0.152 |
+| P(break) engine: AUC, skill vs running rate | 0.812, +0.110 | 0.836, +0.145 |
+
+The model beats both the engine and the side rule, and by the same margin on a random walk. It is a
+better learner of the label's geometry, not of the market. Machine learning does not change the
+verdict; only a label that reads 50% on noise can.
+
 ## Why a random walk "holds": the resolution rule, not the volatility unit
 
 Measured with [`holdgeometry.py`](../harness/holdgeometry.py): 200,000 touches on a pure Gaussian
