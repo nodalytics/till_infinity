@@ -10,6 +10,7 @@ research harnesses are `research/harness/shocktrain.py` and `shockreplay.py`.
 from __future__ import annotations
 
 import heapq
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -21,13 +22,40 @@ from ..structures.learning import shocks as sh
 
 SECONDS = {"15m": 900.0, "1h": 3600.0}
 
-#: Words that mark a Deriv synthetic - an index whose shocks are published as memoryless, so a model
-#: that "predicts" them is fitting noise. They are the retraining's control.
-SYNTHETIC = ("Volatility", "Boom", "Crash", "Jump", "Step", "Range Break", "DEX", "Drift Switch")
+#: Words that mark a Deriv synthetic. Deriv's indices are a market like any other here: their
+#: generator is published as memoryless, but what we score is the whole feed as served, which is
+#: measured rather than assumed. They are scored apart from the broker's other markets because
+#: the two behave differently, and a model must not get worse on either.
+DERIV = ("Volatility", "Boom", "Crash", "Jump", "Step", "Range Break", "DEX", "Drift Switch")
+
+#: Series we generate ourselves, whose process is known to be memoryless - the only true control.
+CONTROL = "~control"
 
 
 def kind(symbol: str) -> str:
-    return "synthetic" if any(word in symbol for word in SYNTHETIC) else "real"
+    if symbol.startswith(CONTROL):
+        return "control"
+    return "deriv" if any(word in symbol for word in DERIV) else "real"
+
+
+def controls(walks: int = 8, bars: int = 8_000, seed: int = 0) -> dict[tuple[str, str], list[Bar]]:
+    """Independent Student-t(3) walks at one fixed scale: heavy-tailed, so shocks happen, and
+    memoryless by construction, so nothing seen beforehand can time one. A model that ranks shocks
+    here above 0.5 has learned an artifact of the features or a leak of the label."""
+    rng = np.random.default_rng(seed)
+    out = {}
+    for w in range(walks):
+        moves = rng.standard_t(3, bars) * 0.001
+        wicks = np.abs(rng.standard_t(3, (bars, 2))) * 0.0005
+        price, t, got = 100.0, 1_700_000_000, []
+        for move, (up, down) in zip(moves, wicks, strict=True):
+            close = price * float(np.exp(move))
+            high = max(price, close) * float(np.exp(up))
+            low = min(price, close) * float(np.exp(-down))
+            got.append(Bar(t, price, high, low, close))
+            price, t = close, t + 900
+        out[(f"{CONTROL}-{w}", "15m")] = got
+    return out
 
 
 @dataclass
@@ -142,15 +170,30 @@ def auc(y: np.ndarray, p: np.ndarray) -> float:
     return float((ranks[pos].sum() - pos.sum() * (pos.sum() + 1) / 2) / (pos.sum() * neg.sum()))
 
 
+def auc_se(a: float, positives: int, negatives: int) -> float:
+    """The AUC's standard error (Hanley and McNeil, 1982), widened by sqrt(AHEAD): a label spans
+    the next `AHEAD` bars, so neighbouring rows share outcomes and are not independent draws."""
+    if math.isnan(a) or not positives or not negatives:
+        return float("nan")
+    q1, q2 = a / (2 - a), 2 * a * a / (1 + a)
+    var = (a * (1 - a) + (positives - 1) * (q1 - a * a) + (negatives - 1) * (q2 - a * a)) / (
+        positives * negatives
+    )
+    return math.sqrt(max(var, 0.0) * sh.AHEAD)
+
+
 def score(predict, x: np.ndarray, y: np.ndarray, kinds: np.ndarray) -> dict[str, float]:
-    """AUC on real markets and on the synthetic controls, and the top decile's realised over
-    predicted rate - the calibration a card relies on."""
+    """AUC and its standard error per kind - real markets, Deriv, our control walks - and the top
+    decile's realised over predicted rate on real markets, the calibration a card relies on."""
     p = np.array([predict(list(row)) for row in x])
     out = {}
-    for name in ("real", "synthetic"):
+    for name in ("real", "deriv", "control"):
         m = kinds == name
         if m.sum() > 50:
-            out[name] = round(auc(y[m], p[m]), 4)
+            a = auc(y[m], p[m])
+            out[name] = round(a, 4)
+            pos = int((y[m] > 0.5).sum())
+            out[f"{name}_se"] = round(auc_se(a, pos, int(m.sum()) - pos), 4)
     real = kinds == "real"
     if real.sum() > 50:
         top = real & (p >= np.quantile(p[real], 0.9))

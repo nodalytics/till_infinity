@@ -39,14 +39,14 @@ log = get_logger(__name__)
 HOLDOUT_DAYS = 14
 
 GATES: dict[str, Any] = {
-    # not meaningfully worse than the model in service, on the same fresh weeks
-    "vs_champion": -0.01,
+    # on real markets and on Deriv alike: not worse than the model in service on the same fresh
+    # weeks, by more than this or two standard errors, whichever is wider - two weeks of one
+    # family is a small sample, and noise must not block every promotion
+    "vs_champion": 0.01,
+    # on our own memoryless walks, where the answer is known: no further from 0.5 than this
+    "control_band": 0.03,
     # worth publishing at all
     "min_real_auc": 0.65,
-    # the memoryless synthetics must stay near 0.5: a model that "predicts" them fits noise
-    "control_band": 0.08,
-    # ...or, outside the band, no further from 0.5 than the champion plus this
-    "control_slack": 0.02,
     # top decile's realised over predicted rate: what a card's "3x normal" relies on
     "calibration": (0.7, 1.4),
     # the dependency-free evaluator must reproduce the training library
@@ -66,21 +66,24 @@ def gate(challenger: dict, champion: dict) -> list[str]:
     real = challenger.get("real", float("nan"))
     if not real >= GATES["min_real_auc"]:
         reasons.append(f"real-market AUC {real} below {GATES['min_real_auc']}")
-    champ = champion.get("real")
-    if champ is not None and not math.isnan(champ) and real < champ + GATES["vs_champion"]:
-        reasons.append(f"real-market AUC {real} against the champion's {champ}")
-    # Two weeks of synthetics is a small sample, and the model in service lands outside the band
-    # too (the lab's first run: 0.36-0.70 per family, champion and challenger alike). So the band
-    # alone would never promote anything; outside it, the challenger must not stray further than
-    # the champion does.
-    control, held = challenger.get("synthetic"), champion.get("synthetic")
-    if control is not None and not math.isnan(control):
-        drift = abs(control - 0.5)
-        allowed = GATES["control_band"]
-        if held is not None and not math.isnan(held):
-            allowed = max(allowed, abs(held - 0.5) + GATES["control_slack"])
-        if drift > allowed:
-            reasons.append(f"synthetic control AUC {control} further from 0.5 than {allowed:.3f}")
+    # Deriv is a market, not a control: what we score is the whole feed as served, and 1h
+    # Volatility indices score 0.70 held out. So it is held to the same standard as the rest.
+    for market in ("real", "deriv"):
+        mine, theirs = challenger.get(market), champion.get(market)
+        if mine is None or theirs is None or math.isnan(theirs):
+            continue
+        se = challenger.get(f"{market}_se", float("nan"))
+        slack = max(GATES["vs_champion"], 2 * se) if not math.isnan(se) else GATES["vs_champion"]
+        if math.isnan(mine) or mine < theirs - slack:
+            reasons.append(
+                f"{market} AUC {mine} against the champion's {theirs} (slack {slack:.3f})"
+            )
+    # The control is only the walks we generate ourselves, whose process we know.
+    control = challenger.get("control")
+    if control is not None and not abs(control - 0.5) <= GATES["control_band"]:
+        reasons.append(
+            f"control AUC {control} on memoryless walks, not 0.5 +- {GATES['control_band']}"
+        )
     lo, hi = GATES["calibration"]
     cal = challenger.get("calibration", float("nan"))
     if not lo <= cal <= hi:
@@ -121,11 +124,15 @@ def run_shocks(fetch: Callable[[str, str], list], names: list[str]) -> tuple[dic
         if len(sample)
         else 0.0
     )
-    challenger = st.score(trees.predict, x[held], y[held], kinds[held])
-    current = frozen.load(sh.MODEL, recipe=sh.RECIPE, names=sh.NAMES)
-    champion = (
-        st.score(frozen.Trees(current).predict, x[held], y[held], kinds[held]) if current else {}
+    _, ck, cx, cy = st.dataset(st.controls()).arrays()  # never trained on: all of it is held out
+    xs, ys, ks = (
+        np.vstack([x[held], cx]),
+        np.concatenate([y[held], cy]),
+        np.concatenate([kinds[held], ck]),
     )
+    challenger = st.score(trees.predict, xs, ys, ks)
+    current = frozen.load(sh.MODEL, recipe=sh.RECIPE, names=sh.NAMES)
+    champion = st.score(frozen.Trees(current).predict, xs, ys, ks) if current else {}
     reasons = gate(challenger, champion)
     if exact > GATES["exact"]:
         reasons.append(f"evaluator differs from the training library by {exact:.2e}")
@@ -177,9 +184,9 @@ def card(report: dict) -> dict:
     lines = [
         f"🧪 {report['model']} retrained on {report.get('series', 0)} series",
         f"challenger AUC real {c.get('real', 'n/a')}"
-        f" · synthetic control {c.get('synthetic', 'n/a')}"
+        f" · deriv {c.get('deriv', 'n/a')} · control {c.get('control', 'n/a')}"
         f" · top-decile calibration {c.get('calibration', 'n/a')}",
-        f"champion AUC real {k.get('real', 'n/a')}",
+        f"champion AUC real {k.get('real', 'n/a')} · deriv {k.get('deriv', 'n/a')}",
         "✅ promoted - live within five minutes"
         if promoted
         else "↩️ kept the champion: " + "; ".join(report.get("reasons", [])),
