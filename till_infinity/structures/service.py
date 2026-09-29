@@ -748,8 +748,9 @@ class Watcher:
         return taught
 
     def _stored_bars(self, conn, feeds: Sequence[str], intervals: Sequence[str]):
-        """`(feed, interval, [(open, high, low, close)])` oldest-first, one venue per series,
-        chosen as `_stored_closes` chooses it."""
+        """`(feed, interval, [(time, open, high, low, close)])` oldest-first, one venue per series,
+        chosen as `_stored_closes` chooses it. The time lets `teach` replay the boosted envelope
+        through its features."""
         for feed in feeds:
             catalogued = prices_config.FEEDS.get(feed)
             keys = [(prices_config.BROKER, prices_config.BROKER.upper(), feed)]
@@ -762,7 +763,7 @@ class Watcher:
             for interval in intervals:
                 for source, venue, ticker in keys:
                     rows = conn.execute(
-                        "SELECT open, high, low, close FROM bars WHERE source=? AND venue=?"
+                        "SELECT ts, open, high, low, close FROM bars WHERE source=? AND venue=?"
                         " AND ticker=? AND interval=? AND close>0 AND closed=1"
                         " ORDER BY ts DESC LIMIT ?",
                         (source, venue, ticker, interval, self.ENVELOPE_WARM_BARS),

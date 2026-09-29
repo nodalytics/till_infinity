@@ -1508,14 +1508,20 @@ class Engine:
         try:
             bps = vol.ewma_tr_bps
             if bps > 0 and close > 0:
-                self._envelopes().observe(feed, interval, close, bps / 10_000)
-                # The band-touch forecaster reads the bands just quoted (`learning/touches.py`).
-                if touches.applies(feed, interval):
+                sigma = bps / 10_000
+                # FX 15m: the bar's features first, which the boosted envelope reads (`vol/
+                # envelope.py`), then the envelope, then the touch forecaster on the bands just
+                # quoted (`learning/touches.py`).
+                fx = touches.applies(feed, interval)
+                taken = fx and self._touches().advance(
+                    feed, interval, opened, high, low, close, sigma
+                )
+                features = self._touches().base(feed, interval) if taken else None
+                self._envelopes().observe(feed, interval, close, sigma, features)
+                if taken:
                     env = self._envelopes().envelopes.get(f"{feed}|{interval}|{touches.AHEAD}")
                     quote = list(env.quote) if env is not None and env.warm else None
-                    self._touches().observe(
-                        feed, interval, opened, high, low, close, bps / 10_000, quote
-                    )
+                    self._touches().hold(feed, interval, quote)
         except Exception as exc:
             log.debug("structures: no envelope for %s %s: %s", feed, interval, exc)
         try:

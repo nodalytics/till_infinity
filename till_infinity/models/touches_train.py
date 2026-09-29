@@ -3,8 +3,9 @@
 Every FX 15m series is replayed through the production pieces in the order the engine runs them:
 - the rollover trim (`structures/rollover.py`);
 - the volatility unit (`Ranges.ewma_tr_bps`, what `Volatility.ewma_tr_bps` returns);
-- the envelope book (`vol/envelope.py`, AgACI and all);
-- `Touches`.
+- `Touches.advance` and its base features;
+- the envelope book (`vol/envelope.py`, AgACI and all, boosted where its model ships);
+- `Touches.hold` on the bands just quoted.
 
 So a retrained model is trained on exactly the features and bands the engine will hand it. The
 labels are whether the next `AHEAD` bars' highs reach the P90 quoted at the bar's close, and their
@@ -74,10 +75,16 @@ def _series(symbol: str, bars: Sequence[Bar], out: Rows) -> None:
             pending.append((0.0, [], 0.0, 0.0))
             continue
         sigma = bps / 10_000
-        book.observe(feed, tc.INTERVAL, close, sigma)
+        # In the engine's order: the features, the envelope reading them (boosted where a model
+        # ships), then the touch features on the bands just quoted.
+        taken = model.advance(feed, tc.INTERVAL, bar.time, high, low, close, sigma)
+        book.observe(
+            feed, tc.INTERVAL, close, sigma, model.base(feed, tc.INTERVAL) if taken else None
+        )
         env = book.envelopes.get(f"{feed}|{tc.INTERVAL}|{tc.AHEAD}")
         quote = list(env.quote) if env is not None and env.warm else None
-        model.observe(feed, tc.INTERVAL, bar.time, high, low, close, sigma, quote)
+        if taken:
+            model.hold(feed, tc.INTERVAL, quote)
         s = model.series.get(f"{feed}|{tc.INTERVAL}")
         if s is None or not s.latest or quote is None:
             pending.append((0.0, [], 0.0, 0.0))

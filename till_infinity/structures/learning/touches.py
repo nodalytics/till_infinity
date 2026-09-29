@@ -91,23 +91,23 @@ class Series(Restorable):
     sigmas: deque = field(default_factory=lambda: deque(maxlen=NORM))
     log_sigmas: deque = field(default_factory=lambda: deque(maxlen=VOV))
     latest: list[float] = field(default_factory=list)
+    #: The bar last advanced over, as (when, high, low, close, sigma): what `base` reads.
+    bar: list[float] = field(default_factory=list)
 
     @property
     def warm(self) -> bool:
         return len(self.sigmas) >= WARM and len(self.closes) > 20
 
 
-def features(
-    s: Series, when: float, high: float, low: float, close: float, sigma: float, quote: list[float]
-) -> list[float] | None:
-    """This bar's features, in the order of `NAMES`, or None when the bands say nothing.
+def base(
+    s: Series, when: float, high: float, low: float, close: float, sigma: float
+) -> dict[str, float]:
+    """The bar's quote-free features by name - volatility state, recent moves, range, the clock.
 
-    `sigma` is the production volatility unit as a log return, and `quote` the envelope's current
-    5-bar P10 / P50 / P90 in that unit. Every move is measured in it, as in `bandrace.py`.
+    Shared: the touch features below are these plus the bands, and the boosted envelope's inputs
+    (`vol/envelope.py`) are a subset of them. `sigma` is the production volatility unit as a log
+    return; every move is measured in it, as in `bandrace.py` and `gbmenvelope.py`.
     """
-    q10, q50, q90 = quote
-    if not (q90 > 0 > q10) or q90 <= q50 or q50 <= q10:
-        return None
     mean_tr = sum(s.true_ranges) / len(s.true_ranges)
     lvol = math.log(sigma / mean_tr) if mean_tr > 0 else 0.0
     rank = sum(1 for v in s.sigmas if v < sigma) / len(s.sigmas)
@@ -126,21 +126,34 @@ def features(
     hour = (when % 86_400) / 3_600
     # 1970-01-01 was a Thursday, 72 hours into a week that starts on Monday 00:00 UTC.
     week_hour = (when / 3_600 + 72) % 168
-    return [
-        lvol,
-        rank,
-        vov,
-        move(1),
-        move(5),
-        move(20),
-        math.log(high / low) / sigma if low > 0 else 0.0,
-        math.sin(2 * math.pi * hour / 24),
-        math.cos(2 * math.pi * hour / 24),
-        (4 * 24 + 21 - week_hour) % 168,
-        q90,
-        -q10,
-        (q90 - q50) / (q50 - q10),
-    ]
+    return {
+        "lvol": lvol,
+        "tr_pct": rank,
+        "vov": vov,
+        "r1": move(1),
+        "r5": move(5),
+        "r20": move(20),
+        "rng": math.log(high / low) / sigma if low > 0 else 0.0,
+        "hsin": math.sin(2 * math.pi * hour / 24),
+        "hcos": math.cos(2 * math.pi * hour / 24),
+        "to_weekend": (4 * 24 + 21 - week_hour) % 168,
+        # The UTC hour as a whole number, the boosted envelope's clock (`gbmenvelope.py`).
+        "hour": float(int(hour)),
+    }
+
+
+def features(
+    s: Series, when: float, high: float, low: float, close: float, sigma: float, quote: list[float]
+) -> list[float] | None:
+    """This bar's features, in the order of `NAMES`, or None when the bands say nothing.
+
+    `quote` is the envelope's current 5-bar P10 / P50 / P90 in the volatility unit.
+    """
+    q10, q50, q90 = quote
+    if not (q90 > 0 > q10) or q90 <= q50 or q50 <= q10:
+        return None
+    got = base(s, when, high, low, close, sigma)
+    return [got[name] for name in NAMES[:10]] + [q90, -q10, (q90 - q50) / (q50 - q10)]
 
 
 @dataclass(slots=True)
@@ -160,13 +173,29 @@ class Touches(Restorable):
         sigma: float,
         quote: list[float] | None,
     ) -> None:
-        """One closed bar, after the envelope has quoted it: update the history, hold the features.
+        """One closed bar, after the envelope has quoted it: `advance`, then `hold`.
 
         `when` is the bar's open time, `sigma` the unit the envelope quoted in, `quote` its 5-bar
         P10 / P50 / P90 (None while it is cold).
         """
+        if self.advance(feed, interval, when, high, low, close, sigma):
+            self.hold(feed, interval, quote)
+
+    def advance(
+        self,
+        feed: str,
+        interval: str,
+        when: float,
+        high: float,
+        low: float,
+        close: float,
+        sigma: float,
+    ) -> bool:
+        """Fold one closed bar into the series' history. Returns whether it was taken.
+
+        Before the envelope quotes, so the boosted envelope can read `base` for this bar."""
         if not applies(feed, interval) or close <= 0 or high < low or not (sigma > 0):
-            return
+            return False
         key = f"{feed}|{interval}"
         s = self.series.get(key)
         if s is None:
@@ -179,9 +208,25 @@ class Touches(Restorable):
         s.log_sigmas.append(math.log(sigma))
         s.closes.append(close)
         s.prev_close = close
+        s.bar = [when, high, low, close, sigma]
+        s.latest = []
+        return True
+
+    def base(self, feed: str, interval: str) -> dict[str, float] | None:
+        """The last advanced bar's quote-free features, or None while the series is cold."""
+        s = self.series.get(f"{feed}|{interval}")
+        if s is None or not s.warm or not s.true_ranges or len(s.bar) != 5:
+            return None
+        return base(s, *s.bar)
+
+    def hold(self, feed: str, interval: str, quote: list[float] | None) -> None:
+        """After the envelope has quoted the last advanced bar: hold its touch features."""
+        s = self.series.get(f"{feed}|{interval}")
+        if s is None or len(s.bar) != 5:
+            return
         s.latest = []
         if s.warm and quote is not None and s.true_ranges:
-            s.latest = features(s, when, high, low, close, sigma, quote) or []
+            s.latest = features(s, *s.bar, quote) or []
 
     def reading(self, feed: str, interval: str) -> dict[str, float]:
         """P(P90 touched) and P(P10 touched) within `AHEAD` bars, and the models' base rates.
