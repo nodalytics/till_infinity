@@ -11,7 +11,9 @@ Three joins, each of which was broken or absent when this was written:
   at publication time rather than at the call site.
 * **The gate can only remove trades, and only when asked.** The measured record
   is a coin on this desk's instruments and worse than one on Boom and Crash, so
-  agreement buys nothing; `TRADING_ZMA_GATE` decides whether even the veto runs.
+  agreement buys nothing. `TRADING_ZMA_GATE` is on by default and the veto
+  still waits on each feed's own record, so it is silent wherever that record
+  is a coin or worse.
 """
 
 from __future__ import annotations
@@ -101,11 +103,18 @@ class TestGate:
         assert found.settings.zma_gate
         return found
 
-    def test_off_by_default(self):
-        """The flag, not the reading, is what decides whether this runs at all."""
-        assert Settings().zma_gate is False
-        plain = CycleScalp(settings=Settings())
-        assert zma_gate(plain, UP, reading(2.0)) is None
+    def test_on_by_default_and_silent_until_a_feed_earns_it(self):
+        """On by default; the feed's record, not the flag, decides whether it acts."""
+        assert Settings().zma_gate is True
+        default = CycleScalp(settings=Settings())
+        assert zma_gate(default, UP, reading(2.0, calls=10.0)) is None
+        assert zma_gate(default, UP, reading(2.0, hit=0.50)) is None
+        assert zma_gate(default, UP, reading(2.0)) is not None
+
+    def test_the_flag_still_turns_it_off(self):
+        settings = Settings()
+        settings.zma_gate = False
+        assert zma_gate(CycleScalp(settings=settings), UP, reading(2.0)) is None
 
     def test_refuses_a_call_the_z_score_leans_against(self, strategy):
         refusal = zma_gate(strategy, UP, reading(2.0))

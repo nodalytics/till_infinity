@@ -768,9 +768,10 @@ class CycleScalp(LevelStrategy):
     def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
         """Keep the unified scalp thesis lean: refuse clogging liquidity, then a z-score against.
 
-        The z gate is inert unless `TRADING_ZMA_GATE` is set, and even then it
-        can only ever remove a trade - see `zma_gate` for why a detector
-        measuring 0.50 on this book is not allowed to add one.
+        The z gate is on by default (`TRADING_ZMA_GATE=0` turns it off) but acts
+        only where the feed's own record has earned it, and it can only ever
+        remove a trade - see `zma_gate` for why a detector measuring 0.50 on
+        this book is not allowed to add one.
         """
         clogged = sweep_gate(self, payload, features)
         if clogged is not None:
