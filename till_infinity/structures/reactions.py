@@ -53,6 +53,7 @@ from .levels import (
     ARRIVAL_RUN_VOL,
     CONFIDENT_TOUCHES,
     DEPARTURE_RUN_VOL,
+    RESOLVE_VOL,
     SECONDS,
     TRAP_VOL,
     TRAP_WINDOW,
@@ -248,6 +249,18 @@ def band_of(interval: str) -> int | None:
 #: daily bar, so a break on the daily was confirmed before the bar it broke on
 #: had finished printing.
 TRAP_BARS = 6.0
+
+#: **The symmetric label's barrier**, in volatility units either side of the price a touch began at.
+#: The production resolution distance, so the two labels ask about moves of the same size.
+SYM_VOL = RESOLVE_VOL
+
+#: How long a symmetric race may run, in bars of its level's timeframe. Four production horizons,
+#: so nearly every race settles. Expiry is symmetric - a race that reaches neither barrier is
+#: dropped, not scored - so the cap cannot move the 50% it reads on noise.
+SYM_HORIZON_BARS = 4 * HORIZON_BARS
+
+#: Races held open at once, across the book. A bound for a process that runs forever.
+MAX_RACES = 5000
 
 
 #: Ceiling on a reward-to-risk reading. Median 0.364, p99 13.2, max 15,846.
@@ -1003,6 +1016,36 @@ class Forward(Restorable):
 
 
 @dataclass(slots=True)
+class Race(Restorable):
+    """One touch's **symmetric** race: fixed barriers `SYM_VOL` either side of where it began.
+
+    The production outcomes are measured from a ratcheting origin for a hold and from the fixed
+    level for a break, and a break has to survive a trap window; on a random walk that reads as
+    holding 55-65% of the time (research/docs/holdlabel.md, research/docs/skill.md). This race has
+    none of that. Its barriers are fixed in price when the touch opens, it runs to its own end
+    regardless of when the production touch closes, and a bar that reaches both barriers is
+    dropped rather than guessed - so on noise it settles each way half the time, and a level that
+    holds more often than that is telling us something about the market.
+    """
+
+    feed: str
+    interval: str
+    level_price: float
+    side: Side
+    started: float
+    up: float
+    down: float
+    deadline: float
+    #: +1 if the upper barrier was reached first, -1 the lower, 0 while open or if dropped.
+    outcome: int = 0
+
+    @property
+    def held(self) -> bool:
+        """Went back the way it came: up off a floor (arrived from above), down off a ceiling."""
+        return self.outcome == (1 if self.side is Side.ABOVE else -1)
+
+
+@dataclass(slots=True)
 class Tracker(Restorable):
     """Follows interactions from first contact to resolution.
 
@@ -1040,6 +1083,9 @@ class Tracker(Restorable):
     #: `service.py` warns about this trap fifty lines from where it was made.
     _forward: dict[str, Forward] = field(default_factory=dict)
     _followed: list[Forward] = field(default_factory=list)
+    #: Symmetric races still running, and those settled but not yet credited to a level.
+    _races: list[Race] = field(default_factory=list)
+    _raced: list[Race] = field(default_factory=list)
 
     def horizon_for(self, touch: Touch) -> float:
         """How long this touch gets, in seconds, for its own timeframe.
@@ -1096,6 +1142,71 @@ class Tracker(Restorable):
 
     def key(self, level: Level) -> tuple[str, float]:
         return (level.feed, round(level.price, 8))
+
+    def start_race(
+        self, level: Level, side: Side, price: float, vol: Volatility, when: float
+    ) -> Race | None:
+        """Open the symmetric race for a touch that has just begun. See `Race`."""
+        distance = vol.price_units(price, SYM_VOL) if vol.bps > 0 else 0.0
+        if distance <= 0 or price <= 0:
+            return None
+        seconds = SECONDS.get(level.interval, 0.0) or self.horizon / self.horizon_bars
+        race = Race(
+            feed=level.feed,
+            interval=level.interval,
+            level_price=level.price,
+            side=side,
+            started=when,
+            up=price + distance,
+            down=price - distance,
+            deadline=when + seconds * SYM_HORIZON_BARS,
+        )
+        self._races.append(race)
+        if len(self._races) > MAX_RACES:
+            del self._races[: len(self._races) - MAX_RACES]
+        return race
+
+    def advance_races(
+        self,
+        feed: str,
+        price: float,
+        when: float,
+        low: float | None = None,
+        high: float | None = None,
+        since: float | None = None,
+    ) -> None:
+        """Move every open race on `feed` against the latest price, and a bar's extremes.
+
+        A race that began inside the bar being delivered (`started >= since`) sees only its close:
+        the bar's earlier wick happened before the race existed. Settled races wait in `_raced`
+        for `drain_races`.
+        """
+        still: list[Race] = []
+        for race in self._races:
+            if race.feed != feed:
+                still.append(race)
+                continue
+            use_wicks = since is None or race.started < since
+            top = high if (use_wicks and high is not None) else price
+            bottom = low if (use_wicks and low is not None) else price
+            up, down = top >= race.up, bottom <= race.down
+            if up and down:
+                continue  # both inside one bar: which came first is unknowable, so it is not scored
+            if up or down:
+                race.outcome = 1 if up else -1
+                self._raced.append(race)
+                continue
+            if when >= race.deadline:
+                continue  # neither barrier in time: dropped, symmetrically
+            still.append(race)
+        self._races = still
+        if len(self._raced) > MAX_RACES:
+            del self._raced[: len(self._raced) - MAX_RACES]
+
+    def drain_races(self) -> list[Race]:
+        """The races settled since the last call."""
+        out, self._raced = self._raced, []
+        return out
 
     def begin(self, level: Level, price: float, features: Features, when: float) -> Touch:
         """Record first contact. The side comes from `features`, not separately -

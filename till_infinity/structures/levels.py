@@ -368,6 +368,17 @@ class SideStats(Restorable):
     push_sum: float = 0.0
     push_sq: float = 0.0
     ups: float = 0.0
+    #: The **symmetric** label, counted beside the production outcomes rather than in place of them.
+    #:
+    #: A touch's race to `RESOLVE_VOL` either side of where it began, with fixed barriers and no
+    #: trap: `sym_held` if price went back the way it came first, `sym_failed` if it went through.
+    #: The production outcomes are biased toward holding on a random walk - `hold_rate` reads 55%
+    #: there (the ratcheting origin, research/docs/holdlabel.md) and the break model's label, which
+    #: counts a trap as held, about 65% (research/docs/skill.md). This one reads 50% on noise by
+    #: construction, so `sym_hold_rate` above 0.5 is evidence about the market rather than the
+    #: definition.
+    sym_held: float = 0.0
+    sym_failed: float = 0.0
 
     def decay(self, factor: float) -> None:
         """Discount everything by `factor`. Old evidence fades; it is not erased.
@@ -389,6 +400,8 @@ class SideStats(Restorable):
         self.wick_sq *= factor
         self.wick_n *= factor
         self.ups *= factor
+        self.sym_held *= factor
+        self.sym_failed *= factor
 
     def observe_wick(self, depth_vol: float) -> None:
         """Fold in how far the wick ran past the origin, exponentially."""
@@ -441,6 +454,19 @@ class SideStats(Restorable):
                 self.traps += 1
             case Outcome.CHOP:
                 self.chops += 1
+
+    def record_symmetric(self, held: bool) -> None:
+        """One symmetric race settled. See `sym_held`."""
+        if held:
+            self.sym_held += 1
+        else:
+            self.sym_failed += 1
+
+    @property
+    def sym_hold_rate(self) -> float:
+        """Share of settled symmetric races that went back the way price came. 0.5 is noise."""
+        settled = self.sym_held + self.sym_failed
+        return self.sym_held / settled if settled > 0 else 0.0
 
     @property
     def decisive(self) -> float:
@@ -514,6 +540,9 @@ class SideStats(Restorable):
             "mean_push_vol": round(self.mean_push, 4),
             "push_sigma_vol": round(self.push_sigma, 4),
             "ups": round(self.ups, 3),
+            "sym_held": round(self.sym_held, 3),
+            "sym_failed": round(self.sym_failed, 3),
+            "sym_hold_rate": round(self.sym_hold_rate, 4),
         }
 
 

@@ -2176,15 +2176,24 @@ class Engine:
             # is. `Consensus.observe` answers again on every venue row, and the
             # See `structures-engine.md` in research/docs.
             return []
-        calls: list[Call] = []
         # A bar is stamped with its **open** time, but it is not knowable until
         # it closes - and quotes carry wall clock. Feeding both to one tracker
         # See `structures-engine.md` in research/docs.
         observed = min(when + lv.SECONDS.get(interval, 0.0), time.time())
+        return self._touch_bar(feed, float(close), observed, low, high, when)
+
+    def _touch_bar(
+        self, feed: str, close: float, observed: float, low: float, high: float, opened: float
+    ) -> list[Call]:
+        """Every level on `feed` against one finished bar, then the symmetric races.
+
+        `opened` is the bar's *open*, which is what says whether a touch - or a
+        race - lived through the range this bar is about to hand over.
+        """
+        calls: list[Call] = []
         for other in self.intervals_for(feed):
-            # `when` is the bar's *open*, which is what says whether a touch
-            # lived through the range this bar is about to hand over.
-            calls += self.check(feed, other, float(close), observed, low, high, since=when)
+            calls += self.check(feed, other, close, observed, low, high, since=opened)
+        self._advance_races(feed, close, observed, low, high, since=opened)
         return calls
 
     def observe_quote(self, payload: dict) -> list[Call]:
@@ -2226,7 +2235,37 @@ class Engine:
         # every interval this instrument has levels at, not just the bar ones.
         for interval in self.intervals_for(feed):
             calls += self.check(feed, interval, agreed, when)
+        self._advance_races(feed, agreed, when)
         return calls
+
+    def _advance_races(
+        self,
+        feed: str,
+        price: float,
+        when: float,
+        low: float | None = None,
+        high: float | None = None,
+        since: float | None = None,
+    ) -> None:
+        """Advance the symmetric races on `feed`, and credit the settled ones to their levels.
+
+        Once per price update rather than inside `check`, which runs once per interval and would
+        walk every race that many times for the same price. A race whose level has since been
+        re-formed or pruned has nothing to credit, the same rule `_drain_expired` follows.
+        """
+        self.tracker.advance_races(feed, price, when, low, high, since)
+        settled = self.tracker.drain_races()
+        if not settled:
+            return
+        known = {
+            (level.feed, level.interval, round(level.price, 8)): level
+            for levels in self._levels.values()
+            for level in levels
+        }
+        for race in settled:
+            level = known.get((race.feed, race.interval, round(race.level_price, 8)))
+            if level is not None:
+                level.stats(race.side).record_symmetric(race.held)
 
     # ------------------------------------------------------------- touching
 
@@ -2414,6 +2453,9 @@ class Engine:
                 when=when,
             )
             touch = self.tracker.begin(level, price, features, when)
+            # The symmetric label beside the production one: fixed barriers, no trap, its own clock.
+            # See `reactions.Race` - it is what reads 50% on noise.
+            self.tracker.start_race(level, side, price, vol, when)
             inference = reactions.infer(
                 level,
                 side,
