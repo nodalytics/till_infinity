@@ -60,6 +60,12 @@ walks (t 4.2-4.4) this way. So the report also shows gross R, and judges each ma
 **difference from the same cell on the walks** (rule minus touch, market minus walks), needing
 +0.05R at t >= 3 there too.
 
+Added after the first full run, before this version's results: the market passes clustered in FX
+15m, and the literal passes ranked the families by their cost (FX 0.8 > crypto 0.5 > metals 0.16),
+which the walks (cost 0.15) cannot net out - the cost-per-R effect scales with the cost. So the
+comparison with the walks is made on **gross** R, before costs, where the walks are a fair null
+whatever the family's cost; net R is still reported and still has to clear the literal rule.
+
 Run on the lab, one process per universe:
   UNIVERSE=real SEQLAB=$HOME/till_infinity/data/seqlab python research/harness/stophunt.py
   UNIVERSE=deriv ...    UNIVERSE=walks ...    then  PART=report
@@ -216,7 +222,7 @@ def run() -> None:
             return
         cost_r = ind.COST_V[fam_of[key[0]]] * np.sqrt(5 / ind.MINUTES[key[1]]) * v * c[j] / risk
         for k, r, stopped, then_right, hit in got:
-            rows.append((kind, fam_of[key[0]], key[0], key[1], t, b, k, r - cost_r, stopped, then_right, hit))
+            rows.append((kind, fam_of[key[0]], key[0], key[1], t, b, k, r - cost_r, r, stopped, then_right, hit))
 
     for n, (key, i, s, b, stop, v, t, entries) in enumerate(plans):
         for rule, j in entries.items():
@@ -227,10 +233,15 @@ def run() -> None:
         if n % 20_000 == 0:
             print(f"  {n:,} of {len(plans):,} touch x buffer plans, {len(rows):,} rows", flush=True)
     df = pd.DataFrame(rows, columns=["rule", "family", "feed", "interval", "time", "b", "k", "net",
-                                     "stopped", "then_right", "hit"])
+                                     "gross", "stopped", "then_right", "hit"])
     df["universe"] = UNIVERSE
     df.to_pickle(OUT / f"{UNIVERSE}.pkl.gz")
     print(f"{UNIVERSE}: {len(df):,} trade rows written", flush=True)
+
+
+def _gross(g: pd.DataFrame) -> pd.DataFrame:
+    """The same rows scored before costs, for `ind.welch`, which reads `net`."""
+    return g.assign(net=g["gross"])
 
 
 def report() -> None:
@@ -240,11 +251,11 @@ def report() -> None:
     for (iv, b, k), g in df[df["family"] == "walks"].groupby(["interval", "b", "k"]):
         base = g[g["rule"] == "touch"]
         for rule in RULES[1:]:
-            d, t = ind.welch(g[g["rule"] == rule], base)
+            d, t = ind.welch(_gross(g[g["rule"] == rule]), _gross(base))
             if np.isfinite(t) and t != 0:
                 walks[(iv, b, k, rule)] = (d, abs(d / t))
     print("net R after costs; stop = share stopped; s-then-r = stopped then target reached within 40 bars")
-    print("vs walks = (rule - touch) here minus (rule - touch) on our memoryless walks, same cell")
+    print("gross vs touch = before costs; vs walks = gross (rule - touch) here minus the same on our walks")
     verdicts = []
     for (family, iv, b, k), g in df.groupby(["family", "interval", "b", "k"]):
         base = g[g["rule"] == "touch"]
@@ -264,11 +275,12 @@ def report() -> None:
             dw, tw = ind.welch(r, wait) if len(wait) >= 50 else (float("nan"), float("nan"))
             halves = [ind.welch(p[p["rule"] == rule], p[p["rule"] == "touch"])[0]
                       for p in (g[g["time"] < cut], g[g["time"] >= cut])]
+            dg, tg = ind.welch(_gross(r), _gross(base))
             dd, td = float("nan"), float("nan")
-            if family != "walks" and (iv, b, k, rule) in walks and np.isfinite(tt) and tt != 0:
+            if family != "walks" and (iv, b, k, rule) in walks and np.isfinite(tg) and tg != 0:
                 wd, wse = walks[(iv, b, k, rule)]
-                dd = dt - wd
-                td = dd / np.sqrt((dt / tt) ** 2 + wse**2)
+                dd = dg - wd
+                td = dd / np.sqrt((dg / tg) ** 2 + wse**2)
             literal = (r["stopped"].mean() < base["stopped"].mean()
                        and r["then_right"].mean() < base["then_right"].mean()
                        and dt >= 0.05 and tt >= 3 and min(halves) > 0)
@@ -278,7 +290,8 @@ def report() -> None:
                   f" s-then-r {r['then_right'].mean():5.1%}"
                   f" ({r['then_right'].sum() / max(r['stopped'].sum(), 1):3.0%} of stops)"
                   f" | net {r['net'].mean():+.3f} vs touch {dt:+.3f} (t {tt:+.1f})"
-                  f" vs wait {dw:+.3f} (t {tw:+.1f}) vs walks {dd:+.3f} (t {td:+.1f})"
+                  f" vs wait {dw:+.3f} (t {tw:+.1f}) | gross vs touch {dg:+.3f} (t {tg:+.1f})"
+                  f" vs walks {dd:+.3f} (t {td:+.1f})"
                   f" | halves {halves[0]:+.3f} / {halves[1]:+.3f}"
                   f" | hit {r['hit'].mean():5.1%}{'  PASS' if ok else '  (literal)' if literal else ''}")
     v = pd.DataFrame(verdicts, columns=["family", "interval", "b", "k", "rule", "literal", "ok"])
