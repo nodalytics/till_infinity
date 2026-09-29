@@ -62,6 +62,29 @@ Share of FX outcomes resolving in 21-22 UTC, by timeframe (even spread: 8.3%):
 - **The desk's own trades are not hurt,** because they rarely enter FX in the window. The damage is
   upstream, in what the engine learns about FX levels.
 
+## Re-measured: the mask on the lab's history
+
+[`rollover_replay.py`](../harness/rollover_replay.py) replays ten FX pairs through the production
+engine twice, once with the mask on and once with it off. The table is weekday FX resolved touches.
+
+| run | touches | 21:00 UTC share (neighbours) | 21:00 trap share (neighbours) | 3m / 15m hold rate |
+|---|---|---|---|---|
+| 15m + 1h bars from 2025-06, mask off | 41,031 | 3.3% (2.8-3.1%) | 16.3% | - / 0.598 |
+| 15m + 1h bars from 2025-06, mask on | 40,083 | 2.3% | 15.9% | - / 0.593 |
+| 3m + 15m bars from 2026-01, mask off | 57,684 | **3.9%** (2.5-3.1%) | **19.7%** (13.1-15.5%) | 0.611 / 0.637 |
+| 3m + 15m bars from 2026-01, mask on | 56,495 | 3.0% | 18.1% | 0.611 / 0.629 |
+
+- **The lab's history carries only a trace of the spike.** It is visible at 3m (3.9% of outcomes and
+  a 19.7% trap share at 21:00) and hardly at 15m. The mask removes it, and hold rates move by under
+  0.01.
+- **So production's bulge (14.7% at 21:00) comes mostly from its live stream,** not from the
+  broker's history. That stream is 1m bars and quotes collected live through the rollover, where a
+  daily trading break and a resuming price jump, or the spread spike itself, land on the touch
+  tracker. The mask covers 16:55-17:10 New York whichever it is.
+- **The real check is a fresh journal after deploy.** Re-run `rollover.py` on a snapshot taken a
+  week or two after the mask ships. The 21:00 share should fall from 14.7% to about the other
+  hours' 3-4%, and the FX 15m and 30m shares in 21-22 UTC from 41-46% to about 8%.
+
 ## For production
 
 1. **Done: the FX rollover is masked in `structures`** (`structures/rollover.py`, on by default,
@@ -73,10 +96,8 @@ Share of FX outcomes resolving in 21-22 UTC, by timeframe (even spread: 8.3%):
      and judged on the prices after it, and levels still form from these bars.
    - **What is left alone:** bars longer than two hours, which always span 17:00 but in which the
      spike is a small part of the range; and Deriv, metals and crypto.
-   - **Follow-up:** levels drawn from the rollover wick itself (a pivot at a spike extreme) are not
-     yet excluded.
-2. **Measure it again after the mask.** The 21:00 bulge should disappear, and the FX 15m and 30m
-   hold rates should be re-read without it.
-3. Optionally, **discount the FX 15m and 30m levels' existing records,** since up to 46% of their
-   outcomes are rollover-made. Decaying them faster once the mask is in would let clean outcomes
-   take over.
+2. **Measure it again after the mask:** done on the lab's history (above), where the trace is
+   removed. It is still to do on production's journal once the mask has run for a week or two.
+3. **Done: existing FX level records are discounted once** by the spike's share at each timeframe
+   (`rollover.DISCOUNT`: 1m 0.95 to 30m 0.59), and the rollover's wick is cut from FX bars, so no
+   level is drawn from it.
