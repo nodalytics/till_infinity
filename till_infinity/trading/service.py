@@ -56,6 +56,7 @@ from ..structures.context.registry import clock_odds
 from ..structures.context.trend import Trend
 from ..structures.learning.focus import Focus
 from ..structures.levels import SECONDS
+from ..structures.vol import envelope
 from . import manage, plans, turning
 from .candles import confirms, rejection_wick
 from .config import Settings, magic_for, strategy_for
@@ -4226,6 +4227,9 @@ class Trader:
             if self.equity
             else f"💰 risking {self.money(intent.risk_money, signed=False)}",
             f"📝 {intent.reason}" if intent.reason else "",
+            # Where price can be five bars from here, from the signal's own features - the same
+            # lines the level alert prints. Read, never acted on. See `structures/vol/envelope.py`.
+            *envelope.card_lines(intent.features, _money_price),
             rule,
         ]
         await self.bus.publish(

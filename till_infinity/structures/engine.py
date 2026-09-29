@@ -62,6 +62,7 @@ from .learning import focus, patterns, regimes
 from .learning.focus import Focus
 from .models import Shape, Signal
 from .state import Restorable
+from .vol import envelope as ev
 from .vol import projection as pj
 from .vol.volatility import Book as VolBook
 from .vol.volatility import Volatility
@@ -1232,6 +1233,9 @@ class Engine:
         zbook = getattr(self, "zma", None)
         if zbook is not None:
             counts["zma"] = zbook.forget({f for f, _ in zbook._by_key if f not in gone})
+        ebook = getattr(self, "envelopes", None)
+        if ebook is not None:
+            counts["envelopes"] = ebook.forget({k.split("|", 1)[0] for k in ebook.envelopes} - gone)
         cbook = getattr(self, "cycles", None)
         if cbook is not None:
             counts["cycles"] = cbook.forget({f for f in cbook._by_feed if f not in gone})
@@ -1449,6 +1453,32 @@ class Engine:
                 self._projection().settle(feed, float(opened), seconds, close)
         except Exception as exc:
             log.debug("structures: no projection for %s %s: %s", feed, interval, exc)
+
+    def _envelopes(self) -> ev.Book:
+        """The envelope book, created on demand - `_projection` says why it is asked for by name."""
+        found = getattr(self, "envelopes", None)
+        if found is None:
+            found = self.envelopes = ev.Book()
+        return found
+
+    def _observe_envelope(self, feed: str, interval: str, close: float, vol: Volatility) -> None:
+        """Settle the envelope quoted N bars ago and quote the next N. See `vol/envelope.py`.
+
+        Wrapped like every reading nobody gates on: a fault here must not stop a bar.
+        """
+        try:
+            bps = vol.ewma_tr_bps
+            if bps > 0 and close > 0:
+                self._envelopes().observe(feed, interval, close, bps / 10_000)
+        except Exception as exc:
+            log.debug("structures: no envelope for %s %s: %s", feed, interval, exc)
+
+    def _envelope_at(self, feed: str, interval: str, price: float) -> dict[str, float]:
+        """The envelope's P10 / P50 / P90 around `price`, for the journal. Absent while cold."""
+        try:
+            return self._envelopes().reading(feed, interval, price)
+        except Exception:  # never let a published extra stop a call
+            return {}
 
     def _projection(self) -> pj.Book:
         """The projection book, created on demand.
@@ -2153,6 +2183,7 @@ class Engine:
             # own method so that `observe_bar` stays inside the branch ceiling
             # and so the flag it is gated by sits next to the work it gates.
             self._settle_projection(feed, interval, opened, float(close))
+            self._observe_envelope(feed, interval, float(close), vol)
             self._observe_zma(feed, interval, float(close))
             self._observe_cycles(feed, interval, float(close))
         # Pivots are session structures priced at today's scale, so they use the
@@ -2176,15 +2207,24 @@ class Engine:
             # is. `Consensus.observe` answers again on every venue row, and the
             # See `structures-engine.md` in research/docs.
             return []
-        calls: list[Call] = []
         # A bar is stamped with its **open** time, but it is not knowable until
         # it closes - and quotes carry wall clock. Feeding both to one tracker
         # See `structures-engine.md` in research/docs.
         observed = min(when + lv.SECONDS.get(interval, 0.0), time.time())
+        return self._touch_bar(feed, float(close), observed, low, high, when)
+
+    def _touch_bar(
+        self, feed: str, close: float, observed: float, low: float, high: float, opened: float
+    ) -> list[Call]:
+        """Every level on `feed` against one finished bar, then the symmetric races.
+
+        `opened` is the bar's *open*, which is what says whether a touch - or a
+        race - lived through the range this bar is about to hand over.
+        """
+        calls: list[Call] = []
         for other in self.intervals_for(feed):
-            # `when` is the bar's *open*, which is what says whether a touch
-            # lived through the range this bar is about to hand over.
-            calls += self.check(feed, other, float(close), observed, low, high, since=when)
+            calls += self.check(feed, other, close, observed, low, high, since=opened)
+        self._advance_races(feed, close, observed, low, high, since=opened)
         return calls
 
     def observe_quote(self, payload: dict) -> list[Call]:
@@ -2226,7 +2266,37 @@ class Engine:
         # every interval this instrument has levels at, not just the bar ones.
         for interval in self.intervals_for(feed):
             calls += self.check(feed, interval, agreed, when)
+        self._advance_races(feed, agreed, when)
         return calls
+
+    def _advance_races(
+        self,
+        feed: str,
+        price: float,
+        when: float,
+        low: float | None = None,
+        high: float | None = None,
+        since: float | None = None,
+    ) -> None:
+        """Advance the symmetric races on `feed`, and credit the settled ones to their levels.
+
+        Once per price update rather than inside `check`, which runs once per interval and would
+        walk every race that many times for the same price. A race whose level has since been
+        re-formed or pruned has nothing to credit, the same rule `_drain_expired` follows.
+        """
+        self.tracker.advance_races(feed, price, when, low, high, since)
+        settled = self.tracker.drain_races()
+        if not settled:
+            return
+        known = {
+            (level.feed, level.interval, round(level.price, 8)): level
+            for levels in self._levels.values()
+            for level in levels
+        }
+        for race in settled:
+            level = known.get((race.feed, race.interval, round(race.level_price, 8)))
+            if level is not None:
+                level.stats(race.side).record_symmetric(race.held)
 
     # ------------------------------------------------------------- touching
 
@@ -2414,6 +2484,9 @@ class Engine:
                 when=when,
             )
             touch = self.tracker.begin(level, price, features, when)
+            # The symmetric label beside the production one: fixed barriers, no trap, its own clock.
+            # See `reactions.Race` - it is what reads 50% on noise.
+            self.tracker.start_race(level, side, price, vol, when)
             inference = reactions.infer(
                 level,
                 side,
@@ -2447,7 +2520,11 @@ class Engine:
                     price=price,
                     time=when,
                     origin=self._origin_at(feed, interval, level.price, vol),
-                    context={**self.changing(feed, when), **self._learned_at(feed, interval)},
+                    context={
+                        **self.changing(feed, when),
+                        **self._learned_at(feed, interval),
+                        **self._envelope_at(feed, interval, price),
+                    },
                     # The same object the tracker put on the touch, so the
                     # break model is scored on this touch rather than on zeros.
                     # See `Call.features`.
