@@ -24,11 +24,11 @@ We are not short of a chart. What this repository has that the reference does no
 
 | question | what we measured | where |
 | --- | --- | --- |
-| does the distance order neighbours better than chance? | **AUC 0.4921** at 300–1,800s against 0.5000 shuffled; flat at every horizon the desk trades | [`similarity.md`](../../../research/docs/similarity.md) |
+| does the distance order neighbours better than chance? | **AUC 0.4921** at 300–1,800s against 0.5000 shuffled; flat at every horizon the desk trades | [`similarity.md`](../../research/docs/similarity.md) |
 | do analogue shapes predict direction? | chance, twice — `motifs.py` died on bootstrap, `shapes.py` came out at chance at two embeddings | `analogue_envelope.py` header |
-| is the next-N-bars **range** forecastable? | **yes, and it is shipped** — percentiles that hold their stated rates, with drift correction | [`envelope.md`](../../../research/docs/envelope.md), `structures/vol/envelope.py` |
+| is the next-N-bars **range** forecastable? | **yes, and it is shipped** — percentiles that hold their stated rates, with drift correction | [`envelope.md`](../../research/docs/envelope.md), `structures/vol/envelope.py` |
 
-And a fourth that is set up but never run: [`analogue_envelope.py`](../../../research/harness/analogue_envelope.py)
+And a fourth that is set up but never run: [`analogue_envelope.py`](../../research/harness/analogue_envelope.py)
 was written **about this exact service** — five-bar window, ten twins, five bars forward,
 `NO_TRADE`, published match scores "from 59% down to 9%" — to ask whether its envelope is
 tighter than a trailing sigma at equal coverage. Its own framing:
