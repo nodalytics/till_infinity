@@ -57,16 +57,42 @@ def _fed(feed: str = "eurusd", interval: str = "15m", n: int = 600) -> tc.Touche
 # ------------------------------------------------------------------ the shipped models
 
 
-def test_the_shipped_models_load_and_match_the_features():
+def _ship_stumps(tmp_path) -> None:
+    """A touch model per band under the current recipe: one split on lvol, so the reading has
+    something to evaluate whatever ships in the package."""
+    out = tmp_path / "models"
+    out.mkdir(exist_ok=True)
+    for name in tc.MODELS.values():
+        spec = {
+            "recipe": tc.RECIPE,
+            "names": list(tc.NAMES),
+            "baseline": -1.3,
+            "trees": [
+                [[0, 0.0, 1, 2, 0, 0.0, 1], [0, 0, 0, 0, 1, -0.2, 0], [0, 0, 0, 0, 1, 0.2, 0]]
+            ],
+            "base_rate": 0.21,
+        }
+        (out / f"{name}.json").write_text(json.dumps(spec))
+    frozen.forget_cache()
+
+
+def test_a_shipped_model_has_earned_its_place(monkeypatch):
+    """Whatever ships under the current recipe passed the contest's skill gate. None may ship:
+    over the boosted envelope's bands the touch models' skill fell under the gate
+    (`touches.RECIPE`), and then the reading is simply absent."""
+    monkeypatch.delenv("TI_MODELS_DIR")
+    frozen.forget_cache()
     for name in tc.MODELS.values():
         spec = frozen.load(name, recipe=tc.RECIPE, names=tc.NAMES)
-        assert spec is not None, name
+        if spec is None:
+            continue
         assert spec["names"] == list(tc.NAMES)
         assert 0.1 < spec["base_rate"] < 0.35
         assert spec["test"]["skill"] >= rt.TOUCH_GATES["min_skill"]
 
 
-def test_a_warm_fx_series_gets_both_probabilities():
+def test_a_warm_fx_series_gets_both_probabilities(tmp_path):
+    _ship_stumps(tmp_path)
     got = _fed().reading("eurusd", "15m")
     assert set(got) == {"touch90_prob5", "touch10_prob5"}
     assert all(0.0 < v < 1.0 for v in got.values())
@@ -172,6 +198,6 @@ def test_the_touch_contest_runs_and_its_export_is_exact(monkeypatch):
     assert report["series"] == 1
     assert report["evaluator_max_diff"] <= rt.GATES["exact"]
     assert {"skill", "calibration_fails"} <= set(report["challenger"])
-    assert "skill" in report["champion"]  # the shipped model is the champion
+    assert isinstance(report["champion"], dict)  # empty while no model has earned the recipe
     assert (spec is not None) == report["promoted"]
     json.dumps(report)  # the report file must be able to hold it
