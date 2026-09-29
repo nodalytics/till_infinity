@@ -3451,7 +3451,15 @@ class Trader:
                 if k not in ("shape", "feed", "ticket")
             }
         except Exception as exc:
-            log.debug("trading: no turn-exit comparison for %s: %s", live.intent.feed, exc)
+            # **Warning, not debug.** This shadow has never once run in production -
+            # `trading.turn_exit` reports inert and not one of 1,202 closed trades
+            # carries a `turn_*` field - while the data is plainly there: 206 of 800
+            # trading decisions sampled from the journal carry a real `turn_price`,
+            # and the end-to-end path passes its own test. So if it is raising, this
+            # line is the only witness, and at `debug` in a container that runs at
+            # INFO it was no witness at all. That exact mistake already cost this
+            # desk every alert it had ever raised.
+            log.warning("trading: no turn-exit comparison for %s: %s", live.intent.feed, exc)
             return {}
 
     def _reach(self, live: Live) -> float:
