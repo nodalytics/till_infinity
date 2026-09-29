@@ -71,6 +71,32 @@ The real-minus-random differences are small and mostly the size of what separate
 1.3-point higher hold rate, +0.024 of skill against the base rate, and +0.023 of `expected_push`
 rank correlation on size. None of them is a direction.
 
+## Why a random walk "holds": the resolution rule, not the volatility unit
+
+Measured with [`holdgeometry.py`](../harness/holdgeometry.py): 200,000 touches on a pure Gaussian
+random walk, resolved by the production rule (`reactions.Tracker.update`), with the volatility unit
+deliberately mis-estimated at 0.5x, 1x and 2x the truth. Arriving 0.35 / 0.75 units above the level:
+
+| rule | vol unit 0.5x | 1x | 2x |
+| --- | --- | --- | --- |
+| production | 72.9% / 75.3% | 67.9% / 72.1% | 67.3% / 76.0% |
+| no trap re-labelling | 55.3% / 59.2% | 59.2% / 64.5% | 65.8% / 74.9% |
+| rejection from the entry, not the running low | 71.4% / 73.3% | 63.9% / 67.4% | 60.0% / 69.2% |
+| **symmetric +-1.5 from the entry, no trap** | **50.0% / 50.0%** | **49.9% / 49.9%** | **50.0% / 50.0%** |
+
+- **The volatility unit is only the ruler.** A fair race is 50% at every scale, even with the unit
+  wrong by a factor of two. What a wrong unit changes is the mix: too small gives more traps (up to
+  18%), too large gives more chop (36-55% of touches).
+- **The rule is what holds.** A rejection is measured from the running low of the leg in, which
+  follows price, and a break from the level, which does not. A break then has to survive six bars,
+  and one that comes back is a *trap*, which the break model and the direction label both count as
+  the level holding. On pure noise that gives 67-76% in this simplified model. The rest of the gap to
+  the replay's 87% is tracker detail not modelled here: zones widened by past wicks, and bar-level
+  handling.
+- **The fix is a symmetric label to score against:** +-k volatility units from where the touch
+  started, with no trap re-labelling. It reads 50% on noise, so any hold rate above 50% on a real
+  market is information about the market rather than about the definition.
+
 ## What this settles
 
 - **Does structures show skill?** Against the base rate, a large skill (+0.58 Brier skill score).
