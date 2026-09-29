@@ -36,7 +36,7 @@ OUT = Path(os.environ.get("OUT", ".data/rollover_replay"))
 START = pd.Timestamp(os.environ.get("START", "2025-06-01"), tz="UTC").timestamp()
 SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "EURJPY", "GBPJPY", "EURGBP", "NZDUSD",
            "USDCHF"]
-INTERVALS = ("15m", "1h")
+INTERVALS = tuple(os.environ.get("INTERVALS", "15m,1h").split(","))
 
 
 def bars_of(sym, iv, df):
@@ -68,15 +68,16 @@ def run() -> None:
         if n % 100_000 == 0:
             print(f"  {n:,} bars, {len(rows):,} resolved", flush=True)
     OUT.mkdir(parents=True, exist_ok=True)
-    name = "on" if ro.ENABLED else "off"
+    name = ("on" if ro.ENABLED else "off") + ("" if INTERVALS == ("15m", "1h") else "_" + "_".join(INTERVALS))
     (OUT / f"{name}.json").write_text(json.dumps(rows))
     print(f"mask {name}: {len(rows):,} resolved touches written", flush=True)
 
 
 def report() -> None:
     frames = {}
+    suffix = "" if INTERVALS == ("15m", "1h") else "_" + "_".join(INTERVALS)
     for name in ("off", "on"):
-        path = OUT / f"{name}.json"
+        path = OUT / f"{name}{suffix}.json"
         if path.exists():
             df = pd.DataFrame(json.loads(path.read_text()))
             t = pd.to_datetime(df["time"], unit="s")
