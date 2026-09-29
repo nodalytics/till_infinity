@@ -19,7 +19,8 @@ failed break. And for comparison, a completed break's retest from the other side
 
 Levels are 5-bar swing lows and highs (highs mirrored), sigma is the trailing mean |bar return| x 1.25
 (about a bar's standard deviation, the production unit), on the lab's broker bars at 15m and 1h, 15
-FX pairs, XAU, XAG, BTC, ETH, SOL; five random walks as the control. Halves by time.
+FX pairs, XAU, XAG, BTC, ETH, SOL; twenty Deriv Volatility series as the control (see WALKS).
+Halves by time.
 """
 from __future__ import annotations
 
@@ -110,10 +111,40 @@ def supports(lh, ll, lc, sig, half_at, rows, label):
                 break
 
 
+#: Every Volatility index the lab holds, both the 2s and the 1s families - twenty series at
+#: 15m and 1h, against the five this study first used.
+#:
+#: **Why it grew.** With five, the control's own hold rate ranged 46.9% to 51.6% across the
+#: seven placements at 1h: a 4.7 point spread on data with no structure in it at all. The
+#: real-market effects read off the same table were +1.7 (FX) and +3 (metals) after
+#: subtracting it, so the noise floor was wider than the signal and no single winning cell
+#: could be told from it. Twenty series is four times the sample and about half the error,
+#: and it takes the control's spread to 1.2 points - at which the effects survive.
+#:
+#: They all belong to the one published family and nothing else on the venue does. twins.md
+#: measures twelve of them as geometric Brownian motion at the annualised sigma in their
+#: names to within 0.5%; the other eight (5, 15, 30, 90 and their 1s twins) are the same
+#: generator at sigmas nobody has checked, and are included on that construction. The flat
+#: reading is itself the check. Boom, Crash and Jump stay out - each has a designed
+#: asymmetry or arrival, so it would be structure rather than a null.
+#:
+#: Named rather than generated, because the family is not symmetric: 150 and 250 exist only
+#: as 1s variants, so a comprehension over both suffixes asks for two series that are not
+#: there. main() skips a symbol `spikerisk.load` cannot find, with one printed line, and
+#: carries on - which is exactly why the list should not lean on that: a control that got
+#: quietly smaller is the thing being fixed here.
+WALKS = ["Volatility_5_Index", "Volatility_5_1s_Index", "Volatility_10_Index",
+         "Volatility_10_1s_Index", "Volatility_15_Index", "Volatility_15_1s_Index",
+         "Volatility_25_Index", "Volatility_25_1s_Index", "Volatility_30_Index",
+         "Volatility_30_1s_Index", "Volatility_50_Index", "Volatility_50_1s_Index",
+         "Volatility_75_Index", "Volatility_75_1s_Index", "Volatility_90_Index",
+         "Volatility_90_1s_Index", "Volatility_100_Index", "Volatility_100_1s_Index",
+         "Volatility_150_1s_Index", "Volatility_250_1s_Index"]
+
+
 def main():
     groups = {"fx": FAMILIES["fx"], "metals": FAMILIES["metal"], "crypto": FAMILIES["crypto"],
-              "random walks": ["Volatility_10_Index", "Volatility_25_Index", "Volatility_50_Index",
-                               "Volatility_75_Index", "Volatility_100_Index"]}
+              "random walks": WALKS}
     for interval in ("15m", "1h"):
         print(f"\n{'=' * 110}\nTRAP LEVELS {interval} - symmetric +-1 sigma race at the first retest within {FOLLOW} bars; held = the level "
               "stopped price (50% on a random walk)")

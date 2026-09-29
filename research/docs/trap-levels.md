@@ -4,6 +4,12 @@ Measured 2026-09-29 on the lab with [`traplevels.py`](../harness/traplevels.py):
 at 15m and 1h for 15 FX pairs, XAU, XAG, BTC, ETH and SOL, with five Deriv random walks as the
 control. Halves are by time.
 
+**The control was widened to all twenty Volatility series on 2026-09-30 and the numbers below
+are superseded in one respect** - the five-walk control's own spread was 4.7 points, wider than
+the effects being read against it. With twenty it is 1.2, and the conclusions change: see
+[the re-run](#re-run-2026-09-30-with-a-twentyfold-tighter-control-and-it-survives) at the
+bottom. The *ranking* here survives; the reading of the midpoint as the best placement does not.
+
 ## The question
 
 A **trap** (`structures/reactions.py`) is a break that failed: price closed 1.5 volatility units
@@ -17,7 +23,11 @@ level, or adjust the old one.
 
 The label is one that cannot flatter anyone: at a level's first retest within 96 bars, a symmetric
 race of ±1 sigma from the level (for a support, up first counts as held). It reads 50% on a random
-walk whatever the geometry, unlike the production outcome labels ([`skill.md`](skill.md)).
+walk whatever the geometry, unlike the production outcome labels ([`skill.md`](skill.md)) - whose
+null [`holdlabel.md`](holdlabel.md) measures at **55%**, all of it the ratcheting origin in
+`reactions.py:1154`. That is why this study does not use them: a placement comparison read against
+a 50% baseline on a 55% label would have credited five points to whichever candidate was measured
+first.
 
 **Levels** are 5-bar swing lows and highs (highs mirrored), and **traps** follow the production
 thresholds. After each trap the candidates are:
@@ -110,3 +120,85 @@ extreme). Held at the first retest, same race and placebo:
   is the best at 15m. Near the extreme is the worst. It is a defensible change to how the level is
   drawn, and it will not change what trading it earns.
 - A trap does not predict a reversal, so the trap label adds nothing as a trade trigger.
+
+## Re-run 2026-09-30 with a twentyfold-tighter control, and it survives
+
+The control above was five Volatility indices, and across the seven placements at 1h its
+own hold rate ran **46.9% to 51.6%** - a 4.7 point spread on data with no structure in
+it. The market effects being read off the same table were +1.7 (FX) and +3 (metals) after
+subtracting it, so the noise floor was wider than the signal and no single cell could be
+distinguished from it. That was the objection.
+
+The lab holds **twenty** Volatility series at both 15m and 1h, not five - both the 2s and
+the 1s families. All twenty belong to the one published family, and nothing else on the
+venue does: [`twins.md`](twins.md) measures twelve of them as geometric Brownian motion at
+the annualised sigma in their names, to within 0.5%, and [`deriving.md`](deriving.md)
+derives from that. The other eight (5, 15, 30, 90 and their 1s twins) are the same
+generator at sigmas nobody has checked, so they are included on the family's construction
+rather than on a measurement - and the flat reading below is itself the check, since a
+series that was not a driftless random walk would not land on 50%. Boom, Crash and Jump
+stay excluded, each having a designed asymmetry or arrival. Same harness, same fractions,
+same label; only the control changed.
+
+*(`twins.md` also warns off `volatility_150_1s_index` for **tick** statistics, its price
+grid being coarse against a tick. This study reads 15m and 1h bars, where a bar's sigma is
+hundreds of grid steps, and the placement effect is differenced within each series.)*
+
+**The control is now flat.** Across all seven placements: **48.9-50.1% at 1h** and
+**48.8-50.1% at 15m** - a spread of 1.2 and 1.3 points against 4.7, on n = 8,500-16,300
+per cell with standard errors of ±0.4-0.5.
+
+Held at the first retest, as a **difference from that market's own placebo** (1h):
+
+| 1h | original | 14% | 20% | 50% | 80% | 86% | extreme |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FX *(placebo 52.0)* | +1.3 | **+2.7** | +2.6 | +1.5 | -0.3 | -1.1 | **-2.8** |
+| metals *(50.9)* | +4.5 | +5.6 | **+5.9** | +3.5 | -1.0 | -2.7 | **-6.3** |
+| crypto *(53.0)* | +0.2 | +1.3 | +1.8 | +2.3 | -0.8 | -3.5 | **-6.8** |
+| random walks *(49.3)* | +0.2 | +0.8 | +0.3 | -0.4 | +0.7 | +0.7 | +0.3 |
+
+| 15m | original | 14% | 20% | 50% | 80% | 86% | extreme |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FX *(placebo 51.7)* | +0.7 | +0.5 | +1.2 | **+1.8** | +1.1 | +1.2 | +1.1 |
+| metals *(50.6)* | +1.1 | +2.4 | +1.5 | **+3.2** | +2.4 | +1.4 | -1.0 |
+| crypto *(52.1)* | -1.8 | +0.2 | 0.0 | **+2.6** | +1.7 | -0.1 | **-4.7** |
+| random walks *(48.9)* | +0.5 | +0.9 | +0.7 | +0.3 | -0.1 | +0.1 | +1.2 |
+
+### What the tight control changes
+
+* **The positive finding survives, and the objection to it does not.** FX at 14% is +2.7
+  over its placebo where the walks give +0.8, so about +1.9 of market against a difference
+  standard error near 0.7 - roughly four standard errors. Metals at 20% is +5.9 against
+  +0.3, about three. These are no longer inside the noise floor, because the noise floor
+  moved.
+* **The negative finding is now the strongest result in the study.** At 1h the extreme
+  sits **6.3 points below placebo in metals and 6.8 in crypto**, against a control that is
+  flat there (+0.3), and the decline is monotone across the whole span: metals 55.4 → 56.5
+  → 56.8 → 54.4 → 49.9 → 48.2 → 44.6. Price returns to a swept low and takes it out again.
+* **The timeframe disagreement is real and is not noise.** 14-20% is best at 1h in FX and
+  metals; the **midpoint** is best at 15m in all three markets, and 14% is worth +0.5 to
+  +2.4 there. A genuine geometric property of a trap should not relocate between
+  intervals, so the optimum is **not identified** - what is identified is that somewhere
+  between the original level and the midpoint beats both the original and the extreme.
+* **Crypto never clears on its own.** +1.3 at 14% against a ±1.7 difference error at 1h.
+  The 1h result is carried by FX and metals.
+
+### What this means for the recommendation
+
+The earlier conclusion - *if a trapped level is moved at all, move it 14-20% toward the
+extreme* - **holds at 1h and overstates its precision.** The defensible statement is:
+
+* **never relabel to the extreme**, which is worse than a random price by 6-7 points and
+  is the one thing this study establishes beyond argument;
+* **a shift between roughly 14% and 50% is better than leaving it**, by 2-6 points
+  depending on market and interval;
+* **the exact fraction is not identified**, differing between 15m and 1h by more than
+  their errors, so any single number is a choice rather than a measurement;
+* and **it still does not change the money** - 0.03-0.06 of a move per retest, below
+  costs, exactly as first reported.
+
+One correction to the record. The noise-floor objection was right about the five-series
+control and wrong as a conclusion: it led to "keep the level at the original price", and
+with the control tightened the shift is real. The lesson is the cheaper one - when a
+control's own spread is wider than the effect, widen the control before drawing the
+conclusion, because either answer was available from that table.

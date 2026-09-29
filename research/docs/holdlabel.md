@@ -97,6 +97,10 @@ level and not for the spread.
    would silently redefine every statistic already recorded and break comparability with
    everything in this folder. Measured alongside on the same touches, the two can be
    differenced — which is the only way to get the real number rather than assert it.
+   [`trap-levels.md`](trap-levels.md) is the working precedent: it scores level placements
+   on a symmetric ±1 sigma race precisely so the +5.1 here cannot leak into the comparison,
+   and its control confirms the property this harness asserts — across seven placements and
+   twenty random-walk series it reads **48.8–50.1%**, flat to 1.2 points.
 3. **Leave `trap_vol` alone** until someone measures it deliberately. It biases the rate
    downward, so "fixing" it in the same pass as the ratchet would move the null in two
    directions at once and the result would be uninterpretable.
@@ -111,3 +115,9 @@ level and not for the spread.
   from the close (`reactions.py:1145`); this harness has one price per bar, so it cannot
   see wick-versus-close effects. That is the most likely reason a replay would read
   differently from this, and it is the next thing to model.
+* **A flat control is not a free pass for the level of anything.** The +5.1 measured here
+  cancels in a differential and nowhere else, so a study needing an absolute rate still
+  needs its own null. [`trap-levels.md`](trap-levels.md) shows the cost of getting that
+  null wrong from the other direction: its first control was five series carrying a 4.7
+  point spread of their own, and both the positive and the negative reading were available
+  from that table.
