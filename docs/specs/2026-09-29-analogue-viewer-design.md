@@ -20,37 +20,71 @@ query window of `q` bars, and it finds the most similar past windows and shows t
 our own harness counts "sixteen published messages" from it.
 
 We are not short of a chart. What this repository has that the reference does not is
-**the measurements underneath the claim**, and three of them are already on the record:
+**the measurements underneath the claim**, and the relevant ones are already on the record.
+They must be read against the right question, because similarity is asked to do two
+different jobs and it fails one and passes the other:
 
 | question | what we measured | where |
 | --- | --- | --- |
-| does the distance order neighbours better than chance? | **AUC 0.4921** at 300–1,800s against 0.5000 shuffled; flat at every horizon the desk trades | [`similarity.md`](../../research/docs/similarity.md) |
-| do analogue shapes predict direction? | chance, twice — `motifs.py` died on bootstrap, `shapes.py` came out at chance at two embeddings | `analogue_envelope.py` header |
-| is the next-N-bars **range** forecastable? | **yes, and it is shipped** — percentiles that hold their stated rates, with drift correction | [`envelope.md`](../../research/docs/envelope.md), `structures/vol/envelope.py` |
+| does similarity predict **direction**? | **no.** Shapes at chance at two embeddings; `motifs.py` died on bootstrap; every conformal method's P50 lands at AUC 0.47–0.54 | `analogue_envelope.py` header, [`conformal.md`](../../research/docs/conformal.md) |
+| does distance order neighbours by **agreement about direction**? | **no.** AUC 0.4921 at 300–1,800s against 0.5000 shuffled, flat at every horizon the desk trades | [`similarity.md`](../../research/docs/similarity.md) |
+| is the next-N-bars **range** forecastable? | **yes, and it is shipped** — percentiles that hold their stated rates, corrected online | [`envelope.md`](../../research/docs/envelope.md), `structures/vol/envelope.py` |
+| does **weighting past outcomes by condition similarity** tighten a correctly-covering interval? | **yes.** MoE-CP `weighted` gives the narrowest band among the methods that cover: **12.05 against ACI's 13.84** at N = 50, and it lifts calm-regime coverage from 82.8% to 86.7%. Holds on FX, metals, crypto and three Deriv families | [`conformal.md`](../../research/docs/conformal.md) |
 
-And a fourth that is set up but never run: [`analogue_envelope.py`](../../research/harness/analogue_envelope.py)
-was written **about this exact service** — five-bar window, ten twins, five bars forward,
-`NO_TRADE`, published match scores "from 59% down to 9%" — to ask whether its envelope is
-tighter than a trailing sigma at equal coverage. Its own framing:
+**That fourth row is the one that matters here, and it reverses an earlier reading in this
+spec.** `similarity.md` is not evidence against an analogue panel. It measured whether
+distance orders *agreement about direction*, which is a different claim from *quote this
+moment from the history that resembled it*. The first is dead. The second is measured,
+narrower at equal coverage, and better conditionally — and it is the claim the viewer is
+actually built on.
+
+So similarity's job is **not to be the envelope. It is to localise it.** MoE-CP puts the
+weighting inside the conformal wrapper, over past residuals, which is why it works while a
+standalone analogue quantile has never been shown to.
+
+### What this does to `analogue_envelope.py`
+
+[`analogue_envelope.py`](../../research/harness/analogue_envelope.py) was written **about
+this exact service** — five-bar window, ten twins, five bars forward, `NO_TRADE`, published
+match scores "from 59% down to 9%" — and asks whether its envelope is tighter than a
+trailing sigma at equal coverage:
 
 > *"If the analogue envelope is no tighter at equal coverage, the nearest-neighbour
 > machinery is decoration on a volatility estimate, and the honest description of the
 > service is 'a trailing sigma with extra steps'."*
 
-The harness is committed. There is no write-up and no sign it was ever run. **That is the
-prerequisite**, not a nice-to-have: it decides whether the analogue panel is a forecast or
-an exhibit. See *Phase 0*.
+It is committed, has no write-up, and shows no sign of having been run. It is still worth
+running, but **its comparison is asymmetric and its verdict must not be taken at face
+value.** `equal-cov` is built as
+
+```python
+equal = np.quantile(np.abs(real) / (band / 1.2816), 1 - total)
+equal_width = np.mean(2 * equal * band / 1.2816)
+```
+
+— a conformally rescaled sigma band whose multiplier is fitted on the same sample whose
+exceedance it matches, so the baseline receives *oracle* calibration. The analogue side is a
+raw empirical percentile of the twins' forwards, corrected by nothing. A loss under that
+test cannot distinguish "similarity does not help" from "the analogue was not given the
+correction its rival got", and `conformal.md` has already shown that similarity does help
+once both sides are treated alike. Phase 0 therefore fixes the asymmetry before reading the
+result.
 
 So the product thesis inverts the reference:
 
-1. **Range is the headline.** It is the part that measures up, and it is already shipped
-   and calibrated in production.
-2. **Direction is labelled a coin, prominently**, because we have measured it twice.
-3. **Every panel carries its control.** A P50 with no null beside it is decoration; a
+1. **Range is the headline.** It is the part that measures up, it is shipped, and its
+   corrector is under active revision (AgACI, then `gbm` + AgACI).
+2. **Direction is labelled a coin, prominently**, because we have now measured it three
+   ways — shapes, ordering, and every conformal P50.
+3. **Similarity appears as a localiser, with its measured gain stated** — not as a
+   forecaster. The honest headline for the analogue panel is "this moment is quoted from
+   history that looked like it, and that makes the band 13% narrower at the same coverage",
+   which is both true and a better sentence than the reference can write.
+4. **Every panel carries its control.** A P50 with no null beside it is decoration; a
    match score of 9% presented as a "match" is a lie of omission. This is the one thing
    that cannot be copied without doing the work, and it is the product.
 
-That third point is a **design constraint, not a disclaimer**. It drives the layout.
+That fourth point is a **design constraint, not a disclaimer**. It drives the layout.
 
 ## Audience: assumed, and the one blocking decision
 
@@ -199,16 +233,25 @@ These are UI requirements with the same standing as the layout.
    and its percentile against the distance distribution, so "the tenth nearest neighbour"
    has a figure attached.
 3. **Direction carries a standing label.** Not a footnote: a persistent chip reading
-   *no directional claim — measured at chance twice*, linking to `similarity.md`. The
-   reference's own `NO_TRADE` is the precedent; ours cites the measurement.
-4. **Coverage is shown realised against stated.** A "P90" covering like a P80 is the
-   failure mode `envelope.md` was written to catch, and production already corrects for it.
-   Show both numbers and the correction.
+   *no directional claim — measured at chance three ways*, linking to `similarity.md` and
+   `conformal.md`. The reference's own `NO_TRADE` is the precedent; ours cites the
+   measurements, and one of them is that every conformal method's P50 lands at AUC
+   0.47–0.54.
+4. **Coverage is shown realised against stated, and conditionally.** A "P90" covering like
+   a P80 is the failure mode `envelope.md` was written to catch. Show both numbers, the
+   correction, and — because this is where the measured weakness actually is — coverage by
+   volatility third and the worst of twenty time slices. `conformal.md` has calm FX at
+   N = 50 covered **84.7%** by AgACI against a stated 90%. A single headline coverage
+   number hides exactly that, and it is the number a user in a calm market needs.
 5. **Warm-up is visible.** `MIN_HISTORY` is 3,000 bars in the harness and the envelope has
    its own `warm()`. Before that, the panel says what it is waiting for. It does not
    display a provisional number as a finished one.
 6. **Every panel links to the doc that measured it.** The research folder is the moat;
    linking to it costs a line and is the difference between a claim and a citation.
+7. **The band says what tightened it.** If the interval is narrower because this moment was
+   quoted from history resembling it, the panel says so and by how much — the measured
+   figure, 12.05 against 13.84 at N = 50, not an adjective. This is the analogue panel's
+   actual claim and the only one it is entitled to make.
 
 ## The look
 
@@ -252,29 +295,49 @@ is a bigger job.
 
 ## Phasing
 
-### Phase 0 — run the harness that already exists. No UI.
+### Phase 0 — sharpen the analogue question. No UI, and no longer a gate.
 
-Run `research/harness/analogue_envelope.py` on the lab across the four metrics it already
-defines (`euclid`, `cosine`, `corr`, `rich`), write up the result as
-`research/docs/analogue-envelope.md`, and answer its own question: **is the analogue
-envelope tighter than a trailing sigma at equal coverage?**
+The original form of this phase asked whether to build the analogue panel at all.
+[`conformal.md`](../../research/docs/conformal.md) has answered that: condition-weighted
+quoting produces the narrowest correctly-covering band measured, so the panel is justified
+and Phase 0 stops blocking Phases 1 and 2. It can run alongside them.
 
-This gates the shape of everything after it:
+What remains is a sharper question, and it is not the one the harness asks. MoE-CP's
+`weighted` conditions on **volatility state** — "a volatile moment is quoted from volatile
+history". `analogue_envelope.py` conditions on **shape**, the window's returns normalised by
+their own dispersion. Those are different conditioners, and only one of them is measured.
 
-* **If analogues win** — the analogue panel is the headline and the shipped envelope is the
-  baseline shown beside it.
-* **If they do not** — the shipped envelope is the headline, and the analogue panel becomes
-  an *exhibit*: here are the twins, here is why they look convincing, here is the trailing
-  sigma matching them. That is a better product than the reference and an honest one, and
-  it is still worth building.
+> **Does shape similarity buy anything beyond volatility-state similarity?**
 
-Either way the UI is worth building. What changes is which number is large, and building
-the UI first means guessing that.
+That is what the analogue panel rests on. If shape adds nothing, the twins are an
+*explanation* of a band that volatility state already produced — still worth showing, and
+honestly labelled as illustration. If shape adds something, the twins are load-bearing and
+the panel is the product's centre.
+
+Three steps, in order:
+
+1. **Symmetrise `analogue_envelope.py`.** Either conformalise the analogue side the way the
+   baseline already is, or strip the baseline's oracle calibration so both are corrected
+   out of sample. Not doing this leaves a result that cannot be read (see *What this does to
+   `analogue_envelope.py`*). Its four metrics — `euclid`, `cosine`, `corr`, `rich` — stay,
+   because they eliminate the distance function as the suspect rather than assuming it.
+2. **Add shape as a conditioner inside the conformal wrapper**, beside `weighted`'s
+   volatility state, and score it on `conformal.md`'s own terms: coverage, pinball, width,
+   and conditional coverage by volatility third and across twenty time slices. Reusing that
+   scoring is what makes the two comparable; a new scoring would just be a new opinion.
+3. **Write it up** as `research/docs/analogue-envelope.md`, including the negative case
+   plainly if shape adds nothing.
+
+The data is present locally — `.secrets/broker-deep/` holds the `1h` series the harness
+globs for, `btcusd` included — so this runs today and does not wait on the lab.
 
 ### Phase 1 — the API, against the shipped envelope only
 
 `till_infinity/web/` with `/api/symbols`, `/api/bars`, `/api/envelope`, `/api/health`. No
-analogues yet. Added to `docker-compose.yml` as `web-api` alongside the existing services,
+analogues yet. `/api/envelope` reports **which corrector produced the numbers**, because
+that is in motion: `conformal.md` recommends replacing production's single-gamma ACI with
+AgACI now, and testing `gbm` + AgACI next. A band whose corrector is unlabelled is a band
+whose coverage history cannot be read. Added to `docker-compose.yml` as `web-api` alongside the existing services,
 with its own restricted redis credentials and read-only mounts. Contract tests on every
 route. This is independently useful — it is the first HTTP read surface the desk has ever
 had.
@@ -288,6 +351,11 @@ The Next.js app at `web/`: chart, envelope cone with its control, coverage panel
 
 `/api/analogues` plus the lab-side panel builder, the match strip, and the distribution
 panel. The causality guard is the whole job (see *Testing*).
+
+Phase 0 does not gate this any more; it decides the panel's **billing**. If shape beats
+volatility state, the twins are the forecast and the band is quoted from them. If it does
+not, the twins illustrate a band that volatility state produced, labelled as illustration,
+and the measured MoE-CP gain is still what the coverage panel reports.
 
 ### Phase 4 — public, only if that is the answer
 
