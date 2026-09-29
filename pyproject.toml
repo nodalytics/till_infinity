@@ -41,6 +41,9 @@ mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
 # Talking to a Windows terminal from anywhere, by proxying the module itself
 # out of a Wine prefix. No platform marker: this half runs on the Linux side.
 rpyc = ["rpyc>=6.0.0"]
+# Retraining the offline models (`till-infinity models retrain`). Only the trainer
+# needs it: the engine evaluates the exported trees in plain Python.
+train = ["scikit-learn>=1.5.0"]
 
 [project.scripts]
 till-infinity = "till_infinity.cli:main"

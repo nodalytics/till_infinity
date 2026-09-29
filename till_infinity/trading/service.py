@@ -54,6 +54,7 @@ from ..structures.context.holds import Book as HoldBook
 from ..structures.context.reach import Reaches
 from ..structures.context.registry import clock_odds
 from ..structures.context.trend import Trend
+from ..structures.learning import shocks
 from ..structures.learning.focus import Focus
 from ..structures.levels import SECONDS
 from ..structures.vol import envelope
@@ -2682,9 +2683,9 @@ class Trader:
         got = payload.get("policy")
         if type(got).__name__ == "Policy":
             self.policy = got
-        kept = payload.get("entries")
-        if type(kept).__name__ == "Entries":
-            self.entries = kept
+        entries = payload.get("entries")
+        if type(entries).__name__ == "Entries":
+            self.entries = entries
         self._restore_refs(payload.get("refs"))
         self._restore_learned(payload.get("learned"))
         self._restore_intervals(payload.get("intervals"))
@@ -4230,6 +4231,7 @@ class Trader:
             # Where price can be five bars from here, from the signal's own features - the same
             # lines the level alert prints. Read, never acted on. See `structures/vol/envelope.py`.
             *envelope.card_lines(intent.features, _money_price),
+            *shocks.card_line(intent.features),
             rule,
         ]
         await self.bus.publish(

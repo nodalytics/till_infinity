@@ -58,7 +58,7 @@ from .drawing import (
     sweeps,
     vwap,
 )
-from .learning import focus, patterns, regimes
+from .learning import focus, patterns, regimes, shocks
 from .learning.focus import Focus
 from .models import Shape, Signal
 from .state import Restorable
@@ -1236,6 +1236,9 @@ class Engine:
         ebook = getattr(self, "envelopes", None)
         if ebook is not None:
             counts["envelopes"] = ebook.forget({k.split("|", 1)[0] for k in ebook.envelopes} - gone)
+        sbook = getattr(self, "shocks", None)
+        if sbook is not None:
+            counts["shocks"] = sbook.forget({k.split("|", 1)[0] for k in sbook.series} - gone)
         cbook = getattr(self, "cycles", None)
         if cbook is not None:
             counts["cycles"] = cbook.forget({f for f in cbook._by_feed if f not in gone})
@@ -1461,10 +1464,29 @@ class Engine:
             found = self.envelopes = ev.Book()
         return found
 
-    def _observe_envelope(self, feed: str, interval: str, close: float, vol: Volatility) -> None:
-        """Settle the envelope quoted N bars ago and quote the next N. See `vol/envelope.py`.
+    def _shocks(self) -> shocks.Shocks:
+        """The shock forecaster, created on demand - see `_projection` on asking by name."""
+        found = getattr(self, "shocks", None)
+        if found is None:
+            found = self.shocks = shocks.Shocks()
+        return found
 
-        Wrapped like every reading nobody gates on: a fault here must not stop a bar.
+    def _observe_forecasts(
+        self,
+        feed: str,
+        interval: str,
+        opened: float,
+        high: float,
+        low: float,
+        close: float,
+        vol: Volatility,
+    ) -> None:
+        """The forward readings nobody gates on, fed one closed bar.
+
+        The envelope settles the quote made N bars ago and quotes the next N (`vol/envelope.py`);
+        the shock forecaster settles the examples whose window this bar closes and holds this one's
+        (`learning/shocks.py`). Each wrapped on its own: a fault in one must not stop the other or
+        the bar.
         """
         try:
             bps = vol.ewma_tr_bps
@@ -1472,6 +1494,18 @@ class Engine:
                 self._envelopes().observe(feed, interval, close, bps / 10_000)
         except Exception as exc:
             log.debug("structures: no envelope for %s %s: %s", feed, interval, exc)
+        try:
+            seconds = lv.SECONDS.get(interval, 0.0)
+            self._shocks().observe(feed, interval, seconds, opened + seconds, high, low, close)
+        except Exception as exc:
+            log.debug("structures: no shock forecast for %s %s: %s", feed, interval, exc)
+
+    def _shock_at(self, feed: str, interval: str) -> dict[str, float]:
+        """P(shock within a few bars) for this series, for the journal. Absent while cold."""
+        try:
+            return self._shocks().reading(feed, interval)
+        except Exception:  # never let a published extra stop a call
+            return {}
 
     def _envelope_at(self, feed: str, interval: str, price: float) -> dict[str, float]:
         """The envelope's P10 / P50 / P90 around `price`, for the journal. Absent while cold."""
@@ -2183,7 +2217,7 @@ class Engine:
             # own method so that `observe_bar` stays inside the branch ceiling
             # and so the flag it is gated by sits next to the work it gates.
             self._settle_projection(feed, interval, opened, float(close))
-            self._observe_envelope(feed, interval, float(close), vol)
+            self._observe_forecasts(feed, interval, when, high, low, float(close), vol)
             self._observe_zma(feed, interval, float(close))
             self._observe_cycles(feed, interval, float(close))
         # Pivots are session structures priced at today's scale, so they use the
@@ -2524,6 +2558,7 @@ class Engine:
                         **self.changing(feed, when),
                         **self._learned_at(feed, interval),
                         **self._envelope_at(feed, interval, price),
+                        **self._shock_at(feed, interval),
                     },
                     # The same object the tracker put on the touch, so the
                     # break model is scored on this touch rather than on zeros.
