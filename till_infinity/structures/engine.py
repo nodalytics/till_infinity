@@ -59,7 +59,7 @@ from .drawing import (
     sweeps,
     vwap,
 )
-from .learning import focus, patterns, regimes, shocks
+from .learning import focus, patterns, regimes, shocks, touches
 from .learning.focus import Focus
 from .models import Shape, Signal
 from .state import Restorable
@@ -1241,9 +1241,10 @@ class Engine:
         ebook = getattr(self, "envelopes", None)
         if ebook is not None:
             counts["envelopes"] = ebook.forget({k.split("|", 1)[0] for k in ebook.envelopes} - gone)
-        sbook = getattr(self, "shocks", None)
-        if sbook is not None:
-            counts["shocks"] = sbook.forget({k.split("|", 1)[0] for k in sbook.series} - gone)
+        for name in ("shocks", "touches"):  # both keyed "feed|interval" in `series`
+            fbook = getattr(self, name, None)
+            if fbook is not None:
+                counts[name] = fbook.forget({k.split("|", 1)[0] for k in fbook.series} - gone)
         cbook = getattr(self, "cycles", None)
         if cbook is not None:
             counts["cycles"] = cbook.forget({f for f in cbook._by_feed if f not in gone})
@@ -1469,6 +1470,13 @@ class Engine:
             found = self.envelopes = ev.Book()
         return found
 
+    def _touches(self) -> touches.Touches:
+        """The band-touch forecaster, created on demand - see `_projection` on asking by name."""
+        found = getattr(self, "touches", None)
+        if found is None:
+            found = self.touches = touches.Touches()
+        return found
+
     def _shocks(self) -> shocks.Shocks:
         """The shock forecaster, created on demand - see `_projection` on asking by name."""
         found = getattr(self, "shocks", None)
@@ -1497,6 +1505,13 @@ class Engine:
             bps = vol.ewma_tr_bps
             if bps > 0 and close > 0:
                 self._envelopes().observe(feed, interval, close, bps / 10_000)
+                # The band-touch forecaster reads the bands just quoted (`learning/touches.py`).
+                if touches.applies(feed, interval):
+                    env = self._envelopes().envelopes.get(f"{feed}|{interval}|{touches.AHEAD}")
+                    quote = list(env.quote) if env is not None and env.warm else None
+                    self._touches().observe(
+                        feed, interval, opened, high, low, close, bps / 10_000, quote
+                    )
         except Exception as exc:
             log.debug("structures: no envelope for %s %s: %s", feed, interval, exc)
         try:
@@ -1504,6 +1519,14 @@ class Engine:
             self._shocks().observe(feed, interval, seconds, opened + seconds, high, low, close)
         except Exception as exc:
             log.debug("structures: no shock forecast for %s %s: %s", feed, interval, exc)
+
+    def _touch_at(self, feed: str, interval: str) -> dict[str, float]:
+        """P(the envelope's P90 / P10 touched in the next bars), for the journal. Absent while cold
+        and off FX 15m."""
+        try:
+            return self._touches().reading(feed, interval)
+        except Exception:  # never let a published extra stop a call
+            return {}
 
     def _shock_at(self, feed: str, interval: str) -> dict[str, float]:
         """P(shock within a few bars) for this series, for the journal. Absent while cold."""
@@ -2596,6 +2619,7 @@ class Engine:
                         **self._learned_at(feed, interval),
                         **self._envelope_at(feed, interval, price),
                         **self._shock_at(feed, interval),
+                        **self._touch_at(feed, interval),
                     },
                     # The same object the tracker put on the touch, so the
                     # break model is scored on this touch rather than on zeros.

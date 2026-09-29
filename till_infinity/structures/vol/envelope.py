@@ -475,4 +475,8 @@ def card_lines(got: Mapping, price: Callable[[float], str]) -> list[str]:
             lines.append("⚖️ tight volatility compression · expansion watch, no side")
         elif percentile >= 0.8:
             lines.append("⚖️ volatility already expanded · wide bars, no side")
+    # The chance each band is touched on the way, where a model is trained for the series.
+    from ..learning import touches
+
+    lines += touches.card_line(got)
     return lines
