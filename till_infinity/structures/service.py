@@ -52,6 +52,7 @@ from .context.sessions import Clock
 from .drawing import confluence as cf
 from .drawing.level_range import ANCHOR, between_origins, level_range_of
 from .engine import Engine
+from .learning import shocks
 from .learning.anomaly import Detector
 from .learning.baseline import Bench
 from .learning.baseline import vector as bench_vector
@@ -429,7 +430,7 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     breaking = got.get("break_probability")
     if breaking is not None:
         body.append(f"💥 break risk {breaking:.0%} · from arrival speed and depth")
-    body.extend(ev.card_lines(got, _price))
+    body.extend([*ev.card_lines(got, _price), *shocks.card_line(got)])
 
     # **The cycle reading, on the card rather than only in the journal.**
     #

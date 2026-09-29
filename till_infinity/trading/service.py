@@ -54,6 +54,7 @@ from ..structures.context.holds import Book as HoldBook
 from ..structures.context.reach import Reaches
 from ..structures.context.registry import clock_odds
 from ..structures.context.trend import Trend
+from ..structures.learning import shocks
 from ..structures.learning.focus import Focus
 from ..structures.levels import SECONDS
 from ..structures.vol import envelope
@@ -4230,6 +4231,7 @@ class Trader:
             # Where price can be five bars from here, from the signal's own features - the same
             # lines the level alert prints. Read, never acted on. See `structures/vol/envelope.py`.
             *envelope.card_lines(intent.features, _money_price),
+            *shocks.card_line(intent.features),
             rule,
         ]
         await self.bus.publish(
