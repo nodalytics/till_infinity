@@ -350,7 +350,6 @@ def boot(values: np.ndarray, n: int = 2000) -> tuple[float, float, float]:
 
 
 def haven() -> None:
-    info = json.loads((OUT / "info.json").read_text())
     spx = pd.read_csv(OUT / "spx.csv", index_col=0, parse_dates=True).squeeze()
     dxy = pd.read_csv(OUT / "dxy.csv", index_col=0, parse_dates=True).squeeze()
     r = np.log(spx).diff()
