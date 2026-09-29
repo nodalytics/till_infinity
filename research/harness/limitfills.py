@@ -61,6 +61,15 @@ Pre-registered: a limit variant is better only if its **total** net R per signal
 misses) at the 2R target beats market entry on the same touches by at least 0.03R with t >= 3, in
 both halves, and by more than the same difference on the walks.
 
+**Added after the first run, and flagged as post hoc.** That rule compares a limit, which trades a
+fraction of the touches, with a market entry that trades every one and pays every cost. Where
+every trade loses to costs (FX 15m: -0.223R net against -0.003R gross), trading less "wins" by
+itself, and the walks, charged 0.15 against FX's 0.8, cannot net that out. So two more
+comparisons are reported, and the verdict uses them:
+  random skip  the market entry on a random subset at the limit's own fill rate (per signal:
+               fill rate x market R). The limit must beat it, net and gross, by 0.03R with t >= 3
+  gross        before costs, per signal and on the fills against the market on the same touches
+
 Run on the lab (one process per universe), then PART=report and PART=journal:
   UNIVERSE=real OUT=$HOME/till_infinity/data/limitfills TOUCHES=$HOME/till_infinity/data/stophunt \\
     SEQLAB=$HOME/till_infinity/data/seqlab python research/harness/limitfills.py
@@ -257,17 +266,29 @@ def report() -> None:
             f = v[v["filled"] == 1]
             u = v[v["filled"] == 0]
             halves = [(p["r2"] - p["m_r2"]).mean() for p in (v[v["time"] < cut], v[v["time"] >= cut])]
+            rate = v["filled"].mean()
+            # The random skip: the market entry kept on a random `rate` of the touches.
+            skip_net, t_skip = clustered(v["r2"] - rate * v["m_r2"], v)
+            skip_gross, t_skip_g = clustered(v["r2_gross"] * v["filled"] - rate * v["m_r2_gross"], v)
+            skip_halves = [(p["r2_gross"] * p["filled"] - p["filled"].mean() * p["m_r2_gross"]).mean()
+                           for p in (v[v["time"] < cut], v[v["time"] >= cut])]
+            fills_gross = (f["r2_gross"] - f["m_r2_gross"]).mean() if len(f) else float("nan")
             after = f["after"].mean() if len(f) else float("nan")
             m_after = f["m_after"].mean() if len(f) else float("nan")
             thru = f["thru"].mean() if len(f) else float("nan")
-            verdict = ("PASS" if d >= 0.03 and t >= 3 and min(halves) > 0 and fam != "walks"
-                       and d > wdiff.get((k, rule, life), 0.0) else "")
+            literal = (d >= 0.03 and t >= 3 and min(halves) > 0 and fam != "walks"
+                       and d > wdiff.get((k, rule, life), 0.0))
+            fair = (literal and skip_net >= 0.03 and t_skip >= 3 and skip_gross >= 0.03
+                    and t_skip_g >= 3 and min(skip_halves) > 0)
+            verdict = "PASS" if fair else ("literal only" if literal else "")
             print(f"  k {k:4.2f} {rule:7s} life {life:2d} | fill {v['filled'].mean():5.1%} | per signal "
                   f"{d:+.3f} (t {t:+.1f}) 1R {d1:+.3f} | halves {halves[0]:+.3f} / {halves[1]:+.3f} | "
                   f"walks {wdiff.get((k, rule, life), float('nan')):+.3f} | filled {f['r2'].mean():+.3f} vs "
                   f"{f['m_r2'].mean():+.3f} | missed {u['m_r2'].mean():+.3f} | thru {thru:+.3f} after {after:+.3f} "
                   f"(market {m_after:+.3f}) | "
-                  f"unit P&L {dp:+.3f} (t {tp:+.1f}) {verdict}")
+                  f"unit P&L {dp:+.3f} (t {tp:+.1f}) | vs random skip net {skip_net:+.3f} (t {t_skip:+.1f}) "
+                  f"gross {skip_gross:+.3f} (t {t_skip_g:+.1f}) halves {skip_halves[0]:+.3f} / "
+                  f"{skip_halves[1]:+.3f} | fills gross vs market {fills_gross:+.3f} {verdict}")
 
 
 # ---------------------------------------------------------------------------------------- the journal
