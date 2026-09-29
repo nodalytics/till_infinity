@@ -830,6 +830,57 @@ async def test_the_extremes_timing_is_forgotten_when_the_trade_closes(tmp_path):
         assert ticket not in trader._worst_at
 
 
+async def test_a_turn_suggestion_on_the_signal_reaches_the_close(tmp_path):
+    """The shadow comparison, end to end, because it has never once run in production.
+
+    `trading.turn_exit` reports inert: declared always-on and never fired across the
+    desk's whole history, and not one of 1,202 closed trades carries a single `turn_*`
+    field. The declaration's own comment names the two candidates - "either the depth
+    head is never warm on a traded feed or `turn_price` is not reaching
+    `Intent.features`" - and the journal rules out the first: 2,409 entries carry a
+    real `turn_price`, and `turn_side` agrees with the trade's side about as often as
+    it disagrees, so it is not being systematically refused either.
+
+    This pins the path itself. If it passes, the wiring is sound and the live silence
+    is environmental - a recovered intent after a restart, whose features default
+    empty, being the documented candidate. If it fails, the break is here.
+    """
+    bus = Bus()
+    async with Journal(tmp_path / "journal.db") as book:
+        trader = Trader(bus, settings=settings(), journal=book)
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+        )
+        # A suggestion in front of a long entry, on the same side as the trade.
+        await trader.handle(
+            Message(
+                topic=SIGNALS,
+                payload=signal(features={"turn_price": 4410.0, "turn_side": 1.0}),
+            )
+        )
+        assert len(trader.open) == 1
+        live = next(iter(trader.open.values()))
+        assert live.intent.features.get("turn_price") == 4410.0, (
+            "the signal's turn_price did not reach Intent.features"
+        )
+
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "gold", "bid": 4395.0, "ask": 4396.0})
+        )
+        await trader.sweep()
+        assert not trader.open
+
+        outcomes = [
+            e.context
+            for e in read(tmp_path / "journal.db")
+            if isinstance(getattr(e, "context", None), dict) and "best_r" in e.context
+        ]
+        assert outcomes, "no outcome carried best_r"
+        turned = [c for c in outcomes if any(k.startswith("turn_") for k in c)]
+        assert turned, "the close carried no turn_* field, so the shadow never ran"
+
+
 async def test_a_close_records_when_each_extreme_came_not_only_how_far(tmp_path):
     """The ordering, without which a break-even trigger cannot be evaluated.
 
