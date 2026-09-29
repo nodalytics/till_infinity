@@ -25,7 +25,10 @@ Scored on the last 40% of each series:
   stability         P90 coverage in 20 consecutive chunks of the test block: its spread and worst chunk
   by regime         P90 coverage in low / mid / high thirds of sigma relative to its 500-bar mean
   direction         AUC of the P50 for the sign of y - does the median say anything about which way
-Families: 15 FX pairs, XAU/XAG, BTC/ETH/SOL, and five random walks as the control, at 15m and 1h.
+Families: 15 FX pairs, XAU/XAG, BTC/ETH/SOL, and every Deriv synthetic family on the lab (Volatility,
+Volatility 1s, Jump, Step, Skew Step, Boom, Crash, DEX, Drift Switch, Range Break), at 15m and 1h,
+over N = 5, 10, 20 and 50 bars (HORIZONS). Width / sqrt(N) profiles how the band grows with N: flat is
+the random-walk law.
 """
 from __future__ import annotations
 
@@ -43,7 +46,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import spikerisk
 from fractal_twins import FAMILIES
 
-H = 5
+H = 5  # set per run from HORIZONS
+HORIZONS = tuple(int(x) for x in os.environ.get("HORIZONS", "5,10,20,50").split(","))
 LEVELS = (0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 0.9, 0.95)
 TARGETS = (0.1, 0.5, 0.9)
 GAMMA = float(os.environ.get("GAMMA", "0.005"))
@@ -80,15 +84,20 @@ def run_series(g, base, gbm_pred, scale):
         a = {q: q for q in TARGETS}
         quotes = {q: np.full(len(idx), np.nan) for q in TARGETS}
         hist = list(y[max(0, idx[0] - WINDOW - H):idx[0] - H]) if len(idx) else []
+        cached = None
         for k, i in enumerate(idx):
+            if base == "empirical" and (cached is None or k % 25 == 0):
+                # The window moves one bar at a time and its quantiles barely at all; re-sorting every 25
+                # bars keeps the run tractable across ninety series and four horizons.
+                arr = np.asarray(hist[-WINDOW:])
+                cached = np.sort(arr[np.isfinite(arr)])
             for q in TARGETS:
                 lvl = a[q] if mode == "aci" else q
                 if base == "gauss":
                     Q = stats.norm.ppf(lvl) * scale
                 elif base == "empirical":
-                    arr = np.asarray(hist[-WINDOW:])
-                    arr = arr[np.isfinite(arr)]
-                    Q = np.quantile(arr, lvl) if len(arr) > 200 else stats.norm.ppf(lvl) * scale
+                    n = len(cached)
+                    Q = cached[int(round(lvl * (n - 1)))] if n > 200 else stats.norm.ppf(lvl) * scale
                 else:
                     Q = np.interp(lvl, LEVELS, gbm_pred[i])
                 quotes[q][k] = Q
@@ -118,16 +127,30 @@ def evaluate(name, rows):
     reg = [np.mean(y[m] <= Q[0.9][m]) for m in (lv <= terc[0], (lv > terc[0]) & (lv <= terc[1]), lv > terc[1])]
     auc = roc_auc_score(y > 0, Q[0.5]) if np.std(Q[0.5]) > 0 else 0.5
     print(f"    {name:<16} cover P10/P50/P90 {cov[0.1]:.1%} / {cov[0.5]:.1%} / {cov[0.9]:.1%} | pinball "
-          f"{pin[0.1]:.3f} / {pin[0.5]:.3f} / {pin[0.9]:.3f} | width {width:.2f} | P90 by chunk sd {c90.std():.1%} "
+          f"{pin[0.1]:.3f} / {pin[0.5]:.3f} / {pin[0.9]:.3f} | width {width:.2f} (/sqrt N {width / np.sqrt(H):.2f}) | P90 by chunk sd {c90.std():.1%} "
           f"worst {c90.min():.1%} | P90 by vol third {reg[0]:.1%} / {reg[1]:.1%} / {reg[2]:.1%} | P50 AUC {auc:.3f}")
 
 
+SYNTHETICS = {
+    "volatility": [f"Volatility_{v}_Index" for v in (5, 10, 15, 25, 30, 50, 75, 90, 100)],
+    "volatility 1s": [f"Volatility_{v}_1s_Index" for v in (5, 10, 15, 25, 30, 50, 75, 90, 100, 150, 250)],
+    "jump": [f"Jump_{v}_Index" for v in (10, 25, 50, 75, 100)],
+    "step": ["Step_Index", "Step_Index_200", "Multi_Step_2_Index", "Multi_Step_3_Index", "Multi_Step_4_Index"],
+    "skew step": ["Skew_Step_Index_4_Up", "Skew_Step_Index_4_Down", "Skew_Step_Index_5_Up", "Skew_Step_Index_5_Down"],
+    "boom": [f"Boom_{v}_Index" for v in (50, 100, 150, 200, 300, 500, 600, 900, 1000)],
+    "crash": [f"Crash_{v}_Index" for v in (50, 100, 150, 200, 300, 500, 600, 900, 1000)],
+    "dex": [f"DEX_{v}_{d}_Index" for v in (600, 900, 1500) for d in ("UP", "DOWN")],
+    "drift switch": [f"Drift_Switch_Index_{v}" for v in (10, 20, 30)],
+    "range break": ["Range_Break_100_Index", "Range_Break_200_Index"],
+}
+
+
 def main():
-    groups = {"fx": FAMILIES["fx"], "metals": FAMILIES["metal"], "crypto": FAMILIES["crypto"],
-              "random walks": ["Volatility_10_Index", "Volatility_25_Index", "Volatility_50_Index",
-                               "Volatility_75_Index", "Volatility_100_Index"]}
+    global H
+    groups = {"fx": FAMILIES["fx"], "metals": FAMILIES["metal"], "crypto": FAMILIES["crypto"], **SYNTHETICS}
     feats = ["lvol", "r1", "r5", "r20", "rng", "hour"]
-    for interval in ("15m", "1h"):
+    runs = [(i, h) for i in os.environ.get("INTERVALS", "15m,1h").split(",") for h in HORIZONS]
+    for interval, H in runs:
         print(f"\n{'=' * 120}\nENVELOPE {interval}, next {H} bars, y in units of the production volatility; ACI gamma {GAMMA}; test = last 40%")
         for name, syms in groups.items():
             frames = []
@@ -139,11 +162,11 @@ def main():
             allf = pd.concat(frames, ignore_index=True)
             tr = allf[~allf["test"] & allf["y"].notna()]
             scale = tr["y"].std()
-            fit = tr.sample(min(300_000, len(tr)), random_state=0)
+            fit = tr.sample(min(150_000, len(tr)), random_state=0)
             models = {q: HistGradientBoostingRegressor(loss="quantile", quantile=q, max_depth=4, max_iter=200,
                                                        learning_rate=0.05, min_samples_leaf=500).fit(fit[feats], fit["y"])
                       for q in LEVELS}
-            print(f"\n  {name}: {len(allf):,} bars, train sd of y {scale:.2f} (a random walk's 5-bar sd would be about "
+            print(f"\n  {name}: {len(allf):,} bars, train sd of y {scale:.2f} (a random walk's {H}-bar sd would be about "
                   f"{np.sqrt(H) / 1.25:.2f} in these units)")
             for base in ("gauss", "empirical", "gbm"):
                 res = {"raw": [], "aci": []}

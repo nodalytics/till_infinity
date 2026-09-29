@@ -62,6 +62,7 @@ from .learning import focus, patterns, regimes
 from .learning.focus import Focus
 from .models import Shape, Signal
 from .state import Restorable
+from .vol import envelope as ev
 from .vol import projection as pj
 from .vol.volatility import Book as VolBook
 from .vol.volatility import Volatility
@@ -1232,6 +1233,9 @@ class Engine:
         zbook = getattr(self, "zma", None)
         if zbook is not None:
             counts["zma"] = zbook.forget({f for f, _ in zbook._by_key if f not in gone})
+        ebook = getattr(self, "envelopes", None)
+        if ebook is not None:
+            counts["envelopes"] = ebook.forget({k.split("|", 1)[0] for k in ebook.envelopes} - gone)
         cbook = getattr(self, "cycles", None)
         if cbook is not None:
             counts["cycles"] = cbook.forget({f for f in cbook._by_feed if f not in gone})
@@ -1449,6 +1453,32 @@ class Engine:
                 self._projection().settle(feed, float(opened), seconds, close)
         except Exception as exc:
             log.debug("structures: no projection for %s %s: %s", feed, interval, exc)
+
+    def _envelopes(self) -> ev.Book:
+        """The envelope book, created on demand - `_projection` says why it is asked for by name."""
+        found = getattr(self, "envelopes", None)
+        if found is None:
+            found = self.envelopes = ev.Book()
+        return found
+
+    def _observe_envelope(self, feed: str, interval: str, close: float, vol: Volatility) -> None:
+        """Settle the envelope quoted N bars ago and quote the next N. See `vol/envelope.py`.
+
+        Wrapped like every reading nobody gates on: a fault here must not stop a bar.
+        """
+        try:
+            bps = vol.ewma_tr_bps
+            if bps > 0 and close > 0:
+                self._envelopes().observe(feed, interval, close, bps / 10_000)
+        except Exception as exc:
+            log.debug("structures: no envelope for %s %s: %s", feed, interval, exc)
+
+    def _envelope_at(self, feed: str, interval: str, price: float) -> dict[str, float]:
+        """The envelope's P10 / P50 / P90 around `price`, for the journal. Absent while cold."""
+        try:
+            return self._envelopes().reading(feed, interval, price)
+        except Exception:  # never let a published extra stop a call
+            return {}
 
     def _projection(self) -> pj.Book:
         """The projection book, created on demand.
@@ -2153,6 +2183,7 @@ class Engine:
             # own method so that `observe_bar` stays inside the branch ceiling
             # and so the flag it is gated by sits next to the work it gates.
             self._settle_projection(feed, interval, opened, float(close))
+            self._observe_envelope(feed, interval, float(close), vol)
             self._observe_zma(feed, interval, float(close))
             self._observe_cycles(feed, interval, float(close))
         # Pivots are session structures priced at today's scale, so they use the
@@ -2489,7 +2520,11 @@ class Engine:
                     price=price,
                     time=when,
                     origin=self._origin_at(feed, interval, level.price, vol),
-                    context={**self.changing(feed, when), **self._learned_at(feed, interval)},
+                    context={
+                        **self.changing(feed, when),
+                        **self._learned_at(feed, interval),
+                        **self._envelope_at(feed, interval, price),
+                    },
                     # The same object the tracker put on the touch, so the
                     # break model is scored on this touch rather than on zeros.
                     # See `Call.features`.

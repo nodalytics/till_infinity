@@ -60,6 +60,7 @@ from .learning.drift import Drift
 from .learning.racing import Races
 from .levels import SECONDS
 from .models import Shape, Signal
+from .vol import envelope as ev
 from .vol import implied
 
 #: How many published feature sets `liveness_tally` reads. Enough that a
@@ -428,6 +429,7 @@ def alert_payload(signal: Signal) -> dict[str, object]:
     breaking = got.get("break_probability")
     if breaking is not None:
         body.append(f"💥 break risk {breaking:.0%} · from arrival speed and depth")
+    body.extend(ev.card_lines(got, _price))
 
     # **The cycle reading, on the card rather than only in the journal.**
     #
