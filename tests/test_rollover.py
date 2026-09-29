@@ -117,3 +117,70 @@ def test_an_open_fx_touch_is_carried_through_the_spike_untouched():
     after = at(f"{SUMMER} 21:20")
     machine.check("eurusd", "1m", 100.0, after, low=99.9, high=100.1, since=after - 60)
     assert handed == [after]
+
+
+# ------------------------------------------------------------------ the wick, and the old records
+
+
+def test_the_body_is_what_is_left_of_a_spiked_bar():
+    assert ro.body(100.0, 100.2) == (100.2, 100.0)
+    assert ro.body(100.2, 100.0) == (100.2, 100.0)
+
+
+def _bar(feed: str, time: float, high: float, low: float) -> dict:
+    return {
+        "feed": feed,
+        "interval": "15m",
+        "venue": "BROKER",
+        "time": time,
+        "open": 100.0,
+        "high": high,
+        "low": low,
+        "close": 100.2,
+    }
+
+
+def test_an_fx_bar_reaching_the_rollover_loses_its_wick_before_anything_draws_on_it():
+    machine = eng.Engine(intervals=("15m",))
+    machine.consensus.single_source = frozenset({"eurusd", "xauusd"})
+    machine.observe_bar(_bar("eurusd", at(f"{SUMMER} 20:45"), 105.0, 95.0))
+    series = machine.series("eurusd", "15m")
+    assert (series.highs[-1], series.lows[-1]) == (100.2, 100.0)
+    machine.observe_bar(_bar("xauusd", at(f"{SUMMER} 20:45"), 105.0, 95.0))
+    gold = machine.series("xauusd", "15m")
+    assert (gold.highs[-1], gold.lows[-1]) == (105.0, 95.0)
+    machine.observe_bar(_bar("eurusd", at(f"{SUMMER} 19:00"), 105.0, 95.0))
+    assert (series.highs[-1], series.lows[-1]) == (105.0, 95.0)
+
+
+def _recorded(feed: str, interval: str) -> Level:
+    from till_infinity.structures.levels import Side
+
+    level = Level(feed=feed, interval=interval, filter=Kalman(mean=100.0, variance=0.01))
+    stats = level.stats(Side.ABOVE)
+    stats.touches, stats.rejects, stats.traps = 20.0, 12.0, 6.0
+    return level
+
+
+def test_records_learned_before_the_mask_are_faded_once():
+    machine = eng.Engine(intervals=("15m", "1h"))
+    assert machine.discount_rollover_records() == 0  # a new engine has nothing to fade
+    fx15, fx1h, gold = (
+        _recorded("eurusd", "15m"),
+        _recorded("eurusd", "1h"),
+        _recorded("xauusd", "15m"),
+    )
+    machine._levels = {
+        ("eurusd", "15m"): [fx15],
+        ("eurusd", "1h"): [fx1h],
+        ("xauusd", "15m"): [gold],
+    }
+    del machine.rollover_discounted  # what an engine restored from an older state looks like
+    assert machine.discount_rollover_records() == 1
+    from till_infinity.structures.levels import Side
+
+    assert fx15.stats(Side.ABOVE).touches == pytest.approx(20.0 * ro.DISCOUNT["15m"])
+    assert fx1h.stats(Side.ABOVE).touches == 20.0  # not measured, left alone
+    assert gold.stats(Side.ABOVE).touches == 20.0
+    assert machine.discount_rollover_records() == 0  # once
+    assert fx15.stats(Side.ABOVE).touches == pytest.approx(20.0 * ro.DISCOUNT["15m"])

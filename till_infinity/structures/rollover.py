@@ -17,7 +17,17 @@ daylight saving: 21:00 UTC in the northern summer, 22:00 in winter. Levels still
 bars, and touches opened outside the window are carried through it untouched and judged on the
 prices after it.
 
-`STRUCTURES_ROLLOVER_MASK=0` turns it off.
+Two more pieces, for what the spike already did and would still do:
+
+- **Its wick is trimmed from the bar.** An FX bar that reaches the window has its high and low cut
+  to the candle's body before it feeds anything, so no level, pivot or volatility reading is drawn
+  from the spike (`body`).
+- **Records already learned are discounted once.** A state saved before the mask carries FX level
+  records of which up to 41% (30m) were rollover-made, and those outcomes cannot be picked out
+  after the fact. Each FX level's record is decayed once by `DISCOUNT`, one minus the spike's
+  share at that timeframe, so the clean outcomes that follow outweigh it sooner.
+
+`STRUCTURES_ROLLOVER_MASK=0` turns all three off.
 """
 
 from __future__ import annotations
@@ -39,6 +49,11 @@ BEFORE, AFTER = 5, 10
 #: masking them would stop a feed whose finest bars are that long from ever touching; the spike is
 #: a small part of such a bar's range.
 LONGEST = 2 * 3600
+
+#: The share of each FX level's record kept by the one-time discount: 1 - (s - e) / (1 - e), where
+#: s is the share of that timeframe's outcomes the journal saw in 21-22 UTC and e = 2/24 is an even
+#: spread's. Timeframes the journal did not break out are left alone.
+DISCOUNT: dict[str, float] = {"1m": 0.95, "3m": 0.84, "5m": 0.78, "15m": 0.65, "30m": 0.59}
 
 #: ISO codes of the currencies a six-letter FX feed is made of. A metal (XAUUSD) or a crypto pair
 #: (BTCUSD) also has six letters, which is why the halves are checked, not the length.
@@ -106,3 +121,17 @@ def masked(feed: str, start: float, end: float | None = None) -> bool:
             return True
         day += timedelta(days=1)
     return False
+
+
+def body(open_: float, close: float) -> tuple[float, float]:
+    """A bar's high and low with the wick cut to the candle's body."""
+    return max(open_, close), min(open_, close)
+
+
+def trimmed(
+    feed: str, start: float, end: float, open_: float, high: float, low: float, close: float
+) -> tuple[float, float, float]:
+    """`(high, low, close)`, with the wick cut to the body if the bar reaches the rollover."""
+    if masked(feed, start, end):
+        high, low = body(open_, close)
+    return high, low, close
