@@ -1879,38 +1879,83 @@ had port 22 dead while the bridge still answered 200, so **check the bridge sepa
 
 ### Supervise it
 
-A unit, so it comes back with the box and restarts when the link drops:
+**Corrected 2026-09-29, after measuring what the hosts actually permit.** The unit that used to
+be here could not have worked, and it is worth saying how it failed rather than quietly replacing
+it: it ran `ssh -L` **from the instance to the terminal host**, and it asked the forward to bind the
+docker bridge. Both are impossible here.
 
-```ini
-# ~/.config/systemd/user/mt5-tunnel.service
-[Unit]
-Description=SSH tunnel to the MT5 bridge
-After=network-online.target
+| measured | consequence |
+| --- | --- |
+| instance -> terminal host `:22` is **shut** (the terminal host is behind NAT) | a forward *from* the instance cannot reach it. The direction has to be reversed |
+| terminal host -> instance `:22` is **open** | the tunnel must be started from the terminal host, as `-R` |
+| the instance's sshd reports **`gatewayports no`** | a remote forward may bind `127.0.0.1` only, never `172.17.0.1` |
+| the terminal host had **no private key** and its public key was **not** in the instance's `authorized_keys` | there has never been an automated path at all - every tunnel this desk has had was started by hand, which is why a reboot always takes execution down |
 
-[Service]
-# Bound to the docker bridge, not to localhost: the container reaches the host at
-# 172.17.0.1, and a tunnel on 127.0.0.1 is invisible to it.
-ExecStart=/usr/bin/ssh -N -T \
-  -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
-  -o StrictHostKeyChecking=accept-new \
-  -i %h/.ssh/lab.pem \
-  -L 172.17.0.1:8000:127.0.0.1:8000 \
-  <user>@<lab>
-Restart=always
-RestartSec=15
+That last row is the root cause of the recurring outage. Nothing was there to restart.
 
-[Install]
-WantedBy=default.target
-```
+**The shape that works.** Three parts, and the second is the one people miss:
 
-```bash
-systemctl --user enable --now mt5-tunnel
-loginctl enable-linger "$USER"     # so it survives logout
-```
+1. **A key the terminal host can use, with nothing else attached to it.** Generate it *on* that host
+   so the private half never moves, and trust only the public half on the instance, stripped down:
+
+   ```
+   restrict,port-forwarding,permitlisten="172.17.0.1:8000",permitlisten="172.17.0.1:11434" ssh-ed25519 AAAA... lab-tunnel
+   ```
+
+   `restrict` turns everything off - no shell, no pty, no agent, no X11 - and `port-forwarding` turns
+   back on only what a tunnel needs. `permitlisten` bounds which addresses `-R` may bind, so the key
+   cannot be repurposed into a general forwarder. This is **less** access than the manual sessions
+   that preceded it.
+
+2. **Make the bind legal.** `-R` cannot bind `172.17.0.1` while sshd says `gatewayports no`, and the
+   container can only see the bridge. Either allow the client to choose, on the instance:
+
+   ```
+   # /etc/ssh/sshd_config.d/10-gatewayports.conf
+   GatewayPorts clientspecified
+   ```
+
+   validated with `sudo sshd -t` and applied with a **reload** rather than a restart, so open sessions
+   survive - or leave sshd alone, bind `127.0.0.1:8001`, and relay `172.17.0.1:8000` to it on the
+   instance. The sshd option has fewer moving parts and `permitlisten` keeps the key narrow.
+
+3. **The unit, on the terminal host**, forwarding the model endpoint beside the bridge so one
+   supervised tunnel serves both rather than two fragile ones:
+
+   ```ini
+   # ~/.config/systemd/user/mt5-tunnel.service   (on the TERMINAL host)
+   [Unit]
+   Description=Reverse tunnel to the trading instance
+   After=network-online.target
+
+   [Service]
+   ExecStart=/usr/bin/ssh -N -T \
+     -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+     -o StrictHostKeyChecking=accept-new -o BatchMode=yes \
+     -i %h/.ssh/tis-tunnel \
+     -R 172.17.0.1:8000:127.0.0.1:8000 \
+     -R 172.17.0.1:11434:127.0.0.1:11434 \
+     <user>@<instance>
+   Restart=always
+   RestartSec=15
+
+   [Install]
+   WantedBy=default.target
+   ```
+
+   ```bash
+   systemctl --user enable --now mt5-tunnel
+   loginctl enable-linger "$USER"     # so it survives logout and comes back on boot
+   ```
 
 `ExitOnForwardFailure=yes` is the part that matters: without it `ssh` stays up having failed to bind
 the forward, `Restart=always` never fires, and the tunnel is dead while the unit reads as active -
 which is the same silent failure one layer up.
+
+**One caveat on the model endpoint.** Forwarding 11434 only helps once something listens there. On
+2026-09-29 the terminal host ran `ollama` with `qwen2.5:7b-instruct` and **no published port** - it
+sat on its compose network alone, unreachable even from its own host - so the compose file has to
+publish it before the second `-R` does anything.
 
 **And the desk should say so.** `trading` logs the retry but nothing alarms on it, so a bridge that
 never attaches looks like a quiet day. The retry counter reaching some threshold is a notification
