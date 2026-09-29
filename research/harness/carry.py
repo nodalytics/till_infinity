@@ -172,6 +172,26 @@ def closes(sym: str, interval: str = "1d") -> pd.Series:
     return s[~s.index.duplicated()]
 
 
+#: Round-trip cost in units of a 5-minute sd (the lab's COST_V: fx 0.8, metals 0.16).
+COST_V = {"fx": 0.8, "metals": 0.16}
+_COST_CACHE: dict[str, float] = {}
+
+
+def cost_bps(sym: str) -> float:
+    """COST_V x the pair's 5-minute sd over its last year of 15m bars, in bps.
+
+    The broker's spread snapshot is not used as the cost: it was taken just after the 17:00 New
+    York rollover, when spreads are wide (`rollover.md`).
+    """
+    if sym not in _COST_CACHE:
+        c = closes(sym, "15m")
+        r = np.log(c).diff().dropna()
+        r = r[r.index >= r.index[-1] - pd.Timedelta(days=365)]
+        sd5 = r.abs().median() * 1.4826 / math.sqrt(3)
+        _COST_CACHE[sym] = COST_V["metals" if sym.startswith("XA") else "fx"] * sd5 * 1e4
+    return _COST_CACHE[sym]
+
+
 def spread_bps(info: dict, sym: str, floor: float = 0.5) -> float:
     i = info.get(sym, {})
     try:
@@ -248,12 +268,13 @@ def carry() -> None:
         m = ((theo - long_a) + (-theo - short_a)) / 2
         markup[p] = max(m, 0.0)
         print(f"    {p}: differential {theo:+.2f} | broker long {long_a:+.2f} short {short_a:+.2f} | "
-              f"markup per side {m:+.2f} | spread {spread_bps(info, p):.2f} bps")
+              f"markup per side {m:+.2f} | cost {cost_bps(p):.2f} bps (rollover-hour spread "
+              f"{spread_bps(info, p):.2f})")
     for sym in DERIV + ["XAUUSD"]:
         i = info.get(sym, {})
         print(f"    {sym}: swap_long {i.get('swap_long')} swap_short {i.get('swap_short')} mode {i.get('swap_mode')}")
 
-    cost = {p: spread_bps(info, p) / 1e4 for p in PAIRS}
+    cost = {p: cost_bps(p) / 1e4 for p in PAIRS}
 
     def run(positions: pd.DataFrame, price_ret: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]:
         """Daily portfolio return: price + carry accrual - markup - spread on changes."""
@@ -380,8 +401,7 @@ def haven() -> None:
         dpath = OUT / f"DXYUSD.{iv}.csv"
         for name, (sym, sign) in intraday.items():
             h = sign * np.log(closes(sym, iv)).diff()
-            cost = spread_bps(info, sym) / 1e4
-            report_bars(name, h, shocks, cost, sp.index)
+            report_bars(name, h, shocks, cost_bps(sym) / 1e4, sp.index)
         if dpath.exists():
             d = pd.read_csv(dpath)
             dx = pd.Series(d["close"].to_numpy(), index=pd.to_datetime(d["time"], unit="s"))
