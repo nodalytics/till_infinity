@@ -73,6 +73,8 @@ class Bar:
     low: float
     close: float
     time: float = 0.0
+    #: Tick volume where the venue gives one; 0 means unknown. Read by the shadowed MFI gate only.
+    volume: float = 0.0
 
     @property
     def body(self) -> float:
