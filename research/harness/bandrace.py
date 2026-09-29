@@ -81,6 +81,11 @@ GEOMETRY = ["d90", "d10", "asym"]
 FEATURES = ["lvol", "tr_pct", "vov", "r1", "r5", "r20", "rng", "hsin", "hcos", "to_weekend",
             "d90", "d10", "asym"]
 SIM_SERIES, SIM_BARS = 6, 60_000
+#: FX bars reaching the 17:00 New York rollover have their wick cut to the body, as production now
+#: does (`structures/rollover.py`): the spread spike dips bid-based lows and would be read as a
+#: touch of P10. TRIM=0 keeps the raw bars; ONLY=fx runs one group.
+TRIM = os.environ.get("TRIM", "1") not in ("0", "false", "no")
+ONLY = os.environ.get("ONLY", "")
 
 
 # ---------------------------------------------------------------------------------------- the bars
@@ -207,7 +212,25 @@ def labels(d: pd.DataFrame, Q: np.ndarray) -> pd.DataFrame:
     return out
 
 
+def trim(df: pd.DataFrame, key: str) -> pd.DataFrame:
+    """Production's rollover trim, bar by bar."""
+    from till_infinity.structures import rollover as ro
+
+    if not ro.is_fx(key):
+        return df
+    df = df.copy()
+    span = MINUTES * 60
+    hit = np.array([ro.masked(key, float(t), float(t) + span) for t in df["ts"].to_numpy()])
+    body_hi = np.maximum(df["open"].to_numpy(), df["close"].to_numpy())
+    body_lo = np.minimum(df["open"].to_numpy(), df["close"].to_numpy())
+    df.loc[hit, "high"] = body_hi[hit]
+    df.loc[hit, "low"] = body_lo[hit]
+    return df
+
+
 def build(df: pd.DataFrame, family: str, key: str) -> pd.DataFrame:
+    if TRIM:
+        df = trim(df, key)
     d = frame(df)
     Q = bands(d)
     lab = labels(d, Q)
@@ -365,8 +388,9 @@ def _phi(x):
 
 
 def main():
-    print(f"BAND RACE {INTERVAL}, N = {N}; AgACI bands; train first 60%, test last 40%", flush=True)
-    groups = dict(GROUPS)
+    print(f"BAND RACE {INTERVAL}, N = {N}; AgACI bands; train first 60%, test last 40%; "
+          f"rollover trim {'on' if TRIM else 'off'}", flush=True)
+    groups = {k: v for k, v in GROUPS.items() if not ONLY or k == ONLY}
     for name, syms in groups.items():
         family = "deriv" if name in DERIV else name
         frames = []
@@ -379,7 +403,7 @@ def main():
             print(f"    built {s}: {len(frames[-1]):,}", flush=True)
         if frames:
             score(f"{name}{' (Deriv, a market)' if family == 'deriv' else ''}", pd.concat(frames, ignore_index=True))
-    for kind in ("walks", "garch"):
+    for kind in () if ONLY else ("walks", "garch"):
         frames = [build(sim(kind, 100 + i), kind, f"{kind}{i}") for i in range(SIM_SERIES)]
         score(f"{kind} (control we generate)", pd.concat(frames, ignore_index=True))
 
