@@ -51,6 +51,30 @@ one-step ACI. It was also 2-9% narrower and had better pinball loss in every cel
 quantile-boosted model gives coverage that is flat across volatility regimes, which neither
 corrector does; it needs offline training and is the next step, not this one.
 
+## Deriv's published laws
+
+On Deriv's Volatility, Jump and Step indices the forward law is published, and
+`research/docs/deriv-variants.md` measured the feed matching it:
+- Volatility realises 0.992-1.010 of its named sigma, with Gaussian kurtosis;
+- Jump realises 0.987-1.014 of 1.32 x its name;
+- Step reproduces its +-0.1 coin.
+
+Quoting that law beat this module's empirical, AgACI-corrected envelope:
+- pinball 3-7% lower and the band 3-7% narrower at 20-50 bars;
+- coverage flat by regime (90/90 against 88/92);
+- calibrated from the first bar, where the empirical envelope needs its history.
+
+The reason is that the empirical envelope measures moves in a noisy live volatility estimate, on a
+process whose volatility is constant.
+
+So on those indices the envelope quotes the law (`law_quantile`):
+- **Volatility:** GBM at the named sigma with the Ito drift (`projection.py`).
+- **Jump:** Gaussian at 1.32 x its name.
+- **Step:** a fair +-0.1 coin each second, in price.
+
+It uses no history and no corrector; AgACI on top of the law measured worse, because there is
+nothing to correct. Outcomes are still settled, so the realised cover on the card stays honest.
+
 ## What it does not do
 
 **P50 is not a direction call.** Its sign carried AUC 0.50-0.55 in the same study, and similar
@@ -61,12 +85,14 @@ enters or exits on it until the record says it should.
 from __future__ import annotations
 
 import math
+import re
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from statistics import NormalDist
 
 from ..state import Restorable
+from . import projection as pj
 from .ranges import Ranges
 
 #: Resolved N-bar moves kept per series and horizon. The study used 2,000; 1,000 keeps the state
@@ -105,6 +131,36 @@ assert max(HORIZONS) < 64, "`Envelope.pending` holds at most 64 quotes"
 TR_TO_SD = 1.25
 
 
+#: Step Index: one fair +-0.1 move a second, in price (`research/docs/generators.md`).
+STEP_SIZE, STEP_EVERY_S = 0.1, 1.0
+
+
+def _canonical(feed: str) -> str:
+    """`Volatility 75 (1s) Index` -> `volatility_75_1s_index`, the form the published names take."""
+    return "_".join(re.findall(r"[a-z0-9]+", feed.lower()))
+
+
+def law_quantile(feed: str, seconds: float, level: float, price: float) -> float | None:
+    """The published law's `level` quantile of `log(S_T / S_0)` over `seconds`, or None where
+    no law is published (every real market, Boom, Crash and the rest)."""
+    if seconds <= 0 or price <= 0:
+        return None
+    name = _canonical(feed)
+    z = _normal_quantile(level)
+    sigma = pj.sigma_for(name, seconds)
+    if sigma is not None:
+        return pj.drift_for(name, seconds, "ito") + sigma * z
+    if name == "step_index":
+        move = STEP_SIZE * math.sqrt(seconds / STEP_EVERY_S) * z
+        return math.log1p(move / price) if move > -price else None
+    return None
+
+
+def has_law(feed: str) -> bool:
+    """Whether the envelope quotes a published law for this feed."""
+    return law_quantile(feed, 60.0, 0.9, 1.0) is not None
+
+
 def _normal_quantile(p: float) -> float:
     """Inverse standard normal, for the cold fallback."""
     return NormalDist().inv_cdf(min(max(p, 1e-9), 1 - 1e-9))
@@ -115,6 +171,10 @@ class Envelope(Restorable):
     """One series, one horizon: the history of resolved moves, the levels being read, the record."""
 
     horizon: int = 5
+    #: The series, so a feed with a published law can be quoted from it (`law_quantile`).
+    feed: str = ""
+    #: The bar's length in seconds; the law's horizon is `horizon` of them.
+    bar_seconds: float = 0.0
     #: Resolved N-bar moves, in volatility units.
     history: deque = field(default_factory=lambda: deque(maxlen=WINDOW))
     #: Quotes waiting for their outcome: (close and sigma when quoted, published z per target,
@@ -167,6 +227,8 @@ class Envelope(Restorable):
                         self._learn(i, target, y, settled[4][i], settled[3][i])
                 if len(settled) > 4:
                     self.learned += 1
+        if self._quote_law(close, sigma):
+            return
         ordered = sorted(self.history) if len(self.history) >= MIN_HISTORY else None
         each = [
             [self._quantile(level, ordered) for level in self.experts[i]]
@@ -179,6 +241,26 @@ class Envelope(Restorable):
             self.quote = [self._quantile(level, ordered) for level in self.levels]
         self.sigma = sigma
         self.pending.append((close, sigma, list(self.quote), each, agg))
+
+    def _quote_law(self, close: float, sigma: float) -> bool:
+        """Quote the published law, where there is one. Returns whether it did.
+
+        In volatility units like every other quote, so `prices` and the settling need no change.
+        The quote goes out without correctors' quotes, so AgACI learns nothing from it.
+        """
+        seconds = self.horizon * self.bar_seconds
+        law = [law_quantile(self.feed, seconds, t, close) for t in TARGETS]
+        if any(q is None for q in law):
+            return False
+        self.quote = [q / sigma for q in law]
+        self.sigma = sigma
+        self.pending.append((close, sigma, list(self.quote)))
+        return True
+
+    @property
+    def lawful(self) -> bool:
+        """Whether this envelope quotes a published law."""
+        return self.bar_seconds > 0 and has_law(self.feed)
 
     def _learn(self, i: int, target: float, y: float, quoted: float, each: list[float]) -> None:
         """One resolved outcome: step every corrector, and charge each its share of the pinball
@@ -253,7 +335,9 @@ class Envelope(Restorable):
 
     @property
     def warm(self) -> bool:
-        return len(self.history) >= MIN_HISTORY
+        """Quotable: a published law is from the first bar; the empirical envelope once it has
+        `MIN_HISTORY` resolved moves."""
+        return self.lawful or len(self.history) >= MIN_HISTORY
 
     def coverage(self) -> list[float]:
         """The realised share of outcomes below each target's quote, over everything resolved."""
@@ -271,6 +355,8 @@ class Envelope(Restorable):
         for target, cover in zip(TARGETS, self.coverage(), strict=True):
             out[f"env{n}_cover_p{round(target * 100):d}"] = round(cover, 4)
         out[f"env{n}_width_bps"] = round((self.quote[-1] - self.quote[0]) * self.sigma * 10_000, 3)
+        if self.lawful:
+            out[f"env{n}_law"] = 1.0
         return out
 
 
@@ -281,11 +367,15 @@ class Book(Restorable):
     envelopes: dict[str, Envelope] = field(default_factory=dict)
 
     def observe(self, feed: str, interval: str, close: float, sigma: float) -> None:
+        seconds = _bar_seconds(interval)
         for n in HORIZONS:
             key = f"{feed}|{interval}|{n}"
             found = self.envelopes.get(key)
             if found is None:
                 found = self.envelopes[key] = Envelope(horizon=n)
+            if found.feed != feed or found.bar_seconds != seconds:
+                # Also fills an envelope restored from a state saved before it knew its series.
+                found.feed, found.bar_seconds = feed, seconds
             found.observe(close, sigma)
 
     def reading(self, feed: str, interval: str, price: float) -> dict[str, float]:
@@ -309,6 +399,8 @@ class Book(Restorable):
         range), and its correction state is adopted if it learned more. Returns how many envelopes
         took it.
         """
+        if has_law(feed):
+            return 0  # quoted from its published law, which has nothing to learn
         taught = 0
         for n in HORIZONS:
             key = f"{feed}|{interval}|{n}"
@@ -336,6 +428,13 @@ class Book(Restorable):
         return len(gone)
 
 
+def _bar_seconds(interval: str) -> float:
+    """An interval's length. Imported late: `levels` imports this package's volatility module."""
+    from ..levels import SECONDS
+
+    return float(SECONDS.get(interval, 0.0))
+
+
 def card_lines(got: Mapping, price: Callable[[float], str]) -> list[str]:
     """The next-5- and next-50-bars envelope and the volatility state, as card lines. Read only.
 
@@ -355,6 +454,8 @@ def card_lines(got: Mapping, price: Callable[[float], str]) -> list[str]:
     lines = [
         f"🎯 next 5 bars · ceiling P90 {leg(p90)} · median P50 {leg(p50)} · floor P10 {leg(p10)}",
     ]
+    if got.get("env5_law"):
+        lines[0] += " · Deriv's published law"
     cover = got.get("env5_cover_p90")
     if isinstance(cover, int | float) and not math.isnan(cover):
         lines[0] += f" · P90 held {cover:.0%}"
