@@ -727,8 +727,11 @@ def cells(df: pd.DataFrame) -> pd.DataFrame:
     for view, g in views:
         for (pair, stop, k), c in g.groupby(["pair", "stop", "k"], observed=True):
             base = c[c["rule"] == "htf_close"]
-            nsig = base["sid"].nunique()
-            if nsig < 50:
+            # Every signal the cell holds is the denominator: a gate can pass a signal whose plain
+            # entry was skipped for risking too little at that bar.
+            nsig = c["sid"].nunique()
+            base_sids = base["sid"].unique()
+            if len(base_sids) < 50:
                 continue
             for rule, r in c.groupby("rule", observed=True):
                 if len(r) < 30 or str(rule).startswith("wait:"):
@@ -736,7 +739,8 @@ def cells(df: pd.DataFrame) -> pd.DataFrame:
                 passed = r["sid"].unique()
                 rate = len(passed) / nsig
                 d, t, _ = diff(r, base)
-                pick = rng.choice(base["sid"].unique(), max(1, int(round(rate * nsig))), replace=False)
+                size = min(len(base_sids), max(1, int(round(rate * len(base_sids)))))
+                pick = rng.choice(base_sids, size, replace=False)
                 rnd = base[base["sid"].isin(pick)]
                 dr, tr_, _ = diff(r, rnd)
                 wait = c[c["rule"] == f"wait:{rule}"]
