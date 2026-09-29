@@ -94,10 +94,11 @@ extreme). Held at the first retest, same race and placebo:
   - FX 54.6-54.7% against 51.6%, metals 56.5-56.8% against 52.5%.
   - The random walks show +1.3 at the same placement, so the market's part is about +1.7 (FX) and +3
     (metals).
-  - At 15m it is about the placebo, and crypto at 1h barely clears it.
+  - At 15m it is 0 to 2.4 points above the placebo, no better than the midpoint, and crypto at 1h
+    barely clears the placebo.
 - **Five placements x three markets x two intervals is thirty cells**, so a single 3-point cell is not
-  strong evidence. The consistent part is the shape: close to the original level is best, the swept
-  extreme is worst.
+  strong evidence. The consistent part is the shape at 1h: close to the original level is best, and the
+  swept extreme is worst.
 - **It does not change the money.** The best cell is worth roughly 0.03-0.06 of a move per retest,
   below costs.
 
@@ -106,6 +107,6 @@ extreme). Held at the first retest, same race and placebo:
 - **Do not relabel the level to the trap's extreme.**
 - If a trapped level is moved at all, move it a little past the original, 14-20% of the way toward
   the extreme (80-86% back from it). That is the best of the placements tried at 1h, and the midpoint
-  is the best at 15m. Near the extreme is the worst. It is a defensible change to how the level is drawn, and it will not
-  change what trading it earns.
+  is the best at 15m. Near the extreme is the worst. It is a defensible change to how the level is
+  drawn, and it will not change what trading it earns.
 - A trap does not predict a reversal, so the trap label adds nothing as a trade trigger.
