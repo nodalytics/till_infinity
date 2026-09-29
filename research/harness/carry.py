@@ -60,7 +60,6 @@ import math
 import os
 import sqlite3
 import sys
-import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -88,18 +87,18 @@ RNG = np.random.default_rng(11)
 # ------------------------------------------------------------------------------------ data
 
 def _get(url: str, tries: int = 5) -> str:
-    """A download with retries: FRED intermittently stalls a read."""
+    """A download through curl: FRED answers curl in under a second and stalls Python's urllib
+    until it times out, from the same machine."""
+    import subprocess
     import time
 
-    last = None
+    last = ""
     for attempt in range(tries):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=90) as r:
-                return r.read().decode()
-        except OSError as exc:
-            last = exc
-            time.sleep(5 * (attempt + 1))
+        got = subprocess.run(["curl", "-s", "-f", "-m", "60", url], capture_output=True, text=True)
+        if got.returncode == 0 and got.stdout:
+            return got.stdout
+        last = got.stderr or f"curl exit {got.returncode}"
+        time.sleep(5 * (attempt + 1))
     raise RuntimeError(f"{url}: {last}")
 
 
