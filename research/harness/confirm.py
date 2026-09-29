@@ -102,6 +102,12 @@ beat its random gate, be positive in both halves, and beat the same cell on the 
 t >= 3. The last condition exists because a later entry against a level-anchored stop risks more,
 so it pays less cost in R, and `stophunt.md` found that is worth up to +0.15R on walks.
 
+Added after the first full run: that mechanical gain scales with the cost, and the walks are charged
+0.15 against FX's 0.8, so the walks understate it about five times on FX. The first run passed 180
+cells, all of them losing money in absolute terms, nearly all on FX with entries about 2 bars late.
+So a cell must also beat htf_close **gross of costs** by at least 0.05R more than the walks do, with
+gross t >= 3.
+
 Run on the lab, one process per universe, then the report:
   UNIVERSE=real  START=2024-01-01 SEQLAB=$HOME/till_infinity/data/seqlab python research/harness/confirm.py
   UNIVERSE=deriv ...    UNIVERSE=walks ...    then  PART=report
@@ -638,7 +644,7 @@ def run() -> None:
                 cost = ind.COST_V[fam_of[feed]] * np.sqrt(5 / MIN[b]) * x["vol"][j] * c[j] / risk
                 for k, (r, stopped, then_right, hit) in zip(TARGETS, got, strict=True):
                     rows.append((sid, rule, fam_of[feed], feed, f"{a}>{b}", skind, k, t, roll, j - k0,
-                                 r - cost, stopped, then_right, hit))
+                                 r - cost, cost, stopped, then_right, hit))
         if n % 20_000 == 0:
             print(f"  {n:,} of {len(plans):,} plans, {len(rows):,} rows", flush=True)
 
@@ -662,9 +668,9 @@ def run() -> None:
             cost = ind.COST_V[fam_of[feed]] * np.sqrt(5 / MIN[b]) * x["vol"][j] * c[j] / risk
             for k, (r, stopped, then_right, hit) in zip(TARGETS, got, strict=True):
                 rows.append((sid, f"wait:{g}", fam_of[feed], feed, f"{a}>{b}", "htf", k, t, roll, j - k0,
-                             r - cost, stopped, then_right, hit))
+                             r - cost, cost, stopped, then_right, hit))
     df = pd.DataFrame(rows, columns=["sid", "rule", "family", "feed", "pair", "stop", "k", "time", "rollover",
-                                     "delay", "net", "stopped", "then_right", "hit"])
+                                     "delay", "net", "cost", "stopped", "then_right", "hit"])
     for col in ("rule", "family", "feed", "pair", "stop"):
         df[col] = df[col].astype("category")
     df["universe"] = UNIVERSE
@@ -739,6 +745,7 @@ def cells(df: pd.DataFrame) -> pd.DataFrame:
                 passed = r["sid"].unique()
                 rate = len(passed) / nsig
                 d, t, _ = diff(r, base)
+                dg, tg, _ = diff(r.assign(net=r["net"] + r["cost"]), base.assign(net=base["net"] + base["cost"]))
                 size = min(len(base_sids), max(1, int(round(rate * len(base_sids)))))
                 pick = rng.choice(base_sids, size, replace=False)
                 rnd = base[base["sid"].isin(pick)]
@@ -753,7 +760,7 @@ def cells(df: pd.DataFrame) -> pd.DataFrame:
                     "view": view, "pair": pair, "stop": stop, "k": k, "rule": str(rule), "n": len(r),
                     "pass": rate, "net": r["net"].mean(), "stop_rate": r["stopped"].mean(),
                     "then_right": r["then_right"].mean(), "hit": r["hit"].mean(),
-                    "d_base": d, "t_base": t, "p": p, "d_random": dr, "t_random": tr_, "d_wait": dw, "t_wait": tw,
+                    "d_base": d, "t_base": t, "p": p, "d_gross": dg, "t_gross": tg, "cost_r": r["cost"].mean(), "d_random": dr, "t_random": tr_, "d_wait": dw, "t_wait": tw,
                     "h1": halves[0], "h2": halves[1], "rejected_net": rejected["net"].mean(),
                     "delay": r["delay"].mean(),
                 })
@@ -816,14 +823,20 @@ def report() -> None:
     market = res["universe"] != "walks"
     res["q"] = np.nan
     res.loc[market, "q"] = bh(res.loc[market, "p"].to_numpy())
-    wd = []
+    wd, wg = [], []
     for _, r in res.iterrows():
         key = (r["pair"], r["stop"], r["k"], r["rule"])
         wd.append(walks.loc[key, "d_base"] if key in walks.index else np.nan)
-    res["walk_d"] = wd
+        wg.append(walks.loc[key, "d_gross"] if key in walks.index else np.nan)
+    res["walk_d"], res["walk_gross"] = wd, wg
     res["did"] = res["d_base"] - res["walk_d"]
+    # Added after the first full run, before this rerun: the mechanical gain of a later entry
+    # (more risk against a level-anchored stop, so a fixed cost is fewer R) scales with the cost,
+    # and the walks are charged 0.15 against FX's 0.8. So a cell must also beat the walks gross.
+    res["did_gross"] = res["d_gross"] - res["walk_gross"]
     res["passes"] = (market & (res["d_base"] >= 0.05) & (res["t_base"] >= 3) & (res["q"] < 0.05)
-                     & (res["d_random"] > 0) & (res["h1"] > 0) & (res["h2"] > 0) & (res["did"] >= 0.05))
+                     & (res["d_random"] > 0) & (res["h1"] > 0) & (res["h2"] > 0) & (res["did"] >= 0.05)
+                     & (res["did_gross"] >= 0.05) & (res["t_gross"] >= 3))
     res.to_csv(OUT / "results.csv", index=False)
     print(f"cells: {len(res):,} ({int(market.sum()):,} market); results in {OUT / 'results.csv'}")
     print(f"PASSING the pre-registered bar: {int(res['passes'].sum())}")
@@ -844,7 +857,7 @@ def report() -> None:
             top = c.sort_values("did", ascending=False).head(5)
             print(f"\n  {view} {pair}")
             print(top[["rule", "pass", "n", "net", "stop_rate", "then_right", "d_base", "t_base", "q", "d_random",
-                       "d_wait", "h1", "h2", "walk_d", "did"]].to_string(index=False, float_format="%.3f"))
+                       "d_wait", "h1", "h2", "walk_d", "did", "d_gross", "t_gross", "did_gross", "cost_r"]].to_string(index=False, float_format="%.3f"))
         t3 = g[(g["t_base"] >= 3)]
         print(f"\n  cells with t >= 3 against htf_close: {len(t3)} of {len(g)}; with q < 0.05: {int((g['q'] < 0.05).sum())}")
     for u in frames:
