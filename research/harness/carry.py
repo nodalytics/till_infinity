@@ -87,10 +87,20 @@ RNG = np.random.default_rng(11)
 
 # ------------------------------------------------------------------------------------ data
 
-def _get(url: str) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return r.read().decode()
+def _get(url: str, tries: int = 5) -> str:
+    """A download with retries: FRED intermittently stalls a read."""
+    import time
+
+    last = None
+    for attempt in range(tries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=90) as r:
+                return r.read().decode()
+        except OSError as exc:
+            last = exc
+            time.sleep(5 * (attempt + 1))
+    raise RuntimeError(f"{url}: {last}")
 
 
 def data() -> None:
