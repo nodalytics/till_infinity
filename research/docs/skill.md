@@ -71,6 +71,68 @@ The real-minus-random differences are small and mostly the size of what separate
 1.3-point higher hold rate, +0.024 of skill against the base rate, and +0.023 of `expected_push`
 rank correlation on size. None of them is a direction.
 
+## A learned model on the same features learns more geometry, equally on both
+
+`PART=ml`: gradient boosting on each touch's own features (`approach_vol`, `depth_vol`, `strength`,
+`run_vol`, `experience`, `pivot`, `backcheck`, `regime`, `up_rate`, `slowing`, `slope`,
+`prior_slope`, `interval_log`, and side). It is fit on the first 60% of touches by time and scored
+on the last 40%.
+
+| | real markets | random walks |
+| --- | --- | --- |
+| P(up) GBM: skill vs the side rule (log loss) | +0.021 (+0.023) | +0.019 (+0.015) |
+| P(up) engine: skill vs the side rule | -0.155 | -0.124 |
+| P(up) GBM: AUC within side | 0.815 / 0.821 | 0.821 / 0.845 |
+| P(break) GBM: AUC, skill vs running rate | 0.817, +0.132 | 0.825, +0.152 |
+| P(break) engine: AUC, skill vs running rate | 0.812, +0.110 | 0.836, +0.145 |
+
+The model beats both the engine and the side rule, and by the same margin on a random walk. It is a
+better learner of the label's geometry, not of the market. Machine learning does not change the
+verdict; only a label that reads 50% on noise can.
+
+## Why a random walk "holds": the resolution rule, not the volatility unit
+
+Measured with [`holdgeometry.py`](../harness/holdgeometry.py): 200,000 touches on a pure Gaussian
+random walk, resolved by the production rule (`reactions.Tracker.update`), with the volatility unit
+deliberately mis-estimated at 0.5x, 1x and 2x the truth. Arriving 0.35 / 0.75 units above the level:
+
+| rule | vol unit 0.5x | 1x | 2x |
+| --- | --- | --- | --- |
+| production | 72.9% / 75.3% | 67.9% / 72.1% | 67.3% / 76.0% |
+| no trap re-labelling | 55.3% / 59.2% | 59.2% / 64.5% | 65.8% / 74.9% |
+| rejection from the entry, not the running low | 71.4% / 73.3% | 63.9% / 67.4% | 60.0% / 69.2% |
+| **symmetric +-1.5 from the entry, no trap** | **50.0% / 50.0%** | **49.9% / 49.9%** | **50.0% / 50.0%** |
+
+- **The volatility unit is only the ruler.** A fair race is 50% at every scale, even with the unit
+  wrong by a factor of two. What a wrong unit changes is the mix: too small gives more traps (up to
+  18%), too large gives more chop (36-55% of touches).
+- **The rule is what holds.** A rejection is measured from the running low of the leg in, which
+  follows price, and a break from the level, which does not. A break then has to survive six bars,
+  and one that comes back is a *trap*, which the break model and the direction label both count as
+  the level holding. On pure noise that gives 67-76% in this simplified model. The rest of the gap to
+  the replay's 87% is tracker detail not modelled here: zones widened by past wicks, and bar-level
+  handling.
+- **The fix is a symmetric label to score against:** +-k volatility units from where the touch
+  started, with no trap re-labelling. It reads 50% on noise, so any hold rate above 50% on a real
+  market is information about the market rather than about the definition.
+
+### Two labels, two nulls (reconciled with [`holdlabel.md`](holdlabel.md))
+
+The desk has two different "held" statistics, and they carry different biases on noise:
+
+- **A level's own `hold_rate`** (`levels.py:458`) is rejects / (rejects + breaks + traps): a trap
+  counts *against* holding. `holdlabel.md` measures its random-walk null at **55%**, and the
+  ratcheting origin is the whole of that bias. Readings of `hold_rate` should be quoted against 55%.
+- **The break model's label** (`learning/breaking.py:233`, `HELD = ("reject", "backcheck", "trap")`)
+  counts a trap as held. That is the label `P(break)` above is scored on, and the one the simulation
+  here models. Its null is near 65% (`holdlabel.md`'s own "traps as holds" row reads 64.6%, and this
+  page's simplified model 67-76%).
+
+Neither changes the result on this page. The real-market skill is compared with the random-walk
+replay, which carries whichever bias applies. And as `holdlabel.md` notes, differential comparisons
+between touches (by experience or by trend efficiency) cancel a bias that applies to every touch
+alike; they still need their own random-walk control before the difference is called market.
+
 ## What this settles
 
 - **Does structures show skill?** Against the base rate, a large skill (+0.58 Brier skill score).
