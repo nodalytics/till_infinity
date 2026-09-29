@@ -58,6 +58,9 @@ SYMBOLS = {
 INTERVALS = ("15m", "1h")
 START = pd.Timestamp(os.environ.get("START", "2025-01-01"), tz="UTC").timestamp()
 OUT = Path(os.environ.get("OUT", ".data/skill")) / f"{UNIVERSE}.json"
+#: The touch's own features, recorded so a learned model can be tried on exactly what the engine saw.
+FEATURES = ("approach_vol", "depth_vol", "strength", "run_vol", "experience", "pivot", "backcheck", "regime",
+            "up_rate", "slowing", "slope", "prior_slope", "interval_log")
 
 
 def stream():
@@ -110,7 +113,8 @@ def replay():
                 record_n=inf.record_n, expected_push=inf.expected_push, push_sigma=inf.push_sigma,
                 edge=inf.edge, actionable=bool(getattr(inf, "actionable", False)), risk_vol=inf.risk_vol,
                 side_up=(ups + 1.0) / (cnt + 2.0), side_n=cnt, brk_rate=(brk[0] + 1) / (brk[1] + 2),
-                p_break=reading.get("break_probability"), p_break_cal=reading.get("break_probability_calibrated"))
+                p_break=reading.get("break_probability"), p_break_cal=reading.get("break_probability_calibrated"),
+                **{f"x_{n}": float(getattr(touch.features, n, 0.0) or 0.0) for n in FEATURES})
         for _level, touch in engine.drain_resolved():
             row = pending.pop(key(touch.feed, touch.interval, touch.level_price, touch.started), None)
             outcome = str(touch.outcome).split(".")[-1].lower()
@@ -217,7 +221,43 @@ def report(rows, label):
               f"'level holds' trade {hold_trade.mean():+.3f}v | median adverse {dd['adverse'].median():.2f}v")
 
 
+def learned(rows, label):
+    """A gradient-boosted model on the touch's own features (and side), fit on the first 60% of
+    touches by time and scored on the last 40% beside the engine's number and the side rule. The
+    same on the random walks says how much of any gain is geometry."""
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    d = pd.DataFrame(rows).sort_values("time").reset_index(drop=True)
+    cols = [f"x_{n}" for n in FEATURES] + ["above_f"]
+    d["above_f"] = d["above"].astype(float)
+    cut = d["time"].quantile(0.6)
+    tr, te = d["time"] < cut, d["time"] >= cut
+    print(f"\n  LEARNED on {label}: fit on {tr.sum():,} touches, scored on {te.sum():,}")
+    dd = d[(d["push"] != 0) & d["outcome"].isin(list(BROKE) + list(HELD))]
+    y = (dd["push"] > 0).to_numpy(float)
+    m_tr, m_te = (dd["time"] < cut).to_numpy(), (dd["time"] >= cut).to_numpy()
+    g = HistGradientBoostingClassifier(max_depth=4, max_iter=300, learning_rate=0.05, min_samples_leaf=100)
+    g.fit(dd[cols].to_numpy()[m_tr], y[m_tr])
+    p = g.predict_proba(dd[cols].to_numpy())[:, 1]
+    refs = {"base rate": dd["base_up"].to_numpy(float)[m_te], "side rule": dd["side_up"].to_numpy(float)[m_te]}
+    sides = dd["above"].to_numpy()[m_te]
+    score("P(up) GBM on features", p[m_te], y[m_te], refs, sides)
+    score("P(up) engine", dd["p_up"].to_numpy(float)[m_te], y[m_te], refs, sides)
+    score("side rule", dd["side_up"].to_numpy(float)[m_te], y[m_te], {"base rate": refs["base rate"]}, sides)
+    bb = d[d["outcome"].isin(list(BROKE) + list(HELD))]
+    yb = bb["outcome"].isin(list(BROKE)).to_numpy(float)
+    b_tr, b_te = (bb["time"] < cut).to_numpy(), (bb["time"] >= cut).to_numpy()
+    gb = HistGradientBoostingClassifier(max_depth=4, max_iter=300, learning_rate=0.05, min_samples_leaf=100)
+    gb.fit(bb[cols].to_numpy()[b_tr], yb[b_tr])
+    pb = gb.predict_proba(bb[cols].to_numpy())[:, 1]
+    ref = {"running rate": bb["brk_rate"].to_numpy(float)[b_te]}
+    score("P(break) GBM", pb[b_te], yb[b_te], ref)
+    score("P(break) engine raw", pd.to_numeric(bb["p_break"], errors="coerce").to_numpy(float)[b_te], yb[b_te], ref)
+
+
 if __name__ == "__main__":
+    if os.environ.get("PART") == "ml":
+        learned(json.loads(OUT.read_text()), UNIVERSE)
+        sys.exit(0)
     if os.environ.get("PART", "replay") == "replay":
         rows = replay()
     else:
