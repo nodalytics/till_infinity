@@ -16,12 +16,13 @@ Targets, read off the next N bars' highs and lows:
   both       both touched within N (range expansion)
   after P50  having closed the first bar above (below) P50, the share that touch P90 (P10) first
 
-Baselines the model must beat - the headline is skill over them, not raw AUC:
-  race       gambler's ruin on the bar's own distances: p_up = d10 / (d90 + d10), in vol units.
-             On a driftless walk this *is* the answer; beating it is a direction call
-  touch      the training period's rate for that family and horizon, and the reflection principle
-             P(max >= d) = 2 (1 - Phi(d / (s sqrt N))), s the per-bar sd of returns in vol units
-  both       the training period's rate
+Baseline the model must beat - the headline is skill over it, not raw AUC: **geometry alone**,
+the same boosting trained on the band distances d90, d10 and their asymmetry only. So "skill" means
+the market's state adds something beyond where the bands sit. For reference only:
+  race       gambler's ruin, p_up = d10 / (d90 + d10). It is not the finite-window answer: given a
+             touch within N the nearer band is first more often, and a first version scored
+             against it found "skill" on memoryless walks for exactly that reason
+  touch      the training rate, and the reflection principle 2 (1 - Phi(d / (s sqrt N)))
 
 Model: gradient boosting on the first 60% of each series by time, scored on the last 40%.
 Features, all known at the bar's close: lvol, the unit's percentile in its last 500 bars, vol of
@@ -35,15 +36,18 @@ indices as markets - and two controls we generate:
   garch   GARCH(1,1) with t(4) shocks: volatility clusters, so touch skill *should* appear, and a
           race should not - the check that the harness can find skill where it exists
 
-Race tradeability: where the model's p_up departs from geometry's by more than the training
-period's 90th percentile of |p_model - p_geo|, trade toward the favoured band with the other as the
-stop, exiting at N. Net R after costs (COST_V in 5-minute vol units, scaled by sqrt(5 / minutes)),
+Race tradeability: on **every** test bar - a first version chose among bars where a band was later
+touched, which conditions on the future and read +0.23R on memoryless walks - where the model's
+p_up departs from the geometry model's by more than the training period's 90th percentile, trade
+toward the favoured band with the other as the stop, exiting at N. Net R after costs (COST_V in 5-minute vol units, scaled by sqrt(5 / minutes)),
 same-bar ties counted as stops. By the barrier theorem it is about -cost without real direction.
 
 Pre-registered pass bars:
   race           Brier skill over geometry >= 0.01, CI above 0, both halves, not on the walks
-  touch / both   AUC over the training rate >= 0.60 (the rate itself has AUC 0.5), calibrated
-                 within +-20% in every decile, not on the iid walks
+  touch / both   Brier skill over geometry >= 0.01, CI above 0, both halves, calibrated within
+                 +-20% in every decile, not on the iid walks. (As first written this bar was AUC
+                 over the training rate >= 0.60; band geometry alone clears that on iid walks,
+                 0.64-0.65, so it could not tell skill from geometry.)
 
 Run on the lab, one process per horizon:
   INTERVAL=15m N=20 SEQLAB=$HOME/till_infinity/data/seqlab python research/harness/bandrace.py
@@ -73,6 +77,7 @@ WINDOW = 1000  # production's history depth
 WARM = 1200
 COST_V = {"fx": 0.8, "metals": 0.16, "crypto": 0.5, "deriv": 0.15, "walks": 0.15, "garch": 0.15}
 DERIV = ("volatility", "boom/crash", "range break")
+GEOMETRY = ["d90", "d10", "asym"]
 FEATURES = ["lvol", "tr_pct", "vov", "r1", "r5", "r20", "rng", "hsin", "hcos", "to_weekend",
             "d90", "d10", "asym"]
 SIM_SERIES, SIM_BARS = 6, 60_000
@@ -250,14 +255,20 @@ def calib(p, y):
     return worst
 
 
-def fit(tr: pd.DataFrame, target: str):
+def fit(tr: pd.DataFrame, target: str, features=None):
+    features = features or FEATURES
     tr = tr[np.isfinite(tr[target])]
     if len(tr) > 400_000:
         tr = tr.sample(400_000, random_state=0)
     model = HistGradientBoostingClassifier(max_depth=4, max_iter=200, learning_rate=0.05,
                                            min_samples_leaf=300)
-    model.fit(tr[FEATURES].fillna(0.0), tr[target])
+    model.fit(tr[features].fillna(0.0), tr[target])
+    model.features_ = features
     return model
+
+
+def prob(model, df):
+    return model.predict_proba(df[model.features_].fillna(0.0))[:, 1]
 
 
 def score(name: str, d: pd.DataFrame) -> None:
@@ -275,34 +286,39 @@ def score(name: str, d: pd.DataFrame) -> None:
           f"{1 - up - down:.1%} | touch90 {te['touch90'].mean():.1%} touch10 {te['touch10'].mean():.1%}"
           f" both {te['both'].mean():.1%}")
 
-    # race against gambler's ruin
+    # race: the full model against geometry alone (the same boosting on the band distances), and
+    # gambler's ruin for reference. Ruin is not the finite-window answer: given a touch within N,
+    # the nearer band is first more often than ruin says, which a geometry-only model learns.
     tr = tr.assign(geo=tr["d10"] / (tr["d90"] + tr["d10"]))
     te["geo"] = te["d10"] / (te["d90"] + te["d10"])
-    m = fit(tr, "race")
+    m, mg = fit(tr, "race"), fit(tr, "race", GEOMETRY)
     r = te[np.isfinite(te["race"])].copy()
-    r["p"] = m.predict_proba(r[FEATURES].fillna(0.0))[:, 1]
-    y, p, g = r["race"].to_numpy(), r["p"].to_numpy(), r["geo"].to_numpy()
+    r["p"], r["pg"] = prob(m, r), prob(mg, r)
+    y, p, pg, g = (r[k].to_numpy() for k in ("race", "p", "pg", "geo"))
     days = r["day"].to_numpy()
-    lo_hi = boot(lambda ix: bss(p[ix], g[ix], y[ix]), days)
-    halves = [bss(p[mk], g[mk], y[mk]) for mk in (half[r.index].to_numpy(), ~half[r.index].to_numpy())]
-    print(f"    race    n={len(r):,} up-first {y.mean():.3f} geo {g.mean():.3f} | AUC model "
-          f"{roc_auc_score(y, p):.3f} geo {roc_auc_score(y, g):.3f} | Brier skill over geometry "
-          f"{bss(p, g, y):+.4f} [{lo_hi[0]:+.4f}, {lo_hi[1]:+.4f}] halves {halves[0]:+.4f} / "
-          f"{halves[1]:+.4f} | calib worst {calib(p, y):.0%}")
+    lo_hi = boot(lambda ix: bss(p[ix], pg[ix], y[ix]), days)
+    hr = half[r.index].to_numpy()
+    halves = [bss(p[mk], pg[mk], y[mk]) for mk in (hr, ~hr)]
+    print(f"    race    n={len(r):,} up-first {y.mean():.3f} | AUC model {roc_auc_score(y, p):.3f} "
+          f"geometry {roc_auc_score(y, pg):.3f} ruin {roc_auc_score(y, g):.3f} | Brier skill over "
+          f"geometry {bss(p, pg, y):+.4f} [{lo_hi[0]:+.4f}, {lo_hi[1]:+.4f}] halves {halves[0]:+.4f} / "
+          f"{halves[1]:+.4f} (ruin as baseline {bss(p, g, y):+.4f}) | calib worst {calib(p, y):.0%}")
     for side in (1.0, 0.0):
         mk = r["above50"] == side
         if mk.sum() > 100:
             print(f"      after closing {'above' if side else 'below'} P50 first: P90 first "
-                  f"{r.loc[mk, 'race'].mean():.3f} (geo {r.loc[mk, 'geo'].mean():.3f}, n={int(mk.sum()):,})")
+                  f"{r.loc[mk, 'race'].mean():.3f} (geometry model {r.loc[mk, 'pg'].mean():.3f}, "
+                  f"n={int(mk.sum()):,}) - mechanical: it conditions on the first bar's move")
 
-    # race as a trade
-    trp = m.predict_proba(tr[FEATURES].fillna(0.0))[:, 1]
-    q = np.nanquantile(np.abs(trp - tr["geo"].to_numpy()), 0.9)
-    edge = p - g
+    # race as a trade, chosen on EVERY test bar (not only those where a band was later touched,
+    # which conditions on the future): toward the band the model favours beyond geometry.
+    q = np.nanquantile(np.abs(prob(m, tr) - prob(mg, tr)), 0.9)
+    allp, allg = prob(m, te), prob(mg, te)
+    edge = allp - allg
     go = np.abs(edge) > q
-    cost = COST_V.get(r["family"].iloc[0], 0.5) * math.sqrt(5 / MINUTES)
+    cost = COST_V.get(te["family"].iloc[0], 0.5) * math.sqrt(5 / MINUTES)
     net = []
-    for (_, row), e in zip(r[go].iterrows(), edge[go], strict=True):
+    for (_, row), e in zip(te[go].iterrows(), edge[go], strict=True):
         long = e > 0
         target_d, stop_d = (row["d90"], row["d10"]) if long else (row["d10"], row["d90"])
         t_target, t_stop = (row["t_up"], row["t_dn"]) if long else (row["t_dn"], row["t_up"])
@@ -315,29 +331,30 @@ def score(name: str, d: pd.DataFrame) -> None:
         net.append(got - cost / stop_d)
     net = np.array(net)
     if len(net) > 30:
-        nd = r[go]["day"].to_numpy()
+        nd = te[go]["day"].to_numpy()
         sums = pd.Series(net - net.mean()).groupby(nd).sum()
         se = np.sqrt((sums**2).sum()) / len(net)
-        hh = half[r[go].index].to_numpy()
-        print(f"    race trade: n={len(net):,} ({go.mean():.1%} of races) net R {net.mean():+.3f} "
+        hh = half[te[go].index].to_numpy()
+        print(f"    race trade: n={len(net):,} ({go.mean():.1%} of bars) net R {net.mean():+.3f} "
               f"(t {net.mean() / se:+.1f}) halves {net[hh].mean():+.3f} / {net[~hh].mean():+.3f}")
 
-    # touch and both against the training rate (and reflection for touch)
+    # touch and both: the full model against geometry alone, the training rate and reflection
     for target, dist in (("touch90", "d90"), ("touch10", "d10"), ("both", None)):
-        mm = fit(tr, target)
+        mm, mg2 = fit(tr, target), fit(tr, target, GEOMETRY)
         yy = te[target].to_numpy()
-        pp = mm.predict_proba(te[FEATURES].fillna(0.0))[:, 1]
+        pp, pg2 = prob(mm, te), prob(mg2, te)
         rate = np.full(len(te), tr[target].mean())
-        parts = [f"    {target:7s} rate {yy.mean():.3f} (train {rate[0]:.3f}) | AUC {roc_auc_score(yy, pp):.3f}"]
         dd = te["day"].to_numpy()
-        ci = boot(lambda ix, pp=pp, yy=yy: roc_auc_score(yy[ix], pp[ix]), dd, n=150)
-        parts.append(f"[{ci[0]:.3f}, {ci[1]:.3f}]")
-        hs = [roc_auc_score(yy[mk], pp[mk]) for mk in (half.to_numpy(), ~half.to_numpy())]
-        parts.append(f"halves {hs[0]:.3f} / {hs[1]:.3f} | BSS vs rate {bss(pp, rate, yy):+.4f}")
+        ci = boot(lambda ix, pp=pp, pg2=pg2, yy=yy: bss(pp[ix], pg2[ix], yy[ix]), dd, n=150)
+        hs = [bss(pp[mk], pg2[mk], yy[mk]) for mk in (half.to_numpy(), ~half.to_numpy())]
+        parts = [f"    {target:7s} rate {yy.mean():.3f} | AUC model {roc_auc_score(yy, pp):.3f} "
+                 f"geometry {roc_auc_score(yy, pg2):.3f} | skill over geometry {bss(pp, pg2, yy):+.4f} "
+                 f"[{ci[0]:+.4f}, {ci[1]:+.4f}] halves {hs[0]:+.4f} / {hs[1]:+.4f} | over rate "
+                 f"{bss(pp, rate, yy):+.4f}"]
         if dist:
             refl = np.clip(2 * (1 - _phi(te[dist].to_numpy() / (s1 * math.sqrt(N)))), 0, 1)
-            parts.append(f"vs reflection {bss(pp, refl, yy):+.4f} (reflection AUC {roc_auc_score(yy, refl):.3f})")
-        parts.append(f"calib worst {calib(pp, yy):.0%}")
+            parts.append(f"| reflection AUC {roc_auc_score(yy, refl):.3f}")
+        parts.append(f"| calib worst {calib(pp, yy):.0%} (geometry {calib(pg2, yy):.0%})")
         print(" ".join(parts), flush=True)
 
 
