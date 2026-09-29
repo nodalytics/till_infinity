@@ -39,6 +39,7 @@ from . import breaks as bk
 from . import cycles as cy
 from . import levels as lv
 from . import reactions
+from . import rollover as ro
 from . import spreadquotes as sq
 from . import zma as zm
 from .config import DEFAULT_FORMATION
@@ -2318,6 +2319,8 @@ class Engine:
         walk every race that many times for the same price. A race whose level has since been
         re-formed or pruned has nothing to credit, the same rule `_drain_expired` follows.
         """
+        if ro.masked(feed, since if since is not None else when, when):
+            return  # the rollover's spike settles no race either - see `rollover.py`
         self.tracker.advance_races(feed, price, when, low, high, since)
         settled = self.tracker.drain_races()
         if not settled:
@@ -2440,6 +2443,9 @@ class Engine:
         vol = self.vol_for(feed, interval)
         if not vol.warm:
             return []
+        # The FX rollover's spread spike, which prints wicks through levels and back: nothing is
+        # opened or resolved on it. See `rollover.py`.
+        rolling = ro.masked(feed, since if since is not None else when, when)
         calls: list[Call] = []
         for level in self._levels.get((feed, interval), []):
             # Before anything decides whether this level is interesting. A
@@ -2448,6 +2454,8 @@ class Engine:
             # while the touch is open - see `ReactionTracker.carry`.
             self.tracker.carry(level, price, vol, when)
             open_touch = self.tracker.open_touch(level)
+            if open_touch is not None and rolling:
+                continue  # carried through the rollover, judged on the prices after it
             if open_touch is not None:
                 # The wick belongs to this touch only if the touch was already
                 # open when the bar carrying it opened.
@@ -2493,6 +2501,8 @@ class Engine:
             # GAP_FACTOR can discard it, and levels must still be formed. It is
             # only *opening* one that a closed market makes meaningless.
             if not self.trading(feed, when):
+                continue
+            if rolling:
                 continue
             side = self._approach(level, price)
             features = reactions.features_for(

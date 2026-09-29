@@ -64,11 +64,17 @@ Share of FX outcomes resolving in 21-22 UTC, by timeframe (even spread: 8.3%):
 
 ## For production
 
-Proposed, not yet done:
-
-1. **Mask the FX rollover in `structures`.** No FX touch opens or resolves on a bar that spans the
-   rollover: 21:00 UTC in northern summer, 22:00 in winter, i.e. 17:00 New York. A few minutes
-   either side covers the widest spread. Deriv, metals and crypto are left alone.
+1. **Done: the FX rollover is masked in `structures`** (`structures/rollover.py`, on by default,
+   `STRUCTURES_ROLLOVER_MASK=0` turns it off).
+   - **Window:** 16:55-17:10 New York, so 21:00 UTC in northern summer and 22:00 in winter.
+   - **What the mask does:** for FX feeds only, a price update that reaches the window neither
+     opens a touch nor resolves one, and does not advance the symmetric races.
+   - **What still happens:** touches opened before the window are carried through it untouched
+     and judged on the prices after it, and levels still form from these bars.
+   - **What is left alone:** bars longer than two hours, which always span 17:00 but in which the
+     spike is a small part of the range; and Deriv, metals and crypto.
+   - **Follow-up:** levels drawn from the rollover wick itself (a pivot at a spike extreme) are not
+     yet excluded.
 2. **Measure it again after the mask.** The 21:00 bulge should disappear, and the FX 15m and 30m
    hold rates should be re-read without it.
 3. Optionally, **discount the FX 15m and 30m levels' existing records,** since up to 46% of their
