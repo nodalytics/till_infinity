@@ -2683,9 +2683,9 @@ class Trader:
         got = payload.get("policy")
         if type(got).__name__ == "Policy":
             self.policy = got
-        kept = payload.get("entries")
-        if type(kept).__name__ == "Entries":
-            self.entries = kept
+        entries = payload.get("entries")
+        if type(entries).__name__ == "Entries":
+            self.entries = entries
         self._restore_refs(payload.get("refs"))
         self._restore_learned(payload.get("learned"))
         self._restore_intervals(payload.get("intervals"))
