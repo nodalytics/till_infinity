@@ -149,7 +149,115 @@ def run_shocks(fetch: Callable[[str, str], list], names: list[str]) -> tuple[dic
     return (spec if not reasons else None), report
 
 
-REGISTRY: dict[str, Callable[..., tuple[dict | None, dict]]] = {"shocks": run_shocks}
+#: The band-touch forecaster's gates (`structures/learning/touches.py`, research/docs/bandrace.md).
+TOUCH_GATES: dict[str, float] = {
+    # Brier skill over geometry - the same boosting on the band distances alone - worth publishing
+    "min_skill": 0.03,
+    # the worst decile's |realised - predicted| / predicted: what "P90 touched 38%" relies on
+    "calibration": 0.20,
+}
+
+#: One replay serves both bands' contests in a run: (fetch, names, hour) -> (series count, rows).
+_touch_rows: dict[tuple[int, tuple[str, ...], int], tuple[int, Any]] = {}
+
+
+def touch_gate(challenger: dict, champion: dict) -> list[str]:
+    """Every reason not to promote a band-touch model; empty means promote."""
+    reasons = []
+    skill = challenger.get("skill", float("nan"))
+    if not skill >= TOUCH_GATES["min_skill"]:
+        reasons.append(f"skill over geometry {skill} below {TOUCH_GATES['min_skill']}")
+    cal = challenger.get("calibration", float("nan"))
+    if not cal <= TOUCH_GATES["calibration"]:
+        reasons.append(f"worst-decile calibration error {cal} above {TOUCH_GATES['calibration']}")
+    theirs = champion.get("skill")
+    if theirs is not None and not math.isnan(theirs):
+        se = challenger.get("skill_se", float("nan"))
+        slack = max(GATES["vs_champion"], 2 * se) if not math.isnan(se) else GATES["vs_champion"]
+        if skill < theirs - slack:
+            reasons.append(f"skill {skill} against the champion's {theirs} (slack {slack:.3f})")
+    return reasons
+
+
+def _touch_contest(band: str, fetch: Callable[[str, str], list], names: list[str]):
+    """One contest for one band's touch model. Returns (spec to promote or None, report)."""
+    from ..structures import rollover as ro
+    from ..structures.learning import touches as tc
+    from . import touches_train as tt
+
+    # Keyed by the hour too: the service reuses one fetch across fortnights, and a replay must not
+    # outlive the run it was made for.
+    key = (id(fetch), tuple(names), int(time.time() // 3600))
+    if key not in _touch_rows:
+        _touch_rows.clear()
+        series = {}
+        for symbol in names:
+            if ro.is_fx(symbol):
+                got = fetch(symbol, tc.INTERVAL)
+                if len(got) > 2 * tc.NORM:
+                    series[(symbol, tc.INTERVAL)] = got
+        _touch_rows[key] = (len(series), tt.dataset(series).arrays())
+    count, (when, x, y90, y10) = _touch_rows[key]
+    y = y90 if band == "touch90" else y10
+    if len(y) == 0:
+        return None, {"series": count, "promoted": False, "reasons": ["no usable FX 15m history"]}
+    cut = when.max() - HOLDOUT_DAYS * 86_400
+    train, held = when < cut, when >= cut
+    if not held.any() or not train.any():
+        return None, {"series": count, "promoted": False, "reasons": ["too little history"]}
+    spec = tt.train(x[train], y[train])
+    model = spec.pop("_sklearn")
+    trees = frozen.Trees(spec)
+    sample = x[held][:5_000]
+    exact = float(
+        np.max(
+            np.abs(
+                np.array([trees.predict(list(r)) for r in sample])
+                - model.predict_proba(sample)[:, 1]
+            )
+        )
+    )
+    geo = tt.geometry(x[train], y[train])(x[held])
+    p = np.array([trees.predict(list(r)) for r in x[held]])
+    challenger = tt.score(p, geo, y[held], when[held])
+    current = frozen.load(tc.MODELS[band], recipe=tc.RECIPE, names=tc.NAMES)
+    champion = {}
+    if current:
+        old = frozen.Trees(current)
+        champion = tt.score(
+            np.array([old.predict(list(r)) for r in x[held]]), geo, y[held], when[held]
+        )
+    reasons = touch_gate(challenger, champion)
+    if exact > GATES["exact"]:
+        reasons.append(f"evaluator differs from the training library by {exact:.2e}")
+    spec["test"] = challenger
+    spec["holdout_from"] = datetime.fromtimestamp(cut, UTC).isoformat(timespec="seconds")
+    report = {
+        "series": count,
+        "challenger": challenger,
+        "champion": champion,
+        "promoted": not reasons,
+        "reasons": reasons,
+        "evaluator_max_diff": exact,
+    }
+    return (spec if not reasons else None), report
+
+
+def run_touch90(fetch: Callable[[str, str], list], names: list[str]) -> tuple[dict | None, dict]:
+    """The P90-touched model's contest."""
+    return _touch_contest("touch90", fetch, names)
+
+
+def run_touch10(fetch: Callable[[str, str], list], names: list[str]) -> tuple[dict | None, dict]:
+    """The P10-touched model's contest."""
+    return _touch_contest("touch10", fetch, names)
+
+
+REGISTRY: dict[str, Callable[..., tuple[dict | None, dict]]] = {
+    "shocks": run_shocks,
+    "touch90_fx15m": run_touch90,
+    "touch10_fx15m": run_touch10,
+}
 
 
 def run_once(name: str, fetch: Callable[[str, str], list], names: list[str]) -> dict:
@@ -186,7 +294,10 @@ def card(report: dict) -> dict:
         f"challenger AUC real {c.get('real', 'n/a')}"
         f" · deriv {c.get('deriv', 'n/a')} · control {c.get('control', 'n/a')}"
         f" · top-decile calibration {c.get('calibration', 'n/a')}",
-        f"champion AUC real {k.get('real', 'n/a')} · deriv {k.get('deriv', 'n/a')}",
+        f"champion AUC real {k.get('real', 'n/a')} · deriv {k.get('deriv', 'n/a')}"
+        if "skill" not in c
+        else f"skill over geometry {c.get('skill')} (champion {k.get('skill', 'n/a')})"
+        f" · calibration {c.get('calibration')}",
         "✅ promoted - live within five minutes"
         if promoted
         else "↩️ kept the champion: " + "; ".join(report.get("reasons", [])),
