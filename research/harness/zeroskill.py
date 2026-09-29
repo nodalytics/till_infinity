@@ -51,7 +51,6 @@ import json
 import math
 import os
 import sqlite3
-import sys
 import time
 from collections import Counter, defaultdict
 from statistics import NormalDist
@@ -86,12 +85,14 @@ def stream():
         "('observation','outcome','decision') ORDER BY time"
     ):
         c = json.loads(ctx)
-        if kind == "observation" and isinstance(c.get("reward"), int | float) and c.get("untaken"):
+        # A resolved untaken intent ("<strategy> would have target/stop/timeout on <feed>") carries
+        # its reward as `reward_r`, in the trade's own R - what `_credit` hands the policy.
+        if kind == "observation" and isinstance(c.get("reward_r"), int | float):
             by = str(c.get("strategy") or c.get("taken_by") or "")
             shape = PRESETS.get(by)
             arm = shape.named() if shape is not None else str(c.get("arm") or "")
             rows.append((t, str(c.get("feed") or ""), str(c.get("interval") or ""), by, arm,
-                         float(c["reward"])))
+                         float(c["reward_r"])))
         elif kind == "outcome" and isinstance(c.get("r_multiple"), int | float):
             closed.append(float(c["r_multiple"]))
         elif kind == "decision" and c.get("arm_reason"):
@@ -157,7 +158,6 @@ def pct(values, q):
 
 
 def policy_part(rows, closed, picks):
-    rng = np.random.default_rng(0)
     real = np.array([r[5] for r in rows])
     days = max(1, (rows[-1][0] - rows[0][0]) / 86_400) if rows else 1
     arms = Counter(r[4] for r in rows if r[4])
