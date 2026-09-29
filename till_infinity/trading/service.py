@@ -67,6 +67,7 @@ from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
 from .risk import Guard
 from .sessions import Sessions
+from .shadow import ShadowGates
 from .sizing import lots, price_distance
 from .strategies import strategy
 from .strategies.opportunity import PRESETS
@@ -442,6 +443,17 @@ class Trader:
         effects.declare("trading.spike_switch", enabled=self.settings.spike_above > 0)
         effects.declare("trading.release_in_hold", enabled=self.settings.release_in_hold)
         self.journal = journal
+        #: The confirmation gates `confirm.md` left standing, shadowed: recorded against every
+        #: matching level signal and never acted on. See `shadow.py`.
+        self.gates = ShadowGates(
+            fetch=lambda symbol, interval, count: self.execution.bars(
+                symbol, interval, count=count
+            ),
+            record=self._record_gate,
+            enabled=self.settings.shadow_gates,
+        )
+        self._gates_task: asyncio.Task[int] | None = None
+        self._gates_checked = 0.0
         self.plan = plans.apply(self.settings)
         self.broker = broker or build(self.settings)
         #: Where orders go. **Not** the same object as `self.broker` unless
@@ -840,6 +852,7 @@ class Trader:
 
     async def handle(self, message: Message) -> Intent | Refusal | None:
         """One bus message in. Returns what it did, for the tests and the log."""
+        self._gates_due()
         if message.topic == QUOTES:
             self._quote(message.payload)
             feed = str(message.payload.get("feed") or "")
@@ -871,8 +884,40 @@ class Trader:
         if message.topic == SIGNALS:
             self.received += 1
             self.received_at = time.time()
+            # Recorded only: nothing below reads what the shadowed gates plan. See `shadow.py`.
+            feed = str(message.payload.get("feed") or "")
+            self.gates.consider(message.payload, self._symbol_of.get(feed))
             return await self.on_signal(message.payload)
         return None
+
+    def _gates_due(self) -> None:
+        """Evaluate shadowed gates whose window has closed, in the background and at most every
+        fifteen seconds, so a bar fetch never holds up a message. Never raises."""
+        try:
+            now = time.time()
+            running = self._gates_task
+            if now - self._gates_checked < 15 or (running is not None and not running.done()):
+                return
+            self._gates_checked = now
+            if any(plan.due <= now for plan in self.gates.pending):
+                self._gates_task = asyncio.get_running_loop().create_task(self.gates.due())
+        except Exception as exc:
+            log.debug("trading: shadow gates not checked: %s", exc)
+
+    async def _record_gate(
+        self, title: str, context: dict[str, Any], tags: tuple[str, ...]
+    ) -> None:
+        await observe(
+            self.journal,
+            title,
+            rationale=(
+                "A confirmation gate from research/docs/confirm.md, shadowed: recorded against "
+                "this level signal and not acted on. research/harness/shadowreport.py settles it."
+            ),
+            actor="trading",
+            context=context,
+            tags=tags,
+        )
 
     def _resolution(self, payload: dict[str, Any]) -> None:
         """Note what a level actually did.

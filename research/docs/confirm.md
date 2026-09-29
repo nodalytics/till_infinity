@@ -3,6 +3,14 @@
 Harness: [`research/harness/confirm.py`](../harness/confirm.py). Lab run 2026-09-29, bars from
 2024-01-01. Results table on the lab: `data/confirm/results.csv`, 10,058 cells.
 
+
+> **Timing note (added 2026-09-29, found while porting the gates to production).** The harness
+> read a touch's time (the touching bar's close) as a bar's open and added one HTF bar, so every
+> lower-timeframe confirmation window here opens one hour later than intended. The results above
+> are for that later window. The production shadow (`trading/shadow.py`) reproduces the offset on
+> purpose, so it tests what was measured, and it records the plain entry beside each verdict so the
+> offset's effect can be judged from live data.
+
 ## The question
 
 The desk wants a confirmation layer in the trading service. A structures signal arrives from any

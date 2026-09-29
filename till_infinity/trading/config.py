@@ -1126,6 +1126,10 @@ class Settings:
     #: default.
     #: Measured; see `research/docs/settings.md`.
     require_candle: bool = False
+    #: Record the five confirmation gates `research/docs/confirm.md` left standing, on every
+    #: matching level signal, without acting on any of them - see `trading/shadow.py`. On by
+    #: default because it only writes journal observations.
+    shadow_gates: bool = True
     #: How close to the level the bar must come, in volatility units, to count
     #: as having tested it.
     candle_tolerance_vol: float = 0.25
@@ -1425,6 +1429,7 @@ class Settings:
             max_against_vol=_float("TRADING_MAX_AGAINST_VOL", 0.0),
             require_turn_vol=_float("TRADING_REQUIRE_TURN_VOL", 0.0),
             require_candle=_flag("TRADING_REQUIRE_CANDLE", False),
+            shadow_gates=_flag("TRADING_SHADOW_GATES", True),
             candle_tolerance_vol=_float("TRADING_CANDLE_TOLERANCE_VOL", 0.25),
             stops_level_margin=_float("TRADING_STOPS_LEVEL_MARGIN", 1.25),
             scale_out_at=_float("TRADING_SCALE_OUT_AT", 0.0),

@@ -547,6 +547,7 @@ class HttpBroker(Broker):
                         low=float(row["low"]),
                         close=float(row["close"]),
                         time=_bar_time(row.get("time")),
+                        volume=float(row.get("tick_volume") or row.get("real_volume") or 0.0),
                     )
                 )
             except (KeyError, TypeError, ValueError):

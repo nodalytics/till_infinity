@@ -807,6 +807,10 @@ class Call(Restorable):
             level_id=self.level.id,
             features={
                 "level": self.level.price,
+                # The side price arrived from: 1 from above (a floor, faded long), 0 from below.
+                # `direction` is the predicted push and can be the break; the shadowed
+                # confirmation gates (`trading/shadow.py`) fade the arrival, as they were measured.
+                "arrived_above": 1.0 if self.inference.side is lv.Side.ABOVE else 0.0,
                 "last_high_structure": high_structure,
                 "last_low_structure": low_structure,
                 "probability_up": self.inference.probability_up,
