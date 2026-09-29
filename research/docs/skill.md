@@ -116,6 +116,23 @@ deliberately mis-estimated at 0.5x, 1x and 2x the truth. Arriving 0.35 / 0.75 un
   started, with no trap re-labelling. It reads 50% on noise, so any hold rate above 50% on a real
   market is information about the market rather than about the definition.
 
+### Two labels, two nulls (reconciled with [`holdlabel.md`](holdlabel.md))
+
+The desk has two different "held" statistics, and they carry different biases on noise:
+
+- **A level's own `hold_rate`** (`levels.py:458`) is rejects / (rejects + breaks + traps): a trap
+  counts *against* holding. `holdlabel.md` measures its random-walk null at **55%**, and the
+  ratcheting origin is the whole of that bias. Readings of `hold_rate` should be quoted against 55%.
+- **The break model's label** (`learning/breaking.py:233`, `HELD = ("reject", "backcheck", "trap")`)
+  counts a trap as held. That is the label `P(break)` above is scored on, and the one the simulation
+  here models. Its null is near 65% (`holdlabel.md`'s own "traps as holds" row reads 64.6%, and this
+  page's simplified model 67-76%).
+
+Neither changes the result on this page. The real-market skill is compared with the random-walk
+replay, which carries whichever bias applies. And as `holdlabel.md` notes, differential comparisons
+between touches (by experience or by trend efficiency) cancel a bias that applies to every touch
+alike; they still need their own random-walk control before the difference is called market.
+
 ## What this settles
 
 - **Does structures show skill?** Against the base rate, a large skill (+0.58 Brier skill score).
