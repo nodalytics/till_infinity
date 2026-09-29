@@ -134,11 +134,11 @@ from till_infinity.trading.sizing import price_distance
 UNIVERSE = os.environ.get("UNIVERSE", "real")
 PART = os.environ.get("PART", "run")
 OUT = Path(os.environ.get("OUT", ".data/confirm"))
-MIN = {"15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
+MIN = {"15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440, "piv": 1440}
 SIGNALS = ("1h", "4h", "1d")
 LTFS = ("15m", "30m", "1h")
 PAIRS = (("1d", "1h"), ("1d", "30m"), ("4h", "1h"), ("4h", "30m"), ("4h", "15m"), ("1h", "15m"),
-         ("1h", "1h"))
+         ("1h", "1h"), ("piv", "1h"), ("piv", "15m"))
 CAP_WINDOW, SAME_WINDOW = 32, 8
 LIMIT_HTF, CAP_LIMIT = 10, 400
 TARGETS = (1, 2)
@@ -552,42 +552,48 @@ def run() -> None:
     plans = []
     for sid, z in enumerate(touches):
         feed = z["feed"]
-        options = [z["interval"]] if z["interval"] in SIGNALS else list(SIGNALS)
-        htf = None
-        for iv in options:
-            if (feed, iv) in TS:
-                i = int(np.searchsorted(TS[(feed, iv)], z["time"]))
-                if i < len(TS[(feed, iv)]) and TS[(feed, iv)][i] == z["time"]:
-                    htf, hi = iv, i
-                    break
-        if htf is None or hi < 60:
+        # A touch's `interval` is the timeframe of the **level**; the bar that touched it is usually
+        # finer (a 4h level touched by a 1h bar). The first version matched the touch time against
+        # the level's own bars and silently dropped 77% of 4h and 97% of 1d signals. The touching
+        # bar is the finest series with a bar at that time (the merge feeds finer bars first), and
+        # the signal is known at its close. Daily and weekly pivots form their own class, "piv".
+        level_tf = z["interval"] if z["interval"] in SIGNALS else "piv"
+        touching = next((iv for iv in SIGNALS if (feed, iv) in TS
+                         and (k := int(np.searchsorted(TS[(feed, iv)], z["time"]))) < len(TS[(feed, iv)])
+                         and TS[(feed, iv)][k] == z["time"]), None)
+        if touching is None:
             continue
-        hx = X[(feed, htf)]
+        closes_at = z["time"] + MIN[touching] * 60
+        # The stop's HTF volatility: the level timeframe's last bar closed by then (1d for pivots).
+        vol_tf = "1d" if level_tf == "piv" else level_tf
+        if (feed, vol_tf) not in TS:
+            continue
+        hts = TS[(feed, vol_tf)]
+        hi = int(np.searchsorted(hts, closes_at - MIN[vol_tf] * 60, side="right")) - 1
+        if hi < 60:
+            continue
+        hx = X[(feed, vol_tf)]
         s = 1 if z["above"] else -1
-        closes_at = z["time"] + MIN[htf] * 60
         fine = (feed, "15m")
         roll = fam_of[feed] == "fx" and fine in TS and rollover(
             TS[fine], X[fine]["low"], X[fine]["high"], z["time"], closes_at, s)
         for a, b in PAIRS:
-            if a != htf or (feed, b) not in TS:
+            if a != level_tf or (feed, b) not in TS or MIN[b] < 1 or MIN[b] > MIN[a]:
+                continue
+            if MIN[b] < MIN[touching] and a == b:
                 continue
             lts, x = TS[(feed, b)], X[(feed, b)]
-            if a == b:
-                k0 = hi
-            else:
-                k0 = int(np.searchsorted(lts, closes_at)) - 1
-                if k0 < 0 or lts[k0] < z["time"]:
-                    continue
-            if k0 < 210:
+            k0 = int(np.searchsorted(lts, closes_at - MIN[b] * 60, side="right")) - 1
+            if k0 < 210 or lts[k0] + MIN[b] * 60 > closes_at:
                 continue
-            ratio = MIN[a] // MIN[b]
+            ratio = max(MIN[a] // MIN[b], 1)
             window = SAME_WINDOW if a == b else min(ratio, CAP_WINDOW)
-            limit = min(LIMIT_HTF * max(ratio, 1), CAP_LIMIT)
-            plans.append((sid, feed, a, b, k0, hi, s, z["level"], z["time"], window, limit, roll))
+            limit = min(LIMIT_HTF * ratio, CAP_LIMIT)
+            plans.append((sid, feed, vol_tf, b, k0, hi, s, z["level"], z["time"], window, limit, roll, a))
             feats.append([sid, f"{a}>{b}", *feature_row(x, k0, s, z["level"], hx, hi)])
     print(f"{UNIVERSE}: {len(plans):,} signal x pair plans", flush=True)
 
-    for n, (sid, feed, a, b, k0, hi, s, level, t, window, limit, roll) in enumerate(plans):
+    for n, (sid, feed, a, b, k0, hi, s, level, t, window, limit, roll, pa) in enumerate(plans):
         x, trig = X[(feed, b)], TRIG[(feed, b)]
         hx = X[(feed, a)]
         o, h, lo, c = x["open"], x["high"], x["low"], x["close"]
@@ -643,13 +649,13 @@ def run() -> None:
                     continue
                 cost = ind.COST_V[fam_of[feed]] * np.sqrt(5 / MIN[b]) * x["vol"][j] * c[j] / risk
                 for k, (r, stopped, then_right, hit) in zip(TARGETS, got, strict=True):
-                    rows.append((sid, rule, fam_of[feed], feed, f"{a}>{b}", skind, k, t, roll, j - k0,
+                    rows.append((sid, rule, fam_of[feed], feed, f"{pa}>{b}", skind, k, t, roll, j - k0,
                                  r - cost, cost, stopped, then_right, hit))
         if n % 20_000 == 0:
             print(f"  {n:,} of {len(plans):,} plans, {len(rows):,} rows", flush=True)
 
     # timing control: every signal, entered after a delay drawn from each trigger's own delays
-    for n, (sid, feed, a, b, k0, hi, s, level, t, window, limit, roll) in enumerate(plans):
+    for n, (sid, feed, a, b, k0, hi, s, level, t, window, limit, roll, pa) in enumerate(plans):
         x, hx = X[(feed, b)], X[(feed, a)]
         h, lo, c = x["high"], x["low"], x["close"]
         stop = level - s * hx["vol"][hi] * hx["close"][hi]
@@ -667,7 +673,7 @@ def run() -> None:
                 continue
             cost = ind.COST_V[fam_of[feed]] * np.sqrt(5 / MIN[b]) * x["vol"][j] * c[j] / risk
             for k, (r, stopped, then_right, hit) in zip(TARGETS, got, strict=True):
-                rows.append((sid, f"wait:{g}", fam_of[feed], feed, f"{a}>{b}", "htf", k, t, roll, j - k0,
+                rows.append((sid, f"wait:{g}", fam_of[feed], feed, f"{pa}>{b}", "htf", k, t, roll, j - k0,
                              r - cost, cost, stopped, then_right, hit))
     df = pd.DataFrame(rows, columns=["sid", "rule", "family", "feed", "pair", "stop", "k", "time", "rollover",
                                      "delay", "net", "cost", "stopped", "then_right", "hit"])
