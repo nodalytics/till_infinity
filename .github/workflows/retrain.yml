@@ -1,0 +1,121 @@
+# Retrain the frozen models on fresh bars, fortnightly, off the instance.
+#
+# The instance is sized for the services, not for training (a run holds a few
+# million feature rows), so the training happens here and the result ships the
+# way code does: a PR that replaces till_infinity/models/<name>.json, merged,
+# then deployed. Nothing is opened unless the gates in models/retrain.py
+# promoted the challenger over the model shipped in main.
+#
+# Needs the TRADING_MT5_URL and TRADING_MT5_API_KEY secrets (the bridge must be
+# reachable from GitHub's runners) and a MODELS_SYMBOLS variable. Without the
+# URL the run is skipped with a notice. To train on the instance instead, see
+# docs/deployment.md.
+
+name: Retrain
+
+on:
+  schedule:
+    - cron: "17 3 1,15 * *"  # the 1st and 15th, 03:17 UTC - quiet on every venue
+  workflow_dispatch:
+
+concurrency:
+  group: retrain
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TRADING_MT5_URL: ${{ secrets.TRADING_MT5_URL }}
+      TRADING_MT5_API_KEY: ${{ secrets.TRADING_MT5_API_KEY }}
+      MODELS_SYMBOLS: ${{ vars.MODELS_SYMBOLS }}
+      # Promote straight over the shipped copy, so the champion is what main ships
+      # and a promotion is a diff to commit.
+      TI_MODELS_DIR: till_infinity/models
+    steps:
+      - name: Bridge configured?
+        id: gate
+        run: |
+          if [ -z "$TRADING_MT5_URL" ]; then
+            echo "::notice::TRADING_MT5_URL is not set - nothing to retrain from"
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.skip != '1'
+
+      - uses: astral-sh/setup-uv@v5
+        if: steps.gate.outputs.skip != '1'
+        with:
+          enable-cache: true
+
+      - if: steps.gate.outputs.skip != '1'
+        run: uv sync --all-extras
+
+      - name: Retrain
+        if: steps.gate.outputs.skip != '1'
+        run: uv run till-infinity models retrain --once
+
+      - name: Report
+        if: steps.gate.outputs.skip != '1'
+        id: report
+        run: |
+          uv run python - <<'EOF'
+          import json, os, pathlib
+          out, failed, promoted = [], False, []
+          for path in sorted(pathlib.Path("till_infinity/models").glob("*.report.jsonl")):
+              r = json.loads(path.read_text().splitlines()[-1])
+              failed |= any(str(x).startswith("failed:") for x in r.get("reasons", []))
+              if r.get("promoted"):
+                  promoted.append(r["model"])
+              out.append(f"### {r['model']}: {'promoted' if r.get('promoted') else 'kept the champion'}")
+              out += [f"- {x}" for x in r.get("reasons", [])]
+              out.append("\n| hold-out | challenger | champion |\n|---|---|---|")
+              c, k = r.get("challenger", {}), r.get("champion", {})
+              out += [f"| {n} | {c.get(n, 'n/a')} | {k.get(n, 'n/a')} |" for n in sorted(set(c) | set(k))]
+              out.append(f"\nevaluator max |diff| vs sklearn: {r.get('evaluator_max_diff', 'n/a')}\n")
+          body = "\n".join(out)
+          pathlib.Path(os.environ["RUNNER_TEMP"], "report.md").write_text(body)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write(body)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"promoted={' '.join(promoted)}\n")
+          # A run that failed must show red, not pass as "kept the champion".
+          raise SystemExit(1 if failed else 0)
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.gate.outputs.skip != '1'
+        with:
+          name: retrain-reports
+          path: till_infinity/models/*.report.jsonl
+          if-no-files-found: ignore
+
+      # A PR opened with GITHUB_TOKEN does not trigger CI, so the checks the PR
+      # would get run here, against the promoted model, before it is opened.
+      - name: Check the promoted model
+        if: steps.report.outputs.promoted != ''
+        run: |
+          uv run ruff check .
+          uv run pytest -q
+
+      - name: Open the PR
+        if: steps.report.outputs.promoted != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTED: ${{ steps.report.outputs.promoted }}
+        run: |
+          branch="models/retrain-$(date -u +%Y%m%d)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          for name in $PROMOTED; do git add "till_infinity/models/$name.json"; done
+          git commit -q -m "models: retrained $PROMOTED, promoted by the gates"
+          git push -q -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "models: retrained $PROMOTED" --body-file "$RUNNER_TEMP/report.md"
