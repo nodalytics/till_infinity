@@ -35,6 +35,10 @@ from fractal_twins import FAMILIES
 
 RNG = np.random.default_rng(43)
 RESOLVE, TRAP, TRAP_BARS, WING, FOLLOW, LIFE = 1.5, 0.5, 6, 5, 96, 500
+#: Where between the original level (0) and the trap's extreme (1) the adjusted level sits. 0.5 is the
+#: first run's midpoint; 0.80 and 0.86 were asked for, and 0.14 and 0.20 are the same numbers measured
+#: from the other end. Fixed before the run and all reported, so this is not a search for the best one.
+FRACTIONS = (0.14, 0.20, 0.50, 0.80, 0.86)
 
 
 def race(lh, ll, i, up, dn, span=FOLLOW):
@@ -76,19 +80,19 @@ def supports(lh, ll, lc, sig, half_at, rows, label):
                 if trapped is not None:
                     j = trapped
                     E = ll[k:j + 1].min()
-                    A = 0.5 * (L + E)
+                    adj = {f: L + f * (E - L) for f in FRACTIONS}
                     lo, hi = E - s, L + s
                     pl = None
                     for _ in range(50):
                         x = RNG.uniform(lo, hi)
-                        if min(abs(x - L), abs(x - E), abs(x - A)) >= 0.3 * s:
+                        if min([abs(x - L), abs(x - E)] + [abs(x - a) for a in adj.values()]) >= 0.3 * s:
                             pl = x
                             break
                     rec = dict(kind=label, event="trap", half=h,
                                extreme=retest(lh, ll, lc, j, E, s), original=retest(lh, ll, lc, j, L, s),
-                               adjusted=retest(lh, ll, lc, j, A, s),
                                placebo=retest(lh, ll, lc, j, pl, s) if pl is not None else 0,
-                               fade=race(lh, ll, j, lc[j] + s, lc[j] - s))
+                               fade=race(lh, ll, j, lc[j] + s, lc[j] - s),
+                               **{f"adj{f:.2f}": retest(lh, ll, lc, j, a, s) for f, a in adj.items()})
                 else:
                     j = k + TRAP_BARS
                     # a completed break: does the old support now resist from below? (-1 = held as resistance)
@@ -129,8 +133,9 @@ def main():
             d = pd.DataFrame(rows)
             traps, breaks = d[d["event"] == "trap"], d[d["event"] == "break"]
             print(f"\n  {name}: {len(traps):,} traps, {len(breaks):,} completed breaks (trap share {len(traps) / max(len(d), 1):.1%})")
-            for col, lab in (("extreme", "new extreme"), ("original", "original level"), ("adjusted", "adjusted (midpoint)"),
-                             ("placebo", "placebo"), ("fade", "fade at confirmation")):
+            cols = ([("original", "original level (0%)")] + [(f"adj{f:.2f}", f"{f:.0%} toward the extreme") for f in FRACTIONS]
+                    + [("extreme", "new extreme (100%)"), ("placebo", "placebo"), ("fade", "fade at confirmation")])
+            for col, lab in cols:
                 x = traps[col]
                 decided = x[x != 0]
                 if len(decided) < 20:
