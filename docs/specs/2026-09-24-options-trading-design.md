@@ -10,12 +10,12 @@ and the venue list longer than when this was first sketched.
 This desk can forecast **size** and cannot forecast **direction**. That is not a hunch, it is the
 settled result of the research folder:
 
-* [`crash-timing.md`](../../../research/docs/crash-timing.md) - a big-move score at AUC 0.65-0.81;
-* [`news-volatility.md`](../../../research/docs/news-volatility.md) - 2.4x normal volatility on a
+* [`crash-timing.md`](../../research/docs/crash-timing.md) - a big-move score at AUC 0.65-0.81;
+* [`news-volatility.md`](../../research/docs/news-volatility.md) - 2.4x normal volatility on a
   release bar, with a profile out to four hours;
-* [`implied.md`](../../../research/docs/implied.md) - VIX beating a trailing estimate by 12-20 points of
+* [`implied.md`](../../research/docs/implied.md) - VIX beating a trailing estimate by 12-20 points of
   R-squared, the only unambiguous positive in the folder;
-* against [`directional-questions.md`](../../../research/docs/directional-questions.md), where a
+* against [`directional-questions.md`](../../research/docs/directional-questions.md), where a
   92-view ensemble over price, volume, calendar, VIX, the dollar, order flow, gaps and events
   cleared costs at **no** interval, and the best out-of-sample IC was +0.039 inside two standard
   errors.
@@ -38,9 +38,9 @@ turned out to be answerable immediately, and both answers were negative.
 
 | finding | consequence |
 | --- | --- |
-| Deriv rise/fall margin: **2.41%** on synthetics, **12.0-15.6%** on real ([`deriv-payouts.md`](../../../research/docs/deriv-payouts.md)) | binaries are dead as a directional bet on both families |
+| Deriv rise/fall margin: **2.41%** on synthetics, **12.0-15.6%** on real ([`deriv-payouts.md`](../../research/docs/deriv-payouts.md)) | binaries are dead as a directional bet on both families |
 | the payout skew is `-0.00054 * sigma * sqrt(T)`, a constant | there is no directional information in the payout |
-| accumulators: 0 of 25 cells favourable, **-28.9%** of stake held to cap ([`accumulators.md`](../../../research/docs/accumulators.md)) | the one volatility-shaped Deriv contract is unfavourably priced |
+| accumulators: 0 of 25 cells favourable, **-28.9%** of stake held to cap ([`accumulators.md`](../../research/docs/accumulators.md)) | the one volatility-shaped Deriv contract is unfavourably priced |
 | `ACCU` is offered on **27 of 89 instruments, all synthetic** | the contract exists only where sigma is a published constant |
 | Deriv sells **no barrier product on the Jump indices** | `deriving.md`'s 1.71x mispricing has no instrument |
 

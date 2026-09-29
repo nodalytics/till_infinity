@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11 (`.venv`), `httpx` (already a dependency), `numpy`, gzipped CSV, `pytest`, `ruff`.
 
-**Spec:** `docs/superpowers/specs/2026-09-24-options-trading-design.md`
+**Spec:** `docs/specs/2026-09-24-options-trading-design.md`
 
 ## Global Constraints
 

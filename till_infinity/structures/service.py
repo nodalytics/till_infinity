@@ -716,6 +716,55 @@ class Watcher:
                         yield feed, interval, [float(r[0]) for r in reversed(rows)]
                         break
 
+    #: Stored bars replayed to teach the envelope's corrector (`vol/envelope.py`): enough for
+    #: `envelope.WARM` resolved outcomes at every horizon, with room to spare.
+    ENVELOPE_WARM_BARS: int = 3_000
+
+    def warm_envelopes(self) -> int:
+        """Teach the envelope's AgACI from stored bars wherever it has not learned enough live.
+
+        Run after the engine's own warm-up, and on a restored state too: a deploy restores the
+        envelopes but replays nothing, and learning 1,000 outcomes live takes ten days at 15m and
+        six weeks at 1h. Replayed walk-forward, so nothing is learned from the future. Returns how
+        many envelopes were taught.
+        """
+        path = Path(self.settings.prices_db)
+        feeds = tuple(self.settings.feeds) or ()
+        if not path.exists() or not feeds:
+            return 0
+        book = self.engine._envelopes()
+        taught = 0
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
+            for feed, interval, bars in self._stored_bars(conn, feeds, self.engine.intervals):
+                taught += book.teach(feed, interval, bars)
+        if taught:
+            log.info("structures: taught %d envelope(s) their corrector from stored bars", taught)
+        return taught
+
+    def _stored_bars(self, conn, feeds: Sequence[str], intervals: Sequence[str]):
+        """`(feed, interval, [(open, high, low, close)])` oldest-first, one venue per series,
+        chosen as `_stored_closes` chooses it."""
+        for feed in feeds:
+            catalogued = prices_config.FEEDS.get(feed)
+            keys = [(prices_config.BROKER, prices_config.BROKER.upper(), feed)]
+            if catalogued is not None:
+                keys += [
+                    (source, symbol.venue, symbol.ticker)
+                    for source in prices_config.bar_source_names()
+                    for symbol in catalogued.for_source(source)
+                ]
+            for interval in intervals:
+                for source, venue, ticker in keys:
+                    rows = conn.execute(
+                        "SELECT open, high, low, close FROM bars WHERE source=? AND venue=?"
+                        " AND ticker=? AND interval=? AND close>0 AND closed=1"
+                        " ORDER BY ts DESC LIMIT ?",
+                        (source, venue, ticker, interval, self.ENVELOPE_WARM_BARS),
+                    ).fetchall()
+                    if len(rows) > 2 * max(ev.HORIZONS):
+                        yield feed, interval, [tuple(map(float, r)) for r in reversed(rows)]
+                        break
+
     def arm(self) -> None:
         """Everything that must happen whether or not a state came back.
 
@@ -1804,4 +1853,10 @@ async def watch(
         # instruments with 2,700 stored bars each were left to learn from the
         # bus one bar at a time.
         watcher.warm_new()
+    # After either warm-up, so the corrector state it installs replaces what the replay above
+    # learned rather than being learned twice. Wrapped: an optimisation, not a requirement.
+    try:
+        watcher.warm_envelopes()
+    except Exception as exc:
+        log.warning("structures: could not teach the envelopes: %s", exc)
     return await watcher.run(messages=messages, on_signal=on_signal)
