@@ -133,13 +133,21 @@ million feature rows, 2-4 GB, so **it does not run on the instance** as sized.
 1st and 15th (and by hand). It trains on a runner, promotes straight over the
 shipped copy, runs the lint and tests against the promoted model, and opens a
 PR. The model then ships like code: merge, deploy. The report is in the run's
-summary and artifacts. It needs the `TRADING_MT5_URL` and `TRADING_MT5_API_KEY`
-secrets and a `MODELS_SYMBOLS` variable (`gh secret set`, `gh variable set`).
+summary and artifacts.
 
-Without `TRADING_MT5_URL` the run is skipped with a notice. The bridge the
-instance uses is an SSH tunnel bound on the instance itself (see
-[`trading.md`](trading.md)), which GitHub cannot reach, so the URL has to be a
-route to the terminal that GitHub can reach.
+The runner reaches the bridge the way the app does. The terminal host is behind
+NAT and holds a reverse tunnel open to the instance ([`trading.md`](trading.md)),
+so the runner forwards a local port through the instance, using the deploy
+secrets, to that tunnel. Nothing runs on the instance. It needs:
+
+```bash
+gh secret set TRADING_MT5_API_KEY          # the bridge's key
+gh variable set MODELS_SYMBOLS --body "EURUSD,XAUUSD,BTCUSD,Volatility 75 Index,Jump 50 Index"
+```
+
+Without them the run is skipped with a notice. If the terminal's tunnel is down
+the run fails red, as the app's trading would. A `TRADING_MT5_URL` secret
+replaces the forward with a route GitHub can reach directly.
 
 **Or on the instance,** if it is resized to take it: run
 `till-infinity models retrain --once` fortnightly in a second, short-lived
