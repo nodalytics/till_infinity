@@ -104,6 +104,7 @@ def test_the_engine_publishes_the_envelope_once_warm():
     got = eng._envelope_at("g", "15m", 100.0)
     assert got["env5_p10"] < got["env5_p50"] < got["env5_p90"]
     assert got["env20_p90"] - got["env20_p10"] > got["env5_p90"] - got["env5_p10"]
+    assert got["env50_p90"] - got["env50_p10"] > got["env20_p90"] - got["env20_p10"]
 
 
 def test_card_lines_are_silent_while_cold():
@@ -123,8 +124,24 @@ def test_card_lines_show_the_envelope_its_cover_and_the_volatility_state():
     assert "ceiling P90 $100.60 (+0.60%)" in lines[0]
     assert "floor P10 $99.50 (-0.50%)" in lines[0]
     assert "P90 held 90%" in lines[0]
+    assert not any("50 bars" in line for line in lines)  # absent until the long horizon is warm
     assert "compression" in lines[1]
     assert len(ev.card_lines({**got, "tr_percentile": 0.5}, str)) == 1
+
+
+def test_card_lines_show_the_long_horizon_once_it_is_warm():
+    got = {
+        "env_ref": 100.0,
+        "env5_p10": 99.5,
+        "env5_p50": 100.1,
+        "env5_p90": 100.6,
+        "env50_p10": 98.0,
+        "env50_p90": 102.1,
+        "env50_cover_p90": 0.89,
+    }
+    lines = ev.card_lines(got, lambda v: f"${v:,.2f}")
+    assert "next 50 bars · ceiling P90 $102.10 (+2.10%) · floor P10 $98.00 (-2.00%)" in lines[1]
+    assert "P90 held 89%" in lines[1]
 
 
 # ------------------------------------------------------ AgACI (research/docs/conformal.md)

@@ -94,8 +94,10 @@ WARM = 1000
 #: The percentiles quoted.
 TARGETS: tuple[float, ...] = (0.1, 0.5, 0.9)
 
-#: Horizons, in bars of the series' own timeframe.
-HORIZONS: tuple[int, ...] = (5, 20)
+#: Horizons, in bars of the series' own timeframe. 50 is where AgACI earns its place: one-step ACI
+#: held P90 only 87.8-88.1% there, AgACI 89.1-89.6% (research/docs/conformal.md); at 5 and 20 the
+#: two are within a few tenths of a point.
+HORIZONS: tuple[int, ...] = (5, 20, 50)
 assert max(HORIZONS) < 64, "`Envelope.pending` holds at most 64 quotes"
 
 #: A random walk's N-bar standard deviation is about sqrt(N) / 1.25 in units of an EWMA of true
@@ -335,7 +337,7 @@ class Book(Restorable):
 
 
 def card_lines(got: Mapping, price: Callable[[float], str]) -> list[str]:
-    """The next-5-bars envelope and the volatility state, as notification-card lines. Read only.
+    """The next-5- and next-50-bars envelope and the volatility state, as card lines. Read only.
 
     Shared by the level alert (`structures/service.py`) and the trade fill card (`trading`), which
     carries the signal's features on `Intent.features`, so both print the same numbers the same
@@ -356,6 +358,13 @@ def card_lines(got: Mapping, price: Callable[[float], str]) -> list[str]:
     cover = got.get("env5_cover_p90")
     if isinstance(cover, int | float) and not math.isnan(cover):
         lines[0] += f" · P90 held {cover:.0%}"
+    far10, far90 = got.get("env50_p10"), got.get("env50_p90")
+    if far10 and far90:
+        # The long horizon, where the corrector matters most - ceiling and floor only.
+        lines.append(f"🔭 next 50 bars · ceiling P90 {leg(far90)} · floor P10 {leg(far10)}")
+        far_cover = got.get("env50_cover_p90")
+        if isinstance(far_cover, int | float) and not math.isnan(far_cover):
+            lines[-1] += f" · P90 held {far_cover:.0%}"
     percentile = got.get("tr_percentile")
     if isinstance(percentile, int | float):
         # research/docs/fractal-twins.md: from the bottom fifth an expansion follows about three
