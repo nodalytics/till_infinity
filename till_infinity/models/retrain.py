@@ -153,8 +153,6 @@ def run_shocks(fetch: Callable[[str, str], list], names: list[str]) -> tuple[dic
 TOUCH_GATES: dict[str, float] = {
     # Brier skill over geometry - the same boosting on the band distances alone - worth publishing
     "min_skill": 0.03,
-    # the worst decile's |realised - predicted| / predicted: what "P90 touched 38%" relies on
-    "calibration": 0.20,
 }
 
 #: One replay serves both bands' contests in a run: (fetch, names, hour) -> (series count, rows).
@@ -167,9 +165,16 @@ def touch_gate(challenger: dict, champion: dict) -> list[str]:
     skill = challenger.get("skill", float("nan"))
     if not skill >= TOUCH_GATES["min_skill"]:
         reasons.append(f"skill over geometry {skill} below {TOUCH_GATES['min_skill']}")
-    cal = challenger.get("calibration", float("nan"))
-    if not cal <= TOUCH_GATES["calibration"]:
-        reasons.append(f"worst-decile calibration error {cal} above {TOUCH_GATES['calibration']}")
+    # What "P90 touched 38%" relies on, judged over 90 days out of sample, where one regime
+    # cannot pass for a bad model (`touches_train.CAL_*` says why each number is what it is).
+    from .touches_train import CAL_DAYS, CAL_TOLERATED
+
+    bad = challenger.get("calibration_fails", float("nan"))
+    if not bad <= CAL_TOLERATED:  # a missing count (nan) fails too
+        reasons.append(
+            f"{bad} decile(s) miscalibrated over {CAL_DAYS} days, beyond 20% and two standard"
+            f" errors (at most {CAL_TOLERATED} tolerated)"
+        )
     theirs = champion.get("skill")
     if theirs is not None and not math.isnan(theirs):
         se = challenger.get("skill_se", float("nan"))
@@ -220,6 +225,16 @@ def _touch_contest(band: str, fetch: Callable[[str, str], list], names: list[str
     geo = tt.geometry(x[train], y[train])(x[held])
     p = np.array([trees.predict(list(r)) for r in x[held]])
     challenger = tt.score(p, geo, y[held], when[held])
+    # Calibration over a longer out-of-sample block, by a model trained before it.
+    early = when < when.max() - tt.CAL_DAYS * 86_400
+    if early.any() and (~early).any():
+        judge = tt.train(x[early], y[early])
+        judge.pop("_sklearn")
+        jt = frozen.Trees(judge)
+        pc = np.array([jt.predict(list(r)) for r in x[~early]])
+        table = tt.deciles(y[~early], pc, when[~early])
+        challenger["calibration_fails"] = len(tt.miscalibrated(table))
+        challenger["calibration_table"] = table
     current = frozen.load(tc.MODELS[band], recipe=tc.RECIPE, names=tc.NAMES)
     champion = {}
     if current:

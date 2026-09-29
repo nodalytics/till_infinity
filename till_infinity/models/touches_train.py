@@ -161,8 +161,75 @@ def brier(y: np.ndarray, p: np.ndarray) -> float:
     return float(np.mean((p - y) ** 2))
 
 
+def deciles(
+    y: np.ndarray,
+    p: np.ndarray,
+    when: np.ndarray,
+    *,
+    bins: int = 10,
+    draws: int = 200,
+    seed: int = 0,
+) -> list[dict[str, float]]:
+    """Per predicted-probability decile: mean predicted, realised, n, the relative error, and the
+    standard error of (realised - predicted) from a bootstrap over whole days.
+
+    Days, not rows: overlapping 5-bar windows and a fortnight's shared regime make neighbouring
+    rows one draw, not many."""
+    edges = np.quantile(p, np.linspace(0, 1, bins + 1))
+    which = np.clip(np.searchsorted(edges, p, side="right") - 1, 0, bins - 1)
+    days = (when // 86_400).astype(int)
+    uniq = np.unique(days)
+    by = {d: np.flatnonzero(days == d) for d in uniq}
+    rng = np.random.default_rng(seed)
+    gaps = np.full((draws, bins), np.nan)
+    for k in range(draws):
+        idx = np.concatenate([by[d] for d in rng.choice(uniq, len(uniq))])
+        for b in range(bins):
+            m = idx[which[idx] == b]
+            if len(m):
+                gaps[k, b] = y[m].mean() - p[m].mean()
+    out = []
+    for b in range(bins):
+        m = which == b
+        if not m.any():
+            continue
+        pred, real = float(p[m].mean()), float(y[m].mean())
+        out.append(
+            {
+                "predicted": round(pred, 4),
+                "realised": round(real, 4),
+                "n": int(m.sum()),
+                "error": round(abs(real - pred) / pred, 4) if pred > 0 else float("nan"),
+                "se": round(float(np.nanstd(gaps[:, b])), 4),
+            }
+        )
+    return out
+
+
+#: A decile is miscalibrated only if its relative error exceeds `CAL_ERROR` AND its gap is more than
+#: `CAL_SIGMAS` day-bootstrap standard errors from zero; a model fails calibration with more than
+#: `CAL_TOLERATED` such deciles, judged over `CAL_DAYS` out of sample. Set 2026-09-29:
+#: - 14 days cannot judge calibration: over the 20 fortnights of a 40% test block a well-calibrated
+#:   model (0 failing deciles pooled) failed a fortnight's test about half the time, because a
+#:   fortnight's days share one regime and shift every decile together; isotonic recalibration on
+#:   the preceding 8 weeks did not help (8-10 of 20 still failed).
+#: - 90 days can: older 90-day blocks passed with 0 failing deciles.
+#: - one decile tolerated: ten tests at about 2 standard errors produce at least one false failure
+#:   about 37% of the time, so zero tolerance rejects good models on multiplicity alone.
+CAL_ERROR, CAL_SIGMAS, CAL_TOLERATED, CAL_DAYS = 0.20, 2.0, 1, 90
+
+
+def miscalibrated(table: list[dict[str, float]]) -> list[dict[str, float]]:
+    """The deciles that fail: relative error above `CAL_ERROR` and the gap beyond noise."""
+    return [
+        d
+        for d in table
+        if d["error"] > CAL_ERROR and abs(d["realised"] - d["predicted"]) > CAL_SIGMAS * d["se"]
+    ]
+
+
 def calibration(y: np.ndarray, p: np.ndarray, bins: int = 10) -> float:
-    """The worst decile's |realised - predicted| / predicted."""
+    """The worst decile's |realised - predicted| / predicted, noise and all. Reported, not gated."""
     edges = np.quantile(p, np.linspace(0, 1, bins + 1))
     worst = 0.0
     for lo, hi in pairwise(edges):
@@ -187,10 +254,12 @@ def score(
         idx = np.concatenate([by[d] for d in rng.choice(uniq, len(uniq))])
         bg = brier(y[idx], p_geo[idx])
         draws.append(1.0 - brier(y[idx], p[idx]) / bg if bg > 0 else float("nan"))
+    table = deciles(y, p, when, seed=seed)
     return {
         "skill": round(skill, 4),
         "skill_se": round(float(np.nanstd(draws)), 4),
         "calibration": round(calibration(y, p), 3),
+        "miscalibrated_deciles": len(miscalibrated(table)),
         "rate": round(float(y.mean()), 4),
         "n": len(y),
     }
