@@ -26,6 +26,12 @@ Entries, each within 8 bars of the touch:
   sweep      the stop-hunt the desk describes: price trades through the level (a low under it,
              for a long), no close beyond the stop, and then a close back on the level's side -
              entered at that close
+  candle     production's candlestick confirmation - `trading/candles.py` `confirms` exactly as
+             `trading/service.py` `_candle_at` calls it: the last 3 closed bars of the entry
+             timeframe, tolerance `price_distance(level, vol_bps, 0.25)` (the default
+             `TRADING_CANDLE_TOLERANCE_VOL`), entered at the close of the first bar in the window
+             where it names a pattern. This is the rule `TRADING_REQUIRE_CANDLE` switches on. The
+             volatility is the bar volatility here, where production reads its own per-feed estimate
   wait:<x>   every touch, entered after a delay drawn from x's own delays, independent of the path
 
 Reported per family, interval, buffer B and target k:
@@ -71,6 +77,9 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent))
 import indicators as ind
 
+from till_infinity.trading import candles
+from till_infinity.trading.sizing import price_distance
+
 UNIVERSE = os.environ.get("UNIVERSE", "real")
 PART = os.environ.get("PART", "run")
 OUT = Path(os.environ.get("OUT", ".data/stophunt"))
@@ -78,7 +87,7 @@ BUFFERS = (0.5, 1.0, 2.0)
 TARGETS = (1, 2, 3)
 LIMIT = 40
 MIN_R = 0.25  # in bar volatilities of price
-RULES = ("touch", "rsi", "stoch", "stochrsi", "bb", "ema", "sma", "macd", "fib+rsi", "sweep")
+RULES = ("touch", "rsi", "stoch", "stochrsi", "bb", "ema", "sma", "macd", "fib+rsi", "sweep", "candle")
 
 
 def sweep_entry(h, lo, c, i, s, level, stop) -> int | None:
@@ -91,6 +100,17 @@ def sweep_entry(h, lo, c, i, s, level, stop) -> int | None:
         through = lo[j] < level if s > 0 else h[j] > level
         swept = swept or through
         if swept and s * (c[j] - level) > 0 and (j > i or through):
+            return j
+    return None
+
+
+def candle_entry(o, h, lo, c, i, s, level, vol) -> int | None:
+    """The first bar in the window whose last 3 closed bars `candles.confirms` accepts, exactly as
+    the trading service asks it."""
+    tolerance = price_distance(level, vol * 10_000, 0.25)
+    for j in range(max(i, 2), min(i + ind.WINDOW + 1, len(c))):
+        bars = [candles.Bar(o[m], h[m], lo[m], c[m]) for m in range(j - 2, j + 1)]
+        if candles.confirms(bars, level, s > 0, tolerance):
             return j
     return None
 
@@ -139,7 +159,8 @@ def run() -> None:
     series = {}
     for (sym, iv), df in frames.items():
         x = ind.indicators(df)
-        series[(sym.lower(), iv)] = (x, df["high"].to_numpy(), df["low"].to_numpy(), df["ts"].to_numpy())
+        series[(sym.lower(), iv)] = (x, df["high"].to_numpy(), df["low"].to_numpy(), df["ts"].to_numpy(),
+                                     df["open"].to_numpy())
     fam_of = {s.lower(): ind.FAMILY.get(s, "walks") for s, _ in frames}
 
     # pass 1: where each rule enters, per touch and buffer (the sweep depends on the stop)
@@ -150,7 +171,7 @@ def run() -> None:
             key = (z["feed"], iv)
             if key not in series:
                 continue
-            x, h, lo, ts = series[key]
+            x, h, lo, ts, o = series[key]
             i = int(np.searchsorted(ts, z["time"]))
             if not (i < len(ts) and ts[i] == z["time"] and i >= ind.SWING):
                 continue
@@ -164,6 +185,8 @@ def run() -> None:
                 for rule in RULES:
                     if rule == "sweep":
                         j = sweep_entry(h, lo, c, i, s, z["level"], stop)
+                    elif rule == "candle":
+                        j = candle_entry(o, h, lo, c, i, s, z["level"], v)
                     else:
                         j = ind.entry(rule, x, i, s, z["level"])
                     if j is not None:
@@ -181,7 +204,7 @@ def run() -> None:
     rows = []
 
     def trade(kind, key, j, s, stop, v, t, b):
-        x, h, lo, _ = series[key]
+        x, h, lo, _, _ = series[key]
         c = x["close"]
         if j >= len(c) - 1:
             return
