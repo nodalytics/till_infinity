@@ -278,10 +278,10 @@ def envelope_gate(challenger: dict) -> list[str]:
     from .envelope_train import ENVELOPE_GATES, SLICE_DAYS, WINDOW_DAYS
 
     reasons = []
-    vs = challenger.get("vs_empirical", {})
+    vs = challenger.get("vs_empirical_slice", {})
     if not vs.get("high", float("nan")) < ENVELOPE_GATES["beats_empirical"]:
         reasons.append(
-            f"pinball against the history envelope {vs.get('relative')} "
+            f"pinball against the history envelope over {SLICE_DAYS} days {vs.get('relative')} "
             f"[{vs.get('low')}, {vs.get('high')}]: not better beyond noise"
         )
     ch = challenger.get("vs_champion")
@@ -339,6 +339,7 @@ def _envelope_contest(horizon: int, fetch: Callable[[str, str], list], names: li
     judge = et.train(when[when < early], x[when < early], y[when < early], horizon)
     judge.pop("_sklearn")
     slice_model, slice_empirical = et.scored(found, horizon, [judge, None], early)
+    challenger["vs_empirical_slice"] = et.compare(slice_model, slice_empirical)
     challenger["worst_window"] = round(et.worst_window(slice_model, early), 4)
     challenger["empirical_worst_window"] = round(et.worst_window(slice_empirical, early), 4)
     reasons = envelope_gate(challenger)

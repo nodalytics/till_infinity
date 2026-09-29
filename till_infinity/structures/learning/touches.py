@@ -55,7 +55,9 @@ WARM = 250
 #: The frozen models, one per band, read through `shared/frozen.py`.
 MODELS = {"touch90": "touch90_fx15m", "touch10": "touch10_fx15m"}
 #: What changing the meaning of an input requires bumping (the rule `breaking.RECIPE` states).
-RECIPE = "2026-09-29 touch: vol state, moves, clock, bands"
+#: Bumped when the FX 15m envelope became boosted (`vol/envelope.py`): the bands the touch is
+#: measured against changed, so a model trained on the history envelope's bands no longer applies.
+RECIPE = "2026-09-29 touch: vol state, moves, clock, bands of the boosted envelope"
 
 NAMES = (
     "lvol",
