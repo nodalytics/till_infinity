@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 import random
 
+import pytest
+
 from till_infinity.structures import codec as scodec
 from till_infinity.structures.vol import envelope as ev
 
@@ -253,3 +255,97 @@ def test_the_service_teaches_envelopes_from_the_price_store(tmp_path):
     assert watcher.warm_envelopes() == len(ev.HORIZONS)
     env = watcher.engine._envelopes().envelopes["EURUSD|15m|5"]
     assert env.learned >= ev.WARM
+
+
+# ------------------------------------------------------ Deriv's published laws (deriv-variants.md)
+
+
+@pytest.mark.parametrize(
+    ("feed", "law"),
+    [
+        ("volatility_75_index", True),
+        ("Volatility 75 (1s) Index", True),
+        ("jump_50_index", True),
+        ("step_index", True),
+        ("boom_1000_index", False),
+        ("range_break_100_index", False),
+        ("eurusd", False),
+    ],
+)
+def test_the_law_is_quoted_only_where_one_is_published(feed, law):
+    assert ev.has_law(feed) is law
+
+
+def test_the_volatility_law_is_the_named_sigma_with_the_ito_drift():
+    from till_infinity.structures.vol import projection as pj
+
+    seconds = 5 * 900.0
+    sigma = pj.sigma_for("volatility_75_index", seconds)
+    drift = pj.drift_for("volatility_75_index", seconds, "ito")
+    q90 = ev.law_quantile("volatility_75_index", seconds, 0.9, 1000.0)
+    assert q90 == pytest.approx(drift + sigma * ev._normal_quantile(0.9))
+
+
+def test_a_lawful_feed_quotes_from_its_first_bar():
+    book = ev.Book()
+    book.observe("volatility_75_index", "15m", 1000.0, 0.002)
+    got = book.reading("volatility_75_index", "15m", 1000.0)
+    assert got["env5_p10"] < got["env5_p50"] < got["env5_p90"]
+    assert got["env50_law"] == 1.0
+    seconds = 5 * 900.0
+    assert got["env5_p90"] == pytest.approx(
+        1000.0 * math.exp(ev.law_quantile("volatility_75_index", seconds, 0.9, 1000.0)), rel=1e-6
+    )
+    book.observe("eurusd", "15m", 1.1, 0.0005)
+    assert book.reading("eurusd", "15m", 1.1) == {}  # an unpublished market still waits
+
+
+def _gbm(n: int, sigma_bar: float, seed: int = 5):
+    rng = random.Random(seed)
+    price = 1000.0
+    for _ in range(n):
+        price *= math.exp(-0.5 * sigma_bar**2 + rng.gauss(0.0, sigma_bar))
+        yield price
+
+
+def test_the_law_is_calibrated_on_its_own_process():
+    from till_infinity.structures.vol import projection as pj
+
+    sigma_bar = pj.sigma_for("volatility_75_index", 900.0)
+    env = ev.Envelope(horizon=5, feed="volatility_75_index", bar_seconds=900.0)
+    for price in _gbm(20_000, sigma_bar):
+        env.observe(price, 0.003)  # any unit: the law does not read it
+    p10, p50, p90 = env.coverage()
+    assert abs(p10 - 0.10) < 0.02
+    assert abs(p50 - 0.50) < 0.03
+    assert abs(p90 - 0.90) < 0.02
+
+
+def test_the_step_law_is_a_fair_tenth_a_second():
+    rng = random.Random(7)
+    env = ev.Envelope(horizon=5, feed="step_index", bar_seconds=60.0)
+    price = 8000.0
+    for _ in range(6_000):
+        price += sum(rng.choice((-0.1, 0.1)) for _ in range(60))
+        env.observe(price, 0.0001)
+    p10, _, p90 = env.coverage()
+    assert abs(p10 - 0.10) < 0.025
+    assert abs(p90 - 0.90) < 0.025
+
+
+def test_teaching_skips_a_lawful_feed():
+    book = ev.Book()
+    assert book.teach("volatility_75_index", "15m", _bars(3000)) == 0
+
+
+def test_the_card_says_when_the_band_is_the_published_law():
+    got = {
+        "env_ref": 1000.0,
+        "env5_p10": 990.0,
+        "env5_p50": 1000.0,
+        "env5_p90": 1010.0,
+        "env5_law": 1.0,
+    }
+    assert "Deriv's published law" in ev.card_lines(got, str)[0]
+    got.pop("env5_law")
+    assert "published law" not in ev.card_lines(got, str)[0]

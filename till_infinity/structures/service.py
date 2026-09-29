@@ -543,6 +543,12 @@ class Watcher:
         #: Off by default - the forecaster loses to `har.py` on 250,000
         #: replayed bars. See `config.vol_learner`.
         self.engine.learn_vol = self.settings.vol_learner
+        # FX level records learned before the rollover mask, faded once. See `rollover.py`.
+        faded = self.engine.discount_rollover_records()
+        if faded:
+            log.info(
+                "structures: faded %d FX level record(s) learned before the rollover mask", faded
+            )
         #: Monetary policy per currency, folded onto every level call and
         #: emitted as its own shape when a stance turns. Empty until the news
         #: service has collected something, and silent while empty - a level

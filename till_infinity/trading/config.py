@@ -785,14 +785,17 @@ class Settings:
 
     # ------------------------------------------------ the z-score's directional veto
     #: Whether `cycle-scalp` may refuse a call the attention-weighted z-score is
-    #: leaning against. Off, and it should stay off until the scored record in
-    #: `structures.zma.Book.standings` says the agreement call beats a coin on
-    #: the instruments this desk actually trades. It is the trading-side twin of
+    #: leaning against. On by default, which is safe because the gate asks each
+    #: feed's own scored record before it acts: under `zma_min_calls` settled
+    #: calls, or at or under `zma_min_accuracy`, it passes everything. So it
+    #: stays silent where the reading is a coin (this desk's FX) or an
+    #: anti-signal (Boom and Crash), and vetoes only on feeds that have earned
+    #: it. `TRADING_ZMA_GATE=0` turns it off. It is the trading-side twin of
     #: `STRUCTURES_ZMA_ACTS` and deliberately a separate switch: `structures`
     #: recording a signal and `trading` obeying one are different decisions, and
     #: the package boundary here is that `trading` reads signals off the bus and
     #: never touches the level engine.
-    zma_gate: bool = False
+    zma_gate: bool = True
     #: Scored continuous calls a feed needs before the gate believes its record
     #: at all. `structures.zma.WARM` is 200 and this matches it: the agreement
     #: condition is strict enough that a series makes one call every forty-odd
@@ -1383,7 +1386,7 @@ class Settings:
             sweep_max_rate=_float("TRADING_SWEEP_MAX_RATE", 0.35),
             sweep_min_history=_float("TRADING_SWEEP_MIN_HISTORY", 6.0),
             sweep_max_exposure=_float("TRADING_SWEEP_MAX_EXPOSURE", 0.8),
-            zma_gate=_flag("TRADING_ZMA_GATE", False),
+            zma_gate=_flag("TRADING_ZMA_GATE", True),
             zma_min_calls=_float("TRADING_ZMA_MIN_CALLS", 200.0),
             zma_min_accuracy=_float("TRADING_ZMA_MIN_ACCURACY", 0.52),
             fade_min_touches=_float("TRADING_FADE_MIN_TOUCHES", 4.0),
