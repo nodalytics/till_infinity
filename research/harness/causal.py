@@ -213,6 +213,9 @@ def part_roll():
         p = pd.concat(pooled, ignore_index=True)
         p = p[np.isfinite(p["spike"]) & (p["spike"] > 0)]
         print(f"   {fam}: {len(p):,} days, median spike {p['spike'].median():.2f}x", flush=True)
+        if np.log(p["spike"]).std() < 1e-6:
+            print(f"   {fam}: the bars' spread never varies here, so no spike to test (not identifiable)", flush=True)
+            continue
         X = np.column_stack([np.log(p["spike"]), p["pre"], fe(p["sym"], "s"), fe(p["wd"], "w")])
         got = ols(p["post"].to_numpy(), X, p["day"])
         if got:
@@ -288,7 +291,6 @@ def part_news():
             if d is None:
                 continue
             idx = pd.to_datetime(d["time"], unit="s", utc=True)
-            pos = pd.Series(np.arange(len(d)), index=idx)
             ccys = (sym[:3], sym[3:])
             mine = by[by["currency"].isin(ccys)]
             ev_times = set(mine["t"])
