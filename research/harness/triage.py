@@ -141,6 +141,8 @@ def intents(conn) -> list[dict]:
         if kind == "decision":
             source = "fill"
         elif d.get("shape") == "untaken":
+            if d.get("filled") is False:
+                continue  # it never filled: nothing to settle
             source = "untaken"
         elif d.get("shape") == "considered":
             if not d.get("wanted"):
@@ -218,6 +220,7 @@ def replay(trades: list[dict], spread: dict) -> list[dict]:
     for t in trades:
         by_feed[t["feed"]].append(t)
     out = []
+    skipped: dict[str, int] = defaultdict(int)
     for n, (feed, part) in enumerate(sorted(by_feed.items(), key=lambda kv: -len(kv[1]))):
         rows, stamps = bars_for(conn, feed)
         bps = spread.get(feed, 0.0)
@@ -226,16 +229,27 @@ def replay(trades: list[dict], spread: dict) -> list[dict]:
             if t["source"] != "random":
                 universes.append(("walks", synthetic_path(t, rng)))
             for universe, path in universes:
+                trade = t
                 if universe == "market":
                     start = bisect.bisect_left(stamps, t["when"])
                     if len(rows) < 500 or start >= len(rows) - 10:
                         continue
                     bars = rows
+                    # The walk enters at `level`. An intent is walked only if that was the market
+                    # at the time - a resting limit away from price, or a zone call's level, would
+                    # book a fill the market never offered. Random picks enter at the market,
+                    # with the same stop and target distances.
+                    price = rows[start][1]
+                    if t["source"] == "random":
+                        trade = {**t, "level": price}
+                    elif abs(price - t["level"]) > 0.25 * t["risk_vol"] * t["unit"]:
+                        skipped[t["strategy"]] += 1
+                        continue
                 else:
                     bars, start = path, 0
                 for exit_name, policy in EXITS.items():
                     for cost_name, cost in (("net", t["level"] * bps / 10_000.0), ("gross", 0.0)):
-                        got = walk(bars, start, t, cost=cost, hold=t["hold"],
+                        got = walk(bars, start, trade, cost=cost, hold=t["hold"],
                                    policy={**policy, "target_mult": t["target_mult"]})
                         if got is None:
                             continue
@@ -243,8 +257,11 @@ def replay(trades: list[dict], spread: dict) -> list[dict]:
                                     t["strategy"], "feed": feed, "family": t["family"],
                                     "interval": t["interval"], "when": t["when"], "exit": exit_name,
                                     "cost": cost_name, "r": got[0], "how": got[1]})
-        print(f"  {n + 1}/{len(by_feed)} feeds, {len(out):,} rows", flush=True)
+        if (n + 1) % 25 == 0 or n + 1 == len(by_feed):
+            print(f"  {n + 1}/{len(by_feed)} feeds, {len(out):,} rows", flush=True)
     conn.close()
+    print("intents not at market when placed (resting limits, skipped): "
+          + ", ".join(f"{k} {v}" for k, v in sorted(skipped.items())), flush=True)
     return out
 
 
