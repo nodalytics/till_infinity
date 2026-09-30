@@ -67,6 +67,42 @@ have shipped without it.
 | VPIN on retail tick volume | Null; the real-trade test is running | [`lopez-de-prado.md`](lopez-de-prado.md) |
 | The production strategies themselves | Gross −0.10 to +0.03R, none beats random selection | [`triage.md`](triage.md) |
 
+## Could we build a mutual fund from this?
+
+Not as an active trading fund. And our risk forecasts do not make a better volatility-managed fund
+than the standard recipe ([`fund.md`](fund.md)).
+
+**The empirical test:** 8 ETFs (stocks, bonds, gold, commodities, real estate), 2006-2026.
+
+- **Our forecasts add nothing here.** Volatility targeting, risk parity and HRP driven by our
+  volatility and envelope forecasts tie the textbook EWMA version in all 20 comparisons. Our tools are
+  built for intraday bars and do not carry over to daily portfolio risk.
+- **The shock overlay made it worse** (Sharpe 1.25 -> 0.95). Shocks go both ways, so de-risking on
+  them cuts exposure to good moves too.
+- **Standard volatility management does work:**
+  - SPY's worst drawdown falls from -55% to -26%, and 2008 from -46% to -15%;
+  - HRP at 10% volatility draws down -19.5% against 60/40's -29.9%, and was roughly flat through
+    2008.
+
+  But 60/40 still has the best Sharpe (+0.77 against HRP's +0.66). The benefit is smaller drawdowns,
+  not better risk-adjusted returns.
+
+**What a fund would need** (sourced in [`fund.md`](fund.md), not legal advice; Nigeria is assumed
+from the desk's time zone):
+
+- investable assets on an exchange. CFDs and Deriv synthetics do not qualify;
+- a licensed fund manager: Nigeria SEC Circular 26-1 (January 2026) requires N5bn of capital
+  full-scope, or N2bn limited-scope, by June 2027;
+- a custodian, trustee and auditor;
+- typically 2-3 years of audited track record.
+
+**The honest recommendation:**
+
+- **The infrastructure is the asset,** as a research and risk platform or a risk-signal service.
+- **If a fund is the goal:** run a transparent HRP or risk-parity ETF portfolio on paper, then with
+  small proprietary capital, for 12-24 months with an audited record. Only then look at a private or
+  regulated vehicle.
+
 ## What we found wrong, and fixed
 
 - **The FX rollover spread spike was teaching the levels** ([`rollover.md`](rollover.md)).
@@ -103,7 +139,6 @@ have shipped without it.
    - agents trading on signals;
    - VPIN on real Binance trades;
    - Deriv law tables and pivot signals;
-   - a volatility-managed-portfolio / fund feasibility study;
    - stock mean reversion.
 
 ## What this means for the desk
