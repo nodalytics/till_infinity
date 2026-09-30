@@ -191,7 +191,11 @@ def model_quantiles(
 
 def _interpolate(level: float, quantiles: Sequence[float]) -> float:
     """The quantile at `level`, linear between `MODEL_LEVELS` and flat beyond them (np.interp)."""
-    levels = MODEL_LEVELS
+    return _between(MODEL_LEVELS, quantiles, level)
+
+
+def _between(levels: Sequence[float], quantiles: Sequence[float], level: float) -> float:
+    """The quantile at `level`, linear between `levels` and flat beyond them (np.interp)."""
     if level <= levels[0]:
         return quantiles[0]
     if level >= levels[-1]:
@@ -228,6 +232,48 @@ def law_quantile(feed: str, seconds: float, level: float, price: float) -> float
 def has_law(feed: str) -> bool:
     """Whether the envelope quotes a published law for this feed."""
     return law_quantile(feed, 60.0, 0.9, 1.0) is not None
+
+
+# ------------------------------------------------------------------ Deriv's own laws
+
+#: The mechanics-only Deriv families (`research/docs/deriv-variants.md`): they publish how they
+#: move but no volatility, and their feeds are memoryless, so the N-bar move is the N-fold
+#: convolution of the one-bar move - fitted on history (`models/deriv_law_train.py`) and shipped
+#: as a table in `models/deriv_law.json`, so a newly followed index is calibrated from bar zero.
+#: It beat the empirical envelope by 3-7% pinball at 20-50 bars; AgACI on top made it worse.
+OWN_LAW_FAMILIES: tuple[str, ...] = ("boom_", "crash_", "dex_", "range_break_", "drift_switch_")
+LAW_MODEL = "deriv_law"
+LAW_RECIPE = "2026-09-30 deriv own law: n-fold convolution of the one-bar log return"
+#: The quantile levels each table holds, of `log(S_{t+n} / S_t)`.
+LAW_LEVELS: tuple[float, ...] = (0.02, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.98)
+LAW_NAMES: tuple[str, ...] = tuple(f"q{level:g}" for level in LAW_LEVELS)
+
+
+def own_law_family(feed: str) -> bool:
+    """Whether a feed is a mechanics-only Deriv index (and has no published law)."""
+    name = _canonical(feed)
+    return name.startswith(OWN_LAW_FAMILIES) and not has_law(name)
+
+
+def table_quantile(table: Sequence[float], level: float) -> float:
+    """A table's quantile at `level`, linear between `LAW_LEVELS` and flat beyond."""
+    return _between(LAW_LEVELS, table, level)
+
+
+def own_law(feed: str, interval: str, horizon: int) -> list[float] | None:
+    """This index's own-law table for the next `horizon` bars of `interval`, or None."""
+    if not own_law_family(feed):
+        return None
+    try:
+        from ...shared import frozen
+
+        spec = frozen.load(LAW_MODEL, recipe=LAW_RECIPE, names=LAW_NAMES)
+    except Exception:  # a published extra must never stop a bar
+        return None
+    if not spec:
+        return None
+    got = spec.get("tables", {}).get(f"{_canonical(feed)}|{interval}|{horizon}")
+    return got if got and len(got) == len(LAW_LEVELS) else None
 
 
 def _normal_quantile(p: float) -> float:
@@ -355,7 +401,10 @@ class Envelope(Restorable):
         seconds = self.horizon * self.bar_seconds
         law = [law_quantile(self.feed, seconds, t, close) for t in TARGETS]
         if any(q is None for q in law):
-            return False
+            table = own_law(self.feed, _interval_of(self.bar_seconds), self.horizon)
+            if table is None:
+                return False
+            law = [table_quantile(table, t) for t in TARGETS]
         self.quote = [q / sigma for q in law]
         self.sigma = sigma
         self.pending.append((close, sigma, list(self.quote)))
@@ -363,8 +412,16 @@ class Envelope(Restorable):
 
     @property
     def lawful(self) -> bool:
-        """Whether this envelope quotes a published law."""
-        return self.bar_seconds > 0 and has_law(self.feed)
+        """Whether this envelope quotes a law: Deriv's published one, or the index's own table."""
+        return self.bar_seconds > 0 and (has_law(self.feed) or self.own_lawful)
+
+    @property
+    def own_lawful(self) -> bool:
+        """Whether this envelope quotes the index's own convolved law (`own_law`)."""
+        return (
+            self.bar_seconds > 0
+            and own_law(self.feed, _interval_of(self.bar_seconds), self.horizon) is not None
+        )
 
     def _learn(self, i: int, target: float, y: float, quoted: float, each: list[float]) -> None:
         """One resolved outcome: step every corrector, and charge each its share of the pinball
@@ -465,7 +522,9 @@ class Envelope(Restorable):
         for target, cover in zip(TARGETS, self.coverage(), strict=True):
             out[f"env{n}_cover_p{round(target * 100):d}"] = round(cover, 4)
         out[f"env{n}_width_bps"] = round((self.quote[-1] - self.quote[0]) * self.sigma * 10_000, 3)
-        if self.lawful:
+        if self.own_lawful:
+            out[f"env{n}_ownlaw"] = 1.0
+        elif self.lawful:
             out[f"env{n}_law"] = 1.0
         if self.base:
             out[f"env{n}_model"] = 1.0
@@ -547,7 +606,6 @@ class Book(Restorable):
         (`clock.py`), applied only where the history is the base."""
         seconds = _bar_seconds(interval)
         boosted = features is not None and model_applies(feed, interval)
-        lawful = has_law(feed)
         for n in HORIZONS:
             key = f"{feed}|{interval}|{n}"
             found = self.envelopes.get(key)
@@ -557,6 +615,7 @@ class Book(Restorable):
                 # Also fills an envelope restored from a state saved before it knew its series.
                 found.feed, found.bar_seconds = feed, seconds
             model = _safe_quantiles(n, features) if boosted else None
+            lawful = found.lawful
             unit = sigma
             if scale and not model and not lawful:
                 m = scale.get(n, 1.0)
@@ -616,8 +675,8 @@ class Book(Restorable):
         through the same features the engine computes, with the rollover's wick cut as the engine
         cuts it, so AgACI is taught on the base it will correct. Returns how many envelopes took it.
         """
-        if has_law(feed):
-            return 0  # quoted from its published law, which has nothing to learn
+        if has_law(feed) or any(own_law(feed, interval, n) for n in HORIZONS):
+            return 0  # quoted from a law, which has nothing to learn
         timed = bool(bars) and len(bars[0]) == 5
         boosted = timed and model_applies(feed, interval)
         seconds = _bar_seconds(interval)
@@ -678,6 +737,16 @@ def _safe_quantiles(horizon: int, features: Mapping[str, float] | None) -> list[
         return None
 
 
+def _interval_of(seconds: float) -> str:
+    """The interval name for a bar length, as `levels.SECONDS` names it; "" if none."""
+    from ..levels import SECONDS
+
+    for name, length in SECONDS.items():
+        if length == seconds and name not in ("daily", "weekly"):
+            return name
+    return ""
+
+
 def _bar_seconds(interval: str) -> float:
     """An interval's length. Imported late: `levels` imports this package's volatility module."""
     from ..levels import SECONDS
@@ -706,6 +775,8 @@ def card_lines(got: Mapping, price: Callable[[float], str]) -> list[str]:
     ]
     if got.get("env5_law"):
         lines[0] += " · Deriv's published law"
+    elif got.get("env5_ownlaw"):
+        lines[0] += " · the index's own law"
     elif got.get("env5_model"):
         lines[0] += " · boosted"
     cover = got.get("env5_cover_p90")

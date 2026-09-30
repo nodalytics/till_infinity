@@ -57,6 +57,7 @@ module-root = ""
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.168.3",
     "pre-commit>=4.6.2",
     "pytest>=8.3.0",
     "pytest-asyncio>=1.4.0",

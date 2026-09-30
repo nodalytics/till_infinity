@@ -1,275 +1,137 @@
-# Topology on price: shape discovery, and what the representation decides
+# Market topology and complex-systems early warning: nothing beyond what the shock forecaster knows
 
-Three attempts at finding exploitable shapes, in the order they were made, because the
-order is the argument. Each failed for a reason that motivated the next.
+Harness: [`research/harness/topology.py`](../harness/topology.py). Lab run 2026-09-30, logs
+`logs/topology_{real,walks,report}.log`, cells in `data/topology/cells.csv`.
 
-| harness | representation | what it can see | outcome |
-|---------|----------------|-----------------|---------|
-| `motifs.py` | raw candle windows, k-means | fixed-length pixel patterns | died on its own bootstrap |
-| `tda.py` | persistence **scalars** | how much structure, not which | loses to 6 trailing-vol ratios |
-| `shapes.py` | persistence **images** | which shape, warp-invariant | chance, at both embeddings |
-| `embed.py` | - | the embedding itself | **lag 4, dimension 6 - not 1 and 3** |
+## The question
 
-## What clustering raw windows found, and why it does not count
+[`findings.md`](findings.md): this desk forecasts risk, not direction. The user's cross-disciplinary
+agenda proposed tools from topological data analysis, complex systems and statistical physics for
+exactly that, as early warnings of regime transitions. Do they warn of a transition *before* it
+comes, *beyond* what the production shock forecaster already reads? That forecaster uses
+volatility state, clustering and the clock (AUC 0.73-0.76, [`anomalies.md`](anomalies.md)). And the
+user's "killer question": are regimes told apart by topology when the conventional moments look the
+same?
 
-`motifs.py` clusters scale-free candle windows - price level and volatility divided
-out - and asks whether any cluster is followed by something other than the base rate.
-Because every row carries the same symmetric barrier, the geometry is constant and the
-overall hit rate **is** the "same geometry entered at an arbitrary moment" placebo that
-`patterns.md` had to construct by hand.
+Related work not repeated here: [`susceptibility.md`](susceptibility.md) (the Ising susceptibility
+of the efficiency ratio), [`manifold.md`](manifold.md) and [`state-and-memory.md`](state-and-memory.md).
 
-On two instruments it looked strong: **9 of 24 motifs cleared two standard errors
-against about 1.1 expected by chance**, with a 5.9-point spread between the best motif
-(53.2% resolving up) and the worst (47.3%) around a 50.0% base. Symmetric in both
-directions, which is what a real partition looks like rather than a fluke. On ten
-instruments it fell to 3 of 24.
+## Method
 
-**Then the block bootstrap removed it.** Consecutive windows share 31 of their 32 bars
-and their forward windows intersect, so a two-proportion error assuming independent
-rows is too narrow. Resampling contiguous blocks longer than window-plus-horizon:
+Every statistic is computed causally, at every 4th bar at 15m, 2nd at 1h and every bar at 1d. It
+uses the last 50 returns in units of the trailing 500-bar mean |return| (`z`):
 
-| | naive band | block bootstrap |
-|---|---:|---:|
-| best motif | +/-1.3% | **+/-2.0%** on a +1.8% gap |
-| worst motif | +/-1.3% | **+/-1.7%** on a -1.6% gap |
+| group | statistics | source |
+|---|---|---|
+| `tda` | persistent homology of the Takens delay embedding of z (dimension 3, delay 1): Vietoris-Rips H0 and H1 by ripser; persistence-landscape L1 and L2 norms, exact from the lifetimes (summed over layers, L1 = Σl²/4, L2² = Σl³/12); the count of H1 features living > 0.5 | Gidea & Katz 2018 |
+| `tda_shape` | the same on the window standardised by its own sd (volatility level removed) | |
+| `csd` | lag-1 autocorrelation of z and of \|z\|, variance, and Kendall's τ of variance over five 20-bar blocks | Scheffer et al. 2009 |
+| `phys` | Hill tail exponent (250 bars, top 25), sample entropy at scales 1 and 2 (m = 2, r = 0.2 sd, 100 bars), Rosenstein largest Lyapunov exponent | |
 
-Both straddle zero. The correction widened the bands by about half and the result did
-not survive it. **The independence assumption was the entire finding.**
+- **Baseline:** the production shock forecaster's features computed from bars (volatility over its
+  norm and its square, rank and its square, vol-of-vol, recent shock counts, hour, hours to the
+  weekly close).
+- **Targets, pre-registered:**
+  - a shock (|r| > 4× the trailing mean) within 4 bars;
+  - a range blowout (4×) within 4 bars;
+  - a volatility-regime shift, meaning the next 20 bars' sd is at least 2× the last 100 bars'.
 
-That is worth stating plainly because the intermediate state - "9 of 24 against 1.1
-expected" - was reported here as promising before the bootstrap ran. It was not.
+  The last is a defined proxy for a Markov-switching or Bai-Perron break, which would need the
+  future to place.
+- **Fit and score:** gradient boosting on the baseline against baseline + each group; train on the
+  first 60% by time, test on the last 40%. The incremental AUC gets a paired day-bootstrap 95% CI
+  and is reported for each half.
+- **Families:**
+  - FX (8 pairs), metals, crypto;
+  - Deriv as a market (Volatility 75, Boom 1000, Crash 1000, Jump 50, Range Break 100);
+  - walks we generate: iid t(3), and **GARCH(1,1) with t innovations**. GARCH has volatility
+    clustering and nothing else, so it is the key control.
 
-## Why persistence scalars cannot find a shape
+  Intervals 15m, 1h and 1d; about 1.35 million rows.
+- **Pass bar:** incremental AUC ≥ 0.01, CI above 0, positive in both halves, and not on the GARCH
+  walks. BH across all 250 cells, and the best cell deflated against the expected maximum of 250
+  null draws ([`lopez-de-prado.md`](lopez-de-prado.md)).
 
-`tda.py` implements the standard pipeline for a scalar series: delay embedding of log
-returns into a point cloud, Vietoris-Rips filtration, persistent homology in `H0` and
-`H1`, then the diagram summarised into twelve numbers - total persistence, max
-persistence, count, entropy, and the `L1`/`L2` norms of the persistence landscape.
+## Results
 
-**Those twelve numbers cannot identify a shape, by construction.** Two entirely
-different shapes with equal total persistence are identical to them. They answer "how
-much topological structure is in this window", which is a magnitude question.
+**The baseline is strong on real markets and on GARCH walks, and weak on iid walks:**
 
-So the prediction was written into the docstring before the run:
+| target, baseline AUC | FX 15m | FX 1h | metals 1h | crypto 1h | Deriv 15m | GARCH walks 1h | iid walks 1h |
+|---|---|---|---|---|---|---|---|
+| shock | 0.796 | 0.756 | 0.773 | 0.766 | 0.779 | 0.666 | 0.496 |
+| range | 0.780 | 0.785 | 0.811 | 0.802 | 0.817 | 0.706 | 0.527 |
+| vol shift | 0.766 | 0.641 | 0.705 | 0.662 | 0.821 | 0.627 | 0.484 |
 
-> the persistence features will **fail on direction** and **may work on forward
-> volatility**.
+**The borrowed tools add almost nothing to it.** Of 250 incremental cells, 4 pass the pre-registered
+bar and 3 survive BH. None is on the GARCH walks.
 
-The grounds were the literature and this repository agreeing. Gidea and Katz (Physica A
-491, 2018) and Aguilar and Ensor (J. Math. Finance 10(4), 2020) both report persistence
-landscape norms rising before crashes - an instability result, not a directional one.
-And `clustering.md` opens with "direction is noise; volatility is the part that
-repeats", while the `triple` run in `supervised-candles.md` had `vol_log_gap` as its
-single most important feature ahead of every return feature.
+| cell | + group | incremental AUC [95%] | halves | GARCH walks, same cell |
+|---|---|---|---|---|
+| metals 1d vol shift | phys | +0.032 [+0.015, +0.048] | +0.080 / +0.028 | +0.008 |
+| metals 1d vol shift | tda | +0.025 [+0.005, +0.045] | +0.129 / +0.002 | −0.019 |
+| Deriv 15m range | phys | +0.010 [+0.005, +0.017] | +0.012 / +0.009 | −0.000 |
+| FX 1h vol shift | tda | +0.012 [+0.001, +0.025] | (passes, not BH) | +0.003 |
 
-### The prediction held
+Everywhere else the increments sit within ±0.005, and are often negative. For example, FX 15m
+shocks: tda −0.0001, csd −0.0012, phys −0.0016, all −0.0022. The median `tda` increment by family is
+−0.002 to +0.002.
 
-64,335 rows, 10 instruments, 5 purged walk-forward folds, balanced accuracy against a
-block-shuffled null:
+**Deflation.** The best real cell (metals 1d vol shift, `phys`) has t = 3.35 against an expected
+maximum of 2.84 over 250 null cells. It survives nominally, but it is fragile:
+- the second half is a third of the first (+0.080 / +0.028);
+- the "all" group, which contains the same statistics, reads −0.003;
+- it rests on 2 instruments' daily bars, 3,262 test rows and about 150 events.
 
-| label | balanced accuracy | shuffled null | lift |
-|-------|------------------:|--------------:|-----:|
-| `banded` (direction) | 0.3371 | 0.3332 | **+0.0039** |
-| `expansion` (volatility) | 0.3604 | 0.3326 | **+0.0278** |
+The FX 1h cell does not survive BH.
 
-Direction is 0.4 points of balanced accuracy on a three-class problem - nothing.
-Volatility is seven times larger. Registering the prediction first is what makes this
-worth anything; found by searching, it would be one cell of many.
+**Deriv 15m range blowouts** is the one clean survivor: +0.010 in both halves and nothing on GARCH.
+The single statistics say what it is. Low sample entropy (AUC 0.266) and a low Hill exponent (0.286)
+come before range blowouts, meaning the window is step-like and fat-tailed. That reads as the
+mechanics of the Range Break and Boom/Crash indices, which follow their own generators
+([`deriv-variants.md`](deriv-variants.md)). It is a finding about those instruments, not a general
+early warning.
 
-### And it is mostly not topology
+### The killer question: topology beyond matched moments
 
-Beating block-shuffled labels at forward volatility is nearly free, because volatility
-clusters - the most replicated fact in finance. A trailing realised-volatility ratio
-clears that null easily. So the harness now fits three models on identical rows:
-topology alone, trailing volatility alone, and both together.
+Against a baseline of the window's *moments* only (sd, skew and kurtosis of z, plus their tercile
+cells), adding the volatility-free topology (`tda_shape`) does help:
 
-**And the baseline wins.** Three models on identical rows, `expansion`, 64,335 rows:
+| family | shock | range |
+|---|---|---|
+| FX 15m | +0.006 [+0.001, +0.011] | **+0.021 [+0.005, +0.036]** |
+| crypto 15m | +0.012 [+0.006, +0.020] | **+0.028 [+0.017, +0.042]** |
+| metals 15m | +0.015 [+0.001, +0.029] | +0.010 [−0.015, +0.035] |
+| **GARCH walks 15m** | **+0.015 [+0.006, +0.023]** | +0.009 [−0.001, +0.019] |
+| **GARCH walks 1h** | **+0.013 [+0.006, +0.019]** | **+0.017 [+0.004, +0.030]** |
+| iid walks 1h | +0.003 [−0.011, +0.018] | −0.005 [−0.027, +0.018] |
 
-| model | balanced accuracy | lift over null | features |
-|-------|------------------:|---------------:|---------:|
-| block-shuffled null | 0.3324 | - | - |
-| topology only | 0.3604 | +0.0280 | 12 |
-| **trailing volatility only** | **0.4279** | **+0.0954** | **6** |
-| both together | 0.4305 | +0.0981 | 18 |
+So yes: regimes with matched moments *are* told apart by the shape of the delay embedding. But the
+GARCH walks show the same gain, and they have nothing but volatility clustering. What topology sees
+beyond static moments is **the dynamics of clustering**, the ordering that moments throw away. The
+production forecaster already reads that through its volatility-state and shock-history features,
+which is why topology adds nothing once they are in the baseline.
 
-Six trivial realised-volatility ratios beat twelve persistence features by **6.8
-points**, and adding topology on top of them buys **0.0026** - a quarter of a point
-for a Vietoris-Rips filtration per window.
+## What this means
 
-So persistence is re-deriving volatility clustering the expensive way, and doing it
-worse than four lines of numpy. The registered prediction was correct that volatility
-beats noise where direction does not, and the baseline shows that this was never the
-interesting comparison.
+- **None of these tools is an early warning beyond what the desk already has.** Persistent
+  homology, critical slowing down, tail exponents, entropy and Lyapunov estimates carry information
+  about coming transitions: single-statistic AUCs reach 0.60-0.73. But that information is
+  volatility clustering, which the production shock forecaster already reads.
+- **The killer question has a precise answer.** Topology distinguishes regimes that moments cannot,
+  because moments discard ordering. The same holds on GARCH walks, so the extra information is
+  clustering dynamics, not a topological property of markets.
+- **Critical slowing down does not appear.** Autocorrelation and variance trends add nothing (csd
+  within ±0.004 in every real cell), consistent with markets not approaching bifurcations the way
+  ecosystems do at these horizons.
+- **Two narrow survivors, neither for production yet:**
+  - Deriv 15m range blowouts (+0.010, instrument mechanics);
+  - metals daily volatility shifts (+0.032, fragile: a small sample, a weak second half, and absent
+    when all tools are added).
 
-**The bar is not the shuffled null, it is GARCH.** A volatility signal that has not
-been compared against a conditional-variance model has established nothing, because
-GARCH is standard and is about sixty lines of code. Trailing realised volatility here
-is a stand-in for it and a weaker one; a proper comparison is still owed.
-
-## What `shapes.py` does differently, and why it might work
-
-Two changes, each answering a specific failure above.
-
-**A persistence image instead of persistence norms.** The image vectorises the diagram
-onto a fixed grid while preserving *where* features are born and die, so different
-shapes give different vectors. That makes clustering them a search over shapes rather
-than over magnitudes - the thing `tda.py` structurally could not do.
-
-**A topological representation instead of raw coordinates.** This is the real argument
-for the expense: **a persistence diagram is invariant to time-warping and to monotone
-rescaling.** The same shape unfolding over twenty bars or forty, in a quiet regime or a
-violent one, gives a similar diagram. Raw-coordinate k-means treats those as unrelated,
-so any shape that recurs *at varying speed* was invisible to `motifs.py`. That is a
-falsifiable reason to expect a different answer, rather than a hope that a more
-sophisticated method will find more.
-
-### Old, new, undiscovered
-
-Every cluster is cross-tabulated against the textbook patterns from `patterns.py` that
-trigger inside it, so each comes back labelled:
-
-* **old** - mostly one named pattern, and its edge should match what `patterns.md`
-  measured for it;
-* **new** - contains several named patterns, so the clustering groups what the books
-  split or splits what they group;
-* **undiscovered** - almost no named pattern in it at all.
-
-The third column is the interesting one and also the one most likely to be noise, which
-is why the controls are not optional: base rate as placebo, block bootstrap sized to
-window plus horizon, fit on the past and score on the future, leave one instrument out,
-and the survivor count printed against the count expected by chance.
-
-### The result: exactly chance
-
-77,190 windows across ten instruments, 19 shapes large enough to judge:
-
-| shape | n | hit | gap | bootstrap band | what is in it |
-|------:|--:|----:|----:|---------------:|---------------|
-| 17 | 1,021 | 51.9% | +2.2% | +/-3.3% | undiscovered |
-| 13 | 4,383 | 51.2% | +1.7% | +/-1.6% | 3% named, mostly double bottom |
-| 14 | 1,815 | 51.2% | +1.5% | +/-2.1% | 3% named, mostly double top |
-| 8 | 2,065 | 50.7% | +1.0% | +/-2.3% | undiscovered |
-| 0 | 611 | 46.2% | -3.7% | +/-4.1% | undiscovered |
-| 18 | 364 | 46.4% | -3.4% | +/-5.3% | 5% named, mostly double bottom |
-
-**1 of 19 shapes clears its bootstrap band, against about 1.0 expected by chance.**
-That is not a weak result, it is precisely the null: one survivor is what nineteen coin
-flips produce. The single survivor, shape 13 at +1.7% +/- 1.6%, clears by 0.1 points.
-
-The **undiscovered** clusters - those containing almost no named pattern, which were the
-whole point of the exercise - did no better than the rest. The best of them is +2.2%
-+/- 3.3%, which does not clear.
-
-A smoke test on two instruments had returned 0 of 7 against 0.4 expected, with bands of
-+/-5 to 7% too wide to conclude from. The panel has ten times the data and lands on
-chance.
-
-### What this rules out, and what it does not
-
-It rules out the specific claim the harness was built for: that clustering
-warp-invariant topological signatures finds shapes followed by a directional edge. On
-this instrument set, at two different embeddings - one arbitrary, one measured - with
-these controls, it does not. The `undiscovered` column being no better than the named
-one is the cleanest part of the answer, because that column was the entire reason for
-preferring discovery over the textbook list.
-
-It does not rule out shapes in general, and one of the reasons turned out to be real
-rather than rhetorical.
-
-## The embedding was wrong, and it was measurable
-
-`tda.py` and `shapes.py` both fixed the delay embedding at dimension 3 with unit lag.
-Neither had any justification for that, and the measure-theoretic embedding paper is
-explicit that `tau` and `m` should come from false nearest neighbours or mutual
-information rather than be assumed. So `embed.py` measures them.
-
-| instrument | lag | dim | false-neighbour fraction, dimensions 1-6 |
-|------------|----:|----:|------------------------------------------|
-| xauusd | 5 | 6 | 1.00 0.88 0.50 0.20 0.06 0.02 |
-| eurusd | 5 | 6 | 1.00 0.87 0.51 0.21 0.06 0.02 |
-| gbpusd | 2 | 6 | 1.00 0.88 0.51 0.19 0.07 0.02 |
-| usdjpy | 4 | 6 | 1.00 0.88 0.51 0.19 0.06 0.02 |
-| volatility_75 | 4 | 5 | 1.00 0.91 0.56 0.19 0.04 0.00 |
-| boom_1000 | 4 | 5 | 1.00 0.91 0.57 0.21 0.04 0.01 |
-| btcusd | 3 | 6 | 1.00 0.88 0.51 0.19 0.06 0.02 |
-
-**Median lag 4, median dimension 6.** Lag 1 embeds adjacent returns, which are nearly
-redundant, so the cloud collapses towards its diagonal and carries little shape;
-dimension 3 under-embeds a series whose false neighbours do not settle until 6. The
-curves are near-identical across seven instruments, so this is not a noisy estimate.
-
-A small structural detail worth keeping: every real instrument needs dimension **6**
-while both synthetics settle at **5**. The generated processes are genuinely simpler.
-
-So the `shapes.py` result above was measured at the wrong embedding, and the obvious
-objection to it - "your embedding was bad" - was correct. Re-running at lag 4, dimension
-6, window 64 gives **the same answer**: 77,169 windows, 19 shapes, **1 clears its
-bootstrap band against about 1.0 expected by chance**.
-
-And the detail that settles it: **the survivor changed identity.** At lag 1 and
-dimension 3 it was shape 13 at +1.7%; at lag 4 and dimension 6 it is shape 19 at
--3.4% - a different cluster, with the opposite sign. A real effect keeps its identity
-when the representation improves. A coin flip does not. The count sitting exactly on its
-expectation while the winner moves is what chance looks like from two angles.
-
-The `undiscovered` clusters again did no better than the named ones. The largest gap in
-the whole table belongs to one of them - shape 10 at +4.4% - and its band is +/-5.9%.
-
-So the negative result is now robust to the objection that motivated the re-run, which
-makes it worth considerably more than it was an hour earlier.
-
-**This affects the two harnesses differently.** The shape search is provisional until
-the re-run. The `tda.py` conclusion is far more robust to it: a better embedding would
-have to close a 6.8-point gap to six trailing-volatility ratios *and then* improve on
-the combined model, which is a much taller order than lifting 0.3604.
-
-### What `embed.py` cannot settle
-
-Both criteria were designed for deterministic chaotic systems observed with little
-noise, and a price series is neither. These are the least arbitrary choice available,
-not the correct embedding. Their value is that the next negative result is no longer
-answerable with "you picked 3 and 1 out of the air".
-
-## Which branch of topology is usable, and a correction
-
-General topology is the wrong tool: a finite candle series is a finite point set, so
-every finite set is compact and totally disconnected and those properties carry no
-information. Differential topology needs a differentiable manifold, and price is not
-differentiable. **Algebraic topology, through persistent homology, is the branch that
-applies.**
-
-Three sources were considered and an error was made about all three, recorded here so
-it is not repeated. Each was dismissed as a "dead end" for not being *about* finance,
-when the question is whether the *method* applies. It does:
-
-* **Fast Betti numbers on 3D cubical complexes** (Gonzalez-Lorenzo et al., CTIC 2016).
-  Cubical complexes are the natural construction for **image-like** data, and a price
-  window can be made image-like - a rasterised chart, a recurrence plot, a Gramian
-  angular field. That is a different pipeline from the one built here and sees chart
-  geometry rather than dynamics. `gudhi` is installed for it; it is not yet written.
-* **Measure-theoretic time-delay embedding** (Botvinick-Greenhouse et al., math.DS
-  2024). Lifts the Takens embedding to a pushforward between probability spaces using
-  optimal transport, motivated explicitly by classical Takens assuming determinism and
-  noise-free observation - which markets violate. It reports 2x to 5x lower
-  reconstruction error than a pointwise loss on noisy chaotic systems. That makes it a
-  better-founded version of exactly what `tda.py` does, and noise robustness is the
-  binding problem here.
-* **Thick and cohesive Betti numbers** (Hernandez-Garcia et al., math.AT 2025). New
-  invariants measuring how well a homological feature is *supported* and whether it
-  survives degradation. Applied to a correlation complex of this desk's instruments it
-  would be a market-fragility reading. The paper defers empirical validation entirely,
-  so this would be new work rather than replication.
-
-## The honest position
-
-Across three representations, the only thing to clear a null is a **volatility** signal,
-and it loses to six lines of trailing volatility by 6.8 points. Nothing has identified an
-exploitable *shape* - old, new, or undiscovered. The shape search landed exactly on its
-chance line.
-
-That is now consistent enough across this repository to be a prior rather than a
-coincidence: direction has failed six independent ways in `directional-edge`, again in
-`supervised-candles.md`, again in `anchors.md`, and again here. Volatility keeps being
-the part that carries information. Any further shape work should be judged against
-that prior, and any shape result that predicts direction should be treated as
-surprising and checked twice.
+  Either could be re-tested on a longer or fresh sample before being considered.
+- **For the cross-disciplinary agenda:** tools that measure the *shape* or *complexity* of a price
+  window are re-measuring volatility clustering on these markets. Borrowed methods are more likely
+  to add something if they bring **new information** that the price series does not contain. On the
+  agenda's list, that means information flow across assets (the network and transfer-entropy
+  program), causal interventions, and real order-flow data (the VPIN study now running), rather
+  than another transform of the same bars.
