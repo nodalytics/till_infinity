@@ -1231,6 +1231,12 @@ class Settings:
     #: has become. This is the gate that does.
     #:
     #: See `research/docs/intraday.md`.
+    #: The most of a trade's target its expected overnight swap may take, over the strategy's
+    #: planned hold. `research/docs/carry.md`: the broker charges about the interbank
+    #: differential plus a markup on FX, and an annual rate on both sides of the synthetics (Boom
+    #: 1000 36%, about 10 bps a night). Only holds crossing the 17:00 New York rollover are
+    #: looked at. 0 turns it off. See `trading/swap.py`.
+    max_swap_fraction: float = 0.25
     quiet_hours: tuple[int, ...] = ()
     #: **FX only, and in New York's clock.** `research/docs/vetoes.md`: on about 52k zone
     #: touches, FX entries between 20:00 and 22:59 UTC in summer - 16:00-18:59 New York, the close
@@ -1502,6 +1508,7 @@ class Settings:
                 for h in (os.environ.get("TRADING_QUIET_HOURS") or "").replace(" ", "").split(",")
                 if h.strip().isdigit() and 0 <= int(h) <= 23
             ),
+            max_swap_fraction=_float("TRADING_MAX_SWAP_FRACTION", 0.25),
             fx_quiet_ny=_ny_span(os.environ.get("TRADING_FX_QUIET_NY", "16-19")),
             fx_sunday_open_min=_float("TRADING_FX_SUNDAY_OPEN_MIN", 60.0),
             stale_after=_float("TRADING_STALE_AFTER_S", 0.0),

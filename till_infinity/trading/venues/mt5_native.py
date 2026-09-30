@@ -121,6 +121,10 @@ class NativeBroker(Broker):
             contract_size=float(info.trade_contract_size or 0.0),
             stops_level=float(getattr(info, "trade_stops_level", 0.0) or 0.0),
             tradable=int(info.trade_mode) == self._mt5.SYMBOL_TRADE_MODE_FULL,
+            swap_long=float(getattr(info, "swap_long", 0.0) or 0.0),
+            swap_short=float(getattr(info, "swap_short", 0.0) or 0.0),
+            swap_mode=int(getattr(info, "swap_mode", -1)),
+            swap_triple_day=int(getattr(info, "swap_rollover3days", 3) or 0),
         )
 
     async def catalogue(self) -> list[str] | None:

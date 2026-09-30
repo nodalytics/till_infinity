@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import re
 import time
 from collections import Counter, deque
@@ -697,6 +698,9 @@ class Trader:
         #: is quiet" from "the trader has been discarding everything".
         self.passed_over: dict[str, int] = {}
         self._last_summary = time.monotonic()
+        #: When the symbol specs were last re-read for their overnight swap terms, which the
+        #: broker revises as rates move. Once a day is often enough; see `_refresh_swaps`.
+        self._swaps_read = time.monotonic()
         #: The volatility unit last published per instrument, so a trail can be
         #: measured in the same units the stop was placed in.
         self._vol_bps: dict[str, float] = {}
@@ -1155,6 +1159,7 @@ class Trader:
                 # its ceiling argument precisely because callers passed the
                 # wrong one.
                 hold=engine.hold_for(verdict.interval),
+                spec=self.specs.get(verdict.feed),
             )
             if stopped is not None:
                 self.refused += 1
@@ -1315,6 +1320,7 @@ class Trader:
                 feed_of=self._feed_of,
                 limits=engine.limits,
                 hold=engine.hold_for(wanted.interval),
+                spec=self.specs.get(wanted.feed),
             )
             if stopped is not None:
                 self.refused += 1
@@ -2825,7 +2831,32 @@ class Trader:
         self._remember_marks()
         await self._expire()
         await self._rearm_stopped()
+        await self._refresh_swaps()
         self._say_what_it_is_doing()
+
+    async def _refresh_swaps(self) -> None:
+        """Re-read each instrument's spec once a day, for the swap terms the swap gate prices.
+
+        Only the swap fields are taken from the fresh spec, so nothing sizing depends on changes
+        mid-session. A failed read keeps what was known.
+        """
+        if time.monotonic() - self._swaps_read < 86_400.0:
+            return
+        self._swaps_read = time.monotonic()
+        for feed, old in list(self.specs.items()):
+            try:
+                fresh = await self.broker.spec(old.symbol)
+            except Exception as exc:  # the old terms stand
+                log.debug("trading: no fresh spec for %s: %s", old.symbol, exc)
+                continue
+            if fresh is not None and fresh.swap_mode >= 0:
+                self.specs[feed] = dataclasses.replace(
+                    old,
+                    swap_long=fresh.swap_long,
+                    swap_short=fresh.swap_short,
+                    swap_mode=fresh.swap_mode,
+                    swap_triple_day=fresh.swap_triple_day,
+                )
 
     async def _orphans(self) -> None:
         """Withdraw resting orders this process is not tracking.
