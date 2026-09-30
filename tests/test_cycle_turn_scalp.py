@@ -28,7 +28,7 @@ def reading(
     *,
     stretched=1.0,
     agrees=None,
-    calls=400.0,
+    calls=1500.0,
     hit=0.60,
     broke=None,
     break_price=99.0,

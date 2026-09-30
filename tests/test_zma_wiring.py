@@ -83,7 +83,7 @@ UP = {"direction": "up", "feed": "v75"}
 DOWN = {"direction": "down", "feed": "v75"}
 
 
-def reading(z: float, *, calls: float = 400.0, hit: float = 0.60) -> dict:
+def reading(z: float, *, calls: float = 1500.0, hit: float = 0.60) -> dict:
     """A published z-score with a stated record behind it."""
     return {
         "zma_z": z,
@@ -170,9 +170,9 @@ class TestTheRecordDecides:
         assert zma_gate(strategy, UP, reading(2.0, hit=0.119)) is None
 
     def test_a_feed_that_has_earned_it_is_vetoed(self, strategy):
-        refusal = zma_gate(strategy, UP, reading(2.0, calls=400.0, hit=0.60))
+        refusal = zma_gate(strategy, UP, reading(2.0, calls=1500.0, hit=0.60))
         assert refusal is not None
-        assert "60% of 400 calls" in refusal.detail
+        assert "60% of 1500 calls" in refusal.detail
 
     def test_the_margin_over_a_coin_is_what_moves_the_line(self, strategy):
         just_under = reading(2.0, hit=strategy.settings.zma_min_accuracy)
@@ -804,32 +804,48 @@ class TestArmRunsOnAColdStart:
                 assert "watcher.arm()" in text, name
 
 
-class TestSignificanceLine:
-    """research/docs/zeroskill.md: 200 calls above 52% let a coin through on about one feed in
-    five. The line is now `0.5 + z * sqrt(0.25 / calls)`, Bonferroni-corrected across feeds."""
+class TestEProcess:
+    """research/docs/zma-conformal.md: the record is re-read every bar, and a single-look line
+    tested that often lets a coin earn in about half of 100-feed books within 180 days. The gate
+    is an anytime-valid e-process instead: valid however often it is checked."""
 
-    def test_the_line_is_the_one_the_study_derived(self):
+    def test_a_skilled_record_earns_and_a_short_one_does_not_yet(self):
         s = Settings()
-        assert s.zma_line(500) == pytest.approx(0.5736, abs=1e-4)
-        assert s.zma_line(1000) == pytest.approx(0.5520, abs=1e-4)
-        assert s.zma_line(5000) == pytest.approx(0.5233, abs=1e-4)
-        assert s.zma_line(1e9) == s.zma_min_accuracy  # the floor still holds
-        assert s.zma_line(0) == 1.0
+        assert s.zma_earned(2000, 1100)  # 55% of 2,000
+        assert not s.zma_earned(500, 275)  # 55% of 500: not enough evidence yet
+        assert s.zma_earned(1500, 900)  # 60% of 1,500
+        assert not s.zma_earned(400, 240)  # 60% of 400
+        assert not s.zma_earned(150, 150)  # under the call floor, however perfect
+        assert not s.zma_earned(0, 0)
 
-    def test_a_record_the_old_bar_passed_on_noise_no_longer_acts(self):
-        settings = Settings()
-        strategy = CycleScalp(settings=settings)
-        # 56% of 200 cleared 52%; it is 1.7 standard errors, which a coin does 4% of the time
-        assert zma_gate(strategy, UP, reading(2.0, calls=200.0, hit=0.56)) is None
+    def test_a_coin_or_worse_never_earns(self):
+        s = Settings()
+        for calls in (200, 1000, 10_000, 100_000):
+            assert not s.zma_earned(calls, calls * 0.5)
+            assert not s.zma_earned(calls, calls * 0.119)  # Boom's anti-signal
 
-    def test_coin_feeds_rarely_pass_across_a_whole_book(self):
-        rng = random.Random(11)
+    def test_coin_books_rarely_earn_under_continuous_checking(self):
+        rng = random.Random(7)
         settings = Settings()
-        books = 200
-        passed_any = 0
+        books, feeds, calls, every = 40, 100, 3000, 25
+        earned_any = 0
         for _ in range(books):
-            feeds = 100
-            calls = 500
-            hits = [sum(rng.random() < 0.5 for _ in range(calls)) for _ in range(feeds)]
-            passed_any += any(h / calls > settings.zma_line(calls) for h in hits)
-        assert passed_any / books < 0.10  # about 5% by design, against ~100% under the old bar
+            hit = False
+            for _ in range(feeds):
+                right = 0
+                for n in range(1, calls + 1):
+                    right += rng.random() < 0.5
+                    if n % every == 0 and settings.zma_earned(n, right):
+                        hit = True
+                        break
+                if hit:
+                    break
+            earned_any += hit
+        assert earned_any / books <= 0.10  # at most alpha = 5% by Ville, plus sampling noise
+
+    def test_the_old_line_would_have_passed_this_coin(self):
+        """56% of 200 cleared 52%; 60% of 400 cleared the single-look line. Neither is evidence
+        that survives being checked every bar."""
+        strategy = CycleScalp(settings=Settings())
+        assert zma_gate(strategy, UP, reading(2.0, calls=200.0, hit=0.56)) is None
+        assert zma_gate(strategy, UP, reading(2.0, calls=400.0, hit=0.60)) is None

@@ -34,7 +34,7 @@ Three things, and the third is what makes the first two safe to ship:
 * it agrees with **the direction the call already states**, so this narrows an
   existing thesis rather than inventing one;
 * and this feed's own scored record clears `zma_min_calls` settled calls and
-  `Settings.zma_line` - **the same bar `zma_gate` defers to**.
+  `Settings.zma_earned` - **the same bar `zma_gate` defers to**.
 
 On a family where the reading is an anti-signal the record never clears and
 this strategy never trades it. On a series where it works - a constructed
@@ -196,11 +196,11 @@ class CycleTurn(LevelStrategy):
                 feed,
             )
         rate = _number(features, "zma_anchor_edge_right") / max(calls, 1.0)
-        if rate <= self.settings.zma_line(calls):
+        if not self.settings.zma_earned(calls, _number(features, "zma_anchor_edge_right")):
             return Refusal(
                 "cycle_poor",
                 f"the {zm.ANCHOR} reading is right {rate:.0%} of {calls:.0f} times here, "
-                f"which is not past {self.settings.zma_line(calls):.1%}",
+                "which is not yet evidence beyond a coin across the book",
                 feed,
             )
         return None
