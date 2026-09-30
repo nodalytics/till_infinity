@@ -401,6 +401,17 @@ def _names(raw: str) -> tuple[str, ...]:
 ZMA_BETS: tuple[float, ...] = (0.02, 0.05, 0.1, 0.2, 0.4)
 
 
+#: The fast bands' gentle size brake - see `Settings.interval_weight` for why these numbers.
+#: Shared by the dataclass and `from_env`, which disagreed until 2026-09-30. To switch it off, set
+#: `TRADING_INTERVAL_WEIGHT=1m=1,3m=1,5m=1,15m=1`.
+INTERVAL_WEIGHT: tuple[tuple[str, float], ...] = (
+    ("1m", 0.8),
+    ("3m", 0.8),
+    ("5m", 0.8),
+    ("15m", 0.95),
+)
+
+
 def _ny_span(raw: str) -> tuple[int, int] | tuple[()]:
     """`"16-19"` -> (16, 19); empty or malformed -> () (off)."""
     try:
@@ -661,12 +672,7 @@ class Settings:
     #: still clears the lot floor. The figure to re-read it against is the same
     #: per-close record, once the widened band has produced a comparable sample
     #: of its own - which is the only thing that can settle the multiplier.
-    interval_weight: tuple[tuple[str, float], ...] = (
-        ("1m", 0.8),
-        ("3m", 0.8),
-        ("5m", 0.8),
-        ("15m", 0.95),
-    )
+    interval_weight: tuple[tuple[str, float], ...] = field(default_factory=lambda: INTERVAL_WEIGHT)
 
     #: Drawdown from the equity peak at which size reaches its floor. Zero is
     #: off.
@@ -1428,7 +1434,9 @@ class Settings:
             # "whatever was measured", not "no correction". `none` is how a
             # deployment says no correction and get an empty table.
             stop_overshoot=_overshoot(_env("TRADING_STOP_OVERSHOOT")) or DEFAULT_STOP_OVERSHOOT,
-            interval_weight=_overshoot(_env("TRADING_INTERVAL_WEIGHT")),
+            # Unset means the measured brake, as the dataclass says; production read it as no
+            # weights at all until 2026-09-30 (docs/environment.md found the two disagreeing).
+            interval_weight=_overshoot(_env("TRADING_INTERVAL_WEIGHT")) or INTERVAL_WEIGHT,
             hold_extends_at=_float("TRADING_HOLD_EXTENDS_AT", 0.0),
             max_hold_multiple=_float("TRADING_MAX_HOLD_MULTIPLE", 4.0),
             news_before=_float("TRADING_NEWS_BEFORE_S", 600.0),
