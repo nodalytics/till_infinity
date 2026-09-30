@@ -75,7 +75,7 @@ The three priority programs named in the agenda map to what is running:
 | 13 | Astronomy → inverse inference | Can hidden events be reconstructed from their observable signatures? | Partly in program D. VPIN as a hidden-flow signature was null ([`vpin.md`](vpin.md)) |
 | 14 | Paleontology → extinct regimes | What can dead market structures teach about today's? | Not started. Needs long, multi-era data |
 | 15 | Immunology → self against non-self | Does an unusual state precede a structural transition? | Largely done: the shock forecaster and anomaly work ([`anomalies.md`](anomalies.md)) |
-| - | Formal methods → verified trading systems | Under what conditions is the system guaranteed not to violate its invariants? | **Running:** program G, [`verification.md`](verification.md) (property-based and stateful tests of the risk invariants) |
+| - | Formal methods → verified trading systems | Under what conditions is the system guaranteed not to violate its invariants? | **Done:** program G, [`verification.md`](verification.md). All 19 invariants hold; the tests run in CI |
 
 The agenda's top pick, OHLC → symbolic market language → grammar → structural state → regime
 transition, is program E. It asks what the smallest language describing market behaviour is, which
