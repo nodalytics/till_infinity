@@ -1058,7 +1058,7 @@ def zma_gate(strategy: Any, payload: dict[str, Any], features: dict[str, float])
     calls = _number(features, "zma_edge_calls")
     if calls < settings.zma_min_calls:
         return None
-    if _number(features, "zma_edge_right") / max(calls, 1.0) <= settings.zma_min_accuracy:
+    if _number(features, "zma_edge_right") / max(calls, 1.0) <= settings.zma_line(calls):
         return None
 
     side = Side.from_direction(str(payload.get("direction") or ""))

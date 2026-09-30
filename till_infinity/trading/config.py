@@ -801,10 +801,15 @@ class Settings:
     #: condition is strict enough that a series makes one call every forty-odd
     #: bars, so 200 is months on a slow timeframe and hours on a fast one.
     zma_min_calls: float = 200.0
-    #: And how far above a coin that record has to be. At 0.50 the gate would
-    #: fire on feeds where the reading is worthless; the margin is what keeps a
-    #: hundred coin flips from reading as evidence.
+    #: A floor on how far above a coin that record has to be. It is not the bar
+    #: on its own: 200 calls above 52% is only 0.6 standard errors, and
+    #: research/docs/zeroskill.md measured a coin clearing it on about one feed
+    #: in five - 26% at 200 calls, 17% at 500. The bar is `zma_line`.
     zma_min_accuracy: float = 0.52
+    #: Standard errors above a coin a feed's record must clear, Bonferroni-
+    #: corrected for the number of feeds scored at once: 3.29 is a 5% chance of
+    #: any false pass across about 100 feeds (one-sided). See `zma_line`.
+    zma_z: float = 3.29
 
     # ------------------------------------------------ pricing the distance
     #: Decisive interactions a level needs before `fade-to-value` will treat it
@@ -1280,6 +1285,18 @@ class Settings:
     #: Filled in by `symbols.resolve`: feed name -> broker symbol.
     resolved: dict[str, str] = field(default_factory=dict)
 
+    def zma_line(self, calls: float) -> float:
+        """The right-rate a feed's z-score record must beat before it may act.
+
+        `0.5 + zma_z * sqrt(0.25 / calls)`, the one-sided significance line for
+        a coin, with `zma_min_accuracy` as a floor: 0.574 at 500 calls, 0.552 at
+        1,000, 0.523 at 5,000. One definition for the veto and both
+        permissions, so "earned a say" means the same thing everywhere.
+        """
+        if calls <= 0:
+            return 1.0
+        return max(self.zma_min_accuracy, 0.5 + self.zma_z * (0.25 / calls) ** 0.5)
+
     @property
     def configured(self) -> bool:
         """Whether a real terminal has been pointed at, by any route."""
@@ -1393,6 +1410,7 @@ class Settings:
             zma_gate=_flag("TRADING_ZMA_GATE", True),
             zma_min_calls=_float("TRADING_ZMA_MIN_CALLS", 200.0),
             zma_min_accuracy=_float("TRADING_ZMA_MIN_ACCURACY", 0.52),
+            zma_z=_float("TRADING_ZMA_Z", 3.29),
             fade_min_touches=_float("TRADING_FADE_MIN_TOUCHES", 4.0),
             fade_max_distance_vol=_float("TRADING_FADE_MAX_DISTANCE_VOL", 8.0),
             fade_min_distance_vol=_float("TRADING_FADE_MIN_DISTANCE_VOL", 1.5),
