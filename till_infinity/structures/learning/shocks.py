@@ -62,7 +62,7 @@ MODEL = "shocks"
 #: What changing the meaning of an input requires bumping. The shipped model records the recipe it
 #: was trained on, and a model trained on a different one is not used (the rule `breaking.RECIPE`
 #: states).
-RECIPE = "2026-09-29 vol state, clustering, clock"
+RECIPE = "2026-09-30 vol state, clustering, clock, range, tick volume"
 #: A card mentions the risk only above this multiple of the base rate. At 2x it would have warned on
 #: 14-23% of real-market bars in the held-out period; 3x is about the model's top decile, where
 #: shocks ran at 3.1-3.6x their base rate.
@@ -80,7 +80,18 @@ NAMES = (
     "hour_cos",
     "to_weekend",
     "interval_log",
+    # research/docs/infoflow.md: the two inputs carrying information about the next bar's size
+    # beyond the state above, in both halves and far above GARCH walks (vpin.md, causal.md agree).
+    "range_vol",
+    "volume_z",
+    "volume_z_hour",
 )
+
+#: Resolved log volumes a volume z needs before it is read; NaN before, which the trees route.
+VOLUME_WARM = 50
+#: Per hour-of-day log volumes kept, and needed, for the clock-adjusted z - so the intraday volume
+#: profile is not mistaken for a surge (`vol/clock.py` does the same for volatility).
+HOUR_KEEP, HOUR_WARM = 60, 10
 
 
 @dataclass(slots=True)
@@ -96,6 +107,14 @@ class Series(Restorable):
     tr_history: deque = field(default_factory=lambda: deque(maxlen=NORM))
     shocks: deque = field(default_factory=lambda: deque(maxlen=100))
     latest: list[float] = field(default_factory=list)
+    #: Log tick volumes, and the same by UTC hour of day. Empty for a venue that reports none.
+    log_volume: deque = field(default_factory=lambda: deque(maxlen=NORM))
+    #: Plain lists trimmed by hand, not deques: a dict's values come back from the state file as
+    #: whatever they were saved as, and only a top-level deque field is re-bounded on restore.
+    volume_by_hour: dict[int, list[float]] = field(default_factory=dict)
+    #: This bar's range in the volatility unit, and its tick volume (0 when none was reported).
+    last_range: float = 0.0
+    last_volume: float = 0.0
 
     @property
     def warm(self) -> bool:
@@ -131,7 +150,24 @@ def _features(s: Series, when: float) -> list[float]:
         math.cos(2 * math.pi * hour / 24),
         math.log1p(to_close),
         math.log(s.seconds) if s.seconds > 0 else 0.0,
+        s.last_range,
+        _z(_log(s.last_volume), s.log_volume, VOLUME_WARM),
+        _z(_log(s.last_volume), s.volume_by_hour.get(int(hour), ()), HOUR_WARM),
     ]
+
+
+def _log(volume: float) -> float:
+    return math.log(volume) if volume > 0 else float("nan")
+
+
+def _z(value: float, history, warm: int) -> float:
+    """`value` against `history` in standard deviations; NaN without enough history or a value."""
+    if math.isnan(value) or len(history) < warm:
+        return float("nan")
+    n = len(history)
+    mean = sum(history) / n
+    sd = math.sqrt(sum((v - mean) ** 2 for v in history) / n)
+    return (value - mean) / sd if sd > 0 else float("nan")
 
 
 @dataclass(slots=True)
@@ -149,8 +185,12 @@ class Shocks(Restorable):
         high: float,
         low: float,
         close: float,
+        volume: float | None = None,
     ) -> None:
-        """One closed bar: update the series' history and hold this bar's features."""
+        """One closed bar: update the series' history and hold this bar's features.
+
+        `volume` is the bar's tick volume where the venue reports one; without it the volume
+        features are NaN, which the trees route like any missing value."""
         if close <= 0 or high < low:
             return
         key = f"{feed}|{interval}"
@@ -170,6 +210,17 @@ class Shocks(Restorable):
         s.ewma_tr = tr if s.ewma_tr <= 0 else s.ewma_tr + (tr - s.ewma_tr) / 14.0
         s.tr_history.append(s.ewma_tr)
         s.shocks.append(1.0 if shock else 0.0)
+        s.last_range = (high - low) / s.prev_close / s.ewma_tr if s.ewma_tr > 0 else 0.0
+        # The bar's own volume is part of its z, as infoflow.py measured it (a rolling window that
+        # includes the bar); features are read after the bar closes, so nothing here is ahead.
+        s.last_volume = float(volume) if volume and volume > 0 else 0.0
+        if s.last_volume > 0:
+            s.log_volume.append(math.log(s.last_volume))
+            hour = int((when % 86_400) // 3_600)
+            bucket = s.volume_by_hour.setdefault(hour, [])
+            bucket.append(math.log(s.last_volume))
+            if len(bucket) > HOUR_KEEP:
+                del bucket[: len(bucket) - HOUR_KEEP]
         s.prev_close = close
         if s.warm:
             s.latest = _features(s, when)

@@ -1037,6 +1037,11 @@ def _read_bars(
         return
 
 
+def _volume(reported: object) -> float | None:
+    """A bar's reported volume as a positive number, or None."""
+    return float(reported) if isinstance(reported, int | float) and reported > 0 else None
+
+
 class Engine:
     """Levels and directional calls for every instrument at once."""
 
@@ -1539,6 +1544,7 @@ class Engine:
         low: float,
         close: float,
         vol: Volatility,
+        volume: float | None = None,
     ) -> None:
         """The forward readings nobody gates on, fed one closed bar.
 
@@ -1576,7 +1582,9 @@ class Engine:
             log.debug("structures: no envelope for %s %s: %s", feed, interval, exc)
         try:
             seconds = lv.SECONDS.get(interval, 0.0)
-            self._shocks().observe(feed, interval, seconds, opened + seconds, high, low, close)
+            self._shocks().observe(
+                feed, interval, seconds, opened + seconds, high, low, close, volume
+            )
         except Exception as exc:
             log.debug("structures: no shock forecast for %s %s: %s", feed, interval, exc)
 
@@ -2310,7 +2318,9 @@ class Engine:
             self._settle_projection(feed, interval, opened, float(close))
             # The z-score first: the envelope keys its Mondrian buckets by the state at this close.
             self._observe_zma(feed, interval, float(close))
-            self._observe_forecasts(feed, interval, when, high, low, float(close), vol)
+            self._observe_forecasts(
+                feed, interval, when, high, low, float(close), vol, _volume(reported)
+            )
             self._observe_cycles(feed, interval, float(close))
         # Pivots are session structures priced at today's scale, so they use the
         # reference estimate rather than the bar interval that happened to
