@@ -195,3 +195,52 @@ def test_the_engine_publishes_it_once_warm():
     for t, h, lo, c in _bars(800):
         eng._shocks().observe("g", "15m", 900, t, h, lo, c)
     assert 0.0 < eng._shock_at("g", "15m")["shock_probability"] < 1.0
+
+
+# ------------------------------------------------------------------ range and tick volume
+
+
+def _fed_with_volume(n: int = 800, surge: float = 1.0) -> sh.Shocks:
+    model = sh.Shocks()
+    rng = random.Random(9)
+    for i, (t, h, lo, c) in enumerate(_bars(n)):
+        volume = math.exp(rng.gauss(5.0, 0.2)) * (surge if i == n - 1 else 1.0)
+        model.observe("g", "15m", 900, t, h, lo, c, volume)
+    return model
+
+
+def test_without_volume_the_volume_features_are_missing_not_zero():
+    x = _fed().series["g|15m"].latest
+    assert len(x) == len(sh.NAMES)
+    range_vol, volume_z, volume_z_hour = x[-3:]
+    assert range_vol > 0
+    assert math.isnan(volume_z)
+    assert math.isnan(volume_z_hour)
+
+
+def test_a_volume_surge_reads_as_a_high_z_against_its_own_history_and_hour():
+    calm = _fed_with_volume().series["g|15m"].latest
+    surge = _fed_with_volume(surge=20.0).series["g|15m"].latest
+    assert abs(calm[-2]) < 4
+    assert surge[-2] > 5
+    assert surge[-1] > 5
+
+
+def test_the_hour_history_stays_bounded_and_survives_the_state_file():
+    model = _fed_with_volume(2_000)
+    s = model.series["g|15m"]
+    assert all(len(v) <= sh.HOUR_KEEP for v in s.volume_by_hour.values())
+    back = scodec.unpack(scodec.pack({"m": model}))["m"]
+    bs = back.series["g|15m"]
+    assert bs.log_volume.maxlen == sh.NORM
+    t = 1_700_000_000.0 + 900 * 3_000
+    back.observe("g", "15m", 900, t, 101.0, 99.0, 100.0, 200.0)
+    assert all(len(v) <= sh.HOUR_KEEP for v in bs.volume_by_hour.values())
+
+
+def test_a_model_on_the_old_recipe_is_not_used(monkeypatch):
+    old = _stump(1.0, recipe="2026-09-29 vol state, clustering, clock", names=sh.NAMES[:11])
+    _write(sh.MODEL, old)
+    frozen.forget_cache()
+    monkeypatch.setattr(frozen, "PACKAGED", frozen.models_dir() / "none")
+    assert _fed().reading("g", "15m") == {}

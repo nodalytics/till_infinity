@@ -92,7 +92,7 @@ def dataset(series: Mapping[tuple[str, str], Sequence[Bar]]) -> Rows:
     model = sh.Shocks()
     per_key: dict[str, list[tuple[float, float, list[float] | None]]] = {}
     for when, symbol, iv, bar in heapq.merge(*streams, key=lambda r: r[0]):
-        model.observe(symbol, iv, SECONDS[iv], when, bar.high, bar.low, bar.close)
+        model.observe(symbol, iv, SECONDS[iv], when, bar.high, bar.low, bar.close, bar.volume)
         s = model.series.get(f"{symbol}|{iv}")
         if s is None or not s.shocks:
             continue
@@ -122,7 +122,12 @@ def train(x: np.ndarray, y: np.ndarray, *, rows: int = 800_000, seed: int = 0) -
     model = HistGradientBoostingClassifier(
         max_depth=4, max_iter=200, learning_rate=0.05, min_samples_leaf=300
     )
-    model.fit(x[pick], y[pick])
+    fit = x[pick].copy()
+    # A column with no values at all (no venue in the sample reported volume) breaks the library's
+    # binning; a constant stands in for it, which no tree splits on, so at runtime a missing value
+    # there changes nothing.
+    fit[:, np.all(np.isnan(fit), axis=0)] = 0.0
+    model.fit(fit, y[pick])
     trees = [
         [
             [
