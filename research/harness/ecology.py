@@ -740,9 +740,16 @@ def fit_hawkes(times: np.ndarray, T: float) -> tuple[float, float, float]:
         comp = mu * T + (al / be) * np.sum(1 - np.exp(-be * (T - t)))
         return comp - np.sum(np.log(lam + 1e-12))
 
-    res = minimize(nll, np.log([len(t) / T * 0.5, 0.5, 1.0]), method="Nelder-Mead",
-                   options={"maxiter": 400, "xatol": 1e-3, "fatol": 1e-2})
-    return tuple(float(v) for v in np.exp(res.x))
+    # Bounded, in (mu, branching n = alpha / beta, beta): a stationary Hawkes needs n < 1, and an
+    # unbounded fit on non-stationary incidence runs alpha off to infinity.
+    def nll_b(theta):
+        mu, n_br, be = theta
+        return nll(np.log([mu, n_br * be, be]))
+
+    res = minimize(nll_b, [len(t) / T * 0.5, 0.5, 0.5], method="L-BFGS-B",
+                   bounds=[(1e-5, 10.0), (0.0, 0.99), (0.02, 5.0)])
+    mu, n_br, be = res.x
+    return float(mu), float(n_br * be), float(be)
 
 
 def hawkes_intensity(inc: pd.Series, mu: float, al: float, be: float) -> pd.Series:
@@ -771,6 +778,10 @@ def contagion_run(h: pd.DataFrame, label: str) -> dict:
             "+susceptible": base + ["fundz", "oiz"], "+all": base + ["R", "hawkes", "cross6", "fundz", "oiz"]}
     d = d.dropna(subset=["y"] + base)
     tr, te = d[d.index < cut_t], d[d.index >= cut_t]
+    # a feature with no values at all (the walks carry no funding or open interest) is dropped
+    empty = [c for c in {c for cols in sets.values() for c in cols} if not np.isfinite(tr[c]).any()]
+    sets = {k: [c for c in v if c not in empty] for k, v in sets.items()}
+    sets = {k: v for k, v in sets.items() if k == "base" or v != sets["base"]}
     preds = {}
     for name, cols in sets.items():
         m = HistGradientBoostingClassifier(max_depth=4, max_iter=150, learning_rate=0.05, min_samples_leaf=300)
