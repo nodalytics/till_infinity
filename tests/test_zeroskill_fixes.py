@@ -77,7 +77,7 @@ def test_the_memory_is_longer():
     score = Score()
     for _ in range(1000):
         score.push(1.0, DECAY)
-    assert score.effective(DECAY) == pytest.approx((2 - DECAY) / DECAY)
+    assert score.effective() == pytest.approx((2 - DECAY) / DECAY, rel=1e-3)
 
 
 def test_a_score_restored_without_its_spread_assumes_the_measured_one():
@@ -172,3 +172,21 @@ def test_no_counterfactual_where_the_policy_already_chose_the_default(tmp_path):
     engine.policy, engine.arm = trader.policy, trader.policy.fallback.named()
     trader._score_default(engine, {"feed": "gold", "interval": "5m"}, None, None)
     assert not trader._untaken
+
+
+def test_the_mean_rests_on_what_it_has_seen_not_on_its_first_reward():
+    """A plain EWMA started at its first reward keeps 61% of its weight there after 50 at decay
+    0.01 - the effective sample the margin assumed was 50, and was under three."""
+    score = Score()
+    for i in range(50):
+        score.push(1.0 if i == 0 else 0.0, DECAY)
+    assert score.mean == pytest.approx(1 / 50)
+    assert score.effective() == pytest.approx(50.0)
+
+
+def test_a_restored_score_rests_on_no_more_than_the_old_decay_allowed():
+    old = Score.__new__(Score)
+    old.__setstate__({"mean": 0.3, "seen": 400})
+    assert old.effective() == pytest.approx(pol.LEGACY_EFFECTIVE)
+    old.push(0.3, DECAY)  # and it carries on learning without raising
+    assert old.seen == 401

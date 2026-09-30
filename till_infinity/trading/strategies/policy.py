@@ -98,40 +98,59 @@ MARGIN_Z = 3.5
 PRIOR_SD = 0.75
 
 
+#: What a score restored from state written before `weights` existed is assumed to rest on, at
+#: most: the old decay's own limit, (2 - 0.05) / 0.05. Those means were plain EWMAs started at
+#: their first reward, so they rest on no more than this whatever `seen` says.
+LEGACY_EFFECTIVE = 39.0
+
+
 @dataclass(slots=True)
 class Score(Restorable):
     """A decayed mean and spread, and how much they rest on."""
 
-    #: Exponentially weighted mean reward.
+    #: The mean reward: an equal-weighted average until `1 / decay` observations, an EWMA after.
+    #: A plain EWMA started at the first reward keeps most of its weight on that one reward for
+    #: its first hundred-odd observations - at decay 0.01 and 50 observations the first still
+    #: weighs 61%, so the mean rests on under three - which is what let noise win.
     mean: float = 0.0
     #: Observations, undecayed, so `seen` answers "how much do we know" rather
     #: than "how recent is it". The two questions want different counters and
     #: conflating them is how a stale cell looks confident.
     seen: int = 0
-    #: Exponentially weighted mean of the squared reward, for the spread. -1 is "unknown": a
-    #: score restored from state written before this field existed. A real one is never below 0.
+    #: The same average of the squared reward, for the spread. -1 is "unknown": a score restored
+    #: from state written before this field existed. A real one is never below 0.
     square: float = -1.0
+    #: The sum of the squared weights behind `mean`, so the effective sample size is 1 / this,
+    #: exactly, whatever the history of weights. -1 is "unknown", as for `square`.
+    weights: float = -1.0
 
     def push(self, reward: float, decay: float) -> None:
         reward = max(CLIP[0], min(CLIP[1], reward))
         if not self.seen:
-            self.mean, self.square = reward, reward * reward
-        else:
-            self.mean = (1 - decay) * self.mean + decay * reward
-            self.square = (1 - decay) * self.square + decay * reward * reward
+            self.mean, self.square, self.weights, self.seen = reward, reward * reward, 1.0, 1
+            return
+        if self.square < 0.0:  # restored without a spread: start it at the measured one
+            self.square = self.mean * self.mean + PRIOR_SD * PRIOR_SD
+        if self.weights < 0.0:
+            self.weights = 1.0 / min(float(self.seen), LEGACY_EFFECTIVE)
         self.seen += 1
+        w = max(decay, 1.0 / self.seen)
+        self.mean = min(max((1 - w) * self.mean + w * reward, CLIP[0]), CLIP[1])
+        self.square = (1 - w) * self.square + w * reward * reward
+        self.weights = (1 - w) * (1 - w) * self.weights + w * w
 
     @property
     def variance(self) -> float:
-        """The decayed variance of the reward; `PRIOR_SD` squared while it is unknown."""
+        """The variance of the reward; `PRIOR_SD` squared while it is unknown."""
         if self.square < 0.0:
             return PRIOR_SD * PRIOR_SD
         return max(self.square - self.mean * self.mean, 0.0)
 
-    def effective(self, decay: float) -> float:
-        """How many observations the decayed mean effectively rests on: the count, up to the
-        EWMA's own limit of (2 - decay) / decay."""
-        return min(float(self.seen), (2.0 - decay) / decay) if decay > 0 else float(self.seen)
+    def effective(self) -> float:
+        """How many observations `mean` effectively rests on: 1 / the sum of squared weights."""
+        if self.weights > 0.0:
+            return 1.0 / self.weights
+        return min(float(self.seen), LEGACY_EFFECTIVE)
 
 
 @dataclass(slots=True)
@@ -234,9 +253,8 @@ class Policy(Restorable):
         if not warm:
             return None
         arm, best = max(warm, key=lambda kv: kv[1].mean)
-        decay = self.ledger.decay
         spread = math.sqrt(
-            best.variance / best.effective(decay) + default.variance / default.effective(decay)
+            best.variance / best.effective() + default.variance / default.effective()
         )
         lead, margin = best.mean - default.mean, MARGIN_Z * spread
         return (arm, lead, margin) if lead > margin else None
