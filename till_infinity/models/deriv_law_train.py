@@ -141,3 +141,48 @@ def gate(scores: dict[str, dict]) -> list[str]:
             if abs(row[key] - target) * 100 > LAW_GATES["cover_points"]:
                 reasons.append(f"N={n}: P{round(target * 100)} held {row[key]:.1%}")
     return reasons
+
+
+def family_of(feed: str) -> str:
+    """The own-law family a feed belongs to (`boom_`, `crash_`, ...), or ""."""
+    name = ev._canonical(feed)
+    return next((f for f in ev.OWN_LAW_FAMILIES if name.startswith(f)), "")
+
+
+def cell_passes(row: dict) -> bool:
+    """Whether one (family, interval, horizon) cell's scores clear `LAW_GATES`."""
+    ratio = row["law_pinball"] / row["empirical_pinball"] if row["empirical_pinball"] else 1.0
+    if ratio > LAW_GATES["pinball_ratio"]:
+        return False
+    return all(
+        abs(row[key] - target) * 100 <= LAW_GATES["cover_points"]
+        for target, key in ((0.1, "law_cover10"), (0.9, "law_cover90"))
+    )
+
+
+def select(
+    spec: dict, series: Mapping[tuple[str, str], Sequence[Bar]], since: float
+) -> tuple[dict, list[dict]]:
+    """Keep only the tables whose (family, interval, horizon) cell passes on bars from `since`.
+
+    `research/docs/deriv-variants.md`'s memoryless premise holds for Boom, Crash and DEX but not
+    everywhere: Drift Switch switches its drift, so a convolution of its one-bar move understates
+    its N-bar spread (P10 / P90 13-17% / 83-87% at 3m-30m), and Range Break's pinball is worse at
+    1h and 4h. A cell that fails keeps the empirical envelope. Returns the pruned spec and every
+    cell's scores.
+    """
+    groups: dict[tuple[str, str], dict[tuple[str, str], Sequence[Bar]]] = {}
+    for key, bars in series.items():
+        fam = family_of(key[0])
+        if fam:
+            groups.setdefault((fam, key[1]), {})[key] = bars
+    keep: set[str] = set()
+    report = []
+    for (fam, interval), group in sorted(groups.items()):
+        for n, row in score(spec, group, since).items():
+            ok = cell_passes(row)
+            report.append({"family": fam, "interval": interval, "n": int(n), "pass": ok, **row})
+            if ok:
+                keep |= {f"{ev._canonical(s)}|{interval}|{n}" for s, _ in group}
+    tables = {k: v for k, v in spec.get("tables", {}).items() if k in keep}
+    return {**spec, "tables": tables}, report
