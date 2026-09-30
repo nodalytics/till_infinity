@@ -381,6 +381,48 @@ def run_envelope50(fetch: Callable[[str, str], list], names: list[str]):
 
 #: In run order. The envelope contests come before the touch contests, because the touch models
 #: read the envelope's bands: they retrain on the bands in service after this run's promotions.
+#: Deriv's own-law tables (`structures/vol/envelope.py`, research/docs/deriv-variants.md): the
+#: timeframes the bridge serves that the tables cover, and the hold-out that judges each cell.
+DERIV_LAW_INTERVALS: tuple[str, ...] = ("5m", "15m", "30m", "1h", "4h")
+DERIV_LAW_HOLDOUT_DAYS = 90
+
+
+def run_deriv_law(fetch: Callable[[str, str], list], names: list[str]) -> tuple[dict | None, dict]:
+    """Fit the mechanics-only Deriv indices' own-law tables on everything before a 90-day
+    hold-out, and keep the (family, interval, horizon) cells that beat the empirical envelope
+    there with calibrated P10 / P90 (`deriv_law_train.select`). Promotes if any cell passes."""
+    from . import deriv_law_train as dl
+
+    series = {}
+    for symbol in names:
+        if not dl.family_of(symbol):
+            continue
+        for interval in DERIV_LAW_INTERVALS:
+            got = fetch(symbol, interval)
+            if len(got) > 3 * dl.MIN_BARS:
+                series[(symbol, interval)] = got
+    if not series:
+        return None, {
+            "series": 0,
+            "promoted": False,
+            "reasons": ["no mechanics-only Deriv history"],
+        }
+    cut = max(b[-1].time for b in series.values()) - DERIV_LAW_HOLDOUT_DAYS * 86_400
+    before = {k: [b for b in v if b.time < cut] for k, v in series.items()}
+    spec, cells = dl.select(dl.fit(before), series, cut)
+    passing = [c for c in cells if c["pass"]]
+    reasons = [] if passing else ["no cell beat the empirical envelope with calibrated P10 / P90"]
+    spec["test"] = {"cells": cells, "holdout_from": datetime.fromtimestamp(cut, UTC).isoformat()}
+    report = {
+        "series": len(series),
+        "challenger": {"cells_passing": len(passing), "cells": len(cells)},
+        "champion": {},
+        "promoted": not reasons,
+        "reasons": reasons,
+    }
+    return (spec if not reasons else None), report
+
+
 REGISTRY: dict[str, Callable[..., tuple[dict | None, dict]]] = {
     "shocks": run_shocks,
     "envelope_fx15m_5": run_envelope5,
@@ -388,6 +430,7 @@ REGISTRY: dict[str, Callable[..., tuple[dict | None, dict]]] = {
     "envelope_fx15m_50": run_envelope50,
     "touch90_fx15m": run_touch90,
     "touch10_fx15m": run_touch10,
+    "deriv_law": run_deriv_law,
 }
 
 
