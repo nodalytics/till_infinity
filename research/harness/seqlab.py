@@ -988,7 +988,38 @@ def ridge(
     return b @ beta
 
 
-def tick_size(bars: dict[str, np.ndarray]) -> float:
+#: The broker's point per symbol, read once from its symbol info (`feed.spec`) and kept beside
+#: the bar cache. Crypto is why: BTCUSD closes print whole while the broker quotes 3 digits, so
+#: the lattice the closes imply (1) is 1,000 times the broker's point (0.001) and a spread in
+#: points read through it is 1,000 times too wide - `vetoes.md` excluded crypto for it.
+POINTS = CACHE / "points.json"
+
+
+def broker_point(symbol: str) -> float | None:
+    """The broker's point for `symbol`, from its symbol info; None if it cannot be had."""
+    try:
+        known = json.loads(POINTS.read_text()) if POINTS.exists() else {}
+    except (OSError, ValueError):
+        known = {}
+    if symbol in known:
+        return float(known[symbol]) or None
+    try:
+        # File names spell spaces as underscores; the broker does not.
+        got = feed.spec(symbol) or (feed.spec(symbol.replace("_", " ")) if "_" in symbol else None)
+    except Exception:  # noqa: BLE001 - no bridge or no key: unknown, not cached
+        return None
+    if not got:
+        return None
+    digits = got.get("digits")
+    point = float(got.get("point") or (10.0 ** -int(digits) if digits is not None else 0.0))
+    if point > 0:
+        known[symbol] = point
+        POINTS.parent.mkdir(parents=True, exist_ok=True)
+        POINTS.write_text(json.dumps(known, indent=0, sort_keys=True))
+    return point or None
+
+
+def tick_size(bars: dict[str, np.ndarray], symbol: str | None = None) -> float:
     """The quote grid, inferred from the closes, because the feed never sends it.
 
     **The `spread` column is an integer count of points, not a price.**
@@ -1000,7 +1031,8 @@ def tick_size(bars: dict[str, np.ndarray]) -> float:
     nothing. This is the single most likely way a cost-aware arm on this study
     reports an edge that is not there.
 
-    `digits` is not on the route, so it is recovered from the data: the coarsest
+    **Pass `symbol` where it is known**: the broker's own point (`broker_point`) is then used,
+    which is exact. Without it, `digits` is recovered from the data: the coarsest
     decimal grid that every close in the series lies on. With fifty thousand
     bars every digit is exercised, so the coarsest grid containing the data is
     the grid.
@@ -1015,6 +1047,10 @@ def tick_size(bars: dict[str, np.ndarray]) -> float:
     points, two different digits and two different point counts, and they land
     on 0.282 and 0.284 bps. Two wrong tick sizes do not agree to three figures.
     """
+    if symbol is not None:
+        point = broker_point(symbol)
+        if point:
+            return point
     c = np.asarray(bars["close"], dtype=float)
     c = c[np.isfinite(c) & (c > 0)]
     if not len(c):
@@ -1026,7 +1062,7 @@ def tick_size(bars: dict[str, np.ndarray]) -> float:
     return float("nan")
 
 
-def rel_spread(bars: dict[str, np.ndarray]) -> np.ndarray:
+def rel_spread(bars: dict[str, np.ndarray], symbol: str | None = None) -> np.ndarray:
     """`c_t`: the full quoted spread at bar `t` as a fraction of price.
 
     This is the `c` in `research/deriving.md`'s `E[net] = -(c/2) x turnover`.
@@ -1035,7 +1071,7 @@ def rel_spread(bars: dict[str, np.ndarray]) -> np.ndarray:
     units of turnover. Returned as the *full* spread so the theorem's arithmetic
     can be written in the same letters it is proved in.
     """
-    tick = tick_size(bars)
+    tick = tick_size(bars, symbol)
     c = np.asarray(bars["close"], dtype=float)
     sp = np.asarray(bars["spread"], dtype=float)
     return sp * tick / np.maximum(c, 1e-12)

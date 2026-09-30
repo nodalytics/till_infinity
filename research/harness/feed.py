@@ -115,6 +115,23 @@ def _get(path: str, params: dict[str, Any] | None = None) -> Any:
         raise RuntimeError(f"{path}: HTTP {exc.code} {exc.reason}") from exc
 
 
+def spec(symbol: str) -> dict[str, Any] | None:
+    """The broker's symbol info - `digits`, `point`, swap terms - or None if no route has it.
+
+    Names with spaces (`Volatility 75 Index`) must be URL-quoted, or urllib refuses the request
+    outright. Both routes are tried, the same two production's `mt5_http` uses.
+    """
+    quoted = urllib.parse.quote(symbol)
+    for route in (f"/symbols/{quoted}", f"/symbols/info/{quoted}"):
+        try:
+            got = _get(route)
+        except Exception:  # noqa: BLE001 - the next route, then None
+            continue
+        if isinstance(got, dict) and got.get("name"):
+            return got
+    return None
+
+
 def symbols() -> list[str]:
     """Every symbol the terminal carries - 796 of them, not the collected subset."""
     got = _get("/symbols/")
