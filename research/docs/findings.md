@@ -1,6 +1,6 @@
 # Findings: what this research program has established
 
-A synthesis of every study in [`README.md`](README.md), as of 2026-09-30. Each claim links to the doc
+A synthesis of every study in [`README.md`](README.md), as of 2026-09-30 (updated after the last study merged). Each claim links to the doc
 that measured it. Read this first. The individual docs carry the numbers, methods and caveats.
 
 ## The one-paragraph answer
@@ -41,7 +41,7 @@ have shipped without it.
 
 | Finding | Evidence | In production |
 |---|---|---|
-| Shocks are visible before they happen, on real markets | AUC 0.73-0.76 held out; Deriv and walks about 0.5 ([`anomalies.md`](anomalies.md)) | Frozen boosted model, retrained fortnightly, on the cards |
+| Shocks are visible before they happen, on real markets | AUC 0.73-0.76 held out; Deriv and walks about 0.5 ([`anomalies.md`](anomalies.md)). Bar range and tick volume add +0.014 more (year-long hold-out, both halves, every real family; walks' volume adds nothing) ([`shockvolume.md`](shockvolume.md)) | Frozen boosted model, retrained fortnightly, on the cards |
 | Adaptive conformal percentiles hold their coverage | AgACI keeps P90 at 89.1-89.6% at 50 bars where one-step ACI slips to about 88% ([`conformal.md`](conformal.md)) | The envelope's corrector, taught from stored history |
 | A boosted quantile envelope beats the history one on FX | Pinball −3.8/−4.2/−5.9% (5/20/50 bars), regime-flat coverage; most of the gain corrects a noisy volatility unit ([`gbm-envelope.md`](gbm-envelope.md)) | FX 15m, retrained fortnightly |
 | Deriv's Volatility, Jump and Step follow their published laws | Realise 0.99-1.01 of the named sigma; the law beats the empirical envelope ([`deriv-variants.md`](deriv-variants.md)) | Envelope quoted from the law |
@@ -65,7 +65,7 @@ have shipped without it.
 | Game-theoretic edges (focal points, crowding, stop-runs) | Real traces, already priced | [`game-theory.md`](game-theory.md) |
 | LLM specialist agents forecasting direction | AUC 0.48-0.50; they behave like fixed priors | [`agents.md`](agents.md) |
 | An LLM deciding trades from the card | A fade rule with a thin skip; +0.035R over random at best (t 0.8) | [`agent-trading.md`](agent-trading.md) |
-| VPIN on retail tick volume | Null; the real-trade test is running | [`lopez-de-prado.md`](lopez-de-prado.md) |
+| VPIN (order-flow toxicity) | Null on real Binance taker flow and on tick volume: it adds nothing plain volume does not | [`vpin.md`](vpin.md), [`lopez-de-prado.md`](lopez-de-prado.md) |
 | The production strategies themselves | Gross −0.10 to +0.03R, none beats random selection | [`triage.md`](triage.md) |
 
 ## Could we build a mutual fund from this?
@@ -136,17 +136,28 @@ from the desk's time zone):
 4. **Rollover re-check:** re-run `rollover.py` on a fresh journal a week or two after the mask
    deployed. The 21:00 share should fall from 14.7% to about 3-4%.
 5. **Retraining workflow:** needs the `TRADING_MT5_API_KEY` secret and the `MODELS_SYMBOLS` variable.
-6. **Still running:**
-   - agents trading on signals;
-   - VPIN on real Binance trades;
-   - Deriv law tables and pivot signals;
-   - stock mean reversion.
+6. **Stop-side gate** ([`verification.md`](verification.md)): no gate refuses a stop on the wrong
+   side of the entry; it holds today only because every stop comes from `stop_for`. A one-line gate
+   would make it a guarantee. Not yet decided.
+7. **Deriv pivot shadow gate:** pivot signals publish (about 262 actionable a day), so this gate
+   should reach 200 trades in about 8 days, the first of the five.
+
+## The cross-disciplinary programs
+
+Every program on the [agenda](agenda.md) has now run. Each borrowed lens (topology, grammar,
+information flow, ecology, causal inference, rituals, Chan, López de Prado, VPIN, stocks, LLM
+agents) either rediscovered volatility clustering, which the shock forecaster already reads, or
+found nothing. One did better: three independent studies ([`vpin.md`](vpin.md),
+[`causal.md`](causal.md), [`infoflow.md`](infoflow.md)) converged on **volume** as information the
+desk lacked. It is now in the shock forecaster ([`shockvolume.md`](shockvolume.md)). New
+*information*, not a new transform of the same bars, is what moved the needle.
 
 ## What this means for the desk
 
 - **Keep building on risk.** The forecasts that work support position sizing, stop placement,
   exposure limits and honest cards. That is also the only defensible basis for managing outside
-  money: a volatility-managed portfolio, not a return-forecasting one (the fund study tests this).
+  money: a volatility-managed portfolio, not a return-forecasting one. Even there, our forecasts tie
+  the textbook EWMA recipe on daily ETFs ([`fund.md`](fund.md)).
 - **Stop searching the same space.** Indicators, confirmations, entry timing and borrowed textbook
   strategies on these markets, bars and costs have been tested broadly and deflated. A new
   directional idea needs either new information (data the market does not already price) or
