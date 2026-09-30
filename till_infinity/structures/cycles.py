@@ -105,11 +105,60 @@ ENABLED = os.environ.get("STRUCTURES_CYCLES", "1") not in ("0", "false", "no")
 #: and nobody maintains a list of which families those are.
 CYCLES_ACT = os.environ.get("STRUCTURES_CYCLES_ACT", "0") not in ("0", "false", "no")
 
-#: Skill against the running mean a feed's depth head needs before the cap may
-#: act. Zero is "no better than predicting the mean", so this is a margin above
-#: useless rather than a bar for excellence - the cap only ever reduces a claim,
-#: so the cost of acting on a mediocre model is bounded by the claim it reduces.
+#: Skill a feed's depth head needs **beyond the same head on a memoryless walk**
+#: before the cap may act. It was skill beyond zero - beating the running mean -
+#: and `research/docs/zeroskill.md` measured the head at **+0.29 on walks we
+#: generate**, with no turns to predict: how far a leg runs before a 2-sigma
+#: retracement is set by the volatility the head is fed, which is geometry, so
+#: every series cleared 0.05. Now the bar is `walk_skill()` plus this margin.
 MIN_SKILL = 0.05
+
+#: The walk the baseline is measured on: iid Student-t(3) returns, bars of the
+#: finest interval with the coarser ones sampled from it, as the book feeds
+#: them. The head's target is in volatility units, so the level of volatility
+#: does not matter (0.279 at one scale, 0.278 at four times it); length and
+#: seeds make it stable to about a hundredth.
+WALK_BARS, WALK_SEEDS = 30_000, 2
+
+_walk_skill: dict[tuple[str, ...], float] = {}
+
+
+def walk_skill(
+    intervals: tuple[str, ...] = ("1m", "15m", "1h"),
+    *,
+    bars: int = WALK_BARS,
+    seeds: int = WALK_SEEDS,
+) -> float:
+    """The depth head's skill on memoryless walks, for this interval set: what geometry alone
+    scores. Seeded, so deterministic; computed once per interval set and length, and only when
+    asked - which is only when the cap is switched on."""
+    key = (*intervals, str(bars), str(seeds))
+    found = _walk_skill.get(key)
+    if found is not None:
+        return found
+    import numpy as np  # only for the simulation
+
+    minutes = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240}
+    steps = [max(1, minutes.get(iv, 1) // minutes.get(intervals[0], 1)) for iv in intervals]
+    skills = []
+    for seed in range(seeds):
+        rng = np.random.default_rng(20_260_930 + seed)
+        book, series, price = Book(intervals=intervals), None, 100.0
+        for i, move in enumerate(rng.standard_t(3, bars) * 0.001 / math.sqrt(3)):
+            price *= math.exp(float(move))
+            for interval, step in zip(intervals, steps, strict=True):
+                if (i + 1) % step == 0:
+                    series = book.observe("walk", interval, price)
+        if series is not None and series.turns.depth_base_error:
+            skills.append(series.turns.depth_skill)
+    found = _walk_skill[key] = sum(skills) / len(skills) if skills else 0.0
+    return found
+
+
+def earned(turns: Turns, intervals: tuple[str, ...]) -> bool:
+    """Whether a feed's depth head has earned the cap: warm, and beyond the walks by `MIN_SKILL`."""
+    return turns.warm and turns.depth_skill - walk_skill(intervals) > MIN_SKILL
+
 
 #: How far inside the predicted turn a push may still be claimed. The turn is a
 #: forecast with error, so pulling a target to exactly it would refuse every
@@ -686,7 +735,7 @@ class Series(Restorable):
         if not (ENABLED and CYCLES_ACT) or push_vol <= 0:
             return push_vol, ""
         turns = self.turns
-        if not turns.warm or not (turns.depth_skill > MIN_SKILL):
+        if not earned(turns, self.cycles.intervals):
             return push_vol, ""
         got = turns.predict(self.cycles, self.bars)
         depth = float(got.get("turn_depth_vol", 0.0) or 0.0)
@@ -722,7 +771,7 @@ class Series(Restorable):
         # that is a constant zero under the default configuration is an inert
         # published feature, which is the defect `research/inert.md` catalogues
         # and `tests/test_published.py` refuses - it caught this one.
-        if CYCLES_ACT and self.turns.warm and self.turns.depth_skill > MIN_SKILL:
+        if CYCLES_ACT and earned(self.turns, self.cycles.intervals):
             out["cycle_acts"] = 1.0
         return out
 

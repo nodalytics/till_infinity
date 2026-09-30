@@ -380,6 +380,31 @@ class Opportunity(LevelStrategy):
             payload, spec=spec, tick=tick, equity=equity, positions=positions, peak=peak
         )
 
+    def consider_as(
+        self,
+        shape: Shape,
+        payload: dict[str, Any],
+        *,
+        spec: SymbolSpec,
+        tick: Tick,
+        equity: float,
+        peak: float = 0.0,
+    ) -> Verdict:
+        """Decide this signal wearing `shape`, without asking the policy.
+
+        What the default would have done where the policy chose otherwise - so the default is
+        scored on every signal like every other arm, and a challenger is compared against a
+        measured default rather than one that is only ever credited while cold
+        (`research/docs/zeroskill.md`). `arm` is left as the policy set it.
+        """
+        held, arm = self.policy, self.arm
+        self.policy = None
+        try:
+            self._wear(shape)
+            return super().consider(payload, spec=spec, tick=tick, equity=equity, peak=peak)
+        finally:
+            self.policy, self.arm = held, arm
+
     def _wear(self, shape: Shape) -> None:
         """Take on a point in the space, as instance attributes.
 

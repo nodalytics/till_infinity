@@ -43,7 +43,7 @@ not, the threshold that brings it to 5% is reported.
 
 Run on the lab:
   JOURNAL=$HOME/till_infinity/data/journal.db python research/harness/zeroskill.py
-  PART=policy | zma | cycles | all (default)
+  PART=policy | zma | cycles | all (default) | fixed (the policy margin and cycles baseline)
 """
 from __future__ import annotations
 
@@ -219,6 +219,102 @@ def policy_part(rows, closed, picks):
             f"{len(vals)} warm picks; the printed mean p50/p95 {pct(vals, 50):+.3f}/{pct(vals, 95):+.3f}R")
 
 
+# ------------------------------------------------------------------------------------ the fixes
+
+
+def drive_fixed(rows, rewards, edge_arm="", edge=0.0, per_day=None):
+    """The fixed production Policy on `rows`, with the default scored on every signal as the service
+    now does (`Trader._score_default`): each credited row also credits the fallback with a reward
+    from the same null. Returns departures per warm context, and (with an edge) the first day the
+    book-level context picks the edged arm."""
+    policy = pol.Policy()
+    fallback = policy.fallback.named()
+    earned_day = None
+    for i, ((t, feed, interval, _by, arm, _), r) in enumerate(zip(rows, rewards, strict=True)):
+        if not arm:
+            continue
+        policy.observe(feed, interval, arm, r + (edge if arm == edge_arm else 0.0))
+        policy.observe(feed, interval, fallback, rewards[(i * 7919 + 13) % len(rewards)])
+        if edge and earned_day is None and i % 50 == 0:
+            got = policy.choose("")
+            if got is not None and got[0] == edge_arm:
+                earned_day = (t - rows[0][0]) / 86_400
+    contexts = {ctx for (ctx, _a) in policy.ledger.cells}
+    warm = departed = 0
+    for ctx in contexts:
+        d = policy.ledger.score(ctx, fallback)
+        if d is None or d.seen < policy.MIN_SEEN:
+            continue
+        warm += 1
+        departed += policy.choose(ctx) is not None
+    return warm, departed, earned_day
+
+
+def fixed_part(rows):
+    say(f"\nFIXED POLICY (MARGIN_Z {pol.MARGIN_Z}, decay {pol.DECAY}, default scored on every signal)")
+    real = np.array([r[5] for r in rows])
+    arms = Counter(r[4] for r in rows if r[4])
+    edge_arm = next(a for a, _ in arms.most_common() if a != pol.Policy().fallback.named())
+    for label, horizon in [("real length", None)] + [(f"{d} days", d) for d in HORIZONS]:
+        per_ctx, per_book, contexts = [], [], []
+        for s in range(SEEDS):
+            r = np.random.default_rng(1000 + s)
+            base = rows if horizon is None else tile(rows, horizon, r)
+            rew = np.array([x[5] for x in base])
+            for values in (r.permutation(rew), r.choice(real, len(rew))):
+                warm, departed, _ = drive_fixed(base, list(values))
+                contexts.append(warm)
+                per_ctx.append(departed / warm if warm else 0.0)
+                per_book.append(departed > 0)
+        say(f"  null, {label} ({SEEDS} seeds x perm+iid): warm contexts {np.mean(contexts):.1f} | "
+            f"departs in {np.mean(per_ctx):.1%} of warm contexts | books with any departure "
+            f"{np.mean(per_book):.1%}  (old rule: 100% of contexts)")
+    for edge in (0.15, 0.30):
+        days = []
+        for s in range(min(SEEDS, 40)):
+            r = np.random.default_rng(5000 + s)
+            base = tile(rows, 180, r)
+            rew = np.array([x[5] for x in base])
+            _, _, day = drive_fixed(base, list(r.permutation(rew)), edge_arm, edge)
+            days.append(day if day is not None else np.inf)
+        found = [d for d in days if np.isfinite(d)]
+        say(f"  a real edge of +{edge:.2f}R on the busiest arm ({edge_arm.split('/')[0]}...): earned in "
+            f"{len(found)}/{len(days)} books within 180 days; days to earn p50 {pct(found, 50):.0f} "
+            f"p90 {pct(found, 90):.0f}")
+
+
+def fixed_cycles_part():
+    try:
+        from till_infinity.structures import cycles as cy
+    except Exception as exc:
+        say(f"\nFIXED CYCLES: skipped ({exc})")
+        return
+    base = cy.walk_skill(("1m", "15m", "1h"))
+    say(f"\nFIXED CYCLES: walk baseline {base:+.4f}; earned needs skill > baseline + {cy.MIN_SKILL}")
+    for kind in ("t3", "garch"):
+        for days in (30, 90):
+            n = int(1440 * days * 5 / 7)
+            seeds = max(4, min(12, SEEDS // 20))
+            skills, old, new = [], 0, 0
+            for s in range(seeds):
+                rng = np.random.default_rng(9000 + s)
+                book, series = cy.Book(), None
+                for i, p in enumerate(walk(n, rng, kind)):
+                    series = book.observe("walk", "1m", float(p))
+                    if i % 15 == 14:
+                        book.observe("walk", "15m", float(p))
+                    if i % 60 == 59:
+                        book.observe("walk", "1h", float(p))
+                t = series.turns
+                if t.warm:
+                    skills.append(t.depth_skill)
+                    old += t.depth_skill > cy.MIN_SKILL
+                    new += cy.earned(t, book.intervals)
+            say(f"  {kind:5s} {days:3d}d: seeds {seeds} | skill p50/p95 {pct(skills, 50):+.3f}/"
+                f"{pct(skills, 95):+.3f} | earned, old bar {old}/{seeds} -> walk baseline {new}/{seeds}")
+    say(f"  a head {0.10:+.2f} beyond the walks earns as soon as it is warm ({cy.WARM} settled turns)")
+
+
 # ------------------------------------------------------------------------------------ the z gate
 
 
@@ -324,6 +420,12 @@ def cycles_part():
                 f"{pct(skills, 95):+.3f} | earned {earned}/{seeds} ({time.time() - t0:.0f}s)")
 
 if __name__ == "__main__":
+    if PART == "fixed":
+        rows, _closed, _picks = stream()
+        if rows:
+            fixed_part(rows)
+        fixed_cycles_part()
+        raise SystemExit
     if PART in ("all", "policy"):
         rows, closed, picks = stream()
         if rows:

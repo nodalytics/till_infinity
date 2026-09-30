@@ -48,6 +48,7 @@ from ..logging import get_logger
 # and a duplicated string would drift silently.
 from ..prices.config import BROKER as BROKER_SOURCE
 from ..shared import effects
+from ..shared.state import Restorable
 from ..structures.codec import pack, registry, unpack
 from ..structures.context.cusum import Cusum, Ensemble, adaptive_threshold
 from ..structures.context.holds import Book as HoldBook
@@ -71,6 +72,7 @@ from .shadow import ShadowGates
 from .sizing import lots, price_distance
 from .strategies import strategy
 from .strategies.opportunity import PRESETS
+from .strategies.policy import DECAY as _POLICY_DECAY
 from .strategies.policy import Entries, Policy
 from .strategies.strategy import Strategy
 from .venues import replicate
@@ -268,7 +270,7 @@ class Waiting:
 
 
 @dataclass(slots=True)
-class Untaken:
+class Untaken(Restorable):
     """A trade a strategy wanted and did not get, followed to its own barriers.
 
     See `trading-service.md` in research/docs.
@@ -303,6 +305,13 @@ class Untaken:
     #: level call and was dropped here.
     regime: float = 0.0
     market: str = ""
+    #: The shape the strategy wore when it wanted this, taken at decision time. `_credit` used to
+    #: read the strategy's *current* arm when the intent resolved, hours later, by which time the
+    #: policy may have chosen another. Empty for strategies the policy does not shape.
+    arm: str = ""
+    #: What the policy's default would have done where the policy chose otherwise. Credits the
+    #: shape ledger only: it is not a strategy's own entry, so `Entries` must not hear it.
+    counterfactual: bool = False
 
 
 @dataclass(slots=True)
@@ -1378,6 +1387,9 @@ class Trader:
         if not self.settings.evaluate_all:
             return wanted_by
         for engine in self.strategies:
+            if engine.name == taken_by and engine.wants(payload):
+                # The taker's own default is owed a score too; its arm is the one it traded with.
+                self._score_default(engine, payload, spec, tick)
             if engine.name == taken_by or not engine.wants(payload):
                 continue
             try:
@@ -1413,7 +1425,9 @@ class Trader:
                     tick.time,
                     float(state) if isinstance(state, int | float) else 0.0,
                     str(payload.get("market") or ""),
+                    arm=str(getattr(engine, "arm", "") or ""),
                 )
+            self._score_default(engine, payload, spec, tick)
             await observe(
                 self.journal,
                 f"{engine.name} would have {'taken' if wanted else 'passed'} {payload.get('feed')}",
@@ -2727,6 +2741,9 @@ class Trader:
         # without it.
         got = payload.get("policy")
         if type(got).__name__ == "Policy":
+            # The memory is policy, not state: a ledger written under an older decay learns at
+            # the current one from here on (`policy.DECAY`).
+            got.ledger.decay = _POLICY_DECAY
             self.policy = got
         entries = payload.get("entries")
         if type(entries).__name__ == "Entries":
@@ -3566,6 +3583,8 @@ class Trader:
         now: float,
         regime: float = 0.0,
         market: str = "",
+        arm: str = "",
+        counterfactual: bool = False,
     ) -> None:
         """Keep an intent a strategy wanted but did not get, to score later.
 
@@ -3589,6 +3608,8 @@ class Trader:
                 placed_at=now,
                 regime=regime,
                 market=market,
+                arm=arm,
+                counterfactual=counterfactual,
             )
         )
         if len(kept) > self.MAX_UNTAKEN:
@@ -3712,11 +3733,60 @@ class Trader:
                 # Carried from the signal so `reward_r` can be split by it.
                 "regime": shade.regime,
                 "market": shade.market,
+                # The shape credited, and whether this is the policy's default scored as a
+                # counterfactual rather than the strategy's own intent.
+                "arm": shade.arm,
+                "counterfactual": shade.counterfactual,
             },
             tags=(shade.feed, shade.by, "untaken"),
         )
         if how != "never filled":
-            self._credit(shade.by, shade.feed, shade.interval, reward)
+            self._credit(
+                shade.by,
+                shade.feed,
+                shade.interval,
+                reward,
+                arm=getattr(shade, "arm", ""),
+                entries=not getattr(shade, "counterfactual", False),
+            )
+
+    def _score_default(
+        self, engine: Strategy, payload: dict[str, Any], spec: SymbolSpec, tick: Tick
+    ) -> None:
+        """Follow what the policy's default shape would have done with this signal.
+
+        Only where a policy chose a shape other than the default: there the default is not what
+        was worn, so nothing else scores it. `research/docs/zeroskill.md` found the default never
+        warm in any context, so every challenger was compared with nothing. Counterfactual:
+        credits the shape ledger, never `Entries`, and never trades. Wrapped, because a shadow
+        must not break the signal it shadows.
+        """
+        policy = getattr(engine, "policy", None)
+        dress = getattr(engine, "consider_as", None)
+        if policy is None or dress is None:
+            return
+        fallback = policy.fallback
+        if str(getattr(engine, "arm", "") or "") in ("", fallback.named()):
+            return
+        try:
+            verdict = dress(
+                fallback, payload, spec=spec, tick=tick, equity=self.equity, peak=self.peak_equity
+            )
+        except Exception as exc:
+            log.debug("trading: no default counterfactual for %s: %s", engine.name, exc)
+            return
+        if isinstance(verdict, Intent):
+            interval = str(payload.get("interval") or "")
+            self._remember_untaken(
+                str(payload.get("feed") or ""),
+                engine.name,
+                verdict,
+                interval,
+                engine.hold_for(interval),
+                tick.time,
+                arm=fallback.named(),
+                counterfactual=True,
+            )
 
     def _arm_of(self, by: str) -> str:
         """The shape the named strategy last chose, or "" if it chooses none.
@@ -3728,7 +3798,16 @@ class Trader:
         engine = next((e for e in self.strategies if e.name == by), None)
         return str(getattr(engine, "arm", "") or "")
 
-    def _credit(self, by: str, feed: str, interval: str, reward: float) -> None:
+    def _credit(
+        self,
+        by: str,
+        feed: str,
+        interval: str,
+        reward: float,
+        *,
+        arm: str = "",
+        entries: bool = True,
+    ) -> None:
         """Tell the policy what a strategy's shape was worth here.
 
         Keyed by the **shape** rather than the strategy name, because the names
@@ -3736,8 +3815,11 @@ class Trader:
         `sweep-aware` are the same point, and crediting them separately would
         split one arm's evidence in half.
         """
-        shape = PRESETS.get(by)
-        arm = shape.named() if shape is not None else ""
+        # The arm recorded when the intent was made wins: the strategy's current arm may have
+        # changed since, and crediting it would score one shape with another's outcome.
+        if not arm:
+            shape = PRESETS.get(by)
+            arm = shape.named() if shape is not None else ""
         if not arm:
             engine = next((e for e in self.strategies if e.name == by), None)
             arm = str(getattr(engine, "arm", "") or "")
@@ -3745,8 +3827,10 @@ class Trader:
             self.policy.observe(feed, interval, arm, reward)
         # The same reward, filed against the strategy rather than its shape. The
         # shape ledger deliberately pools strategies that share an exit, so this
-        # is the only place the per-strategy question is even asked.
-        self.entries.observe(feed, by, reward)
+        # is the only place the per-strategy question is even asked. Not for a
+        # counterfactual default, which is no strategy's own entry.
+        if entries:
+            self.entries.observe(feed, by, reward)
 
     async def _watch_shadows(self, feed: str, tick: Tick) -> None:
         """Follow stopped trades to see whether the target arrived anyway.
