@@ -3,8 +3,9 @@
 Every FX 15m series is replayed through the production pieces in the order the engine runs them:
 - the rollover trim (`structures/rollover.py`);
 - the volatility unit (`Ranges.ewma_tr_bps`, what `Volatility.ewma_tr_bps` returns);
-- the envelope book (`vol/envelope.py`, AgACI and all);
-- `Touches`.
+- `Touches.advance` and its base features;
+- the envelope book (`vol/envelope.py`, AgACI and all, boosted where its model ships);
+- `Touches.hold` on the bands just quoted.
 
 So a retrained model is trained on exactly the features and bands the engine will hand it. The
 labels are whether the next `AHEAD` bars' highs reach the P90 quoted at the bar's close, and their
@@ -74,10 +75,16 @@ def _series(symbol: str, bars: Sequence[Bar], out: Rows) -> None:
             pending.append((0.0, [], 0.0, 0.0))
             continue
         sigma = bps / 10_000
-        book.observe(feed, tc.INTERVAL, close, sigma)
+        # In the engine's order: the features, the envelope reading them (boosted where a model
+        # ships), then the touch features on the bands just quoted.
+        taken = model.advance(feed, tc.INTERVAL, bar.time, high, low, close, sigma)
+        book.observe(
+            feed, tc.INTERVAL, close, sigma, model.base(feed, tc.INTERVAL) if taken else None
+        )
         env = book.envelopes.get(f"{feed}|{tc.INTERVAL}|{tc.AHEAD}")
         quote = list(env.quote) if env is not None and env.warm else None
-        model.observe(feed, tc.INTERVAL, bar.time, high, low, close, sigma, quote)
+        if taken:
+            model.hold(feed, tc.INTERVAL, quote)
         s = model.series.get(f"{feed}|{tc.INTERVAL}")
         if s is None or not s.latest or quote is None:
             pending.append((0.0, [], 0.0, 0.0))
@@ -240,24 +247,38 @@ def calibration(y: np.ndarray, p: np.ndarray, bins: int = 10) -> float:
 
 
 def score(
-    p: np.ndarray, p_geo: np.ndarray, y: np.ndarray, when: np.ndarray, *, seed: int = 0
+    p: np.ndarray,
+    p_geo: np.ndarray,
+    y: np.ndarray,
+    when: np.ndarray,
+    *,
+    base: float | None = None,
+    seed: int = 0,
 ) -> dict[str, float]:
-    """Brier skill over geometry, its standard error over whole days, and calibration."""
+    """Brier skill over geometry and over the training base rate `base` (the constant a card
+    would otherwise print), their standard errors over whole days, and calibration."""
     b_geo = brier(y, p_geo)
     skill = 1.0 - brier(y, p) / b_geo if b_geo > 0 else float("nan")
+    p_rate = np.full(len(y), float(y.mean()) if base is None else float(base))
+    b_rate = brier(y, p_rate)
+    skill_rate = 1.0 - brier(y, p) / b_rate if b_rate > 0 else float("nan")
     days = (when // 86_400).astype(int)
     uniq = np.unique(days)
     rng = np.random.default_rng(seed)
     by = {d: np.flatnonzero(days == d) for d in uniq}
-    draws = []
+    draws, draws_rate = [], []
     for _ in range(200):
         idx = np.concatenate([by[d] for d in rng.choice(uniq, len(uniq))])
         bg = brier(y[idx], p_geo[idx])
         draws.append(1.0 - brier(y[idx], p[idx]) / bg if bg > 0 else float("nan"))
+        br = brier(y[idx], p_rate[idx])
+        draws_rate.append(1.0 - brier(y[idx], p[idx]) / br if br > 0 else float("nan"))
     table = deciles(y, p, when, seed=seed)
     return {
         "skill": round(skill, 4),
         "skill_se": round(float(np.nanstd(draws)), 4),
+        "skill_rate": round(skill_rate, 4),
+        "skill_rate_se": round(float(np.nanstd(draws_rate)), 4),
         "calibration": round(calibration(y, p), 3),
         "miscalibrated_deciles": len(miscalibrated(table)),
         "rate": round(float(y.mean()), 4),

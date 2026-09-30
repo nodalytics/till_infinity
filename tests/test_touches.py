@@ -57,16 +57,42 @@ def _fed(feed: str = "eurusd", interval: str = "15m", n: int = 600) -> tc.Touche
 # ------------------------------------------------------------------ the shipped models
 
 
-def test_the_shipped_models_load_and_match_the_features():
+def _ship_stumps(tmp_path) -> None:
+    """A touch model per band under the current recipe: one split on lvol, so the reading has
+    something to evaluate whatever ships in the package."""
+    out = tmp_path / "models"
+    out.mkdir(exist_ok=True)
+    for name in tc.MODELS.values():
+        spec = {
+            "recipe": tc.RECIPE,
+            "names": list(tc.NAMES),
+            "baseline": -1.3,
+            "trees": [
+                [[0, 0.0, 1, 2, 0, 0.0, 1], [0, 0, 0, 0, 1, -0.2, 0], [0, 0, 0, 0, 1, 0.2, 0]]
+            ],
+            "base_rate": 0.21,
+        }
+        (out / f"{name}.json").write_text(json.dumps(spec))
+    frozen.forget_cache()
+
+
+def test_a_shipped_model_has_earned_its_place(monkeypatch):
+    """Whatever ships under the current recipe passed the contest's skill gate. None may ship:
+    over the boosted envelope's bands the touch models' skill fell under the gate
+    (`touches.RECIPE`), and then the reading is simply absent."""
+    monkeypatch.delenv("TI_MODELS_DIR")
+    frozen.forget_cache()
     for name in tc.MODELS.values():
         spec = frozen.load(name, recipe=tc.RECIPE, names=tc.NAMES)
-        assert spec is not None, name
+        if spec is None:
+            continue
         assert spec["names"] == list(tc.NAMES)
         assert 0.1 < spec["base_rate"] < 0.35
         assert spec["test"]["skill"] >= rt.TOUCH_GATES["min_skill"]
 
 
-def test_a_warm_fx_series_gets_both_probabilities():
+def test_a_warm_fx_series_gets_both_probabilities(tmp_path):
+    _ship_stumps(tmp_path)
     got = _fed().reading("eurusd", "15m")
     assert set(got) == {"touch90_prob5", "touch10_prob5"}
     assert all(0.0 < v < 1.0 for v in got.values())
@@ -153,13 +179,15 @@ def test_a_decile_fails_only_beyond_both_the_error_and_the_noise():
 
 
 def test_the_touch_gate():
-    ok = {"skill": 0.08, "skill_se": 0.01, "calibration_fails": 1}
-    assert rt.touch_gate(ok, {}) == []
-    assert rt.touch_gate({**ok, "skill": 0.02}, {})
+    """Skill over the flat base rate the card would otherwise print - not over geometry, which the
+    boosted bands now carry - with calibration and the champion as before."""
+    ok = {"skill_rate": 0.08, "skill_rate_se": 0.01, "skill": 0.01, "calibration_fails": 1}
+    assert rt.touch_gate(ok, {}) == []  # little over geometry is no longer a reason
+    assert rt.touch_gate({**ok, "skill_rate": 0.02}, {})
     assert rt.touch_gate({**ok, "calibration_fails": 2}, {})
     assert rt.touch_gate({k: v for k, v in ok.items() if k != "calibration_fails"}, {})
-    assert rt.touch_gate({**ok, "skill": 0.06}, {"skill": 0.09})  # beyond the champion's slack
-    assert rt.touch_gate({**ok, "skill": 0.08}, {"skill": 0.085}) == []
+    assert rt.touch_gate({**ok, "skill_rate": 0.06}, {"skill_rate": 0.09})  # beyond the slack
+    assert rt.touch_gate({**ok, "skill_rate": 0.08}, {"skill_rate": 0.085}) == []
 
 
 def test_the_touch_contest_runs_and_its_export_is_exact(monkeypatch):
@@ -171,7 +199,18 @@ def test_the_touch_contest_runs_and_its_export_is_exact(monkeypatch):
     )
     assert report["series"] == 1
     assert report["evaluator_max_diff"] <= rt.GATES["exact"]
-    assert {"skill", "calibration_fails"} <= set(report["challenger"])
-    assert "skill" in report["champion"]  # the shipped model is the champion
+    assert {"skill", "skill_rate", "calibration_fails"} <= set(report["challenger"])
+    assert isinstance(report["champion"], dict)  # empty while no model has earned the recipe
     assert (spec is not None) == report["promoted"]
     json.dumps(report)  # the report file must be able to hold it
+
+
+def test_a_boosted_band_without_a_touch_model_states_the_measured_rate():
+    got = {"env5_model": 1.0}
+    assert tc.card_line(got) == [
+        "👆 each band is touched about 20% of the time within the next 5 bars"
+    ]
+    # a model that passed its gate still speaks for itself
+    got.update({"touch90_prob5": 0.31, "touch10_prob5": 0.12})
+    assert tc.card_line(got) == ["👆 next 5 bars · P90 touched 31% · P10 touched 12%"]
+    assert tc.card_line({}) == []  # and an empirical band says nothing

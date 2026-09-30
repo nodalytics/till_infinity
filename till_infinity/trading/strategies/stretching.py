@@ -172,11 +172,11 @@ class CycleTurnScalp(LevelStrategy):
                 feed,
             )
         rate = _number(features, "zma_edge_right") / max(calls, 1.0)
-        if rate <= self.settings.zma_min_accuracy:
+        if rate <= self.settings.zma_line(calls):
             return Refusal(
                 "cycle_poor",
                 f"the reading is right {rate:.0%} of {calls:.0f} times here, "
-                f"which is not past {self.settings.zma_min_accuracy:.0%}",
+                f"which is not past {self.settings.zma_line(calls):.1%}",
                 feed,
             )
         return None

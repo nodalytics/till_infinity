@@ -19,8 +19,9 @@ JSON with at least `recipe` (what the features mean), `names` (the features, in 
 itself. A consumer states the recipe and feature names it computes, and a file trained on anything
 else is **not used** - a number from the wrong features is worse than no number.
 
-`Trees` evaluates a gradient-boosted classifier exported from sklearn's
-`HistGradientBoostingClassifier` as plain nodes, so production needs no training library.
+`Trees` evaluates a gradient-boosted model exported from sklearn's `HistGradientBoosting*` as plain
+nodes, so production needs no training library: a classifier (logistic link) or a regressor
+(identity link). `Quantiles` holds one regressor per quantile level, for the envelope.
 """
 
 from __future__ import annotations
@@ -91,20 +92,23 @@ def forget_cache() -> None:
 
 
 class Trees:
-    """A binary gradient-boosted classifier exported as plain trees.
+    """A gradient-boosted model exported as plain trees.
 
     Each node is `[feature, threshold, left, right, is_leaf, value, missing_go_to_left]`, exactly
-    sklearn's `HistGradientBoostingClassifier` predictor nodes: go left when `x <= threshold` (or
-    when the value is missing and `missing_go_to_left`), and a leaf's value already carries the
-    learning rate. The probability is the logistic of the baseline plus every tree's leaf.
+    sklearn's `HistGradientBoosting*` predictor nodes: go left when `x <= threshold` (or when the
+    value is missing and `missing_go_to_left`), and a leaf's value already carries the learning
+    rate. The raw score is the baseline plus every tree's leaf. `link` says what it means:
+    `logit` (the default, and every classifier shipped before regression existed) returns the
+    logistic of it, a probability; `identity` returns it as it is, a regressor's prediction.
     """
 
     def __init__(self, spec: dict[str, Any]) -> None:
         self.baseline = float(spec["baseline"])
         self.trees = spec["trees"]
+        self.link = str(spec.get("link", "logit"))
 
-    def predict(self, x: list[float]) -> float:
-        raw = self.baseline
+    def raw(self, x: list[float]) -> float:
+        total = self.baseline
         for nodes in self.trees:
             i = 0
             while not nodes[i][4]:
@@ -112,5 +116,24 @@ class Trees:
                 v = x[feature]
                 go_left = missing_left if math.isnan(v) else v <= threshold
                 i = left if go_left else right
-            raw += nodes[i][5]
+            total += nodes[i][5]
+        return total
+
+    def predict(self, x: list[float]) -> float:
+        raw = self.raw(x)
+        if self.link == "identity":
+            return raw
         return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, raw))))
+
+
+class Quantiles:
+    """Several regressors, one per quantile level, from one spec: `levels` and `models`, each model
+    `{baseline, trees}` read with the identity link. `predict` returns the quantiles in level
+    order, sorted so they never cross - a quantile model fitted level by level can, rarely."""
+
+    def __init__(self, spec: dict[str, Any]) -> None:
+        self.levels = [float(v) for v in spec["levels"]]
+        self.models = [Trees({**m, "link": "identity"}) for m in spec["models"]]
+
+    def predict(self, x: list[float]) -> list[float]:
+        return sorted(m.raw(x) for m in self.models)

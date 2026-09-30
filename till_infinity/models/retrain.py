@@ -151,7 +151,11 @@ def run_shocks(fetch: Callable[[str, str], list], names: list[str]) -> tuple[dic
 
 #: The band-touch forecaster's gates (`structures/learning/touches.py`, research/docs/bandrace.md).
 TOUCH_GATES: dict[str, float] = {
-    # Brier skill over geometry - the same boosting on the band distances alone - worth publishing
+    # Brier skill over the training base rate - the constant the card would otherwise print. It
+    # was skill over geometry (the band distances alone) while the bands were the empirical
+    # envelope's; the boosted FX envelope now carries the volatility state itself, so the touch
+    # model adds little over geometry (+0.011 / +0.017) while still pricing the touch well. What
+    # the card line needs is a calibrated probability that beats the flat rate.
     "min_skill": 0.03,
 }
 
@@ -162,9 +166,9 @@ _touch_rows: dict[tuple[int, tuple[str, ...], int], tuple[int, Any]] = {}
 def touch_gate(challenger: dict, champion: dict) -> list[str]:
     """Every reason not to promote a band-touch model; empty means promote."""
     reasons = []
-    skill = challenger.get("skill", float("nan"))
+    skill = challenger.get("skill_rate", float("nan"))
     if not skill >= TOUCH_GATES["min_skill"]:
-        reasons.append(f"skill over geometry {skill} below {TOUCH_GATES['min_skill']}")
+        reasons.append(f"skill over the base rate {skill} below {TOUCH_GATES['min_skill']}")
     # What "P90 touched 38%" relies on, judged over 90 days out of sample, where one regime
     # cannot pass for a bad model (`touches_train.CAL_*` says why each number is what it is).
     from .touches_train import CAL_DAYS, CAL_TOLERATED
@@ -175,9 +179,9 @@ def touch_gate(challenger: dict, champion: dict) -> list[str]:
             f"{bad} decile(s) miscalibrated over {CAL_DAYS} days, beyond 20% and two standard"
             f" errors (at most {CAL_TOLERATED} tolerated)"
         )
-    theirs = champion.get("skill")
+    theirs = champion.get("skill_rate")
     if theirs is not None and not math.isnan(theirs):
-        se = challenger.get("skill_se", float("nan"))
+        se = challenger.get("skill_rate_se", float("nan"))
         slack = max(GATES["vs_champion"], 2 * se) if not math.isnan(se) else GATES["vs_champion"]
         if skill < theirs - slack:
             reasons.append(f"skill {skill} against the champion's {theirs} (slack {slack:.3f})")
@@ -224,7 +228,8 @@ def _touch_contest(band: str, fetch: Callable[[str, str], list], names: list[str
     )
     geo = tt.geometry(x[train], y[train])(x[held])
     p = np.array([trees.predict(list(r)) for r in x[held]])
-    challenger = tt.score(p, geo, y[held], when[held])
+    base = float(y[train].mean())
+    challenger = tt.score(p, geo, y[held], when[held], base=base)
     # Calibration over a longer out-of-sample block, by a model trained before it.
     early = when < when.max() - tt.CAL_DAYS * 86_400
     if early.any() and (~early).any():
@@ -240,7 +245,7 @@ def _touch_contest(band: str, fetch: Callable[[str, str], list], names: list[str
     if current:
         old = frozen.Trees(current)
         champion = tt.score(
-            np.array([old.predict(list(r)) for r in x[held]]), geo, y[held], when[held]
+            np.array([old.predict(list(r)) for r in x[held]]), geo, y[held], when[held], base=base
         )
     reasons = touch_gate(challenger, champion)
     if exact > GATES["exact"]:
@@ -268,8 +273,119 @@ def run_touch10(fetch: Callable[[str, str], list], names: list[str]) -> tuple[di
     return _touch_contest("touch10", fetch, names)
 
 
+#: One replay serves the three horizons' contests in a run: (fetch, names, hour) -> (count, tracks).
+_envelope_tracks: dict[tuple[int, tuple[str, ...], int], tuple[int, Any]] = {}
+
+
+def envelope_gate(challenger: dict) -> list[str]:
+    """Every reason not to promote a boosted-envelope model; empty means promote. The gates and
+    why each number is what it is: `envelope_train.ENVELOPE_GATES`."""
+    from .envelope_train import ENVELOPE_GATES, SLICE_DAYS, WINDOW_DAYS
+
+    reasons = []
+    vs = challenger.get("vs_empirical_slice", {})
+    if not vs.get("high", float("nan")) < ENVELOPE_GATES["beats_empirical"]:
+        reasons.append(
+            f"pinball against the history envelope over {SLICE_DAYS} days {vs.get('relative')} "
+            f"[{vs.get('low')}, {vs.get('high')}]: not better beyond noise"
+        )
+    ch = challenger.get("vs_champion")
+    if ch:
+        slack = max(ENVELOPE_GATES["vs_champion"], 2 * ch.get("se", 0.0))
+        if not ch.get("relative", float("nan")) <= slack:
+            reasons.append(f"pinball {ch.get('relative')} against the champion (slack {slack:.4f})")
+    mine, theirs = challenger.get("worst_window"), challenger.get("empirical_worst_window")
+    if mine is None or theirs is None or not mine >= theirs - ENVELOPE_GATES["slice_points"]:
+        reasons.append(
+            f"worst {WINDOW_DAYS}-day P90 cover over {SLICE_DAYS} days {mine} against the history"
+            f" envelope's {theirs}"
+        )
+    return reasons
+
+
+def _envelope_contest(horizon: int, fetch: Callable[[str, str], list], names: list[str]):
+    """One contest for one horizon's boosted envelope. Returns (spec to promote or None, report)."""
+    from ..structures import rollover as ro
+    from ..structures.vol import envelope as ev
+    from . import envelope_train as et
+
+    key = (id(fetch), tuple(names), int(time.time() // 3600))
+    if key not in _envelope_tracks:
+        _envelope_tracks.clear()
+        series = {}
+        for symbol in names:
+            if ro.is_fx(symbol):
+                got = fetch(symbol, ev.MODEL_INTERVAL)
+                if len(got) > 2_000:
+                    series[(symbol, ev.MODEL_INTERVAL)] = got
+        _envelope_tracks[key] = (len(series), et.tracks(series))
+    count, found = _envelope_tracks[key]
+    when, x, y = et.rows(found, horizon)
+    if len(y) == 0:
+        return None, {"series": count, "promoted": False, "reasons": ["no usable FX 15m history"]}
+    cut = when.max() - HOLDOUT_DAYS * 86_400
+    early = when.max() - et.SLICE_DAYS * 86_400
+    if not (when < early).any() or not (when >= cut).any():
+        return None, {"series": count, "promoted": False, "reasons": ["too little history"]}
+    spec = et.train(when[when < cut], x[when < cut], y[when < cut], horizon)
+    fitted = spec.pop("_sklearn")
+    exact = et.exactness(spec, fitted, x[when >= cut][:2_000])
+    current = frozen.load(ev.MODELS[horizon], recipe=ev.MODEL_RECIPE, names=ev.MODEL_NAMES)
+    specs = [spec, None] + ([current] if current else [])
+    got = et.scored(found, horizon, specs, cut)
+    challenger = et.summary(got[0])
+    challenger["vs_empirical"] = et.compare(got[0], got[1])
+    empirical = et.summary(got[1])
+    champion = {}
+    if current:
+        champion = et.summary(got[2])
+        challenger["vs_champion"] = et.compare(got[0], got[2])
+    # The slice gate, over a longer out-of-sample block, by a model trained before it.
+    judge = et.train(when[when < early], x[when < early], y[when < early], horizon)
+    judge.pop("_sklearn")
+    slice_model, slice_empirical = et.scored(found, horizon, [judge, None], early)
+    challenger["vs_empirical_slice"] = et.compare(slice_model, slice_empirical)
+    challenger["worst_window"] = round(et.worst_window(slice_model, early), 4)
+    challenger["empirical_worst_window"] = round(et.worst_window(slice_empirical, early), 4)
+    reasons = envelope_gate(challenger)
+    if exact > GATES["exact"]:
+        reasons.append(f"evaluator differs from the training library by {exact:.2e}")
+    spec["test"] = challenger
+    spec["holdout_from"] = datetime.fromtimestamp(cut, UTC).isoformat(timespec="seconds")
+    report = {
+        "series": count,
+        "challenger": challenger,
+        "champion": champion,
+        "empirical": empirical,
+        "promoted": not reasons,
+        "reasons": reasons,
+        "evaluator_max_diff": exact,
+    }
+    return (spec if not reasons else None), report
+
+
+def run_envelope5(fetch: Callable[[str, str], list], names: list[str]):
+    """The 5-bar boosted envelope's contest."""
+    return _envelope_contest(5, fetch, names)
+
+
+def run_envelope20(fetch: Callable[[str, str], list], names: list[str]):
+    """The 20-bar boosted envelope's contest."""
+    return _envelope_contest(20, fetch, names)
+
+
+def run_envelope50(fetch: Callable[[str, str], list], names: list[str]):
+    """The 50-bar boosted envelope's contest."""
+    return _envelope_contest(50, fetch, names)
+
+
+#: In run order. The envelope contests come before the touch contests, because the touch models
+#: read the envelope's bands: they retrain on the bands in service after this run's promotions.
 REGISTRY: dict[str, Callable[..., tuple[dict | None, dict]]] = {
     "shocks": run_shocks,
+    "envelope_fx15m_5": run_envelope5,
+    "envelope_fx15m_20": run_envelope20,
+    "envelope_fx15m_50": run_envelope50,
     "touch90_fx15m": run_touch90,
     "touch10_fx15m": run_touch10,
 }
@@ -309,7 +425,10 @@ def card(report: dict) -> dict:
         f"challenger AUC real {c.get('real', 'n/a')}"
         f" · deriv {c.get('deriv', 'n/a')} · control {c.get('control', 'n/a')}"
         f" · top-decile calibration {c.get('calibration', 'n/a')}",
-        f"champion AUC real {k.get('real', 'n/a')} · deriv {k.get('deriv', 'n/a')}"
+        f"pinball {c['vs_empirical'].get('relative')} against the history envelope"
+        f" · worst 14-day P90 {c.get('worst_window')} (history {c.get('empirical_worst_window')})"
+        if "vs_empirical" in c
+        else f"champion AUC real {k.get('real', 'n/a')} · deriv {k.get('deriv', 'n/a')}"
         if "skill" not in c
         else f"skill over geometry {c.get('skill')} (champion {k.get('skill', 'n/a')})"
         f" · calibration {c.get('calibration')}",

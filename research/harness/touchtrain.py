@@ -56,6 +56,38 @@ def contest(x, y, when, train, held, label):
     return spec, got, exact
 
 
+def contests() -> None:
+    """PART=contest: the production retrain contests themselves on seqlab FX 15m, writing only
+    what they promote - so what ships is exactly what the pipeline would ship."""
+    from till_infinity.models import retrain as rt
+
+    names = list(FAMILIES["fx"])
+    cache: dict[str, list] = {}
+
+    def fetch(symbol: str, interval: str) -> list:
+        if interval != "15m":
+            return []
+        if symbol not in cache:
+            try:
+                cache[symbol] = bars(symbol)
+            except (ValueError, FileNotFoundError):
+                cache[symbol] = []
+        return cache[symbol]
+
+    OUT.mkdir(parents=True, exist_ok=True)
+    for name in ("touch90_fx15m", "touch10_fx15m"):
+        spec, report = rt.REGISTRY[name](fetch, names)
+        c = report.get("challenger", {})
+        print(f"{name}: promoted {report['promoted']} | skill over rate {c.get('skill_rate')} "
+              f"(se {c.get('skill_rate_se')}) | over geometry {c.get('skill')} | calibration fails "
+              f"{c.get('calibration_fails')} | 14d worst decile {c.get('calibration')} | reasons "
+              f"{report['reasons']}", flush=True)
+        for d in c.get("calibration_table", []):
+            print(f"    {d}", flush=True)
+        if spec is not None:
+            (OUT / f"{name}.json").write_text(json.dumps(spec, separators=(",", ":")))
+
+
 def main() -> None:
     series = {}
     for sym in FAMILIES["fx"]:
@@ -81,4 +113,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    contests() if os.environ.get("PART") == "contest" else main()

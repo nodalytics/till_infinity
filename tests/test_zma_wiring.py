@@ -802,3 +802,34 @@ class TestArmRunsOnAColdStart:
             text = (root / name).read_text()
             if "watcher.load()" in text:
                 assert "watcher.arm()" in text, name
+
+
+class TestSignificanceLine:
+    """research/docs/zeroskill.md: 200 calls above 52% let a coin through on about one feed in
+    five. The line is now `0.5 + z * sqrt(0.25 / calls)`, Bonferroni-corrected across feeds."""
+
+    def test_the_line_is_the_one_the_study_derived(self):
+        s = Settings()
+        assert s.zma_line(500) == pytest.approx(0.5736, abs=1e-4)
+        assert s.zma_line(1000) == pytest.approx(0.5520, abs=1e-4)
+        assert s.zma_line(5000) == pytest.approx(0.5233, abs=1e-4)
+        assert s.zma_line(1e9) == s.zma_min_accuracy  # the floor still holds
+        assert s.zma_line(0) == 1.0
+
+    def test_a_record_the_old_bar_passed_on_noise_no_longer_acts(self):
+        settings = Settings()
+        strategy = CycleScalp(settings=settings)
+        # 56% of 200 cleared 52%; it is 1.7 standard errors, which a coin does 4% of the time
+        assert zma_gate(strategy, UP, reading(2.0, calls=200.0, hit=0.56)) is None
+
+    def test_coin_feeds_rarely_pass_across_a_whole_book(self):
+        rng = random.Random(11)
+        settings = Settings()
+        books = 200
+        passed_any = 0
+        for _ in range(books):
+            feeds = 100
+            calls = 500
+            hits = [sum(rng.random() < 0.5 for _ in range(calls)) for _ in range(feeds)]
+            passed_any += any(h / calls > settings.zma_line(calls) for h in hits)
+        assert passed_any / books < 0.10  # about 5% by design, against ~100% under the old bar

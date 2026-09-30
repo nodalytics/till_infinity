@@ -75,6 +75,22 @@ So on those indices the envelope quotes the law (`law_quantile`):
 It uses no history and no corrector; AgACI on top of the law measured worse, because there is
 nothing to correct. Outcomes are still settled, so the realised cover on the card stays honest.
 
+## The boosted envelope, FX at 15m
+
+`research/docs/gbm-envelope.md`: quantile boosting on volatility state, recent moves, range and
+the hour, refit every 14 days and read through AgACI, beat the empirical envelope on pinball
+everywhere. On FX it did so by 3.4 / 4.2 / 6.6% at N = 5 / 20 / 50, 2-3 points more than on our
+memoryless walks, and with coverage flat by regime (FX N = 50 P90 84.5/89.7/93.8 ->
+88.9/88.7/89.3). Elsewhere the gain was the walks' mechanical one, so it ships for FX 15m only.
+
+There, the base quantile function is the frozen model's quantiles at this bar (`MODEL_LEVELS`,
+interpolated, flat beyond the ends, sorted so they never cross) in place of the resolved history's.
+AgACI's correctors read it exactly as they read the history, so the correction, the settling and
+the realised cover are unchanged. The features are `learning/touches.py`'s, computed once per bar.
+Without a usable model - missing, a different recipe, the series still cold - the envelope quotes
+from its history as before. When the base changes, AgACI's state learned on the old one is dropped
+and relearned, since a corrector tuned to one base is wrong on another.
+
 ## What it does not do
 
 **P50 is not a direction call.** Its sign carried AUC 0.50-0.55 in the same study, and similar
@@ -135,6 +151,58 @@ TR_TO_SD = 1.25
 STEP_SIZE, STEP_EVERY_S = 0.1, 1.0
 
 
+#: The boosted envelope (`research/docs/gbm-envelope.md`): FX at 15m, one model file per horizon
+#: holding one quantile regressor per level, read through `shared/frozen.py`.
+MODEL_INTERVAL = "15m"
+MODELS: dict[int, str] = {n: f"envelope_fx15m_{n}" for n in HORIZONS}
+MODEL_LEVELS: tuple[float, ...] = (0.05, 0.1, 0.5, 0.9, 0.95)
+MODEL_NAMES: tuple[str, ...] = ("lvol", "r1", "r5", "r20", "rng", "hour")
+#: What changing the meaning of an input requires bumping.
+MODEL_RECIPE = "2026-09-29 envelope: vol state, moves, range, hour (touches.base)"
+
+
+def model_applies(feed: str, interval: str) -> bool:
+    """Whether a series is one the boosted envelope was trained for: an FX pair at 15m."""
+    from .. import rollover as ro
+
+    return interval == MODEL_INTERVAL and ro.is_fx(feed)
+
+
+def model_quantiles(
+    horizon: int, features: Mapping[str, float] | None, spec: dict | None = None
+) -> list[float] | None:
+    """The boosted model's quantiles of the next `horizon` bars' move, in volatility units, at
+    `MODEL_LEVELS`; None without features or a usable model. `spec` overrides the shipped one
+    (the trainer scores a challenger with it)."""
+    if not features or horizon not in MODELS:
+        return None
+    if spec is None:
+        from ...shared import frozen
+
+        spec = frozen.load(MODELS[horizon], recipe=MODEL_RECIPE, names=MODEL_NAMES)
+        if spec is None:
+            return None
+    from ...shared.frozen import Quantiles
+
+    got = Quantiles(spec).predict([float(features[name]) for name in MODEL_NAMES])
+    return got if all(math.isfinite(v) for v in got) else None
+
+
+def _interpolate(level: float, quantiles: Sequence[float]) -> float:
+    """The quantile at `level`, linear between `MODEL_LEVELS` and flat beyond them (np.interp)."""
+    levels = MODEL_LEVELS
+    if level <= levels[0]:
+        return quantiles[0]
+    if level >= levels[-1]:
+        return quantiles[-1]
+    for k in range(1, len(levels)):
+        if level <= levels[k]:
+            lo, hi = levels[k - 1], levels[k]
+            w = (level - lo) / (hi - lo)
+            return quantiles[k - 1] + w * (quantiles[k] - quantiles[k - 1])
+    return quantiles[-1]
+
+
 def _canonical(feed: str) -> str:
     """`Volatility 75 (1s) Index` -> `volatility_75_1s_index`, the form the published names take."""
     return "_".join(re.findall(r"[a-z0-9]+", feed.lower()))
@@ -175,6 +243,9 @@ class Envelope(Restorable):
     feed: str = ""
     #: The bar's length in seconds; the law's horizon is `horizon` of them.
     bar_seconds: float = 0.0
+    #: What the quantiles are read from: "" the resolved history, else the boosted model's recipe.
+    #: AgACI's state belongs to one base; a change of base relearns it.
+    base: str = ""
     #: Resolved N-bar moves, in volatility units.
     history: deque = field(default_factory=lambda: deque(maxlen=WINDOW))
     #: Quotes waiting for their outcome: (close and sigma when quoted, published z per target,
@@ -202,10 +273,12 @@ class Envelope(Restorable):
     quote: list[float] = field(default_factory=lambda: [0.0] * len(TARGETS))
     sigma: float = 0.0
 
-    def observe(self, close: float, sigma: float) -> None:
+    def observe(self, close: float, sigma: float, model: Sequence[float] | None = None) -> None:
         """One closed bar: settle the quote made `horizon` bars ago, then quote the next N bars.
 
-        `sigma` is the volatility unit as a log-return (bps / 10,000).
+        `sigma` is the volatility unit as a log-return (bps / 10,000). `model` is the boosted
+        model's quantiles at `MODEL_LEVELS` for this bar, where there is one: they replace the
+        history as the base AgACI reads.
         """
         if close <= 0 or not (sigma > 0) or not math.isfinite(sigma):
             return
@@ -229,18 +302,36 @@ class Envelope(Restorable):
                     self.learned += 1
         if self._quote_law(close, sigma):
             return
-        ordered = sorted(self.history) if len(self.history) >= MIN_HISTORY else None
+        self._rebase(MODEL_RECIPE if model else "")
+        ordered = (
+            None if model else sorted(self.history) if len(self.history) >= MIN_HISTORY else None
+        )
         each = [
-            [self._quantile(level, ordered) for level in self.experts[i]]
+            [self._quantile(level, ordered, model) for level in self.experts[i]]
             for i in range(len(TARGETS))
         ]
         agg = [self._aggregate(i, target, each[i]) for i, target in enumerate(TARGETS)]
         if self.learned >= WARM:
             self.quote = agg
         else:
-            self.quote = [self._quantile(level, ordered) for level in self.levels]
+            self.quote = [self._quantile(level, ordered, model) for level in self.levels]
         self.sigma = sigma
         self.pending.append((close, sigma, list(self.quote), each, agg))
+
+    def _rebase(self, base: str) -> None:
+        """Switch what the quantiles are read from, dropping AgACI's state learned on the old base.
+
+        The waiting quotes still settle and count towards coverage; AgACI learns nothing from
+        them, as after `adopt`."""
+        if base == self.base:
+            return
+        self.base = base
+        self.levels = list(TARGETS)
+        self.learned = 0.0
+        self.experts = [[t] * len(GAMMAS) for t in TARGETS]
+        self.regret = [[0.0] * len(GAMMAS) for _ in TARGETS]
+        self.regret_sq = [[0.0] * len(GAMMAS) for _ in TARGETS]
+        self.pending = deque(((q[0], q[1], q[2]) for q in self.pending), maxlen=64)
 
     def _quote_law(self, close: float, sigma: float) -> bool:
         """Quote the published law, where there is one. Returns whether it did.
@@ -321,6 +412,8 @@ class Envelope(Restorable):
         self.regret = [list(row) for row in taught.regret]
         self.regret_sq = [list(row) for row in taught.regret_sq]
         self.learned = taught.learned
+        self.levels = list(taught.levels)
+        self.base = taught.base
         self.pending = deque(((q[0], q[1], q[2]) for q in self.pending), maxlen=64)
 
     @property
@@ -328,7 +421,11 @@ class Envelope(Restorable):
         """Whether the quote is AgACI's, rather than the single corrector's while it learns."""
         return self.learned >= WARM
 
-    def _quantile(self, level: float, ordered: list[float] | None) -> float:
+    def _quantile(
+        self, level: float, ordered: list[float] | None, model: Sequence[float] | None = None
+    ) -> float:
+        if model:
+            return _interpolate(level, model)
         if ordered:
             return ordered[round(level * (len(ordered) - 1))]
         return _normal_quantile(level) * math.sqrt(self.horizon) / TR_TO_SD
@@ -337,7 +434,7 @@ class Envelope(Restorable):
     def warm(self) -> bool:
         """Quotable: a published law is from the first bar; the empirical envelope once it has
         `MIN_HISTORY` resolved moves."""
-        return self.lawful or len(self.history) >= MIN_HISTORY
+        return self.lawful or bool(self.base) or len(self.history) >= MIN_HISTORY
 
     def coverage(self) -> list[float]:
         """The realised share of outcomes below each target's quote, over everything resolved."""
@@ -357,6 +454,8 @@ class Envelope(Restorable):
         out[f"env{n}_width_bps"] = round((self.quote[-1] - self.quote[0]) * self.sigma * 10_000, 3)
         if self.lawful:
             out[f"env{n}_law"] = 1.0
+        if self.base:
+            out[f"env{n}_model"] = 1.0
         return out
 
 
@@ -366,8 +465,19 @@ class Book(Restorable):
 
     envelopes: dict[str, Envelope] = field(default_factory=dict)
 
-    def observe(self, feed: str, interval: str, close: float, sigma: float) -> None:
+    def observe(
+        self,
+        feed: str,
+        interval: str,
+        close: float,
+        sigma: float,
+        features: Mapping[str, float] | None = None,
+    ) -> None:
+        """One closed bar for every horizon's envelope. `features` are the bar's `touches.base`
+        where the boosted envelope applies (FX 15m); without them, or a usable model, the history
+        is the base."""
         seconds = _bar_seconds(interval)
+        boosted = features is not None and model_applies(feed, interval)
         for n in HORIZONS:
             key = f"{feed}|{interval}|{n}"
             found = self.envelopes.get(key)
@@ -376,7 +486,7 @@ class Book(Restorable):
             if found.feed != feed or found.bar_seconds != seconds:
                 # Also fills an envelope restored from a state saved before it knew its series.
                 found.feed, found.bar_seconds = feed, seconds
-            found.observe(close, sigma)
+            found.observe(close, sigma, _safe_quantiles(n, features) if boosted else None)
 
     def reading(self, feed: str, interval: str, price: float) -> dict[str, float]:
         """Every horizon's quote for this series, as published features. Absent while cold."""
@@ -389,18 +499,22 @@ class Book(Restorable):
             out["env_ref"] = price  # what the percentages on a card are measured from
         return out
 
-    def teach(
-        self, feed: str, interval: str, bars: Sequence[tuple[float, float, float, float]]
-    ) -> int:
-        """Warm AgACI from stored bars, oldest first, as (open, high, low, close).
+    def teach(self, feed: str, interval: str, bars: Sequence[tuple[float, ...]]) -> int:
+        """Warm AgACI from stored bars, oldest first, as (open, high, low, close), or as
+        (time, open, high, low, close) when the bar's open time is known.
 
         For each horizon whose envelope has learned from fewer than `WARM` outcomes, the bars are
         replayed walk-forward through a fresh envelope in the engine's own unit (the EWMA of true
-        range), and its correction state is adopted if it learned more. Returns how many envelopes
-        took it.
+        range), and its correction state is adopted if it learned more on the same base. Where the
+        boosted envelope applies and the times are given, the replay reads the boosted model
+        through the same features the engine computes, with the rollover's wick cut as the engine
+        cuts it, so AgACI is taught on the base it will correct. Returns how many envelopes took it.
         """
         if has_law(feed):
             return 0  # quoted from its published law, which has nothing to learn
+        timed = bool(bars) and len(bars[0]) == 5
+        boosted = timed and model_applies(feed, interval)
+        seconds = _bar_seconds(interval)
         taught = 0
         for n in HORIZONS:
             key = f"{feed}|{interval}|{n}"
@@ -408,11 +522,29 @@ class Book(Restorable):
             if found is not None and found.learned >= WARM:
                 continue
             replay, ranges = Envelope(horizon=n), Ranges()
-            for open_, high, low, close in bars:
+            state = None
+            if boosted:
+                from ..learning import touches
+
+                state = touches.Touches()
+            for bar in bars:
+                when, open_, high, low, close = bar if timed else (0.0, *bar)
+                if timed:
+                    from .. import rollover as ro
+
+                    high, low, close = ro.trimmed(
+                        feed, when, when + seconds, open_, high, low, close
+                    )
                 ranges.observe(open_, high, low, close)
                 bps = ranges.ewma_tr_bps
-                if bps > 0 and close > 0:
-                    replay.observe(close, bps / 10_000)
+                if not (bps > 0 and close > 0):
+                    continue
+                model = None
+                if state is not None and state.advance(
+                    feed, interval, when, high, low, close, bps / 10_000
+                ):
+                    model = _safe_quantiles(n, state.base(feed, interval))
+                replay.observe(close, bps / 10_000, model)
             if found is None:
                 found = self.envelopes[key] = Envelope(horizon=n)
             if replay.learned > found.learned:
@@ -426,6 +558,15 @@ class Book(Restorable):
         for k in gone:
             del self.envelopes[k]
         return len(gone)
+
+
+def _safe_quantiles(horizon: int, features: Mapping[str, float] | None) -> list[float] | None:
+    """`model_quantiles`, with any fault read as no model: the history is always there to fall
+    back on, and a model must never stop the envelope."""
+    try:
+        return model_quantiles(horizon, features)
+    except Exception:
+        return None
 
 
 def _bar_seconds(interval: str) -> float:
@@ -456,6 +597,8 @@ def card_lines(got: Mapping, price: Callable[[float], str]) -> list[str]:
     ]
     if got.get("env5_law"):
         lines[0] += " · Deriv's published law"
+    elif got.get("env5_model"):
+        lines[0] += " · boosted"
     cover = got.get("env5_cover_p90")
     if isinstance(cover, int | float) and not math.isnan(cover):
         lines[0] += f" · P90 held {cover:.0%}"
