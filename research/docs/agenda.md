@@ -67,7 +67,7 @@ The three priority programs named in the agenda map to what is running:
 | 5 | Compiler theory → a market intermediate representation | Can price behaviour be written as a formal language (OHLC → IR → structure)? | **Done:** program E - no small alphabet exists (bar shape is a continuum) |
 | 6 | Music theory → market motifs | Are there reusable temporal motifs (tension, resolution) that indicators miss? | **Done** in program E: motifs add +0.004-0.008 AUC to the shock forecaster, under the bar |
 | 7 | Cryptography → commitment and revelation | How does incremental revelation of committed information drive price discovery? | Not started. Adjacent: [`surprise.md`](surprise.md) |
-| 8 | Anthropology → market rituals | Does the market behave differently when participants collectively anticipate an institutional ritual? | **Running:** program F, [`rituals.md`](rituals.md) |
+| 8 | Anthropology → market rituals | Does the market behave differently when participants collectively anticipate an institutional ritual? | **Done:** program F, [`rituals.md`](rituals.md). Rituals are loud on the day (FOMC, NFP, the month-end fix), barely anticipated, and carry no drift; the pre-FOMC drift is absent in USD, gold and BTC |
 | 9 | Legal theory → rule changes | Do rule changes produce breaks that regime models mistake for behavioural regimes? | Not started. Adjacent: [`rollover.md`](rollover.md) (a broker mechanism mistaken for market behaviour) |
 | 10 | Geography → landscapes and basins | Are some states basins of attraction? | Done as a state manifold: [`manifold.md`](manifold.md) |
 | 11 | Genetics → structural inheritance | Do structural traits propagate through time? | **Done** in program E: an order-1 grammar about size, nothing deeper |
