@@ -110,7 +110,8 @@ def panels():
             h = seqlab.cache(sym, "1h")
         except Exception:  # noqa: BLE001
             continue
-        if len(d["close"]) < 200 or len(h["close"]) < 2000:
+        # most names serve regular-session hours only (~7 a day, ~1,880 a year); a few the 22h CFD day
+        if len(d["close"]) < 200 or len(h["close"]) < 1000:
             continue
         point = float(spec.get("point") or 0.01)
         dates = pd.to_datetime(d["time"], unit="s", utc=True).tz_convert(NY).normalize().tz_localize(None)
@@ -216,7 +217,8 @@ def variance_ratio(rets: pd.DataFrame, q: int = 5, win: int = 60) -> pd.DataFram
     return vq / (q * v1)
 
 
-def clusters_of(rets: pd.DataFrame, k: int = 20) -> dict:
+def clusters_of(rets: pd.DataFrame, k: int | None = None) -> dict:
+    k = k or max(2, min(20, rets.shape[1] // 15))  # ~15 names a cluster, as a stand-in for industries
     corr = rets.corr().fillna(0).to_numpy()
     rng = np.random.default_rng(3)
     x = corr
@@ -249,10 +251,15 @@ def pairs_book(px: pd.DataFrame, fit_end, method: str, n_pairs: int = 20) -> pd.
         for o in order:
             a, b = cols[iu[0][o]], cols[iu[1][o]]
             y, x = form[a].to_numpy(), form[b].to_numpy()
-            beta = np.polyfit(x, y, 1)[0]
-            s = y - beta * x
-            ds = np.diff(s)
-            phi = np.polyfit(s[:-1] - s[:-1].mean(), ds, 1)[0]
+            if not (np.isfinite(x).all() and np.isfinite(y).all()) or x.std() == 0:
+                continue
+            try:
+                beta = np.polyfit(x, y, 1)[0]
+                s = y - beta * x
+                ds = np.diff(s)
+                phi = np.polyfit(s[:-1] - s[:-1].mean(), ds, 1)[0]
+            except (np.linalg.LinAlgError, ValueError):
+                continue
             resid = ds - phi * (s[:-1] - s[:-1].mean())
             tstat = phi / (resid.std() / math.sqrt(((s[:-1] - s[:-1].mean()) ** 2).sum()))
             hl = -math.log(2) / math.log(1 + phi) if -1 < phi < 0 else float("inf")
@@ -290,10 +297,10 @@ def pairs_book(px: pd.DataFrame, fit_end, method: str, n_pairs: int = 20) -> pd.
 def factor_walk(rets: pd.DataFrame, fit_end, seed: int) -> pd.DataFrame:
     """One market factor plus noise, vol and beta matched per stock on the fit block."""
     rng = np.random.default_rng(seed)
-    fit = rets[rets.index < fit_end]
+    fit = rets[rets.index < fit_end].iloc[1:].fillna(0.0)
     mkt = fit.mean(axis=1)
-    beta = fit.apply(lambda c: np.cov(c.fillna(0), mkt)[0, 1] / mkt.var())
-    idio = (fit.sub(mkt, axis=0).mul(1)).std()
+    beta = fit.apply(lambda c: np.cov(c, mkt)[0, 1] / mkt.var())
+    idio = (fit - np.outer(mkt, beta)).std()
     f = rng.standard_normal(len(rets)) * mkt.std()
     e = rng.standard_normal(rets.shape) * idio.to_numpy()
     sim = pd.DataFrame(np.outer(f, beta.to_numpy()) + e, index=rets.index, columns=rets.columns)
