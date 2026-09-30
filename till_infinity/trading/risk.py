@@ -36,9 +36,10 @@ from ..logging import get_logger
 from ..shared import effects
 from ..structures import rollover
 from . import exposure as ex
+from . import swap
 from .config import Settings
 from .context import Context
-from .models import Intent, Position, Refusal, Tick, money
+from .models import Intent, Position, Refusal, SymbolSpec, Tick, money
 
 NEW_YORK = ZoneInfo("America/New_York")
 
@@ -290,6 +291,30 @@ class Guard:
             return f"the open book is {money(net, self.currency)}, at the {take:.1%} basket target"
         return ""
 
+    def _swap_refusal(
+        self, intent: Intent, when: float, hold: float, spec: SymbolSpec | None
+    ) -> Refusal | None:
+        """**The overnight swap**, which neither spread gate sees.
+
+        A hold planned across the 17:00 New York rollover pays the broker's financing, three
+        nights on the triple day; on the synthetics it is an annual rate on both sides (Boom 1000
+        about 10 bps a night). Refused when it would eat more than `max_swap_fraction` of the
+        target. A trade planned to close before the rollover pays nothing and is not looked at.
+        See `swap.py`.
+        """
+        limit = self.settings.max_swap_fraction
+        if limit <= 0 or hold <= 0 or intent.reward <= 0:
+            return None
+        cost = swap.expected(spec, intent.feed, intent.side, intent.entry, when, hold)
+        if cost <= limit * intent.reward:
+            return None
+        return self._no(
+            "swap",
+            intent.feed,
+            f"overnight swap is {cost / intent.reward:.0%} of the target over the planned "
+            f"{hold / 3600.0:.0f}h hold, limit is {limit:.0%}",
+        )
+
     def allows(  # noqa: PLR0912 - one gate per branch, in the order they are
         # applied. Splitting them across helpers would hide that order, and the
         # order is the design: cheap refusals about the signal come before the
@@ -304,6 +329,7 @@ class Guard:
         feed_of: dict[str, str] | None = None,
         limits: Limits | None = None,
         hold: float = 0.0,
+        spec: SymbolSpec | None = None,
     ) -> Refusal | None:
         """None if this trade may go ahead, else the gate that stopped it.
 
@@ -461,6 +487,10 @@ class Guard:
                     intent.feed,
                     f"spread is {share:.0%} of the risk, limit is {limit:.0%}",
                 )
+
+        swapped = self._swap_refusal(intent, when, hold, spec)
+        if swapped is not None:
+            return swapped
 
         if intent.volume <= 0:
             return self._no("size", intent.feed, "sized to nothing")

@@ -154,3 +154,51 @@ checked above.
 4. **Every "earned" gate:** state its false-action rate on the book, not per series. The zma
    arithmetic above is the template: a per-series 5% becomes near-certain false passes across 50+
    series.
+
+## Fixed (2026-09-30)
+
+All three proposals are now in production. The ZMA significance line shipped in PR #19; the policy
+margin and the cycles walk baseline are below. Validated with `zeroskill.py PART=fixed` on the same
+null streams (200 seeds, perm and iid).
+
+**Policy** (`trading/strategies/policy.py`, `Trader._score_default`):
+- a challenger wins only when the default is warm and its lead clears `MARGIN_Z = 3.5` standard
+  errors of the difference;
+- the default is scored on every signal the policy shaped otherwise, as a counterfactual that
+  credits the shape ledger only;
+- untaken intents keep the arm they were made with;
+- the decay went from 0.05 to 0.01.
+
+A first run still departed in 35-49% of warm null contexts. A plain EWMA started at its first
+reward keeps 61% of its weight there after 50 observations, so each mean rested on under three
+while the margin assumed fifty. Rewards now weigh max(decay, 1/seen), and the effective sample is
+counted exactly from the squared weights.
+
+| null stream | warm contexts | departs, per warm context | books with any departure |
+|---|---|---|---|
+| before, any horizon | 3-27 | **100%** | 100% |
+| after, 7.5 days | 16.0 | 0.0% | 0.0% |
+| after, 30 days | 25.9 | 0.1% | 1.5% |
+| after, 90 days | 28.9 | 0.1% | 2.8% |
+| after, 180 days | 29.0 | 0.1% | **3.8%** (target 5%) |
+
+A real edge still earns:
+- **+0.15R** on the busiest arm: in 40 of 40 books within 180 days, median 23 days, p90 43;
+- **+0.30R:** median 4 days, p90 9.
+
+The price of the longer memory is adaptivity. A change in which shape works now takes a few
+hundred signals in a context to show, where it took a few dozen.
+
+**Cycles** (`structures/cycles.py`): the cap is earned only when `depth_skill` beats the same head
+on seeded t(3) walks (`walk_skill`, **+0.2945** for 1m/15m/1h, cached per interval set) by
+`MIN_SKILL`.
+
+| walk | horizon | skill p50 / p95 | earned, old bar | earned, walk baseline |
+|---|---|---|---|---|
+| t(3) | 30d | +0.300 / +0.316 | 10/10 | **0/10** |
+| t(3) | 90d | +0.290 / +0.303 | 10/10 | 0/10 |
+| GARCH | 30d | +0.287 / +0.302 | 10/10 | 0/10 |
+| GARCH | 90d | +0.285 / +0.291 | 10/10 | 0/10 |
+
+A head 0.10 beyond the walks earns as soon as it is warm (200 settled turns). `STRUCTURES_CYCLES_ACT`
+stays off.

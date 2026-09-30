@@ -74,6 +74,15 @@ class SymbolSpec:
     #: the broker did not say, not that anything goes.
     stops_level: float = 0.0
     tradable: bool = True
+    #: The overnight financing the broker charges, as its symbol info states it: `swap_long` and
+    #: `swap_short` in the unit `swap_mode` names (1 points, 5 annual interest % of the current
+    #: price - the two this broker uses), and `swap_triple_day` the weekday the rollover is
+    #: charged three times (MetaTrader's 0 Sunday .. 6 Saturday; 7, on the 24/7 synthetics, none).
+    #: `swap_mode` -1 means the broker did not say. See `trading/swap.py`.
+    swap_long: float = 0.0
+    swap_short: float = 0.0
+    swap_mode: int = -1
+    swap_triple_day: int = 3
 
     @property
     def min_stop_distance(self) -> float:

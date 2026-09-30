@@ -21,6 +21,7 @@ at start-up, against the terminal - see `symbols.py`.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -394,6 +395,10 @@ def _names(raw: str) -> tuple[str, ...]:
     rather than its value.
     """
     return tuple(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
+#: The bet sizes the z-score e-process mixes over (`Settings.zma_earned`).
+ZMA_BETS: tuple[float, ...] = (0.02, 0.05, 0.1, 0.2, 0.4)
 
 
 def _ny_span(raw: str) -> tuple[int, int] | tuple[()]:
@@ -810,15 +815,14 @@ class Settings:
     #: condition is strict enough that a series makes one call every forty-odd
     #: bars, so 200 is months on a slow timeframe and hours on a fast one.
     zma_min_calls: float = 200.0
-    #: A floor on how far above a coin that record has to be. It is not the bar
-    #: on its own: 200 calls above 52% is only 0.6 standard errors, and
-    #: research/docs/zeroskill.md measured a coin clearing it on about one feed
-    #: in five - 26% at 200 calls, 17% at 500. The bar is `zma_line`.
+    #: A floor on how far above a coin a record's hit rate has to be. It is not
+    #: the bar on its own - see `zma_earned`.
     zma_min_accuracy: float = 0.52
-    #: Standard errors above a coin a feed's record must clear, Bonferroni-
-    #: corrected for the number of feeds scored at once: 3.29 is a 5% chance of
-    #: any false pass across about 100 feeds (one-sided). See `zma_line`.
-    zma_z: float = 3.29
+    #: The number of feeds whose records are judged at once, and the chance of any
+    #: false pass across all of them, for `zma_earned`'s evidence threshold
+    #: (feeds / alpha = 2,000).
+    zma_feeds: float = 100.0
+    zma_alpha: float = 0.05
 
     # ------------------------------------------------ pricing the distance
     #: Decisive interactions a level needs before `fade-to-value` will treat it
@@ -1227,6 +1231,12 @@ class Settings:
     #: has become. This is the gate that does.
     #:
     #: See `research/docs/intraday.md`.
+    #: The most of a trade's target its expected overnight swap may take, over the strategy's
+    #: planned hold. `research/docs/carry.md`: the broker charges about the interbank
+    #: differential plus a markup on FX, and an annual rate on both sides of the synthetics (Boom
+    #: 1000 36%, about 10 bps a night). Only holds crossing the 17:00 New York rollover are
+    #: looked at. 0 turns it off. See `trading/swap.py`.
+    max_swap_fraction: float = 0.25
     quiet_hours: tuple[int, ...] = ()
     #: **FX only, and in New York's clock.** `research/docs/vetoes.md`: on about 52k zone
     #: touches, FX entries between 20:00 and 22:59 UTC in summer - 16:00-18:59 New York, the close
@@ -1306,17 +1316,31 @@ class Settings:
     #: Filled in by `symbols.resolve`: feed name -> broker symbol.
     resolved: dict[str, str] = field(default_factory=dict)
 
-    def zma_line(self, calls: float) -> float:
-        """The right-rate a feed's z-score record must beat before it may act.
+    def zma_earned(self, calls: float, right: float) -> bool:
+        """Whether a feed's z-score record has earned a say, however often it is checked.
 
-        `0.5 + zma_z * sqrt(0.25 / calls)`, the one-sided significance line for
-        a coin, with `zma_min_accuracy` as a floor: 0.574 at 500 calls, 0.552 at
-        1,000, 0.523 at 5,000. One definition for the veto and both
-        permissions, so "earned a say" means the same thing everywhere.
+        The record is re-read on every bar, and a single-look significance line
+        tested that often lets a coin through: research/docs/zma-conformal.md
+        measured one earning in 50% of 100-feed books within 180 days at 15m.
+        This is an anytime-valid **e-process** instead - a mixture of betting
+        martingales against a coin, `(1 + lam/2)^right * (1 - lam/2)^wrong`
+        averaged over `ZMA_BETS` - which by Ville's inequality exceeds
+        `zma_feeds / zma_alpha` with probability at most `alpha / feeds` on a
+        coin however long it is watched, so across the book at most `alpha`.
+        It needs only the cumulative `calls` and `right`, which must stay
+        undecayed. A skilled feed earns about twice as slowly as under the old
+        line (a 55% feed: 155 days against 76 at 15m); no walk and no Deriv
+        index earned under it.
         """
-        if calls <= 0:
-            return 1.0
-        return max(self.zma_min_accuracy, 0.5 + self.zma_z * (0.25 / calls) ** 0.5)
+        if calls < self.zma_min_calls or calls <= 0:
+            return False
+        if right / calls <= self.zma_min_accuracy:
+            return False
+        wrong = calls - right
+        logs = [right * math.log1p(bet / 2) + wrong * math.log1p(-bet / 2) for bet in ZMA_BETS]
+        top = max(logs)
+        evidence = top + math.log(sum(math.exp(v - top) for v in logs) / len(logs))
+        return evidence >= math.log(self.zma_feeds / self.zma_alpha)
 
     @property
     def configured(self) -> bool:
@@ -1431,7 +1455,8 @@ class Settings:
             zma_gate=_flag("TRADING_ZMA_GATE", True),
             zma_min_calls=_float("TRADING_ZMA_MIN_CALLS", 200.0),
             zma_min_accuracy=_float("TRADING_ZMA_MIN_ACCURACY", 0.52),
-            zma_z=_float("TRADING_ZMA_Z", 3.29),
+            zma_feeds=_float("TRADING_ZMA_FEEDS", 100.0),
+            zma_alpha=_float("TRADING_ZMA_ALPHA", 0.05),
             fade_min_touches=_float("TRADING_FADE_MIN_TOUCHES", 4.0),
             fade_max_distance_vol=_float("TRADING_FADE_MAX_DISTANCE_VOL", 8.0),
             fade_min_distance_vol=_float("TRADING_FADE_MIN_DISTANCE_VOL", 1.5),
@@ -1483,6 +1508,7 @@ class Settings:
                 for h in (os.environ.get("TRADING_QUIET_HOURS") or "").replace(" ", "").split(",")
                 if h.strip().isdigit() and 0 <= int(h) <= 23
             ),
+            max_swap_fraction=_float("TRADING_MAX_SWAP_FRACTION", 0.25),
             fx_quiet_ny=_ny_span(os.environ.get("TRADING_FX_QUIET_NY", "16-19")),
             fx_sunday_open_min=_float("TRADING_FX_SUNDAY_OPEN_MIN", 60.0),
             stale_after=_float("TRADING_STALE_AFTER_S", 0.0),

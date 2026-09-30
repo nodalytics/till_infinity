@@ -815,7 +815,10 @@ def test_an_arm_cannot_win_until_it_has_been_seen_enough():
     from till_infinity.trading.strategies.policy import Policy
 
     policy = Policy()
-    arm = next(iter(policy.arms))
+    fallback = policy.fallback.named()
+    arm = next(a for a in policy.arms if a != fallback)
+    for _ in range(policy.MIN_SEEN):
+        policy.observe("gold", "5m", fallback, -1.0)
     for _ in range(policy.MIN_SEEN - 1):
         policy.observe("gold", "5m", arm, 2.0)
     assert policy.pick("gold", "5m")[0] == policy.fallback
@@ -833,10 +836,12 @@ def test_context_backs_off_rather_than_deciding_on_three_observations():
     assert context_of("volatility_75_index", "3m")[1] == "volatility"
 
     policy = Policy()
-    arm = next(iter(policy.arms))
-    # Warm at the family level only.
+    fallback = policy.fallback.named()
+    arm = next(a for a in policy.arms if a != fallback)
+    # Warm at the family level only, the default included.
     for _ in range(policy.MIN_SEEN):
         policy.observe("boom_500_index", "1h", arm, 1.5)
+        policy.observe("boom_500_index", "1h", fallback, -1.0)
     # A different interval on the same family still gets an answer.
     shape, why = policy.pick("boom_1000_index", "5m")
     assert shape == policy.arms[arm]

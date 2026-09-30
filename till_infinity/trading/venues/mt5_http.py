@@ -667,6 +667,10 @@ def _spec_from(raw: dict[str, Any], symbol: str, account: str = "") -> SymbolSpe
         # 4 is SYMBOL_TRADE_MODE_FULL. Anything less is close-only, quotes-only
         # or disabled, none of which can open a scalp.
         tradable=int(raw.get("trade_mode", 4)) == 4,
+        swap_long=float(raw.get("swap_long") or 0.0),
+        swap_short=float(raw.get("swap_short") or 0.0),
+        swap_mode=int(raw["swap_mode"]) if raw.get("swap_mode") is not None else -1,
+        swap_triple_day=int(raw.get("swap_rollover3days", 3) or 0),
     )
 
 

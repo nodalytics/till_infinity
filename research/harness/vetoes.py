@@ -285,7 +285,11 @@ def bar_frame(sym: str, iv: str) -> pd.DataFrame | None:
     df = df.drop_duplicates("time").sort_values("time").reset_index(drop=True)
     c = df["close"]
     vol = np.log(c).diff().abs().ewm(span=14, adjust=False).mean() * np.sqrt(np.pi / 2)
-    spread_price = df["spread"] * point_size(c.to_numpy())
+    import seqlab  # here, not at the top: it reaches for the bridge only when asked
+
+    # The broker's point where it can be had (crypto's closes print whole, so the lattice they
+    # imply overstates its point a thousandfold); the inferred lattice otherwise.
+    spread_price = df["spread"] * (seqlab.broker_point(sym) or point_size(c.to_numpy()))
     df["cost_vol"] = (spread_price / c) / vol
     df["ratio"] = df["spread"] / df["spread"].rolling(500, min_periods=100).median().shift(1)
     return df[["time", "cost_vol", "ratio"]]

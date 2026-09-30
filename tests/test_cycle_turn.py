@@ -31,9 +31,9 @@ DOWN = {"direction": "down", "feed": "v75", "interval": "15m", "confluence": ["1
 def reading(
     *,
     agrees=1.0,
-    calls=400.0,
+    calls=1500.0,
     hit=0.60,
-    entry_calls=400.0,
+    entry_calls=1500.0,
     entry_hit=0.60,
     broke=None,
     break_price=99.0,
@@ -132,7 +132,7 @@ class TestTheRecordDecides:
         assert "12%" in got.detail
 
     def test_a_feed_that_has_earned_it_is_taken(self, strategy):
-        assert strategy.accept(UP, reading(calls=400.0, hit=0.60)) is None
+        assert strategy.accept(UP, reading(calls=1500.0, hit=0.60)) is None
 
     def test_the_bar_is_the_one_configuration_sets(self, strategy):
         """The same two settings the veto reads, so nobody has to maintain two
