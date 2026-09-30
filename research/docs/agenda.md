@@ -36,7 +36,7 @@ only re-describes volatility clustering will be caught by GARCH walks.
 | # | Field → idea | Core question | Status |
 |---|---|---|---|
 | 1 | Information theory → information geometry | How much *new* information does X add to the market's existing state, I(Y; X \| Z)? | **Running:** program B, [`infoflow.md`](infoflow.md) (a conditional-mutual-information novelty test, transfer-entropy networks) |
-| 2 | Complex systems → regime topology | Are there measurable precursors before orderly regimes turn unstable (critical slowing down, bifurcations)? | **Running:** program A, [`topology.md`](topology.md). Prior: [`susceptibility.md`](susceptibility.md), [`manifold.md`](manifold.md) |
+| 2 | Complex systems → regime topology | Are there measurable precursors before orderly regimes turn unstable (critical slowing down, bifurcations)? | **Done:** program A, [`topology.md`](topology.md). Critical slowing down never appears; nothing adds to the shock forecaster |
 | 3 | Neuroscience → attention and information processing | Do limited processing capacity and attention create predictable behaviour (news → attention → flow → price)? | Not started. Adjacent: [`surprise.md`](surprise.md) (priced within 3 minutes) |
 | 4 | Ecology → financial ecosystems | Does profitability fall because a strategy stops working, or because its population grows too large? | **Done:** program C, [`ecology.md`](ecology.md). Null: no decay-and-recovery beyond walks (0/39), no density dependence (0/44); the one trace is crowded crypto funding |
 | 5 | Evolutionary biology → adaptive strategies | What does strategy evolution under costs and crowding mean economically? | **Done** in program C: evolved rules' "alpha decay" is selection bias, exactly as on walks |
@@ -48,8 +48,8 @@ only re-describes volatility clustering will be caught by GARCH walks.
 | 11 | Causal inference → mechanism | Does liquidity loss cause volatility? Does funding pressure cause dislocation? | **Done:** program D, [`causal.md`](causal.md). The spread is a symptom, not a cause (the rollover's mechanical 15x widening moves nothing); releases cause volatility spikes whatever the surprise; funding marks the regime without pushing price. Volume is the strongest upstream candidate |
 | 12 | Linguistics → narrative structure | Does the structure and propagation speed of a narrative predict changes in market state? | Not started. Needs text data beyond the calendar |
 | 13 | Information retrieval → market memory | Which past states resemble today's, and what followed? | Done for direction: [`state-and-memory.md`](state-and-memory.md), fractal twins (coin-flip). Not yet as a retrieval-based *regime* model |
-| 14 | Topological data analysis → market shape | Are regimes distinguishable by topology when the moments look the same? | **Running:** program A |
-| 15 | Statistical physics → phase transitions | Do tail exponents, entropy and correlation change jointly around transitions? | **Running** within program A. Prior: [`susceptibility.md`](susceptibility.md) |
+| 14 | Topological data analysis → market shape | Are regimes distinguishable by topology when the moments look the same? | **Done:** program A - yes, but GARCH walks gain the same: it is clustering dynamics, which the forecaster already reads |
+| 15 | Statistical physics → phase transitions | Do tail exponents, entropy and correlation change jointly around transitions? | **Done** in program A: add nothing beyond the shock forecaster, except Deriv mechanics |
 
 The three priority programs named in the agenda map to what is running:
 - **A (market state topology)** is [`topology.md`](topology.md);
