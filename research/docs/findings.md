@@ -64,6 +64,7 @@ have shipped without it.
 | Chan: stationarity filter, FX cointegration, time-series momentum | All null; the EURGBP triangle is quote arbitrage that nets −18.5 Sharpe | [`chan.md`](chan.md) |
 | Game-theoretic edges (focal points, crowding, stop-runs) | Real traces, already priced | [`game-theory.md`](game-theory.md) |
 | LLM specialist agents forecasting direction | AUC 0.48-0.50; they behave like fixed priors | [`agents.md`](agents.md) |
+| An LLM deciding trades from the card | A fade rule with a thin skip; +0.035R over random at best (t 0.8) | [`agent-trading.md`](agent-trading.md) |
 | VPIN on retail tick volume | Null; the real-trade test is running | [`lopez-de-prado.md`](lopez-de-prado.md) |
 | The production strategies themselves | Gross −0.10 to +0.03R, none beats random selection | [`triage.md`](triage.md) |
 
