@@ -255,9 +255,25 @@ class Touches(Restorable):
         return len(gone)
 
 
+#: How often each boosted band is touched within the next `AHEAD` bars, measured on the 90-day
+#: out-of-sample block (P90 0.20, P10 0.21-0.24). Over the boosted bands the rate barely moves with
+#: the regime - they already carry it - and the touch models did not beat this constant by 0.03
+#: (research/docs/gbm-envelope.md, the touch contest on 2026-09-30), so the card states it.
+BOOSTED_TOUCH_RATE = 0.20
+
+
 def card_line(got: dict) -> list[str]:
-    """The chance each band is touched in the next bars, as a card line; nothing while absent."""
+    """The chance each band is touched in the next bars, as a card line.
+
+    A trained model's per-signal probabilities where one has passed its gate; otherwise, on a
+    boosted band, the measured constant; nothing otherwise.
+    """
     up, down = got.get(f"touch90_prob{AHEAD}"), got.get(f"touch10_prob{AHEAD}")
-    if not isinstance(up, int | float) or not isinstance(down, int | float):
-        return []
-    return [f"👆 next {AHEAD} bars · P90 touched {up:.0%} · P10 touched {down:.0%}"]
+    if isinstance(up, int | float) and isinstance(down, int | float):
+        return [f"👆 next {AHEAD} bars · P90 touched {up:.0%} · P10 touched {down:.0%}"]
+    if got.get(f"env{AHEAD}_model"):
+        return [
+            f"👆 each band is touched about {BOOSTED_TOUCH_RATE:.0%} of the time "
+            f"within the next {AHEAD} bars"
+        ]
+    return []

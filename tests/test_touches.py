@@ -203,3 +203,14 @@ def test_the_touch_contest_runs_and_its_export_is_exact(monkeypatch):
     assert isinstance(report["champion"], dict)  # empty while no model has earned the recipe
     assert (spec is not None) == report["promoted"]
     json.dumps(report)  # the report file must be able to hold it
+
+
+def test_a_boosted_band_without_a_touch_model_states_the_measured_rate():
+    got = {"env5_model": 1.0}
+    assert tc.card_line(got) == [
+        "👆 each band is touched about 20% of the time within the next 5 bars"
+    ]
+    # a model that passed its gate still speaks for itself
+    got.update({"touch90_prob5": 0.31, "touch10_prob5": 0.12})
+    assert tc.card_line(got) == ["👆 next 5 bars · P90 touched 31% · P10 touched 12%"]
+    assert tc.card_line({}) == []  # and an empirical band says nothing

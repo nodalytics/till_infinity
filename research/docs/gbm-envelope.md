@@ -144,3 +144,16 @@ Not built; this is the proposal.
      within 1 point; no 14-day window more than 2 points under production's worst.
    - **Training:** must replay bars through the production `Ranges` and `Envelope` classes, as
      `shocks_train.py` does, so the unit and the features match serving exactly.
+
+## After shipping: what the boosted bands did to the touch line
+
+The FX touch models (`bandrace.md`) were trained over the empirical envelope's bands. Retrained over
+the boosted bands, they add little over band geometry (+0.011 / +0.017), because the boosted bands
+already carry the volatility state the touch model used. Judged on skill over the flat base rate
+instead, a bar set before the run, they still fall short: P90 0.021 (se 0.005) and P10 0.0297
+(se 0.011) against 0.03. Calibration is fine: one decile each fails over 90 days.
+
+Over bands that adapt to the regime, each band is touched about 20% of the time within 5 bars
+(P90 0.20, P10 0.21-0.24) almost whatever the regime, and the predicted probabilities only span
+0.14-0.30. So FX cards with a boosted band now state that measured constant, and the per-signal line
+returns if a touch model ever passes its gate.
