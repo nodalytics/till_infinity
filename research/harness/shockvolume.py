@@ -205,5 +205,78 @@ def main():
     print(f"wrote {OUT}/shocks.json and report.json", flush=True)
 
 
-if __name__ == "__main__":
+
+
+# ------------------------------------------------------------------ PART=control
+
+
+def control_walks(template: list[Bar], kind: str, seed: int) -> list[Bar]:
+    """A GARCH(1,1) t(4) walk on `template`'s own timestamps (so it lands in both training and
+    hold-out), with a synthetic tick volume:
+      indep  independent of the returns (lognormal)
+      echo   volume that only echoes the same bar's size: exp(5 + |r|/sqrt(h) + noise)"""
+    rng = np.random.default_rng(seed)
+    h, r, price, got = 1e-6, 0.0, 100.0, []
+    for bar in template:
+        h = 2e-8 + 0.08 * r * r + 0.9 * h
+        r = math.sqrt(h) * rng.standard_t(4) / math.sqrt(2)
+        close = price * math.exp(r)
+        wick = abs(rng.standard_t(4)) * math.sqrt(h) * 0.5
+        if kind == "indep":
+            volume = math.exp(rng.normal(5.0, 0.5))
+        else:
+            volume = math.exp(5.0 + 0.7 * abs(r) / math.sqrt(h) + rng.normal(0.0, 0.3))
+        got.append(Bar(bar.time, price, max(price, close) * math.exp(wick),
+                       min(price, close) * math.exp(-wick), close, volume))
+        price = close
+    return got
+
+
+def control() -> None:
+    """Old features against old + range against all 14, on walks with real timing."""
+    templates = {}
+    for sym in ("EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSD", "ETHUSD"):
+        for iv in ("15m", "1h"):
+            try:
+                got = load(sym, iv)
+            except (ValueError, FileNotFoundError):
+                continue
+            if len(got) > 2 * sh.NORM:
+                templates[(sym, iv)] = got
+    print(f"control: {len(templates)} real-timed templates", flush=True)
+    for kind in ("indep", "echo"):
+        series = {(f"~{kind}-{s}", iv): control_walks(b, kind, seed=hash((s, iv, kind)) % 2**31)
+                  for (s, iv), b in templates.items()}
+        rows = st.dataset(series)
+        when, _, x, y = rows.arrays()
+        cut = when.max() - 14 * DAY
+        split = np.quantile(when, 0.6)
+        print(f"\n== {kind} volume: {len(y):,} rows, shock rate {y.mean():.3f}", flush=True)
+        for label, train, held in (("14-day holdout", when < cut, when >= cut),
+                                   ("60/40", when < split, when >= split)):
+            yy, ww = y[held], when[held]
+            days = (ww // DAY).astype(int)
+            mid = np.quantile(ww, 0.5)
+            preds = {}
+            for name, cols in (("old", list(range(OLD_N))), ("old+range", list(range(OLD_N + 1))),
+                               ("all 14", list(range(x.shape[1])))):
+                spec = st.train(x[train][:, cols], y[train])
+                model = spec.pop("_sklearn")
+                preds[name] = model.predict_proba(x[held][:, cols])[:, 1]
+            base = auc(yy, preds["old"])
+            out = [f"old {base:.4f}"]
+            for name in ("old+range", "all 14"):
+                p = preds[name]
+                gain = auc(yy, p) - base
+                diff_se = boot_auc(yy, p, days)
+                halves = [auc(yy[h], p[h]) - auc(yy[h], preds["old"][h]) for h in (ww < mid, ww >= mid)]
+                out.append(f"{name} {gain:+.4f} (se~{diff_se:.4f}) halves {halves[0]:+.4f}/{halves[1]:+.4f}")
+            vol_only = auc(yy, preds["all 14"]) - auc(yy, preds["old+range"])
+            out.append(f"volume beyond range {vol_only:+.4f}")
+            print(f"  {label:15s} n={int(held.sum()):9,} | " + " | ".join(out), flush=True)
+
+
+if __name__ == "__main__" and os.environ.get("PART") == "control":
+    control()
+elif __name__ == "__main__":
     main()
