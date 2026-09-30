@@ -60,18 +60,18 @@ The three priority programs named in the agenda map to what is running:
 
 | # | Field → idea | Core question | Status |
 |---|---|---|---|
-| 1 | Archaeology → market stratigraphy | Can the sequence of historical layers explain why identical patterns behave differently? | **Running** within program E, [`grammar.md`](grammar.md) (conditioning on deeper history) |
+| 1 | Archaeology → market stratigraphy | Can the sequence of historical layers explain why identical patterns behave differently? | **Done** in program E, [`grammar.md`](grammar.md): deeper layers add 0.002 bits, on FX only |
 | 2 | Forensics → event reconstruction | Which hidden event chain most plausibly produced what we observe? | Partly **running** in program D (causal discovery, clearly labelled exploratory) |
 | 3 | Game design → mechanism design | How do tick size, funding, liquidation design and maker/taker pricing shape behaviour? | Partly done: [`game-theory.md`](game-theory.md), [`deriv-payouts.md`](deriv-payouts.md); the funding event study is in program D |
 | 4 | Operations research → capital allocation | Allocate scarce capital across simultaneous opportunities under cost and liquidity constraints | Not started. Needs opportunities with an edge first ([`triage.md`](triage.md)) |
-| 5 | Compiler theory → a market intermediate representation | Can price behaviour be written as a formal language (OHLC → IR → structure)? | **Running:** program E |
-| 6 | Music theory → market motifs | Are there reusable temporal motifs (tension, resolution) that indicators miss? | **Running** within program E (motif mining, deflated) |
+| 5 | Compiler theory → a market intermediate representation | Can price behaviour be written as a formal language (OHLC → IR → structure)? | **Done:** program E - no small alphabet exists (bar shape is a continuum) |
+| 6 | Music theory → market motifs | Are there reusable temporal motifs (tension, resolution) that indicators miss? | **Done** in program E: motifs add +0.004-0.008 AUC to the shock forecaster, under the bar |
 | 7 | Cryptography → commitment and revelation | How does incremental revelation of committed information drive price discovery? | Not started. Adjacent: [`surprise.md`](surprise.md) |
 | 8 | Anthropology → market rituals | Does the market behave differently when participants collectively anticipate an institutional ritual? | **Running:** program F, [`rituals.md`](rituals.md) |
 | 9 | Legal theory → rule changes | Do rule changes produce breaks that regime models mistake for behavioural regimes? | Not started. Adjacent: [`rollover.md`](rollover.md) (a broker mechanism mistaken for market behaviour) |
 | 10 | Geography → landscapes and basins | Are some states basins of attraction? | Done as a state manifold: [`manifold.md`](manifold.md) |
-| 11 | Genetics → structural inheritance | Do structural traits propagate through time? | **Running** within program E |
-| 12 | Linguistics → market grammar | What production rules recur, and which transitions matter? | **Running:** program E |
+| 11 | Genetics → structural inheritance | Do structural traits propagate through time? | **Done** in program E: an order-1 grammar about size, nothing deeper |
+| 12 | Linguistics → market grammar | What production rules recur, and which transitions matter? | **Done:** program E - a one-bar grammar about size (+0.04-0.06 bits), no economic consequence beyond volatility |
 | 13 | Astronomy → inverse inference | Can hidden events be reconstructed from their observable signatures? | Partly in program D. VPIN as a hidden-flow signature was null ([`vpin.md`](vpin.md)) |
 | 14 | Paleontology → extinct regimes | What can dead market structures teach about today's? | Not started. Needs long, multi-era data |
 | 15 | Immunology → self against non-self | Does an unusual state precede a structural transition? | Largely done: the shock forecaster and anomaly work ([`anomalies.md`](anomalies.md)) |
