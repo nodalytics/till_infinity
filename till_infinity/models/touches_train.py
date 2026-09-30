@@ -247,24 +247,38 @@ def calibration(y: np.ndarray, p: np.ndarray, bins: int = 10) -> float:
 
 
 def score(
-    p: np.ndarray, p_geo: np.ndarray, y: np.ndarray, when: np.ndarray, *, seed: int = 0
+    p: np.ndarray,
+    p_geo: np.ndarray,
+    y: np.ndarray,
+    when: np.ndarray,
+    *,
+    base: float | None = None,
+    seed: int = 0,
 ) -> dict[str, float]:
-    """Brier skill over geometry, its standard error over whole days, and calibration."""
+    """Brier skill over geometry and over the training base rate `base` (the constant a card
+    would otherwise print), their standard errors over whole days, and calibration."""
     b_geo = brier(y, p_geo)
     skill = 1.0 - brier(y, p) / b_geo if b_geo > 0 else float("nan")
+    p_rate = np.full(len(y), float(y.mean()) if base is None else float(base))
+    b_rate = brier(y, p_rate)
+    skill_rate = 1.0 - brier(y, p) / b_rate if b_rate > 0 else float("nan")
     days = (when // 86_400).astype(int)
     uniq = np.unique(days)
     rng = np.random.default_rng(seed)
     by = {d: np.flatnonzero(days == d) for d in uniq}
-    draws = []
+    draws, draws_rate = [], []
     for _ in range(200):
         idx = np.concatenate([by[d] for d in rng.choice(uniq, len(uniq))])
         bg = brier(y[idx], p_geo[idx])
         draws.append(1.0 - brier(y[idx], p[idx]) / bg if bg > 0 else float("nan"))
+        br = brier(y[idx], p_rate[idx])
+        draws_rate.append(1.0 - brier(y[idx], p[idx]) / br if br > 0 else float("nan"))
     table = deciles(y, p, when, seed=seed)
     return {
         "skill": round(skill, 4),
         "skill_se": round(float(np.nanstd(draws)), 4),
+        "skill_rate": round(skill_rate, 4),
+        "skill_rate_se": round(float(np.nanstd(draws_rate)), 4),
         "calibration": round(calibration(y, p), 3),
         "miscalibrated_deciles": len(miscalibrated(table)),
         "rate": round(float(y.mean()), 4),

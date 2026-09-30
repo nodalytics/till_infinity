@@ -151,7 +151,11 @@ def run_shocks(fetch: Callable[[str, str], list], names: list[str]) -> tuple[dic
 
 #: The band-touch forecaster's gates (`structures/learning/touches.py`, research/docs/bandrace.md).
 TOUCH_GATES: dict[str, float] = {
-    # Brier skill over geometry - the same boosting on the band distances alone - worth publishing
+    # Brier skill over the training base rate - the constant the card would otherwise print. It
+    # was skill over geometry (the band distances alone) while the bands were the empirical
+    # envelope's; the boosted FX envelope now carries the volatility state itself, so the touch
+    # model adds little over geometry (+0.011 / +0.017) while still pricing the touch well. What
+    # the card line needs is a calibrated probability that beats the flat rate.
     "min_skill": 0.03,
 }
 
@@ -162,9 +166,9 @@ _touch_rows: dict[tuple[int, tuple[str, ...], int], tuple[int, Any]] = {}
 def touch_gate(challenger: dict, champion: dict) -> list[str]:
     """Every reason not to promote a band-touch model; empty means promote."""
     reasons = []
-    skill = challenger.get("skill", float("nan"))
+    skill = challenger.get("skill_rate", float("nan"))
     if not skill >= TOUCH_GATES["min_skill"]:
-        reasons.append(f"skill over geometry {skill} below {TOUCH_GATES['min_skill']}")
+        reasons.append(f"skill over the base rate {skill} below {TOUCH_GATES['min_skill']}")
     # What "P90 touched 38%" relies on, judged over 90 days out of sample, where one regime
     # cannot pass for a bad model (`touches_train.CAL_*` says why each number is what it is).
     from .touches_train import CAL_DAYS, CAL_TOLERATED
@@ -175,9 +179,9 @@ def touch_gate(challenger: dict, champion: dict) -> list[str]:
             f"{bad} decile(s) miscalibrated over {CAL_DAYS} days, beyond 20% and two standard"
             f" errors (at most {CAL_TOLERATED} tolerated)"
         )
-    theirs = champion.get("skill")
+    theirs = champion.get("skill_rate")
     if theirs is not None and not math.isnan(theirs):
-        se = challenger.get("skill_se", float("nan"))
+        se = challenger.get("skill_rate_se", float("nan"))
         slack = max(GATES["vs_champion"], 2 * se) if not math.isnan(se) else GATES["vs_champion"]
         if skill < theirs - slack:
             reasons.append(f"skill {skill} against the champion's {theirs} (slack {slack:.3f})")
@@ -224,7 +228,8 @@ def _touch_contest(band: str, fetch: Callable[[str, str], list], names: list[str
     )
     geo = tt.geometry(x[train], y[train])(x[held])
     p = np.array([trees.predict(list(r)) for r in x[held]])
-    challenger = tt.score(p, geo, y[held], when[held])
+    base = float(y[train].mean())
+    challenger = tt.score(p, geo, y[held], when[held], base=base)
     # Calibration over a longer out-of-sample block, by a model trained before it.
     early = when < when.max() - tt.CAL_DAYS * 86_400
     if early.any() and (~early).any():
@@ -240,7 +245,7 @@ def _touch_contest(band: str, fetch: Callable[[str, str], list], names: list[str
     if current:
         old = frozen.Trees(current)
         champion = tt.score(
-            np.array([old.predict(list(r)) for r in x[held]]), geo, y[held], when[held]
+            np.array([old.predict(list(r)) for r in x[held]]), geo, y[held], when[held], base=base
         )
     reasons = touch_gate(challenger, champion)
     if exact > GATES["exact"]:

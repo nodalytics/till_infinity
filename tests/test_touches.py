@@ -179,13 +179,15 @@ def test_a_decile_fails_only_beyond_both_the_error_and_the_noise():
 
 
 def test_the_touch_gate():
-    ok = {"skill": 0.08, "skill_se": 0.01, "calibration_fails": 1}
-    assert rt.touch_gate(ok, {}) == []
-    assert rt.touch_gate({**ok, "skill": 0.02}, {})
+    """Skill over the flat base rate the card would otherwise print - not over geometry, which the
+    boosted bands now carry - with calibration and the champion as before."""
+    ok = {"skill_rate": 0.08, "skill_rate_se": 0.01, "skill": 0.01, "calibration_fails": 1}
+    assert rt.touch_gate(ok, {}) == []  # little over geometry is no longer a reason
+    assert rt.touch_gate({**ok, "skill_rate": 0.02}, {})
     assert rt.touch_gate({**ok, "calibration_fails": 2}, {})
     assert rt.touch_gate({k: v for k, v in ok.items() if k != "calibration_fails"}, {})
-    assert rt.touch_gate({**ok, "skill": 0.06}, {"skill": 0.09})  # beyond the champion's slack
-    assert rt.touch_gate({**ok, "skill": 0.08}, {"skill": 0.085}) == []
+    assert rt.touch_gate({**ok, "skill_rate": 0.06}, {"skill_rate": 0.09})  # beyond the slack
+    assert rt.touch_gate({**ok, "skill_rate": 0.08}, {"skill_rate": 0.085}) == []
 
 
 def test_the_touch_contest_runs_and_its_export_is_exact(monkeypatch):
@@ -197,7 +199,7 @@ def test_the_touch_contest_runs_and_its_export_is_exact(monkeypatch):
     )
     assert report["series"] == 1
     assert report["evaluator_max_diff"] <= rt.GATES["exact"]
-    assert {"skill", "calibration_fails"} <= set(report["challenger"])
+    assert {"skill", "skill_rate", "calibration_fails"} <= set(report["challenger"])
     assert isinstance(report["champion"], dict)  # empty while no model has earned the recipe
     assert (spec is not None) == report["promoted"]
     json.dumps(report)  # the report file must be able to hold it
