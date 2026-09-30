@@ -147,7 +147,8 @@ def _walk(n: int, seed: int = 5):
         yield price
 
 
-def test_each_bucket_learns_only_from_its_own_quotes():
+def test_each_bucket_learns_only_from_its_own_quotes(monkeypatch):
+    monkeypatch.setattr(ev, "MONDRIAN", True)  # off by default; these test it on
     book = ev.Book()
     for i, price in enumerate(_walk(1200)):
         book.observe("btcusd", "15m", price, 0.001, bucket=1 if i % 3 == 0 else 0)
@@ -159,7 +160,8 @@ def test_each_bucket_learns_only_from_its_own_quotes():
     assert down.resolved == 0
 
 
-def test_a_bucket_is_published_only_once_it_has_its_own_history():
+def test_a_bucket_is_published_only_once_it_has_its_own_history(monkeypatch):
+    monkeypatch.setattr(ev, "MONDRIAN", True)  # off by default; these test it on
     book = ev.Book()
     for price in _walk(100):
         book.observe("btcusd", "15m", price, 0.001, bucket=1)
@@ -190,6 +192,7 @@ def test_the_switch_turns_mondrian_off(monkeypatch):
 
 
 def test_a_boosted_base_stays_the_base_in_every_bucket(monkeypatch):
+    monkeypatch.setattr(ev, "MONDRIAN", True)  # off by default; these test it on
     fixed = [-2.0, -1.2, 0.0, 1.2, 2.0]
     monkeypatch.setattr(ev, "_safe_quantiles", lambda n, features: list(fixed))
     book = ev.Book()

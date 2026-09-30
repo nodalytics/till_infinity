@@ -158,6 +158,21 @@ no deploy. Under compose, the same is `docker compose --profile models up -d`, a
 service that waits out the fortnight itself. Either way the image already
 carries scikit-learn (the `train` extra); the app never imports it.
 
+## Features that wait on memory headroom
+
+**The Mondrian envelope** (`STRUCTURES_ENVELOPE_MONDRIAN`) is built, tested and **off by default**.
+It keys the envelope's AgACI correction by the ZMA stretched state (research/docs/zma-conformal.md),
+which closes 1-2 points of coverage gap in stretched states at equal or better pinball. It roughly
+triples each series' envelope state (about 65 KB to 189 KB across the three horizons) and raises the
+per-bar envelope cost from about 440 us to about 815 us. On the 908 MB instance, whose container has
+been killed for memory before (see "Sizing it" above), that is not free.
+
+**Switching Mondrian on is one setting once memory headroom is confirmed:**
+`STRUCTURES_ENVELOPE_MONDRIAN=1` in the instance's environment, then a restart. Confirm the headroom
+first: note the container's resident size under normal load (`docker stats`), and multiply the
+followed series by about 124 KB of extra state. Then check that the total stays well inside the
+container's cap and the host's free memory.
+
 ## Moving to another instance
 
 Three GitHub secrets point the deploy at a box, and they are the *easy* part.

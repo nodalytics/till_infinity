@@ -508,7 +508,12 @@ class Published(Restorable):
 #: has `MIN_HISTORY` resolved outcomes of its own; the pooled envelope's before that. It closed
 #: 2-5 point coverage gaps in stretched states (FX N = 5 stretched-up P90 85.2% -> 89.9%) at equal
 #: or better pinball. Not for a published law, which has nothing to correct.
-MONDRIAN = os.environ.get("STRUCTURES_ENVELOPE_MONDRIAN", "1") not in ("0", "false", "no")
+#:
+#: **Off by default.** It roughly triples each series' envelope state (about 65 KB to 189 KB across
+#: the three horizons) for a gain of 1-2 coverage points in stretched states and at most 2% pinball,
+#: on a 908 MB host whose container has been killed for memory before (docs/deployment.md). Turn it
+#: on once the headroom is measured.
+MONDRIAN = os.environ.get("STRUCTURES_ENVELOPE_MONDRIAN", "0") not in ("0", "false", "no")
 BUCKETS: tuple[int, ...] = (-1, 0, 1)
 
 
