@@ -20,6 +20,7 @@
 | [journal.md](journal.md) | the decision journal - reasoning, outcomes, exporting for training |
 | [edge.md](edge.md) | **measured** - the 0.08 alert gate sits in a flat region and should be 0.11; a rolling quantile is worse than a constant, and why |
 | [deployment.md](deployment.md) | running it - one process, compose, or CI to a server |
+| [environment.md](environment.md) | every environment variable: default, effect, the research behind it, and whether changing it moves trading |
 | [logging.md](logging.md) | project logging: levels, JSON log files, adding a logger to a module |
 | [recovering-a-grown-wal.md](recovering-a-grown-wal.md) | the one-off recovery when the prices file has outgrown its box - 29.5 GB with a 13 GB write-ahead log took the desk out for a day; three omissions let it happen and all three are now closed |
 

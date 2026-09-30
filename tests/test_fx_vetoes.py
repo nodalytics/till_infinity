@@ -95,3 +95,14 @@ def test_the_window_is_read_from_the_environment():
     assert _ny_span("") == ()
     assert _ny_span("19-16") == ()
     assert _ny_span("x") == ()
+
+
+def test_the_fast_bands_size_brake_applies_when_the_setting_is_unset(monkeypatch):
+    """docs/environment.md: `from_env` used to read an unset TRADING_INTERVAL_WEIGHT as no weights,
+    silently dropping the brake the dataclass sets."""
+    from till_infinity.trading.config import INTERVAL_WEIGHT
+
+    monkeypatch.delenv("TRADING_INTERVAL_WEIGHT", raising=False)
+    assert Settings.from_env().interval_weight == INTERVAL_WEIGHT == Settings().interval_weight
+    monkeypatch.setenv("TRADING_INTERVAL_WEIGHT", "1m=0.5")
+    assert Settings.from_env().interval_weight == (("1m", 0.5),)

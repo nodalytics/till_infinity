@@ -113,7 +113,8 @@ distributions, no levels, no touch history.
 ## Configuration
 
 Everything comes from the environment, documented in
-[`.env.example`](../.env.example). Real environment variables win over the
+[`.env.example`](../.env.example) and, variable by variable, in
+[environment.md](environment.md). Real environment variables win over the
 file, so a deployment is never overridden by a stray `.env`.
 
 Agents are **off** unless `AGENTS_ENABLED=1`. They are the only part needing a
