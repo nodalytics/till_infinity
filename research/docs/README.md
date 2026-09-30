@@ -8,7 +8,8 @@ Design documents live in [docs/](../docs). This folder is for things that were
 *measured*, with the harness that measured them, so a result can be re-run
 rather than believed.
 
-**Start with [findings.md](findings.md)**: the synthesis of everything below. In short, this desk
+**Start with [findings.md](findings.md)**; the cross-disciplinary research agenda and each item's
+status is in [agenda.md](agenda.md). Findings is the synthesis of everything below. In short, this desk
 can forecast risk and cannot yet forecast direction, and that finding survives deflation for the
 number of trials.
 
