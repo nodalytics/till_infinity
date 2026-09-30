@@ -101,6 +101,7 @@ enters or exits on it until the record says it should.
 from __future__ import annotations
 
 import math
+import os
 import re
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
@@ -273,19 +274,28 @@ class Envelope(Restorable):
     quote: list[float] = field(default_factory=lambda: [0.0] * len(TARGETS))
     sigma: float = 0.0
 
-    def observe(self, close: float, sigma: float, model: Sequence[float] | None = None) -> None:
+    def observe(
+        self,
+        close: float,
+        sigma: float,
+        model: Sequence[float] | None = None,
+        *,
+        record: bool = True,
+    ) -> None:
         """One closed bar: settle the quote made `horizon` bars ago, then quote the next N bars.
 
         `sigma` is the volatility unit as a log-return (bps / 10,000). `model` is the boosted
         model's quantiles at `MODEL_LEVELS` for this bar, where there is one: they replace the
-        history as the base AgACI reads.
+        history as the base AgACI reads. `record=False` keeps the bar's place in the queue without
+        quoting it, so nothing is learned from its outcome: a Mondrian bucket's envelope sees
+        every bar but learns only from the quotes made in its bucket.
         """
         if close <= 0 or not (sigma > 0) or not math.isfinite(sigma):
             return
         if len(self.pending) >= self.horizon:
             settled = self.pending.popleft()
             then, unit, quoted = settled[0], settled[1], settled[2]
-            y = math.log(close / then) / unit
+            y = math.log(close / then) / unit if quoted is not None else float("nan")
             if math.isfinite(y):
                 self.history.append(y)
                 self.resolved += 1
@@ -300,6 +310,9 @@ class Envelope(Restorable):
                         self._learn(i, target, y, settled[4][i], settled[3][i])
                 if len(settled) > 4:
                     self.learned += 1
+        if not record:
+            self.pending.append((close, sigma, None))
+            return
         if self._quote_law(close, sigma):
             return
         self._rebase(MODEL_RECIPE if model else "")
@@ -460,10 +473,56 @@ class Envelope(Restorable):
 
 
 @dataclass(slots=True)
+class Published(Restorable):
+    """The coverage of what was actually published for one series and horizon.
+
+    Under Mondrian the published quote comes from a bucket's envelope or from the pooled one,
+    bar by bar, so neither envelope's own record is the card's. This settles the published
+    quotes themselves.
+    """
+
+    horizon: int = 5
+    pending: deque = field(default_factory=lambda: deque(maxlen=64))
+    hits: list[float] = field(default_factory=lambda: [0.0] * len(TARGETS))
+    resolved: float = 0.0
+
+    def observe(self, close: float, sigma: float, quote: Sequence[float] | None) -> None:
+        if close <= 0 or not (sigma > 0):
+            return
+        if len(self.pending) >= self.horizon:
+            then, unit, quoted = self.pending.popleft()
+            if quoted is not None:
+                y = math.log(close / then) / unit
+                if math.isfinite(y):
+                    self.resolved += 1
+                    for i, q in enumerate(quoted):
+                        self.hits[i] += 1.0 if y <= q else 0.0
+        self.pending.append((close, sigma, list(quote) if quote else None))
+
+    def coverage(self) -> list[float]:
+        return [h / self.resolved if self.resolved else float("nan") for h in self.hits]
+
+
+#: Mondrian envelope by ZMA state (`research/docs/zma-conformal.md`): AgACI and history are kept
+#: per stretched bucket (-1 down, 0 inside, +1 up), and a bucket's quote is published once it
+#: has `MIN_HISTORY` resolved outcomes of its own; the pooled envelope's before that. It closed
+#: 2-5 point coverage gaps in stretched states (FX N = 5 stretched-up P90 85.2% -> 89.9%) at equal
+#: or better pinball. Not for a published law, which has nothing to correct.
+MONDRIAN = os.environ.get("STRUCTURES_ENVELOPE_MONDRIAN", "1") not in ("0", "false", "no")
+BUCKETS: tuple[int, ...] = (-1, 0, 1)
+
+
+@dataclass(slots=True)
 class Book(Restorable):
     """Every series' envelopes, per (feed, interval) and horizon."""
 
     envelopes: dict[str, Envelope] = field(default_factory=dict)
+    #: "feed|interval|n|bucket" -> that ZMA bucket's envelope (`MONDRIAN`).
+    mondrian: dict[str, Envelope] = field(default_factory=dict)
+    #: "feed|interval|n" -> the bucket whose envelope is published now; absent means pooled.
+    chosen: dict[str, int] = field(default_factory=dict)
+    #: "feed|interval|n" -> the published quotes' own coverage.
+    published: dict[str, Published] = field(default_factory=dict)
 
     def observe(
         self,
@@ -472,12 +531,18 @@ class Book(Restorable):
         close: float,
         sigma: float,
         features: Mapping[str, float] | None = None,
+        *,
+        bucket: int | None = None,
+        scale: Mapping[int, float] | None = None,
     ) -> None:
         """One closed bar for every horizon's envelope. `features` are the bar's `touches.base`
         where the boosted envelope applies (FX 15m); without them, or a usable model, the history
-        is the base."""
+        is the base. `bucket` is the series' ZMA stretched state at this close, which keys the
+        Mondrian envelopes; `scale` is the hour-of-week multiplier of the unit per horizon
+        (`clock.py`), applied only where the history is the base."""
         seconds = _bar_seconds(interval)
         boosted = features is not None and model_applies(feed, interval)
+        lawful = has_law(feed)
         for n in HORIZONS:
             key = f"{feed}|{interval}|{n}"
             found = self.envelopes.get(key)
@@ -486,15 +551,51 @@ class Book(Restorable):
             if found.feed != feed or found.bar_seconds != seconds:
                 # Also fills an envelope restored from a state saved before it knew its series.
                 found.feed, found.bar_seconds = feed, seconds
-            found.observe(close, sigma, _safe_quantiles(n, features) if boosted else None)
+            model = _safe_quantiles(n, features) if boosted else None
+            unit = sigma
+            if scale and not model and not lawful:
+                m = scale.get(n, 1.0)
+                if m > 0 and math.isfinite(m):
+                    unit = sigma * m
+            found.observe(close, unit, model)
+            use = found
+            if MONDRIAN and bucket in BUCKETS and not lawful:
+                for b in BUCKETS:
+                    mk = f"{key}|{b}"
+                    mb = self.mondrian.get(mk)
+                    if mb is None:
+                        mb = self.mondrian[mk] = Envelope(horizon=n, feed=feed, bar_seconds=seconds)
+                    mb.observe(close, unit, model, record=b == bucket)
+                mine = self.mondrian[f"{key}|{bucket}"]
+                if mine.resolved >= MIN_HISTORY and mine.warm:
+                    use = mine
+            if use is found:
+                self.chosen.pop(key, None)
+            else:
+                self.chosen[key] = int(bucket)  # type: ignore[arg-type]
+            tracker = self.published.get(key)
+            if tracker is None:
+                tracker = self.published[key] = Published(horizon=n)
+            tracker.observe(close, unit, use.quote if use.warm else None)
 
     def reading(self, feed: str, interval: str, price: float) -> dict[str, float]:
         """Every horizon's quote for this series, as published features. Absent while cold."""
         out: dict[str, float] = {}
         for n in HORIZONS:
-            found = self.envelopes.get(f"{feed}|{interval}|{n}")
-            if found is not None:
-                out.update(found.prices(price))
+            key = f"{feed}|{interval}|{n}"
+            found = self.envelopes.get(key)
+            if found is None:
+                continue
+            b = self.chosen.get(key)
+            source = self.mondrian.get(f"{key}|{b}") if b is not None else None
+            got = (source or found).prices(price)
+            tracker = self.published.get(key)
+            if got and tracker is not None and tracker.resolved > 0:
+                for target, cover in zip(TARGETS, tracker.coverage(), strict=True):
+                    got[f"env{n}_cover_p{round(target * 100):d}"] = round(cover, 4)
+            if got and source is not None:
+                got[f"env{n}_zma"] = float(b)
+            out.update(got)
         if out:
             out["env_ref"] = price  # what the percentages on a card are measured from
         return out
@@ -557,6 +658,9 @@ class Book(Restorable):
         gone = [k for k in self.envelopes if k.split("|", 1)[0] not in keep]
         for k in gone:
             del self.envelopes[k]
+        for book in (self.mondrian, self.chosen, self.published):
+            for k in [k for k in book if k.split("|", 1)[0] not in keep]:
+                del book[k]
         return len(gone)
 
 
@@ -618,6 +722,10 @@ def card_lines(got: Mapping, price: Callable[[float], str]) -> list[str]:
             lines.append("⚖️ tight volatility compression · expansion watch, no side")
         elif percentile >= 0.8:
             lines.append("⚖️ volatility already expanded · wide bars, no side")
+    # This hour's volatility against the average hour's, where the family has a clock.
+    from . import clock
+
+    lines += clock.card_line(dict(got))
     # The chance each band is touched on the way, where a model is trained for the series.
     from ..learning import touches
 

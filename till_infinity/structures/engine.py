@@ -63,6 +63,7 @@ from .learning import focus, patterns, regimes, shocks, touches
 from .learning.focus import Focus
 from .models import Shape, Signal
 from .state import Restorable
+from .vol import clock
 from .vol import envelope as ev
 from .vol import projection as pj
 from .vol.volatility import Book as VolBook
@@ -1245,10 +1246,13 @@ class Engine:
         ebook = getattr(self, "envelopes", None)
         if ebook is not None:
             counts["envelopes"] = ebook.forget({k.split("|", 1)[0] for k in ebook.envelopes} - gone)
-        for name in ("shocks", "touches"):  # both keyed "feed|interval" in `series`
+        # Each keyed "feed|interval" in the named field.
+        for name, keyed in (("shocks", "series"), ("touches", "series"), ("vol_clock", "last")):
             fbook = getattr(self, name, None)
             if fbook is not None:
-                counts[name] = fbook.forget({k.split("|", 1)[0] for k in fbook.series} - gone)
+                counts[name] = fbook.forget(
+                    {k.split("|", 1)[0] for k in getattr(fbook, keyed)} - gone
+                )
         cbook = getattr(self, "cycles", None)
         if cbook is not None:
             counts["cycles"] = cbook.forget({f for f in cbook._by_feed if f not in gone})
@@ -1474,6 +1478,44 @@ class Engine:
             found = self.envelopes = ev.Book()
         return found
 
+    def _vol_clock(self) -> clock.Clock:
+        """The hour-of-week volatility profile, created on demand - see `_projection`."""
+        found = getattr(self, "vol_clock", None)
+        if found is None:
+            found = self.vol_clock = clock.Clock()
+        return found
+
+    def _clock_scale(
+        self, feed: str, interval: str, opened: float, close: float, sigma: float
+    ) -> dict[int, float] | None:
+        """Learn this bar's hour, then the unit's multiplier for each envelope horizon from the
+        next bar on (`vol/clock.py`). None where the family has no forecasting clock."""
+        book = self._vol_clock()
+        book.observe(feed, interval, opened, close, sigma)
+        seconds = lv.SECONDS.get(interval, 0.0)
+        if clock.family(feed) not in clock.FORECAST or seconds <= 0:
+            return None
+        return {
+            n: book.multiplier(feed, interval, opened + seconds, n, seconds) for n in ev.HORIZONS
+        }
+
+    def _zma_bucket(self, feed: str, interval: str) -> int | None:
+        """The series' ZMA stretched state at this close, for the Mondrian envelope; None when
+        the z-score is off or has not seen the series."""
+        if not zm.ENABLED:
+            return None
+        found = getattr(self, "zma", None)
+        z = found._by_key.get((feed, interval)) if found is not None else None
+        return None if z is None else int(z.stretched)
+
+    def _clock_at(self, feed: str, interval: str, when: float) -> dict[str, float]:
+        """This hour's volatility against the average hour's, for the card; absent while cold."""
+        try:
+            m = self._vol_clock().now(feed, interval, when)
+        except Exception:  # never let a published extra stop a call
+            return {}
+        return {} if m is None else {"vol_clock": round(m, 3)}
+
     def _touches(self) -> touches.Touches:
         """The band-touch forecaster, created on demand - see `_projection` on asking by name."""
         found = getattr(self, "touches", None)
@@ -1517,7 +1559,15 @@ class Engine:
                     feed, interval, opened, high, low, close, sigma
                 )
                 features = self._touches().base(feed, interval) if taken else None
-                self._envelopes().observe(feed, interval, close, sigma, features)
+                self._envelopes().observe(
+                    feed,
+                    interval,
+                    close,
+                    sigma,
+                    features,
+                    bucket=self._zma_bucket(feed, interval),
+                    scale=self._clock_scale(feed, interval, opened, close, sigma),
+                )
                 if taken:
                     env = self._envelopes().envelopes.get(f"{feed}|{interval}|{touches.AHEAD}")
                     quote = list(env.quote) if env is not None and env.warm else None
@@ -2258,8 +2308,9 @@ class Engine:
             # own method so that `observe_bar` stays inside the branch ceiling
             # and so the flag it is gated by sits next to the work it gates.
             self._settle_projection(feed, interval, opened, float(close))
-            self._observe_forecasts(feed, interval, when, high, low, float(close), vol)
+            # The z-score first: the envelope keys its Mondrian buckets by the state at this close.
             self._observe_zma(feed, interval, float(close))
+            self._observe_forecasts(feed, interval, when, high, low, float(close), vol)
             self._observe_cycles(feed, interval, float(close))
         # Pivots are session structures priced at today's scale, so they use the
         # reference estimate rather than the bar interval that happened to
@@ -2628,6 +2679,7 @@ class Engine:
                         **self.changing(feed, when),
                         **self._learned_at(feed, interval),
                         **self._envelope_at(feed, interval, price),
+                        **self._clock_at(feed, interval, when),
                         **self._shock_at(feed, interval),
                         **self._touch_at(feed, interval),
                     },
