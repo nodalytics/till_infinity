@@ -396,6 +396,15 @@ def _names(raw: str) -> tuple[str, ...]:
     return tuple(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
+def _ny_span(raw: str) -> tuple[int, int] | tuple[()]:
+    """`"16-19"` -> (16, 19); empty or malformed -> () (off)."""
+    try:
+        start, end = (int(v) for v in raw.replace(" ", "").split("-"))
+    except ValueError:
+        return ()
+    return (start, end) if 0 <= start < end <= 24 else ()
+
+
 @dataclass(slots=True)
 class Settings:
     """Everything tunable, resolved once and threaded through the service."""
@@ -1219,6 +1228,18 @@ class Settings:
     #:
     #: See `research/docs/intraday.md`.
     quiet_hours: tuple[int, ...] = ()
+    #: **FX only, and in New York's clock.** `research/docs/vetoes.md`: on about 52k zone
+    #: touches, FX entries between 20:00 and 22:59 UTC in summer - 16:00-18:59 New York, the close
+    #: and the rollover - did -0.43 / -0.45 vol worse than the rest of the day, in both halves and
+    #: at both horizons. Deriv did *better* in the same hours and metals and our walks were flat,
+    #: which is why `quiet_hours`, global and in UTC, is the wrong tool: it would cost Deriv, and it
+    #: drifts an hour at every daylight-saving change. `(start, end)` New York hours, end exclusive;
+    #: empty turns it off.
+    fx_quiet_ny: tuple[int, int] | tuple[()] = (16, 19)
+    #: FX entries in the first minutes after the Sunday open (17:00 New York) - `vetoes.md`: -1.2 /
+    #: -1.5 vol against the rest of the week, worse gross too, both halves. The book reopens on the
+    #: weekend's gap with the widest spread of the week. 0 turns it off.
+    fx_sunday_open_min: float = 60.0
 
     stale_after: float = 0.0
     #: How far the trade must have travelled by `stale_after` to count as
@@ -1462,6 +1483,8 @@ class Settings:
                 for h in (os.environ.get("TRADING_QUIET_HOURS") or "").replace(" ", "").split(",")
                 if h.strip().isdigit() and 0 <= int(h) <= 23
             ),
+            fx_quiet_ny=_ny_span(os.environ.get("TRADING_FX_QUIET_NY", "16-19")),
+            fx_sunday_open_min=_float("TRADING_FX_SUNDAY_OPEN_MIN", 60.0),
             stale_after=_float("TRADING_STALE_AFTER_S", 0.0),
             stale_move=_float("TRADING_STALE_MOVE", 0.25),
             reentry_max=_int("TRADING_REENTRY_MAX", 0),

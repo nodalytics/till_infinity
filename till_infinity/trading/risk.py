@@ -30,13 +30,44 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from ..logging import get_logger
 from ..shared import effects
+from ..structures import rollover
 from . import exposure as ex
 from .config import Settings
 from .context import Context
 from .models import Intent, Position, Refusal, Tick, money
+
+NEW_YORK = ZoneInfo("America/New_York")
+
+
+def fx_window(settings: Settings, feed: str, when: float) -> tuple[str, str] | None:
+    """`(gate, detail)` if an FX entry at `when` falls in New York's quiet hours or the Sunday
+    open, else None. Anchored to New York so it follows daylight saving; FX only, because Deriv
+    and metals did not suffer these hours (`research/docs/vetoes.md`)."""
+    if not rollover.is_fx(feed):
+        return None
+    local = datetime.fromtimestamp(when, UTC).astimezone(NEW_YORK)
+    span = settings.fx_quiet_ny
+    if span and span[0] <= local.hour < span[1]:
+        return (
+            "fx_quiet_hour",
+            f"{local:%H:%M} New York is inside FX's quiet hours "
+            f"({span[0]:02d}:00-{span[1]:02d}:00: the close and the rollover)",
+        )
+    minutes = settings.fx_sunday_open_min
+    if minutes > 0 and local.weekday() == 6:
+        after = (local.hour - 17) * 60 + local.minute
+        if 0 <= after < minutes:
+            return (
+                "fx_sunday_open",
+                f"{after:.0f}m after the Sunday open - FX reopens on the weekend's gap "
+                f"with the week's widest spread",
+            )
+    return None
+
 
 log = get_logger(__name__)
 
@@ -306,6 +337,10 @@ class Guard:
                     f"{hour:02d}:00 UTC is a quiet hour - the spread is widest around "
                     f"the rollover and nothing opens here",
                 )
+
+        fx_closed = fx_window(self.settings, intent.feed, when)
+        if fx_closed:
+            return self._no(fx_closed[0], intent.feed, fx_closed[1])
 
         if self.context is not None:
             release = self.context.blackout(intent.feed, when)
