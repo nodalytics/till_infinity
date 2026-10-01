@@ -1,4 +1,4 @@
-# Volatility expansion can be called from compression; a breakout straddle still cannot trade it
+# Volatility expansion can be called from compression and the calendar; a breakout straddle still cannot trade it
 
 Measured 2026-10-01 on the lab with [`expansion_build.py`](../harness/expansion_build.py) and
 [`coil_trade.py`](../harness/coil_trade.py). The universe is 48 real instruments (15 FX pairs, gold,
@@ -258,6 +258,90 @@ surprised. It is not an entry.
   interest), measured with this same harness against the same walks.
 - **Tick-level breakouts** (`mt5bt --ticks`), in case bars hide a commitment signature at the
   moment of the break.
+
+## What else foretells an expansion? ([`precursors.py`](../harness/precursors.py), [`signature.py`](../harness/signature.py))
+
+**The question:** is compression one sensor of a broader "pre-expansion state"? Fifteen candidate
+sensors, each pre-registered, were added one at a time to the alert. A sensor counts if it adds
+≥ 0.005 held-out AUC in *both* halves.
+
+| Sensor | Held-out AUC (first / second half) | Counts |
+|---|---|---|
+| The alert's 15 features | 0.786 (0.784 / 0.788) | baseline |
+| **+ the calendar ahead:** the series' weekday × hour range profile over the next 16 bars against the last 16 | **0.803 (0.805 / 0.800)** | **yes, +0.017** |
+| + cross-asset breadth (share of the family already expanding) / family mean percentile | 0.785 / 0.786 | no |
+| + spread state (spread against its 500-bar median) | 0.787 | no |
+| + volume build-up (slope of tick volume over 16 bars) | 0.786 | no |
+| *Over alert + calendar (0.803):* | | |
+| + boundary exhaustion (tests of the edge; slope of their penetration) | 0.803 / 0.803 | no |
+| + vol term structure (RV 4/16, RV 16/64) | 0.803 / 0.803 | no |
+| + directional entropy (up-close share, 32 bars) | 0.803 | no |
+| + return-sequence entropy (sign 3-grams, 64 bars), and its change | 0.802 / 0.802 | no |
+| + cross-asset dispersion; family mean correlation, and its change | 0.802 / 0.801 / 0.801 | no |
+| + all ten | 0.800 | no (overfits) |
+
+- **The calendar is the one other precursor.** A quiet market with a busier session ahead expands
+  by the clock alone, and the alert did not know the calendar.
+- **Everything else the bars can say, the alert's own state already says.** Each sensor alone
+  carries some signal (breadth 0.56 alone, sequence entropy and correlation correlate with the
+  label), but none adds to compression plus the calendar.
+- **No common latent state:** the ten sensors' first principal component explains 19% of their
+  variance at compressed bars. They are not one pre-expansion state seen ten ways.
+- **Sensors these markets cannot answer from bars:**
+  - liquidity (depth, cancel rates);
+  - volume composition (trade count against trade size);
+  - order flow against price.
+
+  They need order-book and trade data. On crypto that is the Binance archive (`bookDepth`,
+  `aggTrades`, `metrics`) or Bybit; see [`../freqtrade/README.md`](../freqtrade/README.md).
+
+**Shipped:** the calendar is now the alert's 16th feature (`clock_ahead`), learned online per
+series. Re-validated with the same pre-registered gates:
+
+- **Real AUC 0.798**, up from 0.781; both halves 0.798 and 0.797.
+- **By family:** crypto 0.848 (from 0.808), FX 0.773 (from 0.752), metals 0.837, stocks 0.750.
+- **15m:** 0.812.
+- **Top decile:** 3.7x the base rate, calibration 1.03.
+- **Walks:** iid 0.550, GARCH 0.582.
+
+## How long does an expansion last, and how far does it go?
+
+**Definitions:**
+
+- **Onset:** the bar where the range percentile crosses into the top fifth.
+- **Duration D:** bars until it falls below the median.
+- **Magnitude M:** the largest move from the pre-onset close during the episode, in pre-onset σ.
+- **Velocity:** V = M / D.
+
+60,250 episodes, 24,178 of them held out.
+
+| | Median D (bars) | Middle half | 90th pct | Median excess range |
+|---|---|---|---|---|
+| All | 19 | 10–38 | 69 | +0.05 |
+| Out of compression | **15** | 9–31 | 53 | **+0.25** |
+| Not out of compression | 20 | 11–40 | 79 | −0.02 |
+| Crypto / metals / FX / stocks / Deriv | 45 / 29 / 28 / 20 / 13 | | | |
+
+- **Out of compression, expansions are shorter but stronger.**
+- **Size:** median magnitude 3.3σ (middle half 2.0–5.6σ). Duration and magnitude move together
+  (rank correlation 0.75).
+- **All three are predictable at the onset,** by rank correlation with the held-out outcome:
+
+  | Target | Gradient boosting | Persistence baseline (last episode's duration) |
+  |---|---|---|
+  | Duration | 0.70 | 0.53 |
+  | Duration, without the last episode | 0.51 | – |
+  | Magnitude | 0.48 | – |
+  | Velocity | 0.53 | – |
+
+  The strongest single predictors are the onset bar's size (0.24 for D, 0.38 for M), its
+  tick-volume surge (0.22), the depth of the compression before it (0.20), and the calendar
+  (0.18). Deeper compression gives slower expansions (−0.24 with velocity).
+
+- **Caveat:** some of this is mechanical. A larger onset bar takes longer to decay out of the
+  percentile on any process. GARCH walks here (persistence 0.98) run longer than markets (median
+  48 bars), so they are not yet a matched control. Before a duration forecast ships, it must beat
+  walks fitted to each market's own persistence.
 
 ## Did it, or the shock forecaster, see the AUS 200 move? (2026-09-30 and 10-01)
 
