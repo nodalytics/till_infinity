@@ -177,6 +177,31 @@ forecaster lacks.
 | E8 | Law-candidate grading: score every finding on invariance, mechanism, both halves, walks and a second measurement system | 8 item 21 | Apply to [`findings.md`](findings.md); the regularities that grade as laws are what strategies should be built on |
 | E7 | Ontology test: which of our objects (levels, zones, sweeps, order blocks, cycles) carry information on markets that they do not on walks | 7 (ontology) | One run per object family, the same harness for each. No new data needed |
 
+## Part F: trading ideas inspired by the agendas
+
+Trades, not risk rules, drawn from agendas 3-8. Most are **conditional**: they trade only where an
+agenda's measured state says the odds differ. That gives each a natural null: the same trade taken
+unconditionally, or in random states for the same share of time.
+
+| # | Idea | Agenda | How it trades | First test | Venue |
+|---|---|---|---|---|---|
+| F1 | **Shock-metabolism range trade.** After a shock, volatility decays at a state-dependent k. Once the fitted half-life has passed, fade excursions to the band edges | 8 item 7 | Range fades only in the post-shock decay window | Do band fades pay more after the half-life than at random times? | MT5, FT |
+| F2 | **Unrecovered-stress straddle.** Arm the two-sided breakout (B1) only when accumulated unrecovered stress F_t is high at ordinary volatility | 8 item 18, 4 (failure mechanics) | B1, gated by F_t | Does F_t raise the straddle's hit rate beyond the shock score alone? | MT5, FT |
+| F3 | **Allosteric gating.** Take a setup only in states where the market's gain to that setup's trigger is high, ∂move/∂trigger = f(Z) | 8 item 8, 6 item 11 | Existing structure signals, filtered by the measured gain | Estimate the gain by state on the first half; does trading high-gain states beat all states on the second? | MT5 |
+| F4 | **Alpha ore bodies.** Map each strategy's P&L over state space (volatility, spread, shock score, hour, ZMA state); trade only inside dense connected regions | 8 item 15 | Every strategy, restricted to its ore body | Map on the first half; does the second half's P&L inside the regions beat outside, and beat random regions of the same size? | All |
+| F5 | **Bullwhip continuation.** When a small move meets high leverage (OI) and delayed reaction, trade for amplification | 8 item 10, 5 item 6 | Continuation entry after the first leg, crypto first | Is the second leg larger in high-OI states than in low-OI states with the same first leg? | FT |
+| F6 | **Information congestion fade.** When participation in an obvious signal spikes (funding, OI, taker share, a big figure), fade it as it degrades | 8 item 5, 7 items 7 and 10 | Fade crowded signals once participation crosses a threshold | The crowding fade (C2/D3) is the first case; then FX big figures ([`focal-points.md`](focal-points.md)) | FT, MT5 |
+| F7 | **Residence-time unwind.** When long-held open interest (old capital) starts leaving, trade continuation of the unwind | 8 item 19, 7 item 11 | Entry on falling OI with an aged position profile | Do unwinds of old OI run further than unwinds of young OI? | FT |
+| F8 | **Special-cause regime trade.** After a special-cause shift (a control chart breaks), stop fading and follow the new process until the chart settles | 8 item 6, 4 item 12 | Switch from reversion to continuation only on a special-cause flag | Does continuation beat reversion after flags, and not at random times? | MT5, FT |
+| F9 | **Lesion breaks.** Trade level breaks only where morphology is abnormal before the touch (spread, tick rate, range shape) | 8 item 9, 5 item 19 | Break entries filtered by an abnormality score | Break rate and push with and without the lesion, against break_probability alone (AUC 0.658) | MT5 |
+| F10 | **Venue-invariant signals.** Trade a crypto signal only when it fires on both the broker's CFD (MT5) and the exchange perp (Bybit) | 8 item 11 (geodesy), 7 item 3 (sheaves) | The agreement filters out venue artefacts | Do signals present on both venues outperform single-venue ones? | MT5 + FT |
+| F11 | **Episode-species strategies.** Classify episodes into species by invariant traits, then run each strategy only on the species it was built for | 8 items 2-3, 5 item 20 | A strategy-to-species map | Does species-matching beat volatility-state matching? | All |
+| F12 | **Island re-coupling.** When an instrument decouples from its cluster, trade its return to the cluster | 8 item 4 | Convergence entry on a correlation break | Caution: cross-venue and cross-rate convergence was null ([`crossing.md`](crossing.md), [`chan.md`](chan.md)). Test only with a pre-registered bar | MT5 |
+| F13 | **Regime-provenance analogues.** Match today's regime fingerprint to past regimes; trade what worked in the matched regime | 6 items 1 and 18, 4 item 19 | Strategy selection by analogue | [`fractal-twins.md`](fractal-twins.md): twins time volatility, not direction. So select *strategy families*, not sides | All |
+| F14 | **Transport-speed breakout.** A fast optimal-transport shift in the return distribution arms a breakout in the direction of the shifted mean | 7 item 4 | Breakout after a large W(P_t, P_t+1) | Direction is the risky part: test the arming against B1's direction-free version | MT5, FT |
+| F15 | **Liquidation-cascade follow and fade.** Follow a cascade while fuel remains (OI still falling, funding still extreme); fade it when fuel is spent | 5 items 6-7, 7 item 7 | Two rules from one state | Do cascades with fuel left run further than spent ones? | FT |
+| F16 | **Funding-stamp positioning.** Hold into or out of the stamp at extreme funding where the drift around stamps is reliable | A3.7, D10 | Timed entries around stamps | D10 measures the drift first | FT |
+
 ## Closed: do not re-run without new information
 
 - Deriv binaries and barrier products: a 2.41% margin on synthetics, 12-15.6% on real instruments
@@ -195,7 +220,7 @@ forecaster lacks.
    A4.10 (bitemporal and type checks).
 2. **Risk from forecasts we trust:** A1.1, A1.3, A2.1, A4.1, A4.2. They use models that already
    pass, so the prior is best.
-3. **Crypto exchange data:** D1, D2 and D3. They are the first test of information MT5 cannot give,
+3. **Crypto exchange data:** D1, D2, D3, then F5, F7 and F15. They are the first test of information MT5 cannot give,
    and the study that converged on volume says new information is what moves the needle.
-4. **Direction-free trades:** B1 and B2.
+4. **Direction-free and conditional trades:** B1 and B2, then F1, F2 and F4 (the ore-body map also grades every existing strategy).
 5. **The ontology test** (E7), which reframes the rest.
