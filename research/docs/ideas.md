@@ -17,6 +17,7 @@ Directional near-misses (Part C) are listed so they are not lost, not because th
 
 **Venue key:** **MT5** = broker FX, metals and indices; **Deriv** = Deriv's own markets;
 **FT** = crypto perpetuals with exchange data, backtested in [`../freqtrade/`](../freqtrade/README.md).
+MT5 and Deriv ideas are backtested with [`../mt5bt/`](../mt5bt/README.md): bid/ask fills, ticks, swap and the broker's lot grid.
 
 **Where the data comes from:**
 
