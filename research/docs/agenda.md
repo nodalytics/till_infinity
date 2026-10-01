@@ -377,6 +377,79 @@ So the test exists already: **an object is discovered if it carries information 
 does not carry on walks we generate.** Applied across the list above, that test is a first
 ontology study, and it needs no new data.
 
+## Agenda 8: a science of financial systems before prediction (parked for later)
+
+Set on 2026-10-01, to be researched later. This batch hunts for whole **scientific worldviews**
+finance has not imported, rather than fields useful to it. Each one attacks a different layer of
+what a market is. Several sharpen earlier items, as noted.
+
+| # | Field → phenomenon | Core questions | Related work here |
+|---|---|---|---|
+| 1 | Epistemology → when is an observation evidence? | Are five agreeing signals five pieces of evidence, or one expressed five ways: I(H; E_1..E_n) against the apparent count? Can there be false consensus of evidence? What is the minimum evidence to tell two states apart? Does evidence correlate before prices do? | [`agents.md`](agents.md) (LLM specialists behaved like fixed priors), [`confirm.md`](confirm.md), the effective-trial count in [`lopez-de-prado.md`](lopez-de-prado.md) |
+| 2 | Taxonomy → what kinds of market objects exist | Are trends, breakouts, liquidity events, gaps, breaks and squeezes distinct species, or one object at different scales? Classify by invariant structural traits, not trader terms | Agenda 7's ontology; [`families.md`](families.md) |
+| 3 | Phylogenetics → do structures have ancestry? | Can an episode inherit structure from the sequence of transformations that produced it, beyond autocorrelation? | Agenda 2 item 11 (inheritance: an order-1 grammar about size, nothing deeper) |
+| 4 | Power systems → grid stability | What are a market's reserve margin, inertia, transmission capacity and frequency deviation? How large a perturbation can the liquidity reserve absorb? Can one market region "island" from another? | None |
+| 5 | Telecommunications → information congestion | Can a signal destroy its own value as participation in it rises: information → participation → congestion → degraded information? | Agenda 7 item 10 (carrying capacity); [`crowding.md`](crowding.md) |
+| 6 | Process control → ordinary vs special-cause variation | Is the system still generating from its established process, or has an intervention changed it? Process integrity, not "is volatility high" | Sharpens agenda 4 item 12; ideas A4.6 |
+| 7 | Pharmacokinetics → shock metabolism | Treat a shock as a dose and the response as a concentration C(t) = C_0 e^(−kt) with a state-dependent k. How fast does a shock penetrate, how long does it stay active, and does its half-life depend on the state? | [`news-volatility.md`](news-volatility.md) (2.424x on the print's bar, 1.762x at +30m), [`ecology.md`](ecology.md) (Hawkes branching 0.61), [`surprise.md`](surprise.md) |
+| 8 | Biochemistry → allostery | Does the state change the **gain** of the market's response to every other input, ∂Y/∂X_1 = f(Z), rather than adding information? | Agenda 6 item 11 (epistasis); [`susceptibility.md`](susceptibility.md) |
+| 9 | Pathology → abnormal morphology | What does structurally abnormal price formation look like before the obvious failure? Can a market carry "lesions" that do not yet show in returns? | [`anomalies.md`](anomalies.md); agenda 5 item 19 (defects) |
+| 10 | Supply chains → the financial bullwhip | Price move → risk adjustment → position change → liquidity impact → price move: what conditions amplify a small disturbance, and does information delay set the amplification? A bullwhip coefficient | [`cascading.md`](cascading.md) (coarse-to-fine cascade, +0.01-0.03), [`infoflow.md`](infoflow.md) |
+| 11 | Geodesy → a reference frame for markets | What is the right coordinate system for a state, and what is invariant under venue, timeframe, currency and sampling transformations? | [`lagging.md`](lagging.md), [`crossing.md`](crossing.md), [`twins.md`](twins.md); agenda 7 item 9 (metrology) |
+| 12 | Navigation → dead reckoning | How fast does a model's state uncertainty grow without a fresh observation (P_t+1 = F P_t F' + Q), and when does the reconstruction become unreliable? | [`conformal.md`](conformal.md) (coverage at 5, 20 and 50 bars); the stale-feed handling in production |
+| 13 | Air-traffic control → collision geometry | When do independent strategies or positions become dangerously synchronised? Collision as simultaneous competition for one resource, not similarity | [`power-and-sizing.md`](power-and-sizing.md) (34 positions on correlated dollar legs) |
+| 14 | Railway signalling → interlocking | Which decisions are valid alone but jointly impossible (same liquidity, execution window, collateral, risk budget, dependency)? | [`verification.md`](verification.md) (invariants on single decisions, none across them) |
+| 15 | Mining geology → alpha ore bodies | Is alpha concentrated in small connected regions of state space, with grade, boundaries, dilution and extraction cost? | [`manifold.md`](manifold.md), [`triage.md`](triage.md) |
+| 16 | Archival science → provenance | Can two identical-looking datasets record different realities because their provenance (venue, engine, timestamp, feed, aggregation, cleaning) differs? A provenance calculus | Sharpens agenda 6 item 8 (taphonomy); [`similarity.md`](similarity.md) (a cited doc that never existed) |
+| 17 | Statistical genetics → epistasis, radically | Do variables mean anything outside a structural context, Y = β1X1 + β2X2 + β12X1X2? An attack on features having fixed identities | Sharpens agenda 6 item 11 |
+| 18 | Sleep science → unrecovered stress | A deficit account F_t+1 = F_t + S_t − R_t: at equal volatility, does accumulated unrecovered stress change the response to a new shock? | Agenda 4's failure mechanics; ideas A4.1. [`susceptibility.md`](susceptibility.md): the one fatigue proxy so far had the wrong sign |
+| 19 | Chemical engineering → residence time | Does instability depend on how long capital or information stays in a subsystem, not on volume alone? | Agenda 7 item 11 (capital age); open interest in `till_infinity/prices/positioning.py` |
+| 20 | Aerospace → the flight envelope | Which region of state space can a strategy structurally survive? Survivability geometry, not expected return | Agenda 4 item 9; the risk gates and vetoes ([`vetoes.md`](vetoes.md)) |
+| 21 | Philosophy of science → are financial laws laws? | Law, regularity, correlation and measurement artefact are different things. A law candidate needs invariance, mechanism, validity across contexts and robustness to measurement | See below: we have examples of each |
+
+**The layers, as the agenda arranged them:**
+
+| Discipline | Question |
+|---|---|
+| Geodesy | Where is the state? |
+| Metrology | How do we observe it? |
+| Taxonomy | What objects exist? |
+| Phylogenetics | Where did they come from? |
+| Epistemology | What do we actually know? |
+| Pharmacokinetics | How do shocks propagate? |
+| Power systems | How does the system remain stable? |
+| Pathology | What does abnormal structure look like? |
+| Supply chains | How does feedback amplify? |
+| Navigation | How do we reconstruct hidden state? |
+| Genetics | How do interactions create phenotype? |
+| Aerospace | What states are survivable? |
+
+The overarching question: **can we build a science of financial systems that describes markets
+before asking whether they are predictable?** The hierarchy it proposes:
+
+    Measurement -> Ontology -> Morphology -> Dynamics -> Causality -> Stability -> Survival -> Decision
+
+A finished study in this frame reads: *we found a previously unformalised property of financial
+systems, borrowed the machinery from the science that formalised it, and tested whether it is
+real.*
+
+**Item 21 against our own record.** This program has met all four categories already:
+
+- **Laws, exactly.** Deriv's markets follow their published generators. Realised volatility is
+  within 0.49% of the name on 12 of 12 indices. The 0.5826 discrete-monitoring constant makes the
+  barrier closed forms exact ([`generators.md`](generators.md), [`deriving.md`](deriving.md)). That
+  is invariance, mechanism and measurement robustness together.
+- **A regularity with a mechanism:** volatility clustering. It holds on every real market and both
+  halves, is absent on iid walks, and carries the shock forecaster.
+- **Correlations without a law:** most directional findings, which failed a second half, a walk
+  control or deflation ([`findings.md`](findings.md)).
+- **Measurement artefacts:** the rollover quote spike, the 1,000x crypto spread, the label
+  geometry of hold rates ([`rollover.md`](rollover.md), [`skill.md`](skill.md)).
+
+So the criteria can be applied, not just stated. A law-candidate checklist (invariance across venues
+and timeframes, a mechanism, both halves, walks, a second measurement system) could grade every
+finding in [`findings.md`](findings.md).
+
 ## The backlog of ideas to backtest
 
 The trading and risk ideas these agendas suggest, together with ideas from past studies, are kept
