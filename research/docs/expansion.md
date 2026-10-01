@@ -195,6 +195,70 @@ the one the trade needs answered directly: once price leaves the box, does it co
 measured on post-breakout paths against a martingale's own odds, in
 [`escape.py`](../harness/escape.py).
 
+## Once price leaves the box, does it commit? ([`escape.py`](../harness/escape.py))
+
+The whipsaw is B1's central failure mode, so this asks the question the trade needs: **does
+compression change the distribution of post-breakout paths?**
+
+**Pre-registered:**
+
+- **Box:** the 16 bars ending at the arming bar; W is its height.
+- **Breakout:** the first bar within the next 16 that leaves the box. Follow it 48 bars from its
+  close.
+- **Outcomes:**
+  - *clean:* reaches the edge + 1W before the opposite edge;
+  - *whipsaw:* reaches the opposite edge first;
+  - *stall:* neither.
+- **The martingale null, event by event:** P(clean) = distance to the opposite edge / (that +
+  distance to +1W).
+- **The verdict compares real markets with GARCH walks**, because stalls count as not-clean, which
+  puts the raw excess below zero on any process.
+
+| First breakouts | n | Clean | Whipsaw | Stall | Excess over martingale odds | Median BQ | Median MAE/MFE |
+|---|---|---|---|---|---|---|---|
+| Alert ≥ 2.5x | 2,153 | 0.430 | 0.385 | 0.186 | −0.098 [−0.120, −0.076] | 0.97 W | 0.92 |
+| Compressed, alert quiet | 13,377 | 0.428 | 0.438 | 0.134 | −0.076 [−0.087, −0.065] | 1.04 W | 1.01 |
+| All compressed | 17,667 | 0.426 | 0.423 | 0.151 | −0.082 [−0.091, −0.073] | 1.01 W | 0.99 |
+| **GARCH walks** | 2,372 | 0.420 | 0.411 | 0.169 | **−0.083** [−0.105, −0.061] | 0.91 W | 0.96 |
+
+**No.** Breakouts from compressed boxes on real markets commit exactly as often as breakouts on
+GARCH walks: −0.082 against −0.083. Every half and every family is negative, from −0.03 (crypto)
+to −0.14 (stocks under the alert).
+
+- **The alert's breakouts commit slightly *less*:** −0.098, within noise of the walks. The alert
+  predicts energy, not commitment.
+- **Refractory:** a second breakout after a whipsaw does better than a first (−0.054 against
+  −0.082). The walks show the same lift (−0.048 against −0.083), so it is the geometry of the
+  second box position, not a market's tendency to oscillate after a failure.
+- **Precursors at the breakout bar are geometry, not information:**
+
+  | Feature | AUC on markets | AUC on walks |
+  |---|---|---|
+  | Closed outside the box | 0.581 | 0.580 |
+  | The bar's range | 0.526 | 0.531 |
+  | Tick-volume z | 0.536 | – |
+  | Wait, box width, alert strength | 0.49–0.51 | 0.50–0.51 |
+  | Gradient boosting, all features (second half) | 0.612 | 0.585 |
+  | The martingale geometry alone | 0.606 | 0.618 |
+
+  Everything together adds 0.006 over the geometry.
+
+**So:** the hoped-for state, where direction is uncertain but continuation is not, is not what
+compression produces on these markets and bars. Compression reliably predicts that the market
+will move more (energy). It does not predict that a move out of the box will keep going. A
+two-sided bracket therefore pays for the whipsaw at the rate a random walk does, and its costs
+make it lose. The alert stays in production as a risk reading: sizing, stops, and not being
+surprised. It is not an entry.
+
+**What is left untested, each a new trial:**
+
+- **Options**, which monetise energy without needing commitment: buy volatility on the alert.
+  Deribit BTC and ETH are reachable.
+- **Other direction-free precursors** of energy (the shock forecaster, release timing, open
+  interest), measured with this same harness against the same walks.
+- **Tick-level breakouts** (`mt5bt --ticks`), in case bars hide a commitment signature at the
+  moment of the break.
+
 ## Did it, or the shock forecaster, see the AUS 200 move? (2026-09-30 and 10-01)
 
 The ASX 200 cash index (Yahoo 15m bars; the broker's Australia 200 CFD is not on the lab), replayed
