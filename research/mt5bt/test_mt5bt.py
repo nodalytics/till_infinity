@@ -224,3 +224,36 @@ def test_a_trailing_stop_follows_completed_bars_and_takes_the_profit():
     # after bar 2 the best bid is 1.1050, so the stop is 1.1030; bar 3's low of 1.1020 takes it
     assert t["reason"].iat[0] == "trail" and t["exit"].iat[0] == pytest.approx(1.1030)
     assert t["R"].iat[0] > 0
+
+
+# ------------------------------------------------------------------ resting orders and trails on ticks
+
+
+def test_a_resting_buy_stop_jumped_through_fills_at_the_tick_not_the_level():
+    # quiet for a bar, then the bid jumps from 1.1000 to 1.1030 in one tick: a buy stop at 1.1011
+    prices = [1.1000] * 30 + [1.1000] * 10 + [1.1030] * 50
+    b = ticked(prices)
+    t, _ = run(b, pending([dict(i=0, side=1, entry=1.1011, expires=3, stop=0.0050)]),
+               Costs(swap=False, fill="ticks"))
+    assert t["fill"].iat[0] == "ticks"
+    assert t["entry"].iat[0] == pytest.approx(1.1031)  # the tick's ask, 20 pips past the level
+
+
+def test_a_trailing_stop_on_ticks_follows_ticks_already_seen():
+    # long from 1.1001; the bid climbs to 1.1050, then falls through 1.1030
+    prices = [1.1000] * 30 + list(np.linspace(1.1000, 1.1050, 20)) + [1.1040, 1.1020] + [1.1020] * 38
+    b = ticked(prices)
+    t, _ = run(b, lambda bars, bk: pd.DataFrame([dict(i=0, side=1, stop=0.0030, trail=0.0020)]),
+               Costs(swap=False, fill="ticks"))
+    assert t["fill"].iat[0] == "ticks" and t["reason"].iat[0] == "trail"
+    assert t["exit"].iat[0] == pytest.approx(1.1020)  # the first tick at or below 1.1030
+
+
+def test_one_cancels_the_other_by_tick_time():
+    # one bar touches both edges: ticks say the low came first, so the sell stop wins
+    prices = [1.1000] * 30 + [1.0985, 1.1015] + [1.1015] * 58
+    b = ticked(prices)
+    legs = [dict(i=0, side=1, entry=1.1011, expires=3, stop=0.0030, oco=1),
+            dict(i=0, side=-1, entry=1.0990, expires=3, stop=0.0030, oco=1)]
+    t, _ = run(b, pending(legs), Costs(swap=False, fill="ticks"))
+    assert len(t) == 1 and t["side"].iat[0] == -1
