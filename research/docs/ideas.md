@@ -236,6 +236,8 @@ profitable one? The ablation G4 asks whether the economics improve monotonically
 compression intensity. Judge on EV in R (not hit rate), with MFE, MAE, run length and activation
 rate beside it, net of spread, swap and repeated activations. Use both halves and walks.
 
+**Results (2026-10-01, [`expansion.md`](expansion.md)):** G1-G4 hold (energy 10x more than sign, a hazard of 79% by bar 16 under the alert, monotone with strength), but G5 kills the bracket: the alert raises the whipsaw from 0.10 to 0.30, and once price leaves the box it commits exactly as often as on GARCH walks (−0.082 vs −0.083 excess over martingale odds). Best SL-only bracket over 20 configurations: −0.010R.
+
 **The wider program, if G1-G2 hold:** search for other *direction-free precursors of market
 energy* (the shock forecaster, the vol clock, release timing, open interest) and test whether each
 can be monetised through asymmetric execution.
