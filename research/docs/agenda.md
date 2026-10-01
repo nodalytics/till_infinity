@@ -1,6 +1,7 @@
 # Research agenda: borrowing methods from other sciences
 
-The desk's cross-disciplinary research agenda, set on 2026-09-30, and where each item stands.
+The desk's cross-disciplinary research agenda, set on 2026-09-30 and extended on 2026-10-01, and
+where each item stands.
 [`findings.md`](findings.md) has the results so far. This page is the map of what to do next and why.
 
 ## The strategy
@@ -81,6 +82,62 @@ The agenda's top pick, OHLC → symbolic market language → grammar → structu
 transition, is program E. It asks what the smallest language describing market behaviour is, which
 grammatical structures recur, which transitions correspond to changes in state, and whether those
 transitions have economic consequences.
+
+## Agenda 3: the radical frontier (parked for later)
+
+Set on 2026-10-01, to be researched later. These are fields whose basic objects, mathematics or
+worldview are far from finance. The strategy is the same: borrow the **problem formulation**, not
+an algorithm. Where earlier work already touches an item, it is noted.
+
+| # | Field → idea | Core question | Related work here |
+|---|---|---|---|
+| 1 | Mycology → decentralised resource routing | Does liquidity reroute through venues like a fungal network after one is impaired (redundancy, path efficiency, damage and recovery)? | None. Needs multi-venue liquidity data |
+| 2 | Architecture → markets as designed spaces | Are some states (price × liquidity × volatility) structurally easier for capital to move through? | None |
+| 3 | Cartography → a market atlas | Can markets be represented as navigable state spaces rather than time series? | [`manifold.md`](manifold.md) (a state manifold) |
+| 4 | Paleoclimatology → market climates | Reconstruct a multidimensional latent "liquidity climate" from proxies (spreads, volume, funding, OI, correlation), then study climate transitions | Partly: the shock forecaster's state; [`infoflow.md`](infoflow.md) |
+| 5 | Seismology → financial seismology | Infer a shock's source, magnitude, propagation and aftershocks; the propagation medium is the object | [`infoflow.md`](infoflow.md) (volatility spills over, about 2x), [`ecology.md`](ecology.md) (Hawkes self-excitation, branching 0.61) |
+| 6 | Volcanology → pressure accumulation | Is the market accumulating structural pressure before a threshold release? | [`topology.md`](topology.md) (critical slowing down never appeared), [`susceptibility.md`](susceptibility.md) |
+| 7 | Materials science → market fatigue | Does cumulative stress predict instability better than instantaneous volatility? | None directly; testable against the shock forecaster |
+| 8 | Fracture mechanics → liquidity cracks | Do micro-anomalies (spread, depth, basis, funding, cross-venue price) behave like microcracks before dislocations? | [`causal.md`](causal.md): the spread is a symptom, not a lever. Needs order-book data |
+| 9 | Oceanography → capital currents | Estimate a capital-flow field (currents, eddies, convergence) across BTC → ETH → majors → small caps | [`infoflow.md`](infoflow.md) (no directional flow between assets) |
+| 10 | Phonology → market phonemes | Can episodes be built hierarchically from structural primitives (phoneme → morpheme → word)? | [`grammar.md`](grammar.md): no small alphabet; a one-bar grammar about size |
+| 11 | Gene regulation → strategy activation networks | Model strategies as conditionally activated and mutually regulating, not as correlated assets | [`ecology.md`](ecology.md) |
+| 12 | Immunology → immune memory | Does a market remember shocks, and for how long: P(S_t+1 \| S_t, shock history) against P(S_t+1 \| S_t)? | Partly: shock clustering in the forecaster and in [`ecology.md`](ecology.md); memory *length* untested |
+| 13 | Cognitive archaeology → collective beliefs | Reconstruct what the market collectively believed at t from its artefacts (options surfaces, curves, positioning) | Needs options and futures data |
+| 14 | Incomplete-information games → belief wars | How fast do beliefs converge after information arrives, and when does disagreement itself create volatility? | [`surprise.md`](surprise.md) (priced within 3 minutes), [`rituals.md`](rituals.md) |
+| 15 | Anthropology of time → market time | Replace clock time with market time, dτ = g(X_t)dt, for volatility, regimes, event studies and memory | Partly: the volume clock in [`vpin.md`](vpin.md); the weekday × hour clock in [`calendar-returns.md`](calendar-returns.md) |
+| 16 | Thermodynamics of computation → the cost of information | What does it cost to turn information into a decision, and what is information efficiency per resource spent? | None |
+| 17 | Evolutionary game theory → markets without rational agents | Strategy → environment → strategy feedback as a theory of adaptive markets | [`ecology.md`](ecology.md): no density dependence beyond walks |
+| 18 | Information archaeology → forgotten alpha | Re-test old hypotheses with new data and methods: the fossil record of quant finance | [`chan.md`](chan.md), [`lopez-de-prado.md`](lopez-de-prado.md) |
+| 19 | Cybernetics → reflexive markets | How does deploying a predictive signal change the signal's own statistics (the deeper reason alpha decays)? | [`ecology.md`](ecology.md): "alpha decay" of evolved rules was selection bias |
+| 20 | Semiotics → prices as signs | Context-dependent price meaning: the same price is a breakout, a support or a liquidation threshold | Partly: the structures engine's levels and zones; [`focal-points.md`](focal-points.md) |
+| - | **Metrology → the science of measuring financial concepts** | Is "liquidity" one variable or several? Are volatility, trend, regime and alpha well-defined measurements of latent structures? | See below: our own record argues for this first |
+
+**The most promising chain, as the agenda framed it:**
+
+    Market measurement -> representation -> grammar -> dynamics -> intervention
+
+That is metrology, then compiler theory and linguistics, then cybernetics. The question underneath
+it: *what if most of quantitative finance's objects are poorly defined measurements of deeper latent
+structures?*
+
+**Why metrology deserves to go first: our own record already supports it.** Several of this
+program's largest "findings" turned out to be measurement problems, not market behaviour:
+
+- the boosted envelope's gain was mostly correcting a noisy volatility unit; walks gained the same
+  ([`gbm-envelope.md`](gbm-envelope.md));
+- the rollover "market behaviour" in FX level statistics was a broker quote artefact
+  ([`rollover.md`](rollover.md));
+- crypto spreads were read 1,000x too wide from an inferred point size ([`vetoes.md`](vetoes.md));
+- the levels' hold rate was the geometry of the label, the same on random walks
+  ([`skill.md`](skill.md));
+- the empirical envelope on Deriv's constant-volatility indices added error by measuring in a
+  noisy live volatility estimate ([`deriv-variants.md`](deriv-variants.md)).
+
+A first metrology program could ask, for volatility, liquidity and "regime": how many distinct
+latent constructs does each name hide (factor analysis across competing measures)? How much
+measurement error does each measure carry, judged against walks where the truth is known? Which
+measures are stable across venues, timeframes and estimators?
 
 ## How a program is judged
 
