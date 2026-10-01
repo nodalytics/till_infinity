@@ -92,12 +92,15 @@ def _frame(signals) -> pd.DataFrame:
         df = signals.copy()
     else:
         df = pd.DataFrame([s.__dict__ for s in signals or []])
-    for col, default in (("target", 0.0), ("hold", 0), ("risk", 0.0)):
+    for col, default in (("target", 0.0), ("hold", 0), ("risk", 0.0), ("entry", np.nan),
+                         ("expires", 1), ("oco", -1), ("trail", 0.0)):
         if col not in df:
             df[col] = default
     if df.empty:
-        return pd.DataFrame(columns=["i", "side", "stop", "target", "hold", "risk"])
-    df = df.fillna({"target": 0.0, "hold": 0, "risk": 0.0})
+        return pd.DataFrame(columns=["i", "side", "stop", "target", "hold", "risk", "entry",
+                                     "expires", "oco", "trail"])
+    df = df.fillna({"target": 0.0, "hold": 0, "risk": 0.0, "expires": 1, "oco": -1,
+                    "trail": 0.0})
     df["i"] = df["i"].astype(int)
     df["side"] = np.sign(df["side"]).astype(int)
     bad = (df["side"] == 0) | ~(df["stop"] > 0)
@@ -143,8 +146,15 @@ def _sides(book: Book, sp: np.ndarray):
 
 
 def walk(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: int,
-         sp: np.ndarray, costs: Costs, sides=None) -> dict | None:
-    """One trade from bar j's open to its exit, on bars. None when there is no bar j."""
+         sp: np.ndarray, costs: Costs, sides=None, fill: float | None = None,
+         trail: float = 0.0) -> dict | None:
+    """One trade from bar j's open (or a resting order's `fill` inside bar j) to its exit, on
+    bars. None when there is no bar j. On a resting order's fill bar, a stop inside that bar's
+    range counts: the bar cannot say whether the low came before the fill, so it is assumed to.
+
+    `trail` > 0 trails the stop that far behind the best exit-side price of the bars already
+    *completed* (never the bar being checked: its high may have come after its low). The stop only
+    ever tightens; a trailed stop that is hit exits as "trail"."""
     b = book.bars
     n = len(b)
     if j >= n:
@@ -152,7 +162,10 @@ def walk(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: in
     (o, h, l, c), (ao, ah, al, ac) = sides or _sides(book, sp)
     pt = book.spec.point
     slip = costs.slippage_points * pt
-    entry = ao[j] + slip if side > 0 else o[j] - slip
+    if fill is not None and not np.isnan(fill):
+        entry = fill
+    else:
+        entry = ao[j] + slip if side > 0 else o[j] - slip
     stop = entry - side * stop_d
     target = entry + side * target_d if target_d > 0 else np.nan
     stop_slip = slip + costs.stop_slip_frac * stop_d
@@ -161,10 +174,14 @@ def walk(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: in
     # the exit side: a long sells the bid, a short buys the ask
     xo, xh, xl, xc = (o, h, l, c) if side > 0 else (ao, ah, al, ac)
     base = dict(entry=entry, sp_entry=ao[j] - o[j], fill="bars")
+    first_stop, best = stop, entry
     for k in range(j, last + 1):
+        if trail > 0 and k > j:
+            stop = max(stop, best - trail) if side > 0 else min(stop, best + trail)
+        why = "stop" if stop == first_stop else "trail"
         if k > j:
             if (side > 0 and xo[k] <= stop) or (side < 0 and xo[k] >= stop):
-                return base | dict(exit_bar=k, exit=xo[k] - side * stop_slip, reason="stop_gap",
+                return base | dict(exit_bar=k, exit=xo[k] - side * stop_slip, reason=why + "_gap",
                                    sp_exit=ao[k] - o[k])
             if target_d > 0 and ((side > 0 and xo[k] >= target) or (side < 0 and xo[k] <= target)):
                 return base | dict(exit_bar=k, exit=xo[k], reason="target_gap", sp_exit=ao[k] - o[k])
@@ -174,10 +191,11 @@ def walk(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: in
             first = _first_tick(book, b["ts"].iat[k], b["ts"].iat[k] + step, side, stop, target)
             hit_s, hit_t = first == "stop", first == "target"
         if hit_s:
-            return base | dict(exit_bar=k, exit=stop - side * stop_slip, reason="stop",
+            return base | dict(exit_bar=k, exit=stop - side * stop_slip, reason=why,
                                sp_exit=ac[k] - c[k])
         if hit_t:
             return base | dict(exit_bar=k, exit=target, reason="target", sp_exit=ac[k] - c[k])
+        best = max(best, xh[k]) if side > 0 else min(best, xl[k])
     reason = "time" if hold and last == j + hold - 1 else "end"
     return base | dict(exit_bar=last, exit=xc[last], reason=reason, sp_exit=ac[last] - c[last])
 
@@ -225,6 +243,60 @@ def walk_ticks(book: Book, j: int, side: int, stop_d: float, target_d: float, ho
                 reason=reason, sp_exit=ask[k] - bid[k], fill="ticks")
 
 
+def resolve(sig: pd.DataFrame, book: Book, sides, costs: Costs) -> pd.DataFrame:
+    """Market signals fill at bar i + 1's open. Resting stop orders (`entry` a price level) fill
+    on the first bar within `expires` whose *entry*-side price reaches the level: a buy stop when the ask's high reaches it, a sell stop when the bid's low does; at
+    the level, or at the open when the bar gaps through it. Orders sharing an `oco` id cancel each
+    other: the first to fill wins. When both legs fill in the same bar, the bar cannot say which
+    came first, and the leg against the bar's close is taken - the whipsaw, the worse case.
+
+    Returns one row per order that fills: the signal's columns plus `j` (fill bar) and `fill`."""
+    (o, h, l, c), (ao, ah, al, ac) = sides
+    n = len(o)
+    slip = costs.slippage_points * book.spec.point
+    out = []
+    for row in sig.itertuples(index=False):
+        r = row._asdict()
+        if np.isnan(row.entry):
+            r.update(j=row.i + 1, fill=np.nan)
+            out.append(r)
+            continue
+        a, z = row.i + 1, min(n, row.i + 1 + int(row.expires))
+        if a >= n:
+            continue
+        L = row.entry
+        if row.side > 0:
+            hit = np.nonzero(ah[a:z] >= L)[0]
+            if not len(hit):
+                continue
+            k = a + hit[0]
+            px = max(L, ao[k]) + slip
+        else:
+            hit = np.nonzero(l[a:z] <= L)[0]
+            if not len(hit):
+                continue
+            k = a + hit[0]
+            px = min(L, o[k]) - slip
+        r.update(j=k, fill=px)
+        out.append(r)
+    df = pd.DataFrame(out)
+    if df.empty:
+        return df
+    grouped = df[df["oco"] >= 0]
+    keep = df[df["oco"] < 0]
+    winners = []
+    for _, g in grouped.groupby("oco"):
+        g = g.sort_values("j")
+        first = g[g["j"] == g["j"].iloc[0]]
+        if len(first) > 1:  # both legs in one bar: the whipsaw
+            k = int(first["j"].iloc[0])
+            against = -1 if c[k] >= o[k] else 1
+            first = first[first["side"] == against].head(1)
+        winners.append(first.head(1))
+    df = pd.concat([keep, *winners], ignore_index=True) if winners else keep
+    return df.sort_values(["j", "i"]).reset_index(drop=True)
+
+
 def run(books: list[Book] | Book, strategy, costs: Costs | None = None, *, equity: float = 10_000.0,
         risk: float = 0.005, max_open: int = 0, one_per_symbol: bool = True, allow=None,
         signals: dict[str, pd.DataFrame] | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -242,8 +314,9 @@ def run(books: list[Book] | Book, strategy, costs: Costs | None = None, *, equit
         sides = _sides(book, sp)
         ts = book.bars["ts"].to_numpy()
         busy_until = -1
+        sig = resolve(sig, book, sides, costs)
         for row in sig.itertuples(index=False):
-            j = row.i + 1
+            j = int(row.j)
             if j >= len(ts):
                 continue
             if one_per_symbol and j <= busy_until:
@@ -253,14 +326,16 @@ def run(books: list[Book] | Book, strategy, costs: Costs | None = None, *, equit
                 refused.append(dict(symbol=book.symbol, ts=ts[j], why="vetoed"))
                 continue
             got = None
-            if costs.fill in ("auto", "ticks"):
+            resting = not np.isnan(row.fill)
+            trail = float(getattr(row, "trail", 0.0) or 0.0)
+            if costs.fill in ("auto", "ticks") and not resting and not trail:
                 got = walk_ticks(book, j, row.side, row.stop, row.target, int(row.hold), costs)
                 if got is None and costs.fill == "ticks":
                     refused.append(dict(symbol=book.symbol, ts=ts[j], why="no ticks"))
                     continue
             if got is None:
                 got = walk(book, j, row.side, row.stop, row.target, int(row.hold), sp, costs,
-                           sides)
+                           sides, fill=row.fill if resting else None, trail=trail)
             if got is None:
                 continue
             busy_until = got["exit_bar"]

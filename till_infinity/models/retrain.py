@@ -423,8 +423,101 @@ def run_deriv_law(fetch: Callable[[str, str], list], names: list[str]) -> tuple[
     return (spec if not reasons else None), report
 
 
+#: The expansion alert's gates (`structures/learning/expansion.py`, research/docs/expansion.md).
+#: Its walks are not held to 0.5: from a deep compression the smoothed range takes longer to climb
+#: back on any process, so some skill there is mechanical and correct. What must hold is that
+#: markets beat the walks by a clear margin.
+EXPANSION_GATES: dict[str, Any] = {
+    "min_real_auc": 0.68,
+    "over_control": 0.10,
+    "vs_champion": 0.01,
+    "calibration": (0.7, 1.4),
+}
+
+
+def expansion_gate(challenger: dict, champion: dict) -> list[str]:
+    """Every reason not to promote an expansion model; empty means promote."""
+    g = EXPANSION_GATES
+    reasons = []
+    real = challenger.get("real", float("nan"))
+    if not real >= g["min_real_auc"]:
+        reasons.append(f"real-market AUC {real} below {g['min_real_auc']}")
+    control = challenger.get("control")
+    if control is not None and not real - control >= g["over_control"]:
+        reasons.append(
+            f"real AUC {real} beats the walks' {control} by less than {g['over_control']}"
+        )
+    theirs = champion.get("real")
+    if theirs is not None and not math.isnan(theirs) and not real >= theirs - g["vs_champion"]:
+        reasons.append(f"real AUC {real} against the champion's {theirs}")
+    lo, hi = g["calibration"]
+    cal = challenger.get("calibration", float("nan"))
+    if not lo <= cal <= hi:
+        reasons.append(f"top-decile calibration {cal} outside {lo}-{hi}")
+    return reasons
+
+
+def run_expansion(fetch: Callable[[str, str], list], names: list[str]) -> tuple[dict | None, dict]:
+    """One contest for the compression-to-expansion alert. Returns (spec or None, report)."""
+    from ..structures.learning import expansion as ex
+    from . import expansion_train as et
+
+    series = {}
+    for symbol in names:
+        for interval in ("15m", "1h", "4h"):
+            got = fetch(symbol, interval)
+            if len(got) > ex.WARM + ex.AHEAD + 50:
+                series[(symbol, interval)] = got
+    rows = et.dataset(series)
+    when, kinds, x, y = rows.arrays()
+    if len(y) == 0:
+        return None, {"series": len(series), "promoted": False, "reasons": ["no usable history"]}
+    cut = when.max() - HOLDOUT_DAYS * 86_400
+    train, held = when < cut, when >= cut
+    spec = et.train(x[train], y[train])
+    model = spec.pop("_sklearn")
+    trees = frozen.Trees(spec)
+    sample = x[held][:5_000]
+    exact = (
+        float(
+            np.max(
+                np.abs(
+                    np.array([trees.predict(list(r)) for r in sample])
+                    - model.predict_proba(sample)[:, 1]
+                )
+            )
+        )
+        if len(sample)
+        else 0.0
+    )
+    _, ck, cx, cy = et.dataset(et.walks()).arrays()  # never trained on
+    xs, ys, ks = (
+        np.vstack([x[held], cx]),
+        np.concatenate([y[held], cy]),
+        np.concatenate([kinds[held], ck]),
+    )
+    challenger = et.score(trees.predict, xs, ys, ks)
+    current = frozen.load(ex.MODEL, recipe=ex.RECIPE, names=ex.NAMES)
+    champion = et.score(frozen.Trees(current).predict, xs, ys, ks) if current else {}
+    reasons = expansion_gate(challenger, champion)
+    if exact > GATES["exact"]:
+        reasons.append(f"evaluator differs from the training library by {exact:.2e}")
+    spec["test"] = challenger
+    spec["holdout_from"] = datetime.fromtimestamp(cut, UTC).isoformat(timespec="seconds")
+    report = {
+        "series": len(series),
+        "challenger": challenger,
+        "champion": champion,
+        "promoted": not reasons,
+        "reasons": reasons,
+        "evaluator_max_diff": exact,
+    }
+    return (spec if not reasons else None), report
+
+
 REGISTRY: dict[str, Callable[..., tuple[dict | None, dict]]] = {
     "shocks": run_shocks,
+    "expansion": run_expansion,
     "envelope_fx15m_5": run_envelope5,
     "envelope_fx15m_20": run_envelope20,
     "envelope_fx15m_50": run_envelope50,

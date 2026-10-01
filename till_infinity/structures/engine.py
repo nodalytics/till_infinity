@@ -59,7 +59,7 @@ from .drawing import (
     sweeps,
     vwap,
 )
-from .learning import focus, patterns, regimes, shocks, touches
+from .learning import expansion, focus, patterns, regimes, shocks, touches
 from .learning.focus import Focus
 from .models import Shape, Signal
 from .state import Restorable
@@ -1252,7 +1252,12 @@ class Engine:
         if ebook is not None:
             counts["envelopes"] = ebook.forget({k.split("|", 1)[0] for k in ebook.envelopes} - gone)
         # Each keyed "feed|interval" in the named field.
-        for name, keyed in (("shocks", "series"), ("touches", "series"), ("vol_clock", "last")):
+        for name, keyed in (
+            ("shocks", "series"),
+            ("expansion", "series"),
+            ("touches", "series"),
+            ("vol_clock", "last"),
+        ):
             fbook = getattr(self, name, None)
             if fbook is not None:
                 counts[name] = fbook.forget(
@@ -1535,6 +1540,13 @@ class Engine:
             found = self.shocks = shocks.Shocks()
         return found
 
+    def _expansion(self) -> expansion.Expansion:
+        """The compression-to-expansion alert, created on demand - see `_projection`."""
+        found = getattr(self, "expansion", None)
+        if found is None:
+            found = self.expansion = expansion.Expansion()
+        return found
+
     def _observe_forecasts(
         self,
         feed: str,
@@ -1587,6 +1599,14 @@ class Engine:
             )
         except Exception as exc:
             log.debug("structures: no shock forecast for %s %s: %s", feed, interval, exc)
+        try:
+            if expansion.applies(interval):
+                seconds = lv.SECONDS.get(interval, 0.0)
+                self._expansion().observe(
+                    feed, interval, seconds, opened + seconds, high, low, close, volume
+                )
+        except Exception as exc:
+            log.debug("structures: no expansion reading for %s %s: %s", feed, interval, exc)
 
     def _touch_at(self, feed: str, interval: str) -> dict[str, float]:
         """P(the envelope's P90 / P10 touched in the next bars), for the journal. Absent while cold
@@ -1600,6 +1620,14 @@ class Engine:
         """P(shock within a few bars) for this series, for the journal. Absent while cold."""
         try:
             return self._shocks().reading(feed, interval)
+        except Exception:  # never let a published extra stop a call
+            return {}
+
+    def _expansion_at(self, feed: str, interval: str) -> dict[str, float]:
+        """P(volatility expands out of compression soon), for the journal. Absent unless the series
+        is compressed, warm and a model is shipped."""
+        try:
+            return self._expansion().reading(feed, interval)
         except Exception:  # never let a published extra stop a call
             return {}
 
@@ -2691,6 +2719,7 @@ class Engine:
                         **self._envelope_at(feed, interval, price),
                         **self._clock_at(feed, interval, when),
                         **self._shock_at(feed, interval),
+                        **self._expansion_at(feed, interval),
                         **self._touch_at(feed, interval),
                     },
                     # The same object the tracker put on the touch, so the
