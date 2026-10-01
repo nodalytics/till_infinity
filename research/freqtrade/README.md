@@ -129,3 +129,22 @@ Run them again with:
 
     .venv/bin/freqtrade backtesting -c config.bybit.json --strategy CoilBreakout --timerange 20240101- --export trades
     .venv/bin/python report.py FundingFade CoilBreakout FundingStamp
+
+## Trading *with* extreme funding: the one-shot test, 2026-10-01 ([`../harness/funding_with.py`](../harness/funding_with.py))
+
+FundingFade's loss suggested the crowd paying extreme funding was right. That was a hypothesis
+made by looking, so it got one pre-registered test on data neither venue nor year had touched:
+**Binance USD-M, 12 perps, 2023.** The rule: after a stamp in the top or bottom 5% of its 90 days,
+trade *with* the side that pays. Stop 3 ATR, exit after 24h, fees 0.05% a side, funding at every
+stamp held.
+
+| Rule | Trades | Net per trade [95% CI] | 2023 H1 / H2 |
+|---|---|---|---|
+| **With the crowd** | 1,312 | **−0.437%** [−0.769, −0.027] | −0.85 / −0.19 |
+| Coin | 1,312 | −0.052% | −0.09 / −0.03 |
+| Fade (the Bybit rule) | 1,312 | +0.082% [−0.152, +0.334] | +0.46 / −0.14 |
+| With minus coin | | −0.385% [−0.719, −0.038] | −0.76 / −0.16 |
+
+**Rejected.** Trading with the crowd lost in both halves and on all 12 symbols. The fade won in
+early 2023, lost in late 2023, and lost on Bybit in 2024–26. **The funding effect's sign flips
+from period to period, so neither side is an edge.** Funding-based direction is closed.

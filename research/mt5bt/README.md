@@ -11,7 +11,7 @@ Research only: it never places an order.
 |---|---|
 | **Bid and ask** | MT5 bars are bid. Every bar also carries `ask_open..ask_close`, `mid_*`, `spread` (points) and `spread_price`. Bars built from ticks keep the true ask; MT5 bars rebuild it from the bar's spread |
 | **Tick volume** | `tick_volume` (MT5's tick count; the only volume a CFD has) on every bar |
-| **Ticks** | `fetch.py ticks` stores every bid/ask tick. `bars_from_ticks` builds bars with bid and ask OHLC, the spread's min, mean and max, and the tick count. With ticks loaded, fills walk the real ticks (`Costs.fill`) |
+| **Ticks** | `fetch.py ticks` stores every bid/ask tick. On ticks, resting stop orders fill at the first tick that reaches the level, at that tick's price; one-cancels-other goes by which fill tick came first; trailing stops trail the ticks already seen. `bars_from_ticks` builds bars with bid and ask OHLC, the spread's min, mean and max, and the tick count. With ticks loaded, fills walk the real ticks (`Costs.fill`) |
 | **Fills** | A long buys the ask and sells the bid; a short sells the bid and buys the ask. Stops are hit by wicks on the exit side. A bar that opens beyond a level fills at the open. A bar touching both levels counts as the stop, unless ticks show the target came first |
 | **Costs** | The spread (once a round trip), commission per lot per side, entry and stop slippage, extra stop slippage as a share of the stop (spike sides), and swap at the New York rollover with the triple day (production's `trading.swap`) |
 | **Contract** | The broker's own symbol info, parsed as production parses it: tick size and value, contract size, minimum lot and lot step, swap terms |

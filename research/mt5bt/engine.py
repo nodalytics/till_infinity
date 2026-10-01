@@ -200,39 +200,63 @@ def walk(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: in
     return base | dict(exit_bar=last, exit=xc[last], reason=reason, sp_exit=ac[last] - c[last])
 
 
-def walk_ticks(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: int,
-               costs: Costs) -> dict | None:
-    """One trade on real ticks: in at the first tick of bar j (the ask for a long), out on the
-    first tick whose exit side (the bid for a long, the ask for a short) reaches a level - at
-    that tick's price, so a jump through a stop costs what it cost. None if ticks don't cover it."""
+def _covered(book: Book, t0: float, t1: float) -> tuple[int, int] | None:
+    """Tick indices [a, z) spanning epoch seconds [t0, t1), or None if the ticks don't cover it."""
     tk = book.ticks
+    if tk is None or tk.empty:
+        return None
+    ms = tk["ts_ms"].to_numpy()
+    if ms[0] > t0 * 1000 + 60_000 or ms[-1] < t1 * 1000 - 60_000:
+        return None
+    a, z = np.searchsorted(ms, [t0 * 1000, t1 * 1000])
+    return (int(a), int(z)) if z > a else None
+
+
+def walk_ticks(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: int,
+               costs: Costs, trail: float = 0.0, start_ms: float | None = None,
+               entry: float | None = None) -> dict | None:
+    """One trade on real ticks: in at the first tick of bar j (the ask for a long), or at a resting
+    order's fill tick (`start_ms`, `entry`); out on the first tick whose exit side (the bid for a
+    long, the ask for a short) reaches a level - at that tick's price, so a jump through a stop
+    costs what it cost. `trail` trails the stop behind the best exit-side price of the ticks
+    already seen. None if ticks don't cover it."""
     b = book.bars
     step = SECONDS.get(book.interval, 0)
     n = len(b)
-    if tk is None or tk.empty or j >= n:
+    if j >= n:
         return None
-    t0 = b["ts"].iat[j]
     last = n - 1 if not hold else min(n - 1, j + int(hold) - 1)
-    t1 = b["ts"].iat[last] + step
-    ms = tk["ts_ms"].to_numpy()
-    if ms[0] > t0 * 1000 + 60_000 or ms[-1] < t1 * 1000 - 60_000:
-        return None  # ticks do not cover this trade: fall back to bars
-    a, z = np.searchsorted(ms, [t0 * 1000, t1 * 1000])
-    if z <= a:
+    t0 = b["ts"].iat[j] if start_ms is None else start_ms / 1000
+    span = _covered(book, t0, b["ts"].iat[last] + step)
+    if span is None:
         return None
+    a, z = span
+    tk = book.ticks
+    ms = tk["ts_ms"].to_numpy()
     bid, ask = tk["bid"].to_numpy()[a:z], tk["ask"].to_numpy()[a:z]
     slip = costs.slippage_points * book.spec.point
-    entry = (ask[0] + slip) if side > 0 else (bid[0] - slip)
+    if entry is None:
+        entry = (ask[0] + slip) if side > 0 else (bid[0] - slip)
     stop = entry - side * stop_d
     px = bid if side > 0 else ask
-    hit_s = np.nonzero(px <= stop if side > 0 else px >= stop)[0]
+    if trail > 0:
+        if side > 0:
+            best = np.r_[entry, np.maximum.accumulate(np.maximum(px, entry))[:-1]]
+            path = np.maximum(stop, best - trail)
+        else:
+            best = np.r_[entry, np.minimum.accumulate(np.minimum(px, entry))[:-1]]
+            path = np.minimum(stop, best + trail)
+    else:
+        path = np.full(len(px), stop)
+    hit_s = np.nonzero(px <= path if side > 0 else px >= path)[0]
     hit_t = (np.nonzero(px >= entry + target_d if side > 0 else px <= entry - target_d)[0]
              if target_d > 0 else np.array([], int))
     s0 = hit_s[0] if len(hit_s) else len(px)
     g0 = hit_t[0] if len(hit_t) else len(px)
     k = min(s0, g0, len(px) - 1)
     if s0 <= g0 and s0 < len(px):
-        price, reason = px[s0] - side * costs.stop_slip_frac * stop_d - side * slip, "stop"
+        price = px[s0] - side * costs.stop_slip_frac * stop_d - side * slip
+        reason = "stop" if path[s0] == stop else "trail"
     elif g0 < len(px):
         price, reason = px[g0], "target"
     else:
@@ -241,6 +265,29 @@ def walk_ticks(book: Book, j: int, side: int, stop_d: float, target_d: float, ho
     exit_bar = int(min(max(np.searchsorted(b["ts"].to_numpy(), at, side="right") - 1, j), last))
     return dict(entry=entry, sp_entry=ask[0] - bid[0], exit_bar=exit_bar, exit=price,
                 reason=reason, sp_exit=ask[k] - bid[k], fill="ticks")
+
+
+def _tick_fill(book: Book, i: int, expires: int, side: int, level: float, costs: Costs):
+    """A resting stop order on ticks: the first tick after bar i whose entry side reaches the level,
+    at that tick's price. (fill_ms, price) or None if ticks don't cover the window or it never
+    fills."""
+    b = book.bars
+    n = len(b)
+    if i + 1 >= n:
+        return None
+    step = SECONDS.get(book.interval, 0)
+    end = min(n - 1, i + int(expires))
+    span = _covered(book, b["ts"].iat[i + 1], b["ts"].iat[end] + step)
+    if span is None:
+        return None
+    a, z = span
+    tk = book.ticks
+    px = (tk["ask"] if side > 0 else tk["bid"]).to_numpy()[a:z]
+    hit = np.nonzero(px >= level if side > 0 else px <= level)[0]
+    if not len(hit):
+        return (np.nan, np.nan)  # covered and never reached: no fill
+    slip = costs.slippage_points * book.spec.point
+    return float(tk["ts_ms"].to_numpy()[a + hit[0]]), float(px[hit[0]] + side * slip)
 
 
 def resolve(sig: pd.DataFrame, book: Book, sides, costs: Costs) -> pd.DataFrame:
@@ -253,18 +300,28 @@ def resolve(sig: pd.DataFrame, book: Book, sides, costs: Costs) -> pd.DataFrame:
     Returns one row per order that fills: the signal's columns plus `j` (fill bar) and `fill`."""
     (o, h, l, c), (ao, ah, al, ac) = sides
     n = len(o)
+    b_ts = book.bars["ts"].to_numpy()
     slip = costs.slippage_points * book.spec.point
     out = []
     for row in sig.itertuples(index=False):
         r = row._asdict()
         if np.isnan(row.entry):
-            r.update(j=row.i + 1, fill=np.nan)
+            r.update(j=row.i + 1, fill=np.nan, fill_ms=np.nan)
             out.append(r)
             continue
         a, z = row.i + 1, min(n, row.i + 1 + int(row.expires))
         if a >= n:
             continue
         L = row.entry
+        if costs.fill in ("auto", "ticks") and book.ticks is not None:
+            got = _tick_fill(book, row.i, int(row.expires), int(row.side), L, costs)
+            if got is not None:
+                if np.isnan(got[0]):
+                    continue  # the ticks say it never filled
+                k_ms = int(np.searchsorted(b_ts, got[0] / 1000, side="right") - 1)
+                r.update(j=k_ms, fill=got[1], fill_ms=got[0])
+                out.append(r)
+                continue
         if row.side > 0:
             hit = np.nonzero(ah[a:z] >= L)[0]
             if not len(hit):
@@ -277,7 +334,7 @@ def resolve(sig: pd.DataFrame, book: Book, sides, costs: Costs) -> pd.DataFrame:
                 continue
             k = a + hit[0]
             px = min(L, o[k]) - slip
-        r.update(j=k, fill=px)
+        r.update(j=k, fill=px, fill_ms=np.nan)
         out.append(r)
     df = pd.DataFrame(out)
     if df.empty:
@@ -286,6 +343,9 @@ def resolve(sig: pd.DataFrame, book: Book, sides, costs: Costs) -> pd.DataFrame:
     keep = df[df["oco"] < 0]
     winners = []
     for _, g in grouped.groupby("oco"):
+        if g["fill_ms"].notna().all():  # ticks say which filled first
+            winners.append(g.sort_values("fill_ms").head(1))
+            continue
         g = g.sort_values("j")
         first = g[g["j"] == g["j"].iloc[0]]
         if len(first) > 1:  # both legs in one bar: the whipsaw
@@ -328,8 +388,12 @@ def run(books: list[Book] | Book, strategy, costs: Costs | None = None, *, equit
             got = None
             resting = not np.isnan(row.fill)
             trail = float(getattr(row, "trail", 0.0) or 0.0)
-            if costs.fill in ("auto", "ticks") and not resting and not trail:
-                got = walk_ticks(book, j, row.side, row.stop, row.target, int(row.hold), costs)
+            fill_ms = getattr(row, "fill_ms", np.nan)
+            if costs.fill in ("auto", "ticks") and (not resting or not np.isnan(fill_ms)):
+                got = walk_ticks(book, j, row.side, row.stop, row.target, int(row.hold), costs,
+                                 trail=trail,
+                                 start_ms=None if np.isnan(fill_ms) else fill_ms,
+                                 entry=row.fill if resting else None)
                 if got is None and costs.fill == "ticks":
                     refused.append(dict(symbol=book.symbol, ts=ts[j], why="no ticks"))
                     continue

@@ -288,8 +288,9 @@ and per interval, against the quiet-alert arm and GARCH walks.
 - **I2, the trailing bracket:** +0.019R pooled with Deriv, same caveat. Real markets are mixed.
 - **Candidates left:** Drift Switch 10 and Jump 50 at 15m, pending a tick-fill check.
 - **Freqtrade on crypto** (D3 FundingFade, D10 FundingStamp, a close-confirmed B1): none beats its
-  coin in both halves. Fading extreme funding did worse than a coin; trading *with* it is a new
-  hypothesis for fresh data.
+  coin in both halves. Fading extreme funding did worse than a coin. Trading *with* it was then tested once on
+  Binance 2023 and rejected (−0.437% a trade, worse than a coin in both halves): the effect's sign
+  flips by period. Funding-based direction is closed.
 
 ## Closed: do not re-run without new information
 
