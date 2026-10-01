@@ -18,6 +18,7 @@ number of trials.
 
 | | |
 |---|---|
+| [expansion.md](expansion.md) | **measured, shipped, and not tradable as a straddle** - from compression, volatility expansion within 16 bars is called at AUC **0.781** held out (both halves 0.78; metals 0.83, crypto 0.81, FX and stocks 0.75) against 0.55-0.56 on our walks, **3.5x** the base rate in the top decile, calibration 1.04. Shipped as a card line and a retrain contest. A two-sided box breakout armed by it (B1) still loses, -0.05R straddle and -0.04R OCO, half the unarmed loss but all of the gain is spread, not move; arming on unrecovered stress (F2) is worse. The AUS 200 move of 30 Sep-1 Oct was not compressed beforehand and the shock forecaster rose only after the open |
 | [models.md](models.md) | **measured** - would trees, forests, cosine similarity or an MLP help; a 1KB logistic regression beats all of them, and five times the data did not change that |
 | [features.md](features.md) | **measured** - `side` alone matches all nine features together, generated features make it worse, and the trivial "level holds" rule still beats our directional call everywhere but the top decile |
 | [aligning.md](aligning.md) | **measured** - trading against a live higher timeframe costs 2.5 to 4.1 points of held rate at 3m and 5m, nothing at 1m, and reverses at 15m; the pooled figure says the opposite and is Simpson's paradox for the third time |

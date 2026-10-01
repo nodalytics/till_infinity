@@ -122,9 +122,15 @@ def load_bars(symbol: str, interval: str, source: str = "sqlite", path: str | No
         conn.close()
     elif source == "seqlab":
         root = Path(path or os.environ.get("SEQLAB", ".data/seqlab"))
-        z = np.load(root / f"{symbol}.{interval}.npz")
-        df = pd.DataFrame({"ts": z["time"], "open": z["open"], "high": z["high"], "low": z["low"],
-                           "close": z["close"], "volume": z["volume"]})
+        f = root / f"{symbol}.{interval}.npz"
+        if not f.exists():  # stocks carry their exchange: AAPL.OQ.1h.npz
+            found = sorted(root.glob(f"{symbol}.*.{interval}.npz"))
+            f = found[0] if found else f
+        z = np.load(f)
+        df = pd.DataFrame({k: z[k] for k in ("open", "high", "low", "close", "volume")})
+        df.insert(0, "ts", z["time"])
+        if "spread" in z.files:  # the lab's broker bars keep MT5's per-bar spread
+            df["spread"] = z["spread"]
     elif source == "csv":
         df = pd.read_csv(path or f"{symbol}.{interval}.csv")
         if "ts" not in df and "time" in df:

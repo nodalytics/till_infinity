@@ -106,7 +106,7 @@ fills, C4 first-minute releases, D7 latency) starts from MT5 ticks, not bars.
 
 | # | Idea | Source | Status and what to test | Venue |
 |---|---|---|---|---|
-| B1 | **Expansion-from-compression straddle.** Arm a two-sided breakout only when the compression alert fires (GB AUC 0.728/0.738, about 2.9x lift; the side is a coin) | [`fractal-twins.md`](fractal-twins.md), [`replay.md`](replay.md) | Untested as a trade. An unconditional two-sided stop straddle lost on one side at every stop, so the alert must earn the fill | MT5, FT |
+| B1 | **Expansion-from-compression straddle.** Arm a two-sided breakout only when the compression alert fires | [`expansion.md`](expansion.md) | **Tested 2026-10-01, no as specified:** −0.053R straddle, −0.036R OCO (CIs touch zero) against −0.10/−0.07 unarmed. The gain is spread, not move: gross −0.024 vs −0.030. Halves disagree. Next: Part G's trailing-stop version | MT5, FT |
 | B2 | **Shock-armed straddle.** The same, armed by the frozen shock model (AUC 0.73-0.76) | [`shockvolume.md`](shockvolume.md) | Untested. Costs two spreads, so start on the cheapest instruments | MT5, FT |
 | B3 | **Volatility selling when the forecast says calm**, where a product allows it | [`implied.md`](implied.md), [`ecology.md`](ecology.md) | The S&P short-straddle proxy has gross Sharpe +5.6 with no costs, but the desk has no options. On crypto: Deribit options are reachable (BTC, ETH) | Deribit |
 | B4 | **Deriv Accumulator on a real instrument** (break-even is a 2.51% fall in per-tick volatility) | [`accumulators.md`](accumulators.md) | Null on synthetics (0 of 25 cells). Re-open if ACCU lists a real instrument, or the barrier widens past 2.18σ at g = 0.03 | Deriv |
@@ -187,7 +187,7 @@ unconditionally, or in random states for the same share of time.
 | # | Idea | Agenda | How it trades | First test | Venue |
 |---|---|---|---|---|---|
 | F1 | **Shock-metabolism range trade.** After a shock, volatility decays at a state-dependent k. Once the fitted half-life has passed, fade excursions to the band edges | 8 item 7 | Range fades only in the post-shock decay window | Do band fades pay more after the half-life than at random times? | MT5, FT |
-| F2 | **Unrecovered-stress straddle.** Arm the two-sided breakout (B1) only when accumulated unrecovered stress F_t is high at ordinary volatility | 8 item 18, 4 (failure mechanics) | B1, gated by F_t | Does F_t raise the straddle's hit rate beyond the shock score alone? | MT5, FT |
+| F2 | **Unrecovered-stress straddle.** Arm B1 only when unrecovered stress F_t is high | 8 item 18 | B1 gated by F_t | **Tested 2026-10-01, null with the wrong sign:** −0.158R vs −0.102R at low stress ([`expansion.md`](expansion.md)) | MT5 |
 | F3 | **Allosteric gating.** Take a setup only in states where the market's gain to that setup's trigger is high, ∂move/∂trigger = f(Z) | 8 item 8, 6 item 11 | Existing structure signals, filtered by the measured gain | Estimate the gain by state on the first half; does trading high-gain states beat all states on the second? | MT5 |
 | F4 | **Alpha ore bodies.** Map each strategy's P&L over state space (volatility, spread, shock score, hour, ZMA state); trade only inside dense connected regions | 8 item 15 | Every strategy, restricted to its ore body | Map on the first half; does the second half's P&L inside the regions beat outside, and beat random regions of the same size? | All |
 | F5 | **Bullwhip continuation.** When a small move meets high leverage (OI) and delayed reaction, trade for amplification | 8 item 10, 5 item 6 | Continuation entry after the first leg, crypto first | Is the second leg larger in high-OI states than in low-OI states with the same first leg? | FT |
@@ -202,6 +202,43 @@ unconditionally, or in random states for the same share of time.
 | F14 | **Transport-speed breakout.** A fast optimal-transport shift in the return distribution arms a breakout in the direction of the shifted mean | 7 item 4 | Breakout after a large W(P_t, P_t+1) | Direction is the risky part: test the arming against B1's direction-free version | MT5, FT |
 | F15 | **Liquidation-cascade follow and fade.** Follow a cascade while fuel remains (OI still falling, funding still extreme); fade it when fuel is spent | 5 items 6-7, 7 item 7 | Two rules from one state | Do cascades with fuel left run further than spent ones? | FT |
 | F16 | **Funding-stamp positioning.** Hold into or out of the stamp at extreme funding where the drift around stamps is reliable | A3.7, D10 | Timed entries around stamps | D10 measures the drift first | FT |
+
+## Part G: magnitude without direction
+
+Set 2026-10-01. The expansion alert ([`expansion.md`](expansion.md)) predicts that volatility will
+expand (AUC 0.78, 3.5x in its top decile). As specified, though, a box straddle could not trade it.
+This part sharpens the question before more trades are tried:
+
+> **Can a market state carry information about the size of the coming move while carrying little
+> or none about its sign?** That is, I(C; |R|) > 0 while I(C; sign R) ≈ 0.
+
+**Research, first:**
+
+| # | Question | Measure |
+|---|---|---|
+| G1 | Does the alert predict *excursion*, not just a range percentile? | Two-sided excursion Y = max(MFE up, MFE down) over H bars, in volatility units and in box heights: P(Y > θ \| alert) against compressed-without-alert, not compressed, and all bars |
+| G2 | Magnitude without sign | Mutual information of alert strength with \|R\| against with sign(R), each against a shuffled null; P(up \| alert) |
+| G3 | When does the move arrive? | The hazard of a first excursion beyond kσ, bar by bar, by alert strength |
+| G4 | Does it scale with compression intensity? | P(Y > θ) and bracket EV by alert-strength decile: monotone or not |
+| G5 | Why did B1 lose gross? | Whipsaw rate (both box edges touched within H), and how much of the favourable excursion a static stop gives back |
+
+**Then the trades, all SL-only (no take-profit, the stop takes the profit):**
+
+| Strategy | Gate | Direction | Exit |
+|---|---|---|---|
+| A | none (any compressed bar) | two-sided bracket, OCO | initial stop at the opposite edge, then a trailing stop k·σ from the best price |
+| B | the alert | two-sided bracket, OCO | the same |
+| C | none | one-sided, in the box's drift | the same |
+| D | the alert | one-sided, in the box's drift | the same |
+
+The main comparison is A → B: does the gate turn an unprofitable direction-free bracket into a
+profitable one? The ablation G4 asks whether the economics improve monotonically with
+compression intensity. Judge on EV in R (not hit rate), with MFE, MAE, run length and activation
+rate beside it, net of spread, swap and repeated activations. Use both halves and walks.
+
+**The wider program, if G1-G2 hold:** search for other *direction-free precursors of market
+energy* (the shock forecaster, the vol clock, release timing, open interest) and test whether each
+can be monetised through asymmetric execution.
 
 ## Closed: do not re-run without new information
 

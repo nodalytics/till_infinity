@@ -173,3 +173,54 @@ def test_a_short_on_ticks_exits_on_the_ask():
     t, _ = run(b, one(-1, 0.0010), Costs(swap=False, fill="ticks"))
     assert t["reason"].iat[0] == "stop" and t["exit"].iat[0] == pytest.approx(1.1010)
     assert t["spread_cost"].iat[0] > 0
+
+
+# ------------------------------------------------------------------ resting stop orders, OCO
+
+
+def pending(rows):
+    return lambda bars, b: pd.DataFrame(rows)
+
+
+def test_a_buy_stop_fills_at_its_level_on_the_ask():
+    b = book([(1.1000,) * 4, (1.1000, 1.1003, 1.0998, 1.1001), (1.1001, 1.1020, 1.1000, 1.1015)])
+    t, _ = run(b, pending([dict(i=0, side=1, entry=1.1010, expires=5, stop=0.0030)]),
+               Costs(swap=False))
+    # the ask high is 1.1004 on bar 1, 1.1021 on bar 2: fills on bar 2 at the level
+    assert t["entry_bar"].iat[0] == 2 and t["entry"].iat[0] == pytest.approx(1.1010)
+
+
+def test_a_stop_order_gapped_through_fills_at_the_open():
+    b = book([(1.1000,) * 4, (1.0950, 1.0955, 1.0940, 1.0945)])
+    t, _ = run(b, pending([dict(i=0, side=-1, entry=1.0990, expires=3, stop=0.0030)]),
+               Costs(swap=False))
+    assert t["entry"].iat[0] == pytest.approx(1.0950)
+
+
+def test_an_order_that_expires_never_fills():
+    b = book([(1.1000,) * 4] * 6)
+    t, _ = run(b, pending([dict(i=0, side=1, entry=1.1050, expires=3, stop=0.0030)]),
+               Costs(swap=False))
+    assert t.empty
+
+
+def test_one_cancels_the_other_and_a_bar_through_both_is_the_whipsaw():
+    legs = [dict(i=0, side=1, entry=1.1010, expires=5, stop=0.0020, oco=7),
+            dict(i=0, side=-1, entry=1.0990, expires=5, stop=0.0020, oco=7)]
+    up = book([(1.1000,) * 4, (1.1000, 1.1015, 1.0995, 1.1012), (1.1012, 1.1013, 1.0980, 1.0985)])
+    t, _ = run(up, pending(legs), Costs(swap=False))
+    assert len(t) == 1 and t["side"].iat[0] == 1  # the buy stop came first; the sell stop died
+    both = book([(1.1000,) * 4, (1.1000, 1.1015, 1.0985, 1.1012)])  # one bar through both, closes up
+    t, _ = run(both, pending(legs), Costs(swap=False))
+    assert len(t) == 1 and t["side"].iat[0] == -1  # the leg against the close: the worse case
+
+
+def test_a_trailing_stop_follows_completed_bars_and_takes_the_profit():
+    # long from 1.1001; the bid runs to a 1.1050 high, then falls back
+    b = book([(1.1000,) * 4, (1.1000, 1.1020, 1.0999, 1.1018), (1.1018, 1.1050, 1.1015, 1.1045),
+              (1.1045, 1.1046, 1.1020, 1.1025)])
+    t, _ = run(b, lambda bars, bk: pd.DataFrame(
+        [dict(i=0, side=1, stop=0.0030, trail=0.0020)]), Costs(swap=False))
+    # after bar 2 the best bid is 1.1050, so the stop is 1.1030; bar 3's low of 1.1020 takes it
+    assert t["reason"].iat[0] == "trail" and t["exit"].iat[0] == pytest.approx(1.1030)
+    assert t["R"].iat[0] > 0

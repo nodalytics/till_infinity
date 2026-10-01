@@ -46,6 +46,7 @@ have shipped without it.
 | A boosted quantile envelope beats the history one on FX | Pinball −3.8/−4.2/−5.9% (5/20/50 bars), regime-flat coverage; most of the gain corrects a noisy volatility unit ([`gbm-envelope.md`](gbm-envelope.md)) | FX 15m, retrained fortnightly |
 | Deriv's Volatility, Jump and Step follow their published laws | Realise 0.99-1.01 of the named sigma; the law beats the empirical envelope ([`deriv-variants.md`](deriv-variants.md)) | Envelope quoted from the law |
 | Volatility has a weekday × hour clock | FX out-of-sample profile corr +0.96; cuts next-hour error 5-6% ([`calendar-returns.md`](calendar-returns.md)) | Vol clock (FX, crypto) and a card line |
+| Volatility expansion out of compression can be called | AUC 0.781 held out (both halves), walks 0.55-0.56; 3.5x the base rate in the top decile ([`expansion.md`](expansion.md)) | Card line and fortnightly retrain contest (2026-10-01) |
 | Whether a band is touched is forecastable; which band comes first is not | FX touch skill +0.056 to +0.087 over geometry ([`bandrace.md`](bandrace.md)) | Superseded by the boosted bands: a stated 20% touch rate |
 
 ## What does not work: direction
@@ -66,6 +67,7 @@ have shipped without it.
 | LLM specialist agents forecasting direction | AUC 0.48-0.50; they behave like fixed priors | [`agents.md`](agents.md) |
 | An LLM deciding trades from the card | A fade rule with a thin skip; +0.035R over random at best (t 0.8) | [`agent-trading.md`](agent-trading.md) |
 | VPIN (order-flow toxicity) | Null on real Binance taker flow and on tick volume: it adds nothing plain volume does not | [`vpin.md`](vpin.md), [`lopez-de-prado.md`](lopez-de-prado.md) |
+| A breakout straddle armed by the expansion alert (B1), or by unrecovered stress (F2) | B1 halves the unarmed loss, but gross it is the same (-0.024 vs -0.030R): the gain is spread, not move. F2 is worse than its null | [`expansion.md`](expansion.md) |
 | The production strategies themselves | Gross −0.10 to +0.03R, none beats random selection | [`triage.md`](triage.md) |
 
 ## Could we build a mutual fund from this?
