@@ -94,6 +94,11 @@ fills, C4 first-minute releases, D7 latency) starts from MT5 ticks, not bars.
 | A4.8 | **Diversity-aware exposure.** Count *behaviourally* distinct positions (by equivalence of their P&L paths), not instruments | 6 items 12 and 21 | Do correlated legs make the worst day worse than the per-trade bound suggests? Extends A1.12 | All |
 | A4.9 | **Bitemporal guard.** Every backtest input carries (event time, knowledge time); refuse joins that use a value before it was known | 6 item 13 | A harness check, not a trial. Protects every external-data FT idea | All |
 | A4.10 | **Type checks for research.** Tag volatility units, intervals and price conventions as types | 5 item 13 | Would have caught the 1,000x crypto spread and the lost size brake. Engineering, not a trial | All |
+| A4.12 | **Shock half-life sizing.** After a shock, scale size back up on its fitted, state-dependent decay C_0 e^(−kt), not on a fixed cooldown | 8 item 7 | Does k differ by state (held out), and does a k-based ramp beat a fixed cooldown and a uniform cut? | MT5, FT |
+| A4.13 | **Interlocking.** Refuse a new position that is valid alone but shares a liquidity source, execution window, collateral or risk budget with open ones | 8 items 13-14 | Replay the journal: how often did simultaneous positions collide, and what did the collisions cost? | All |
+| A4.14 | **Flight envelope per strategy.** Map the state region (volatility, spread, shock score, hour) each strategy survives, and stand it aside outside it | 8 item 20 | Fit on the first half and apply to the second; beats standing aside at random for the same share of time? | All |
+| A4.15 | **Evidence count.** Size by the *independent* evidence behind a signal (the gates' redundancy measured by their joint information), not the number of gates agreeing | 8 item 1 | Do signals with more independent agreement do better than ones with redundant agreement? | All |
+| A4.16 | **Dead-reckoning staleness.** Widen the envelope and cut size as time since a fresh observation grows (gaps, stale feeds, the weekend) | 8 item 12 | Is coverage worse after gaps, and does a staleness widening fix it without loosening normal bars? | MT5, FT |
 | A4.11 | **Liquidation-zone exposure.** Cut size when open interest is high and price nears a cluster of estimated liquidation prices (leverage tiers × OI by entry) | 5 items 6 and 8, 7 item 7 | Do 4x moves come more often from such states, beyond the shock score? | FT |
 
 ## Part B: trades that need no direction
@@ -169,6 +174,7 @@ forecaster lacks.
 | E4 | Path signatures as memory: same state, different path, different outcome? | 7 item 5 | Incremental AUC over the shock forecaster, on markets vs walks |
 | E5 | Optimal-transport speed of the return distribution as a regime-change alarm | 7 item 4 | Does a large W(P_t, P_t+1) lead shocks beyond realised volatility? |
 | E6 | Strategy equivalence: collapse look-alike strategies before counting trials | 6 item 12 | Position-path correlation across all strategies; feeds the effective-trial count |
+| E8 | Law-candidate grading: score every finding on invariance, mechanism, both halves, walks and a second measurement system | 8 item 21 | Apply to [`findings.md`](findings.md); the regularities that grade as laws are what strategies should be built on |
 | E7 | Ontology test: which of our objects (levels, zones, sweeps, order blocks, cycles) carry information on markets that they do not on walks | 7 (ontology) | One run per object family, the same harness for each. No new data needed |
 
 ## Closed: do not re-run without new information
