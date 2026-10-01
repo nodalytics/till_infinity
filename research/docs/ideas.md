@@ -265,6 +265,32 @@ questions to answer and then trade:
 | H7 | Phase recognition: which phase is the market in now? | stops that widen early and tighten in maturity and decay (SL-only, no take-profit) |
 | H8 | A universal pre-expansion signature, or one per market? | the alert per family against pooled (pooled wins so far: one model, every family 0.75–0.85) |
 
+## Part I: trading the energy without direction
+
+Set 2026-10-01. The alert says a big move is coming and roughly when (79% reach 3σ within 16 bars,
+median 7), but not which way. So these trades take both sides and rely on stops to cap the loser.
+All are SL-only (no take-profit) and are judged per family (FX, metals, crypto, stocks, **Deriv**)
+and per interval, against the quiet-alert arm and GARCH walks.
+
+| # | Trade | How | Note |
+|---|---|---|---|
+| I1 | **Hedged pair** | On a hedging-mode MT5 account, open a long and a short at once when the alert fires, each with its own SL (at the opposite box edge, or 1.5σ), both trailing 2σ behind their best price | Economically the same as B1's bracket (stops at the edges), but it pays both spreads up front and swap on both legs while both are open. So expect slightly worse than B1, unless the fills differ |
+| I2 | B1 bracket with trailing stops | Buy stop and sell stop at the box edges, OCO, trailing 2σ | −0.013R on real markets (Part G); rerun with Deriv, 4h and 1d |
+| I3 | Volatility options on the alert | Buy a straddle when the alert fires | Monetises energy without needing commitment. Deribit BTC/ETH are reachable; MT5 has no options |
+| I4 | **Closed 2026-10-01:** order-book-gated bracket (crypto). No order-book or flow sensor adds to the alert ([`expansion.md`](expansion.md)). Was: | Arm the bracket only when the alert fires and the buffer is thin (depth within 1% low against its norm) or flow is piling against a trapped price | Only if the order-book study finds a sensor that counts |
+| I5 | **Closed 2026-10-01:** flow-signed entry (crypto). Flow calls no side on rows known in advance; the 0.558 was selection bias. Was: | When compressed, take the side of the net taker flow that price has not yet expressed | Only if flow calls the breakout's side (tested in `buffer.py`) |
+
+**Results, 2026-10-01** ([`expansion.md`](expansion.md), [`../freqtrade/README.md`](../freqtrade/README.md)):
+
+- **I1, the hedged pair:** positive in the pooled run (+0.082R), but almost all of it was Deriv
+  bar-fill optimism (Boom, Crash, Range Break). On real markets it is negative in FX, metals and
+  stocks.
+- **I2, the trailing bracket:** +0.019R pooled with Deriv, same caveat. Real markets are mixed.
+- **Candidates left:** Drift Switch 10 and Jump 50 at 15m, pending a tick-fill check.
+- **Freqtrade on crypto** (D3 FundingFade, D10 FundingStamp, a close-confirmed B1): none beats its
+  coin in both halves. Fading extreme funding did worse than a coin; trading *with* it is a new
+  hypothesis for fresh data.
+
 ## Closed: do not re-run without new information
 
 - Deriv binaries and barrier products: a 2.41% margin on synthetics, 12-15.6% on real instruments

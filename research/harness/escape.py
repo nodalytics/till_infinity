@@ -49,7 +49,7 @@ from till_infinity.models.shocks_train import auc  # noqa: E402
 
 OUT = Path(os.environ.get("OUT", ".data/expansion"))
 SEQLAB = os.environ.get("SEQLAB", ".data/seqlab")
-SECONDS = {"15m": 900, "1h": 3600}
+SECONDS = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 BOX, WAIT, FOLLOW = 16, 16, 48
 RNG = np.random.default_rng(23)
 
@@ -200,9 +200,10 @@ def precursors(ev: pd.DataFrame) -> dict:
 
 def main() -> None:
     pred = pd.read_csv(OUT / "test_predictions.csv")
-    pred = pred[pred["test"] & (pred["kind"] == "real")]
+    pred = pred[pred["test"] & pred["kind"].isin(["real", "deriv"])]
     wf = json.loads((OUT / "expansion_wf.json").read_text())
-    pred["lift"] = pred["p"] / wf["base_rate"]
+    if "lift" not in pred:  # a merged file carries each model's own lift
+        pred["lift"] = pred["p"] / wf["base_rate"]
     rows = []
     for key, g in pred.groupby("key"):
         sym, iv = key.split("|")
@@ -232,6 +233,8 @@ def main() -> None:
         res[f"{group}/second_after_whipsaw"] = summarise(e[e["second"].astype(bool)])
         res[f"{group}/by_family"] = {f: summarise(x[~x["second"].astype(bool)]).get("excess")
                                      for f, x in e.groupby("family")}
+        res[f"{group}/by_interval"] = {i: summarise(x[~x["second"].astype(bool)]).get("excess")
+                                       for i, x in e.groupby(e["key"].str.split("|").str[1])}
     res["precursors_all"] = precursors(ev[ev["group"] == "all"])
     print(json.dumps(res, indent=1), flush=True)
 

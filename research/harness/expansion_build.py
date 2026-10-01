@@ -5,7 +5,9 @@ on 288 raw window values, with Deriv's indices as the control. Deriv is a market
 and production cannot keep those windows, so this re-runs the question through the production
 class (`structures/learning/expansion.py`) on the lab's broker bars, against walks we generate.
 
-Pre-registered (2026-10-01), before any run:
+Pre-registered (2026-10-01), before any run (4h and 1d added the same day, judged by the same
+gates per interval: an interval is read in production only if its real-market AUC is >= 0.68 in
+both halves):
   1. real-market held-out AUC >= 0.68, in both halves of the held-out period
   2. real-market AUC beats our iid t walks by >= 0.10 (some walk skill is mechanical: a deep
      compression takes longer to climb back)
@@ -79,14 +81,16 @@ def main() -> None:
     started = time.time()
     series = {}
     for sym in FAMILY:
-        for iv in ("15m", "1h", "4h"):
+        for iv in ("15m", "1h", "4h", "1d"):
             bars = load(sym, iv)
             if len(bars) > 2_000:
                 series[(sym, iv)] = bars
     print(f"{len(series)} series loaded ({time.time() - started:.0f}s)", flush=True)
-    rows = et.dataset(series)
-    walks = et.walks(8, 20_000) | et.walks(8, 20_000, garch=True)
-    wrows = et.dataset(walks)
+    scored_ivs = tuple((os.environ.get("SCORED") or "15m,1h").split(","))
+    rows = et.dataset(series, intervals=scored_ivs)
+    wbars = int(os.environ.get("WALK_BARS", "20000"))  # 1d needs long walks to warm
+    walks = et.walks(8, wbars) | et.walks(8, wbars, garch=True)
+    wrows = et.dataset(walks, intervals=scored_ivs)
     when, kinds, x, y = rows.arrays()
     keys = np.array(rows.key)
     fam = np.array([FAMILY.get(k.split("|")[0], "?") for k in keys])
@@ -129,7 +133,12 @@ def main() -> None:
             "control_iid": a(wk == "control", wp, wy), "garch": a(wk == "garch", wp, wy),
         },
         "by_family": {f: a(test & (fam == f)) for f in FAMILIES},
-        "by_interval": {i: a(real & (iv == i)) for i in ("15m", "1h")},
+        "by_interval": {i: a(real & (iv == i)) for i in ("15m", "1h", "4h", "1d")},
+        "by_interval_halves": {i: [a(real & (iv == i) & ~second), a(real & (iv == i) & second)]
+                               for i in ("15m", "1h", "4h", "1d")},
+        "by_interval_deriv": {i: a(test & (kinds == "deriv") & (iv == i)) for i in ("15m", "1h", "4h", "1d")},
+        "by_family_interval": {f"{f}|{i}": a(test & (fam == f) & (iv == i))
+                               for f in FAMILIES for i in ("15m", "1h", "4h", "1d")},
         "baselines_real": {
             "pct_only": round(et.auc(y[real], -x[real, 0]), 4),
             "depth_only": round(et.auc(y[real], -x[real, 1]), 4),

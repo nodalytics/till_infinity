@@ -98,3 +98,34 @@ Freqtrade's own reports are not the evaluation. Ideas tested here follow
   metrics are often stamped at the start of their window.
 - **Fills.** Freqtrade fills at the next candle's open, and its stops fill at the stop price. On
   gappy moves, model stops on wicks and with slippage ([`../docs/crash-timing.md`](../docs/crash-timing.md)).
+
+## Backtests, 2026-10-01 ([`user_data/strategies/edges.py`](user_data/strategies/edges.py), [`report.py`](report.py))
+
+Three pre-registered strategies on 12 Bybit perps (BTC ETH SOL BNB XRP DOGE ADA AVAX LINK LTC DOT
+TRX), 15m, 2024-01 to 2026-10. Taker fee 0.055% a side; funding charged at each stamp; no
+take-profit. Each strategy has a coin twin with the same bars and exits but a random side.
+
+| Strategy | Trades | Net per trade [95% CI, days resampled] | Coin twin | Strategy − coin (2024 / 2025+) |
+|---|---|---|---|---|
+| **FundingFade:** after an extreme funding stamp (top or bottom 5% of 90 days), take the receiving side; stop 3 ATR; exit 24h | 2,330 | −0.178% [−0.382, +0.036] | −0.064% | **−0.114%** (−0.128 / −0.102) |
+| **CoilBreakout:** compressed (range percentile ≤ 0.2), then a close beyond the 16-bar box; stop at the opposite edge, trailing 2σ; 24h at most | 19,420 | −0.247% [−0.259, −0.236] | −0.241% | −0.007% (−0.021 / +0.001) |
+| **FundingStamp:** an hour either side of the stamp, on the receiving side after an extreme stamp | 3,197 | −0.089% [−0.198, +0.027] | −0.053% | −0.035% (−0.089 / +0.021) |
+| *RandomBaseline* | 4,564 | −0.11% (the round-trip fee) | | |
+
+**None beats its coin in both halves.**
+
+- **CoilBreakout is its coin.** Taking the side of the breakout is worth nothing, which matches the
+  escape study ([`../docs/expansion.md`](../docs/expansion.md)): a breakout out of compression
+  commits no more than a random walk's. It loses about 0.25% a trade because 1.3-hour trades with
+  tight trailing stops mostly pay two fees.
+- **FundingFade collects funding and loses on price.** It received +27.5 USDT of funding over the
+  trades, yet did 0.11% a trade worse than a coin in both halves: the crowd that pays extreme
+  funding was, if anything, right over the next day. "Trade *with* extreme funding" is a new
+  hypothesis, not a finding. It needs fresh data (the Binance archive's 2023, or 2026 onward)
+  before it counts.
+- **FundingStamp** also collects funding (+45.7 USDT) and loses more on price.
+
+Run them again with:
+
+    .venv/bin/freqtrade backtesting -c config.bybit.json --strategy CoilBreakout --timerange 20240101- --export trades
+    .venv/bin/python report.py FundingFade CoilBreakout FundingStamp

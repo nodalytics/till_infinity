@@ -27,7 +27,7 @@ from ..prices.models import Bar
 from ..structures.learning import expansion as ex
 from .shocks_train import auc, kind
 
-SECONDS = {"15m": 900.0, "1h": 3600.0, "4h": 14400.0}
+SECONDS = {"15m": 900.0, "1h": 3600.0, "4h": 14400.0, "1d": 86400.0}
 CONTROL, GARCH = "~control", "~garch"
 
 
@@ -85,6 +85,7 @@ def walks(n: int = 6, bars: int = 12_000, seed: int = 0, garch: bool = False):
         out[(name, "15m")] = got
         out[(name, "1h")] = _aggregate(got, 4)
         out[(name, "4h")] = _aggregate(got, 16)
+        out[(name, "1d")] = _aggregate(got, 96)
     return out
 
 
@@ -111,14 +112,16 @@ class Rows:
         )
 
 
-def dataset(series: Mapping[tuple[str, str], Sequence[Bar]]) -> Rows:
-    """Features and labels at every compressed bar of every 15m and 1h series."""
+def dataset(
+    series: Mapping[tuple[str, str], Sequence[Bar]], intervals: Sequence[str] = ex.INTERVALS
+) -> Rows:
+    """Features and labels at every compressed bar of every series at a scored interval."""
     streams = [_stream(s, iv, b) for (s, iv), b in series.items() if iv in SECONDS]
     model = ex.Expansion()
     per_key: dict[str, list[tuple[float, float, bool, list[float] | None]]] = {}
     for when, symbol, iv, bar in heapq.merge(*streams, key=lambda r: r[0]):
         model.observe(symbol, iv, SECONDS[iv], when, bar.high, bar.low, bar.close, bar.volume)
-        if iv not in ex.INTERVALS:
+        if iv not in intervals:
             continue
         s = model.series.get(f"{symbol}|{iv}")
         if s is None or not s.warm:

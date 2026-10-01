@@ -142,7 +142,8 @@ def test_the_expansion_contest_runs_and_its_export_is_exact(monkeypatch):
     series = walks(2, 6_000, seed=5)
     names = sorted({s for s, _ in series})
     spec, report = rt.run_expansion(lambda s, iv: series.get((s, iv), []), names)
-    assert report["series"] == len(series)
+    usable = [v for v in series.values() if len(v) > ex.WARM + ex.AHEAD + 50]
+    assert report["series"] == len(usable)  # a 6,000-bar 15m walk is too short for daily
     assert report["evaluator_max_diff"] <= rt.GATES["exact"]
     assert (spec is not None) == report["promoted"]
 

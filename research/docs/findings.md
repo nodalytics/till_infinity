@@ -68,6 +68,9 @@ have shipped without it.
 | An LLM deciding trades from the card | A fade rule with a thin skip; +0.035R over random at best (t 0.8) | [`agent-trading.md`](agent-trading.md) |
 | VPIN (order-flow toxicity) | Null on real Binance taker flow and on tick volume: it adds nothing plain volume does not | [`vpin.md`](vpin.md), [`lopez-de-prado.md`](lopez-de-prado.md) |
 | A breakout straddle armed by the expansion alert (B1), or by unrecovered stress (F2) | B1 halves the unarmed loss, but gross it is the same (-0.024 vs -0.030R): the gain is spread, not move. F2 is worse than its null | [`expansion.md`](expansion.md) |
+| Trading the expansion alert without direction (brackets, hedged pairs) | Real markets mixed to negative; the Deriv positives were bar-fill optimism on Boom, Crash and Range Break. Breakouts from compression commit no more than on random walks ([`expansion.md`](expansion.md)) | [`expansion.md`](expansion.md) |
+| Order-book depth, trade composition, taker flow and open interest (crypto) | Add nothing to the expansion alert; flow calls no side on rows known in advance (an apparent 0.558 was selection bias) | [`expansion.md`](expansion.md) |
+| Crypto perps in freqtrade: funding fade, funding stamp, compression breakout | None beats its coin twin in both halves; fading extreme funding does worse than a coin | [`../freqtrade/README.md`](../freqtrade/README.md) |
 | The production strategies themselves | Gross −0.10 to +0.03R, none beats random selection | [`triage.md`](triage.md) |
 
 ## Could we build a mutual fund from this?

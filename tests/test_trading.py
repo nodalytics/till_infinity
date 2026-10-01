@@ -131,6 +131,12 @@ def settings(**over):
     # strategy happened to be first. A test that silently changes what it is
     # testing when a default moves is testing the default.
     made.strategies = ("level-scalp",)
+    # **The FX clock vetoes are off for tests that are not about them.** They read the wall clock,
+    # so an FX test run at 16:00-19:00 New York (or a Sunday open) was refused by the quiet-hour
+    # gate before reaching the gate it was written for. `test_fx_vetoes.py` tests them at fixed
+    # times.
+    made.fx_quiet_ny = ()
+    made.fx_sunday_open_min = 0.0
     made.state_dir = Path(tempfile.mkdtemp(prefix="till-trading-test-"))
     for key, value in over.items():
         setattr(made, key, value)
