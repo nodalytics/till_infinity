@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.freqtrade.io/schema.json",
+  "_comment": "Research backtesting only: no keys, never live. See README.md.",
+  "dry_run": true,
+  "trading_mode": "futures",
+  "margin_mode": "isolated",
+  "stake_currency": "USDT",
+  "stake_amount": 100,
+  "dry_run_wallet": 10000,
+  "max_open_trades": 3,
+  "timeframe": "15m",
+  "fee": 0.0005,
+  "exchange": {
+    "name": "binance",
+    "key": "",
+    "secret": "",
+    "pair_whitelist": [
+      "BTC/USDT:USDT",
+      "ETH/USDT:USDT",
+      "SOL/USDT:USDT"
+    ],
+    "pair_blacklist": []
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "entry_pricing": {
+    "price_side": "other",
+    "use_order_book": false
+  },
+  "exit_pricing": {
+    "price_side": "other",
+    "use_order_book": false
+  },
+  "datadir": "user_data/data/binance",
+  "user_data_dir": "user_data",
+  "dataformat_ohlcv": "feather"
+}
