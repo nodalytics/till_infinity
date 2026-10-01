@@ -139,6 +139,133 @@ latent constructs does each name hide (factor analysis across competing measures
 measurement error does each measure carry, judged against walks where the truth is known? Which
 measures are stable across venues, timeframes and estimators?
 
+## Agenda 4: another science's way of defining reality (parked for later)
+
+Set on 2026-10-01, to be researched later. These fields deliberately avoid the ones above. Their
+concerns are memory, emergence, measurement, spatial organisation, computation, perception,
+uncertainty and hidden structure. The standard is stricter: **don't borrow another algorithm.
+Borrow another science's way of defining reality.** The foreign field has to supply the problem's
+mathematical ontology, not a new transform of the same bars.
+
+| # | Field → idea | Core question | Related work here |
+|---|---|---|---|
+| 1 | Geology → layers, faults and tectonics | Can latent fault lines (liquidity discontinuities, crowded positioning, leverage concentration, correlated exposures, cross-venue fragmentation) be detected before a dislocation? | [`grammar.md`](grammar.md) (stratigraphy: deeper layers add 0.002 bits). Needs positioning data |
+| 2 | Acoustics → market resonance | Which forcing frequencies (funding, expiries, rebalancing, sessions, macro calendar) does a market amplify or suppress, H(f) = response / forcing? | [`calendar-returns.md`](calendar-returns.md) (the weekday × hour volatility clock), [`rituals.md`](rituals.md) |
+| 3 | Signal processing → blind source separation | Can movement be decomposed (ICA, NMF, sparse coding) into latent behavioural sources (macro, flow, leverage, information) rather than statistical factors? | None |
+| 4 | Computer vision → shape without images | Treat [O,H,L,C,V] trajectories as objects: contours, segmentation, tracking, and an optical-flow field v(x,t) across market dimensions | [`grammar.md`](grammar.md) (bar shape is a continuum), [`patterns.md`](patterns.md) |
+| 5 | Robotics SLAM → localisation and mapping | Infer P(state, map \| data) together: a system that builds its map of the market while navigating it, not a fixed model | Partly: online learners (AgACI, [`conformal.md`](conformal.md)); [`manifold.md`](manifold.md) |
+| 6 | Astronomy → gravitational lensing | Infer hidden positioning from the distortions it leaves in prices, basis, the volatility surface, liquidity and cross-asset behaviour | [`positioning.md`](positioning.md), [`vpin.md`](vpin.md) (a hidden-flow signature, null). Needs derivatives data |
+| 7 | Bayesian experimental design → active sensing | Which next observation most reduces uncertainty about the regime, IG(X) = H(H_i) − H(H_i \| X)? | None |
+| 8 | Reliability engineering → alpha hazard | Treat a strategy as a component: its hazard h(t) and h(t \| crowding, volatility, regime, size) | [`ecology.md`](ecology.md) ("alpha decay" was selection bias), [`triage.md`](triage.md). Needs strategies with an edge to fail |
+| 9 | Aerospace → fault-tolerant trading | Design for graceful degradation (primary + fallback + isolation + recovery) rather than nominal performance | Partly: [`verification.md`](verification.md) (19 invariants), the risk gates, the shadow gates |
+| 10 | Distributed systems → consensus latency | After an information event, how long until venues converge on a new price, T_consensus? | [`surprise.md`](surprise.md) (priced within 3 minutes), [`infoflow.md`](infoflow.md), [`coinbase-premium.md`](coinbase-premium.md). Needs multi-venue ticks |
+| 11 | Queueing theory → congestion markets | Is instability a congestion phenomenon, λ(t) > μ(t), with execution demand over capacity? | [`queueing.md`](queueing.md) (the desk's own strategy queue, not the market's). Needs order-book data |
+| 12 | Manufacturing → statistical process control | Is the price-generating process still the same mechanism, θ1 → θ2, detected before a model notices its assumptions died? | Partly: [`structures-context-cusum.md`](structures-context-cusum.md), [`structures-learning-drift.md`](structures-learning-drift.md), the ZMA e-process ([`zma-conformal.md`](zma-conformal.md)) |
+| 13 | Meteorology → nowcasting conditions | Predict the state Ŝ(t+Δ) (volatility, liquidity, correlation, spread, volume, breadth), not the price | Largely the desk's working direction: the shock forecaster, the envelope, the vol clock ([`findings.md`](findings.md)) |
+| 14 | Bioinformatics → sequence alignment | Align episodes structurally (insertions, deletions, substitutions, speed changes), richer than dynamic time warping | [`fractal-twins.md`](fractal-twins.md) (twins time volatility, not direction), [`grammar.md`](grammar.md) |
+| 15 | Error-correcting codes → noise-invariant structure | Find representations of market structure that survive realistic market noise | Ties to metrology (agenda 3) |
+| 16 | Morphogenesis → how structure forms | Which local interactions (liquidity, flow, agent rules) generate trends, ranges and dislocations? Generative microstructure | [`ecology.md`](ecology.md) (evolved agents) |
+| 17 | Crystallography → symmetry and its breaking | Do states show measurable symmetries T(X) ≈ X (time, scale, repetition), and does symmetry breaking mark a regime change? | None |
+| 18 | Archaeological dating → regime age | Does the chance of a transition depend on the regime's age, P(transition \| A_t)? | [`states.md`](states.md) (a level's behaviour over its life), [`structures-learning-decay.md`](structures-learning-decay.md) |
+| 19 | Information retrieval → market analogues | Retrieve genuinely analogous historical states under a learned structural similarity metric | [`fractal-twins.md`](fractal-twins.md), [`similarity.md`](similarity.md), [`structures-vol-analogue.md`](structures-vol-analogue.md) |
+| 20 | Philosophy of science → falsification engines | A system built to destroy each hypothesis: alternative definitions, costs, regime splits, placebos, feature destruction, delayed information, execution degradation | Largely how this program already works: walk controls, both halves, deflation ([`lopez-de-prado.md`](lopez-de-prado.md), [`controls.md`](controls.md)) |
+
+**Five research universes, as the agenda grouped them:**
+
+| Universe | Fields | Concerns |
+|---|---|---|
+| A: financial geophysics | Geology, seismology, volcanology, materials science, acoustics | Shocks, faults, stress, resonance, fractures |
+| B: financial computation | Compiler theory, distributed systems, error-correcting codes, formal methods, information retrieval | Representation, state, consensus, noise correction, verification |
+| C: financial morphology | Morphogenesis, crystallography, cartography, architecture, computer vision | Shape, symmetry, spatial structure, formation |
+| D: financial epistemology | Philosophy of science, cognitive archaeology, semiotics, experimental design, metrology | What markets know, what we think they know, and whether we measure it correctly |
+| E: financial reliability | Aerospace, manufacturing, reliability engineering, queueing theory, fault-tolerant computing | Degradation, failure, congestion, robustness, recovery |
+
+**The idea circled in red: financial failure mechanics.** Materials science, reliability engineering,
+seismology and microstructure combined. The market is a structure accumulating stress:
+
+    Stress -> Damage -> Crack -> Fracture -> Cascade
+
+with stress σ_t = f(leverage, liquidity, positioning, correlation), damage
+D_t = ∫ g(σ_τ, conditions) dτ, and a dislocation when D_t > D_critical. Its concrete questions:
+
+1. Can cumulative stress be estimated from OHLCV plus derivatives?
+2. Does stress accumulate even while volatility falls?
+3. Are there observable "microcracks" before major dislocations?
+4. Does fatigue explain why identical shocks have different consequences?
+5. Can the age and history of stress explain nonlinear responses?
+6. Does one framework work across BTC, FX, equities and commodities?
+
+**What we already know that bears on it:**
+
+- A fatigue proxy has been measured once and had the **wrong sign**: susceptibility predicted
+  volatility *falling* ([`susceptibility.md`](susceptibility.md)). Critical slowing down never
+  appeared ([`topology.md`](topology.md)).
+- The shock forecaster already carries instantaneous stress (recent volatility, range, volume). A
+  damage integral D_t is only a finding if it adds to that, incrementally, on held-out data, and
+  not on GARCH walks.
+- σ_t as framed needs leverage and positioning, which OHLCV does not carry. An OHLCV-only first pass
+  tests questions 2, 4 and 5. Questions 1 and 3 need derivatives or order-book data.
+
+## Agenda 5: reconstruction, perception and representation (parked for later)
+
+Set on 2026-10-01, to be researched later. This batch takes ideas from fields whose core problem
+is reconstruction, perception, representation, failure or hidden-state inference. Most of them
+recast the task as an **inverse problem**: infer the hidden state S_t from the observables X_t
+(X_t → S_t), rather than forecasting the next return (X_t → r_t+1).
+
+| # | Field → idea | Core question | Related work here |
+|---|---|---|---|
+| 1 | Medical imaging → financial tomography | Reconstruct latent positioning and state, Ŝ_t = T(X_t), from many indirect projections (price, volume, spreads, funding, OI, options, flow, cross-asset) | [`positioning.md`](positioning.md). Needs derivatives and flow data |
+| 2 | Radar → markets seen through their echoes | Infer hidden liquidity, institutional execution, latent demand, liquidation pressure or market-maker withdrawal from how observables respond, r(t) = H(s(t), θ) + ε | [`vpin.md`](vpin.md) (a hidden-flow echo, null), [`orderflow.md`](orderflow.md) |
+| 3 | Remote sensing → sensor disagreement | When price says calm, options say stress, funding says crowded and liquidity says fragile, does the **inconsistency** itself signal a regime transition? | [`agreeing.md`](agreeing.md) (one change point across timeframes), [`implied.md`](implied.md) |
+| 4 | Inverse rendering → the invisible scene | What hidden configuration could have generated the observations we see? | Same inverse framing as 1 and 2 |
+| 5 | Traffic engineering → financial traffic | Is instability sometimes congestion (demand over liquidity capacity, q_in > q_max) with stop-and-go waves and capacity collapse, rather than a volatility phenomenon? | Agenda 4 item 11 (queueing). Needs order-book data |
+| 6 | Wildfire science → ignition | Not every spark becomes a fire: P(cascade \| state), with fuel (leverage, crowding), ignition, spread and barriers | [`crash-timing.md`](crash-timing.md) (a crash can be timed, not signed), the shock forecaster |
+| 7 | Avalanche science → metastability | Can a stable market be told from a metastable one at the same volatility? | [`topology.md`](topology.md) (no critical slowing down), [`susceptibility.md`](susceptibility.md) |
+| 8 | Hydrology → liquidity drainage | Does the liquidity reservoir drain, dL/dt = inflow − outflow, while price looks normal, and does depletion precede instability? | [`causal.md`](causal.md) (the spread is a symptom). Needs depth data |
+| 9 | Plasma physics → collective fields | Model aggregate fields (position density, capital-flow velocity, a liquidity field) and their collective instabilities, not individual agents | [`ecology.md`](ecology.md), [`agents.md`](agents.md) |
+| 10 | Cellular automata → minimal local rules | What minimal local rules generate trends, volatility clustering, bubbles, crashes and liquidity gaps? | Agenda 4 item 16 (morphogenesis); [`ecology.md`](ecology.md) |
+| 11 | Percolation → liquidity connectivity | Is there a critical connectivity p_c below which arbitrage relationships across venues break down? | [`coinbase-premium.md`](coinbase-premium.md). Needs multi-venue data, crypto first |
+| 12 | Category theory → compositional finance | Can strategies be written as composable maps (state → signal → decision → portfolio) with properties formally preserved under composition? | [`verification.md`](verification.md) (invariants on the pipeline) |
+| 13 | Type theory → impossible trades | A type system for research: Price<5m> vs Price<1h>, Volatility<realised> vs <implied>, State<trend>, so invalid operations (mixed scales, future data, out-of-regime use, conditional-as-unconditional) fail before the backtest | Our own bugs argue for it: crypto spreads read 1,000x wide (a units error), the lost size brake, the rollover quote artefact ([`findings.md`](findings.md)) |
+| 14 | Cryptanalysis → distinguishers | What statistical property distinguishes this process from the null, D(X) ∈ {structure, null-like}, before asking whether it predicts? | Largely our walk-control method ([`controls.md`](controls.md), [`null.md`](null.md)) |
+| 15 | Algorithmic information theory → compressibility | Does the compressibility K(X_{t−k:t}) of the market change systematically before regime transitions, and does it track forecastability? | [`grammar.md`](grammar.md) (entropy of a bar alphabet) |
+| 16 | Psychophysics → the just-noticeable difference | How large must a change be, θ = f(volatility, attention, context), before participants collectively react? | [`surprise.md`](surprise.md) (macro surprises priced within 3 minutes) |
+| 17 | Gestalt psychology → market objects | Extract structural objects (compression, reversal, breakout) by figure-ground separation, continuity and closure, not indicators | [`grammar.md`](grammar.md), [`patterns.md`](patterns.md), the structures engine's levels and zones |
+| 18 | Human factors → the human-model system | Does the operator, model and interface together decide well under uncertainty: alert overload, hidden uncertainty, inconsistent intervention? | The cards and notifications; [`agent-trading.md`](agent-trading.md) |
+| 19 | Semiconductor fabrication → defect detection | Do tiny local defects (an abnormal spread, a broken correlation, stale liquidity, inconsistent pricing) predict large-scale deterioration? | [`anomalies.md`](anomalies.md) (anomaly work feeding the shock forecaster) |
+| 20 | Film editing → event segmentation | Find natural boundaries between episodes, X_1:T → E_1…E_n, instead of fixed windows | [`structures-context-cusum.md`](structures-context-cusum.md), [`agreeing.md`](agreeing.md) |
+| 21 | Dramaturgy → market tension | Does a latent tension T_t = f(positioning, disagreement, volatility, liquidity) accumulate before large structural events, beyond what volatility shows? | Overlaps agenda 4's failure mechanics |
+
+**A unified failure model, the batch's synthesis.** Hydrology (accumulation and drainage),
+materials science (damage and fatigue), avalanche science (threshold instability), traffic theory
+(congestion) and radar or tomography (hidden-state inference) fit one chain:
+
+    liquidity accumulates -> stress builds -> local defect appears -> threshold crossed -> cascade propagates
+
+The target becomes P(structural failure | S_t), where S_t holds latent stress, connectivity,
+liquidity, congestion, positioning and fragility, across BTC, equities, FX, commodities and rates.
+It is agenda 4's financial failure mechanics, given a hidden-state front end.
+
+**The representation architecture:** tomography + radar + type theory + cellular automata:
+
+    observations -> latent state reconstruction -> formal state representation -> generative dynamics
+
+Observe the market indirectly, reconstruct what is happening underneath, represent it formally,
+then ask what local rules could have generated it.
+
+**Notes for when this is picked up:**
+
+- Most items need data the desk does not hold: order-book depth, derivatives (options, funding,
+  open interest), positioning, multi-venue ticks. OHLCV plus tick volume can test items 6, 7, 10,
+  14, 15, 16, 17, 20 and 21. Crypto venues are the cheapest source of the rest.
+- Two items are method, not market, and can start without new data: **type theory** (item 13) and
+  **distinguishers** (item 14). Type theory is the most direct follow-on to agenda 3's metrology:
+  several of our worst errors were type errors.
+- Every reconstruction claim needs a ground truth. Generate the hidden state ourselves (agents or
+  automata with known positioning), check the reconstruction recovers it, then apply it to markets.
+  Deriv's feeds are markets, not ground truth.
+
 ## How a program is judged
 
 - Walk-forward by time, both halves, pre-registered pass bars.
