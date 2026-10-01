@@ -35,7 +35,10 @@ CONTROL = "~control"
 def kind(symbol: str) -> str:
     if symbol.startswith(CONTROL):
         return "control"
-    return "deriv" if any(word in symbol for word in DERIV) else "real"
+    # The lab's bar files spell names with underscores (`Range_Break_100_Index`), the broker with
+    # spaces; both are Deriv.
+    name = symbol.replace("_", " ")
+    return "deriv" if any(word in name for word in DERIV) else "real"
 
 
 def controls(walks: int = 8, bars: int = 8_000, seed: int = 0) -> dict[tuple[str, str], list[Bar]]:

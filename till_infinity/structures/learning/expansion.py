@@ -38,7 +38,7 @@ from ..state import Restorable
 from .shocks import _log, _z
 
 MODEL = "expansion"
-RECIPE = "2026-10-01 compression state, range, clock, higher timeframe, tick volume"
+RECIPE = "2026-10-01b compression state, range, clock, calendar ahead, higher timeframe, volume"
 
 #: Bars ahead the expansion must arrive within.
 AHEAD = 16
@@ -71,7 +71,16 @@ NAMES = (
     "up_pct",
     "volume_z",
     "volume_z_hour",
+    # research/docs/expansion.md, precursors: the one sensor besides compression that adds (+0.017
+    # AUC in both halves) - the series' own weekday x hour range profile over the next AHEAD bars
+    # against the last AHEAD. The calendar is known in advance: a quiet session with a busier one
+    # coming expands by the clock alone.
+    "clock_ahead",
 )
+
+#: The weekday x hour profile: slots of the UTC week, the most observations a slot's mean weighs
+#: (after that it moves like an average of the last SLOT_KEEP), and the fewest it needs to count.
+SLOTS, SLOT_KEEP, SLOT_WARM = 168, 200, 5
 
 VOLUME_WARM = 50
 HOUR_KEEP, HOUR_WARM = 60, 10
@@ -103,6 +112,9 @@ class Series(Restorable):
     log_volume: deque = field(default_factory=lambda: deque(maxlen=500))
     volume_by_hour: dict[int, list[float]] = field(default_factory=dict)
     last_volume: float = 0.0
+    #: Mean log true range by hour of the UTC week, and how many bars each mean has seen.
+    slot_mean: list = field(default_factory=lambda: [0.0] * SLOTS)
+    slot_n: list = field(default_factory=lambda: [0] * SLOTS)
     latest: list[float] = field(default_factory=list)
 
     @property
@@ -112,6 +124,28 @@ class Series(Restorable):
     @property
     def compressed(self) -> bool:
         return self.warm and self.pct <= COMPRESSED
+
+
+def slot(t: float) -> int:
+    """Hour of the UTC week, Monday 00:00 = 0. 1970-01-01 was a Thursday, 72 hours in."""
+    return int((t / 3_600 + 72) % 168)
+
+
+def clock_ahead(s: Series, when: float) -> float:
+    """log(profile over the next AHEAD bars / profile over the last AHEAD), from bar opens; NaN
+    until most of both windows' slots have been seen."""
+    if s.seconds <= 0:
+        return float("nan")
+
+    def level(starts) -> float:
+        got = [math.exp(s.slot_mean[slot(t)]) for t in starts if s.slot_n[slot(t)] >= SLOT_WARM]
+        return sum(got) / len(got) if len(got) >= 0.75 * AHEAD else float("nan")
+
+    ahead = level(when + k * s.seconds for k in range(AHEAD))
+    behind = level(when - (k + 1) * s.seconds for k in range(AHEAD))
+    if math.isnan(ahead) or math.isnan(behind) or behind <= 0:
+        return float("nan")
+    return math.log(ahead / behind)
 
 
 def percentile(value: float, ranked: list) -> float:
@@ -165,6 +199,10 @@ class Expansion(Restorable):
         _push(s, s.slow)
         s.log_tr.append(math.log(tr) if tr > 0 else -20.0)
         s.abs_moves.append(abs(math.log(close / s.prev_close)))
+        if tr > 0:
+            k = slot(when - seconds)  # the bar's own hour, by its open
+            s.slot_n[k] = min(s.slot_n[k] + 1, SLOT_KEEP)
+            s.slot_mean[k] += (math.log(tr) - s.slot_mean[k]) / s.slot_n[k]
         s.closes.append(close)
         s.last_range = (lh - ll) / s.slow if s.slow > 0 else 0.0
         s.last_volume = float(volume) if volume and volume > 0 else 0.0
@@ -238,6 +276,7 @@ def _features(s: Series, when: float, up: Series | None) -> list[float]:
         up.pct if up is not None and up.warm else float("nan"),
         _z(_log(s.last_volume), s.log_volume, VOLUME_WARM),
         _z(_log(s.last_volume), s.volume_by_hour.get(int(hour), ()), HOUR_WARM),
+        clock_ahead(s, when),
     ]
 
 

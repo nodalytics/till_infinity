@@ -46,7 +46,7 @@ have shipped without it.
 | A boosted quantile envelope beats the history one on FX | Pinball −3.8/−4.2/−5.9% (5/20/50 bars), regime-flat coverage; most of the gain corrects a noisy volatility unit ([`gbm-envelope.md`](gbm-envelope.md)) | FX 15m, retrained fortnightly |
 | Deriv's Volatility, Jump and Step follow their published laws | Realise 0.99-1.01 of the named sigma; the law beats the empirical envelope ([`deriv-variants.md`](deriv-variants.md)) | Envelope quoted from the law |
 | Volatility has a weekday × hour clock | FX out-of-sample profile corr +0.96; cuts next-hour error 5-6% ([`calendar-returns.md`](calendar-returns.md)) | Vol clock (FX, crypto) and a card line |
-| Volatility expansion out of compression can be called | AUC 0.781 held out (both halves), walks 0.55-0.56; 3.5x the base rate in the top decile ([`expansion.md`](expansion.md)) | Card line and fortnightly retrain contest (2026-10-01) |
+| Volatility expansion out of compression can be called; the calendar is the only other precursor that adds | AUC 0.798 held out (both halves), walks 0.55-0.58; 3.7x the base rate in the top decile. Of 15 candidate sensors only the calendar ahead added (+0.017); its duration is predictable at the onset (rank corr 0.70) ([`expansion.md`](expansion.md)) | Card line and fortnightly retrain contest (2026-10-01) |
 | Whether a band is touched is forecastable; which band comes first is not | FX touch skill +0.056 to +0.087 over geometry ([`bandrace.md`](bandrace.md)) | Superseded by the boosted bands: a stated 20% touch rate |
 
 ## What does not work: direction

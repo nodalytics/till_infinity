@@ -145,3 +145,39 @@ def test_the_expansion_contest_runs_and_its_export_is_exact(monkeypatch):
     assert report["series"] == len(series)
     assert report["evaluator_max_diff"] <= rt.GATES["exact"]
     assert (spec is not None) == report["promoted"]
+
+
+def test_the_calendar_sees_a_busier_session_coming():
+    """A series whose range quadruples every day from 12:00 to 16:00 UTC: at 09:00 the next 16
+    quarter-hours reach into the busy session, so the calendar reads positive; at 16:00 it turns."""
+    rng = np.random.default_rng(0)
+    model, price = ex.Expansion(), 100.0
+    t = 1_700_000_000 - 1_700_000_000 % 86_400
+    readings = {}
+    for _ in range(6_000):
+        hour = (t % 86_400) // 3_600
+        scale = 0.002 if 12 <= hour < 16 else 0.0005
+        close = price * math.exp(rng.standard_normal() * scale)
+        high = max(price, close) * math.exp(abs(rng.standard_normal()) * scale / 2)
+        low = min(price, close) * math.exp(-abs(rng.standard_normal()) * scale / 2)
+        model.observe("g", "15m", 900, t + 900, high, low, close)
+        price, t = close, t + 900
+        if t % 3_600 == 0:
+            readings[(t % 86_400) // 3_600] = ex.clock_ahead(model.series["g|15m"], t)
+    assert readings[9] > 0.3
+    assert readings[16] < -0.3
+
+
+def test_deriv_is_recognised_however_its_name_is_spelled():
+    from till_infinity.models.shocks_train import kind
+
+    for name in (
+        "Range Break 100 Index",
+        "Range_Break_100_Index",
+        "Drift_Switch_Index_10",
+        "Volatility_75_Index",
+        "Boom 1000 Index",
+    ):
+        assert kind(name) == "deriv", name
+    assert kind("EURUSD") == "real"
+    assert kind("AAPL.OQ") == "real"

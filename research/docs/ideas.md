@@ -242,6 +242,29 @@ rate beside it, net of spread, swap and repeated activations. Use both halves an
 energy* (the shock forecaster, the vol clock, release timing, open interest) and test whether each
 can be monetised through asymmetric execution.
 
+## Part H: the pre-expansion state, and the life of an expansion
+
+Set 2026-10-01; first results in [`expansion.md`](expansion.md). Compression is one sensor of a
+possible pre-expansion state. Of 15 sensors bars can measure, only the calendar ahead added (now
+shipped). The open sensors need order-book or trade data (crypto first):
+
+| # | Sensor | Data |
+|---|---|---|
+| H1 | Liquidity: executable depth falling while the range stays tight (the buffer disappearing) | Binance `bookDepth`, Bybit order book |
+| H2 | Volume composition: trade count against average trade size (participation against capital compression) | Binance `aggTrades` |
+| H3 | Order flow against price: taker imbalance accumulating while price is trapped | Binance `aggTrades`, `metrics` |
+| H4 | Scheduled releases inside the next 16 bars | the news service's calendar |
+
+**The life of an expansion** (onset → acceleration → maturity → decay → recompression), as
+questions to answer and then trade:
+
+| # | Question | Use |
+|---|---|---|
+| H5 | Onset as time-to-event: P(onset ≤ t \| state) | arming windows for any direction-free entry |
+| H6 | Duration, magnitude and velocity at onset, against walks fitted to each market's own persistence | stop width and hold time for trades already open; sizing |
+| H7 | Phase recognition: which phase is the market in now? | stops that widen early and tighten in maturity and decay (SL-only, no take-profit) |
+| H8 | A universal pre-expansion signature, or one per market? | the alert per family against pooled (pooled wins so far: one model, every family 0.75–0.85) |
+
 ## Closed: do not re-run without new information
 
 - Deriv binaries and barrier products: a 2.41% margin on synthetics, 12-15.6% on real instruments
