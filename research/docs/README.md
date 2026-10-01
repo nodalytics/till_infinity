@@ -9,7 +9,10 @@ Design documents live in [docs/](../docs). This folder is for things that were
 rather than believed.
 
 **Start with [findings.md](findings.md)**; the cross-disciplinary research agenda and each item's
-status is in [agenda.md](agenda.md). Findings is the synthesis of everything below. In short, this desk
+status is in [agenda.md](agenda.md) (seven agendas, the last four parked for later). The trading and
+risk-management ideas waiting to be backtested are in [ideas.md](ideas.md), and crypto perpetuals with
+exchange data (funding, open interest, basis) are backtested with [freqtrade](../freqtrade/README.md).
+Findings is the synthesis of everything below. In short, this desk
 can forecast risk and cannot yet forecast direction, and that finding survives deflation for the
 number of trials.
 

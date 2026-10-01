@@ -266,6 +266,123 @@ then ask what local rules could have generated it.
   automata with known positioning), check the reconstruction recovers it, then apply it to markets.
   Deriv's feeds are markets, not ground truth.
 
+## Agenda 6: formation, provenance and the language of markets (parked for later)
+
+Set on 2026-10-01, to be researched later. This is the fourth batch of fields not touched above. The
+agenda singles out **representation** as the direction to keep attacking: solve the language and the
+models may not need to grow.
+
+| # | Field → idea | Core question | Related work here |
+|---|---|---|---|
+| 1 | Archaeometry → regime provenance | From a regime fingerprint F_t (volatility, liquidity, correlation, flow, positioning), estimate P(age, origin \| F_t): is this regime new, or an old one returning? | [`fractal-twins.md`](fractal-twins.md), agenda 4 item 18 (regime age) |
+| 2 | Metallurgy → phase mixtures | Is a market better described as a mixture S_t = Σ α_i(t) S_i of behavioural phases (trend, reversion, liquidity-driven) than as one discrete HMM state? | [`states.md`](states.md), [`clustering.md`](clustering.md) |
+| 3 | Protein folding → configuration landscapes | Which high-dimensional states are stable, transitional, frequently visited or never visited, and why? | [`manifold.md`](manifold.md), [`atlas.md`](atlas.md) |
+| 4 | Origami → structure-preserving folding | Fold market conditions into a low-dimensional map that preserves economically meaningful transitions, not just variance | [`manifold.md`](manifold.md), [`linear-algebra.md`](linear-algebra.md) |
+| 5 | Prosthetics → the belief-to-action interface | How should uncertain beliefs become executable actions under latency, cost and execution limits? Prediction and execution as one system | [`costs.md`](costs.md), [`limitfills.md`](limitfills.md), [`power-and-sizing.md`](power-and-sizing.md) |
+| 6 | Entomology → swarm allocation | Can decentralised populations with local information allocate capital efficiently without a global optimiser? | [`bandits.md`](bandits.md), [`ecology.md`](ecology.md) |
+| 7 | Flocking → trends without a driver | Can trends emerge from local alignment, separation and cohesion rules with no common fundamental? | [`crowding.md`](crowding.md), agenda 5 item 10 (automata) |
+| 8 | Taphonomy → how data distorts the event | X = T(E) + ε: how do aggregation, latency, gaps, venue mechanics, survivorship and asynchrony distort the underlying event? | Our own record: the rollover quote artefact, crypto spread units ([`rollover.md`](rollover.md), [`vetoes.md`](vetoes.md)); agenda 3's metrology |
+| 9 | Paleontology → the fossil record of alpha | What separates strategies that adapt from evolutionary dead ends (worked, decayed, crowded, broke)? | [`triage.md`](triage.md), [`ecology.md`](ecology.md); agenda 3 item 18 |
+| 10 | Neurosurgery → local intervention | What does perturbing one component do to the rest, as interventions rather than correlations? | [`causal.md`](causal.md) |
+| 11 | Epistasis → signal interactions | Which combinations produce behaviour neither signal produces alone, Δr(X1 \| X2) ≠ Δr(X1)? | [`confirm.md`](confirm.md) (17 of 8,366 gate × timeframe cells), [`lopez-de-prado.md`](lopez-de-prado.md) |
+| 12 | Compiler optimisation → strategy equivalence | Are two "different" strategies the same idea, S1 ~ S2 by positions under a market class? Expose fake diversity, and count trials honestly | [`triage.md`](triage.md); deflation's effective-trial count ([`lopez-de-prado.md`](lopez-de-prado.md)) |
+| 13 | Database theory → bitemporal data | Store (event time, knowledge time) so research never uses a value before it was known | [`journal-store.md`](journal-store.md), [`replay.md`](replay.md). Practical, and protects every backtest |
+| 14 | Time geography → capital velocity | Does the speed at which capital moves through FX, crypto, metals and equities change before cross-market transitions? | [`infoflow.md`](infoflow.md) (no directional flow between assets) |
+| 15 | Queueing networks → arbitrage survival | Model arbitrage opportunities as jobs, ρ = λ/μ: how long does an opportunity survive as arbitrage capacity saturates? | [`queueing.md`](queueing.md), [`coinbase-premium.md`](coinbase-premium.md), [`chan.md`](chan.md) (EURGBP triangle: quote arbitrage, −18.5 Sharpe net) |
+| 16 | Garbage collection → strategy retirement | Reclaim capital from strategies whose marginal utility minus capital and risk cost reaches zero | [`triage.md`](triage.md) (the strategy decision still open) |
+| 17 | Linguistic morphology → market primitives | Decompose episodes into primitives (sweep-continuation as un-break-able) and study composition, motifs and mutation | [`grammar.md`](grammar.md) (no small alphabet), agenda 3 item 10 |
+| 18 | Dendrochronology → candles as rings | Treat each bar as a ring of environmental information and cross-date ring sequences across periods | [`fractal-twins.md`](fractal-twins.md), [`state-and-memory.md`](state-and-memory.md) |
+| 19 | Information ecology → information habitats | Which kinds of information (macro, flow, fundamental, narrative, technical) survive longest where: fitness = impact / (lifespan × cost)? | [`surprise.md`](surprise.md), [`news-volatility.md`](news-volatility.md) |
+| 20 | Evo-devo → how markets develop | How does a market grow from new asset to liquidity, derivatives, arbitrage and institutions? Crypto as the laboratory | [`crypto.md`](crypto.md) |
+| 21 | Conservation biology → strategy diversity | Does low behavioural diversity make markets fragile (correlated behaviour → fragility)? | [`crowding.md`](crowding.md), [`ecology.md`](ecology.md) |
+| 22 | Contact tracing → information genealogy | Reconstruct a narrative's chain: event → analyst → social → trader → flow → price | [`news-models.md`](news-models.md). Needs timestamped text |
+| 23 | Conservation genetics → hidden populations | Can behaviour reveal latent participant populations (holding period, leverage, execution style) without identities? | [`ecology.md`](ecology.md) |
+| 24 | Code-switching → what makes a market switch grammar | Not detecting regimes, but what *causes* a switch from trend grammar to panic grammar | [`grammar.md`](grammar.md) |
+| 25 | Ocean acoustics → financial sonar | P(Z_t \| X_1:t) for hidden liquidity, positioning, latent demand and pressure; judged on structural regime detection, not price | Agenda 5 items 1-2 (tomography, radar) |
+
+**Four unexplored directions, as the agenda separated them:**
+
+| Direction | Fields | Question |
+|---|---|---|
+| A: hidden-state sciences | Radar, sonar, tomography, remote sensing, astronomy, medical imaging | What exists underneath the observable market? |
+| B: structural formation sciences | Morphogenesis, geology, metallurgy, crystallography, developmental biology | How does market structure form and transform? |
+| C: failure sciences | Fracture mechanics, reliability, wildfire, avalanche physics, traffic, percolation | How does a seemingly stable market become unstable? |
+| D: representation sciences | Compiler theory, type theory, linguistics, cartography, database theory, algorithmic information theory | What is the correct language for describing markets? |
+
+The agenda's pick is **D**, as a progression:
+
+    Raw market data -> financial primitives -> market language -> market grammar -> market state -> dynamics
+
+**What we already know about D:** program E ([`grammar.md`](grammar.md)) found no small alphabet (bar
+shape is a continuum) and a one-bar grammar that is about size. A new attempt should start where E
+stopped: primitives defined over *episodes* (agenda 5 item 20, segmentation), not single bars, and
+judged incrementally against the shock forecaster and on GARCH walks. Items 8 (taphonomy) and 13
+(bitemporal data) belong with agenda 3's metrology: they make every later measurement honest.
+
+## Agenda 7: phenomena finance has no language for (parked for later)
+
+Set on 2026-10-01, to be researched later. This batch changes the question once more. It no longer
+asks "what technique can we borrow?" It asks: **what phenomenon does another science study that
+quantitative finance has no language for yet?** Three items sharpen earlier ones, as noted.
+
+| # | Field → phenomenon | Core questions | Related work here |
+|---|---|---|---|
+| 1 | Actuarial science → alpha mortality | The hazard λ_alpha(t) of a strategy dying. Do strategies have lifespans, with infant mortality, maturity, senescence and extinction? Does alpha age while its Sharpe holds? Can approaching death be seen before performance collapses? Is there a universal survival curve, and does mortality cluster across unrelated strategies? | Sharpens agenda 4 item 8. [`triage.md`](triage.md) (none of the production strategies had an edge to lose), [`ecology.md`](ecology.md) ("decay" was selection bias) |
+| 2 | Catastrophe theory → phase transitions | Which control parameters (leverage, liquidity, volatility, concentration, information asymmetry) carry the market across a bifurcation surface B, where it can no longer stay in its state? | [`topology.md`](topology.md) (no critical slowing down), [`susceptibility.md`](susceptibility.md); agenda 5 item 7 (metastability) |
+| 3 | Sheaf theory → can local truths glue globally? | Given local states (timeframes, BTC vs ETH, perp vs spot, venue vs venue) and restriction maps r_ij, does a global X* consistent with all of them exist? If not, is the obstruction a measurable object and a signal? | [`agreeing.md`](agreeing.md), [`aligning.md`](aligning.md) (Simpson's paradox across timeframes), [`confirm.md`](confirm.md); agenda 5 item 3 (sensor disagreement) |
+| 4 | Optimal transport → the cost of changing identity | Wasserstein W(P_t, P_t+1) and the path through distribution space. Are some transitions intrinsically expensive? Is a crash a short path with a huge transport cost? Are regime changes reversible, and is there hysteresis? | None |
+| 5 | Rough paths → markets remember trajectories | Does the market care about the path between states (path signatures S(X)) when conventional features call the states identical? Signatures as a hypothesis about memory, not a feature trick | [`state-and-memory.md`](state-and-memory.md) (state beats memory), [`fractal-twins.md`](fractal-twins.md) |
+| 6 | Inverse optimisation → what participants optimise | From observed actions a_1..a_T, recover Û(a \| s) with a_t ≈ argmax U. Do populations differ in their objectives? | Agenda 6 item 23 (hidden populations). Needs order or trade data |
+| 7 | Global games → uncertainty as coordination | With private signals s_i = θ + ε_i, when does uncertainty coordinate a cascade? How much disagreement prevents one? Can a market stay stable while everyone privately thinks instability possible? | [`game-theory.md`](game-theory.md), [`crowding.md`](crowding.md); liquidation cascades in crypto |
+| 8 | Matching theory → markets as matching machines | Matching efficiency M_t = realised compatible matches / potential. Does it deteriorate before price instability? | Agenda 4 item 11 (queueing). Needs order-book and trade data |
+| 9 | Metrology → how much of a phenomenon the instrument creates | Market → exchange → matching engine → feed → timestamp → dataset: cross-venue disagreement, timestamp uncertainty, sampling and aggregation artefacts, feature instability across resolutions | Sharpens agenda 3's metrology, which our record already supports; [`lagging.md`](lagging.md) (every timestamp is our receive clock) |
+| 10 | Information ecology → carrying capacity | Does information have a carrying capacity? Can markets saturate on a signal? Do signals compete, reproduce, mutate and go extinct? | Sharpens agenda 6 item 19 |
+| 11 | Demography → capital age structure | Treat capital as cohorts by entry time, holding period, leverage and strategy. Does the age distribution A_t = Σ w_i age_i predict volatility, liquidity and instability? | `till_infinity/prices/positioning.py` (open interest separates new money from closing): a first proxy for cohort births and deaths |
+| 12 | Experimental design → active sensing | x* = argmax_x I(Z; X=x \| D): which observation (timeframe, venue, flow, surface, funding) would most reduce uncertainty about the hidden state? The economics of acquiring information | Sharpens agenda 4 item 7 |
+| 13 | Constraint satisfaction → the smallest coherent theory | Write structural hypotheses (BOS, FVG, MSS) as constraints and search for the minimal rule set that explains a class of episodes. Compression into laws, not prediction | [`verification.md`](verification.md), [`grammar.md`](grammar.md); agenda 5 item 15 (compressibility) |
+| 14 | Intelligence analysis → information-to-action latency | With τ_i = t_action − t_information, does instability come from heterogeneous latency, Var(τ_i), more than from the mean? | [`surprise.md`](surprise.md) (priced within 3 minutes), [`lagging.md`](lagging.md) (Deriv's crypto quote third of six venues) |
+| 15 | Differential geometry → state-space curvature | Is the state space curved, with cheap and expensive directions, geodesics, attractors and singularities? Does curvature K(z_t) measure how constrained the current state is? | [`manifold.md`](manifold.md); agenda 6 items 3-4 |
+
+**The dangerous question: does a market have an ontology?** Not "what predicts returns" but **what
+things actually exist in a market**. Are trend, liquidity, regime, order block, volatility cluster,
+support and resistance, imbalance, cohort, information shock, structural break and episode real
+objects? Or are they human descriptions imposed on continuous numbers? The research tree:
+
+    Observation -> Primitive -> Object -> Relation -> State -> Transition -> Law
+
+with questions:
+
+- Which entities are invariant under changes of timeframe, exchange and sampling?
+- Which structures are discovered, and which are imposed?
+- Can two observers of the same market build different but mathematically equivalent realities?
+- What makes two episodes the same episode? When does a collection of observations become an event?
+- Does a market have memory independent of its price path? Can a state exist before price shows it?
+- Is there a minimum vocabulary from which all recurring behaviour can be generated?
+
+**The north star the agenda proposes: find the smallest generative language capable of describing
+financial behaviour.** Formal languages, topology, optimal transport, actuarial science,
+catastrophe theory, demography, inverse optimisation, information theory, metrology, matching,
+rough paths, global games and differential geometry each attack one piece of it.
+
+**What we already know about the ontology question.** Some of our objects have been tested for
+reality against walks we generated:
+
+- The levels' hold rate is the geometry of the label: random walks show the same
+  ([`skill.md`](skill.md)). As an object with predictive content, a "level" was imposed.
+- Volatility clusters are real: present on markets, absent on iid walks, and they carry the
+  shock forecaster. A volatility cluster is discovered.
+- Program E found no small alphabet over bars ([`grammar.md`](grammar.md)).
+
+So the test exists already: **an object is discovered if it carries information on markets that it
+does not carry on walks we generate.** Applied across the list above, that test is a first
+ontology study, and it needs no new data.
+
+## The backlog of ideas to backtest
+
+The trading and risk ideas these agendas suggest, together with ideas from past studies, are kept
+as a backtest backlog in [`ideas.md`](ideas.md). Crypto ideas that need exchange data run in
+[`../freqtrade/`](../freqtrade/README.md).
+
 ## How a program is judged
 
 - Walk-forward by time, both halves, pre-registered pass bars.
