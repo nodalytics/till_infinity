@@ -52,7 +52,7 @@ from till_infinity.structures.learning import expansion as ex  # noqa: E402
 
 OUT = Path(os.environ.get("OUT", ".data/expansion"))
 SEQLAB = os.environ.get("SEQLAB", ".data/seqlab")
-SECONDS = {"15m": 900, "1h": 3600}
+SECONDS = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 BOX, HOLD, ARM_LIFT, QUIET_LIFT = 16, 16, 2.5, 1.0
 
 
@@ -110,10 +110,11 @@ def judge(trades: pd.DataFrame) -> dict:
 
 def main() -> None:
     pred = pd.read_csv(OUT / "test_predictions.csv")
-    pred = pred[pred["test"] & (pred["kind"] == "real")]
+    pred = pred[pred["test"] & pred["kind"].isin(["real", "deriv"])]
     wf = json.loads((OUT / "expansion_wf.json").read_text())
     base = wf["base_rate"]
-    pred["lift"] = pred["p"] / base
+    if "lift" not in pred:  # a merged file carries each model's own lift
+        pred["lift"] = pred["p"] / base
     specs = load_specs(os.environ.get("MT5BT_DB"))
     results: dict = {}
     rng = np.random.default_rng(3)
@@ -121,12 +122,13 @@ def main() -> None:
     books = {}
     for key, g in pred.groupby("key"):
         sym, iv = key.split("|")
-        spec = specs.get(sym) or next((v for k, v in specs.items() if k.split(".")[0] == sym), None)
+        spec = (specs.get(sym) or specs.get(sym.replace("_", " "))
+                or next((v for k, v in specs.items() if k.split(".")[0] == sym), None))
         if spec is None:
             print(f"  no spec for {sym}", flush=True)
             continue
         bars = load_bars(sym, iv, "seqlab", SEQLAB)
-        book = Book(spec.symbol, bars, spec, iv, feed=sym.lower(),
+        book = Book(spec.symbol, bars, spec, iv, feed=sym.replace("_", " ").lower(),
                     meta={"family": g["family"].iloc[0]})
         ts = book.bars["ts"].to_numpy()
         idx = np.searchsorted(ts, (g["when"].to_numpy() - SECONDS[iv]).astype(np.int64))
@@ -157,11 +159,13 @@ def main() -> None:
                            signals={k: sigs[k]})
                 if len(t):
                     t["family"] = book.meta["family"]
+                    t["interval"] = book.interval
                     parts.append(t)
             tr = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
             res = judge(tr)
             if len(tr):
                 res["by_family"] = {f: round(x["R"].mean(), 4) for f, x in tr.groupby("family")}
+                res["by_interval"] = {i: [round(x["R"].mean(), 4), len(x)] for i, x in tr.groupby("interval")}
             results[f"{version}/{arm}"] = res
             print(f"  {version:8s} {arm:7s} {json.dumps(res)}", flush=True)
 

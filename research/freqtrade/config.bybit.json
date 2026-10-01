@@ -7,7 +7,7 @@
   "stake_currency": "USDT",
   "stake_amount": 100,
   "dry_run_wallet": 10000,
-  "max_open_trades": 3,
+  "max_open_trades": 12,
   "timeframe": "15m",
   "fee": 0.00055,
   "exchange": {
@@ -17,7 +17,16 @@
     "pair_whitelist": [
       "BTC/USDT:USDT",
       "ETH/USDT:USDT",
-      "SOL/USDT:USDT"
+      "SOL/USDT:USDT",
+      "BNB/USDT:USDT",
+      "XRP/USDT:USDT",
+      "DOGE/USDT:USDT",
+      "ADA/USDT:USDT",
+      "AVAX/USDT:USDT",
+      "LINK/USDT:USDT",
+      "LTC/USDT:USDT",
+      "DOT/USDT:USDT",
+      "TRX/USDT:USDT"
     ],
     "pair_blacklist": [],
     "ccxt_config": {

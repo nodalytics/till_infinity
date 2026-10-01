@@ -343,6 +343,99 @@ series. Re-validated with the same pre-registered gates:
   48 bars), so they are not yet a matched control. Before a duration forecast ships, it must beat
   walks fitted to each market's own persistence.
 
+## 4h and daily
+
+Re-run 2026-10-01 with the same pre-registered gates, applied per interval (≥ 0.68 held-out
+real-market AUC in both halves).
+
+| Model | 15m | 1h | 4h | 1d |
+|---|---|---|---|---|
+| One model, all four intervals pooled | 0.798 | 0.783 | **0.651** (0.634 / 0.667) | **0.633** (0.633 / 0.620) |
+| A slow model, 4h and 1d only | – | – | **0.665** (0.644 / 0.685) | **0.652** (0.627 / 0.664) |
+| The shipped model, 15m and 1h only, Deriv labels fixed | **0.801** (0.802 / 0.800) | **0.784** (0.782 / 0.783) | – | – |
+
+- **Neither slow model passes.** Expansion out of compression is only moderately predictable on
+  4h and daily bars, so production reads the alert on 15m and 1h only.
+- Pooling the slow intervals in also cost 15m 0.014, so the pooled model is not shipped.
+- **Deriv is the other way round:** 0.56 on 15m and 1h, 0.64–0.68 on 4h and daily.
+- **The shipped model, clean** (Range Break and Drift Switch are no longer scored as real
+  markets): real 0.796. By family: crypto 0.854, metals 0.836, FX 0.774, stocks 0.748, Deriv
+  0.562. Top decile 3.9x the base rate.
+
+## Deriv in the trading tests, and the fill check ([`deriv_check.py`](../harness/deriv_check.py))
+
+Every trading test was re-run with Deriv as a family beside FX, metals, crypto and stocks, at
+15m, 1h, 4h and 1d (4h and 1d descriptive, since the alert failed there). It used the 15m/1h
+model's held-out predictions and the slow model's for 4h and 1d, and Deriv's own broker specs.
+
+Pooled, some arms turned positive:
+
+| Arm | R per trade [95% CI] | Halves |
+|---|---|---|
+| Alert-armed trailing bracket (B) | +0.019 [+0.004, +0.034] | −0.017 / +0.055 |
+| **Hedged pair** (long and short at once, each with its own stop at the opposite box edge, both trailing 2σ) | +0.082 [+0.038, +0.132] | |
+| Hedged pair, stops at 1.5σ | +0.045 | |
+
+**Almost all of it was Deriv, and most of Deriv was bar-fill optimism.** A bar backtest fills a
+stop at its level even when price jumped through it. Charging each jumpy instrument its own jump
+size as stop slippage:
+
+| Instrument | Filled at the level | With its jump slippage | Verdict |
+|---|---|---|---|
+| Boom 1000, Crash 1000 | +0.01 to +0.45R | **−0.16 to −0.51R**, both halves | artefact |
+| Range Break 100 | +0.17 to +1.27R | −0.30R bracket; hedged pair +0.13R, mixed halves at 1h | mostly artefact |
+| Volatility 75 | −0.02 to −0.09R | – | negative, as its law says |
+| Volatility 25, Step | −0.01 to +0.15R | – | about 400 trades each (noise ≈ 0.05R), halves mixed: noise |
+| **Drift Switch 10** | +0.08 to +0.11R at 15m, both halves | – | **candidate:** a measured AR(1) of +0.15 ([`families.md`](families.md)) |
+| **Jump 50** | +0.11 to +0.20R at 15m | slippage estimate came out 0 | **unverified:** its jumps need tick fills |
+
+So the Deriv-driven positives do not stand. Drift Switch 10 and Jump 50 at 15m are the only
+candidates. Each needs a tick-fill check (the bridge serves Deriv ticks; `mt5bt --ticks`) and fresh
+data before anyone trades them.
+
+On real markets alone the hedged pair is negative in FX, metals and stocks, and slightly positive in
+crypto. **It is not better than the bracket it is equivalent to**, which only costs one spread
+instead of two.
+
+**The timing question: arm the bracket now, or near bar 16?** Now. Under the alert, the first 3σ
+move has arrived by bar 4 in 17% of cases, by bar 8 in 50% (median bar 7), and by bar 16 in 79%.
+Resting stop orders cost nothing until price leaves the box. Arm them at the alert and cancel
+what has not filled after 16 bars.
+
+## The order book and flow (crypto): [`buffer.py`](../harness/buffer.py), [`flowsign.py`](../harness/flowsign.py)
+
+**The hypothesis:** the buffer disappears while the range stays calm. Depth falls, the
+participants change, and flow piles up against a trapped price.
+
+**Data:** Binance USD-M perpetuals from the public archive, 12 symbols, 2023-03 onward, 15m and
+1h. Book depth within ±1% and ±5%, trade count and taker-buy volume from the klines, open interest
+and long/short ratios from the metrics.
+
+**Expansion: nothing adds.** The base is the alert with the calendar; a group counts if it adds
++0.005 AUC in both halves, against a 30-day placebo shift.
+
+| Added to the alert (crypto base AUC 0.838) | Held-out AUC | Counts |
+|---|---|---|
+| H1 buffer (depth level, its trend, asymmetry, 5% depth) | 0.838 | no |
+| H2 composition (trade count, trade size, size − count) | 0.837 | no |
+| H3 flow (taker imbalance, the part price has not expressed) | 0.834 | no |
+| H4 positioning (OI change and level, taker and top-trader ratios) | 0.837 | no |
+| All | 0.840 | no |
+
+**Direction: nothing either, once a selection bias is removed.** Among compressed moments that
+went on to expand, taker flow called the side at AUC 0.558. But momentum alone scored 0.562 on the
+same rows, and the 30-day placebo 0.52–0.53. Defining the rows by what happened next lets moves
+that continue the prior push qualify more often. On rows known in advance, everything sits at a
+coin:
+
+| Rows | Flow | Flow not yet in price | Momentum | Depth asymmetry | OI change |
+|---|---|---|---|---|---|
+| All compressed bars (177,411) | 0.498 | 0.501 | 0.494 | 0.505 | 0.498 |
+| Alert fires (24,677) | 0.504 | 0.511 | 0.494 | 0.493 | 0.493 |
+
+The order book and flow predict neither the expansion nor its side, beyond what compression and
+the calendar already say. That closes ideas I4 and I5.
+
 ## Did it, or the shock forecaster, see the AUS 200 move? (2026-09-30 and 10-01)
 
 The ASX 200 cash index (Yahoo 15m bars; the broker's Australia 200 CFD is not on the lab), replayed

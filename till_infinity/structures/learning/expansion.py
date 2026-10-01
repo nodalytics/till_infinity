@@ -51,6 +51,9 @@ EXPANDED = 0.8
 WARM = 300
 #: The timeframes it is trained and read on, and the one above each that informs it.
 INTERVALS = ("15m", "1h")
+#: Scored and read on 15m and 1h. A pooled model over 4h and 1d as well failed the gate there
+#: (held-out 0.651 and 0.633, against >= 0.68 in both halves) and cost 15m 0.014; a model of its
+#: own for the slow intervals is a separate trial (research/docs/expansion.md).
 UP = {"15m": "1h", "1h": "4h"}
 #: A card line from this multiple of the base rate: about the top decile in research.
 CARD_LIFT = 2.5

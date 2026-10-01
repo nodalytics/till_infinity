@@ -52,7 +52,7 @@ from till_infinity.structures.learning import expansion as ex  # noqa: E402
 
 OUT = Path(os.environ.get("OUT", ".data/expansion"))
 SEQLAB = os.environ.get("SEQLAB", ".data/seqlab")
-SECONDS = {"15m": 900, "1h": 3600}
+SECONDS = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 H, BOX, MAXHOLD = 16, 16, 96
 RNG = np.random.default_rng(17)
 
@@ -108,9 +108,21 @@ def mi_test(x, y, draws=200):
                 p=round(float(np.mean(np.array(null) >= real)), 3))
 
 
+def spec_for(specs: dict, sym: str):
+    """The broker's spec: the lab spells Deriv with underscores and stocks without the exchange."""
+    for name in (sym, sym.replace("_", " ")):
+        if name in specs:
+            return specs[name]
+    return next((v for k, v in specs.items() if k.split(".")[0] == sym), None)
+
+
 def orders(bars: pd.DataFrame, st: pd.DataFrame, arms: np.ndarray, *, two_sided: bool,
-           buffer: float, trail_k: float, confirm: bool) -> pd.DataFrame:
-    """The pre-registered orders for every arming bar (one per BOX bars)."""
+           buffer: float, trail_k: float, confirm: bool, hedge: str | None = None) -> pd.DataFrame:
+    """The pre-registered orders for every arming bar (one per BOX bars).
+
+    `hedge` opens both sides at once at the next open (a hedging account), each with its own
+    stop: "edges" at the opposite box edge (economically B1's bracket, paying both spreads up
+    front), "sigma" 1.5 sigma away. Both trail `trail_k` sigma behind their best price."""
     hi = bars["high"].rolling(BOX).max().to_numpy()
     lo = bars["low"].rolling(BOX).min().to_numpy()
     cl = bars["close"].to_numpy()
@@ -129,6 +141,15 @@ def orders(bars: pd.DataFrame, st: pd.DataFrame, arms: np.ndarray, *, two_sided:
         stop = height + sp[i] + 2 * d
         trail = trail_k * px_sig
         sides = [1, -1] if two_sided else [1 if cl[i] >= (hi[i] + lo[i]) / 2 else -1]
+        if hedge:
+            for side in (1, -1):
+                if hedge == "edges":
+                    dist = (cl[i] + sp[i] - lo[i]) if side > 0 else (hi[i] - cl[i])
+                else:
+                    dist = 1.5 * px_sig
+                if dist > 0:
+                    rows.append(dict(i=i, side=side, stop=dist + sp[i], trail=trail, hold=MAXHOLD))
+            continue
         if confirm:  # market entry at the next open after a close beyond the edge, within BOX bars
             j_end = min(len(cl) - 1, i + BOX)
             for k in range(i + 1, j_end + 1):
@@ -162,21 +183,24 @@ def judge(t: pd.DataFrame) -> dict:
 
 def main() -> None:
     pred = pd.read_csv(OUT / "test_predictions.csv")
-    pred = pred[pred["test"] & (pred["kind"] == "real")]
+    pred = pred[pred["test"] & pred["kind"].isin(["real", "deriv"])]
     wf = json.loads((OUT / "expansion_wf.json").read_text())
     base = wf["base_rate"]
-    pred["lift"] = pred["p"] / base
+    if "lift" not in pred:  # a merged file carries each model's own lift
+        pred["lift"] = pred["p"] / base
     specs = load_specs(os.environ.get("MT5BT_DB"))
     deciles = np.quantile(pred["lift"], np.linspace(0, 1, 11))
 
     stats, books = [], {}
     for key, g in pred.groupby("key"):
         sym, iv = key.split("|")
-        spec = specs.get(sym) or next((v for k, v in specs.items() if k.split(".")[0] == sym), None)
+        spec = spec_for(specs, sym)
         if spec is None:
+            print(f"  no spec for {sym}", flush=True)
             continue
         bars = load_bars(sym, iv, "seqlab", SEQLAB)
-        book = Book(key, bars, spec, iv, feed=sym.lower(), meta={"family": g["family"].iloc[0]})
+        book = Book(key, bars, spec, iv, feed=sym.replace("_", " ").lower(),
+                    meta={"family": g["family"].iloc[0]})
         st = state(book.bars)
         ts = book.bars["ts"].to_numpy()
         idx = np.searchsorted(ts, (g["when"].to_numpy() - SECONDS[iv]).astype(np.int64))
@@ -245,6 +269,9 @@ def main() -> None:
         configs[f"{tag}_buffer1"] = dict(gate=gate, two_sided=True, buffer=1.0, trail_k=2.0, confirm=False)
         configs[f"{tag}_confirm"] = dict(gate=gate, two_sided=True, buffer=0.0, trail_k=2.0, confirm=True)
         configs[f"{tag}_trail3"] = dict(gate=gate, two_sided=True, buffer=0.0, trail_k=3.0, confirm=False)
+        for hedge in ("edges", "sigma"):
+            configs[f"H{tag}_{hedge}"] = dict(gate=gate, two_sided=True, buffer=0.0, trail_k=2.0,
+                                              confirm=False, hedge=hedge)
         for kk in ("buffer0.5", "buffer1", "trail3"):
             configs[f"{'C' if gate == 'any' else 'D'}_{kk}"] = dict(
                 gate=gate, two_sided=False, buffer=configs[f"{tag}_{kk}"]["buffer"],
@@ -255,17 +282,20 @@ def main() -> None:
         for key, (book, st, idx, lift) in books.items():
             arms = idx[lift >= 2.5] if cfg["gate"] == "alert" else idx
             sig = orders(book.bars, st, arms, two_sided=cfg["two_sided"], buffer=cfg["buffer"],
-                         trail_k=cfg["trail_k"], confirm=cfg["confirm"])
+                         trail_k=cfg["trail_k"], confirm=cfg["confirm"], hedge=cfg.get("hedge"))
             if len(sig):
                 t, _ = run(book, None, Costs(), equity=1e7, risk=0.001, one_per_symbol=False,
                            signals={key: sig})
                 if len(t):
-                    parts.append(t.assign(family=book.meta["family"]))
+                    parts.append(t.assign(family=book.meta["family"], interval=book.interval))
         t = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
         trades[name] = t
         out = judge(t)
         if len(t):
             out["by_family"] = {f: round(x["R"].mean(), 4) for f, x in t.groupby("family")}
+            out["by_interval"] = {i: [round(x["R"].mean(), 4), len(x)] for i, x in t.groupby("interval")}
+            out["deriv_by_interval"] = {i: [round(x["R"].mean(), 4), len(x)]
+                                        for i, x in t[t["family"] == "deriv"].groupby("interval")}
         res[f"trade/{name}"] = out
         print(f"  {name:14s} {json.dumps(out)}", flush=True)
 
