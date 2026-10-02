@@ -3663,3 +3663,27 @@ what would kill it; none of them exists in the code.
   room - 2.6 GB and OOM-killed four times in two days - so this is a question
   about which *other* host, and what that host failing would take down. See
   [local-models.md](../research/planned/local-models.md).
+- **The envelope's published coverage survives a rebase, and should not.** `hits`
+  and `resolved` in `structures/vol/envelope.py` only ever increment, and
+  `_rebase` resets the six AgACI fields - `levels`, `learned`, `experts`,
+  `regret`, `regret_sq`, `pending` - while leaving the counters. So since FX 15m
+  moved to the boosted base, `env15_cover_p90` reports a rate earned mostly under
+  the *empirical* base, and `card_lines` prints it beside a quote it no longer
+  describes. The new `Published` class carries a second copy of the same shape.
+  The decided fix is two changes in one edit. **Make the counters recent**, so a
+  rebase ages out instead of needing a reset - and prefer decayed counters to a
+  deque of hit flags, because the module already cut `WINDOW` from 2,000 to 1,000
+  to keep the state file small and nine deques per envelope would undo that; a
+  decayed `(hits, weight)` pair is two floats. **Then bucket them by volatility
+  third**, which is the conditional coverage `conformal.md` names as the one
+  weakness neither corrector fixes - calm FX at N = 50 covering 84.7% against a
+  stated 90% - and which `research/harness/zmaconformal.py` has now measured.
+  Three targets by three buckets is eighteen floats, and the overall coverage is
+  their sum, so both readings come from one structure. `Envelope` is a
+  `Restorable` with `slots=True`, so keep `hits` and `resolved` as fields and add
+  the new ones beside them, with `coverage()` preferring the buckets once
+  populated - the migration shape the module already used when it kept `levels`
+  "so a restored series keeps it". This is also what the analogue viewer's
+  coverage panel needs, so it is on that critical path rather than beside it. See
+  [conformal.md](../research/docs/conformal.md) and
+  [the viewer spec](specs/2026-09-29-analogue-viewer-design.md).
