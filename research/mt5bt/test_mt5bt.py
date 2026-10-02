@@ -290,3 +290,19 @@ def test_a_buy_limit_on_ticks_fills_at_the_level_or_better():
                Costs(swap=False, fill="ticks"))
     assert t["fill"].iat[0] == "ticks"
     assert t["entry"].iat[0] <= 1.0980 + 1e-12
+
+
+def test_a_limit_fill_bar_does_not_credit_a_target_its_high_made_first():
+    # bar 1 opens at 1.1000, its high 1.1030 comes before it falls to the buy limit at 1.0980 and
+    # closes at 1.0990: the target at 1.1020 (4R) was not reached after the fill. Bar 2 stops it.
+    b = book([(1.1000,) * 4, (1.1000, 1.1030, 1.0978, 1.0990), (1.0990, 1.0992, 1.0970, 1.0972)])
+    t, _ = run(b, pending([dict(i=0, side=1, entry=1.0980, limit=1, expires=5, stop=0.0005,
+                                target=0.0040)]), Costs(swap=False))
+    assert t["entry_bar"].iat[0] == 1 and t["reason"].iat[0] == "stop"
+
+
+def test_a_limit_fill_bar_closing_past_the_target_takes_it():
+    b = book([(1.1000,) * 4, (1.1000, 1.1030, 1.0978, 1.1025), (1.1025,) * 4])
+    t, _ = run(b, pending([dict(i=0, side=1, entry=1.0980, limit=1, expires=5, stop=0.0005,
+                                target=0.0040)]), Costs(swap=False))
+    assert t["reason"].iat[0] == "target" and t["exit_bar"].iat[0] == 1

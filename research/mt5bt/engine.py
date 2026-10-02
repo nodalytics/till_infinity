@@ -155,6 +155,8 @@ def walk(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: in
     """One trade from bar j's open (or a resting order's `fill` inside bar j) to its exit, on
     bars. None when there is no bar j. On a resting order's fill bar, a stop inside that bar's
     range counts: the bar cannot say whether the low came before the fill, so it is assumed to.
+    A target on that bar counts only if the bar closes beyond it: the far side of a resting
+    order's fill bar most likely printed before the fill.
 
     `trail` > 0 trails the stop that far behind the best exit-side price of the bars already
     *completed* (never the bar being checked: its high may have come after its low). The stop only
@@ -166,7 +168,8 @@ def walk(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: in
     (o, h, l, c), (ao, ah, al, ac) = sides or _sides(book, sp)
     pt = book.spec.point
     slip = costs.slippage_points * pt
-    if fill is not None and not np.isnan(fill):
+    resting = fill is not None and not np.isnan(fill)
+    if resting:
         entry = fill
     else:
         entry = ao[j] + slip if side > 0 else o[j] - slip
@@ -191,6 +194,11 @@ def walk(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: in
                 return base | dict(exit_bar=k, exit=xo[k], reason="target_gap", sp_exit=ao[k] - o[k])
         hit_s = xl[k] <= stop if side > 0 else xh[k] >= stop
         hit_t = target_d > 0 and (xh[k] >= target if side > 0 else xl[k] <= target)
+        if k == j and resting and hit_t and not hit_s:
+            # A resting order is filled from the far side, so the bar's extreme on the target side
+            # most likely came before the fill. Only a close beyond the target proves price got
+            # there after it.
+            hit_t = xc[k] >= target if side > 0 else xc[k] <= target
         if hit_s and hit_t:
             first = _first_tick(book, b["ts"].iat[k], b["ts"].iat[k] + step, side, stop, target)
             hit_s, hit_t = first == "stop", first == "target"
