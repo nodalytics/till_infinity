@@ -611,3 +611,48 @@ per instrument per day.
 appear once each in a 28.8-day sample and look constant. They are **retired
 names** - `racing.py` records that `channel_position` became `range_position` -
 and a single surviving row is not a reading.
+
+## Nineteen: `drawn_by_n` is a proxy for level age and instrument — 2026-10-02
+
+Not a feature that does nothing. A feature that does something, publishes it correctly, and is
+**measuring a different thing from the one its name claims** - which is the same defect one layer
+along, and invisible in exactly the same way.
+
+`drawn_by_n` is published on every level call, and the note beside `STRUCTURES_FORMATION` says
+why: a pass can be useless as a source of levels and still carry information about a price
+something else already drew, so running every pass and recording the agreement is how that gets
+judged. Nothing had ever judged it.
+
+On 110,299 resolved level outcomes it looks emphatically right. The reject rate climbs
+monotonically with the number of agreeing passes, 67.11% at one to 73.87% at six, and the break
+rate halves, 10.29% to 5.44%.
+
+**Subtract each instrument-and-interval's own mean and there is nothing there**: lifts of -0.19,
++0.24, -0.08, -0.11, +0.21 and +1.03 points, none past 1.6 sigma and in no order. The count was
+reporting two things already published separately:
+
+* **which instrument the level is on.** The synthetics are 15.1% of one-pass levels and 4.2% of
+  six-pass ones, and they hold at different rates.
+* **how much history the level has.** `experience` rises monotonically with the count - 0.245 at
+  one pass to 0.727 at six - and the reject rate rises with `experience` on its own, 67.03% /
+  66.45% / 71.42% by tercile. Inside a tercile the count orders nothing.
+
+It is not `confluence_n` in disguise, which was the other obvious reading: r = 0.15 between them,
+and the median `confluence_n` is 0 at every count.
+
+So a consumer gating on `drawn_by_n` would believe it had found agreement and would in fact be
+buying old levels on quiet instruments. **The fix is not to compute it better.** `experience` is
+already published and is the thing that carries the signal; the count adds nothing on top of it.
+
+Three notes for whoever reads this next:
+
+* **The same page already holds the other half of this.** `STRUCTURES_FORMATION` is the third row
+  in "The four" above, inert for its whole life because `Watcher.load` replaced the configured
+  engine with the pickled one. That is fixed - the live journal shows `equal` and `gap` drawing
+  and `wick`/`vwap` absent, matching the deployed string and contradicting the code default - so
+  the setting now works and the feature it feeds does not.
+* **Pass *identity* is not covered by this null.** Asking which pass rather than how many found
+  one real effect at -5.3 sigma, written up in [gap-levels.md](gap-levels.md). A count throwing
+  away which passes agreed is part of why it measures nothing.
+* **Pivot-only levels record a `break` rate of exactly zero** across 23,003 rows. Not
+  investigated here. On this page's own evidence that is worth a look rather than a shrug.
