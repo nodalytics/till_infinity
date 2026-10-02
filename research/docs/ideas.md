@@ -365,6 +365,12 @@ probability of a clean displacement Q, and the expected duration D.
 | K14 | Information bottleneck / MDL | The smallest state that keeps the information about expansion | **Answered 2026-10-02:** six features keep 0.798 of 0.800: short vs long range, range vs its mean, the calendar ahead, the hour, time to the weekly close, the timeframe. The pre-expansion state is volatility mean reversion plus the calendar |
 | K15 | Topology + persistence | Does state-space topology change before the dynamics do? | Partly: [`topology.md`](topology.md) found no topological precursor of shocks |
 
+## Paper trading (decided)
+
+| What | Where | Status |
+|---|---|---|
+| **Crypto 4h CCI(20) ±100**, the only indicator strategy to pass every test on fresh coins (+0.06R a trade) | freqtrade dry-run, Bybit perps, 12 coins, with a coin-flip twin | **To set up.** Plan, expectations and kill checkpoints in [`battery.md`](battery.md) |
+
 ## Closed: do not re-run without new information
 
 - Deriv binaries and barrier products: a 2.41% margin on synthetics, 12-15.6% on real instruments

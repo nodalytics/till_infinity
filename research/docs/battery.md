@@ -116,3 +116,58 @@ here as it did before ([`lopez-de-prado.md`](lopez-de-prado.md)).
 - **FX, metals and stocks:** no indicator strategy has an edge.
 - **Deriv:** the apparent edges are fill artefacts, except Drift Switch, which is being checked on
   real ticks ([`ta_ticks.py`](../harness/ta_ticks.py), [`deriv_ticks.py`](../harness/deriv_ticks.py)).
+
+## Next: paper trade crypto 4h CCI (decided 2026-10-02)
+
+The one indicator strategy that passed every pre-registered test on fresh instruments goes to a
+**paper (dry-run) account, not production.** Its edge is thin, so it must earn a forward record
+before any money.
+
+**The rule, frozen exactly as validated:**
+
+- **Signal:** CCI(20) on 4h candles, computed at the candle's close. Long when CCI crosses up
+  through +100; short when it crosses down through −100.
+- **Entry:** at the next 4h candle's open.
+- **Stop:** 2 ATR(14) from entry; then a trailing stop 3 ATR behind the best price.
+- **Exit:** the opposite signal, the stop, or 200 candles. **No take-profit.**
+- **One position per coin.** Risk a fixed fraction per trade (paper: 0.5% of the paper equity).
+
+**Where:** USD-margined perpetuals, the 12 coins of the validation (BTC ETH SOL BNB XRP DOGE ADA
+AVAX LINK LTC DOT TRX), in freqtrade dry-run on Bybit. Bybit is reachable through `bytick.com`
+([`../freqtrade/README.md`](../freqtrade/README.md)); Binance's API is blocked from the desk.
+Taker fees and funding are charged as freqtrade does. **No live keys.** The paper run must not
+touch the production hosts.
+
+**A shadow twin:** the same signals with a coin-flip side, run alongside. The edge is measured as
+the strategy minus its twin, exactly as validated.
+
+**What to expect:** +0.06R a trade net on the fresh coins (5,372 trades, halves +0.053 / +0.065;
+the coin twin was −0.018). In the original sample (BTC, ETH, SOL) its win rate was 37%, winners
+averaged 1.59R and losers −0.73R; the fresh-coin run did not record these. The standard deviation
+of R is estimated at about 1.4 from that payoff shape, and the first checkpoint should replace it
+with the measured value. Expect long losing streaks: at a 37% win rate,
+runs of 10 or more losses are normal.
+
+**How long it takes to know:**
+
+- 12 coins at 4h give about 1,250 trades a year.
+- Confirming +0.06R at two standard errors (1.4R / √n) needs about 2,200 trades, **about two
+  years.**
+- A shorter record can only show that the edge is broken, not that it is real.
+
+**Pre-registered checkpoints:**
+
+| After | Check | Action |
+|---|---|---|
+| 300 trades (about 3 months) | Mean R minus the twin's below −0.15R | **Kill**: that is about 2 standard errors below the expected edge |
+| 600 trades | Mean R minus the twin's ≤ 0 | **Kill**: the edge is not showing |
+| 1,200 trades | Below +0.02R | Review; likely kill |
+| 2,200 trades (about 2 years) | Above 0 with the 95% interval above 0, in both halves of the forward record | Eligible to be proposed for a small real allocation, as a separate decision |
+| Any time | Fills or fees differ from the backtest's by more than 0.02R a trade | Stop and reconcile before continuing |
+
+**What it is not:**
+
+- It is not a production strategy, and it does not touch the desk's MT5 account.
+- Its parameters are not tuned. Any change resets the record, because a changed rule is a new
+  trial.
+- It is not to be judged on its first weeks.
