@@ -26,6 +26,110 @@ were tightened after its review: a stricter leg, a strong break, strong candles.
 | filters | 4h bias (the last 4h break of structure points the trade's way), nested in a live 4h zone (1h), strong candles; SMC: discount/premium of the 4h dealing range, inducement swept on the way in, London/New York killzones, all of them; the desk's NAS100 example (a zone 50+ bars old reached by a 3-ATR fall in 5 bars) |
 | nulls | the coin twin (same fills, random side) and random-time trades (same side and geometry in ATR at a random bar); day-bootstrap p, Benjamini-Hochberg over every cell |
 
+## How the zones are built
+
+Four zone definitions went through the same harness. All are in [`zones.py`](../ideas/zones.py)
+except the DAX checklist ([`dax_smc.py`](../ideas/dax_smc.py)). Every rule is written for a long;
+a short is the same rule on the flipped chart (prices negated, highs and lows swapped), so both
+sides are always traded. ATR is Wilder's 14-bar. Nothing is used before the bar it is known on.
+
+### 1. Research origin zones (the desk's idea) - `long_zones`, `strong_leg`
+
+The plots in `zones_*.png` and the `gallery/` folder. Built from the desk's description, then
+tightened after its first review of the plots.
+
+1. **Origin.** A swing low: lower than the 3 bars before it and no higher than the 3 after
+   (`prims.pivots`, known 3 bars later).
+2. **Break of structure.** Within 10 bars of the origin a bar *closes* above the last swing high
+   that was known by the origin bar. Price may not trade below the origin's low before that close.
+3. **A violent leg.** From the origin to the break, price travels at least 3 ATR (the highest high
+   of the leg minus the origin low), and the leg leaves a fair-value gap: some bar whose low is
+   above the high two bars before it by at least 0.2 ATR.
+4. **A strong break, not a poke.** The 3 bars after the break all close above the broken level,
+   and price reaches 1 ATR beyond it within 5 bars. A break that falls back or stalls at the line
+   is not an origin.
+5. **The zone.** The origin bar from its low (the far edge, where the stop goes) to the top of
+   its body (the near edge, where a resting buy sits), forced to between 0.2 and 1.5 ATR tall.
+6. **Live** from the latest of: the pivot confirmed, the strong break confirmed, the gap formed.
+7. **The return.** The first bar after it is live whose low reaches the near edge; only the first
+   return is traded, and a zone not revisited within 300 bars is dropped. From the return there
+   is a 12-bar window for the reaction - price may bounce at once, stall or grind. The zone fails
+   on a close 0.1 ATR below the far edge, and the window closes once price leaves the zone by
+   more than 0.25 ATR.
+8. **Strong candles** (`strong_leg`, the `strong` filter): the leg's bodies average 60% or more
+   of their bar ranges, at least 70% of its bars close in the move's direction, and at least one
+   body is 1 ATR or larger.
+9. **The mother cycle** (`bias_4h`, the `bias` filter): on the 4h chart, the last close beyond
+   a confirmed swing high (or low) sets the bias up (or down); a trade must agree with it.
+
+The `gallery/` folder draws only setups that pass both 8 and 9, four per entry type, picked at
+random from 12 markets on 1h and 4h.
+
+### 2. Production's origins - `zones_prod`, `prod_unit` (`ZONES=prod`)
+
+The plots in `zones/prod/`. Production's own detector, `till_infinity/structures/drawing/origins.py`,
+called unchanged and replayed the way production runs it:
+
+1. **The volatility unit.** An exponentially weighted mean of absolute close-to-close moves in
+   basis points (half-life 60 bars, floor 0.25 bps), times the close.
+2. **Replay.** Every 4 bars, `Origins.observe` on the last 1,000 bars at that bar's unit.
+3. **What production calls an origin:** a close-to-close move of 4 units within 6 bars, run out
+   to its full extent; the origin is the extreme inside that window (the turn); the move must
+   close beyond the highest (lowest) close of the 20 bars before the turn by at least 0.5 units.
+4. **The zone** is the turn bar's full high-low range, or its body when that bar is 2 units or
+   wider.
+5. **Live** from the first replay that finds it, never before its structure break. Production
+   never invalidates an origin; here only the first return is traded, as for the others.
+
+The differences from 1: a running 20-bar extreme instead of a pivot, no fair-value gap, a single
+bar's full range, no strong-break test - and about 14 times as many zones.
+
+### 3. Fair-value gaps - `zones_fvg` (`ZONES=fvg`)
+
+The plots in `zones/fvg/`.
+
+1. **The gap.** Bar k's low is above bar k-2's high by at least 0.2 ATR (a bearish gap: bar k's
+   high below bar k-2's low).
+2. **The zone** runs from bar k-2's high (the far edge) to bar k's low (the near edge).
+3. **Live** when bar k closes; first return as in 1.
+4. **Strong** when the middle bar, the one that left the gap, has a body of 1 ATR or more in the
+   gap's direction.
+
+### 4. The DAX mentorship's POI - `dax_smc.long_setups`
+
+The plots in `.data/dax_smc/`. The course's checklist, in its order:
+
+1. **Sweep.** A swing low (3/3 pivot) that trades below the last swing low of the 40 bars before
+   it - one no bar had broken in between - and closes back above it within two bars. That low is
+   *protected*.
+2. **Break.** The first close above the last swing high known before the sweep, within 60 bars,
+   with the protected low holding. *Major* when that high was lower than the swing high before it
+   (the previous lower high), *minor* otherwise.
+3. **Structural liquidity.** The last swing low strictly between the protected low and the break,
+   above the protected low. If there is none, the protected low is *inducement* and the setup is
+   vetoed (kept only as the `no_sl` comparison group). It passes the *50% test* when it sits at or
+   below the midpoint of the leg from the protected low to the break's high, and the *V test* when
+   price stood at least 0.5 ATR above it within 3 bars on both sides.
+4. **POI.** The QMR first: the last order block (a bearish bar followed within 3 bars by a 1-ATR
+   rise) in the 30 bars before the sweep, which the drop into the sweep traded through - used when
+   it sits above the structural liquidity, inside the discount half and untouched since the break.
+   Otherwise the order block at the structural liquidity (the last bearish bar among the 5 up to
+   it). Without structural liquidity, the order block at the protected low. The zone is that bar's
+   full range.
+5. **Context.** The entry in the discount half of the timeframe above's last swing range (4h for
+   a 1h setup, 1d for 4h, weekly for 1d).
+6. **Entries.** A limit at the POI's top (the risk entry), or at the structural liquidity (the
+   trigger entry). Live for 50 bars from when everything above is known; cancelled by a close
+   below the protected low or by price reaching the target unfilled. Stop 0.1 ATR past the
+   protected low; target 3R.
+
+### What every plot shows
+
+Candles; the zone as a blue box from where it formed to the entry; the gap in orange (research
+zones only - for production's origins the orange box has no meaning, since they need no gap); the
+broken level dashed; the first return dotted; the entry as a triangle; the stop in red; the target
+(the near edge of the nearest live opposite zone, or 3R for the DAX checklist) in green.
+
 ## Result
 
 **Nothing passes.** 3,697 cells (market family x timeframe x trigger x filter x exit). On real
