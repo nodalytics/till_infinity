@@ -217,3 +217,28 @@ These are paper-trading candidates, not validated results: no instrument here is
 - **Deriv binary contracts and the RDBULL/RDBEAR resets:** these are payoffs, not prices.
 - **Tick-level Deriv scalpers:** they need ticks.
 - **Anything needing a historical news calendar.**
+
+## Replicated on Binance perpetuals, 2026-10-02 ([`binance.py`](../ideas/binance.py))
+
+Both crypto survivors re-run on another venue and feed: Binance USD-M daily candles from the public
+archive, paying 0.05% taker + 0.02% slippage a side and the actual 8-hourly funding, delisted
+contracts kept for as long as they traded. Set A is the 34 coins the CFD study used (MLN has no
+perpetual); set B is 36 perpetuals nothing here was built or scored on. Pre-registered in the
+script's docstring.
+
+**The time-series momentum book replicates, and better on the unseen coins.**
+
+| | Sharpe | halves | max DD | beta to the basket | residual Sharpe | funding a year |
+|---|---|---|---|---|---|---|
+| A (the CFD coins) | 0.70 | 0.81 / 0.61 | -6.7% | -0.01 | 0.85 | 0.7% |
+| **B (unseen)** | **0.79** | 0.83 / 0.77 | -8.6% | -0.02 | **0.96** | 0.5% |
+| A+B (70) | 0.76 | 0.84 / 0.70 | -7.2% | -0.02 | 0.94 | 0.6% |
+
+Every set beats all 200 random-sign books. By year (A+B): 2020 0.43, 2021 1.84, 2022 0.44, 2023 1.20,
+2024 1.11, **2025 -0.24**, 2026 to date 0.61.
+
+**CUSUM ignition replicates as a long-side timing edge, and only that.** Against longs taken at random
+times with the same geometry, the long side beats them in 15 of 15 k x h cells on A (mean +0.33R) and
+14 of 15 on B (+0.28R). At the validated setting on the unseen coins: 10R target +0.50R against
++0.13R (p 0.055), 4R +0.38R against +0.06R (p 0.01). Shorts lose on both sets. On its own it is a
+modest edge on a long-only crypto sleeve, which is still mostly beta (see the correction above).
