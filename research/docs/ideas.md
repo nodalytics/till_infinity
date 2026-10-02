@@ -292,6 +292,79 @@ and per interval, against the quiet-alert arm and GARCH walks.
   Binance 2023 and rejected (−0.437% a trade, worse than a coin in both halves): the effect's sign
   flips by period. Funding-based direction is closed.
 
+## Part J: the 1R-first framework
+
+Set 2026-10-02. Change the search criterion from "profitable" to a measurable displacement profile.
+For every setup with entry E and stop distance R:
+
+- **P₁R = P(T₁R < T_SL):** the chance a 1R favourable move comes before the stop;
+- **E[T₁R]**, given it came first: how fast;
+- **E[MFE / R]**, and **P(MFE ≥ 2R)**, **P(MFE ≥ 3R)**: how far it can run;
+- **immediate, delayed and pathological 1R:** a 1R reached only after a 2R adverse excursion is
+  useless, since the stop would have killed it.
+
+The aim: **discover the market states in which 1R displacement becomes structurally probable.**
+
+**A property to keep in view:** for a symmetric race (1R target, 1R stop) on a martingale,
+P₁R = 0.5 exactly, *whatever the volatility*. Volatility changes the speed, not the winner. So
+P₁R > 0.5 needs information about direction. A state can raise it only if it carries the side,
+and so far nothing tested does ([`expansion.md`](expansion.md): breakouts out of compression commit
+at a random walk's rate). What a direction-free state *can* change is E[T₁R] and the shape of the
+excursion distribution. Every test reports P₁R against its exact null (0.5, minus the spread in R)
+and against GARCH walks.
+
+| # | Setup | What it believes precedes 1R | Status |
+|---|---|---|---|
+| J1 | Compression → bracket | constrained range | Measured as clean escape vs whipsaw (escape.py): same as walks. Re-expressed in 1R terms in `attainment.py` |
+| J2 | Volatility contraction → release | the first volatility acceleration beats the first price break | `attainment.py` |
+| J3 | Liquidity vacuum | depth falling while the range holds | Closed: depth adds nothing (buffer.py) |
+| J4 | Absorption → release | pressure rising while displacement falls | Closed for now: flow neither foretells expansion nor calls its side (flowsign.py) |
+| J5 | Failed breakout → opposite expansion | one side could not sustain displacement | Measured in escape.py (second breakout after a whipsaw: same as walks). Re-expressed in 1R terms in `attainment.py` |
+| J6 | Breakout → first structural retracement | a genuine impulse already established; compact structural stop | `attainment.py` |
+| J7 | Range traversal | internal displacement predicts traversing the rest of the range | `attainment.py` |
+| J8 | Vol-of-vol transition | uncertainty about volatility changes before volatility does | Vol-of-vol is in the alert; as a trigger in `attainment.py` |
+| J9 | Entropy release | directional uncertainty collapsing | As a precursor it adds nothing (signature.py); as a trigger in `attainment.py` |
+| J10 | Cross-asset divergence → convergence | moves that repair an inconsistency | Closed: cointegration and convergence null (chan.md, crossing.md) |
+| J11 | Multi-timeframe compression cascade | compression propagating down the timeframes | `attainment.py` |
+| J12 | Expansion age → continuation | continuation depends on maturity | `attainment.py` |
+
+**Results 2026-10-02** ([`expansion.md`](expansion.md)): every setup's P₁R sits at or below its
+random-walk null (−0.029 to +0.011). The only positive is J12 for expansions 17+ bars old
+(+0.011, under the +0.02 bar). About a quarter of 1R hits are pathological. The attainment surface
+scores AUC 0.50-0.545, as on walks. No market state makes 1R structurally probable without
+direction.
+
+**The attainment surface:** model P₁R(X) over the state X (compression, volatility, vol-of-vol,
+entropy, expansion age, multi-timeframe state) for each setup's side, held out, against the same
+on walks. A surface rising above 0.5 on markets and not on walks would be the pre-expansion state
+the program is looking for.
+
+## Part K: combinations of fields, aimed at the four unknowns of expansion
+
+Set 2026-10-02. Combine two unrelated fields so that together they ask a question neither asks
+alone, aimed at four unknowns: **when does expansion start, will it be clean or a whipsaw, how
+large, how long.** The synthesis proposed, "market pre-expansion physics", has five latent
+quantities: distance to instability A, accumulated fatigue F, the hazard of expansion λ, the
+probability of a clean displacement Q, and the expected duration D.
+
+| # | Combination | Question | Status |
+|---|---|---|---|
+| K1 | Rheology + microstructure | Does a market deform elastically before it yields? Is a whipsaw a market that deforms without yielding? | **Rejected 2026-10-02:** compliance and elastic recovery add nothing to expansion (0.799 vs 0.800) or to clean vs whipsaw (0.616 vs 0.617) ([`expansion.md`](expansion.md)) |
+| K2 | Reaction kinetics + survival | What sets the reaction rate (onset) and its lifetime (duration)? | **Answered:** the onset hazard rises steeply under the alert (79% reach 3σ by bar 16, median bar 7; `energy.py`); the lifetime is GARCH persistence, which matched walks predict as well (`duration.py`) |
+| K3 | Seismology + point processes | Do expansions have foreshocks: small excursions, micro-breaks, failed attempts? | **Rejected 2026-10-02:** foreshocks add nothing on markets (0.799; clean vs whipsaw 0.618 vs 0.617), only on GARCH walks |
+| K4 | Fracture + fatigue | Does repeated boundary testing weaken compression; does the history of failed breakouts matter? | **Rejected 2026-10-02:** failed-breakout and boundary-test fatigue add nothing (0.799; 0.618 vs 0.617) |
+| K5 | Thermodynamics + information | Does compression redistribute uncertainty (direction high, magnitude low) rather than reduce it? | **Answered, yes:** under the alert P(up) is 0.49 while information about size is 10x that about sign (`energy.py`). It is why direction-neutral trading is conceivable; it does not pay, because the escape is not clean |
+| K6 | Reaction-diffusion + propagation | Does expansion start locally and diffuse (BTC → ETH → alts), or does the system transition at once? | Partly: cross-asset breadth adds nothing ([`expansion.md`](expansion.md)); no lead-lag between assets ([`infoflow.md`](infoflow.md)). An expansion-front speed is not yet measured |
+| K7 | Spectroscopy + latent state | Does the market's response spectrum change before expansion? | Queued |
+| K8 | Control + phase transitions | Distance to instability, without its direction | The alert is one estimate of it; a formal boundary model is queued |
+| K9 | Renewal theory | Does expansion depend on event time since the last structural event? Does the last duration set the next? | Partly: the previous episode's duration has rank correlation 0.53 with the next, but matched GARCH walks show the same (`duration.py`) |
+| K10 | Hawkes + ecology | Do expansions self-excite; does a whipsaw excite the wrong kind? | Partly: shock self-excitation, branching 0.61 ([`ecology.md`](ecology.md)). Competing expansion and whipsaw intensities are queued |
+| K11 | Reliability + competing risks | Cause-specific hazards of clean, whipsaw and stall exits by state | Measured as shares (`escape.py`: clean 0.43, whipsaw 0.42, stall 0.15, as on walks); by fatigue in `prephysics.py` |
+| K12 | Optimal transport + duration | Do long expansions need a larger distributional move to enter? | Queued |
+| K13 | State estimation + change detection | What evidence is enough to declare a real state change, not a wick? | Partly: at the breakout bar only the geometry separates clean from whipsaw (`escape.py`) |
+| K14 | Information bottleneck / MDL | The smallest state that keeps the information about expansion | **Answered 2026-10-02:** six features keep 0.798 of 0.800: short vs long range, range vs its mean, the calendar ahead, the hour, time to the weekly close, the timeframe. The pre-expansion state is volatility mean reversion plus the calendar |
+| K15 | Topology + persistence | Does state-space topology change before the dynamics do? | Partly: [`topology.md`](topology.md) found no topological precursor of shocks |
+
 ## Closed: do not re-run without new information
 
 - Deriv binaries and barrier products: a 2.41% margin on synthetics, 12-15.6% on real instruments

@@ -168,6 +168,9 @@ def main() -> None:
             walk.append(episodes(wf).assign(key=f"{sym}|{iv}", family=fam, alpha=a, beta=b))
             print(f"  {sym} {iv}: garch a={a:.3f} b={b:.3f}, {len(ep)} episodes", flush=True)
     R, W = pd.concat(real, ignore_index=True), pd.concat(walk, ignore_index=True)
+    # a few lab bars carry non-positive prices, which leave an episode without a magnitude
+    R = R[np.isfinite(R["M"]) & np.isfinite(R["D"])].reset_index(drop=True)
+    W = W[np.isfinite(W["M"]) & np.isfinite(W["D"])].reset_index(drop=True)
     res = {"episodes_real": len(R), "episodes_walk": len(W)}
     for target in ("D", "M"):
         cell = {}

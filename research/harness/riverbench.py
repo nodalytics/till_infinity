@@ -14,8 +14,9 @@ Pre-registered (2026-10-01), before any run.
             trees), ADWINBoosting, BOLE, LeveragingBagging, SRP, Stacking (LR + HT + ARF under an
             LR), Voting (the same, averaged); against sklearn HistGradientBoosting trained once on
             the training rows (what production ships)
-  modes     online: test-then-train through the whole stream (river's natural mode, which keeps
-            learning on the held-out rows); frozen: learn the training rows, then only predict
+  modes     online: predict every row, and learn each label only once it has resolved (AHEAD bars
+            after the row - a first run that learned it at once leaked the future and scored 0.83);
+            frozen: learn the training rows, then only predict
   judged    held-out AUC and both halves; memory (pickled bytes); microseconds per prediction
 """
 from __future__ import annotations
@@ -61,7 +62,9 @@ def build() -> None:
         te = m[when[m] >= cut]
         second[te] = when[te] >= np.median(when[te])
     order = np.argsort(when, kind="stable")[::3]
+    step = np.array([3600.0 if k.endswith("|1h") else 900.0 for k in keys])
     np.savez_compressed(DATA, x=x[order], y=y[order], train=train[order], second=second[order],
+                        when=when[order], known=when[order] + ex.AHEAD * step[order],
                         names=np.array(ex.NAMES))
 
 
@@ -138,16 +141,23 @@ def bench(name: str) -> dict:
     x, y, train, second = z["x"], z["y"], z["train"], z["second"]
     X = as_dicts(x)
     out = {}
+    when, known = z["when"], z["known"]
     for mode in ("online", "frozen"):
         model = models()[name]()
         p = np.full(len(y), np.nan)
         t0 = time.time()
-        for k, (xi, yi) in enumerate(zip(X, y, strict=True)):
+        # a row's label resolves AHEAD bars after it: an online model learns it only then
+        queue = np.argsort(known, kind="stable")
+        q = 0
+        for k, xi in enumerate(X):
+            while q < len(queue) and known[queue[q]] <= when[k]:
+                j = queue[q]
+                if mode == "online" or train[j]:
+                    model.learn_one(X[j], y[j])
+                q += 1
             if not train[k] or mode == "online":
                 pr = model.predict_proba_one(xi)
                 p[k] = pr.get(1.0, pr.get(True, 0.0)) if pr else 0.0
-            if mode == "online" or train[k]:
-                model.learn_one(xi, yi)
         out[mode] = score(y, p, train, second) | {"seconds": round(time.time() - t0)}
     sample = X[-2000:]
     t0 = time.perf_counter()
