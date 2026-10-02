@@ -151,12 +151,13 @@ def _sides(book: Book, sp: np.ndarray):
 
 def walk(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: int,
          sp: np.ndarray, costs: Costs, sides=None, fill: float | None = None,
-         trail: float = 0.0) -> dict | None:
+         trail: float = 0.0, limit: bool = False) -> dict | None:
     """One trade from bar j's open (or a resting order's `fill` inside bar j) to its exit, on
     bars. None when there is no bar j. On a resting order's fill bar, a stop inside that bar's
     range counts: the bar cannot say whether the low came before the fill, so it is assumed to.
-    A target on that bar counts only if the bar closes beyond it: the far side of a resting
-    order's fill bar most likely printed before the fill.
+    For a resting *limit* a target on that bar counts only if the bar closes beyond it: a limit
+    is filled from the far side, so that bar's target-side extreme most likely printed first. A
+    stop order is filled on the way toward the target, so its bar is left as it was.
 
     `trail` > 0 trails the stop that far behind the best exit-side price of the bars already
     *completed* (never the bar being checked: its high may have come after its low). The stop only
@@ -194,8 +195,8 @@ def walk(book: Book, j: int, side: int, stop_d: float, target_d: float, hold: in
                 return base | dict(exit_bar=k, exit=xo[k], reason="target_gap", sp_exit=ao[k] - o[k])
         hit_s = xl[k] <= stop if side > 0 else xh[k] >= stop
         hit_t = target_d > 0 and (xh[k] >= target if side > 0 else xl[k] <= target)
-        if k == j and resting and hit_t and not hit_s:
-            # A resting order is filled from the far side, so the bar's extreme on the target side
+        if k == j and resting and limit and hit_t and not hit_s:
+            # A resting limit is filled from the far side, so the bar's extreme on the target side
             # most likely came before the fill. Only a close beyond the target proves price got
             # there after it.
             hit_t = xc[k] >= target if side > 0 else xc[k] <= target
@@ -434,7 +435,8 @@ def run(books: list[Book] | Book, strategy, costs: Costs | None = None, *, equit
                     continue
             if got is None:
                 got = walk(book, j, row.side, row.stop, row.target, int(row.hold), sp, costs,
-                           sides, fill=row.fill if resting else None, trail=trail)
+                           sides, fill=row.fill if resting else None, trail=trail,
+                           limit=bool(getattr(row, "limit", 0)))
             if got is None:
                 continue
             busy_until = got["exit_bar"]

@@ -97,3 +97,39 @@ does as well. The hand-picked examples (XAUUSD 4h reclaim, NAS100 1h short recla
 engulf) are what the rule finds on a good day. If the desk sees something in them the rules miss,
 the next step is to say which feature it is and test that feature alone, as the NAS100 example was
 here (`fast_old`: -0.19R).
+
+## The same harness on production's zones, fair-value gaps and the DAX mentorship's checklist
+
+Run after the desk asked whether the research zones were production's (they are not) and for two
+more zone definitions. Same triggers, filters, exits, 5-day hold, nulls and direction measure.
+
+- **Production's origins** (`ZONES=prod`): `structures/drawing/origins.py` replayed every 4 bars
+  over the last 1,000 at production's volatility unit (an EWMA of absolute close-to-close moves,
+  half-life 60), live from the first replay that finds them. They differ from the research zones:
+  a 20-bar running extreme instead of a pivot, 4 units in 6 bars, no gap required, the turn bar's
+  full range (its body when 2+ units wide), never invalidated - 14x as many (3,975 on EURUSD 1h).
+- **Fair-value gaps** (`ZONES=fvg`): every 0.2+ ATR three-bar gap, far edge to near edge.
+- **The DAX mentorship** ([`dax_smc.py`](../ideas/dax_smc.py)): the course's full checklist - a
+  swept low becomes protected, a major break of the previous lower high, structural liquidity
+  (the last higher low, at or below 50% of the leg, an obvious V) or the inducement veto, the QMR
+  else the order block as the POI, discount on the timeframe above; a risk entry (limit at the
+  POI) and a trigger entry (limit at the structural liquidity), stop past the protected low, the
+  source's fixed 3R. Both sides.
+
+| | cells | real-market R a trade | coin / random time | cells beating both nulls, both halves |
+|---|---|---|---|---|
+| production's origins | 8,304 | -0.13 | -0.14 / -0.12 | 59 of 1,412 |
+| fair-value gaps | 9,885 | -0.13 | -0.13 / -0.11 | 22 of 1,488 |
+| DAX checklist | 824 | -0.13 | -0.11 / -0.10 | 0 of 152 |
+
+- **Nothing passes.** Production's one "pass" (1d engulfing, `fast_old`, 10R: 30 trades) is the
+  floor of the scoring: its coin twin had too few trades to bootstrap and the remaining p was 0 of
+  200 draws. Not counted.
+- **The DAX checklist, every step passing,** makes -0.11R (1d), -0.11R (1h), -0.15R (4h) at the
+  source's 3R. The trigger entry is worse (-0.17 to -0.29R). The inducement veto is the only rule
+  that moves anything, and a little: setups with structural liquidity -0.06 to -0.10R against
+  -0.12 to -0.18R for those it skips; on the 1h they reach 2 ATR first 51.6% of the time against
+  47.2%.
+- **Direction, stop aside:** every confirmed trigger on every zone type is 47-53%. Production's
+  plain touch reads 33-36% - not a signal that the zones break: they are one bar wide, so the bar
+  that arrives runs through the limit price, and a measure taken from the limit counts that move.

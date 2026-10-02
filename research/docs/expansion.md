@@ -551,3 +551,17 @@ top decile is calibrated (0.7-1.4).
   and 0.55 for shocks. Its generators are its own processes ([`generators.md`](generators.md)).
 - **What to do:** keep production's pooled model. A new instrument in a family already in training
   gets a working alert on its first day. A new asset class needs its own history before it does.
+
+## B1 drawn, and re-run with Deriv ([`b1_plot.py`](../harness/b1_plot.py), 2026-10-02)
+
+The desk asked to see B1's trades. Re-run with the trades kept: the original (static stop, 16
+bars, one cancels the other) and Part G's trailing version, on the same held-out alerts. The charts
+(box, alert, both resting orders, fill, stop, exit) and each version's cumulative net R are drawn.
+
+- **Real markets reproduce exactly:** 1,183 trades, -0.036R (B1) and -0.013R (trailing) - the
+  figures above.
+- **The original run had no Deriv trades** (the broker's Deriv specs were missing then). With them:
+  the trailing version makes +0.065R over 4,464 Deriv trades, but +0.124R of that is the jump
+  family (Range Break 15m +0.42R, 1h +0.19R), whose bar fills are known to flatter stop entries;
+  the smooth indices make +0.022R (2,590 trades), Volatility 75 negative on both timeframes. Not an
+  edge; if anything, a tick-filled re-run of Range Break is the one thing left to check.

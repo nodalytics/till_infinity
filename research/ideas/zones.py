@@ -65,7 +65,16 @@ the nearest opposite zone of the same kind. 1h to 1d, everything aligned with th
              forecast of the next 5 days' true range over ATR; setups by its causal tercile, on
              trade R and the direction measures, each against random bars of the same tercile
 
-  OUT=... MT5BT_DB=... MODE=plot|run|gallery|direction|vol python research/ideas/zones.py
+  ZONES=prod  every mode on production's own origins (`structures/drawing/origins.py`) instead:
+             replayed every 4 bars over the last 1,000 at production's volatility unit, live from
+             the first replay that finds them; the zone is production's band. Asked for once the
+             desk learned the research zones were not production's
+
+  ZONES=fvg   every mode on fair-value gaps as the zones instead (asked for later): a 0.2+ ATR
+             three-bar gap, far edge to near edge, live when it forms; strong = a 1-ATR
+             displacement body left it
+
+  OUT=... MT5BT_DB=... [ZONES=prod|fvg] MODE=plot|run|gallery|direction|vol python research/ideas/zones.py
 """
 from __future__ import annotations
 
@@ -181,6 +190,61 @@ def zones(df, a):
     for z in zs:
         z.lo, z.hi, z.bos_level, z.leg_extreme = -z.lo, -z.hi, -z.bos_level, -z.leg_extreme
     return zl + zs
+
+
+def prod_unit(df: pd.DataFrame) -> np.ndarray:
+    """Production's volatility unit on each bar, in price: an exponentially weighted mean absolute
+    close-to-close move (half-life 60 bars, floor 0.25 bps) times the close
+    (`structures/vol/volatility.py`)."""
+    c = df["close"].to_numpy()
+    move = np.r_[0.0, np.abs(np.diff(c)) / np.maximum(np.abs(c[:-1]), 1e-12) * 10_000]
+    alpha = 1.0 - np.exp(np.log(0.5) / 60.0)
+    bps = pd.Series(move).ewm(alpha=alpha, adjust=False).mean().to_numpy()
+    return c * np.maximum(bps, 0.25) / 10_000.0
+
+
+def zones_prod(df: pd.DataFrame, a: np.ndarray, stride: int = 4) -> list[Zone]:
+    """Production's origins (`structures/drawing/origins.py`), replayed as production finds them:
+    every `stride` bars, `Origins.observe` over the last 1,000 bars at that bar's volatility unit.
+    An origin is live from the first replay that sees it (never before its structure break). The
+    zone is production's band - the turn bar's range, or its body when the bar is 2+ units wide."""
+    from types import SimpleNamespace
+
+    from till_infinity.structures.drawing.origins import Origins
+    o, h, l, c = (df[k].to_numpy() for k in ("open", "high", "low", "close"))
+    ts = df["ts"].to_numpy()
+    unit = prod_unit(df)
+    bars = [SimpleNamespace(open=o[k], high=h[k], low=l[k], close=c[k]) for k in range(len(df))]
+    seen: dict = {}
+    for T in range(200, len(df), stride):
+        lo_ = max(0, T - 999)
+        got = Origins().observe([float(x) for x in ts[lo_:T + 1]], [float(x) for x in c[lo_:T + 1]], float(unit[T]),
+                                bars_at=bars[lo_:T + 1])
+        for g in got:
+            key = (g.when, g.launched)
+            if key not in seen:
+                seen[key] = (g, T)
+    out = []
+    for (when, launched), (g, T) in seen.items():
+        p = int(np.searchsorted(ts, when))
+        bos = int(np.searchsorted(ts, g.settled))
+        if not (0 <= p < len(df)) or not a[p] > 0:
+            continue
+        side = 1 if launched == "up" else -1
+        live = max(T, bos)
+        ext = h[p:bos + 1].max() if side > 0 else l[p:bos + 1].min()
+        lo_e, hi_e = (g.low, g.high) if side > 0 else (g.high, g.low)  # far edge, near edge
+        if side > 0:
+            clean = strong_leg(o, h, l, c, a[p], p, bos)
+        else:
+            clean = strong_leg(-o, -l, -h, -c, a[p], p, bos)
+        z = Zone(side, p, lo_e, hi_e, bos, c[bos], p, live, ext, clean)
+        for k in range(live + 1, min(len(df), live + EXPIRE)):
+            if (l[k] <= hi_e) if side > 0 else (h[k] >= hi_e):
+                z.ret = k
+                break
+        out.append(z)
+    return sorted(out, key=lambda z: z.live)
 
 
 def bias_4h(d4: pd.DataFrame) -> np.ndarray:
@@ -352,6 +416,37 @@ def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
                              zone_lo=z.lo, zone_hi=z.hi, zone_live=z.live, zone_ret=z.ret, clean=z.clean, age=age, approach=approach,
                              inducement=bool(inner.any())))
     return pd.DataFrame(rows)
+
+
+def zones_fvg(df: pd.DataFrame, a: np.ndarray) -> list[Zone]:
+    """Fair-value gaps as zones: a bullish gap (bar k's low above bar k-2's high by 0.2+ ATR) is a
+    zone from that high (far edge) to that low (near edge), live once bar k closes; a bearish gap
+    the mirror. `clean` when the bar that left it was a displacement: a 1-ATR body the gap's way."""
+    o, h, l, c = (df[k].to_numpy() for k in ("open", "high", "low", "close"))
+    out = []
+    for k in range(2, len(df)):
+        A = a[k - 1]
+        if not A > 0:
+            continue
+        for side in (1, -1):
+            gap = (l[k] - h[k - 2]) if side > 0 else (l[k - 2] - h[k])
+            if gap < FVG_MIN * A:
+                continue
+            far, near = (h[k - 2], l[k]) if side > 0 else (l[k - 2], h[k])
+            body = side * (c[k - 1] - o[k - 1])
+            z = Zone(side, k - 1, far, near, k, c[k], k, k, h[k] if side > 0 else l[k], bool(body >= A))
+            for j in range(k + 1, min(len(df), k + EXPIRE)):
+                if (l[j] <= near) if side > 0 else (h[j] >= near):
+                    z.ret = j
+                    break
+            out.append(z)
+    return out
+
+
+if os.environ.get("ZONES") == "prod":  # every mode below on production's origins instead
+    zones = zones_prod  # noqa: F811
+elif os.environ.get("ZONES") == "fvg":  # or on fair-value gaps
+    zones = zones_fvg  # noqa: F811
 
 
 # ------------------------------------------------------------------------------------------ plot
@@ -538,7 +633,8 @@ def _trade_all(sym, iv, book, costs, min_stop, df, a, st, filters, trigs, sec):
                 raw = raw[raw[flt]]
             if raw.empty:
                 continue
-            raw = raw.assign(expires=1, tag="", hold=max(1, int(HOLD_DAYS * 86400 / sec)))
+            raw = raw.assign(expires=raw["expires"] if "expires" in raw else 1, tag="",
+                             hold=max(1, int(HOLD_DAYS * 86400 / sec)))
             sid_of = raw.drop_duplicates("i").set_index("i")["sid"]
             for exit_ in EXITS:
                 sig = R.to_mt5(raw, df, a, "src" if exit_ == "opp" else ("trail" if exit_ == "trail" else exit_), min_stop)
@@ -635,7 +731,7 @@ def run_one(job):
     return out + [feats.assign(kind="setup")]
 
 
-def run():
+def run(one=None, primary=("pin", "bias", "opp"), show="bias"):
     import run as R
     from score import JUMPY, boot_p
     syms = os.environ.get("SYMBOLS")
@@ -643,7 +739,7 @@ def run():
     ivs = os.environ.get("INTERVALS", "1h,4h,1d").split(",")
     jobs = [(s, iv) for iv in ivs for s in syms]
     with ProcessPoolExecutor(int(os.environ.get("WORKERS", 20))) as pool:
-        parts = [p for got in pool.map(run_one, jobs) for p in got]
+        parts = [p for got in pool.map(one or run_one, jobs) for p in got]
     pd.concat([p for p in parts if (p["kind"] == "setup").all()], ignore_index=True).to_pickle(OUT / "setups.pkl.gz")
     df = pd.concat([p for p in parts if not (p["kind"] == "setup").all()], ignore_index=True)
     df.loc[(df["family"] == "deriv") & df["sym"].str.startswith(JUMPY), "family"] = "deriv_jump"
@@ -680,12 +776,13 @@ def run():
     pd.set_option("display.width", 250)
     pd.set_option("display.max_rows", 400)
     rm = cells[cells["scope"] == "real markets"]
-    print("\nreal markets, R by trigger x exit (4h bias filter):")
+    print(f"\nreal markets, R by trigger x exit ({show} filter):")
     for iv in ivs:
-        g = rm[(rm["iv"] == iv) & (rm["filter"] == "bias")]
+        g = rm[(rm["iv"] == iv) & (rm["filter"] == show)]
         print(f"\n{iv}\n" + g.pivot_table(index="trigger", columns="exit", values="R").round(3).to_string())
-    print("\nprimary (pin, 4h bias, opposite zone):")
-    print(cells[(cells["trigger"] == "pin") & (cells["filter"] == "bias") & (cells["exit"] == "opp")].round(3).to_string(index=False))
+    print(f"\nprimary {primary}:")
+    print(cells[(cells["trigger"] == primary[0]) & (cells["filter"] == primary[1])
+                & (cells["exit"] == primary[2])].round(3).to_string(index=False))
     print("\npassing cells:")
     print(cells[cells["passes"]].round(3).to_string(index=False))
 

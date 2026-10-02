@@ -306,3 +306,11 @@ def test_a_limit_fill_bar_closing_past_the_target_takes_it():
     t, _ = run(b, pending([dict(i=0, side=1, entry=1.0980, limit=1, expires=5, stop=0.0005,
                                 target=0.0040)]), Costs(swap=False))
     assert t["reason"].iat[0] == "target" and t["exit_bar"].iat[0] == 1
+
+
+def test_a_stop_order_fill_bar_still_credits_its_target():
+    # a buy stop at 1.1010 is filled on the way up; the same bar's high 1.1060 reaches the target
+    b = book([(1.1000,) * 4, (1.1004, 1.1060, 1.1003, 1.1040), (1.1040,) * 4])
+    t, _ = run(b, pending([dict(i=0, side=1, entry=1.1010, expires=5, stop=0.0010, target=0.0040)]),
+               Costs(swap=False))
+    assert t["reason"].iat[0] == "target" and t["exit_bar"].iat[0] == 1
