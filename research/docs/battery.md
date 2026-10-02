@@ -117,6 +117,56 @@ here as it did before ([`lopez-de-prado.md`](lopez-de-prado.md)).
 - **Deriv:** the apparent edges are fill artefacts, except Drift Switch, which is being checked on
   real ticks ([`ta_ticks.py`](../harness/ta_ticks.py), [`deriv_ticks.py`](../harness/deriv_ticks.py)).
 
+## On real ticks ([`ta_ticks.py`](../harness/ta_ticks.py), [`deriv_ticks.py`](../harness/deriv_ticks.py))
+
+**The tick battery:** 21 rules (the 19 plus EMA 9/21 and 20/50) on 1m, 5m and 15m candles built
+from real bid/ask ticks, with every fill on the ticks themselves. Each rule ran plain and aligned
+with the next timeframe up (1m → 15m, 5m → 1h, 15m → 4h, as of its last closed candle).
+
+- **Instruments:** Drift Switch 10 and Jump 50 (2026-02-13 → 10-02, about 20 million ticks each);
+  EURUSD, XAUUSD and BTCUSD (the last 30 days).
+- **Missing:** US 500 returned no ticks under that name.
+- **Scale:** 592 cells.
+
+**7 cells pass deflation, and only one group looks real:**
+
+| Cell | Trades | Net R | Coin twin | Halves |
+|---|---|---|---|---|
+| Drift Switch 10, 15m MACD, aligned | 715 | +0.093 | −0.092 | +0.10 / +0.08 |
+| Drift Switch 10, 5m EMA 20/50, aligned | 601 | +0.055 | −0.244 | +0.03 / +0.08 |
+| Drift Switch 10, 15m CCI, aligned | 577 | +0.027 | −0.196 | +0.01 / +0.04 |
+| Drift Switch 10, 15m Keltner | 786 | +0.024 | −0.128 | +0.02 / +0.03 |
+| Jump 50, 5m Supertrend | 2,140 | +0.026 | −0.069 | +0.01 / +0.04 |
+| BTCUSD 5m RSI(14), aligned | 65 | +0.279 | −0.300 | |
+| EURUSD 15m CCI, aligned | 37 | +0.122 | −0.327 | |
+
+- **Drift Switch trend-following holds up on ticks** with indicator exits. That fits the index's
+  published design (drift regimes that switch, an autocorrelation of +0.15, [`families.md`](families.md)).
+  **Re-tested on the sister indices, Drift Switch 20 and 30** (never used in choosing,
+  [`drift_validate.py`](../harness/drift_validate.py), 20 million ticks each):
+  - **The trend effect replicates:** all 8 cells beat their coin by +0.09 to +0.28R, 6 of them
+    significant after deflation. It is a genuine property of how these indices are generated.
+  - **It does not pay the spread:** on DSI 20 every cell is net negative (−0.01 to −0.15R). On
+    DSI 30 the positive cells (+0.02 to +0.08R) all turn negative in their second half.
+  - **None passes.** A real directional property, too small to trade after Deriv's costs.
+- **The BTCUSD and EURUSD cells are noise** (37 and 65 trades from 30 days); Jump 50's +0.026R is
+  negligible.
+- **Timeframe alignment does not help on average:** the aligned version beats the plain one in only
+  45% of cells.
+- **1m candles are worst** (median −0.09R; costs dominate).
+
+**The Deriv candidates' brackets, settled on ticks.**
+
+- **Drift Switch 10's brackets** made +0.05 to +0.11R on bars. On ticks they make +0.008 (any
+  compression), −0.030 (the alert) and −0.490 (the hedged pair). The bar-level profit was fill
+  optimism.
+- **Jump 50's brackets** stay positive on ticks (+0.07 to +0.12R, both halves), so they pass the
+  letter of the pre-registered rule. But at about 230-480 trades that is about 1.3 standard errors.
+  Jump 50 is published as a jump-diffusion martingale, and its fresh three weeks are negative on
+  every arm. **Not established.**
+- **A lesson for future pre-registrations:** "positive in both halves" without a significance test
+  is too weak a bar.
+
 ## Next: paper trade crypto 4h CCI (decided 2026-10-02)
 
 The one indicator strategy that passed every pre-registered test on fresh instruments goes to a

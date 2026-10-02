@@ -74,6 +74,7 @@ have shipped without it.
 | TA indicators traded as strategies (21 rules, every family, 15m-1d) | 15 of 323 cells survived; on fresh instruments only crypto trend rules hold up (10 of 12 beat their coin; one passes everything, crypto 4h CCI at +0.06R a trade). FX, metals and stocks: nothing ([`battery.md`](battery.md)) | [`battery.md`](battery.md) |
 | ML choosing which indicator trades to take | Lifts markets +0.07R but walks +0.28R: fails its control ([`battery.md`](battery.md)) | [`battery.md`](battery.md) |
 | 1R attainment and pre-expansion physics (fatigue, rheology, foreshocks) | No setup reaches 1R more often than on walks; no physics sensor predicts expansion or clean escape ([`expansion.md`](expansion.md)) | [`expansion.md`](expansion.md) |
+| Indicator strategies on real ticks (1m-15m, with timeframe alignment), and the Deriv candidates on ticks | Drift Switch trend-following beats a coin on all three Drift Switch indices but nets negative on its sisters; the Deriv brackets were fill optimism; alignment helps in only 45% of cells ([`battery.md`](battery.md)) | [`battery.md`](battery.md) |
 | The production strategies themselves | Gross −0.10 to +0.03R, none beats random selection | [`triage.md`](triage.md) |
 
 ## Could we build a mutual fund from this?
