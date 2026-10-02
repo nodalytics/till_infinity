@@ -6831,6 +6831,84 @@ async def test_a_rested_entry_is_also_left_with_the_broker():
     assert trader._waiting["gold"].ticket == 4242
 
 
+def _with_stops_level(trader, points: float):
+    """Give the gold spec a broker minimum, which paper does not set."""
+    was = trader.specs["gold"]
+    trader.specs["gold"] = replace(was, stops_level=points)
+    return trader.specs["gold"]
+
+
+async def _edging_trader(edge: float):
+    """`_resting_trader` with the entry edge under test, which it fixes at 1.5."""
+    made = settings(entry_edge_vol=edge, entry_pending=True, pullback_fraction=0.0, live=True)
+    trader = Trader(Bus(), settings=made)
+    trader.broker = RestingBroker(made)
+    trader.paper = None
+    await trader.start()
+    await trader.handle(
+        Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+    )
+    return trader
+
+
+async def test_a_resting_price_inside_the_brokers_minimum_is_pushed_out():
+    """`Invalid price`, measured on the live desk 2026-10-02.
+
+    Volatility 100 Index reports `trade_stops_level` 138 at a point of 0.01, so
+    the broker refuses a pending order closer than 1.38 to the market - and the
+    resting price is chosen from `entry_edge_vol` alone, which at 0.50v was
+    0.23. Four of six rests were refused that way in an hour. The price is
+    nudged out to what the broker will take rather than thrown away.
+    """
+    # One volatility unit is 4.40 here. A 0.2v edge wants to rest 0.88 from the
+    # market, the broker demands 2.00, and the stop is 4.40 away - so pushing
+    # the entry out to 2.00 still leaves 2.40 between it and the stop.
+    trader = await _edging_trader(0.2)
+    spec = _with_stops_level(trader, 200.0)  # 2.00 in price
+    got = await trader.on_signal(signal())
+    assert isinstance(got, Refusal)
+    assert trader.broker.rested, "the rest should have been pushed out, not dropped"
+    price, _until = trader.broker.rested[0]
+    held = trader._waiting["gold"]
+    assert held.resting is not None
+    # Far enough out for the broker, and still a trade the broker will accept.
+    assert abs(price - held.resting.entry) >= spec.min_stop_distance - 1e-9
+    assert not td.sizing.respects_stops_level(spec, price, held.resting.stop, held.resting.target)
+
+
+async def test_the_rest_is_skipped_when_the_push_would_cross_its_own_stop():
+    """A limit on the far side of its own stop is a trade that opens beaten.
+
+    The stop does not move when the entry is pushed, so a wide broker minimum
+    walks the entry through it. Then there is no price to rest at and the
+    in-process wait is the whole of the answer - which is what it was before
+    the broker-side order existed.
+    """
+    # The same trade as the test above against a 4.00 minimum instead of 2.00:
+    # the push would land 0.40 from the 4.40 stop, which the broker refuses for
+    # the same reason it refused the rest. The trade itself is still valid, so
+    # this is not the signal being gated - it is the rest having nowhere legal
+    # to sit.
+    trader = await _edging_trader(0.2)
+    _with_stops_level(trader, 400.0)
+    got = await trader.on_signal(signal())
+    assert isinstance(got, Refusal)
+    assert got.gate == "waiting"
+    assert not trader.broker.rested, "nothing resteable, so nothing rested"
+    # The wait itself survives: this degrades the order, it does not lose the setup.
+    assert "gold" in trader._waiting
+    assert trader._waiting["gold"].ticket == 0
+
+
+async def test_a_broker_with_no_minimum_is_left_exactly_where_it_was():
+    """`stops_level` zero means the broker did not say, not that it is zero."""
+    trader = await _resting_trader()
+    got = await trader.on_signal(signal())
+    assert isinstance(got, Refusal)
+    price, _until = trader.broker.rested[0]
+    assert price == pytest.approx(trader._waiting["gold"].trigger)
+
+
 async def test_the_order_is_withdrawn_when_the_window_expires():
     """An order left behind is one that fills on a setup this system has
     already stopped watching."""
