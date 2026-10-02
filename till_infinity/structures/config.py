@@ -40,9 +40,36 @@ DEFAULT_NEWS_DB = ".data/news/news.db"
 #: `REFORM_EVERY` at 20 bars across the production book it works out at roughly
 #: two reforms a minute: **0.3% of one core**, on a host with two.
 #:
+#: `gap` joins on 2026-10-02, and the reason is the drift this constant exists
+#: to prevent rather than any new belief about imbalances. **Production had been
+#: running it for some time** - the deployed `STRUCTURES_FORMATION` reads
+#: `pip,run,origin,profile,equal,gap,round` - so the default denied a pass the
+#: desk was already drawing with, and every replay, backtest and test run drew
+#: a book production does not have. Over 32,603 level calls on 09-30..10-02 it
+#: was attributed 204 times, 0.6%, which is the rarity `gaps` predicts of
+#: itself: a gap is one point, so it becomes a level alone only where three have
+#: opened at nearly one price.
+#:
+#: Two things this does **not** settle, both recorded so they are not mistaken
+#: for settled. `equal` is in production and still not here, and `wick` and
+#: `vwap` are here and still not in production - so those three remain
+#: unjudgeable in exactly the way the note above says a pass must not be.
+#: And `research/docs/imbalance.md` measures gap *edges* at first touch, 50.2%
+#: against a 49.6% placebo and a 51.5% breakeven, while this pass emits the
+#: **midpoint** - so what production draws is not the price that study measured.
+#:
+#: `gap` is also the most expensive pass measured here, which the cost note
+#: above did not cover. Its fill scan is O(gaps x bars), so the price is set by
+#: how many gaps stay open rather than by the window: on synthetic 1,500-bar
+#: series - `STRUCTURES_FINE_WINDOW` - 81 open gaps cost 45.7ms against `run`'s
+#: 15.8ms in the same process, and a deliberately pathological 149 cost 135.6ms.
+#: At roughly two reforms a minute that is still well under a percent of one
+#: core, which is why it stays; it is recorded because it is three times the
+#: next pass and the earlier table would have let someone assume otherwise.
+#:
 #: `pip` stays first because `Engine.swings` - and so `_record_shape` - reads
 #: `passes[0]` rather than the merge.
-DEFAULT_FORMATION = "pip,run,origin,profile,wick,vwap,round"
+DEFAULT_FORMATION = "pip,run,origin,profile,wick,vwap,gap,round"
 
 #: Only fast data. Above five minutes a "cross-venue disagreement" is mostly
 #: different bar boundaries, not different opinions about the price.
