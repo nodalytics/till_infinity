@@ -286,3 +286,25 @@ above is about entries.
 * **Where the edge is not:** the machinery that finds size - `crash-timing.md`'s
   big-move score, `news-volatility.md`'s calendar, the VIX member - predicts very well. The
   value of this folder's models is in risk and stop width, not in direction.
+
+## 2026-10-02: the three leads, rebuilt on the broker's feed and re-checked on the weeks since
+
+[`leads_recheck.py`](../harness/leads_recheck.py), pre-registered. Each lead was rebuilt exactly
+as above (same features, labels, model and threshold) on the broker's own bars from the same start
+date. Everything before T0 (the day the original data ended: 2026-08-19 intraday, 2026-08-17
+daily) played the original's role, and the frozen model was then scored on the bars after T0,
+which no version of it had seen.
+
+| Lead | Original | Rebuilt, original test window | After T0 |
+|---|---|---|---|
+| Short, 1h H5, top 5% (gross) | +0.16 +- 0.05 | -0.031 +- 0.053 (n 308) | -0.014 +- 0.046 (n 385) |
+| Short, 15m H4 (gross) | +0.12 +- 0.05 | +0.018 +- 0.061 | +0.049 +- 0.035 (n 753) |
+| Short, 15m H8 (gross) | +0.12 +- 0.07 | +0.018 +- 0.078 | +0.070 +- 0.047 (n 377) |
+| Daily +3:-1 long, top 20% (net) | +0.10 +- 0.04 | +0.039 +- 0.036 (n 802) | +0.037 +- 0.251 (n 23) |
+| Daily pair reversion, \|z\| > 2 (net) | +0.11 +- 0.06 | +0.071 +- 0.065 (n 205) | n 5 |
+
+- **None reproduces on the broker's feed, even over its own original window.** The leads were
+  properties of the original sources (OANDA, Coinbase, Bitstamp bars), not of the markets.
+- **The strongest lead, the 1h short, is gone.**
+- **The six weeks since are too few to say anything about the daily leads.**
+- All three are closed.

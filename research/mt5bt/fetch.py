@@ -94,12 +94,19 @@ async def do_bars(client, conn, symbols, intervals, days):
             tf = TIMEFRAMES[iv]
             total, t1 = 0, end
             start = end - days * 86400
+            chunk = CHUNK_DAYS.get(iv, 180)
             while t1 > start:
-                t0 = max(start, t1 - CHUNK_DAYS.get(iv, 180) * 86400)
+                t0 = max(start, t1 - chunk * 86400)
                 try:
                     got = rows_of(await get(client, "/symbols/rates/range", {
                         "symbol": name, "timeframe": tf, "start": stamp(t0), "end": stamp(t1)}))
                 except Exception as exc:
+                    # The bridge answers 404 both for a window older than the server's history and
+                    # for one holding too many bars. Halving tells them apart: a window that is too
+                    # big succeeds smaller, and one past the history keeps failing down to a week.
+                    if chunk > 7:
+                        chunk = max(7, chunk // 2)
+                        continue
                     print(f"  {name:20s} {iv:4s} {stamp(t0)}: {exc}")
                     got = []
                 rows = []

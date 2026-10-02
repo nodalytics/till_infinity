@@ -100,5 +100,9 @@ recommendation.
 - **Stops and targets are measured from the actual fill,** not from the signal bar's close.
 - **One position per symbol is decided before sizing.** A signal refused for lot size or
   `max_open` can still have blocked a later signal on that symbol.
-- **Market orders only.** Resting limit and stop entries are not modelled yet. Limit fills carry
-  the winner's curse ([`../docs/limitfills.md`](../docs/limitfills.md)), so model them with care.
+- **Resting limits fill only on a trade-through.** A limit (`limit=1` with an `entry` price) fills
+  once price trades `Costs.limit_through_points` beyond it, at the level or the better open. A
+  touch is not a fill: the queue ahead takes it, and the fills a touch does get are the ones price
+  runs through ([`../docs/limitfills.md`](../docs/limitfills.md)).
+- **MT5 bars carry each bar's lowest spread, often 0.** Set `spread_floor_points` to the median tick
+  spread or the broker's quoted spread, or every tight stop trades for free.

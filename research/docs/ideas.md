@@ -434,6 +434,9 @@ forecasts *how much and how soon*, not *which way*.
 | What | Where | Status |
 |---|---|---|
 | **Crypto 4h CCI(20) ±100**, the only indicator strategy to pass every test on fresh coins (+0.06R a trade) | freqtrade dry-run, Bybit perps, 12 coins, with a coin-flip twin | **To set up.** Plan, expectations and kill checkpoints in [`battery.md`](battery.md) |
+| **Crypto daily momentum ignition**: `cusum_follow` (10R target and FOCuS exit) and the 5-sigma `anomaly` bar (10R target), the only imported ideas to survive validation on 32 unseen crypto CFDs | MT5 crypto CFDs, paper, with coin twins | **Proposed 2026-10-02.** [`imported-ideas.md`](imported-ideas.md) |
+| **Time-series momentum book** (7/14/30/60-day sign ensemble, vol-scaled) | MT5 universe + crypto CFDs, paper | **Proposed 2026-10-02.** Sharpe 0.66 in-sample, 0.42 on fresh coins |
+| Exploratory arm: momentum-gated `anomaly`, CUSUM-confirmed breakouts | as above | **Proposed**, labelled exploratory: their parts were chosen on the same coins |
 
 ## Closed: do not re-run without new information
 
