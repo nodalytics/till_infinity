@@ -70,7 +70,7 @@ from .models import money as money  # noqa: PLC0414
 from .risk import Guard
 from .sessions import Sessions
 from .shadow import ShadowGates
-from .sizing import lots, price_distance
+from .sizing import lots, price_distance, respects_stops_level
 from .strategies import strategy
 from .strategies.opportunity import PRESETS
 from .strategies.policy import DECAY as _POLICY_DECAY
@@ -2363,6 +2363,55 @@ class Trader:
                 )
         return ""
 
+    def _restable(self, intent: Intent, at: float) -> float | None:
+        """`at` moved out to a price the broker will take, or None if there is none.
+
+        A pending order has to sit at least `stops_level` from the market, the same
+        distance a stop or a target does - and the resting price is chosen from
+        `entry_edge_vol` alone, which on an instrument with a wide minimum is inside
+        it. Measured on the live desk on 2026-10-02: Volatility 100 Index reports 138
+        points at a point of 0.01, so the broker wants 1.38 and a 0.50v edge asked for
+        0.23. Four of six rests in an hour came back `Invalid price`, and the desk
+        went on waiting in process for a price it had no order to catch.
+
+        Pushing the price out costs nothing if it fills and makes filling less likely,
+        which is the trade the edge was already making. What it must not do is walk the
+        entry through its own **stop**: the stop does not move with it, and a limit on
+        the far side of its stop opens a trade that is already beaten. So the pushed
+        price is checked the way the entry itself was, and when there is no room the
+        broker-side order is given up rather than sent to be refused. The in-process
+        wait is untouched either way - that is the fallback, and it was the whole
+        mechanism before resting existed.
+        """
+        spec = self.specs.get(intent.feed)
+        if spec is None:
+            return at
+        room = spec.min_stop_distance
+        if room <= 0 or abs(at - intent.entry) >= room:
+            return at
+        pushed = intent.entry - intent.side.sign * room
+        crowded = respects_stops_level(spec, pushed, intent.stop, intent.target)
+        if (pushed - intent.stop) * intent.side.sign <= 0:
+            crowded = f"{pushed:.5g} is through the stop at {intent.stop:.5g}"
+        if crowded:
+            log.info(
+                "trading: not resting %s with the broker - it needs %.5g from %.5g and %s",
+                intent.feed,
+                room,
+                intent.entry,
+                crowded,
+            )
+            return None
+        log.info(
+            "trading: %s rest moved out from %.5g to %.5g - the broker needs %.5g from %.5g",
+            intent.feed,
+            at,
+            pushed,
+            room,
+            intent.entry,
+        )
+        return pushed
+
     async def _leave_with_broker(self, intent: Intent, by: str, at: float, until: float) -> None:
         """Also leave the price with the broker, as a limit order.
 
@@ -2373,6 +2422,10 @@ class Trader:
         held = self._waiting.get(intent.feed)
         if held is None:
             return
+        where = self._restable(intent, at)
+        if where is None:
+            return
+        at = where
         order = Order(
             symbol=intent.symbol,
             side=intent.side,
