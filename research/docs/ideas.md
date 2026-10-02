@@ -365,6 +365,70 @@ probability of a clean displacement Q, and the expected duration D.
 | K14 | Information bottleneck / MDL | The smallest state that keeps the information about expansion | **Answered 2026-10-02:** six features keep 0.798 of 0.800: short vs long range, range vs its mean, the calendar ahead, the hour, time to the weekly close, the timeframe. The pre-expansion state is volatility mean reversion plus the calendar |
 | K15 | Topology + persistence | Does state-space topology change before the dynamics do? | Partly: [`topology.md`](topology.md) found no topological precursor of shocks |
 
+## Part L: two radical reframings, checked against what is already measured
+
+Set 2026-10-02. Two proposals for the next generation of `structures`, which pull in opposite
+directions.
+
+- **L-a, a displacement engine:** drop direction from the centre. A level becomes a coordinate,
+  the expansion alert arms a two-sided entry, and the targets become P(1R before the stop), a
+  whipsaw hazard and expansion survival. Fixed take-profits are replaced by a survival stop.
+- **L-b, conditional direction:** keep direction, but stop asking P(up | level). Ask which
+  *transition* contact with the level makes likely, given the approach, the state, the
+  expansion and the level's sequence of tests. The label is a first-passage race, not a candle.
+
+Most of L-a has already been run, so it is mapped to its results here rather than re-run. L-b's
+central experiment, the direction ladder, had not been run, and now has been (L13).
+
+| # | Proposal | Status |
+|---|---|---|
+| L1 | P(1R before SL \| X) as the first-class target (L-a §2) | **Done, Part J:** every setup sits at or below its walk null; the attainment surface scores 0.50-0.545, as on walks. On a symmetric race P(1R) = 0.5 on a martingale whatever the volatility, so only direction can lift it |
+| L2 | A whipsaw model; competing 1R and whipsaw hazards (§3) | **Done for shares and the classifier:** clean 0.43, whipsaw 0.42, stall 0.15, as on walks (`escape.py`). Clean vs whipsaw is predictable only from geometry (0.617 on markets, 0.594 on walks), and no sensor adds (K1, K3, K4, order book). The time-varying competing hazards (K10) are not fitted; with flat cause-specific shares they have little room |
+| L3 | The expansion alert as the arming switch for a two-sided breakout (§4), and the gate ladder no gate → compression → hazard → whipsaw filter → full state (the experiment L-a prioritises) | **Done, Parts G and I:** the alert raises energy monotonically, but the whipsaw rises with it (0.10 → 0.30), and price commits after leaving the box as often as on GARCH walks. Best SL-only bracket −0.010R over 20 configurations. Deriv positives were bar-fill artefacts, and on ticks they go negative. No whipsaw filter exists that beats geometry, so the last two rungs have nothing to add |
+| L4 | Expansion survival S_D(d) and a survival stop instead of a take-profit (§5, §6) | **Done:** duration is GARCH persistence (walks predict it as well as markets: 0.70 vs 0.65). As hold times or trail widths it adds +0.001 to +0.002R, the same as a shuffled placebo (`duration.py`) |
+| L5 | P(1R \| low directional confidence, high hazard), the straddle's asymmetry (§7) | **Follows from L1:** in a symmetric race the hazard changes the speed, not the winner. Its only use is in the two-sided bracket, which is L3 |
+| L6 | A market-state machine Q → PE → B → E → M → D → W (§8) | **Partly:** a level's own states do not exist as distinct regimes (`states.md`: levels are stationary, and the flip is not real). The pre-expansion state reduces to volatility mean reversion plus the calendar (K14). Phase recognition (H7) is queued; it would serve stops, which L4 says gain nothing from duration |
+| L7 | The level as a conditional path object; distance to instability; precursor families scored by I(clean) − I(whipsaw) (§9-§11) | **Distance to instability is the alert** (K8). Fifteen bar sensors, rheology, foreshocks, fatigue, entropy, order book and flow were all scored on clean vs whipsaw, and none adds. The path distribution conditional on the approach is L13's D1 |
+| L8 | The journal as an episode database: T₁R, T_SL, MFE/R, MAE/R, opposite breakout, expansion end, whipsaw class (§12) | **Built 2026-10-02:** every touch, called or not, is followed for 48 bars on both sides and journalled as an `episode` observation. It records first passage to 1R/2R/3R each way, MFE and MAE in R, the opposite side's 1R time, peak and fade (the expansion's end), velocity, path class (clean, whipsaw, partial, stall, ambiguous) and the belief at contact ([`structures-reactions.md`](structures-reactions.md), `Episode`). Recorded, not used |
+| L9 | Judge on E[net R \| X], not AUC (§13) | **Already the standard** for every trade here: net R against a coin twin and walks. AUC is used only to rank forecasts that are not trades |
+| L10 | First-passage label, three-class transition (up, down, whipsaw/neither) (L-b §2, §8) | **Done for bars, features and ensembles:** `directional-questions.md` used race labels and 70 features in a 92-model ensemble. No edge clears costs; three weak leads are left to re-test |
+| L11 | Approach morphology, and the level's sequence of tests (L-b §4, §5) | Approach speed and run predict *breaks* (0.658, `force.md`), but a break is not a side. Fatigue does not predict clean vs whipsaw (K4). Recency predicts worse than pooling (`states.md`). **As predictors of the race's winner they had never been tried: L13's D1 and D4** |
+| L12 | Trajectory-aware similarity for the kNN (L-b §9) | **The premise fails at the desk's horizons:** at 300-1,800s, neighbours by the current metric agree no more than far pairs (AUC 0.492, `similarity.md`). Whether a trajectory metric would do better is answered more cheaply by L13: if approach and history carry no direction in a flexible model, no distance built from them will |
+| **L13** | **The direction ladder D0 → D4** (L-b §11): level → + approach → + state → + expansion → + the level's history, with the gain each rung adds | **Rejected 2026-10-02** ([`ladder.md`](ladder.md)): every rung scores 0.49-0.51 on real markets, Deriv and walks alike, with negative information over the base rate. No rung passes |
+
+**L13, pre-registered before the run** ([`ladder.py`](../harness/ladder.py)).
+
+- **Data:** the production engine replayed from 2025-01-01 at 15m and 1h, on three families:
+  - real markets: 6 FX pairs, gold, BTC and ETH;
+  - Deriv (a market);
+  - nine GARCH walks with t(3) innovations from sub-steps (the control).
+- **Label:** a symmetric race from the touch bar's close, ±1.5 ATR within 32 bars, and whether
+  the up barrier wins.
+- **Model:** HistGB per rung, trained on the first 60% of touches by time and tested on the
+  last 40%.
+- **What passes:** a rung counts if all three of these hold:
+  - it adds ≥ 0.01 AUC in both test halves;
+  - its day-bootstrap interval excludes zero;
+  - the same gain on walks is under half of it.
+
+  The program needs some rung above 0.55 on real markets and not on walks.
+
+**L13 results** ([`ladder.md`](ladder.md)). The race AUC, D0 → D4:
+
+| Family | D0 → D4 | D4 − D0 |
+|---|---|---|
+| Real markets | 0.502 → 0.505 | +0.003, interval −0.007 to +0.014 |
+| Deriv | 0.510 → 0.488 | −0.022 |
+| GARCH walks | 0.500 → 0.503 | +0.003 |
+
+- The best single gain is state on real markets: +0.008, interval includes zero, under the bar in
+  one half.
+- Every rung loses information against the base rate out of sample.
+
+So approach morphology, the higher timeframe, the expansion state and the level's sequence of
+tests carry no side at a touch. Both reframings end where the evidence already was: the desk
+forecasts *how much and how soon*, not *which way*.
+
 ## Paper trading (decided)
 
 | What | Where | Status |

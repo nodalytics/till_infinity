@@ -262,6 +262,21 @@ SYM_HORIZON_BARS = 4 * HORIZON_BARS
 #: Races held open at once, across the book. A bound for a process that runs forever.
 MAX_RACES = 5000
 
+#: **One R for an episode**, in volatility units: the symmetric race's barrier, so an episode's 1R
+#: and the race's settlement are the same distance. See `Episode`.
+EPISODE_R_VOL = SYM_VOL
+
+#: How long an episode is followed, in bars of its level's timeframe. The symmetric race's horizon,
+#: but an episode runs all of it rather than stopping at the first barrier, because what happens
+#: after 1R - the run, the reversal, the fade - is the point of it.
+EPISODE_BARS = SYM_HORIZON_BARS
+
+#: The R multiples whose first-passage times are recorded, each side.
+EPISODE_MULTIPLES = (1, 2, 3)
+
+#: Episodes held open at once. The same bound as the races, for the same reason.
+MAX_EPISODES = MAX_RACES
+
 
 #: Ceiling on a reward-to-risk reading. Median 0.364, p99 13.2, max 15,846.
 RR_CAP = 20.0
@@ -1046,6 +1061,170 @@ class Race(Restorable):
 
 
 @dataclass(slots=True)
+class Episode(Restorable):
+    """The whole path after a touch begins, measured in R either way: the episode database's row.
+
+    `Race` asks one question - which barrier first - and stops. An episode keeps going to its
+    horizon and records what a trade from the touch would have lived through, **on both sides**,
+    so a long and a short hypothesis are scored from one path:
+
+    - when each side first reached 1R, 2R and 3R (`t_up`, `t_down`), and how far against it had
+      gone by then (`mae_at_up1`, `mae_at_down1`) - a 1R reached only after a 1R adverse move is
+      one a stop would have killed;
+    - the furthest each side went (`mfe_up`, `mfe_down`), in R;
+    - which side reached 1R first, and when the other side reached 1R after it (`opposite`);
+    - when the leading side's excursion last grew (`t_peak`), and when it first gave back 1R
+      from that peak (`t_fade`): the expansion's end, measured two ways.
+
+    R is `EPISODE_R_VOL` volatility units at the price the touch began at, fixed when it opens.
+    A bar that takes both sides to their first 1R at once is marked `ambiguous`, not guessed,
+    because which came first is unknowable from a bar. Times are seconds after `started`.
+
+    Recorded, not used: nothing gates on an episode. See `structures-reactions.md`.
+    """
+
+    feed: str
+    interval: str
+    level_price: float
+    level_id: str
+    #: Which side of the level price was on at contact. A floor (ABOVE) holds by going up.
+    side: Side
+    started: float
+    entry: float
+    #: One R as a price distance.
+    unit: float
+    deadline: float
+    #: Seconds in one bar of the level's timeframe, so the record can speak in bars.
+    bar: float
+    #: What was believed when the touch opened. Set by the engine after the inference.
+    probability_up: float = 0.5
+    base_rate_up: float = 0.5
+    edge: float = 0.0
+    actionable: bool = False
+    mfe_up: float = 0.0
+    mfe_down: float = 0.0
+    t_up: dict[int, float] = field(default_factory=dict)
+    t_down: dict[int, float] = field(default_factory=dict)
+    mae_at_up1: float | None = None
+    mae_at_down1: float | None = None
+    #: +1 if the upper 1R came first, -1 the lower, 0 while neither has or when `ambiguous`.
+    first: int = 0
+    ambiguous: bool = False
+    t_peak: float | None = None
+    t_fade: float | None = None
+
+    def step(self, when: float, top: float, bottom: float, last: float) -> None:
+        """Fold in one observation: the high and low since the last one, and the last price."""
+        if self.unit <= 0:
+            return
+        elapsed = max(0.0, when - self.started)
+        up = (top - self.entry) / self.unit
+        down = (self.entry - bottom) / self.unit
+        hit_up = up >= 1.0 and 1 not in self.t_up
+        hit_down = down >= 1.0 and 1 not in self.t_down
+        if hit_up and hit_down and self.first == 0 and not self.ambiguous:
+            self.ambiguous = True
+        elif self.first == 0 and not self.ambiguous and (hit_up or hit_down):
+            self.first = 1 if hit_up else -1
+        if hit_up:
+            self.mae_at_up1 = max(self.mfe_down, down)
+        if hit_down:
+            self.mae_at_down1 = max(self.mfe_up, up)
+        for k in EPISODE_MULTIPLES:
+            if up >= k and k not in self.t_up:
+                self.t_up[k] = elapsed
+            if down >= k and k not in self.t_down:
+                self.t_down[k] = elapsed
+        lead_before = self.mfe_up if self.first >= 0 else self.mfe_down
+        self.mfe_up = max(self.mfe_up, up)
+        self.mfe_down = max(self.mfe_down, down)
+        if self.first:
+            lead = self.mfe_up if self.first > 0 else self.mfe_down
+            if lead > lead_before or self.t_peak is None:
+                self.t_peak = elapsed
+            now = (last - self.entry) / self.unit * self.first
+            if self.t_fade is None and lead - now >= 1.0:
+                self.t_fade = elapsed
+
+    @property
+    def opposite(self) -> float | None:
+        """When the side that did not reach 1R first reached it anyway."""
+        if not self.first or self.ambiguous:
+            return None
+        return (self.t_down if self.first > 0 else self.t_up).get(1)
+
+    @property
+    def kind(self) -> str:
+        """The path's class, from the side that reached 1R first.
+
+        clean    it went on to 2R before the other side reached 1R
+        whipsaw  the other side reached 1R before it reached 2R
+        partial  1R and no more either way
+        stall    neither side reached 1R
+        ambiguous both did inside one bar
+        """
+        if self.ambiguous:
+            return "ambiguous"
+        if not self.first:
+            return "stall"
+        mine, theirs = (self.t_up, self.t_down) if self.first > 0 else (self.t_down, self.t_up)
+        two, back = mine.get(2), theirs.get(1)
+        if two is not None and (back is None or two < back):
+            return "clean"
+        if back is not None:
+            return "whipsaw"
+        return "partial"
+
+    def to_dict(self) -> dict:
+        bars = self.bar or 1.0
+
+        def b(seconds: float | None) -> float | None:
+            return None if seconds is None else round(seconds / bars, 3)
+
+        held = 1 if self.side is Side.ABOVE else -1
+        return {
+            "feed": self.feed,
+            "interval": self.interval,
+            "level": round(self.level_price, 8),
+            "level_id": self.level_id,
+            "side": str(self.side),
+            "started": self.started,
+            "entry": round(self.entry, 8),
+            "r_price": round(self.unit, 8),
+            "r_vol": EPISODE_R_VOL,
+            "horizon_bars": EPISODE_BARS,
+            "kind": self.kind,
+            "first": self.first,
+            # Whether the first 1R went the way a held level would send it.
+            "held_first": (self.first == held) if self.first else None,
+            "mfe_up_r": round(self.mfe_up, 4),
+            "mfe_down_r": round(self.mfe_down, 4),
+            "mae_at_up1_r": None if self.mae_at_up1 is None else round(self.mae_at_up1, 4),
+            "mae_at_down1_r": None if self.mae_at_down1 is None else round(self.mae_at_down1, 4),
+            **{f"bars_up_{k}r": b(self.t_up.get(k)) for k in EPISODE_MULTIPLES},
+            **{f"bars_down_{k}r": b(self.t_down.get(k)) for k in EPISODE_MULTIPLES},
+            # When the other side reached 1R, after the first side had: the whipsaw's clock.
+            "bars_opposite": b(self.opposite),
+            "bars_peak": b(self.t_peak),
+            "bars_fade": b(self.t_fade),
+            # How fast the leading side travelled to its furthest point, in R a bar.
+            "velocity_r": (
+                round(
+                    (self.mfe_up if self.first > 0 else self.mfe_down)
+                    / max(self.t_peak / bars, 1.0),
+                    4,
+                )
+                if self.first and self.t_peak is not None
+                else None
+            ),
+            "probability_up": round(self.probability_up, 4),
+            "base_rate_up": round(self.base_rate_up, 4),
+            "edge": round(self.edge, 4),
+            "actionable": self.actionable,
+        }
+
+
+@dataclass(slots=True)
 class Tracker(Restorable):
     """Follows interactions from first contact to resolution.
 
@@ -1086,6 +1265,9 @@ class Tracker(Restorable):
     #: Symmetric races still running, and those settled but not yet credited to a level.
     _races: list[Race] = field(default_factory=list)
     _raced: list[Race] = field(default_factory=list)
+    #: Episodes still being followed, and those finished but not yet drained. See `Episode`.
+    _episodes: list[Episode] = field(default_factory=list)
+    _episoded: list[Episode] = field(default_factory=list)
 
     def horizon_for(self, touch: Touch) -> float:
         """How long this touch gets, in seconds, for its own timeframe.
@@ -1206,6 +1388,67 @@ class Tracker(Restorable):
     def drain_races(self) -> list[Race]:
         """The races settled since the last call."""
         out, self._raced = self._raced, []
+        return out
+
+    def start_episode(
+        self, level: Level, side: Side, price: float, vol: Volatility, when: float
+    ) -> Episode | None:
+        """Open the episode for a touch that has just begun. See `Episode`."""
+        unit = vol.price_units(price, EPISODE_R_VOL) if vol.bps > 0 else 0.0
+        if unit <= 0 or price <= 0:
+            return None
+        seconds = SECONDS.get(level.interval, 0.0) or self.horizon / self.horizon_bars
+        episode = Episode(
+            feed=level.feed,
+            interval=level.interval,
+            level_price=level.price,
+            level_id=level.id,
+            side=side,
+            started=when,
+            entry=price,
+            unit=unit,
+            deadline=when + seconds * EPISODE_BARS,
+            bar=seconds,
+        )
+        self._episodes.append(episode)
+        if len(self._episodes) > MAX_EPISODES:
+            del self._episodes[: len(self._episodes) - MAX_EPISODES]
+        return episode
+
+    def advance_episodes(
+        self,
+        feed: str,
+        price: float,
+        when: float,
+        low: float | None = None,
+        high: float | None = None,
+        since: float | None = None,
+    ) -> None:
+        """Move every open episode on `feed` on by one price, with `advance_races`' rule for wicks.
+
+        An episode that began inside the bar being delivered sees only its close. One that has
+        reached its deadline is finished and waits in `_episoded` for `drain_episodes`.
+        """
+        still: list[Episode] = []
+        for episode in self._episodes:
+            if episode.feed != feed:
+                still.append(episode)
+                continue
+            use_wicks = since is None or episode.started < since
+            top = high if (use_wicks and high is not None) else price
+            bottom = low if (use_wicks and low is not None) else price
+            episode.step(min(when, episode.deadline), max(top, price), min(bottom, price), price)
+            if when >= episode.deadline:
+                self._episoded.append(episode)
+                continue
+            still.append(episode)
+        self._episodes = still
+        if len(self._episoded) > MAX_EPISODES:
+            del self._episoded[: len(self._episoded) - MAX_EPISODES]
+
+    def drain_episodes(self) -> list[Episode]:
+        """The episodes finished since the last call."""
+        out, self._episoded = self._episoded, []
         return out
 
     def begin(self, level: Level, price: float, features: Features, when: float) -> Touch:
