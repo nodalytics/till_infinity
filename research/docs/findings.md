@@ -149,6 +149,7 @@ from the desk's time zone):
    would make it a guarantee. Not yet decided.
 7. **Deriv pivot shadow gate:** pivot signals publish (about 262 actionable a day), so this gate
    should reach 200 trades in about 8 days, the first of the five.
+8. **Paper trade crypto 4h CCI** ([`battery.md`](battery.md)): the one indicator strategy that passed every test on fresh coins (+0.06R a trade). It goes to a freqtrade dry-run on Bybit perps, with a coin-flip twin and pre-registered kill checkpoints at 300, 600 and 1,200 trades. Confirming it needs about 2,200 trades, about two years. Not production.
 
 ## The cross-disciplinary programs
 
