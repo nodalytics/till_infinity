@@ -55,7 +55,10 @@ def one(sym: str) -> list[dict]:
     from mt5bt import Book, Costs, bars_from_ticks, load_specs, load_ticks, run
 
     db = os.environ.get("MT5BT_DB")
-    spec = load_specs(db)[sym]
+    spec = load_specs(db).get(sym)
+    if spec is None:  # the broker names some indices differently; no spec, no test
+        print(f"  {sym}: no spec, skipped", flush=True)
+        return []
     days = INSTRUMENTS[sym]
     end = pd.Timestamp.now(tz="UTC").timestamp()
     start = end - days * 86400 if days else pd.Timestamp("2026-02-13", tz="UTC").timestamp()
