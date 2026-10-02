@@ -75,6 +75,13 @@ def mirror(fn):
     return both
 
 
+def _ret(c: np.ndarray) -> np.ndarray:
+    """Bar returns that survive the mirror. Log returns of the flipped (negative) chart clip to a
+    constant, so a rule built on them never fires short - which made the first cusum_follow,
+    anomaly and sweep_fade_hivol long-only without saying so."""
+    return np.r_[0.0, np.diff(c) / np.maximum(np.abs(c[:-1]), 1e-12)]
+
+
 def frame(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["i", "side", "stop_px", "entry", "limit", "expires", "tag"]) \
         if not rows else pd.DataFrame(rows)
@@ -461,7 +468,7 @@ def anomaly(ctx, df):
     stop under the bar's low."""
     o, h, l, c = arrays(df)
     a = ctx.a
-    r = np.r_[0, np.diff(np.log(np.maximum(c, 1e-12)))]
+    r = _ret(c)
     s = pd.Series(r)
     med = s.shift(1).rolling(60).median()
     mad = (s - med).abs().shift(1).rolling(60).median() * 1.4826
@@ -932,7 +939,7 @@ def cusum_follow(ctx, df):
     last 30; the first bar the up-sum crosses is followed, stop two ATR."""
     o, h, l, c = arrays(df)
     a = ctx.a
-    r = np.r_[0, np.diff(np.log(np.maximum(c, 1e-12)))]
+    r = _ret(c)
     sig = pd.Series(r).shift(30).rolling(60).std().to_numpy()
     rows, s_up, armed = [], 0.0, True
     for i in range(100, len(df)):
@@ -1106,7 +1113,7 @@ def sweep_fade_hivol(ctx, df):
     bars); the trader's stop sits under the wick."""
     o, h, l, c = arrays(df)
     a = ctx.a
-    r = np.r_[0, np.diff(np.log(np.maximum(c, 1e-12)))]
+    r = _ret(c)
     rv = pd.Series(r).rolling(12).std()
     gate = (rv > rv.rolling(500, min_periods=100).quantile(0.66)).to_numpy()
     prior = pd.Series(l).shift(1).rolling(24).min().to_numpy()
@@ -1168,7 +1175,7 @@ def physics(ctx):
     o, h, l, c = arrays(df)
     a = ctx.a
     s20, s10 = _slope(c, 20), _slope(c, 10)
-    r = np.r_[0, np.diff(np.log(np.maximum(c, 1e-12)))]
+    r = _ret(c)
     ofi = 2 * (c - l) / np.maximum(h - l, 1e-12) - 1
     B = np.r_[0, np.diff(ofi)]
     curl = P.sma(B, 5) - P.sma(B, 20)

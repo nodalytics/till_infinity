@@ -1,4 +1,43 @@
-# The imported ideas, re-tested on the broker: crypto momentum ignition survives, the rest does not
+# The imported ideas, re-tested on the broker: crypto momentum survives as a book; ignition is mostly being long
+
+> **Correction, 2026-10-02 (later the same day).** The two "survivors" were long-only without
+> saying so. `cusum_follow` and `anomaly` built returns from log prices. On the mirrored chart
+> prices are negative, so the logs clipped to a constant and the short side never fired.
+> `sweep_fade_hivol` had the same bug. Fixed in `setups._ret`, with a symmetry test over every
+> setup (`ideas/test_setups.py`).
+>
+> A long-only rule in a rising market beats a random-*side* coin twin just by being long. So it was
+> re-judged ([`survivors.py`](../ideas/survivors.py), 35 coins) against longs taken at random times
+> with the same geometry:
+>
+> | At the validated settings, long | Rule | Random-time longs | Shorts |
+> |---|---|---|---|
+> | `cusum_follow`, 10R | +0.79R | +0.11 | -0.64 |
+> | `cusum_follow`, FOCuS exit | +0.33R | +0.03 | -0.41 |
+> | `anomaly`, 10R | +0.86R | **+0.88** | -0.82 |
+>
+> Across 135 parameter settings, CUSUM longs beat random-time longs in 97% of cells, by +0.27R on
+> average, though fat tails make only 24 cells individually significant. `anomaly` beats them in
+> 84% of cells, but not at its validated setting.
+>
+> Marked to market daily and set against an equal-weight buy-and-hold basket, the residual
+> Sharpe (after the basket's beta) is:
+> - CUSUM 10R: 0.33 (correlation with the basket 0.52);
+> - CUSUM with the FOCuS exit: 0.33;
+> - `anomaly`: 0.15 (correlation 0.63) - that is, mostly beta;
+> - **time-series momentum: 0.73, beta -0.01.**
+>
+> Shorting crypto CFDs loses at any timing (drift plus swap). Holding costs are material: spread
+> about 0.05R and swap about 0.15R a trade, median holds of 13-34 days, and almost no gap exits.
+> The battery's crypto 4h CCI loses on these CFDs (-0.07R a trade over 13,212 trades). It only
+> holds on Bybit perps' lower costs. The six sleeves amount to 3.3 independent bets.
+>
+> **So:**
+> - the time-series momentum book is the survivor;
+> - CUSUM long timing is a modest, unproven-alone overlay on being long;
+> - the 5-sigma bar is beta.
+>
+> The sections below are the original record.
 
 Measured 2026-10-02. The desk's earlier projects (the sage service, its api, and the research lab)
 had built and tested a large number of trading ideas. Five catalogues copy every one of them into
