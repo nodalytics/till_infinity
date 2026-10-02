@@ -181,6 +181,36 @@ that way. Nothing was discarded.
     the call was right. Nothing else here has that property.
 
 
+## `Episode`
+
+    **The episode database's row**, added 2026-10-02 (ideas.md Part L, L8). One per
+    touch, called or not, opened at first contact and followed for `EPISODE_BARS`
+    (48 bars of the level's timeframe), the symmetric race's horizon. Unlike the
+    race it does not stop at the first barrier: what happens after 1R is the point.
+
+    R is `EPISODE_R_VOL` (1.5) volatility units at the contact price, fixed at open,
+    the same distance the race settles at. Both sides are measured from one path,
+    so a long and a short hypothesis are scored together:
+
+    | field | meaning |
+    |---|---|
+    | `bars_up_{1,2,3}r`, `bars_down_{1,2,3}r` | first passage to 1R, 2R, 3R each way, in bars; null if never |
+    | `mfe_up_r`, `mfe_down_r` | the furthest each side went, in R |
+    | `mae_at_up1_r`, `mae_at_down1_r` | how far against a side had gone when it reached 1R; ≥ 1 means a stop at 1R would have killed it first |
+    | `first`, `held_first` | which side reached 1R first (+1 up, -1 down, 0 neither or ambiguous), and whether that is the way a held level goes |
+    | `bars_opposite` | when the other side reached 1R after the first had: the whipsaw's clock |
+    | `bars_peak`, `bars_fade`, `velocity_r` | when the leading excursion last grew, when it first gave back 1R from that peak (the expansion's end, two ways), and R per bar to the peak |
+    | `kind` | `clean` (2R before the other side's 1R), `whipsaw` (the other side's 1R first), `partial` (1R, no more), `stall` (neither 1R), `ambiguous` (both in one bar) |
+    | `probability_up`, `base_rate_up`, `edge`, `actionable` | what was believed at contact, so beliefs can be scored against paths |
+
+    Wicks are used as `advance_races` uses them: an episode that began inside the
+    bar being delivered sees only its close. A bar that takes both sides to their
+    first 1R is `ambiguous`, never guessed. On a fair coin the first 1R goes each
+    way half the time (`tests/test_episodes.py`).
+
+    Journalled by `service.record_outcomes` as an observation with
+    `context.shape == "episode"`. Recorded, not used: nothing gates on it.
+
 ## `Tracker.update`
 
         `price` is where the bar closed (or the current mid); `wick` is how far

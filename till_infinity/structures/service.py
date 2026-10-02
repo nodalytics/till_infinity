@@ -1314,6 +1314,23 @@ class Watcher:
             )
             written += 1
 
+        # **The episode database.** Every touch's whole path, both ways, in R: first-passage
+        # times, excursions, whipsaw class and the expansion's end. Recorded for every touch,
+        # called or not, for the same reason the resolutions are. See `reactions.Episode`.
+        for episode in self.engine.drain_episodes():
+            found = episode.to_dict()
+            await observe(
+                self.journal,
+                f"{episode.feed} {episode.level_price:g}: episode {found['kind']}",
+                rationale=(
+                    f"Over {found['horizon_bars']} bars from contact: up {found['mfe_up_r']:.2f}R, "
+                    f"down {found['mfe_down_r']:.2f}R at most"
+                ),
+                actor="structures",
+                context={"shape": "episode", **found},
+            )
+            written += 1
+
         for level, touch in self.engine.drain_resolved():
             # Announced before the journal lookup, and unconditionally. A
             # resolution is a fact about the market, not a label on one of our

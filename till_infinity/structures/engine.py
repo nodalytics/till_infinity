@@ -2451,6 +2451,7 @@ class Engine:
         if ro.masked(feed, since if since is not None else when, when):
             return  # the rollover's spike settles no race either - see `rollover.py`
         self.tracker.advance_races(feed, price, when, low, high, since)
+        self.tracker.advance_episodes(feed, price, when, low, high, since)
         settled = self.tracker.drain_races()
         if not settled:
             return
@@ -2680,6 +2681,9 @@ class Engine:
             # The symmetric label beside the production one: fixed barriers, no trap, its own clock.
             # See `reactions.Race` - it is what reads 50% on noise.
             self.tracker.start_race(level, side, price, vol, when)
+            # And the whole path after it, both ways, for the episode database.
+            # See `reactions.Episode`.
+            episode = self.tracker.start_episode(level, side, price, vol, when)
             inference = reactions.infer(
                 level,
                 side,
@@ -2697,6 +2701,11 @@ class Engine:
             touch.probability_up = inference.probability_up
             touch.base_rate_up = inference.base_rate_up
             touch.actionable = inference.actionable
+            if episode is not None:
+                episode.probability_up = inference.probability_up
+                episode.base_rate_up = inference.base_rate_up
+                episode.edge = inference.edge
+                episode.actionable = inference.actionable
             # A call is priced entirely in volatility units, so an estimate
             # that has not warmed makes every number on it meaningless rather
             # than merely uncertain. See `Volatility.warm`: the guard existed
@@ -2951,6 +2960,10 @@ class Engine:
         """
         found, self._resolved = self._resolved, []
         return found
+
+    def drain_episodes(self) -> list[reactions.Episode]:
+        """The episodes finished since the last call. See `reactions.Episode`."""
+        return self.tracker.drain_episodes()
 
     def drain_followed(self) -> list[reactions.Forward]:
         """The forward returns finished since the last call. See `Forward`."""
