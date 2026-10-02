@@ -436,6 +436,75 @@ coin:
 The order book and flow predict neither the expansion nor its side, beyond what compression and
 the calendar already say. That closes ideas I4 and I5.
 
+## 2026-10-02: duration, river, the desk's own trades, F9, 1R attainment and pre-expansion physics
+
+**Duration and magnitude are GARCH persistence** ([`duration.py`](../harness/duration.py)). For every
+series, a GARCH walk fitted on its own training data predicts its expansions' length at least as
+well as the market does: rank correlation 0.70 on the walks against 0.65 on markets for duration,
+and 0.56 against 0.53 for magnitude. Markets' expansions are also shorter than their matched walks'
+(FX 28 bars against 44, crypto 45 against 89). Used as hold times and trail widths on the
+bracket, the forecast adds nothing: +0.001 to +0.002R for hold times, worse for trail widths, and
+about the same as the shuffled placebo.
+
+**River's ensembles do not beat the frozen model** ([`riverbench.py`](../harness/riverbench.py)).
+Learning online with each label delivered only after it resolves (a first run learned it at once,
+leaked the future and scored 0.83), the best is AdaBoost at 0.757 against the frozen model's 0.784.
+The bagging, forests, stacking and voting score 0.64-0.74. The models are 10-200x larger, up to
+79 MB each. Frozen after training, every river model is worse still (0.58-0.75).
+
+**As a risk overlay on the desk's trades, the alert does nothing** ([`alert_risk.py`](../harness/alert_risk.py)).
+
+- **Sample:** 7,248 strategy intents (`triage.py`'s settled rows) inside the held-out window; 22%
+  were flagged by an alert on their market within the previous 16 bars.
+- **Gross of costs, flagged and unflagged trades are identical:** −0.037 against −0.033R.
+- **Halving flagged trades lost to halving random trades,** beating 0-1% of 500 random cuts.
+
+Those strategies lose to spread, not to fast moves, and a volatility forecast cannot fix spread.
+
+**F9, lesion breaks: rejected** ([`lesion.py`](../harness/lesion.py)). Abnormal bars before a level
+touch (range, tick volume, spread z) make break prediction worse: 0.611 → 0.573 held out. A first
+run showed +0.11, but it read bars up to the touch's *resolution*, which includes the breakout; the
+touch begins `seconds` earlier.
+
+**1R attainment** ([`attainment.py`](../harness/attainment.py), ideas.md Part J). For every setup,
+P(1R before a 1R stop) sits at or below its random-walk null. That is the symmetric-race property:
+without direction it cannot exceed 0.5, and none of these setups carries direction.
+
+| Setup | Events | P(1R first) | Walks | Excess (95% CI) |
+|---|---|---|---|---|
+| Compression breakout | 53,550 | 0.486 | 0.512 | −0.027 |
+| Volatility release | 61,461 | 0.472 | 0.501 | −0.029 |
+| Failed breakout → reversal | 28,541 | 0.495 | 0.501 | −0.007 |
+| Breakout → first retracement | 134,165 | 0.479 | 0.486 | −0.007 |
+| Range traversal | 294,234 | 0.487 | 0.503 | −0.016 |
+| Vol-of-vol trigger | 170,466 | 0.486 | 0.514 | −0.028 |
+| Multi-timeframe cascade | 9,573 | 0.473 | (no walk equivalent) | |
+| Expansion age 17+ bars | 92,947 | 0.494 | 0.483 | +0.011 (+0.002, +0.019), under the +0.02 bar |
+
+About a quarter of the 1R hits are "pathological": they reach 1R only after a 2R adverse
+excursion a real stop would have taken. The median time to 1R is 1-3 bars. The attainment surface
+(whether the state predicts 1R-first) scores AUC 0.50-0.545, about what the walks show.
+
+**Pre-expansion physics** ([`prephysics.py`](../harness/prephysics.py),
+[`prephysics_escape.py`](../harness/prephysics_escape.py), ideas.md Part K):
+
+| Sensor | Predicting expansion (base 0.800) | Clean vs whipsaw (geometry 0.617) |
+|---|---|---|
+| Fatigue: failed breakouts, boundary tests | 0.799 | 0.618 |
+| Rheology: compliance, elastic recovery | 0.799 | 0.616 |
+| Foreshocks and their acceleration | 0.799 | 0.618 |
+
+None counts. **The information bottleneck (K14) gives the clearest result of the day.** Six of the
+alert's 16 features hold almost all of its skill (0.798 against 0.800):
+
+- short against long range, and the range against its own mean;
+- the calendar ahead, and the hour;
+- time to the weekly close, and the timeframe.
+
+The minimum description of the "pre-expansion state" is volatility mean reversion plus the
+calendar. That is why every richer sensor tried (order book, flow, entropy, fatigue, foreshocks,
+cross-asset) added nothing.
+
 ## Did it, or the shock forecaster, see the AUS 200 move? (2026-09-30 and 10-01)
 
 The ASX 200 cash index (Yahoo 15m bars; the broker's Australia 200 CFD is not on the lab), replayed
