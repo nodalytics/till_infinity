@@ -85,6 +85,10 @@ class Costs:
     #: "auto": a trade's fills come from ticks when the book's ticks cover it, else bars.
     #: "ticks": ticks or nothing (uncovered signals are refused). "bars": bars only.
     fill: str = "auto"
+    #: How far price must trade *through* a resting limit before it counts as filled, in points.
+    #: A touch at the level is not a fill: the queue ahead of us may take it, and the fills a touch
+    #: does get are the ones price is about to run through (the winner's curse, limitfills.md).
+    limit_through_points: float = 0.0
 
 
 def _frame(signals) -> pd.DataFrame:
@@ -93,14 +97,14 @@ def _frame(signals) -> pd.DataFrame:
     else:
         df = pd.DataFrame([s.__dict__ for s in signals or []])
     for col, default in (("target", 0.0), ("hold", 0), ("risk", 0.0), ("entry", np.nan),
-                         ("expires", 1), ("oco", -1), ("trail", 0.0)):
+                         ("expires", 1), ("oco", -1), ("trail", 0.0), ("limit", 0)):
         if col not in df:
             df[col] = default
     if df.empty:
         return pd.DataFrame(columns=["i", "side", "stop", "target", "hold", "risk", "entry",
-                                     "expires", "oco", "trail"])
+                                     "expires", "oco", "trail", "limit"])
     df = df.fillna({"target": 0.0, "hold": 0, "risk": 0.0, "expires": 1, "oco": -1,
-                    "trail": 0.0})
+                    "trail": 0.0, "limit": 0})
     df["i"] = df["i"].astype(int)
     df["side"] = np.sign(df["side"]).astype(int)
     bad = (df["side"] == 0) | ~(df["stop"] > 0)
@@ -267,10 +271,13 @@ def walk_ticks(book: Book, j: int, side: int, stop_d: float, target_d: float, ho
                 reason=reason, sp_exit=ask[k] - bid[k], fill="ticks")
 
 
-def _tick_fill(book: Book, i: int, expires: int, side: int, level: float, costs: Costs):
-    """A resting stop order on ticks: the first tick after bar i whose entry side reaches the level,
-    at that tick's price. (fill_ms, price) or None if ticks don't cover the window or it never
-    fills."""
+def _tick_fill(book: Book, i: int, expires: int, side: int, level: float, costs: Costs,
+               limit: bool = False):
+    """A resting order on ticks: the first tick after bar i whose entry side reaches the level, at
+    that tick's price. A stop order is reached from the near side (a buy stop when the ask rises to
+    it); a limit from the far side (a buy limit when the ask falls `limit_through_points` below it),
+    and fills at the level or the better tick price. (fill_ms, price) or None if ticks don't cover
+    the window or it never fills."""
     b = book.bars
     n = len(b)
     if i + 1 >= n:
@@ -283,6 +290,13 @@ def _tick_fill(book: Book, i: int, expires: int, side: int, level: float, costs:
     a, z = span
     tk = book.ticks
     px = (tk["ask"] if side > 0 else tk["bid"]).to_numpy()[a:z]
+    if limit:
+        through = costs.limit_through_points * book.spec.point
+        hit = np.nonzero(px <= level - through if side > 0 else px >= level + through)[0]
+        if not len(hit):
+            return (np.nan, np.nan)
+        got = float(px[hit[0]])
+        return float(tk["ts_ms"].to_numpy()[a + hit[0]]), (min(level, got) if side > 0 else max(level, got))
     hit = np.nonzero(px >= level if side > 0 else px <= level)[0]
     if not len(hit):
         return (np.nan, np.nan)  # covered and never reached: no fill
@@ -314,7 +328,8 @@ def resolve(sig: pd.DataFrame, book: Book, sides, costs: Costs) -> pd.DataFrame:
             continue
         L = row.entry
         if costs.fill in ("auto", "ticks") and book.ticks is not None:
-            got = _tick_fill(book, row.i, int(row.expires), int(row.side), L, costs)
+            got = _tick_fill(book, row.i, int(row.expires), int(row.side), L, costs,
+                             limit=bool(getattr(row, "limit", 0)))
             if got is not None:
                 if np.isnan(got[0]):
                     continue  # the ticks say it never filled
@@ -322,6 +337,18 @@ def resolve(sig: pd.DataFrame, book: Book, sides, costs: Costs) -> pd.DataFrame:
                 r.update(j=k_ms, fill=got[1], fill_ms=got[0])
                 out.append(r)
                 continue
+        if getattr(row, "limit", 0):
+            # A resting limit: reached from the far side, through by `limit_through_points`, and
+            # filled at the level - or at the open, the better price, when a bar gaps past it.
+            through = costs.limit_through_points * book.spec.point
+            hit = np.nonzero(al[a:z] <= L - through if row.side > 0 else h[a:z] >= L + through)[0]
+            if not len(hit):
+                continue
+            k = a + hit[0]
+            px = min(L, ao[k]) if row.side > 0 else max(L, o[k])
+            r.update(j=k, fill=px, fill_ms=np.nan)
+            out.append(r)
+            continue
         if row.side > 0:
             hit = np.nonzero(ah[a:z] >= L)[0]
             if not len(hit):

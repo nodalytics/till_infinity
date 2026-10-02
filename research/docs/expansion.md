@@ -520,3 +520,34 @@ bar by bar through the production shock forecaster:
 
 The cash index has session hours only and no tick volume, so this is indicative. The CFD trades
 overnight, where the Oct 1 move may have built more gradually.
+
+## 2026-10-02: one model for every market? Leave one family out
+
+[`generalize.py`](../harness/generalize.py), pre-registered before the run. Both production
+models (the expansion alert and the shock forecaster) were trained on every family except one, and
+scored on the family left out. Three versions were scored on each family's test rows:
+- **pooled:** trained on every family (production's arrangement);
+- **unseen:** trained on all the others;
+- **own:** trained on that family alone.
+
+A family generalises when the unseen version is within 0.02 AUC of pooled in both halves and its
+top decile is calibrated (0.7-1.4).
+
+| Family held out | Expansion: unseen / pooled / own | Shock: unseen / pooled / own |
+|---|---|---|
+| FX | 0.743 / 0.774 / 0.776 | 0.705 / 0.752 / 0.767 |
+| Metals | **0.832** / 0.837 / 0.827 | **0.762** / 0.767 / 0.787 |
+| Crypto | 0.810 / 0.854 / 0.858 | 0.728 / 0.755 / 0.777 |
+| Stocks | **0.745** / 0.750 / 0.732 | 0.723 / 0.850 / 0.865 |
+| Deriv | 0.497 / 0.561 / 0.570 | 0.549 / 0.812 / 0.827 |
+
+(Bold: passes the rule.)
+
+- **Volatility's precursors are shared, but not perfectly.** A real-market family the model has
+  never seen still scores 0.74-0.83 for expansion and 0.70-0.76 for shocks: useful from the first
+  day. Seeing the family is worth 0.02-0.06, and 0.13 for shocks on stocks. Only metals pass on
+  both models, and stocks on expansion.
+- **Deriv shares nothing with real markets.** A model that never saw it scores 0.50 for expansion
+  and 0.55 for shocks. Its generators are its own processes ([`generators.md`](generators.md)).
+- **What to do:** keep production's pooled model. A new instrument in a family already in training
+  gets a working alert on its first day. A new asset class needs its own history before it does.

@@ -257,3 +257,36 @@ def test_one_cancels_the_other_by_tick_time():
             dict(i=0, side=-1, entry=1.0990, expires=3, stop=0.0030, oco=1)]
     t, _ = run(b, pending(legs), Costs(swap=False, fill="ticks"))
     assert len(t) == 1 and t["side"].iat[0] == -1
+
+
+def test_a_buy_limit_fills_only_when_the_ask_trades_down_to_it():
+    # spread 1 pip: the ask is the bid + 0.0001. The limit at 1.0980 is reached on bar 2's low.
+    b = book([(1.1000,) * 4, (1.1000, 1.1005, 1.0990, 1.0995), (1.0995, 1.0996, 1.0975, 1.0985),
+              (1.0985,) * 4])
+    t, _ = run(b, pending([dict(i=0, side=1, entry=1.0980, limit=1, expires=5, stop=0.0030)]),
+               Costs(swap=False))
+    assert t["entry"].iat[0] == pytest.approx(1.0980)
+
+
+def test_a_limit_needs_price_through_it_when_asked():
+    # the bid's high touches the sell limit at 1.1020 exactly, but 2 points through is required
+    b = book([(1.1000,) * 4, (1.1000, 1.1020, 1.0995, 1.1010), (1.1010,) * 4])
+    t, _ = run(b, pending([dict(i=0, side=-1, entry=1.1020, limit=1, expires=5, stop=0.0030)]),
+               Costs(swap=False, limit_through_points=2))
+    assert t.empty
+
+
+def test_a_limit_gapped_past_fills_at_the_better_open():
+    b = book([(1.1000,) * 4, (1.1040, 1.1045, 1.1035, 1.1040), (1.1040,) * 4])
+    t, _ = run(b, pending([dict(i=0, side=-1, entry=1.1020, limit=1, expires=5, stop=0.0030)]),
+               Costs(swap=False))
+    assert t["entry"].iat[0] == pytest.approx(1.1040)
+
+
+def test_a_buy_limit_on_ticks_fills_at_the_level_or_better():
+    prices = [1.1000] * 30 + list(np.linspace(1.1000, 1.0960, 20)) + [1.0960] * 40
+    b = ticked(prices)
+    t, _ = run(b, pending([dict(i=0, side=1, entry=1.0980, limit=1, expires=3, stop=0.0050)]),
+               Costs(swap=False, fill="ticks"))
+    assert t["fill"].iat[0] == "ticks"
+    assert t["entry"].iat[0] <= 1.0980 + 1e-12

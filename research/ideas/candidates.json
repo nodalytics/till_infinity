@@ -1,0 +1,24 @@
+{
+  "frozen": "2026-10-02, before any validation data was scored",
+  "rule": "Each candidate is re-run unchanged (same setup, tag, exit, interval) on instruments it was never scored on. It survives if, on the fresh set, net R > 0 in both halves and it beats its coin twin with day-bootstrap p < 0.05 after Benjamini-Hochberg across the candidates below.",
+  "fresh_sets": {
+    "crypto": "the broker's 32 other crypto CFDs (research/harness/ideas_fresh.sh)",
+    "metal": "platinum, palladium, copper (XPTUSD, XPDUSD, XCUUSD)",
+    "deriv": "Volatility 10/50/100 Index, Step Index 200/500, Drift Switch Index 20/30"
+  },
+  "trade_candidates": [
+    {"setup": "donchian_trend", "exit": "trail", "interval": "1d", "family": "crypto"},
+    {"setup": "donchian_trend", "exit": "t4", "interval": "1d", "family": "crypto"},
+    {"setup": "box_breakout", "exit": "trail", "interval": "1d", "family": "crypto"},
+    {"setup": "cusum_follow", "exit": "t10", "interval": "1d", "family": "crypto"},
+    {"setup": "cusum_follow", "exit": "focus", "interval": "1d", "family": "crypto"},
+    {"setup": "triangle_cook", "exit": "t10", "interval": "1d", "family": "crypto"},
+    {"setup": "focus_size", "exit": "trail", "interval": "1d", "family": "crypto"},
+    {"setup": "anomaly", "exit": "t10", "interval": "1d", "family": "crypto"},
+    {"setup": "tf_coherent_breakout", "exit": "t10", "interval": "4h", "family": "metal"},
+    {"setup": "cusum_follow", "exit": "t4", "interval": "15m", "family": "metal"},
+    {"setup": "asc_triangle", "exit": "focus", "interval": "4h", "family": "deriv"}
+  ],
+  "portfolio_candidates": ["real tsmom", "real xsmom L30 H5", "real xsmom L30 H10", "real xsmom L60 H5", "gold momentum alone"],
+  "portfolio_check": "tsmom and xsmom re-run on the 32 fresh crypto CFDs as their own universe; gold momentum on platinum and palladium"
+}
