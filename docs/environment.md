@@ -134,7 +134,7 @@ To change a setting:
 | `STRUCTURES_FINE_WINDOW` | `1500` | 1m bars kept for refining origins (about a day). | restart |
 | `STRUCTURES_FORGET_FEED` | `604800` (7 days) | Seconds of silence before a feed's state is dropped. | restart |
 | `STRUCTURES_SAVE_S` | `300` | Seconds between state saves. | restart |
-| `STRUCTURES_FORMATION` | `pip,run,origin,profile,wick,vwap,round` | How swings are found, as a list of drawing passes. | trades |
+| `STRUCTURES_FORMATION` | `pip,run,origin,profile,wick,vwap,gap,round` | How swings are found, as a list of drawing passes. | trades |
 | `STRUCTURES_SIGMA` | `4` | Per-venue anomaly cutoff, in sigma. | restart |
 | `STRUCTURES_QUANTILE` | `0.999` | Joint-model anomaly cutoff. | restart |
 | `STRUCTURES_COOLDOWN_S` | `900` | Seconds before the same finding is announced again. | restart |
