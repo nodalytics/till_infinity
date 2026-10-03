@@ -625,6 +625,29 @@ it. A RANGE whose last excursion is undecided at the end of the series has neith
 `RANGE·`, `RANGE_TEST↑[2]`, `ESCAPE↑`, `FAILED_ESCAPE↓`. The fixtures use the warm-up itself, which
 is a range (99.75 .. 100.75, ATR 1, known at bar 14 when the ATR first exists).
 
+### 2. Compression and expansion words
+
+`candles.compression` adds four L1 qualifiers to the token table; `grammar.WORDS2` holds the runs.
+
+| qualifier | token | definition |
+|---|---|---|
+| **NR4**, **NR7** | CANDLE | the bar's range (h - l) is strictly narrower than each of the 3 (6) bars before it: the narrowest of the last 4 (7). Ties are not |
+| **WR7** | CANDLE | strictly wider than each of the 6 before it |
+| **overlap** | BAR_RELATION | the share of the bar's range inside the previous bar's: (min(h, ph) - max(l, pl))+ / (h - l); a zero-range bar is 1 inside the previous range, 0 outside; none on bar 0 |
+
+In the qualifier syntax the flags are bare names (`CANDLE[NR7]`, `CANDLE[not WR7]`) and overlap is a
+number (`CANDLE[overlap≥0.75]`). The runs are words over them, firing once per run where it reaches k:
+
+| event | production (up side) | direction | parts |
+|---|---|---|---|
+| **BALANCE** | `RUN[k≥3, overlap≥0.75]` - three bars each at least BALANCE_MIN (**0.75**) inside the one before | none (NONE): one event where it holds both ways | the three CANDLEs and BAR_RELATIONs |
+| **IMBALANCE** | `RUN[k≥3, overlap≤0.25, rel=HH]` - three bars each at most IMBALANCE_MAX (**0.25**) inside the one before, each a higher high | UP; DOWN on the flipped chart (LL) | likewise |
+
+A non-directional word is a `Word(..., sym=True)`: it is evaluated on both frames and emitted once,
+with direction NONE, where it holds in both. The bar word carries the qualifiers after a `#` with
+`bar_words(chart, v2=True)`: `BULL(M,M,M,M){...}/IN|... #NR4,ov1.00` (overlap printed to two
+decimals).
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -738,6 +761,7 @@ never NaN.
 | equal highs / lows, liquidity, "buy-side / sell-side liquidity taken" (v2) | POOL, POOL_TAKEN[SWEPT / THROUGH] | |
 | protected low (the DAX course) (v2) | SWEEP_PROTECTED | `dax_smc.py` step 1, exactly |
 | range, consolidation, box; breakout / fakeout (v2) | RANGE; ESCAPE / FAILED_ESCAPE | |
+| NR4 / NR7, wide-range bar; balance / imbalance, overlapping or "clean" bars (v2) | NR4, NR7, WR7, overlap; BALANCE, IMBALANCE | |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -946,6 +970,11 @@ GARCH and 152 of 2,710 under momentum.
   bars" is m consecutive closes beyond, the first included (m = 3), so an ESCAPE is known two bars
   after its first close beyond. A failed escape counts as a test of its edge. A RANGE has no
   direction (Dir.NONE).
+- **Compression (item 2).** NR and WR are strict (a tie is neither) and count the bar itself in its
+  4 or 7. OVERLAP is a BAR_RELATION attribute (it relates two bars); NR4 / NR7 / WR7 are CANDLE
+  attributes. BALANCE / IMBALANCE use k = 3 and thresholds 0.75 / 0.25 (the walk's overlap quartiles
+  are 0.25 and 0.79, so each bar of a run is in the top or bottom quarter); IMBALANCE's direction is
+  that of the bars' higher highs (rel = HH), BALANCE has none.
 
 ### v1
 

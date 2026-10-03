@@ -125,6 +125,8 @@ class Word:
     rels: tuple[int, ...] = ()  # BAR_RELATION offsets consumed
     unless: tuple[Clause, ...] = ()  # a context that must not hold as a whole (cells it reads may be absent)
     attrs: Callable[[Table, int, int], dict] | None = None  # semantic action: (frame, bar, side) -> attributes
+    sym: bool = False  # v2: a word with no direction (BALANCE, a doji): one event, Dir.NONE, where it holds both ways
+    suffix: str = ""  # v2: an id suffix, so several words of one head can share a bar (PATTERN.U.57.hammer)
 
     @property
     def span(self) -> int:
@@ -153,7 +155,12 @@ _KEYS = {"dir": ("dir", None), "size": ("size", SIZE), "upper": ("upper", WICK),
          "wick.up.share": ("upper_share_g", WGRADE), "wick.low.share": ("lower_share_g", WGRADE),
          "wick.up.body": ("upper_body", "num"), "wick.low.body": ("lower_body", "num"),
          "close": ("close_q", QUARTILES), "rel": ("rel", None), "engulf": ("engulf", None),
-         "beyond": ("beyond", None)}
+         "beyond": ("beyond", None),
+         # v2
+         "overlap": ("overlap", "num")}
+FLAGS: set[str] = {"NR4", "NR7", "WR7"}
+"""v2: boolean token columns a qualifier names bare (`CANDLE[NR7]`, `CANDLE[not WR7]`); modules add
+theirs."""
 _OPS = (("≥", ">="), ("≤", "<="), (">=", ">="), ("<=", "<="), ("!=", "!="), ("≠", "!="), ("=", "=="),
         (">", ">"), ("<", "<"))
 
@@ -171,7 +178,7 @@ def _qual(item: str, cell: int | None) -> Clause:
     pre = "" if cell is None else f"{cell}."
     neg = item.startswith("not ")
     name = POINT_ALIASES.get(item[4:].strip() if neg else item, item[4:].strip() if neg else item)
-    if name in NAMED_POINTS or name in COMPOSITE_POINTS:
+    if name in NAMED_POINTS or name in COMPOSITE_POINTS or name in FLAGS:
         return C(pre + name, "==", not neg)
     for sym, op in _OPS:
         if sym in item:
@@ -369,11 +376,23 @@ def words(T: Table, cid: list[str], rid: list[str | None], names: Iterable[str] 
     out, seen = [], set()
     for name in names:
         w = table_[name]
+        if w.sym:
+            both = word_mask(w, fr[1]) & word_mask(w, fr[-1])
+            for t in np.flatnonzero(both):
+                t = int(t)
+                eid = make_id(w.head, Dir.NONE, t, w.suffix)
+                if eid in seen:
+                    continue
+                seen.add(eid)
+                attrs = w.attrs(fr[1], t, 1) if w.attrs else {"rule": name}
+                parts = tuple(cid[t + k] for k in sorted(w.cells)) + tuple(rid[t + k] for k in sorted(w.rels))
+                out.append(Entity(eid, w.head, Dir.NONE, t, t + w.span, attrs_of(attrs), parts=parts))
+            continue
         for side, d in zip((1, -1), SIDES):
             F = fr[side]
             for t in np.flatnonzero(word_mask(w, F)):
                 t = int(t)
-                eid = make_id(w.head, d, t)
+                eid = make_id(w.head, d, t, w.suffix)
                 if eid in seen:
                     continue
                 seen.add(eid)
@@ -687,3 +706,26 @@ def _build(rule: Rule, anc: Entity, bound: dict[str, list[Entity]], d: Dir) -> E
         suffix = f"{rule.suffix[0]}{_eval(rule.suffix[1], bound, 1)}"
     return Entity(make_id(rule.head, d, at, suffix), rule.head, d, at, known,
                   attrs_of(attrs), parts=tuple(e.id for e in parts))
+
+
+# ---------------------------------------------------------------- v2 words
+
+BALANCE_K = 3
+"""Bars in a BALANCE or IMBALANCE run."""
+BALANCE_MIN = 0.75
+"""BALANCE: each bar has at least this share of its range inside the previous bar's."""
+IMBALANCE_MAX = 0.25
+"""IMBALANCE: each bar has at most this share inside the previous bar's, extending it one way."""
+
+_BAL = run(f"RUN[k≥{BALANCE_K}, overlap≥{BALANCE_MIN}]")
+_IMB = run(f"RUN[k≥{BALANCE_K}, overlap≤{IMBALANCE_MAX}, rel=HH]")
+
+WORDS2: dict[str, Word] = {
+    # v2 item 2: runs of overlapping and of non-overlapping bars
+    "BALANCE": Word("BALANCE", _BAL[0], _BAL[1], rels=_BAL[0], unless=_BAL[2], sym=True,
+                    attrs=lambda F, t, side: {"bars": BALANCE_K}),
+    "IMBALANCE": Word("IMBALANCE", _IMB[0], _IMB[1], rels=_IMB[0], unless=_IMB[2],
+                      attrs=lambda F, t, side: {"bars": BALANCE_K}),
+}
+"""BALANCE   := RUN[k≥3, overlap≥0.75]            k overlapping bars (no direction)
+IMBALANCE_UP := RUN[k≥3, overlap≤0.25, rel=HH]  k bars each mostly above the last, higher highs"""

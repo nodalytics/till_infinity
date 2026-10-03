@@ -239,6 +239,8 @@ def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
 
     df = df.reset_index(drop=True)
     T = candles.table(df)
+    if v2:
+        candles.compression(T)
     cid, rid = candles.ids(T)
     toks = candles.entities(T)
     fr = frames(T)
@@ -248,6 +250,8 @@ def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
     extra: list[Entity] = []
     vtrans: list = []
     if v2:
+        from mcfl.grammar import WORDS2
+        extra += words(T, cid, rid, table_=WORDS2, fr=fr)
         from mcfl import structure as S
         swings = S.labels(ext, T["atr"])
         sshift, st, cnt, rnid = S.shifts(swings, len(df))

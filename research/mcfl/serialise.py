@@ -147,12 +147,37 @@ def _by_bar(chart: Chart) -> tuple[dict[int, Entity], dict[int, Entity]]:
     return c, r
 
 
-def bar_words(chart: Chart) -> list[str]:
+def bar_words(chart: Chart, v2: bool = False) -> list[str]:
     """One word a bar: `BULL(L,T,N,S)/HH` - direction(size, body, upper wick, lower wick)/relation
     to the previous bar (IN, OUT, HH, LL; +E when the body engulfs). The first bar has no relation;
-    warm-up bars print their classes as W."""
+    warm-up bars print their classes as W. `v2=True` appends the v2 L1 qualifiers (`v2_word`)."""
     c, r = _by_bar(chart)
+    if v2:
+        return [word(c.get(t), r.get(t)) + v2_word(c.get(t), r.get(t)) for t in range(chart.n)]
     return [word(c.get(t), r.get(t)) for t in range(chart.n)]
+
+
+V2_L1_TEXT: list = []
+"""Functions (candle, relation) -> list of codes, each adding a v2 L1 qualifier to the bar word."""
+
+
+def _v2_compression(c: Entity, r: Entity | None) -> list[str]:
+    out = [k for k in ("NR4", "NR7", "WR7") if c.get(k)]
+    if r is not None and r.get("overlap") is not None:
+        out.append(f"ov{r.get('overlap'):.2f}")
+    return out
+
+
+V2_L1_TEXT.append(_v2_compression)
+
+
+def v2_word(c: Entity | None, r: Entity | None) -> str:
+    """The v2 L1 qualifiers of a bar as text: ` #NR7,ov0.82,...` - NR4 / NR7 / WR7, the overlap with
+    the previous bar, then the volume, effort and session codes when the chart has them."""
+    if c is None:
+        return ""
+    codes = [x for f in V2_L1_TEXT for x in f(c, r)]
+    return " #" + ",".join(codes) if codes else ""
 
 
 def bar_sentence(chart: Chart) -> str:

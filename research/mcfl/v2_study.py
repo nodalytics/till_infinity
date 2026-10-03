@@ -205,9 +205,30 @@ def item5(ch: Chart) -> dict:
             "rates": rates, "shares": shares}
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
+def item2(ch: Chart) -> dict:
+    c = sorted(ch.of("CANDLE"), key=lambda e: e.at)
+    r = {e.at: e for e in ch.of("BAR_RELATION")}
+    rng = np.array([e.get("high") - e.get("low") for e in c])
+    stream = []
+    for e in c[10:]:
+        ov = r[e.at].get("overlap")
+        code = "W7" if e.get("WR7") else "N7" if e.get("NR7") else "N4" if e.get("NR4") else "-"
+        stream.append(code + ("h" if ov >= 0.75 else "l" if ov <= 0.25 else "m"))
+    shares = {}
+    for k in ("NR4", "NR7", "WR7"):
+        ts = [e.at for e in c if e.get(k) and e.at + 1 < ch.n]
+        shares[f"after {k}, the next bar's range is wider"] = (sum(rng[t + 1] > rng[t] for t in ts), len(ts))
+        shares[f"after {k}, the next 5 bars' mean range > this bar's"] = (
+            sum(rng[t + 1:t + 6].mean() > rng[t] for t in ts if t + 5 < ch.n), sum(1 for t in ts if t + 5 < ch.n))
+    shares["NR7 bars"] = (sum(1 for e in c if e.get("NR7")), len(c))
+    shares["WR7 bars"] = (sum(1 for e in c if e.get("WR7")), len(c))
+    rates = Counter(f"{e.type}{e.dir.arrow}" for e in ch.of("BALANCE", "IMBALANCE"))
+    return {"streams": {"compression": stream}, "rates": rates, "shares": shares}
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
                                              "5": item5}
-TITLES = {"1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
+TITLES = {"2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
           "7": "retracement depth", "6": "liquidity pools and the protected sweep",
           "5": "RANGE: boxes, tests and escapes"}
 

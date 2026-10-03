@@ -1,0 +1,55 @@
+MCFL v2 alphabets against matched iid walks: 2 series x 2000 bars per source, R = 3; 15m timestamps and tick volume on every series
+
+== item 2: compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)
+-- walk against its matched walks
+   stream compression       3980 tokens,  12 symbols   p: n=1:0.400 n=2:0.200 n=3:0.600 k=1:0.200 k=2:0.800
+      2-gram N4l -l                                       5.28     2.60   +3.3  (per 1,000 tokens: data / null / z)
+   per 1,000 bars (data / null mean / z):
+     BALANCE·                                     11.75     11.25   +0.5
+     IMBALANCE↑                                    3.50      3.92   -0.7
+     IMBALANCE↓                                    5.50      4.00   +0.8
+   shares (data / null mean / z [data n]):
+     after NR4, the next bar's range is wider           0.792   0.794   -0.2 [1017]
+     after NR4, the next 5 bars' mean range > this bar's   0.918   0.918   -0.0 [1014]
+     after NR7, the next bar's range is wider           0.872   0.880   -2.0 [579]
+     after NR7, the next 5 bars' mean range > this bar's   0.983   0.977   +1.6 [576]
+     after WR7, the next bar's range is wider           0.124   0.120   +0.6 [565]
+     after WR7, the next 5 bars' mean range > this bar's   0.048   0.055   -0.6 [565]
+     NR7 bars                                           0.145   0.140   +3.3 [4000]
+     WR7 bars                                           0.141   0.145   -0.8 [4000]
+-- garch against its matched walks
+   stream compression       3980 tokens,  12 symbols   p: n=1:0.800 n=2:1.000 n=3:0.800 k=1:1.000 k=2:0.600
+   per 1,000 bars (data / null mean / z):
+     BALANCE·                                     10.00     10.92   -0.8
+     IMBALANCE↑                                    5.25      3.58   +2.3
+     IMBALANCE↓                                    3.50      4.17   -0.5
+   shares (data / null mean / z [data n]):
+     after NR4, the next bar's range is wider           0.810   0.796   +7.2 [979]
+     after NR4, the next 5 bars' mean range > this bar's   0.934   0.926   +0.5 [978]
+     after NR7, the next bar's range is wider           0.874   0.877   -0.3 [565]
+     after NR7, the next 5 bars' mean range > this bar's   0.975   0.979   -0.7 [565]
+     after WR7, the next bar's range is wider           0.140   0.122   +1.6 [586]
+     after WR7, the next 5 bars' mean range > this bar's   0.056   0.041   +1.6 [586]
+     NR7 bars                                           0.141   0.146   -2.4 [4000]
+     WR7 bars                                           0.147   0.141   +2.1 [4000]
+-- trend against its matched walks
+   stream compression       3980 tokens,  12 symbols   p: n=1:0.200 n=2:0.200 n=3:0.400 k=1:0.200 k=2:0.400
+      1-gram W7l                                         75.88    58.96   +4.4  (per 1,000 tokens: data / null / z)
+      1-gram -l                                         175.38   153.94   +3.4  (per 1,000 tokens: data / null / z)
+      2-gram W7l W7l                                      6.28     1.93   +4.9  (per 1,000 tokens: data / null / z)
+      2-gram W7l -l                                      19.35     9.05   +3.6  (per 1,000 tokens: data / null / z)
+      2-gram -l -l                                       27.89    20.02   +3.5  (per 1,000 tokens: data / null / z)
+   per 1,000 bars (data / null mean / z):
+     BALANCE·                                      8.25      9.83   -0.8
+     IMBALANCE↑                                    9.75      3.08   +8.7
+     IMBALANCE↓                                    9.00      4.67   +2.5
+   shares (data / null mean / z [data n]):
+     after NR4, the next bar's range is wider           0.789   0.792   -0.3 [1002]
+     after NR4, the next 5 bars' mean range > this bar's   0.919   0.930   -2.6 [998]
+     after NR7, the next bar's range is wider           0.865   0.870   -0.2 [563]
+     after NR7, the next 5 bars' mean range > this bar's   0.973   0.981   -2.5 [560]
+     after WR7, the next bar's range is wider           0.136   0.136   +0.0 [573]
+     after WR7, the next 5 bars' mean range > this bar's   0.042   0.046   -0.3 [572]
+     NR7 bars                                           0.141   0.144  -13.0 [4000]
+     WR7 bars                                           0.143   0.143   +0.0 [4000]
+
