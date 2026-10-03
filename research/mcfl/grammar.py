@@ -157,7 +157,7 @@ _KEYS = {"dir": ("dir", None), "size": ("size", SIZE), "upper": ("upper", WICK),
          "close": ("close_q", QUARTILES), "rel": ("rel", None), "engulf": ("engulf", None),
          "beyond": ("beyond", None),
          # v2
-         "overlap": ("overlap", "num")}
+         "overlap": ("overlap", "num"), "session": ("session", None), "dow": ("dow", None)}
 FLAGS: set[str] = {"NR4", "NR7", "WR7"}
 """v2: boolean token columns a qualifier names bare (`CANDLE[NR7]`, `CANDLE[not WR7]`); modules add
 theirs."""

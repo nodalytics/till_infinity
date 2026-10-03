@@ -226,9 +226,30 @@ def item2(ch: Chart) -> dict:
     return {"streams": {"compression": stream}, "rates": rates, "shares": shares}
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
+def item8(ch: Chart) -> dict:
+    sess = {e.at: e.get("session") for e in ch.of("CANDLE")}
+    rates = Counter(f"BREAK in {sess[e.at]}" for e in ch.of("BREAK"))
+    rates.update(f"SESSION_EXTREME_TAKEN{e.dir.arrow} {e.get('session')}" for e in ch.of("SESSION_EXTREME_TAKEN"))
+    shares = {}
+    ext = ch.of("SESSION_EXTREME")
+    taken = {e.get("extreme"): e for e in ch.of("SESSION_EXTREME_TAKEN")}
+    for name in ("ASIA", "LONDON", "OVERLAP", "NY"):
+        xs = [e for e in ext if e.get("session") == name]
+        shares[f"{name} extremes taken before its next instance"] = (sum(e.id in taken for e in xs), len(xs))
+        tk = [taken[e.id] for e in xs if e.id in taken]
+        shares[f"{name} takes that closed back"] = (sum(t.get("closed_back") for t in tk), len(tk))
+    # a fast return against a slow one: what ends the revisit
+    rp = {(e.get("zone"), e.get("count")) for e in ch.of("REJECT_PATH")}
+    for p in ("FAST", "NORMAL", "SLOW"):
+        rv = [r for r in ch.of("REVISIT") if r.get("pace") == p]
+        shares[f"REVISIT[pace={p}] then REJECT_PATH"] = (sum((r.get("zone"), r.get("count")) in rp for r in rv), len(rv))
+    stream = _seq(ch, ("BREAK",), lambda e: f"{sess[e.at][:2]}{e.dir.arrow}")
+    return {"streams": {"breaks by session": stream}, "rates": rates, "shares": shares}
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
                                              "5": item5}
-TITLES = {"2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
+TITLES = {"8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
           "7": "retracement depth", "6": "liquidity pools and the protected sweep",
           "5": "RANGE: boxes, tests and escapes"}
 

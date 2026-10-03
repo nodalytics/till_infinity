@@ -240,7 +240,9 @@ def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
     df = df.reset_index(drop=True)
     T = candles.table(df)
     if v2:
+        from mcfl import timing
         candles.compression(T)
+        timing.columns(T, df)
     cid, rid = candles.ids(T)
     toks = candles.entities(T)
     fr = frames(T)
@@ -274,7 +276,11 @@ def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
         extra += pools.pools(fr, ext, level) + sw + setups
         from mcfl import ranges
         extra += ranges.run(T, cid)
-    ents = sorted(toks + wds + level + zones + life + rejects + extra, key=sort_key)
+        extra += timing.sessions(T, cid)
+    ents = toks + wds + level + zones + life + rejects + extra
+    if v2:
+        ents = timing.tempo(ents)
+    ents = sorted(ents, key=sort_key)
     rels = sorted(relations(ents), key=lambda r: (r.known_at, r.kind, r.src, r.dst))
     return Chart(n=len(df), entities=tuple(ents), relations=tuple(rels),
                  failures=tuple(sorted(failures, key=lambda f: (f.known_at, f.candidate))),

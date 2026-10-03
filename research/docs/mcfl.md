@@ -648,6 +648,39 @@ with direction NONE, where it holds in both. The bar word carries the qualifiers
 `bar_words(chart, v2=True)`: `BULL(M,M,M,M){...}/IN|... #NR4,ov1.00` (overlap printed to two
 decimals).
 
+### 8. Time and tempo
+
+`timing.py`. Time words need a `ts` column (each bar's open, epoch seconds, UTC); a chart without one
+has none. Tempo needs only bars.
+
+**SESSION** and **DAY_OF_WEEK** are L1 qualifiers of every CANDLE (`session`, `dow`), from the UTC hour
+and day of the bar's open, with fixed hours (no daylight saving):
+
+| session | UTC hours | code |
+|---|---|---|
+| ASIA | 22:00 - 07:00 | AS |
+| LONDON | 07:00 - 12:00 | LN |
+| OVERLAP | 12:00 - 16:00 (London and New York both open) | OV |
+| NY | 16:00 - 22:00 | NY |
+
+Qualifiers `CANDLE[session=LONDON]`, `CANDLE[dow=FRI]`; the bar word ends `@LN.MON`. A session
+**instance** is a run of consecutive bars with one session (a gap over 12 hours starts a new one).
+
+| event | definition | `known_at` | attributes |
+|---|---|---|---|
+| **SESSION_OPEN** (NONE) | the first bar of each instance | that bar | `session`, `price` (its open) |
+| **SESSION_EXTREME**↑ / ↓ | an instance's high / low, at the bar that made it (the first on a tie) | the first bar of the next instance: when the clock has shown the session over | `session`, `price`, `start`, `end`; parts the instance's CANDLEs |
+| **SESSION_EXTREME_TAKEN**↑ / ↓ (SESSION_HIGH_TAKEN, SESSION_LOW_TAKEN) | the first bar, from the next instance on and before the same session's next instance, whose high is above the session high (low below the low) | its bar | `extreme`, `session`, `level`, `closed_back` |
+
+**Tempo.** Every lifecycle event of a structure gets `tempo`, the bars since the previous event of the
+same structure: a zone's REVISIT, REJECT_PATH, ACCEPT, FAIL and EXPIRE since the zone qualified or its
+last event; a VOID's transitions since the void or its last transition; a RANGE's tests and escapes
+since the range was known or its last event. And `pace`, by a rolling quantile of the same event
+type: FAST when the tempo is at or under the 25th percentile of the last TEMPO_WINDOW (**50**) tempos of
+that type known before it, SLOW at or over the 75th, NORMAL between, WARMUP with fewer than TEMPO_MIN
+(**10**) of them. "A fast return" is then grammatical: `REVISIT[pace=FAST]`, and the text form is
+`REVISIT↑[FAST]`.
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -762,6 +795,8 @@ never NaN.
 | protected low (the DAX course) (v2) | SWEEP_PROTECTED | `dax_smc.py` step 1, exactly |
 | range, consolidation, box; breakout / fakeout (v2) | RANGE; ESCAPE / FAILED_ESCAPE | |
 | NR4 / NR7, wide-range bar; balance / imbalance, overlapping or "clean" bars (v2) | NR4, NR7, WR7, overlap; BALANCE, IMBALANCE | |
+| Asian range, London open, NY session; "London took the Asian high" (v2) | session; SESSION_OPEN, SESSION_EXTREME, SESSION_EXTREME_TAKEN | fixed UTC hours |
+| a fast / slow return (v2) | REVISIT[pace=FAST] / [pace=SLOW] | tempo by rolling quartile |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -975,6 +1010,15 @@ GARCH and 152 of 2,710 under momentum.
   attributes. BALANCE / IMBALANCE use k = 3 and thresholds 0.75 / 0.25 (the walk's overlap quartiles
   are 0.25 and 0.79, so each bar of a run is in the top or bottom quarter); IMBALANCE's direction is
   that of the bars' higher highs (rel = HH), BALANCE has none.
+- **Sessions (item 8)** use fixed UTC hours, no daylight saving, read from the bar's open. SESSION is a
+  CANDLE attribute (a qualifier), not a separate token per bar: one token per bar is the CANDLE, and a
+  second L1 token type would only repeat its bar. A session's extremes are known at the first bar of
+  the next session (the bar that shows the clock passed), and are watched for a take until the same
+  session comes round again. SESSION_HIGH_TAKEN and SESSION_LOW_TAKEN are one type with two directions,
+  so the flip maps them onto each other.
+- **Tempo** is measured between consecutive events of one structure (the first since the structure was
+  known), and FAST / SLOW are quartiles of the same event type's last 50 tempos, known strictly before
+  it. A tie with a quartile is FAST (SLOW).
 
 ### v1
 

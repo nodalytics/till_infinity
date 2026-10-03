@@ -60,7 +60,15 @@ V2_TEXT: dict[str, Any] = {
     "POOL": lambda e: f"{e.get('kind')}:{e.get('count')}",
     "POOL_TAKEN": lambda e: "SWEPT" if e.get("closed_back") else "THROUGH",
     "RANGE_TEST": lambda e: str(e.get("count")),
+    "SESSION_OPEN": lambda e: e.get("session"),
+    "SESSION_EXTREME": lambda e: e.get("session"),
+    "SESSION_EXTREME_TAKEN": lambda e: e.get("session"),
 }
+for _t in ("REVISIT", "REJECT_PATH", "ACCEPT", "FAIL", "EXPIRE", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
+           "ESCAPE", "FAILED_ESCAPE"):
+    V2_TEXT[_t] = lambda e: e.get("pace") if e.get("pace") not in (None, "WARMUP") else None
+_rt = V2_TEXT["RANGE_TEST"]
+V2_TEXT["RANGE_TEST"] = lambda e: ":".join(x for x in (_rt(e), e.get("pace")) if x and x != "WARMUP")
 
 
 def _v2(e: Entity) -> str:
@@ -169,6 +177,14 @@ def _v2_compression(c: Entity, r: Entity | None) -> list[str]:
 
 
 V2_L1_TEXT.append(_v2_compression)
+
+
+def _v2_time(c: Entity, r: Entity | None) -> list[str]:
+    from mcfl.timing import SESSION_CODE
+    return [f"@{SESSION_CODE[c.get('session')]}.{c.get('dow')}"] if c.get("session") else []
+
+
+V2_L1_TEXT.append(_v2_time)
 
 
 def v2_word(c: Entity | None, r: Entity | None) -> str:
