@@ -97,8 +97,29 @@ def item11(ch: Chart) -> dict:
             "rates": rates, "shares": shares}
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"1": item1, "11": item11}
-TITLES = {"1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT"}
+def item4(ch: Chart) -> dict:
+    voids = ch.of("VOID")
+    first: dict[str, dict[str, int]] = {}
+    for t in ch.transitions:
+        if t.zone.startswith("VOID."):
+            first.setdefault(t.zone, {})[t.dst] = t.at
+    shares = {}
+    for st in ("PARTIAL", "FILLED", "INVERTED"):
+        for h in (5, 50):
+            ok = sum(1 for v in voids if v.at + h < ch.n)
+            hit = sum(1 for v in voids if v.at + h < ch.n and first.get(v.id, {}).get(st, 10**9) <= v.at + h)
+            shares[f"{st} within {h} bars"] = (hit, ok)
+    filled = [v for v in voids if "FILLED" in first.get(v.id, {})]
+    shares["INVERTED on the bar it FILLED, of filled"] = (
+        sum(1 for v in filled if first[v.id].get("INVERTED") == first[v.id]["FILLED"]), len(filled))
+    rates = Counter(e.type for e in ch.of("VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED"))
+    # the transitions as a sentence, in the order they became known
+    stream = [f"{t.dst}{'↑' if '.U.' in t.zone else '↓'}" for t in ch.transitions if t.zone.startswith("VOID.")]
+    return {"streams": {"void life": stream}, "rates": rates, "shares": shares}
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"1": item1, "11": item11, "4": item4}
+TITLES = {"1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle"}
 
 
 # ---------------------------------------------------------------- runs

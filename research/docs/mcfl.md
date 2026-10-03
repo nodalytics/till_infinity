@@ -526,6 +526,29 @@ higher low at bar 67 (AGAINST: the CHARACTER_SHIFT↓), then LL and LH (MIXED at
 breaks down at 87 and 103 that are WITH - the BOS in the new direction - and not further CHoCHs. A
 break against a state that only one label holds is AGAINST without being a CHoCH.
 
+### 4. The VOID lifecycle
+
+`voids.py`. Every VOID is followed from the bar after it to its end:
+
+```
+UNTOUCHED --VOID_PARTIAL--> PARTIAL --VOID_FILLED--> FILLED --VOID_INVERTED--> INVERTED (terminal)
+```
+
+For a VOID↑ at bar k (down mirrored), `near` = its top l[k] (the edge price meets first on the way
+back), `far` = its bottom h[k-2]:
+
+| event | the first bar t > k with | attributes | `known_at` |
+|---|---|---|---|
+| VOID_PARTIAL | l[t] < near (price entered the gap; a low exactly at the edge has not) | `void`, `share` = (near - l[t]) / (near - far), capped at 1 | t |
+| VOID_FILLED | l[t] ≤ far (traded through it) | `void`, `share` (1) | t |
+| VOID_INVERTED | c[t] < far (a close beyond its far side: the IFVG) | `void`, `beyond_atr` = (far - c[t]) / ATR | t |
+
+Each implies the ones before it, so one bar can make two or three transitions; all are recorded, in
+order, at its close. `parts` is that bar's CANDLE. Each transition is also a
+`Transition(void, src, dst, at, known_at, event)` in `Chart.transitions` (keyed by the VOID's id), so a
+void's state at any bar is `voids.void_state(chart, void_id, t)` - None before the VOID is known,
+UNTOUCHED from then. Exact comparisons, no tolerance, as v1's VOID itself.
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -634,6 +657,7 @@ never NaN.
 | gap | OPEN_GAP_UP / OPEN_GAP_DOWN; a full gap HIGH_BELOW_PREV_LOW / LOW_ABOVE_PREV_HIGH | |
 | higher high, lower low, ... (v2) | SWING↑[HH], SWING↓[LL], ... | labels of 3/3 swings |
 | market structure bullish / bearish (v2) | STRUCTURE UP / DOWN | last high HH and last low HL / LH and LL |
+| FVG filled / mitigated, inverted FVG (IFVG) (v2) | VOID_FILLED, VOID_PARTIAL, VOID_INVERTED | |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -819,6 +843,10 @@ GARCH and 152 of 2,710 under momentum.
   state; "first" is per run of the state and in the order breaks became known, so a truncated parse
   finds the same one. At most one per bar (two legs breaking on one bar make one CHoCH, the longer
   leg's).
+- **VOID transitions are exact** (no tolerance), like the VOID: entering is a low strictly below
+  the near edge, filling a low at or below the far edge, inverting a close strictly below it. A void
+  is followed to the end of the series (no expiry); INVERTED is terminal. The transitions go into
+  `Chart.transitions` beside the zones', keyed by the VOID's id.
 
 ### v1
 

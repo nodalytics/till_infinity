@@ -10,7 +10,7 @@ from mcfl import synth
 from mcfl.parse import parse
 
 #: the v2 types each prefix test must see (so the test cannot pass by finding nothing)
-COMMON = {"SWING", "STRUCTURE_SHIFT"}
+COMMON = {"SWING", "STRUCTURE_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED"}
 #: rarer ones, checked entity by entity on a longer series
 RARE = {"CHARACTER_SHIFT"}
 

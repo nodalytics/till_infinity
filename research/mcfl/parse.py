@@ -242,12 +242,16 @@ def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
     ext = [e for e in wds if e.type == "EXTREME"]
     level = [e for side in (1, -1) for e in _side(fr[side], ext, side, cid)]
     extra: list[Entity] = []
+    vtrans: list = []
     if v2:
         from mcfl import structure as S
         swings = S.labels(ext, T["atr"])
         sshift, st, cnt, rnid = S.shifts(swings, len(df))
         level = S.annotate_breaks(level, st)
         extra += swings + sshift + S.character_shifts([e for e in level if e.type == "BREAK"], st, cnt, rnid)
+        from mcfl import voids
+        vev, vtrans = voids.run(fr, [e for e in wds if e.type == "VOID"], cid)
+        extra += vev
     zones, failures, pending = grammar([e for e in wds if e.type in ("EXTREME", "VOID")] + level, RULES)
     life, transitions, states = lifecycle(T, zones, failures, cid, [e for e in wds if e.type == "DELIVERY_SHIFT"])
     rejects, _, _ = grammar([e for e in toks if e.type == "CANDLE"] + zones + life, CANDLE_RULES, n=len(df))
@@ -255,5 +259,5 @@ def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
     rels = sorted(relations(ents), key=lambda r: (r.known_at, r.kind, r.src, r.dst))
     return Chart(n=len(df), entities=tuple(ents), relations=tuple(rels),
                  failures=tuple(sorted(failures, key=lambda f: (f.known_at, f.candidate))),
-                 transitions=tuple(sorted(transitions, key=lambda t: (t.known_at, t.zone, t.at))),
+                 transitions=tuple(sorted(transitions + vtrans, key=lambda t: (t.known_at, t.zone, t.at))),
                  states=tuple(sorted(states.items())), pending=tuple(sorted(pending)))
