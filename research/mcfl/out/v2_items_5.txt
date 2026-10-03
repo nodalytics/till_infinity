@@ -1,0 +1,43 @@
+MCFL v2 alphabets against matched iid walks: 2 series x 2000 bars per source, R = 3; 15m timestamps and tick volume on every series
+
+== item 5: RANGE: boxes, tests and escapes
+-- walk against its matched walks
+   stream range events        94 tokens,   7 symbols   p: n=1:0.800 n=2:0.600 n=3:0.400 k=1:0.800 k=2:0.200
+   per 1,000 bars (data / null mean / z):
+     ESCAPE                                        7.00      6.83   +1.2
+     FAILED_ESCAPE                                 4.50      5.00   -0.3
+     RANGE                                         7.00      6.83   +1.2
+     RANGE_TEST                                    5.00      4.75   +0.1
+   shares (data / null mean / z [data n]):
+     excursions that ESCAPE                             0.609   0.586   +0.3 [46]
+     ESCAPE up                                          0.393   0.586  -15.8 [28]
+     ESCAPE through the edge tested last                0.667   0.597   +0.7 [9]
+     after ESCAPE, one box height on before closing back in   0.607   0.756   -2.7 [28]
+     bars a RANGE lives (mean, x1000)                   0.008   0.008   -0.1 [28000]
+-- garch against its matched walks
+   stream range events        97 tokens,   7 symbols   p: n=1:0.800 n=2:0.400 n=3:0.400 k=1:0.400 k=2:0.400
+   per 1,000 bars (data / null mean / z):
+     ESCAPE                                        7.00      7.00   +0.0
+     FAILED_ESCAPE                                 4.25      5.00   -0.6
+     RANGE                                         7.00      7.00   +0.0
+     RANGE_TEST                                    6.00      4.92   +0.4
+   shares (data / null mean / z [data n]):
+     excursions that ESCAPE                             0.622   0.587   +0.5 [45]
+     ESCAPE up                                          0.536   0.479   +0.6 [28]
+     ESCAPE through the edge tested last                0.588   0.752   -1.0 [17]
+     after ESCAPE, one box height on before closing back in   0.786   0.551   +3.1 [28]
+     bars a RANGE lives (mean, x1000)                   0.009   0.008   +0.2 [28000]
+-- trend against its matched walks
+   stream range events        55 tokens,   7 symbols   p: n=1:0.800 n=2:0.800 n=3:1.000 k=1:0.400 k=2:0.800
+   per 1,000 bars (data / null mean / z):
+     ESCAPE                                        5.00      6.00   -1.5
+     FAILED_ESCAPE                                 1.50      4.42   -7.6
+     RANGE                                         5.00      6.00   -1.5
+     RANGE_TEST                                    2.25      3.25   -0.5
+   shares (data / null mean / z [data n]):
+     excursions that ESCAPE                             0.769   0.575   +4.1 [26]
+     ESCAPE up                                          0.650   0.504   +0.9 [20]
+     ESCAPE through the edge tested last                0.667   0.802   -2.5 [6]
+     after ESCAPE, one box height on before closing back in   0.750   0.684   +1.3 [20]
+     bars a RANGE lives (mean, x1000)                   0.006   0.008   -3.0 [20000]
+

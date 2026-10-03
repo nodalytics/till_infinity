@@ -1,0 +1,86 @@
+MCFL v2 alphabets against matched iid walks: 2 series x 2000 bars per source, R = 3; 15m timestamps and tick volume on every series
+
+== item 8: sessions, session anchors and tempo
+-- walk against its matched walks
+   stream breaks by session     310 tokens,   8 symbols   p: n=1:0.800 n=2:0.400 n=3:0.400 k=1:0.400 k=2:0.400
+      2-gram LO↓ LO↓                                     67.74    34.73   +3.0  (per 1,000 tokens: data / null / z)
+   per 1,000 bars (data / null mean / z):
+     BREAK in ASIA                                27.75     28.50   -0.8
+     BREAK in LONDON                              20.50     16.75   +3.3
+     BREAK in NY                                  18.25     20.42   -1.4
+     BREAK in OVERLAP                             11.00     13.25   -5.2
+     SESSION_EXTREME_TAKEN↑ ASIA                   6.00      7.25   -1.9
+     SESSION_EXTREME_TAKEN↑ LONDON                 6.25      7.08   -0.8
+     SESSION_EXTREME_TAKEN↑ NY                     6.75      7.17   -0.7
+     SESSION_EXTREME_TAKEN↑ OVERLAP                7.50      7.42   +0.2
+     SESSION_EXTREME_TAKEN↓ ASIA                   5.50      6.25   -0.8
+     SESSION_EXTREME_TAKEN↓ LONDON                 7.25      6.42   +0.9
+     SESSION_EXTREME_TAKEN↓ NY                     7.25      6.92   +0.6
+     SESSION_EXTREME_TAKEN↓ OVERLAP                7.50      7.67   -0.3
+   shares (data / null mean / z [data n]):
+     ASIA extremes taken before its next instance       0.548   0.643   -2.3 [84]
+     ASIA takes that closed back                        0.283   0.357   -0.6 [46]
+     LONDON extremes taken before its next instance     0.643   0.643   +0.0 [84]
+     LONDON takes that closed back                      0.370   0.289   +3.2 [54]
+     OVERLAP extremes taken before its next instance    0.714   0.718   -0.1 [84]
+     OVERLAP takes that closed back                     0.383   0.379   +0.1 [60]
+     NY extremes taken before its next instance         0.700   0.704   -0.1 [80]
+     NY takes that closed back                          0.375   0.362   +0.5 [56]
+     REVISIT[pace=FAST] then REJECT_PATH                0.349   0.405   -0.6 [63]
+     REVISIT[pace=NORMAL] then REJECT_PATH              0.411   0.472   -1.6 [90]
+     REVISIT[pace=SLOW] then REJECT_PATH                0.362   0.380   -0.8 [69]
+-- garch against its matched walks
+   stream breaks by session     310 tokens,   8 symbols   p: n=1:0.800 n=2:0.400 n=3:0.600 k=1:0.200 k=2:0.600
+   per 1,000 bars (data / null mean / z):
+     BREAK in ASIA                                29.00     29.42   -0.2
+     BREAK in LONDON                              18.25     17.17   +0.4
+     BREAK in NY                                  17.25     21.75   -2.6
+     BREAK in OVERLAP                             13.00     14.33   -0.5
+     SESSION_EXTREME_TAKEN↑ ASIA                   6.00      5.75   +0.2
+     SESSION_EXTREME_TAKEN↑ LONDON                 7.75      7.25   +0.7
+     SESSION_EXTREME_TAKEN↑ NY                     7.00      6.50   +0.8
+     SESSION_EXTREME_TAKEN↑ OVERLAP                7.75      7.50   +0.3
+     SESSION_EXTREME_TAKEN↓ ASIA                   4.75      6.58   -0.9
+     SESSION_EXTREME_TAKEN↓ LONDON                 7.00      7.08   -0.2
+     SESSION_EXTREME_TAKEN↓ NY                     5.50      6.08   -2.0
+     SESSION_EXTREME_TAKEN↓ OVERLAP                7.50      7.42   +0.2
+   shares (data / null mean / z [data n]):
+     ASIA extremes taken before its next instance       0.512   0.587   -1.7 [84]
+     ASIA takes that closed back                        0.326   0.306   +0.4 [43]
+     LONDON extremes taken before its next instance     0.702   0.683   +1.1 [84]
+     LONDON takes that closed back                      0.305   0.377   -1.2 [59]
+     OVERLAP extremes taken before its next instance    0.726   0.710   +0.3 [84]
+     OVERLAP takes that closed back                     0.262   0.315   -0.8 [61]
+     NY extremes taken before its next instance         0.625   0.629   -0.2 [80]
+     NY takes that closed back                          0.380   0.358   +1.0 [50]
+     REVISIT[pace=FAST] then REJECT_PATH                0.586   0.394  +11.8 [58]
+     REVISIT[pace=NORMAL] then REJECT_PATH              0.366   0.412   -0.9 [101]
+     REVISIT[pace=SLOW] then REJECT_PATH                0.303   0.407   -3.5 [66]
+-- trend against its matched walks
+   stream breaks by session     296 tokens,   8 symbols   p: n=1:0.800 n=2:1.000 n=3:1.000 k=1:1.000 k=2:1.000
+   per 1,000 bars (data / null mean / z):
+     BREAK in ASIA                                26.50     30.25   -2.3
+     BREAK in LONDON                              15.00     16.50   -0.9
+     BREAK in NY                                  18.00     18.83   -0.7
+     BREAK in OVERLAP                             14.50     16.50   -1.2
+     SESSION_EXTREME_TAKEN↑ ASIA                   7.00      5.67   +3.5
+     SESSION_EXTREME_TAKEN↑ LONDON                 7.25      6.75   +2.0
+     SESSION_EXTREME_TAKEN↑ NY                     6.25      5.83   +2.9
+     SESSION_EXTREME_TAKEN↑ OVERLAP                7.50      7.17   +0.6
+     SESSION_EXTREME_TAKEN↓ ASIA                   5.25      7.08   -2.1
+     SESSION_EXTREME_TAKEN↓ LONDON                 7.25      8.00   -1.7
+     SESSION_EXTREME_TAKEN↓ NY                     6.75      6.75   +0.0
+     SESSION_EXTREME_TAKEN↓ OVERLAP                7.25      7.50   -0.3
+   shares (data / null mean / z [data n]):
+     ASIA extremes taken before its next instance       0.583   0.607   -1.0 [84]
+     ASIA takes that closed back                        0.306   0.405   -3.2 [49]
+     LONDON extremes taken before its next instance     0.690   0.702   -1.0 [84]
+     LONDON takes that closed back                      0.259   0.288   -1.0 [58]
+     OVERLAP extremes taken before its next instance    0.702   0.698   +0.2 [84]
+     OVERLAP takes that closed back                     0.407   0.329   +1.4 [59]
+     NY extremes taken before its next instance         0.650   0.629   +0.8 [80]
+     NY takes that closed back                          0.288   0.324   -0.5 [52]
+     REVISIT[pace=FAST] then REJECT_PATH                0.462   0.416   +0.6 [65]
+     REVISIT[pace=NORMAL] then REJECT_PATH              0.370   0.395   -1.2 [119]
+     REVISIT[pace=SLOW] then REJECT_PATH                0.282   0.442   -4.5 [71]
+

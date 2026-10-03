@@ -115,7 +115,7 @@ NAME_CODE = {
     "LOW_AT_PREV_OPEN": "l=po", "LOW_AT_PREV_HIGH": "l=ph", "LOW_ABOVE_PREV_HIGH": "l>ph",
     "BODY_MIRROR": "mirror", "OPEN_AT_HIGH": "o=h", "OPEN_AT_LOW": "o=l", "CLOSE_AT_HIGH": "c=h",
     "CLOSE_AT_LOW": "c=l", "OPEN_EQ_CLOSE": "o=c"}
-REL_FIELDS = frozenset({"rel", "engulf", "beyond", "mother", "points", "named", *NAMED_ALL})
+REL_FIELDS = frozenset({"rel", "engulf", "beyond", "mother", "points", "named", *NAMED_ALL, "overlap"})
 TEXT_HIDE = frozenset({"OPEN_AT_PREV_CLOSE", "HIGH_ABOVE_PREV_HIGH", "HIGH_BELOW_PREV_HIGH",
                        "LOW_BELOW_PREV_LOW", "LOW_ABOVE_PREV_LOW"})
 """Named relations the compact word text leaves out because they hold on most bars (the open at the
@@ -333,20 +333,65 @@ _NUM = LEXEME + STRENGTH
 _CANDLE_KEYS = tuple(sorted(_NUM + CLASSES + ("within", "inner")))
 
 
+V2_CANDLE: dict[str, bool] = {}
+"""v2 attributes of the CANDLE token, `key -> numeric?`, added to its attributes when the token table
+has them (`compression`, `volume.columns`, `timing.columns` add them in a v2 parse)."""
+V2_RELATION: dict[str, bool] = {}
+"""v2 attributes of the BAR_RELATION token, likewise."""
+
+
 def entities(T: Table) -> list[Entity]:
     cid, rid = ids(T)
     out = []
-    cols = [(k, k in _NUM, T[k]) for k in _CANDLE_KEYS]
+    keys = sorted(set(_CANDLE_KEYS) | {k for k in V2_CANDLE if k in T})
+    cols = [(k, k in _NUM or V2_CANDLE.get(k, False), T[k]) for k in keys]
+    rkeys = [(k, V2_RELATION[k], T[k]) for k in V2_RELATION if k in T]
     for t in range(len(cid)):
-        a = tuple((k, _num(x[t]) if num else x[t]) for k, num, x in cols)  # already in key order
+        a = tuple((k, _num(x[t]) if num else _plain(x[t])) for k, num, x in cols)  # already in key order
         out.append(Entity(cid[t], "CANDLE", _dir(T["dir"][t]), t, t, a))
         if rid[t] is not None:
             mo = int(T["mother"][t])
             parts = tuple(cid[i] for i in sorted({mo, t - 1, t}))
             out.append(Entity(rid[t], "BAR_RELATION", _dir(T["rel"][t]), t, t, attrs_of(
                 {"rel": T["rel"][t], "engulf": T["engulf"][t], "beyond": T["beyond"][t], "mother": mo,
-                 "points": T["points"][t], "named": T["named"][t]}), parts=parts))
+                 "points": T["points"][t], "named": T["named"][t],
+                 **{k: (_num(x[t]) if num else _plain(x[t])) for k, num, x in rkeys}}), parts=parts))
     return out
+
+
+def _plain(x):
+    """numpy scalars (a bool column, an int) as Python values; everything else as it is."""
+    return x.item() if isinstance(x, np.generic) else x
+
+
+# ---------------------------------------------------------------- v2 item 2: compression and expansion
+
+NR_SHORT, NR_LONG, WR_N = 4, 7, 7
+"""NR4 / NR7: the bar's range is strictly the narrowest of the last 4 / 7 bars (itself included);
+WR7: strictly the widest of the last 7."""
+
+
+def compression(T: Table) -> None:
+    """Add the v2 compression and expansion qualifiers to a token table, in place: NR4, NR7, WR7
+    (CANDLE) and `overlap` (BAR_RELATION) - the share of the bar's range inside the previous bar's
+    range, (min(h, ph) - max(l, pl))+ / (h - l); a zero-range bar is 1 inside it, 0 outside."""
+    h, l = T["high"], T["low"]
+    rng = h - l
+    n = len(rng)
+    for name, k, cmp in (("NR4", NR_SHORT, np.less), ("NR7", NR_LONG, np.less), ("WR7", WR_N, np.greater)):
+        out = np.zeros(n, bool)
+        for t in range(k - 1, n):
+            prev = rng[t - k + 1:t]
+            out[t] = bool(cmp(rng[t], prev).all())
+        T[name] = out
+    ph, pl = np.r_[h[:1], h[:-1]], np.r_[l[:1], l[:-1]]
+    inside = np.clip(np.minimum(h, ph) - np.maximum(l, pl), 0.0, None)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ov = np.where(rng > 0, inside / np.where(rng > 0, rng, 1.0), ((h <= ph) & (l >= pl)).astype(float))
+    ov[0] = np.nan
+    T["overlap"] = ov
+    V2_CANDLE.update(NR4=False, NR7=False, WR7=False)
+    V2_RELATION.update(overlap=True)
 
 
 # ---------------------------------------------------------------- words as text

@@ -1,0 +1,69 @@
+MCFL v2 alphabets against matched iid walks: 2 series x 2000 bars per source, R = 3; 15m timestamps and tick volume on every series
+
+== item 3: volume: effort against result, taker skew
+-- walk against its matched walks
+   stream effort            3980 tokens,   8 symbols   p: n=1:0.800 n=2:0.800 n=3:0.800 k=1:0.800 k=2:0.600
+   per 1,000 bars (data / null mean / z):
+     effort ABSORPTION                            11.00     10.50   +0.3
+     effort AGREE                                433.25    446.58   -2.6
+     effort EASE                                  12.50     13.92   -1.5
+     effort NEUTRAL                              538.75    524.50   +2.6
+     effort WARMUP                                 4.50      4.50   +0.0
+   shares (data / null mean / z [data n]):
+     ABSORPTION bars                                    0.011   0.011   +0.3 [4000]
+     after ABSORPTION, the next bar goes the same way   0.477   0.540   -0.6 [44]
+     EASE bars                                          0.013   0.014   -1.5 [4000]
+     after EASE, the next bar goes the same way         0.600   0.504   +5.3 [50]
+     AGREE bars                                         0.433   0.447   -2.7 [4000]
+     after AGREE, the next bar goes the same way        0.499   0.506   -0.3 [1732]
+     NEUTRAL bars                                       0.538   0.524   +2.6 [4000]
+     after NEUTRAL, the next bar goes the same way      0.505   0.508   -0.2 [2154]
+     after taker=BUY, the next bar goes its way         0.503   0.503   -0.0 [1252]
+     after taker=SELL, the next bar goes its way        0.515   0.507   +0.5 [1269]
+-- garch against its matched walks
+   stream effort            3980 tokens,   8 symbols   p: n=1:0.600 n=2:0.200 n=3:0.200 k=1:0.200 k=2:0.200
+   per 1,000 bars (data / null mean / z):
+     effort ABSORPTION                            10.50     13.50   -6.9
+     effort AGREE                                456.00    448.25   +1.1
+     effort EASE                                  14.75     13.58   +0.5
+     effort NEUTRAL                              514.25    520.17   -0.7
+     effort WARMUP                                 4.50      4.50   +0.0
+   shares (data / null mean / z [data n]):
+     ABSORPTION bars                                    0.011   0.013   -6.9 [4000]
+     after ABSORPTION, the next bar goes the same way   0.405   0.530   -2.9 [42]
+     EASE bars                                          0.015   0.014   +0.5 [4000]
+     after EASE, the next bar goes the same way         0.475   0.526   -5.0 [59]
+     AGREE bars                                         0.456   0.448   +1.0 [4000]
+     after AGREE, the next bar goes the same way        0.492   0.494   -0.3 [1822]
+     NEUTRAL bars                                       0.514   0.520   -0.7 [4000]
+     after NEUTRAL, the next bar goes the same way      0.509   0.496   +1.4 [2057]
+     after taker=BUY, the next bar goes its way         0.516   0.475   +2.5 [1241]
+     after taker=SELL, the next bar goes its way        0.510   0.500   +0.8 [1289]
+-- trend against its matched walks
+   stream effort            3980 tokens,   7 symbols   p: n=1:0.200 n=2:0.200 n=3:0.200 k=1:0.200 k=2:0.200
+      1-gram E-                                          21.86     8.54   +9.1  (per 1,000 tokens: data / null / z)
+      1-gram G-                                         185.93   228.81   -5.7  (per 1,000 tokens: data / null / z)
+      1-gram E+                                           0.00     7.54   -5.5  (per 1,000 tokens: data / null / z)
+      1-gram G+                                         262.06   221.61   +5.4  (per 1,000 tokens: data / null / z)
+      2-gram G+ G+                                       89.20    48.07  +11.8  (per 1,000 tokens: data / null / z)
+      2-gram E- N-                                        7.54     1.76   +8.7  (per 1,000 tokens: data / null / z)
+      2-gram N- N-                                       98.24    74.29   +5.5  (per 1,000 tokens: data / null / z)
+      2-gram E- G+                                        5.53     2.09   +4.7  (per 1,000 tokens: data / null / z)
+   per 1,000 bars (data / null mean / z):
+     effort ABSORPTION                             3.75     11.58   -6.6
+     effort AGREE                                445.75    448.42   -1.4
+     effort EASE                                  21.75     16.00   +8.7
+     effort NEUTRAL                              524.25    519.50   +2.7
+     effort WARMUP                                 4.50      4.50   +0.0
+   shares (data / null mean / z [data n]):
+     ABSORPTION bars                                    0.004   0.012   -6.6 [4000]
+     after ABSORPTION, the next bar goes the same way   0.400   0.492   -0.6 [15]
+     EASE bars                                          0.022   0.016   +8.7 [4000]
+     after EASE, the next bar goes the same way         0.575   0.512   +1.0 [87]
+     AGREE bars                                         0.446   0.448   -1.5 [4000]
+     after AGREE, the next bar goes the same way        0.563   0.507  +11.3 [1782]
+     NEUTRAL bars                                       0.524   0.519   +3.0 [4000]
+     after NEUTRAL, the next bar goes the same way      0.573   0.505   +9.3 [2096]
+     after taker=BUY, the next bar goes its way         0.602   0.491   +6.1 [1332]
+     after taker=SELL, the next bar goes its way        0.591   0.524   +9.4 [1202]
+

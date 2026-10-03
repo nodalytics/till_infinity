@@ -417,6 +417,12 @@ trades, out of 63 tails and pairs tried.
 > + a rare origin, + both) "passed" with S2 at +0.177R on Binance and **fails** causally (S2 -0.045R
 > [-0.101, +0.013], S3 -0.037R). The table below is kept as it was measured; its numbers are not
 > tradeable.
+>
+> A second hindsight, found while MCFL v2 reproduced the flag (`mcfl/mtf.py`): the HTF breaks come
+> from `zone_events` rows, which exist only for zones that were later *returned to*, so the HTF
+> break list itself was selected on the future. MCFL's causal NESTED flags 0.4-1.1% of zones on walks
+> where the research form flags 20-23%, and the research form's better hold rate (59% vs 54%) is
+> matched on null walks (58%): selection, not information.
 
 ## The higher timeframe's break, entered from a lower-timeframe zone ([`zone_nested.py`](../ideas/zone_nested.py))
 

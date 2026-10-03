@@ -21,7 +21,24 @@ LAYER = {
     "PIN": 2, "ENGULF": 2, "INSIDE_BREAK": 2, "STAR": 2, "DISPLACE_C": 2, "DELIVERY_SHIFT": 2, "REJECT": 2,
     "REVISIT": 2, "REJECT_PATH": 2, "ACCEPT": 2, "FAIL": 2, "EXPIRE": 2,
     "ORIGIN": 3, "LEG": 3, "ZONE": 3,
+    # v2 (see V2_TYPES)
+    "SWING": 2, "STRUCTURE_SHIFT": 2, "CHARACTER_SHIFT": 2,
+    "VOID_PARTIAL": 2, "VOID_FILLED": 2, "VOID_INVERTED": 2,
+    "BALANCE": 2, "IMBALANCE": 2,
+    "RANGE_TEST": 2, "ESCAPE": 2, "FAILED_ESCAPE": 2,
+    "POOL_TAKEN": 2, "SWEEP_PROTECTED": 2,
+    "RETRACE": 2, "PULLBACK": 2,
+    "SESSION_OPEN": 2, "SESSION_EXTREME": 2, "SESSION_EXTREME_TAKEN": 2,
+    "FOCUS": 2, "FOCUS6": 2, "CUSUM_IGNITION": 2,
+    "PURGE": 2, "DISTRIBUTION": 2, "PATTERN": 2,
+    "RANGE": 3, "POOL": 3, "DAX50": 3, "DAX_SETUP": 3, "FOCUS_ZONE": 3, "CRT3": 3, "NESTED": 3,
 }
+V2_TYPES = ("SWING", "STRUCTURE_SHIFT", "CHARACTER_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
+            "BALANCE", "IMBALANCE", "RANGE", "RANGE_TEST", "ESCAPE", "FAILED_ESCAPE", "POOL", "POOL_TAKEN",
+            "SWEEP_PROTECTED", "RETRACE", "PULLBACK", "DAX50", "DAX_SETUP", "SESSION_OPEN", "SESSION_EXTREME",
+            "SESSION_EXTREME_TAKEN", "FOCUS", "FOCUS6", "CUSUM_IGNITION", "FOCUS_ZONE", "PURGE", "DISTRIBUTION", "CRT3",
+            "PATTERN", "NESTED")
+"""The types v2 adds, in the order of the roadmap's items."""
 TOKEN_TYPES = tuple(k for k, v in LAYER.items() if v == 1)
 EVENT_TYPES = tuple(k for k, v in LAYER.items() if v == 2)
 STRUCTURE_TYPES = tuple(k for k, v in LAYER.items() if v == 3)
@@ -30,9 +47,13 @@ RELATIONS = ("BEFORE", "AFTER", "TOUCH", "CROSS", "CONTAIN", "INVALIDATE")
 ORDER = {t: i for i, t in enumerate(
     ("CANDLE", "BAR_RELATION",
      "EXTREME", "BREACH_REVERT", "VOID", "PIN", "ENGULF", "INSIDE_BREAK", "STAR", "DISPLACE_C",
-     "DELIVERY_SHIFT",
-     "DISPLACE", "BREAK", "ORIGIN", "LEG", "ZONE",
-     "REVISIT", "REJECT_PATH", "REJECT", "ACCEPT", "FAIL", "EXPIRE"))}
+     "DELIVERY_SHIFT", "PATTERN", "BALANCE", "IMBALANCE", "PURGE", "SESSION_OPEN", "SESSION_EXTREME",
+     "SESSION_EXTREME_TAKEN", "FOCUS", "FOCUS6", "CUSUM_IGNITION",
+     "SWING", "STRUCTURE_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
+     "RANGE", "RANGE_TEST", "FAILED_ESCAPE", "ESCAPE", "POOL", "POOL_TAKEN", "SWEEP_PROTECTED",
+     "DISPLACE", "BREAK", "CHARACTER_SHIFT", "PULLBACK", "ORIGIN", "LEG", "ZONE", "DAX50", "DAX_SETUP", "FOCUS_ZONE",
+     "REVISIT", "RETRACE", "REJECT_PATH", "REJECT", "ACCEPT", "FAIL", "EXPIRE",
+     "DISTRIBUTION", "CRT3", "NESTED"))}
 
 
 class Dir(str, Enum):
@@ -62,7 +83,10 @@ SIDES = (Dir.UP, Dir.DOWN)
 
 # How a value reads on the flipped chart (prices negated, highs and lows swapped). One table, used
 # by the token frames (`candles.frame`), the grammar's clauses (`view`) and the symmetry test.
-NEG_FIELD = frozenset({"open", "high", "low", "close", "price", "level", "far", "near", "extreme_px"})
+NEG_FIELD = frozenset({"open", "high", "low", "close", "price", "level", "far", "near", "extreme_px",
+                       # v2
+                       "body_mid", "range_mid", "peak", "taker_skew", "swept_level", "upper_edge",
+                       "lower_edge"})
 """Price fields: negated under the flip."""
 POINTS = "OHLC"
 """Order of the point-relation matrices, row-major: `points` is the bar's O, H, L, C (rows) against
@@ -113,7 +137,9 @@ def point_twin(name: str) -> str:
     return next(n for n, v in NAMED_POINTS.items() if v == want)
 
 
-_PAIRS = (("HH", "LL"), ("BULL", "BEAR"), ("ABOVE", "BELOW"), ("Q1", "Q4"), ("Q2", "Q3"))
+_PAIRS = (("HH", "LL"), ("BULL", "BEAR"), ("ABOVE", "BELOW"), ("Q1", "Q4"), ("Q2", "Q3"),
+          # v2: swing labels, structure states, taker skew
+          ("LH", "HL"), ("EH", "EL"), ("UP", "DOWN"), ("BUY", "SELL"), ("EQUAL_HIGHS", "EQUAL_LOWS"))
 SWAP_VALUE = {**{a: b for a, b in _PAIRS}, **{b: a for a, b in _PAIRS},
               **{n: point_twin(n) for n in NAMED_POINTS if point_twin(n) != n}}
 """Class values and named relations that trade places under the flip; every other value is its

@@ -1,0 +1,46 @@
+MCFL v2 alphabets against matched iid walks: 2 series x 2000 bars per source, R = 3; 15m timestamps and tick volume on every series
+
+== item 12: candle range theory (single timeframe)
+-- walk against its matched walks
+   stream crt               1858 tokens,   4 symbols   p: n=1:0.800 n=2:0.200 n=3:0.400 k=1:0.200 k=2:0.400
+   per 1,000 bars (data / null mean / z):
+     CRT3↑                                        82.50     80.25   +1.1
+     CRT3↓                                        88.00     80.75   +1.1
+     DISTRIBUTION↑                                82.50     80.25   +1.1
+     DISTRIBUTION↓                                88.00     80.75   +1.1
+     PURGE↑                                      145.75    142.50   +0.7
+     PURGE↓                                      148.25    140.08   +2.4
+   shares (data / null mean / z [data n]):
+     PURGE then DISTRIBUTION (CRT3) within 3            0.580   0.570   +0.4 [1175]
+     ... of those, the mid reached on an earlier bar    0.291   0.280   +0.6 [681]
+     ... distributed on the next candle                 0.648   0.652   -0.7 [681]
+     baseline: an inside candle, the range's low (or high) within 3   0.478   0.478   -0.1 [1004]
+-- garch against its matched walks
+   stream crt               1820 tokens,   4 symbols   p: n=1:0.400 n=2:1.000 n=3:0.800 k=1:1.000 k=2:0.800
+   per 1,000 bars (data / null mean / z):
+     CRT3↑                                        81.75     85.83   -0.5
+     CRT3↓                                        87.00     84.50   +0.7
+     DISTRIBUTION↑                                81.75     85.83   -0.5
+     DISTRIBUTION↓                                87.00     84.50   +0.7
+     PURGE↑                                      149.25    144.17   +1.2
+     PURGE↓                                      137.00    147.25   -1.3
+   shares (data / null mean / z [data n]):
+     PURGE then DISTRIBUTION (CRT3) within 3            0.591   0.585   +0.5 [1143]
+     ... of those, the mid reached on an earlier bar    0.279   0.282   -0.2 [675]
+     ... distributed on the next candle                 0.658   0.637   +0.8 [675]
+     baseline: an inside candle, the range's low (or high) within 3   0.477   0.481   -0.7 [1028]
+-- trend against its matched walks
+   stream crt               1678 tokens,   4 symbols   p: n=1:0.400 n=2:0.200 n=3:0.200 k=1:0.200 k=2:0.200
+   per 1,000 bars (data / null mean / z):
+     CRT3↑                                        80.50     79.17   +0.3
+     CRT3↓                                        70.75     81.67   -4.1
+     DISTRIBUTION↑                                80.50     79.17   +0.3
+     DISTRIBUTION↓                                70.75     81.67   -4.1
+     PURGE↑                                      130.75    140.25   -2.6
+     PURGE↓                                      137.50    144.50   -2.0
+   shares (data / null mean / z [data n]):
+     PURGE then DISTRIBUTION (CRT3) within 3            0.564   0.565   -0.1 [1072]
+     ... of those, the mid reached on an earlier bar    0.273   0.287   -0.7 [605]
+     ... distributed on the next candle                 0.645   0.633   +1.7 [605]
+     baseline: an inside candle, the range's low (or high) within 3   0.488   0.479   +4.3 [852]
+
