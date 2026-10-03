@@ -237,3 +237,73 @@ more zone definitions. Same triggers, filters, exits, 5-day hold, nulls and dire
 - **Direction, stop aside:** every confirmed trigger on every zone type is 47-53%. Production's
   plain touch reads 33-36% - not a signal that the zones break: they are one bar wide, so the bar
   that arrives runs through the limit price, and a measure taken from the limit counts that move.
+
+## Levels where fair-value gaps line up (2026-10-03)
+
+The desk's next idea: fair-value gaps from different moves that sit at the same height make a level,
+whether or not they were filled later. What does price do when it gets back there? Then two
+variants: count only levels that have already bounced (0.5, 1 or 2 ATR), and rest the entries
+deeper - below the level for a buy, above it for a sell. Code: `zones_fvglevel`, `_proof` and the
+`touch_*` triggers in [`zones.py`](../ideas/zones.py) (`ZONES=fvglevel LEVELS=...`); plots in
+`.data/zones/fvg_levels/`.
+
+**How a level is built.**
+
+1. Every fair-value gap of 0.2+ ATR, either direction (`_gaps`).
+2. A new gap whose band overlaps (within 0.1 ATR) an earlier gap 10 to 300 bars older makes a
+   level at the mean of their centres; more gaps there add to it. A new level within 0.25 ATR of
+   one not yet returned to is merged into it.
+3. The level's band is +-0.25 ATR. Once price has gone 1 ATR away, the side it went decides
+   support (a long) or resistance (a short); the first return is traded.
+4. *Proven* (`LEVEL_BOUNCE` = 0.5 / 1 / 2): from the level's first gap on, some touch after which
+   price went that many ATR back the way it came before closing through the band; the trade is the
+   next return after that bounce completed.
+5. *Deeper entries*: besides the touch at the band's near edge, resting limits at the level itself,
+   at the band's far edge, and half an ATR beyond the level - resting through the 12-bar window,
+   the stop always 0.6 ATR past the entry so R means the same at every depth.
+
+**Matched nulls**, built and arrived at the same way: levels from a single gap with no partner
+(does alignment matter?), and levels at a random price as far from the close as each aligned
+level, on a random side (do the gaps matter at all?) - each also with the same bounce proof.
+
+**What price does at the level** (the stop aside; from the touch, 1h, real markets):
+
+| | 1 ATR back before 1 ATR through | 2 ATR | n |
+|---|---|---|---|
+| aligned gaps | 52.0% | 51.1% | 60,977 |
+| one gap alone | 53.1% | 51.6% | 19,945 |
+| random price, same distance | 51.6% | 50.7% | 63,231 |
+| proven 0.5 / 1 / 2 ATR | 52.0 / 52.0 / 52.0% | 51.1 / 51.1 / 51.0% | |
+| proven random | 51.7 / 51.7 / 51.6% | 50.7 / 50.7 / 50.6% | |
+
+- **Lining up does not make a level.** Every kind of level, random ones included, shows the same
+  slight reversal on a first touch (about 52%); the gaps add at most half a point. The number of
+  gaps (2, 3, 4-5, 6+) changes nothing (51.4-52.4%).
+- **A past bounce proves nothing,** because nearly every level has one: requiring it removes under
+  1% of levels.
+- **The deeper entries look superb with the stop aside (82-85% reach 1 ATR first) and are an
+  artefact of that measure:** a limit far below the level fills on the spike, often at the bar's
+  low, and random levels score the same. With the stop, they lose like the rest.
+
+**Trading it** (all triggers, filters and exits; real markets, R a trade):
+
+| levels | R | coin | random time | touch | middle | far edge | 0.5 ATR past |
+|---|---|---|---|---|---|---|---|
+| aligned | -0.12 | -0.13 | -0.11 | | | | |
+| proven 1 ATR | -0.12 | -0.09 | -0.12 | -0.13 | -0.13 | -0.12 | -0.13 |
+| proven random 1 ATR | -0.13 | -0.08 | -0.12 | -0.14 | -0.16 | -0.14 | -0.15 |
+
+The gaps are worth about +0.01 to +0.02R over a random level that also bounced - inside the noise
+and far short of the cost. Win rates are 21-22% at every depth.
+
+## A flaw in the significance test, and the re-test
+
+`zones.run` judged cells by a 200-draw day bootstrap and Benjamini-Hochberg over all cells. Two
+faults, both fixed: a bootstrap that found no draw above the real mean returned p = 0 rather than
+"below 1/201", which let a handful of 30-trade cells through as "passes"; and a cell whose coin
+twin was too thin to test was judged on the other null alone. Floored at 1/201 and with a missing
+null failing, **no cell of any run passes - but 200 draws cannot resolve significance across
+thousands of cells either way**, so every cell of 200+ trades that beat both nulls in both halves
+(561 of them, across the origin, production, gap, DAX and level runs) was re-tested with 10,000
+draws. The best p is 0.0027 among about 10,000 cells; Bonferroni would need about 0.000005. The
+random-price levels, which can have no edge, produce p-values as small. The nulls stand.
