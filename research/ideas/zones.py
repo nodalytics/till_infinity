@@ -137,6 +137,7 @@ class Zone:
     ret: int = -1  # first return
     dead: int = -1  # the bar it failed (closed through), or expired
     parts: tuple = ()  # for a level: the (bar, low, high) of each gap that made it
+    target: float = float("nan")  # a zone that carries its own target (the rejection trade: the BOS level)
     # the DAX mentorship's tests asked of an origin zone (research zones only; see `long_zones`)
     protected: bool = False
     major: bool = False
@@ -532,7 +533,8 @@ def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
             ref = entry if np.isfinite(entry) else c[t["i"]]
             rows.append(dict(i=t["i"], side=z.side, trigger=t["trigger"], entry=entry, limit=t["limit"],
                              expires=t["expires"],
-                             stop_px=stop_px, target_px=opposite_target(zs, z, t["i"], ref), zone_p=z.p,
+                             stop_px=stop_px, target_px=(z.target if np.isfinite(z.target) and z.side * (z.target - ref) > 0
+                                                         else opposite_target(zs, z, t["i"], ref)), zone_p=z.p,
                              zone_lo=z.lo, zone_hi=z.hi, zone_live=z.live, zone_ret=z.ret, clean=z.clean, age=age, approach=approach,
                              protected=z.protected, dax_major=z.major, has_sl=z.has_sl,
                              inducement=bool(inner.any()), n_gaps=len(z.parts)))
@@ -770,12 +772,75 @@ def zma_series(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["z", "strong", "agrees", "stretched"])
 
 
+REV_ATR = 1.0  # how far price must fall back from the post-break high for it to count as a reversal
+
+
+def zones_rejection(df: pd.DataFrame, a: np.ndarray) -> list[Zone]:
+    """The desk's rejection trade (2026-10-03): price breaks structure up, makes a high, and reverses;
+    the high that rejected it is a zone to sell on the pullback, back down to the broken level.
+
+    For a bullish break (a bearish one is the mirror): a swing low p, the first close above the last
+    swing high L known at p within 20 bars, before any trade under p (the break, at b); then the
+    first 3/3 swing high R after b and above L; the reversal - a close 1 ATR under R's high. The zone
+    is R's bar from its body bottom (the near edge, where a resting sell sits) to its high (the far
+    edge); its target is L. Live once R is confirmed and the reversal has happened; first return only.
+    """
+    out = []
+    for side, frame in ((1, df), (-1, flip(df))):
+        o, h, l, c = (frame[k].to_numpy() for k in ("open", "high", "low", "close"))
+        n = len(frame)
+        ph, pl = P.pivots(h, l, LR, LR)
+        ph_known = np.array([x[0] for x in ph])
+        for known, p, low in pl:
+            if not a[p] > 0:
+                continue
+            j = np.searchsorted(ph_known, p, side="right") - 1
+            if j < 0 or ph[j][2] <= low:
+                continue
+            level = ph[j][2]
+            b = -1
+            for k in range(p + 1, min(n, p + 21)):
+                if l[k] < low:
+                    break
+                if c[k] > level:
+                    b = k
+                    break
+            if b < 0:
+                continue
+            nxt = [x for x in ph if x[1] > b and x[2] > level]
+            if not nxt:
+                continue
+            r_known, r, r_hi = nxt[0]
+            A = a[r]
+            if not A > 0:
+                continue
+            rev = next((k for k in range(r + 1, min(n, r + 60)) if c[k] <= r_hi - REV_ATR * A), -1)
+            if rev < 0:
+                continue
+            near = min(o[r], c[r])
+            near = max(min(near, r_hi - 0.2 * A), r_hi - 1.5 * A)
+            if not near > level:
+                continue
+            live = max(r_known, rev)
+            # in this (long-terms) chart the trade is a sell: far edge the high, near edge the body bottom
+            far_px, near_px, tgt = (r_hi, near, level) if side > 0 else (-r_hi, -near, -level)
+            z = Zone(-side, r, far_px, near_px, b, tgt, r, live, tgt, False, target=tgt)
+            for k in range(live + 1, min(n, live + EXPIRE)):
+                if h[k] >= near:
+                    z.ret = k
+                    break
+            out.append(z)
+    return out
+
+
 if os.environ.get("ZONES") == "prod":  # every mode below on production's origins instead
     zones = zones_prod  # noqa: F811
 elif os.environ.get("ZONES") == "fvg":  # or on fair-value gaps
     zones = zones_fvg  # noqa: F811
 elif os.environ.get("ZONES") == "bjorgum":  # or on Bjorgum's key-level zones alone
     zones = zones_bjorgum  # noqa: F811
+elif os.environ.get("ZONES") == "rejection":  # or on the post-break rejection high, traded back to the break
+    zones = zones_rejection  # noqa: F811
 elif os.environ.get("ZONES") == "fvglevel":  # or on levels where gaps line up (LEVELS=aligned|single|random)
     zones = zones_fvglevel  # noqa: F811
 
@@ -820,8 +885,9 @@ def plot():
             ax.add_patch(Rectangle((z.p - 0.4, lo), int(s.i) - z.p + 0.8, hi - lo, color="#457b9d", alpha=0.25))
             h_, l_ = df["high"].to_numpy(), df["low"].to_numpy()
             g = z.fvg  # the gap: between bar g-2's high and bar g's low (a short's mirrored)
-            g_lo, g_hi = (h_[g - 2], l_[g]) if z.side > 0 else (h_[g], l_[g - 2])
-            ax.add_patch(Rectangle((g - 2, g_lo), 2, g_hi - g_lo, color="#f4a261", alpha=0.5))
+            if g != z.p:  # zones without a gap (the rejection trade) carry fvg = p
+                g_lo, g_hi = (h_[g - 2], l_[g]) if z.side > 0 else (h_[g], l_[g - 2])
+                ax.add_patch(Rectangle((g - 2, g_lo), 2, g_hi - g_lo, color="#f4a261", alpha=0.5))
             ax.hlines(z.bos_level, z.bos - 15, z.bos, colors="k", linestyles="--", lw=1)
             ax.annotate("BOS", (z.bos, z.bos_level), fontsize=8)
             ax.axvline(z.ret, color="#999", lw=0.6, ls=":")

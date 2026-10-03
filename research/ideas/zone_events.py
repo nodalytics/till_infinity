@@ -28,6 +28,10 @@ Construction (for a bullish zone; bearish is the same on the flipped chart):
               zone's way dated within 3 bars of the origin and fired by the time the zone is live;
               fc_leg - any such fire during the leg; fc_lag - bars to it; fc_against - a fire against the
               zone during the return leg; fc_with - a fire the zone's way in the 5 bars before the return
+  regime      (asked for later, from NautilusTrader's indicators) vhf_o / vhf_r: the vertical-horizontal
+              filter (28) before the origin and before the return; er_o / er_r: Kaufman efficiency (10);
+              press_leg / press_pb: pressure (close position in the range x volume / its 20-bar mean)
+              over the leg and over the return leg - on this chart, so the zone's way
   rarity      (asked for later) extraordinary swing points: left_extent (bars back since a lower low,
               to 1000), origin_tr (the origin bar's range / ATR), origin_vol (its tick volume / the
               50-bar median), stretch (the 50-bar EMA minus the origin low, ATR) - all known there
@@ -246,6 +250,15 @@ def events(df: pd.DataFrame, a: np.ndarray, side: int, spread: float, bias: np.n
     tv = df["volume"].to_numpy(float) if "volume" in df else np.full(n, np.nan)
     tv_med = pd.Series(tv).shift(1).rolling(50, min_periods=20).median().to_numpy()
     ema50 = pd.Series(c).ewm(span=50, adjust=False).mean().to_numpy()
+    # regime and pressure (asked for later, from NautilusTrader's indicator set), each read at a bar
+    # from bars up to it: VHF (28), Kaufman efficiency ratio (10), and pressure - where the close sat in
+    # the bar's range, times volume over its 20-bar mean
+    absd = np.r_[0.0, np.abs(np.diff(c))]
+    cs_ = pd.Series(c)
+    vhf = ((cs_.rolling(28).max() - cs_.rolling(28).min()) / pd.Series(absd).rolling(28).sum()).to_numpy()
+    er = (cs_.diff(10).abs() / pd.Series(absd).rolling(10).sum()).to_numpy()
+    vol_ma = pd.Series(tv).rolling(20, min_periods=5).mean().to_numpy()
+    press = ((c - l) - (h - c)) / np.maximum(h - l, 1e-12) * tv / np.where(vol_ma > 0, vol_ma, np.nan)
     rows = []
     for known, p, low in pl:
         A = a[p]
@@ -310,7 +323,8 @@ def events(df: pd.DataFrame, a: np.ndarray, side: int, spread: float, bias: np.n
         cu_leg = bool(((cu_up >= p) & (cu_up <= live)).any())
         lower = np.flatnonzero(l[max(0, p - 1000):p] < low)
         left_extent = p - (max(0, p - 1000) + lower[-1]) if len(lower) else min(p, 1000)
-        base = dict(side=side, p=p, ts=int(ts[p]), V=V, left_extent=left_extent, origin_tr=tr_[p] / A,
+        base = dict(side=side, p=p, ts=int(ts[p]), V=V, bos_level=level, bos_ts=int(ts[b]), atr_p=A,
+                    left_extent=left_extent, origin_tr=tr_[p] / A,
                     origin_vol=tv[p] / tv_med[p] if tv_med[p] and tv_med[p] > 0 else np.nan,
                     stretch=(ema50[p - 1] - low) / A if p >= 1 else np.nan, bos_close=(c[b] - level) / A, bos_follow=follow,
                     bos_bars=b - p, disp=disp, disp_eff=(ext - low) / max(path, 1e-12), n_gaps=len(big),
@@ -370,6 +384,9 @@ def events(df: pd.DataFrame, a: np.ndarray, side: int, spread: float, bias: np.n
                              n_counter=n_counter, counter=n_counter > 0, pb_eff=pb_eff, pb_gaps=pb_gaps,
                              pb_bars=k - peak, k_idx=k, peak_idx=peak, b_idx=b, peak_ts=int(ts[peak]),
                              fc_origin=fc_origin, fc_leg=fc_leg, fc_lag=fc_lag,
+                             vhf_o=vhf[p - 1] if p >= 1 else np.nan, er_o=er[p - 1] if p >= 1 else np.nan,
+                             vhf_r=vhf[k - 1], er_r=er[k - 1],
+                             press_leg=np.nanmean(press[p:b + 1]), press_pb=np.nanmean(press[peak:k]) if k > peak else np.nan,
                              fc_against=bool(((dn_fires >= peak) & (dn_fires < k)).any()),
                              fc_with=bool(((up_fires >= k - 5) & (up_fires < k)).any()),
                              fc6_origin=fc6_origin, fc6_leg=bool(len(leg6)),

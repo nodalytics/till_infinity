@@ -13,6 +13,10 @@ returns with the same reading, by quintile or flag, before and after a split, on
              the lag to it, one against the zone on the return leg, one the zone's way just before it
   cusum      CUSUM ignition (k 0.5, h 5): the zone's way during the leg, against it on the return leg,
              the zone's way just before the return
+  regime     (asked for later, NautilusTrader's indicators) VHF and Kaufman efficiency before the origin
+             and before the return, pressure on the leg and on the return leg, and their swing (an
+             origin that is the lowest of 20+ bars); flow adds book imbalance (bid vs ask depth within
+             1%, the zone's way) at the return and over the pullback, from 2023
   rare       extraordinary swing points: the top 10 / 5 / 2% of left_extent, origin_tr, origin_vol,
              stretch, the fall's speed, displacement and relative force, thresholds from before 2023,
              and pairs of them (each top 10%), qualified zones vs ordinary swing points in the tail
@@ -31,7 +35,7 @@ returns with the same reading, by quintile or flag, before and after a split, on
              funding at the return the zone's way (positive: the crowd already leans with it).
              Open interest exists from 2023: its split is 2024-09-01, the rest's 2023-01-01
 
-  OUT=... MT5BT_DB=... BASE=<zone_events pickle> MODE=structure|smt|flow|rare|plot python research/ideas/zone_context.py
+  OUT=... MT5BT_DB=... BASE=<zone_events pickle> MODE=structure|smt|flow|rare|regime|plot python research/ideas/zone_context.py
 """
 from __future__ import annotations
 
@@ -94,6 +98,19 @@ def report_structure(d):
         if col == "n_counter":
             d[col] = d[col].clip(upper=5)
         print(f"\n{col}  (rows: quantile or flag; V True = qualified zones, False = baseline; fit < 2023 <= judge)")
+        print(curve(d, col, SPLIT).to_string())
+
+
+def report_regime(d):
+    """Regime and pressure from Nautilus's indicator set, and their swing: an origin that is the
+    lowest of 20+ bars. Quintiles on qualified zones vs ordinary swing points, both halves."""
+    d = first_returns(d)
+    d = d[~d["family"].str.startswith("deriv")].copy()
+    d["swing20"] = d["left_extent"].astype(float) >= 20
+    pd.set_option("display.width", 250)
+    for col in ("vhf_o", "vhf_r", "er_o", "er_r", "press_leg", "press_pb", "swing20"):
+        d[col] = d[col].astype(float) if col != "swing20" else d[col]
+        print(f"\n{col}")
         print(curve(d, col, SPLIT).to_string())
 
 
@@ -224,6 +241,21 @@ def flow_one(job):
     except OSError:
         f_t = f_r = np.zeros(0)
 
+    try:
+        bk = np.load(BIN / f"{coin}USDT.book15m.npz")
+        bk_t = bk["time"]
+        bk_imb = (bk["bid1_mean"] - bk["ask1_mean"]) / np.maximum(bk["bid1_mean"] + bk["ask1_mean"], 1e-12)
+    except OSError:
+        bk_t = bk_imb = np.zeros(0)
+
+    def book_at(t0, t1):
+        """Mean depth imbalance within 1% over book snapshots in [t0, t1) (one if t0 == t1)."""
+        i0, i1 = np.searchsorted(bk_t, t0), np.searchsorted(bk_t, t1)
+        if i1 <= i0:
+            j = np.searchsorted(bk_t, t1, side="right") - 1
+            return bk_imb[j] if 0 <= j < len(bk_imb) and t1 - bk_t[j] < 3600 else np.nan
+        return float(np.mean(bk_imb[i0:i1]))
+
     def oi_at(t):
         j = np.searchsorted(oi_t, t, side="right") - 1
         return oi[j] if 0 <= j < len(oi) and t - oi_t[j] < 3600 else np.nan
@@ -243,7 +275,9 @@ def flow_one(job):
             pb_taker=(pb_buy if s > 0 else 1 - pb_buy) if pb_buy == pb_buy else np.nan,
             pb_vol=np.mean(v[pk:k]) / max(np.mean(v[p:b + 1]), 1e-12) if k > pk else np.nan,
             oi_pb=oi_at(ts[k - 1]) / oi_at(ts[pk]) - 1 if k > pk else np.nan,
-            funding=s * f_r[fz] if 0 <= fz < len(f_r) else np.nan))
+            funding=s * f_r[fz] if 0 <= fz < len(f_r) else np.nan,
+            # book imbalance the zone's way: bids over asks for a bull zone, at the return and over the pullback
+            book_r=s * book_at(ts[k], ts[k]), book_pb=s * book_at(ts[pk], ts[k]) if k > pk else np.nan))
     d = d.reset_index(drop=True).join(pd.DataFrame(out))
     print(f"  flow {coin} {iv}: {len(d)} first returns", flush=True)
     return d.assign(sym=coin, iv=iv, family="crypto")
@@ -259,7 +293,8 @@ def report_flow():
     print(f"\nflow: {len(d)} first returns on Binance (V=1 {int(d['V'].sum())}); all R {d['R'].mean():+.3f}, "
           f"V=1 {d.loc[d['V'], 'R'].mean():+.3f}, V=0 {d.loc[~d['V'], 'R'].mean():+.3f}")
     for col, split in (("leg_taker", SPLIT), ("vol_surge", SPLIT), ("pb_taker", SPLIT), ("pb_vol", SPLIT),
-                       ("funding", SPLIT), ("oi_leg", SPLIT_OI), ("oi_pb", SPLIT_OI)):
+                       ("funding", SPLIT), ("oi_leg", SPLIT_OI), ("oi_pb", SPLIT_OI), ("book_r", SPLIT_OI),
+                       ("book_pb", SPLIT_OI)):
         print(f"\n{col}")
         print(curve(d, col, split).to_string())
 
@@ -427,7 +462,7 @@ def main():
         plot()
     else:
         d = pd.read_pickle(BASE)
-        {"structure": report_structure, "smt": report_smt, "rare": report_rare}[mode](d)
+        {"structure": report_structure, "smt": report_smt, "rare": report_rare, "regime": report_regime}[mode](d)
 
 
 if __name__ == "__main__":
