@@ -46,6 +46,19 @@ the nearest opposite zone of the same kind. 1h to 1d, everything aligned with th
   candles  strong  (asked for later) the leg's candles are strong, not sloppy: bodies on average
                    60% of their range, 70% of bars in the move's direction, one body of 1 ATR+.
                    Run as a filter on top of the 4h bias
+  dax      (asked for later) dax: the origin was a PROTECTED low (it swept the last swing low of
+           the 40 bars before and closed back above it) with STRUCTURAL LIQUIDITY in the leg (a
+           swing low above the origin before the break - no inducement); dax_major: and the high
+           it broke was a lower high. On top of the 4h bias. The other half of the combination is
+           in `dax_smc.py` (its POI on a live zone of ours)
+  bjorgum  (asked for later) bjorg: the zone overlaps a Bjorgum key-level zone shown at the trigger
+           bar (`bjorgum_live`: 20/15 pivots, half-width min(0.5 ATR30, 2.5%), merged, 4 newest a
+           side); bjorg_strong with the strong-candle leg; bjorg_dax with the DAX tests. On top of
+           the 4h bias. ZONES=bjorgum trades Bjorgum's zones alone
+  zma      (asked for later) production's Z-Momentum Attention replayed bar by bar (`zma_series`):
+           zma - at the trigger bar it `agrees` with the zone (oversold and rising for a long);
+           zma_stretch - it is merely stretched the zone's way; zma_bjorg - stretched and on a
+           Bjorgum zone; zma_strong - stretched with the strong-candle leg. On top of the 4h bias
   gap      (asked for later) nogap / hasgap: whether production's `gap` pass would have been one of
            this zone's drawers - an open fair-value gap whose midpoint sits in the zone's band at
            the trigger bar. `gap-levels.md` measures those levels holding 7.4 points worse on
@@ -124,6 +137,10 @@ class Zone:
     ret: int = -1  # first return
     dead: int = -1  # the bar it failed (closed through), or expired
     parts: tuple = ()  # for a level: the (bar, low, high) of each gap that made it
+    # the DAX mentorship's tests asked of an origin zone (research zones only; see `long_zones`)
+    protected: bool = False
+    major: bool = False
+    has_sl: bool = False
 
 
 def flip(df: pd.DataFrame) -> pd.DataFrame:
@@ -170,6 +187,17 @@ def long_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
         top = min(max(top, low + 0.2 * a[p]), low + 1.5 * a[p])
         z = Zone(side, p, low, top, b, level, gaps[0], max(known, strong, gaps[0]), ext,
                  strong_leg(o, h, l, c, a[p], p, b))
+        # The DAX mentorship's tests, asked of this origin (`dax_smc.py` has the method in full):
+        # PROTECTED - the origin swept the last swing low of the 40 bars before it (one nothing had
+        # broken) and closed back above it within two bars; MAJOR - the high it broke was a lower
+        # high; STRUCTURAL LIQUIDITY - a swing low inside the leg, above the origin (without one
+        # the course calls the origin inducement and stands down)
+        prior = [x for x in pl if p - 40 <= x[1] < p and x[0] <= p]
+        if prior:
+            _, q, q_px = prior[-1]
+            z.protected = bool(low < q_px and l[q + 1:p].min(initial=np.inf) >= q_px and c[p:p + 2].max() > q_px)
+        z.major = bool(j >= 1 and level < ph[j - 1][2])
+        z.has_sl = any(p < x[1] < b and x[2] > low for x in pl)
         # its first return, or the bar it is broken / expires before one
         for k in range(z.live + 1, min(n, z.live + EXPIRE)):
             if l[k] <= z.hi:
@@ -506,6 +534,7 @@ def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
                              expires=t["expires"],
                              stop_px=stop_px, target_px=opposite_target(zs, z, t["i"], ref), zone_p=z.p,
                              zone_lo=z.lo, zone_hi=z.hi, zone_live=z.live, zone_ret=z.ret, clean=z.clean, age=age, approach=approach,
+                             protected=z.protected, dax_major=z.major, has_sl=z.has_sl,
                              inducement=bool(inner.any()), n_gaps=len(z.parts)))
     return pd.DataFrame(rows)
 
@@ -654,10 +683,99 @@ def zones_fvglevel(df: pd.DataFrame, a: np.ndarray, mode: str | None = None) -> 
     return out
 
 
+# ------------------------------------------------------------------------------------- bjorgum
+
+BJ_LEFT, BJ_RIGHT, BJ_KEEP, BJ_WIDTH, BJ_PCT = 20, 15, 4, 0.5, 0.025
+
+
+def bjorgum_pivots(df: pd.DataFrame) -> list[tuple]:
+    """Bjorgum key-level zones as the sage peer builds them, kept causal: pivots with 20 bars left
+    and 15 right (known 15 bars later), each a zone of half-width min(0.5 x ATR30, 2.5% of price)
+    about the pivot's high (resistance) or low (support). Plain candles, not Heikin-Ashi. Returns
+    (known bar, pivot bar, bottom, top, resistance), in the order they became known."""
+    h, l = df["high"].to_numpy(), df["low"].to_numpy()
+    a30 = P.atr(df, 30)
+    ph, pl = P.pivots(h, l, BJ_LEFT, BJ_RIGHT)
+    out = []
+    for piv, res in ((ph, True), (pl, False)):
+        for known, p_, px in piv:
+            if not a30[p_] > 0:
+                continue
+            half = min(BJ_WIDTH * a30[p_], BJ_PCT * abs(px))
+            out.append((known, p_, px - half, px + half, res))
+    return sorted(out)
+
+
+def bjorgum_live(piv: list[tuple], i: int) -> list[tuple]:
+    """The zones the indicator shows at bar i: pivots known by then, overlapping same-side zones
+    merged newest first, the 4 newest per side kept. (bottom, top, resistance)."""
+    known = [x for x in piv if x[0] <= i][-60:]
+    kept: list[list] = []
+    for _, _, lo, hi, res in sorted(known, key=lambda x: x[1], reverse=True):
+        hit = next((k for k in kept if k[2] == res and lo <= k[1] and hi >= k[0]), None)
+        if hit is not None:
+            hit[0], hit[1] = min(hit[0], lo), max(hit[1], hi)
+            continue
+        kept.append([lo, hi, res])
+    return [tuple(k) for k in [k for k in kept if k[2]][:BJ_KEEP] + [k for k in kept if not k[2]][:BJ_KEEP]]
+
+
+def bjorgum_overlap(piv, i: int, lo: float, hi: float, pad: float = 0.0) -> bool:
+    """Whether any Bjorgum zone shown at bar i overlaps [lo, hi] (either role: a level is a level)."""
+    return any(b_hi >= lo - pad and b_lo <= hi + pad for b_lo, b_hi, _ in bjorgum_live(piv, i))
+
+
+def zones_bjorgum(df: pd.DataFrame, a: np.ndarray) -> list[Zone]:
+    """Bjorgum's zones traded alone: each, once known and once price has gone 1 ATR away, is
+    support or resistance by the side price went; its own band; the first return is traded. A zone
+    overlapping one not yet returned to is skipped (the indicator merges them)."""
+    out, made = [], []
+    h, l, c = (df[x].to_numpy() for x in ("high", "low", "close"))
+    for known, p_, lo, hi, res in bjorgum_pivots(df):
+        if any(m_lo <= hi and m_hi >= lo and m_known <= known < m_end for m_lo, m_hi, m_known, m_end in made):
+            continue
+        A = a[known] if known < len(df) else np.nan
+        if not A > 0:
+            continue
+        level = (lo + hi) / 2
+        live = next((j for j in range(known + 1, min(len(df), known + LEVEL_EXPIRE))
+                     if abs(c[j] - level) >= LEVEL_AWAY * A), -1)
+        if live < 0:
+            continue
+        side = 1 if c[live] > level else -1
+        near, far = (hi, lo) if side > 0 else (lo, hi)
+        z = Zone(side, p_, far, near, known, level, p_, live, np.nan, False, parts=((p_, lo, hi),))
+        ext = c[live]
+        for j in range(live + 1, min(len(df), live + LEVEL_EXPIRE)):
+            if (l[j] <= near) if side > 0 else (h[j] >= near):
+                z.ret = j
+                break
+            ext = max(ext, h[j]) if side > 0 else min(ext, l[j])
+        z.leg_extreme = ext
+        made.append((lo, hi, known, z.ret if z.ret >= 0 else live + LEVEL_EXPIRE))
+        out.append(z)
+    return out
+
+
+def zma_series(df: pd.DataFrame) -> pd.DataFrame:
+    """Production's Z-Momentum Attention (`structures/zma.py`) replayed over the closes, bar by bar:
+    each bar's z-score, its strong threshold, `agrees` (+1 oversold and rising, -1 overbought and
+    falling) and `stretched` (+1 oversold, -1 overbought)."""
+    from till_infinity.structures.zma import Zma
+    z = Zma()
+    rows = []
+    for px in df["close"].to_numpy():
+        z.observe(float(px))
+        rows.append((z.z_score, z.strong, z.agrees, z.stretched))
+    return pd.DataFrame(rows, columns=["z", "strong", "agrees", "stretched"])
+
+
 if os.environ.get("ZONES") == "prod":  # every mode below on production's origins instead
     zones = zones_prod  # noqa: F811
 elif os.environ.get("ZONES") == "fvg":  # or on fair-value gaps
     zones = zones_fvg  # noqa: F811
+elif os.environ.get("ZONES") == "bjorgum":  # or on Bjorgum's key-level zones alone
+    zones = zones_bjorgum  # noqa: F811
 elif os.environ.get("ZONES") == "fvglevel":  # or on levels where gaps line up (LEVELS=aligned|single|random)
     zones = zones_fvglevel  # noqa: F811
 
@@ -922,8 +1040,28 @@ def run_one(job):
     st["marked"] = gap_marked(df, a, st)
     st["nogap"] = st["bias"] & ~st["marked"]
     st["hasgap"] = st["bias"] & st["marked"]
+    # the DAX tests on the origin (research zones): protected and not inducement; and the major break
+    st["dax"] = st["bias"] & st["protected"] & st["has_sl"]
+    st["dax_major"] = st["dax"] & st["dax_major"]
+    # Bjorgum alignment: the zone overlaps a Bjorgum zone shown at the trigger bar
+    piv = bjorgum_pivots(df)
+    st["bj"] = [bjorgum_overlap(piv, int(r.i), min(r.zone_lo, r.zone_hi), max(r.zone_lo, r.zone_hi))
+                for r in st.itertuples()]
+    st["bjorg"] = st["bias"] & st["bj"]
+    st["bjorg_strong"] = st["strong"] & st["bj"]
+    st["bjorg_dax"] = st["dax"] & st["bj"]
+    # ZMA at the trigger bar: displacement and momentum agreeing with the zone, or displacement alone
+    zm = zma_series(df)
+    ii = st["i"].to_numpy()
+    st["zma_ag"] = zm["agrees"].to_numpy()[ii] == st["side"].to_numpy()
+    st["zma_st"] = zm["stretched"].to_numpy()[ii] == st["side"].to_numpy()
+    st["zma"] = st["bias"] & st["zma_ag"]
+    st["zma_stretch"] = st["bias"] & st["zma_st"]
+    st["zma_bjorg"] = st["zma_stretch"] & st["bj"]
+    st["zma_strong"] = st["strong"] & st["zma_st"]
     filters = ["none", "bias", "strong", "smc_pd", "smc_idm", "smc_all", "fast_old",
-               "nogap", "hasgap"] + \
+               "nogap", "hasgap", "dax", "dax_major", "bjorg", "bjorg_strong", "bjorg_dax",
+               "zma", "zma_stretch", "zma_bjorg", "zma_strong"] + \
         (["nest", "smc_kz"] if iv == "1h" else [])
     if iv == "1h":
         st["smc_kz"] = st["bias"] & st["killzone"]
@@ -1117,6 +1255,9 @@ def direction_one(job):
         return None
     k4 = P.htf_index(df["ts"].to_numpy(), SEC[iv], d4["ts"].to_numpy(), SEC["4h"])
     st["bias"] = bias_4h(d4)[np.maximum(k4[st["i"].to_numpy()], 0)] == st["side"]
+    piv = bjorgum_pivots(df)
+    zm = zma_series(df)
+    zm_ag, zm_st = zm["agrees"].to_numpy(), zm["stretched"].to_numpy()
     o = df["open"].to_numpy()
     rng = np.random.default_rng(zlib.crc32(f"dir{sym}{iv}".encode()))
     ok = np.flatnonzero(a > 0)
@@ -1128,10 +1269,14 @@ def direction_one(job):
         if i + 1 >= len(df) or not a[i] > 0:
             continue
         ref = s.entry if s.limit else o[i + 1]
-        rows.append(dict(kind="setup", trigger=s.trigger, bias=bool(s.bias), side=s.side, n_gaps=s.n_gaps,
+        dx = dict(dax=bool(s.bias and s.protected and s.has_sl), dax_major=bool(s.bias and s.protected and s.has_sl
+                                                                                 and s.dax_major),
+                  bj=bjorgum_overlap(piv, int(s.i), min(s.zone_lo, s.zone_hi), max(s.zone_lo, s.zone_hi)),
+                  zma_ag=bool(zm_ag[int(s.i)] == s.side), zma_st=bool(zm_st[int(s.i)] == s.side))
+        rows.append(dict(kind="setup", trigger=s.trigger, bias=bool(s.bias), side=s.side, n_gaps=s.n_gaps, **dx,
                          **dict(zip(cols, _paths(df, a, i, s.side, ref, SEC[iv]), strict=True))))
         for j in rng.choice(ok, 3):  # the same side at a random bar of this market
-            rows.append(dict(kind="random", trigger=s.trigger, bias=bool(s.bias), side=s.side, n_gaps=s.n_gaps,
+            rows.append(dict(kind="random", trigger=s.trigger, bias=bool(s.bias), side=s.side, n_gaps=s.n_gaps, **dx,
                              **dict(zip(cols, _paths(df, a, int(j), s.side, o[j + 1], SEC[iv]), strict=True))))
     out = pd.DataFrame(rows).assign(sym=sym, iv=iv, family=R.FAMILY.get(sym, "?"))
     print(f"  direction {sym} {iv}: {len(st)} setups", flush=True)
@@ -1228,6 +1373,180 @@ def plot_levels():
         fig.savefig(OUT / f"levels_{sym.replace(' ', '_')}_{iv}.png", dpi=80)
         plt.close(fig)
         print(f"  {sym} {iv}: {len(zs)} levels returned to", flush=True)
+
+
+def plot_combo():
+    """Our origin zones where a Bjorgum zone lines up, and Bjorgum's zones alone: the origin zone
+    (blue) with its break of structure and gap, every Bjorgum zone the indicator shows at the
+    trigger bar (purple, support / resistance by where it came from), the entry, stop, target."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+
+    import run as R
+    R.DB = os.environ.get("MT5BT_DB")
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    def candles(ax, df, i0, i1):
+        w = df.iloc[i0:i1 + 1]
+        x = np.arange(i0, i1 + 1)
+        up = (w["close"] >= w["open"]).to_numpy()
+        ax.vlines(x, w["low"], w["high"], color="#555", lw=0.6)
+        ax.bar(x[up], (w["close"] - w["open"])[up], bottom=w["open"][up], color="#2a9d8f", width=0.7)
+        ax.bar(x[~up], (w["close"] - w["open"])[~up], bottom=w["open"][~up], color="#e76f51", width=0.7)
+
+    for sym, iv in (("EURUSD", "1h"), ("XAUUSD", "4h"), ("US Tech 100", "1h"), ("GBPJPY", "4h"),
+                    ("BTCUSD", "4h"), ("Germany 40", "1h")):
+        df, d4 = R.load(sym, iv), R.load(sym, "4h")
+        if df is None or d4 is None:
+            continue
+        df, d4 = df.reset_index(drop=True), d4.reset_index(drop=True)
+        a = P.atr(df, 14)
+        piv = bjorgum_pivots(df)
+        rng = np.random.default_rng(zlib.crc32(sym.encode()))
+        # 1 our zones that line up with Bjorgum
+        zs = zones(df, a)
+        st = setups(df, a, zs)
+        k4 = P.htf_index(df["ts"].to_numpy(), SEC[iv], d4["ts"].to_numpy(), SEC["4h"])
+        st = st[(bias_4h(d4)[np.maximum(k4[st["i"].to_numpy()], 0)] == st["side"])
+                & st["trigger"].isin(["touch", "pin", "engulf", "reclaim", "cisd"])]
+        st = st[[bjorgum_overlap(piv, int(r.i), min(r.zone_lo, r.zone_hi), max(r.zone_lo, r.zone_hi))
+                 for r in st.itertuples()]]
+        figs = []
+        if len(st):
+            fig, axes = plt.subplots(2, 2, figsize=(18, 11))
+            for ax, (_, s_) in zip(axes.flat, st.iloc[np.sort(rng.choice(len(st), min(4, len(st)), replace=False))].iterrows(),
+                                   strict=False):
+                z = next(z for z in zs if z.p == s_.zone_p and z.side == s_.side)
+                i = int(s_.i)
+                i0, i1 = max(0, z.p - 40), min(len(df) - 1, i + 50)
+                candles(ax, df, i0, i1)
+                for b_lo, b_hi, res in bjorgum_live(piv, i):
+                    ax.axhspan(b_lo, b_hi, color="purple", alpha=0.10)
+                    ax.annotate("bjorgum " + ("R" if res else "S"), (i0, b_hi), fontsize=7, color="purple")
+                lo, hi = min(z.lo, z.hi), max(z.lo, z.hi)
+                ax.add_patch(Rectangle((z.p - 0.4, lo), i - z.p + 0.8, hi - lo, color="#457b9d", alpha=0.35))
+                hh, ll = df["high"].to_numpy(), df["low"].to_numpy()
+                g = z.fvg
+                g_lo, g_hi = (hh[g - 2], ll[g]) if z.side > 0 else (hh[g], ll[g - 2])
+                ax.add_patch(Rectangle((g - 2, g_lo), 2, g_hi - g_lo, color="#f4a261", alpha=0.6))
+                ax.hlines(z.bos_level, z.bos - 10, z.bos, colors="k", linestyles="--", lw=1)
+                ax.annotate("BOS", (z.bos, z.bos_level), fontsize=8)
+                ent = s_.entry if np.isfinite(s_.entry) else df["open"].iat[i + 1]
+                ax.scatter([i + (0 if s_.limit else 1)], [ent], marker="^" if s_.side > 0 else "v", s=120,
+                           color="green" if s_.side > 0 else "red", zorder=5)
+                ax.hlines(s_.stop_px, i, i1, colors="red", lw=1)
+                if np.isfinite(s_.target_px):
+                    ax.hlines(s_.target_px, i, i1, colors="green", lw=1)
+                ax.set_ylim(df["low"].iloc[i0:i1 + 1].min() * 0.998, df["high"].iloc[i0:i1 + 1].max() * 1.002)
+                ax.set_title(f"{sym} {iv} {'long' if s_.side > 0 else 'short'}  trigger={s_.trigger}  "
+                             f"{pd.Timestamp(df['ts'].iat[i], unit='s'):%Y-%m-%d %H:%M}", fontsize=10)
+            fig.suptitle("our origin zone (blue: BOS dashed, imbalance orange) where a Bjorgum zone (purple) lines up "
+                         "- 4h bias agrees | red stop, green target", fontsize=11)
+            figs.append(("combo", fig))
+        # 2 Bjorgum alone
+        zb = [z for z in zones_bjorgum(df, a) if z.ret >= 0]
+        if zb:
+            fig, axes = plt.subplots(2, 2, figsize=(18, 11))
+            for ax, zi in zip(axes.flat, np.sort(rng.choice(len(zb), min(4, len(zb)), replace=False)), strict=False):
+                z = zb[zi]
+                i0, i1 = max(0, z.p - 30), min(len(df) - 1, z.ret + 50)
+                candles(ax, df, i0, i1)
+                for b_lo, b_hi, res in bjorgum_live(piv, z.ret):
+                    ax.axhspan(b_lo, b_hi, color="purple", alpha=0.08)
+                lo, hi = min(z.lo, z.hi), max(z.lo, z.hi)
+                ax.add_patch(Rectangle((z.p, lo), z.ret - z.p, hi - lo, color="#457b9d", alpha=0.35))
+                ax.scatter([z.p], [z.bos_level], marker="o", s=60, facecolors="none", edgecolors="k")
+                ax.axvline(z.bos, color="#999", lw=0.8, ls=":")
+                ax.scatter([z.ret], [z.hi], marker="^" if z.side > 0 else "v", s=110,
+                           color="green" if z.side > 0 else "red", zorder=5)
+                ax.set_ylim(df["low"].iloc[i0:i1 + 1].min() * 0.998, df["high"].iloc[i0:i1 + 1].max() * 1.002)
+                ax.set_title(f"{sym} {iv} Bjorgum zone as {'support' if z.side > 0 else 'resistance'}  first return "
+                             f"{pd.Timestamp(df['ts'].iat[z.ret], unit='s'):%Y-%m-%d %H:%M}", fontsize=10)
+            fig.suptitle("Bjorgum alone: the pivot (circle, 20 bars left / 15 right), its zone (blue) from the pivot to "
+                         "the first return (triangle); dotted: pivot confirmed; purple: every zone shown then", fontsize=11)
+            figs.append(("bjorgum", fig))
+        for name, fig in figs:
+            fig.tight_layout()
+            fig.savefig(OUT / f"{name}_{sym.replace(' ', '_')}_{iv}.png", dpi=80)
+            plt.close(fig)
+        print(f"  {sym} {iv}: {len(st)} aligned setups, {len(zb)} Bjorgum zones returned to", flush=True)
+
+
+def plot_zma():
+    """Our origin zones where ZMA agrees at the trigger bar: price with the zone, gap and break above;
+    ZMA's z-score below with its strong thresholds, the trigger bar marked."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+
+    import run as R
+    R.DB = os.environ.get("MT5BT_DB")
+    OUT.mkdir(parents=True, exist_ok=True)
+    for sym, iv in (("EURUSD", "1h"), ("XAUUSD", "4h"), ("US Tech 100", "1h"), ("GBPJPY", "4h"),
+                    ("BTCUSD", "4h"), ("Germany 40", "1h")):
+        df = R.load(sym, iv)
+        if df is None:
+            continue
+        df = df.reset_index(drop=True)
+        a = P.atr(df, 14)
+        zs = zones(df, a)
+        st = setups(df, a, zs)
+        zm = zma_series(df)
+        st = st[(zm["stretched"].to_numpy()[st["i"].to_numpy()] == st["side"].to_numpy())
+                & st["trigger"].isin(["touch", "pin", "engulf", "reclaim", "cisd"])]
+        if st.empty:
+            continue
+        rng = np.random.default_rng(zlib.crc32(("zma" + sym).encode()))
+        pick = st.iloc[np.sort(rng.choice(len(st), min(4, len(st)), replace=False))]
+        fig = plt.figure(figsize=(18, 12))
+        gs = fig.add_gridspec(4, 2, height_ratios=[3, 1, 3, 1])
+        for n_, (_, s_) in enumerate(pick.iterrows()):
+            r_, c_ = (n_ // 2) * 2, n_ % 2
+            ax, az = fig.add_subplot(gs[r_, c_]), fig.add_subplot(gs[r_ + 1, c_])
+            z = next(z for z in zs if z.p == s_.zone_p and z.side == s_.side)
+            i = int(s_.i)
+            i0, i1 = max(0, z.p - 40), min(len(df) - 1, i + 50)
+            w = df.iloc[i0:i1 + 1]
+            x = np.arange(i0, i1 + 1)
+            up = (w["close"] >= w["open"]).to_numpy()
+            ax.vlines(x, w["low"], w["high"], color="#555", lw=0.6)
+            ax.bar(x[up], (w["close"] - w["open"])[up], bottom=w["open"][up], color="#2a9d8f", width=0.7)
+            ax.bar(x[~up], (w["close"] - w["open"])[~up], bottom=w["open"][~up], color="#e76f51", width=0.7)
+            lo, hi = min(z.lo, z.hi), max(z.lo, z.hi)
+            ax.add_patch(Rectangle((z.p - 0.4, lo), i - z.p + 0.8, hi - lo, color="#457b9d", alpha=0.35))
+            hh, ll = df["high"].to_numpy(), df["low"].to_numpy()
+            g = z.fvg
+            g_lo, g_hi = (hh[g - 2], ll[g]) if z.side > 0 else (hh[g], ll[g - 2])
+            ax.add_patch(Rectangle((g - 2, g_lo), 2, g_hi - g_lo, color="#f4a261", alpha=0.6))
+            ax.hlines(z.bos_level, z.bos - 10, z.bos, colors="k", linestyles="--", lw=1)
+            ent = s_.entry if np.isfinite(s_.entry) else df["open"].iat[i + 1]
+            ax.scatter([i + (0 if s_.limit else 1)], [ent], marker="^" if s_.side > 0 else "v", s=120,
+                       color="green" if s_.side > 0 else "red", zorder=5)
+            ax.hlines(s_.stop_px, i, i1, colors="red", lw=1)
+            if np.isfinite(s_.target_px):
+                ax.hlines(s_.target_px, i, i1, colors="green", lw=1)
+            ax.set_ylim(w["low"].min() * 0.998, w["high"].max() * 1.002)
+            ax.set_xlim(i0 - 1, i1 + 1)
+            ax.set_title(f"{sym} {iv} {'long' if s_.side > 0 else 'short'}  trigger={s_.trigger}  ZMA "
+                         f"{'agrees' if zm['agrees'].iat[i] == s_.side else 'stretched'}  "
+                         f"{pd.Timestamp(df['ts'].iat[i], unit='s'):%Y-%m-%d %H:%M}", fontsize=10)
+            zz = zm.iloc[i0:i1 + 1]
+            az.plot(x, zz["z"], color="#1d3557", lw=1)
+            az.plot(x, zz["strong"], color="#999", lw=0.8, ls="--")
+            az.plot(x, -zz["strong"], color="#999", lw=0.8, ls="--")
+            az.axhline(0, color="#ccc", lw=0.6)
+            az.axvline(i, color="purple", lw=1)
+            az.set_xlim(i0 - 1, i1 + 1)
+            az.set_ylabel("ZMA z", fontsize=8)
+        fig.suptitle("origin zone (blue, BOS dashed, imbalance orange) with ZMA (below: z-score, dashed = strong "
+                     "thresholds, purple = trigger bar) stretched the zone's way | red stop, green target", fontsize=11)
+        fig.tight_layout()
+        fig.savefig(OUT / f"zma_{sym.replace(' ', '_')}_{iv}.png", dpi=80)
+        plt.close(fig)
+        print(f"  {sym} {iv}: {len(st)} setups with ZMA stretched the zone's way", flush=True)
 
 
 # ------------------------------------------------------------------------------------ volatility
@@ -1342,7 +1661,7 @@ def vol():
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     {"plot": plot, "run": run, "gallery": gallery, "direction": direction, "vol": vol,
-     "levelplot": plot_levels}[os.environ.get("MODE", "plot")]()
+     "levelplot": plot_levels, "comboplot": plot_combo, "zmaplot": plot_zma}[os.environ.get("MODE", "plot")]()
 
 
 if __name__ == "__main__":

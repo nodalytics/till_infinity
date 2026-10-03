@@ -11,5 +11,6 @@
     "target": "1R, net of the broker's spread floor; else out after 5 days"
   },
   "judged_once_on": "the 32 validation crypto CFDs, XPT/XPD/XCU, and Deriv's Volatility 10/50/100, Step 200/500, Drift Switch 20/30 - none used in any zone study",
-  "passes_if": "R a trade > 0 and above both the qualified zones without the approach rule and the unqualified swing origins with it, the day-bootstrap 90% interval of R excluding 0"
+  "passes_if": "R a trade > 0 and above both the qualified zones without the approach rule and the unqualified swing origins with it, the day-bootstrap 90% interval of R excluding 0",
+  "status": "VOID 2026-10-03: the approach feature read the return bar's own low, unknowable to a resting order; corrected, the effect is gone (origin-zones.md)"
 }

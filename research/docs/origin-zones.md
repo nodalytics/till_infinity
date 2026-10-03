@@ -307,3 +307,68 @@ thousands of cells either way**, so every cell of 200+ trades that beat both nul
 (561 of them, across the origin, production, gap, DAX and level runs) was re-tested with 10,000
 draws. The best p is 0.0027 among about 10,000 cells; Bonferroni would need about 0.000005. The
 random-price levels, which can have no edge, produce p-values as small. The nulls stand.
+
+## Combinations: DAX + our zones, Bjorgum, ZMA, and APA (2026-10-03)
+
+Asked for after the single definitions failed: combine them, and see whether agreement improves the
+signal. Every arm on the same harness (both sides, coin twin and random-time trades, 5-day hold).
+Plots: `.data/zones/bjorgum/` (Bjorgum alone and aligned with our zones), `.data/dax_smc/bjorgum/`,
+`.data/zones/zma/` (with the ZMA panel), `.data/apa/`.
+
+- **DAX checklist on our zones** (`dax_smc.py`: the POI on a live research origin zone, one of
+  production's, or a fair-value gap): -0.09 to -0.38R, no arm above its nulls. **Our origin zones
+  asked the DAX tests** (`zones.py` `dax`: the origin a protected low, structural liquidity in the
+  leg; `dax_major`: and a major break): only 87 such zones in the whole universe; -0.20R.
+- **Bjorgum** (the sage peer's key levels, rebuilt causally - 20/15 pivots, half-width min(0.5
+  ATR30, 2.5%), merged, 4 newest a side - `bjorgum_*` in `zones.py`): alone -0.14R; as a filter on
+  our zones -0.19R. Its zones are wide and many: 68% of our setups overlap one on a random walk.
+- **ZMA** (production's Z-Momentum Attention replayed bar by bar): the touch entry with ZMA
+  stretched the zone's way averaged +0.11R, but only on the 1h, on 288 trades, no p below 0.07,
+  carried by 37 index and 30 metal trades with FX and crypto negative. Noise.
+- **APA** ([`apa.py`](../ideas/apa.py); the course's outline made into rules - HTF trend and
+  discount/premium, an HTF origin zone as the POI, an aggressive rejection entry or a conservative
+  LTF CHoCH-and-retest entry, the HTF swing liquidity as target; 4h>1h, 4h>15m, 1d>1h, 1h>15m):
+  all 96 cells lose; the full method -0.20 to -0.22R, worse than its parts unfiltered.
+
+## Zone events: does the market remember the force that made a zone? ([`zone_events.py`](../ideas/zone_events.py))
+
+The idea, restated by the desk: a zone is the origin of a validated displacement event -
+Zone -> Imbalance -> Displacement -> BOS - and its return is the experiment. So every swing origin
+that broke structure was recorded as an event: QUALIFIED (V = 1: a gap of 0.1+ ATR on the path and
+2+ ATR of displacement) or not (V = 0, the matched baseline - swing points that broke structure
+without the rest of the chain), with its formation fingerprint (BOS penetration and time to break,
+displacement, speed, efficiency, volatility surprise, force relative to a random walk, structure
+crossed, gaps and their size against the pre-zone range, the leg *into* the origin and the move out
+against it), its lifecycle (returns 1-3), depth (near edge, middle, far edge), four boundaries, and
+the outcome: 1R in the BOS direction before the stop, net of spread. Pre-registered in the file.
+
+| first return, near edge, body | P(1R) qualified | P(1R) baseline | difference [90%] | R qualified / baseline |
+|---|---|---|---|---|
+| real 1h | 47.8% | 45.4% | +2.4 pts [+1.7, +3.2] | -0.15 / -0.19 |
+| real 4h | 47.2% | 44.2% | +2.9 pts [+1.7, +4.2] | -0.09 / -0.13 |
+| real 1d | 37.1% | 33.4% | +3.8 pts [+1.9, +5.6] | -0.04 / -0.13 |
+
+- **The chain matters a little, and only once.** Qualified zones beat swing origins without it on
+  every timeframe and family, +2 to +4 points - and only on the first return; by the second the
+  difference is gone. It is not enough: both lose money.
+- **The force does not matter.** Every formation dimension - magnitude, speed, efficiency, BOS
+  penetration, volatility surprise, relative force, structure crossed, gap size, and the leg into
+  the origin (its size, speed, efficiency, gaps, and how much harder the move out was) - is flat
+  across its quartiles, in both periods: no optimum, no monotone effect. A model on formation alone
+  scores AUC 0.548 fitted and **0.510** on 2023-2026. The force x imbalance grid is flat.
+- **The return state does not rescue it.** With every feature, fitted before 2023: AUC 0.562,
+  **0.518** after; its top fifth makes -0.135R against -0.125R for all qualified zones.
+- **Deeper entries and wider boundaries do not help:** the middle and the far edge lose the edge;
+  body and candle boundaries do best, the pre-move cluster worst.
+
+### A look-ahead, caught, and a void confirmation
+
+The first run of this study defined the return's approach as the close five bars back minus the
+return bar's *low*. A resting order fills during that bar, before its low exists; a small value
+selected the bars that did not spike through the zone - the ones less likely to be stopped. It
+looked like the strongest feature (AUC 0.57 out of sample, top fifth +0.004R), and it worked as well
+on the baseline swing points, which is what gave it away. A rule built on it was frozen
+(`zone_rule.json`, committed before the run) and "passed" on the held-out markets - +0.143R a trade
+over 7,705 trades - **and that result is void**: the rule could not have been traded. The fix
+measures approach to the entry level and travel from closes before the return bar; with it the
+effect disappears (44-46% across quintiles), as it does on a random walk.
