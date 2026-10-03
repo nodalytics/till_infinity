@@ -306,3 +306,33 @@ A rule learned twice on 2026-10-03 (see memory `lookahead-in-conditioning-flags`
 - token text forms;
 - reproduction proofs where noted;
 - a walk or shuffle null for anything claiming information.
+
+
+## v5: detection methods from particle physics
+
+The desk asked for these. High-energy physics detects rare structured events in overwhelming noise
+without fooling itself, which is this desk's problem exactly. Build on merged v4, keeping every
+earlier rule.
+
+**Finding patterns.**
+1. **Trigger system.** A cheap level-1 trigger on L1 candle tokens and simple relations passes candidate windows; a high-level trigger runs the full grammar only on those. Document each trigger's rate and its efficiency against the full parse. This is the real-time design.
+2. **Track finding.**
+   - A Hough transform finds lines and channels through many EXTREMEs robustly. It is an alternative to two-swing LINEs, with outlier tolerance.
+   - Kalman tracking follows a level or line as it evolves, with uncertainty. Production's levels already use a Kalman filter (`till_infinity/structures/levels.py`).
+3. **Jet clustering.** An anti-kt-style clustering of entities in (time, price) under a documented distance gives composite objects with an "energy" (summed volume or ATR moves). Zones and ranges then emerge from data and are compared with the grammar's.
+4. **Invariant quantities.** Features invariant to price scale (ATR units, as now) and also to time scale, so one pattern means the same thing on 15m and 4h. Test the invariance by resampling.
+5. **Particle flow.** One event reconstruction from every source at once: price, volume, book, positioning, with each source's contribution recorded.
+
+**Not fooling ourselves.**
+6. **Signal injection and detector simulation.**
+   - Plant known patterns (with documented generators) into matched walks.
+   - For every MCFL detector, measure its efficiency (the share of planted patterns found) and its fake rate (detections in pure noise), as curves over the detector's thresholds.
+   - No detector ships without this.
+7. **Data-driven backgrounds.** Sideband estimates (the same detector on neighbouring time or price regions) and the ABCD method (two independent variables) as nulls, alongside the random walks.
+8. **Significance.**
+   - The look-elsewhere effect: global significance with the trials factor from every pattern or cell examined.
+   - Blind analysis: a pattern's selection is frozen before its signal region is examined, as with the desk's frozen rules.
+   - Report local and global sigma, with 5 sigma as the discovery bar.
+9. **Anomaly detection without labels.** CWoLa (train a classifier to separate a signal region from its sidebands) and autoencoder reconstruction error on sentence embeddings, to surface sentence types nobody has named. Each comes with a walk control.
+10. **Unfolding.** Correct measured pattern frequencies and outcome distributions for each detector's efficiency and fake rate (from item 6), with uncertainties.
+11. **Event displays.** One standard plot per detected event, showing every constituent token and the detector's decision path.
