@@ -407,6 +407,17 @@ how price arrives at a level, not something about zones.
 +0.035 before, the heaviest origin volume +0.031 after) are positive in one half each, on 134 and 514
 trades, out of 63 tails and pairs tried.
 
+> **Correction, 2026-10-03 (later the same day): the nested effect below was mostly look-ahead.**
+> "Inside a 4h break's leg" was judged by whether the LTF origin lay in a leg that *went on* to break
+> the 4h's structure - but that break is only known when its 4h bar closes, and 25-45% of the
+> "inside" LTF zones were entered before it had happened. Those were the best trades. With the 4h
+> break required to be known before the entry (`inside_known_4h`), 30m zones inside a 4h break make
+> -0.121R on Binance (not -0.008) and -0.116R on MT5, against -0.160 / -0.183 for all LTF zones:
+> about +0.04R, not +0.15. The frozen stacking test (`nested_stack.json`: S0 + a trending return,
+> + a rare origin, + both) "passed" with S2 at +0.177R on Binance and **fails** causally (S2 -0.045R
+> [-0.101, +0.013], S3 -0.037R). The table below is kept as it was measured; its numbers are not
+> tradeable.
+
 ## The higher timeframe's break, entered from a lower-timeframe zone ([`zone_nested.py`](../ideas/zone_nested.py))
 
 The desk's idea: when the 4h (or 1h) breaks structure, drop to 15m or 30m and enter from a zone there,

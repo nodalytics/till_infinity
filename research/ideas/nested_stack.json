@@ -9,5 +9,6 @@
   },
   "thresholds": "percentiles of all qualified 15m/30m first returns in the MT5 run (discovery), per timeframe, computed mechanically - no other choice made after seeing results",
   "judged_once_on": "Binance perpetuals, 12 coins, 15m and 30m, 2021-01 to 2024-06 and 2024-07 on, fees 0.07%",
-  "passes_if": "R a trade > 0 on Binance 30m in both periods, and the day-bootstrap 90% interval of R over the whole Binance sample above 0"
+  "passes_if": "R a trade > 0 on Binance 30m in both periods, and the day-bootstrap 90% interval of R over the whole Binance sample above 0",
+  "result": "as first run: S2 passed on Binance 30m (+0.177R) and S3 (+0.112R) - but the 'inside' flag used 4h breaks not yet known at the entry. Causal (4h break known before entry): S1 -0.127, S2 -0.045 [-0.101, +0.013], S3 -0.037 on Binance 30m: all fail. VOID as a pass."
 }
