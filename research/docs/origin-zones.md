@@ -406,3 +406,39 @@ how price arrives at a level, not something about zones.
 -0.090 / 0.000. None is positive in both halves; the two positive cells (the biggest origin spikes
 +0.035 before, the heaviest origin volume +0.031 after) are positive in one half each, on 134 and 514
 trades, out of 63 tails and pairs tried.
+
+## The higher timeframe's break, entered from a lower-timeframe zone ([`zone_nested.py`](../ideas/zone_nested.py))
+
+The desk's idea: when the 4h (or 1h) breaks structure, drop to 15m or 30m and enter from a zone there,
+close to the break. Every qualified 15m/30m zone's first return (near edge, 1R, net) was classed by
+its relation to the higher timeframe's breaks: *inside* (the LTF origin lies in an HTF break's leg of
+the same direction), *near* (and its band is within 0.5 HTF-ATR of the broken HTF level), *just
+after*, *against* (the other direction inside an HTF break's leg), or none. First on the broker's
+15m (from 2024-07); then, pre-registered, on Binance perpetuals (12 coins, 15m from 2021, fees
+0.07%), judged on 2021 to 2024-06 - time the first run never saw.
+
+| 30m zones, first return | MT5 CFDs R | Binance R (2021-24.06 / 24.07 on) | Binance P(1R) |
+|---|---|---|---|
+| all | -0.183 | -0.160 (-0.147 / -0.180) | 48.1% |
+| **inside a 4h break's leg** | **-0.011** | **-0.008** (-0.004 / -0.014) | **55.7%** |
+| inside, near the broken level | -0.037 | -0.092 | 51.2% |
+| just after a 4h break | -0.189 | -0.160 | 47.9% |
+| against a 4h break | -0.461 | -0.513 | 30.7% |
+
+**The largest structural effect in this work, and it replicates** - on another venue, in both
+periods, on 15m too (-0.084 against -0.241 for all): an LTF zone that is part of the move which broke
+the 4h's structure is worth about +0.15R over the average LTF zone and +0.5R over one against it.
+**It reaches breakeven, not profit.** Being near the broken level (the "retest") is worse than simply
+being inside the leg; inside a 1h break helps less (about -0.09).
+
+## The rejection trade, and regime gates
+
+- **Sell the post-break high on its pullback, back to the broken level** (`ZONES=rejection`): a
+  bullish break, the first swing high after it, a reversal of 1 ATR, the high's bar as the zone,
+  target the broken level. Confirmations win 52-56%, and every trigger and exit loses (-0.05 to
+  -0.17R), as do the nulls.
+- **Gates from NautilusTrader's indicator set**, on every zone event: VHF and Kaufman efficiency before
+  the origin and before the return, pressure (close position x relative volume) on the leg and the
+  return leg, their swing definition (the lowest of 20+ bars), and Binance book imbalance at the
+  return. The trendiest returns are least bad (-0.07 to -0.09R) and moderate return pressure too;
+  nothing is positive in both halves; book imbalance shows no consistent sign.
