@@ -226,8 +226,9 @@ def relations(entities: list[Entity]) -> list[Relation]:
     return out
 
 
-def parse(df: pd.DataFrame) -> Chart:
-    """Bars (open, high, low, close[, volume]) to a Chart. The index is ignored: bars are 0..n-1."""
+def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
+    """Bars (open, high, low, close[, volume]) to a Chart. The index is ignored: bars are 0..n-1.
+    `v2=False` gives the v1 chart alone (the v2 entities and attributes are left out)."""
     from mcfl.grammar import CANDLE_RULES, RULES, frames, words
     from mcfl.grammar import apply as grammar
     from mcfl.lifecycle import run as lifecycle
@@ -240,10 +241,17 @@ def parse(df: pd.DataFrame) -> Chart:
     wds = words(T, cid, rid, fr=fr)
     ext = [e for e in wds if e.type == "EXTREME"]
     level = [e for side in (1, -1) for e in _side(fr[side], ext, side, cid)]
+    extra: list[Entity] = []
+    if v2:
+        from mcfl import structure as S
+        swings = S.labels(ext, T["atr"])
+        sshift, st, cnt, rnid = S.shifts(swings, len(df))
+        level = S.annotate_breaks(level, st)
+        extra += swings + sshift + S.character_shifts([e for e in level if e.type == "BREAK"], st, cnt, rnid)
     zones, failures, pending = grammar([e for e in wds if e.type in ("EXTREME", "VOID")] + level, RULES)
     life, transitions, states = lifecycle(T, zones, failures, cid, [e for e in wds if e.type == "DELIVERY_SHIFT"])
     rejects, _, _ = grammar([e for e in toks if e.type == "CANDLE"] + zones + life, CANDLE_RULES, n=len(df))
-    ents = sorted(toks + wds + level + zones + life + rejects, key=sort_key)
+    ents = sorted(toks + wds + level + zones + life + rejects + extra, key=sort_key)
     rels = sorted(relations(ents), key=lambda r: (r.known_at, r.kind, r.src, r.dst))
     return Chart(n=len(df), entities=tuple(ents), relations=tuple(rels),
                  failures=tuple(sorted(failures, key=lambda f: (f.known_at, f.candidate))),

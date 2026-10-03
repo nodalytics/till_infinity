@@ -1,7 +1,18 @@
-# MCFL v1: a formal language for what a chart shows, and what a walk shows too
+# MCFL v2: a formal language for what a chart shows, and what a walk shows too
 
 Code: [`research/mcfl/`](../mcfl/README.md). Specification written 2026-10-03 with v0 of the parser
-and extended the same day to v1. Run on generated bars only; no market data was used.
+and extended the same day to v1 and v2. Run on generated bars only; no market data was used.
+
+**What v2 adds** (the thirteen items of [`mcfl-roadmap.md`](mcfl-roadmap.md), section v2; their
+definitions are in [v2](#v2-structure-lifecycles-time-timeframes-and-the-candlestick-vocabulary)
+below): swing-structure labels and a STRUCTURE state, the BREAK's relation to it and the CHoCH;
+compression and expansion words; volume (effort against result); the VOID lifecycle; RANGE as a
+structure; liquidity pools and the DAX course's protected sweep; retracement depth; sessions, days
+and tempo; FOCuS and CUSUM changepoints as events; multiple timeframes, with the desk's nested-zone
+finding as one production in a causal form; candle range theory; and the classical candlestick
+vocabulary as productions over the v1 words. v0 and v1 are unchanged (`parse(df, v2=False)` gives
+the v1 chart; the default parse adds the v2 entities and attributes). Every v2 entity has a
+`known_at`, is under the truncation test, and is flip-symmetric.
 
 **What v1 adds.** v0 started at events: an EXTREME, a VOID, a BREAK, each computed from prices.
 v1 puts a token layer under them, so a chart reads as one sentence from the bars up. Every bar is
@@ -446,6 +457,75 @@ a `known_at`, because it depends on where the series stops.
 On six 5,000-bar random walks the 1,604 zones ended 878 FAILED, 388 ACCEPTED, 288 EXPIRED, and the
 rest still live.
 
+## v2: structure, lifecycles, time, timeframes and the candlestick vocabulary
+
+The items in the roadmap's build order. Each is written for the up side and run on the chart and on
+the chart flipped, like everything else; each entity's `known_at` is the first bar it could be known,
+checked by the truncation tests (`tests/test_causality.py`, `tests/test_v2_causality.py`). Text forms
+are `token(e, v2=True)`: the type, the arrow, then the qualifier that says which one it is in brackets.
+Non-directional v2 entities (BALANCE, RANGE, a DOJI) have direction NONE, which v1 allowed only for
+L1 tokens.
+
+### 1. Swing-structure labels and the STRUCTURE state
+
+`structure.py`. Each EXTREME after the first of its kind is labelled against the previous EXTREME of
+its kind (by bar), with tol = SWING_EQ_ATR (**0.1**) × ATR(14) at the later swing:
+
+| kind | label | condition | flip twin |
+|---|---|---|---|
+| high (EXTREME↑) | HH | price > previous high + tol | LL |
+| | EH | within tol | EL |
+| | LH | price < previous high - tol | HL |
+| low (EXTREME↓) | LL | price < previous low - tol | HH |
+| | EL | within tol | EH |
+| | HL | price > previous low + tol | LH |
+
+A label is a **SWING** event: `at` and `known_at` the EXTREME's (bar + 3), `parts` the previous
+EXTREME and this one, attributes `label`, `price`, `prev` (the previous EXTREME's id), `diff_atr`
+(signed, positive further out) and `bars` between them. Text `SWING↑[HH]`.
+
+The **STRUCTURE** state (L4) is read from the last high label and the last low label known:
+
+| state | condition |
+|---|---|
+| UP | last high HH and last low HL |
+| DOWN | last high LH and last low LL |
+| MIXED | anything else, including an EH or EL (an equal high is not a higher high), and before both kinds have a label |
+
+Labels known on the same bar (a bar can be both a swing high and a swing low) are applied together
+and the state read once, so their order cannot matter. **STRUCTURE_SHIFT** is the event of a change:
+at the latest labelled bar, known at the labels' `known_at`, attributes `from`, `to` and `run` (the
+labels the previous state held), parts the SWING events that caused it; direction UP when the state
+rose in the order DOWN < MIXED < UP, DOWN when it fell. Text `STRUCTURE_SHIFT↑[MIXED>UP]`. The
+state known at any bar is `structure.structure_at(chart, t)` (and, inside the parser, the token
+table's `trend` column, which the candlestick vocabulary reads).
+
+### 11. vs_structure, BOS and CHARACTER_SHIFT (CHoCH)
+
+Every BREAK gets `vs_structure` and `structure`, read from the STRUCTURE state known at the break's
+own bar b (labels with `known_at` ≤ b):
+
+| `vs_structure` | condition | trader term |
+|---|---|---|
+| WITH | the state is the break's direction (UP and BREAK↑) | **BOS**: a BREAK with WITH is the trader's break of structure |
+| AGAINST | the state is the other direction | |
+| NONE | the state is MIXED | |
+
+Text `BREAK↑[WITH]`.
+
+**CHARACTER_SHIFT** (alias CHoCH): the first AGAINST BREAK while an **established** UP or DOWN state
+holds, once per run of that state. A state is established once ESTABLISH_LABELS (**2**) consecutive
+labels have held it, the label that set it counting; a run ends at the next STRUCTURE_SHIFT. Breaks
+are taken in the order they became known (known_at, then bar, then the earliest origin), so a prefix
+sees the same first one; at most one per bar. Direction the break's, `known_at` the break's, `parts`
+the BREAK; attributes `break`, `structure` (the state it went against), `run`, `level`.
+
+The fixture `TREND_CHOCH_BOS` (`tests/test_structure.py`): an up trend labelled HH HL HH HL HH
+(state UP from bar 41, established at 49), BOS↑ at 43 and 55 (WITH), a fall that breaks the last
+higher low at bar 67 (AGAINST: the CHARACTER_SHIFT↓), then LL and LH (MIXED at 77, DOWN at 83), and
+breaks down at 87 and 103 that are WITH - the BOS in the new direction - and not further CHoCHs. A
+break against a state that only one label holds is AGAINST without being a CHoCH.
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -552,6 +632,10 @@ never NaN.
 | marubozu | OPEN_AT_LOW and CLOSE_AT_HIGH (bull) | within-bar point relations |
 | doji | OPEN_EQ_CLOSE | |
 | gap | OPEN_GAP_UP / OPEN_GAP_DOWN; a full gap HIGH_BELOW_PREV_LOW / LOW_ABOVE_PREV_HIGH | |
+| higher high, lower low, ... (v2) | SWING↑[HH], SWING↓[LL], ... | labels of 3/3 swings |
+| market structure bullish / bearish (v2) | STRUCTURE UP / DOWN | last high HH and last low HL / LH and LL |
+| BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
+| CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
 ## What the walk null shows
 
@@ -716,6 +800,25 @@ GARCH and 152 of 2,710 under momentum.
   candidates too, so that V = 0 origins have sentences comparable with zones'.
 
 ## Decisions the brief left open
+
+### v2
+
+- **v2 is part of the default parse.** `parse(df)` adds every v2 entity and attribute (FOCuS and
+  CUSUM only with `changepoints=True`, multiple timeframes through `mtf.py`), so the v1 truncation
+  and flip tests cover v2 as well; `parse(df, v2=False)` is the v1 chart, entity for entity.
+- **Swing labels (item 1).** The equality tolerance is SWING_EQ_ATR = 0.1 ATR at the later swing,
+  not v1's EQ_ATR (0.05, for adjacent price points): swings are further apart in time and price. An
+  equal high or low makes the state MIXED - the brief's UP is HH and HL, and an equal high is not a
+  higher one. The first swing of each kind has no label. Labels known on one bar are applied together.
+- **STRUCTURE_SHIFT's direction** is the direction the state moved in the order DOWN < MIXED < UP
+  (UP → MIXED is a shift down), so every shift has one and the flip maps it.
+- **vs_structure reads the state at the break's bar**, not at its known_at (a break can be known up
+  to three bars later, when its origin swing is confirmed). Both are causal; the bar is what a trader
+  means by "the structure when it broke".
+- **CHoCH (item 11)**: "established" counts labels, not shifts, and includes the label that set the
+  state; "first" is per run of the state and in the order breaks became known, so a truncated parse
+  finds the same one. At most one per bar (two legs breaking on one bar make one CHoCH, the longer
+  leg's).
 
 ### v1
 

@@ -47,19 +47,37 @@ def _bin(x: float | None, bins: tuple) -> str:
     return next(name for edge, name in bins if x < edge)
 
 
-def token(e: Entity, bins: bool = False) -> str:
+# ---------------------------------------------------------------- v2 token text
+
+#: Each v2 type's text qualifier: what says which one it is, printed in brackets after the type and
+#: arrow by `token(e, v2=True)`. v1 text is unchanged unless asked.
+V2_TEXT: dict[str, Any] = {
+    "SWING": lambda e: e.get("label"),
+    "STRUCTURE_SHIFT": lambda e: f"{e.get('from')}>{e.get('to')}",
+    "BREAK": lambda e: e.get("vs_structure"),
+}
+
+
+def _v2(e: Entity) -> str:
+    f = V2_TEXT.get(e.type)
+    q = f(e) if f is not None else None
+    return f"[{q}]" if q else ""
+
+
+def token(e: Entity, bins: bool = False, v2: bool = False) -> str:
+    """`BREAK↑`, binned `BREAK↑[force:strong,age:mid,took:1]`, with v2 qualifiers `BREAK↑[WITH]`
+    (both: `BREAK↑[force:strong,age:mid,took:1][WITH]`)."""
     t = f"{e.type}{e.dir.arrow}"
-    if not bins:
-        return t
-    if e.type == "BREAK" and e.force is not None:
-        return (f"{t}[force:{_bin(e.force.magnitude, FORCE_BINS)},age:{_bin(e.get('ref_age'), AGE_BINS)},"
-                f"took:{_bin(e.get('swings_taken'), TOOK_BINS)}]")
-    if e.type == "VOID":
-        return f"{t}[size:{_bin(e.get('size_atr'), VOID_BINS)}]"
-    if e.type == "REVISIT":
-        k = e.get("count")
-        return f"{t}[n:{k if k < 3 else '3+'}]"
-    return t
+    if bins:
+        if e.type == "BREAK" and e.force is not None:
+            t = (f"{t}[force:{_bin(e.force.magnitude, FORCE_BINS)},age:{_bin(e.get('ref_age'), AGE_BINS)},"
+                 f"took:{_bin(e.get('swings_taken'), TOOK_BINS)}]")
+        elif e.type == "VOID":
+            t = f"{t}[size:{_bin(e.get('size_atr'), VOID_BINS)}]"
+        elif e.type == "REVISIT":
+            k = e.get("count")
+            t = f"{t}[n:{k if k < 3 else '3+'}]"
+    return t + _v2(e) if v2 else t
 
 
 def sentence(chart: Chart, types: tuple[str, ...] = SENTENCE_TYPES) -> list[Entity]:
@@ -81,8 +99,8 @@ def _origin_at(e: Entity) -> int:
     return int(o.split(".")[2]) if o else -1
 
 
-def tokens(chart: Chart, bins: bool = False, types: tuple[str, ...] = SENTENCE_TYPES) -> list[str]:
-    return [token(e, bins) for e in sentence(chart, types)]
+def tokens(chart: Chart, bins: bool = False, types: tuple[str, ...] = SENTENCE_TYPES, v2: bool = False) -> list[str]:
+    return [token(e, bins, v2) for e in sentence(chart, types)]
 
 
 def episode(chart: Chart, zone_id: str, bins: bool = False) -> list[str]:
@@ -136,14 +154,14 @@ def bar_sentence(chart: Chart) -> str:
     return " ".join(bar_words(chart))
 
 
-def interleaved(chart: Chart, types: tuple[str, ...] = V1_TYPES, bins: bool = False) -> list[str]:
+def interleaved(chart: Chart, types: tuple[str, ...] = V1_TYPES, bins: bool = False, v2: bool = False) -> list[str]:
     """The bar words with every L2/L3 event of `types` placed after the word of the bar at which it
     became known (its known_at), in the event sentence's order - so a reader sees an EXTREME three
     words after its own bar, when it could first have been known."""
     ws = bar_words(chart)
     at: dict[int, list[str]] = {}
     for e in sentence(chart, types):
-        at.setdefault(e.known_at, []).append(token(e, bins))
+        at.setdefault(e.known_at, []).append(token(e, bins, v2))
     out = []
     for t, w in enumerate(ws):
         out.append(w)

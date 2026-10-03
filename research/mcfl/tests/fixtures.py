@@ -38,3 +38,27 @@ INVALIDATED = WARMUP + RISE + FALL + LEG_INVALID + AFTER
 # closes above the high at 101.0 having travelled 1.55 (under 2 ATR) from the origin: no DISPLACE
 SHALLOW = WARMUP + [100.7, 100.5, 100.3, 100.1, 99.95, 100.2, 100.85, 101.0, 101.1, 101.2]
 SHALLOW_ORIGIN = len(WARMUP) + 4
+
+
+# ---------------------------------------------------------------- v2
+
+def zig(points: list[float], step: float = 0.5) -> list[float]:
+    """Closes moving in `step`s from each point to the next: a zigzag whose turns are 3/3 swings
+    when each leg is at least four steps long."""
+    out: list[float] = []
+    for a, b in zip(points, points[1:]):
+        k = int(round(abs(b - a) / step))
+        s = 1.0 if b > a else -1.0
+        out += [a + s * step * (i + 1) for i in range(k)]
+    return out
+
+
+# an up trend (HH HL HH HL HH), a fall that breaks the last higher low (the CHoCH, bar 67), a lower
+# high and a lower low (DOWN), and two breaks down with the new structure (BOS, bars 87 and 103)
+TREND_CHOCH_BOS = WARMUP + zig([100.5, 103, 101.5, 105, 103, 107, 105, 109, 101, 104, 99, 102, 96])
+CHOCH_BAR = 67
+
+
+def with_time(df: pd.DataFrame, sec: int = 900, start: int = 0) -> pd.DataFrame:
+    """The bars with a `ts` column (bar open, epoch seconds), every `sec` seconds from `start`."""
+    return df.assign(ts=start + np.arange(len(df), dtype=np.int64) * sec)
