@@ -308,9 +308,43 @@ def item12(ch: Chart) -> dict:
             "rates": rates, "shares": shares}
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"12": item12, "3": item3, "9": item9, "8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
+def item10(m) -> dict:
+    from mcfl.mtf import nested_flags
+    ch = m.ltf
+    zs = {z.id: z for z in ch.of("ZONE")}
+    # how each zone's first revisit ended: REJECT_PATH (1 ATR back out) before a FAIL?
+    first: dict[str, str] = {}
+    for e in sorted(ch.of("REVISIT", "REJECT_PATH", "FAIL", "ACCEPT"), key=lambda e: (e.known_at, e.at)):
+        z = e.get("zone")
+        if e.type == "REVISIT":
+            first.setdefault(z, "open")
+        elif first.get(z) == "open" and e.get("count") == 1:
+            first[z] = e.type
+    shares = {}
+    rates = Counter()
+    for mode in ("causal", "entry", "leg", "research"):
+        fl = nested_flags(m, mode)
+        flagged = [k for k, v in fl.items() if v]
+        rates[f"ZONE nested ({mode})"] = len(flagged)
+        done = [k for k in flagged if first.get(k) in ("REJECT_PATH", "FAIL")]
+        shares[f"nested ({mode}): first revisit REJECT_PATH before FAIL"] = (
+            sum(first[k] == "REJECT_PATH" for k in done), len(done))
+        shares[f"share of zones nested ({mode})"] = (len(flagged), len(zs))
+    done = [k for k in zs if first.get(k) in ("REJECT_PATH", "FAIL")]
+    shares["all zones: first revisit REJECT_PATH before FAIL"] = (sum(first[k] == "REJECT_PATH" for k in done), len(done))
+    rates.update(r.kind for r in m.relations if r.kind in ("ALIGN", "CONFLICT"))
+    pur = [e for e in m.entities if e.type == "PURGE"]
+    dist = {e.get("purge") for e in m.entities if e.type == "DISTRIBUTION"}
+    shares["4h CRT: LTF-seen purge then distribution within 3 HTF bars"] = (sum(p.id in dist for p in pur), len(pur))
+    rates["4h PURGE seen on 15m"] = len(pur)
+    al = [r for r in m.relations if r.kind in ("ALIGN", "CONFLICT") and r.src.startswith("ZONE") and "BREAK" in r.dst]
+    stream = [("A" if r.kind == "ALIGN" else "C") for r in sorted(al, key=lambda r: r.known_at)]
+    return {"streams": {"zone vs 4h legs": stream}, "rates": rates, "shares": shares}
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"10": item10, "12": item12, "3": item3, "9": item9, "8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
                                              "5": item5}
-TITLES = {"12": "candle range theory (single timeframe)", "3": "volume: effort against result, taker skew", "9": "changepoints: FOCuS and CUSUM", "8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
+TITLES = {"10": "multiple timeframes (15m against 4h): NESTED, ALIGN / CONFLICT, 4h CRT", "12": "candle range theory (single timeframe)", "3": "volume: effort against result, taker skew", "9": "changepoints: FOCuS and CUSUM", "8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
           "7": "retracement depth", "6": "liquidity pools and the protected sweep",
           "5": "RANGE: boxes, tests and escapes"}
 
@@ -326,8 +360,14 @@ def _measure(job: tuple) -> dict:
         seed = 7_000_001 * (rep + 1) + s
     else:
         df, seed = base, s
-    ch = parse(dress(df, seed), changepoints=True)
-    return {k: ITEMS[k](ch) for k in items} | {"_bars": ch.n}
+    df = dress(df, seed)
+    if "10" in items:
+        from mcfl.mtf import parse_mtf
+        m = parse_mtf(df, htf_sec=14400, label="4h", changepoints=True)
+        ch = m.ltf
+    else:
+        m, ch = None, parse(df, changepoints=True)
+    return {k: (ITEMS[k](m) if k == "10" else ITEMS[k](ch)) for k in items} | {"_bars": ch.n}
 
 
 def _z(x: float, xs: list[float]) -> float:

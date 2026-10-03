@@ -736,6 +736,66 @@ entity: the candle is a part of what is built on it (usually a higher timeframe'
 Text `PURGE↑`, `DISTRIBUTION↓[2,mid:1]`, `CRT3↓`. Multi-timeframe CRT (an HTF range candle whose purge
 is seen on LTF candles) is item 10's `mtf.crt`, below.
 
+### 10. Multiple timeframes
+
+`mtf.py`: `parse_mtf(df, htf_sec=14400, label="4h")` parses the lower timeframe (LTF), builds the
+higher timeframe (HTF) from it, parses that, and relates the two; `parse_mtf(df, ..., htf=bars)`
+takes the HTF chart's own bars instead and maps them onto the LTF bars by time.
+
+**Aggregation.** An HTF bar is built from the LTF CANDLE tokens' lexemes: the first open, the highest
+high, the lowest low, the last close, the summed volume (and taker volumes). Bars are grouped by time
+(`ts // htf_sec`), or by count (`factor`) without timestamps. An HTF bar is **complete** - and anything
+read from it known - at the LTF bar that closes its period (that bar's `ts` plus the LTF bar length
+reaches the period's end), or, when bars are missing at the end, at the next period's first bar; by
+count, at its last bar. The incomplete last bar is never used. The HTF chart is then parsed as any
+chart, so its CANDLE words are fuzzy classes against the HTF's own history, and every HTF entity is
+read in LTF time: `MTF.span(e)` (the LTF bars of its HTF bars - a BREAK's leg from its origin to its
+break bar, a LEG's origin to end, a ZONE's origin to break, a RANGE's window) and
+`MTF.known_ltf(e)` (the LTF bar at which its HTF `known_at` bar is complete). HTF ids are prefixed
+with the label: `4h:BREAK.U.66.o57`.
+
+| relation | meaning | `known_at` |
+|---|---|---|
+| CONTAINS_TF(H, L) | the HTF entity's span holds L's bar. Materialised for each HTF CANDLE → the LTF CANDLEs it was built from (the aggregation's derivation); on demand for any pair (`MTF.contains`) | the later of the two |
+| ALIGN / CONFLICT (L, H) | an LTF ZONE or BREAK against (a) the HTF STRUCTURE state known when L is: ALIGN when it is L's direction, CONFLICT when opposite, nothing when MIXED (H the STRUCTURE_SHIFT that set it); (b) an HTF BREAK whose leg spans L's bar **and which is known by L's known_at**: ALIGN same direction, CONFLICT opposite | L's |
+
+**NESTED** (L3, `MTF.entities`): the desk's strongest finding (`zone_nested.py`, "inside_4h") as one
+production, in its causal form:
+
+```
+NESTED_UP := ZONE_UP@LTF   where ZONE.at in span(BREAK_UP@HTF)  and  known_ltf(BREAK) <= ZONE.known_at
+```
+
+an LTF ZONE whose ORIGIN lies inside the leg of an HTF BREAK of the same direction - and only once that
+HTF break was knowable when the LTF zone was. Parts the ZONE and the HTF BREAK (the first known),
+attributes `of_zone`, `htf_break`, `htf_breaks`, `tf`. `mtf.nested_flags(m, mode)` gives the flag for
+every LTF zone in four forms:
+
+| mode | the HTF break must be | causal? |
+|---|---|---|
+| `causal` (default; = NESTED) | known by the LTF zone's `known_at` | yes |
+| `entry` | known by the zone's first REVISIT (zone_nested's own later correction, CAUSAL=1) | for a trade entered at the revisit; not for the zone |
+| `leg` | any whose leg spans the origin, whenever known | no |
+| `research` | `leg`, among the HTF breaks zone_events recorded - those whose own HTF zone was later returned to (`zone_events_recorded`: 5 bars after the break exist and one of its four bounds was revisited before a close through it) | no: it reads the future twice |
+
+**The research form reproduces `inside_4h` exactly**: `tests/test_mtf.py` runs `zone_nested.evs` on
+the 15m walk and on its 4h aggregation and the flag's own leg test, and every LTF zone zone_nested
+flags (qualified first returns filled at the near edge, body bound; 150-200 per series) has the same
+flag, on two walks and two GARCH walks of 4,800 bars. **The causal form disagrees, and by a lot**: an
+LTF zone qualifies within hours of its origin, while the HTF break whose leg holds that origin is
+usually known days later, so on those walks the research form flags 49-84 zones per series and the
+causal form 1-3; most research-flagged zones (over 50 in two series) are flagged only through breaks
+the zone could not have known (`test_causal_and_research_forms_disagree`). This is the desk's lesson in
+the language's terms: the conditioning event of a cross-timeframe relation must be known before the
+entity it conditions.
+
+**Multi-timeframe CRT** (`MTF.entities`): an HTF CANDLE j is the RANGE_CANDLE; its PURGE is seen on the
+LTF, on the first LTF candle of the next HTF period (CONTAINS_TF) whose high is beyond the HTF candle's
+high and whose close is back inside the HTF range - at that LTF bar, before the HTF candle closes;
+DISTRIBUTION the first later LTF candle, up to the end of HTF period j + 1 + CRT_N, at the HTF range's
+other side; CRT3 the three, as in item 12. Periods are read from the LTF bars' own timestamps, so a
+purge is found at its LTF bar whether or not the HTF bar it falls in is complete.
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -855,6 +915,7 @@ never NaN.
 | "momentum ignition", a change in drift (v2) | FOCUS, FOCUS6, CUSUM_IGNITION | the desk's own detectors |
 | effort vs result, absorption, "no supply" (v2) | effort = ABSORPTION / EASE / AGREE; vol | Wyckoff's effort and result |
 | CRT: range candle, purge (manipulation), distribution (v2) | RANGE_CANDLE (any CANDLE), PURGE, DISTRIBUTION, CRT3 | |
+| HTF bias, "trade with the 4h", a 15m zone inside a 4h break (v2) | ALIGN / CONFLICT, NESTED | causal: the HTF event known first |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -1013,10 +1074,9 @@ GARCH and 152 of 2,710 under momentum.
   `ORIGIN↑ DISPLACE↑ VOID↑ BREAK↑ REVISIT↑ REJECT↑` has the same continuation distribution on EURUSD
   1h and BTC 4h, the language is scale-free and pooling is legitimate; if not, sentences need an
   asset/timeframe context, which is a different language.
-- **Does a multi-timeframe ALIGN/CONFLICT relation work?** ALIGN(a, b) for a lower-timeframe
-  entity inside a same-direction higher-timeframe ZONE, CONFLICT for the opposite, mapped with
-  `prims.htf_index` so the higher bar is closed. The desk's 4h-bias filter is a special case; it
-  helped nothing in [`origin-zones.md`](origin-zones.md), so this is to be measured, not assumed.
+- **Does a multi-timeframe ALIGN/CONFLICT relation work?** v2 defines it (item 10), causally; whether
+  it carries anything is to be measured on markets, not assumed. The desk's 4h-bias filter, a special
+  case, helped nothing in [`origin-zones.md`](origin-zones.md).
 - **EPISODE as an entity** (RANGE became one in v2), and whether lifecycle events should exist for failed
   candidates too, so that V = 0 origins have sentences comparable with zones'.
 
@@ -1093,6 +1153,17 @@ GARCH and 152 of 2,710 under momentum.
   point tolerance. CRT_N = 3 candles after the purge, the purge candle itself not counted (its own
   low below the range is a purge of the other side, not a distribution). DISTRIBUTION's direction is
   the move's (down after a purge of the high), and so is CRT3's.
+- **Multiple timeframes (item 10).** The HTF chart is parsed on its own bars (so its words are HTF
+  words) and read in LTF time through two maps, span and known; the two charts stay separate objects
+  (`MTF`), with HTF ids prefixed by the timeframe, rather than one chart with mixed bar clocks.
+  CONTAINS_TF is materialised only for candles (any other pair is on demand; all pairs would be
+  quadratic). ALIGN/CONFLICT are materialised for LTF ZONEs and BREAKs. NESTED is causal by default:
+  the HTF break must be known, in LTF time, by the LTF zone's known_at - the brief's rule. The
+  research's flag is kept as a non-causal form (`nested_flags(mode="research")`), with the selection of
+  HTF breaks zone_events made (only those later returned to), because reproducing it exactly needs it;
+  it is a check, not a relation the language offers.
+- **The multi-timeframe CRT** waits for the HTF range candle to be complete but not for the purge's HTF
+  candle: the purge is an LTF event, found by the LTF bars' own periods.
 
 ### v1
 
