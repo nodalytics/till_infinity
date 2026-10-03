@@ -1,0 +1,15 @@
+{
+  "frozen": "2026-10-03",
+  "found_on": "MT5 CFDs (FX, metals XAU/XAG, indices, energy, BTC/ETH/SOL) 1h/4h/1d; threshold from returns before 2023-01-01",
+  "rule": {
+    "zone": "qualified origin (V=1): a 3/3 swing low/high, a close beyond the last known swing within 20 bars before trading through the origin, a 0.1+ ATR gap on the path, 2+ ATR displacement",
+    "return": "first return",
+    "entry": "resting limit at the near edge of the body band (origin low to body top for a bull zone)",
+    "approach_max_atr": 1.4346,
+    "approach": "close 5 bars before the return bar minus the return bar's low (bull; mirrored for bear), in ATR",
+    "stop": "0.1 ATR past the far edge, at least 0.25 ATR from the entry",
+    "target": "1R, net of the broker's spread floor; else out after 5 days"
+  },
+  "judged_once_on": "the 32 validation crypto CFDs, XPT/XPD/XCU, and Deriv's Volatility 10/50/100, Step 200/500, Drift Switch 20/30 - none used in any zone study",
+  "passes_if": "R a trade > 0 and above both the qualified zones without the approach rule and the unqualified swing origins with it, the day-bootstrap 90% interval of R excluding 0"
+}
