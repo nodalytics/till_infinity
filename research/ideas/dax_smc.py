@@ -31,6 +31,14 @@ timeframe up (4h, 1d, weekly). For a buy (a sell is the same on the flipped char
   filters        all (no veto), veto (structural liquidity present), veto50 (+ the 50% test),
                  vshape (+ the V), major (+ the major break), full (+ context), no_sl (exactly the
                  setups the veto skips - what standing down avoided)
+  combined       (asked for later) the POI on a live zone of ours, not closed through since:
+                 zr_all  any setup whose POI is on a research origin zone; zr the same with the
+                 veto; zp on one of production's origins; zf on a fair-value gap; z_full every
+                 step of the checklist and on any of them. zb: the POI on a Bjorgum zone shown
+                 at that bar (veto too); zb_full every step and on one; zrb on a Bjorgum zone and
+                 on one of ours. zz: ZMA stretched the setup's way when it is known (veto
+                 too); zz_full every step and that; zzb that and on a Bjorgum zone. The other half - our origin zones
+                 asked the DAX tests - is in `zones.py` (filters dax, dax_major)
   nulls          coin twin, random-time trades; day bootstrap, Benjamini-Hochberg (zones.run)
 
   OUT=... MT5BT_DB=... MODE=plot|run|direction python research/ideas/dax_smc.py
@@ -58,7 +66,8 @@ OUT = Path(os.environ.get("OUT", ".data/dax_smc"))
 L, SWEEP_BACK, BREAK_BARS, QMR_BACK, LIVE_BARS, BUF, TARGET_R = 3, 40, 60, 30, 50, 0.1, 3.0
 UP = {"1h": "4h", "4h": "1d", "1d": "1w"}
 SEC = {"1h": 3600, "4h": 14400, "1d": 86400, "1w": 7 * 86400}
-FILTERS = ("all", "veto", "veto50", "vshape", "major", "full", "no_sl")
+FILTERS = ("all", "veto", "veto50", "vshape", "major", "full", "no_sl",
+           "zr_all", "zr", "zp", "zf", "z_full", "zb", "zb_full", "zrb", "zz", "zz_full", "zzb")
 TRIGGERS = ("risk", "sl_take")
 
 
@@ -198,6 +207,29 @@ def context(df, iv, st, load):
     return np.where(st["side"] > 0, e < mid, e > mid)
 
 
+def confluence(df, a, st, zs) -> np.ndarray:
+    """Whether each setup's POI overlaps (0.1 ATR) a zone of the same side that is live by the
+    setup's bar and has not been closed through since."""
+    c = df["close"].to_numpy()
+    out = np.zeros(len(st), bool)
+    for n_, s in enumerate(st.itertuples()):
+        plo, phi = min(s.poi_lo, s.poi_hi), max(s.poi_lo, s.poi_hi)
+        pad = 0.1 * a[int(s.i)]
+        for z in zs:
+            if z.side != s.side or z.live > s.i:
+                continue
+            lo, hi = min(z.lo, z.hi), max(z.lo, z.hi)
+            if hi < plo - pad or lo > phi + pad:
+                continue
+            span = c[z.live:int(s.i) + 1]
+            A = a[z.p]
+            broken = (span < z.lo - Z.BUF * A).any() if z.side > 0 else (span > z.lo + Z.BUF * A).any()
+            if not broken:
+                out[n_] = True
+                break
+    return out
+
+
 def flags(st: pd.DataFrame) -> pd.DataFrame:
     st["all"] = True
     st["veto"] = st["has_sl"]
@@ -206,6 +238,19 @@ def flags(st: pd.DataFrame) -> pd.DataFrame:
     st["major"] = st["vshape"] & st["major"]
     st["full"] = st["major"] & st["context"]
     st["no_sl"] = ~st["has_sl"]
+    # the combination with our zone marking (asked for later): the POI sits on a live zone of ours
+    if "conf_research" in st:
+        st["zr_all"] = st["conf_research"]
+        st["zr"] = st["veto"] & st["conf_research"]
+        st["zp"] = st["veto"] & st["conf_prod"]
+        st["zf"] = st["veto"] & st["conf_fvg"]
+        st["z_full"] = st["full"] & (st["conf_research"] | st["conf_prod"] | st["conf_fvg"])
+        st["zb"] = st["veto"] & st["conf_bjorgum"]
+        st["zb_full"] = st["full"] & st["conf_bjorgum"]
+        st["zrb"] = st["veto"] & st["conf_bjorgum"] & (st["conf_research"] | st["conf_prod"] | st["conf_fvg"])
+        st["zz"] = st["veto"] & st["zma_st"]
+        st["zz_full"] = st["full"] & st["zma_st"]
+        st["zzb"] = st["veto"] & st["zma_st"] & st["conf_bjorgum"]
     return st
 
 
@@ -224,12 +269,28 @@ def run_one(job):
     if st.empty:
         return []
     st["context"] = context(df, iv, st, lambda x: R.load(sym, x))
+    st["conf_research"] = confluence(df, a, st, Z.long_zones(df, a) + _flipped(df, a))
+    st["conf_prod"] = confluence(df, a, st, Z.zones_prod(df, a))
+    st["conf_fvg"] = confluence(df, a, st, Z.zones_fvg(df, a))
+    piv = Z.bjorgum_pivots(df)
+    st["conf_bjorgum"] = [Z.bjorgum_overlap(piv, int(r.i), min(r.poi_lo, r.poi_hi), max(r.poi_lo, r.poi_hi))
+                          for r in st.itertuples()]
+    zm = Z.zma_series(df)  # stretched the setup's way when it is known (the bar before the limit rests)
+    st["zma_st"] = zm["stretched"].to_numpy()[st["i"].to_numpy()] == st["side"].to_numpy()
     st = flags(st)
     st["sid"] = [f"{sym}|{iv}|{k}" for k in range(len(st))]
     out = Z._trade_all(sym, iv, book, costs, min_stop, df, a, st, list(FILTERS), list(TRIGGERS), SEC[iv])
     print(f"  {sym} {iv}: {len(st)} setups, {int(st['veto'].sum())} with structural liquidity, "
           f"{int(st['full'].sum())} pass every step", flush=True)
     return out + [st.assign(sym=sym, iv=iv, kind="setup", ts=df["ts"].to_numpy()[st["i"].to_numpy()])]
+
+
+def _flipped(df, a):
+    """The research origin zones' short side, in this chart's prices (as `zones.zones` builds it)."""
+    zs = Z.long_zones(Z.flip(df), a, -1)
+    for z in zs:
+        z.lo, z.hi, z.bos_level, z.leg_extreme = -z.lo, -z.hi, -z.bos_level, -z.leg_extreme
+    return zs
 
 
 def run():
@@ -333,6 +394,7 @@ def plot():
             continue
         st["context"] = context(df, iv, st, lambda x, s=sym: R.load(s, x))
         st = flags(st)
+        piv = Z.bjorgum_pivots(df)
         pick = st[(st["trigger"] == "risk") & st["veto50"]]
         if pick.empty:
             continue
@@ -347,6 +409,10 @@ def plot():
             ax.vlines(x, w["low"], w["high"], color="#555", lw=0.6)
             ax.bar(x[up], (w["close"] - w["open"])[up], bottom=w["open"][up], color="#2a9d8f", width=0.7)
             ax.bar(x[~up], (w["close"] - w["open"])[~up], bottom=w["open"][~up], color="#e76f51", width=0.7)
+            bj = False
+            for b_lo, b_hi, _ in Z.bjorgum_live(piv, int(s.i)):
+                ax.axhspan(b_lo, b_hi, color="purple", alpha=0.08)
+                bj |= b_hi >= min(s.poi_lo, s.poi_hi) and b_lo <= max(s.poi_lo, s.poi_hi)
             ax.hlines(s.swept_px, s.swept, s.protected, colors="#666", linestyles=":", lw=1)
             ax.annotate("swept low" if s.side > 0 else "swept high", (s.swept, s.swept_px), fontsize=8)
             ax.scatter([s.protected], [s.protected_px], marker="o", s=80, facecolors="none", edgecolors="k", zorder=5)
@@ -365,10 +431,10 @@ def plot():
             ax.axvline(s.i, color="#bbb", lw=0.6, ls=":")
             ax.set_title(f"{sym} {iv} {'buy' if s.side > 0 else 'sell'}  POI={s.poi}  "
                          f"50%:{'ok' if s.valid50 else 'fail'}  V:{'ok' if s.vshape else 'fail'}  "
-                         f"context:{'ok' if s.context else 'fail'}  "
+                         f"context:{'ok' if s.context else 'fail'}  bjorgum:{'on' if bj else 'off'}  "
                          f"{pd.Timestamp(df['ts'].iat[int(s.i)], unit='s'):%Y-%m-%d %H:%M}", fontsize=9)
         fig.suptitle("swept low -> PROTECTED low -> BOS (dashed) -> structural liquidity (x) -> POI (blue, live "
-                     "window) | red stop past the protected low, green 3R | dotted line: setup known", fontsize=11)
+                     "window) | red stop past the protected low, green 3R | purple: Bjorgum zones shown then", fontsize=11)
         fig.tight_layout()
         fig.savefig(OUT / f"dax_{sym.replace(' ', '_')}_{iv}.png", dpi=80)
         plt.close(fig)
