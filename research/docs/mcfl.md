@@ -549,6 +549,39 @@ order, at its close. `parts` is that bar's CANDLE. Each transition is also a
 void's state at any bar is `voids.void_state(chart, void_id, t)` - None before the VOID is known,
 UNTOUCHED from then. Exact comparisons, no tolerance, as v1's VOID itself.
 
+### 7. Retracement depth
+
+`retrace.py`. For an up structure (down mirrored): the leg runs from the structure's low L to the
+peak P, the retracement from P down to the pullback's low x, and
+
+```
+depth = (P - x) / (P - L)       SHALLOW < 0.382 <= HALF < 0.618 <= DEEP <= 1 < BEYOND (past the origin)
+```
+
+| event | where | P, x | `known_at` | parts |
+|---|---|---|---|---|
+| **RETRACE** | every REVISIT of a zone, at the revisit bar t | P = the highest high from the origin to t - 1, x = low[t]; L = the zone's far edge | t | the REVISIT |
+| **PULLBACK** `phase=INSIDE` | per BREAK: the last swing low strictly between its origin p and the break bar b, above the origin's low (the DAX course's "structural liquidity") | P = the highest high of p..b (the leg to the break), x = the swing's price | max(the break's, the swing's) | the BREAK and the EXTREME |
+| **PULLBACK** `phase=AFTER` | per BREAK: the first swing low after b | P = the highest high of p..that swing | max(the break's, the swing's) | the BREAK and the EXTREME |
+
+Attributes `depth` (a number) and `depth_bin`, `peak`, `level` (x), and `revisit`, `count` or `break`,
+`phase`. Text `RETRACE↑[DEEP]`, `PULLBACK↑[INSIDE:HALF]`.
+
+Both are qualifiers through the v2 **entity qualifier** syntax (`grammar.qe`), the rule-table form
+of v1's CANDLE[...]: `TYPE[key op value, ...]`, where a number compares with the attribute
+(`PULLBACK[depth≥0.5]`), a value of a registered order compares by rank (`PULLBACK[depth≥HALF]` is
+HALF, DEEP or BEYOND) and anything else is equality (`PULLBACK[phase=INSIDE]`). So **the DAX 50%
+rule** ([`dax_smc.py`](../ideas/dax_smc.py) step 3: the structural liquidity is valid at or below the
+50% of the leg, protected low to the break's high) is one row of the rule table:
+
+```
+DAX50_UP := BREAK_UP PULLBACK_UP[phase=INSIDE, depth≥0.5]       where PULLBACK.break == BREAK.id
+```
+
+known at the later of the two. The fixtures `DAX_DEEP` (a pullback to 0.8 of the leg: DAX50) and
+`DAX_SHALLOW` (0.4: none) are in `tests/test_retrace.py`. With item 6's SWEEP_PROTECTED as the break's
+origin, steps 1-3 of the DAX checklist are a sentence (below).
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -658,6 +691,7 @@ never NaN.
 | higher high, lower low, ... (v2) | SWING↑[HH], SWING↓[LL], ... | labels of 3/3 swings |
 | market structure bullish / bearish (v2) | STRUCTURE UP / DOWN | last high HH and last low HL / LH and LL |
 | FVG filled / mitigated, inverted FVG (IFVG) (v2) | VOID_FILLED, VOID_PARTIAL, VOID_INVERTED | |
+| retracement, discount / premium, "the 50%" (v2) | RETRACE, PULLBACK[depth_bin], DAX50 | depth of a pullback in its leg |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -847,6 +881,12 @@ GARCH and 152 of 2,710 under momentum.
   the near edge, filling a low at or below the far edge, inverting a close strictly below it. A void
   is followed to the end of the series (no expiry); INVERTED is terminal. The transitions go into
   `Chart.transitions` beside the zones', keyed by the VOID's id.
+- **Retracement (item 7).** On a REVISIT the leg's peak is the highest high from the origin to the bar
+  before the revisit (the revisit bar's own high may come after its low). After a BREAK, the
+  pullback measured is the first swing low after the break (AFTER), and, for the DAX rule, the last
+  swing low inside the leg (INSIDE) measured against the leg to the break, exactly as `dax_smc.py`
+  measures its structural liquidity. Bins: 0.382 and 0.618 belong to the bin above; 1.0 is DEEP.
+  The DAX rule's 50% is the number 0.5 (`depth≥0.5`), not the HALF bin, which starts at 0.382.
 
 ### v1
 

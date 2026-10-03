@@ -204,6 +204,44 @@ def q(spec: str, cell: int | None = None) -> tuple[Clause, ...]:
     return tuple(_qual(x, cell) for x in _items(spec, "CANDLE"))
 
 
+ENTITY_ORDERS: dict[str, tuple[str, tuple[str, ...]]] = {}
+"""v2: ordered attribute values for entity qualifiers, `key -> (attribute, values in order)`; each
+module registers its own (retrace: depth -> depth_bin SHALLOW < HALF < DEEP < BEYOND)."""
+
+
+def qe(spec: str) -> tuple[Clause, ...]:
+    """v2: an entity qualifier, `TYPE[key op value, ...]`, as clauses on a rule slot's entity. A
+    number compares with the attribute itself (`PULLBACK[depth≥0.5]`); a value of a registered order
+    compares by rank (`PULLBACK[depth≥HALF]` is HALF, DEEP or BEYOND); anything else is (in)equality
+    with the attribute (`PULLBACK[phase=INSIDE]`)."""
+    head = spec.split("[", 1)[0].strip()
+    out = []
+    for item in _items(spec, head):
+        item = item.strip()
+        for sym, op in _OPS:
+            if sym in item:
+                key, value = (x.strip() for x in item.split(sym, 1))
+                break
+        else:
+            raise ValueError(f"cannot read qualifier {item!r}")
+        try:
+            out.append(C(key, op, float(value)))
+            continue
+        except ValueError:
+            pass
+        if key in ENTITY_ORDERS and value in ENTITY_ORDERS[key][1]:
+            col, order = ENTITY_ORDERS[key]
+            if op in ("==", "!="):
+                out.append(C(col, op, value))
+            else:
+                i = order.index(value)
+                keep = {">=": order[i:], "<=": order[:i + 1], ">": order[i + 1:], "<": order[:i]}[op]
+                out.append(C(col, "in", frozenset(keep)))
+        else:
+            out.append(C(key, op, value))
+    return tuple(out)
+
+
 def run(spec: str) -> tuple[tuple[int, ...], tuple[Clause, ...], tuple[Clause, ...]]:
     """`RUN[k≥2, quals]`: the cells, clauses and `unless` of a word that completes when the K-th
     consecutive token qualifies - once per run, at its K-th token. With `k=K` the token before the

@@ -55,6 +55,8 @@ V2_TEXT: dict[str, Any] = {
     "SWING": lambda e: e.get("label"),
     "STRUCTURE_SHIFT": lambda e: f"{e.get('from')}>{e.get('to')}",
     "BREAK": lambda e: e.get("vs_structure"),
+    "RETRACE": lambda e: e.get("depth_bin"),
+    "PULLBACK": lambda e: f"{e.get('phase')}:{e.get('depth_bin')}",
 }
 
 

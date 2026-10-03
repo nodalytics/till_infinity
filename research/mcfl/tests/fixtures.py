@@ -62,3 +62,10 @@ CHOCH_BAR = 67
 def with_time(df: pd.DataFrame, sec: int = 900, start: int = 0) -> pd.DataFrame:
     """The bars with a `ts` column (bar open, epoch seconds), every `sec` seconds from `start`."""
     return df.assign(ts=start + np.arange(len(df), dtype=np.int64) * sec)
+
+# a swing high at 104 (high 104.25), an origin at 100 (low 99.75), a rise to 103 and a pullback to 101
+# (a swing low, low 100.75) inside the leg, then the close above 104.25 at bar 51: the pullback is
+# 0.8 of the leg to the break (DEEP, past the DAX 50%)
+DAX_DEEP = WARMUP + zig([100.5, 104, 100, 103, 101, 105, 103, 106])
+# the same leg pulling back only to 103 (low 102.75): 0.4 of it (HALF, above the 50%)
+DAX_SHALLOW = WARMUP + zig([100.5, 104, 100, 104]) + zig([104, 103], 0.25) + zig([103, 106])

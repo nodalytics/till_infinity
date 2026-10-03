@@ -118,8 +118,23 @@ def item4(ch: Chart) -> dict:
     return {"streams": {"void life": stream}, "rates": rates, "shares": shares}
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"1": item1, "11": item11, "4": item4}
-TITLES = {"1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle"}
+def item7(ch: Chart) -> dict:
+    shares = {}
+    for name, ents in (("RETRACE", ch.of("RETRACE")),
+                       ("PULLBACK INSIDE", [e for e in ch.of("PULLBACK") if e.get("phase") == "INSIDE"]),
+                       ("PULLBACK AFTER", [e for e in ch.of("PULLBACK") if e.get("phase") == "AFTER"])):
+        for b in ("SHALLOW", "HALF", "DEEP", "BEYOND"):
+            shares[f"{name} {b}"] = (sum(e.get("depth_bin") == b for e in ents), len(ents))
+    br = len(ch.of("BREAK"))
+    shares["BREAKs with a DAX50 (inside pullback >= 0.5)"] = (len(ch.of("DAX50")), br)
+    rates = Counter(e.type for e in ch.of("RETRACE", "PULLBACK", "DAX50"))
+    return {"streams": {"pullbacks": _seq(ch, ("PULLBACK",), lambda e: f"{e.get('phase')[0]}{e.get('depth_bin')}")},
+            "rates": rates, "shares": shares}
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"1": item1, "11": item11, "4": item4, "7": item7}
+TITLES = {"1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
+          "7": "retracement depth"}
 
 
 # ---------------------------------------------------------------- runs

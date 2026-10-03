@@ -255,6 +255,11 @@ def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
     zones, failures, pending = grammar([e for e in wds if e.type in ("EXTREME", "VOID")] + level, RULES)
     life, transitions, states = lifecycle(T, zones, failures, cid, [e for e in wds if e.type == "DELIVERY_SHIFT"])
     rejects, _, _ = grammar([e for e in toks if e.type == "CANDLE"] + zones + life, CANDLE_RULES, n=len(df))
+    if v2:
+        from mcfl import retrace
+        pbs = retrace.pullbacks(fr, level, ext)
+        dax, _, _ = grammar([e for e in level if e.type == "BREAK"] + pbs, retrace.RULES, n=len(df))
+        extra += retrace.retraces(fr, zones, life) + pbs + dax
     ents = sorted(toks + wds + level + zones + life + rejects + extra, key=sort_key)
     rels = sorted(relations(ents), key=lambda r: (r.known_at, r.kind, r.src, r.dst))
     return Chart(n=len(df), entities=tuple(ents), relations=tuple(rels),
