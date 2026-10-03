@@ -98,6 +98,8 @@ def trades(df, side, cost_frac, spread, src, sym, iv):
 
 
 NS = (0.5, 1, 2, 4, 10)
+SLIP = 0.05  # adverse slippage on every stop fill, in ATR (amended before the run; see turn_rule2.json)
+WALK_STEPS = 256  # sub-steps a bar for the walk null: coarse paths let stops fill better than they traded
 
 
 def trades_exits(df, side, cost_atr, src, sym, iv):
@@ -130,7 +132,7 @@ def trades_exits(df, side, cost_atr, src, sym, iv):
             if j > t + 1:
                 stop = max(stop, best - 2 * atr[t])
             if l[j] <= stop:
-                px = min(o[j], stop) if j > t + 1 else stop
+                px = (min(o[j], stop) if j > t + 1 else stop) - SLIP * atr[t]
                 R = (px - entry) / risk
                 break
             best = max(best, h[j])
@@ -142,7 +144,7 @@ def trades_exits(df, side, cost_atr, src, sym, iv):
         R, mfe = None, 0.0
         for j in range(t + 1, min(n, t + 1 + H)):
             if l[j] <= stop0:
-                R = ((min(o[j], stop0) if j > t + 1 else stop0) - entry) / risk
+                R = ((min(o[j], stop0) if j > t + 1 else stop0) - SLIP * atr[t] - entry) / risk
                 break
             mfe = max(mfe, (h[j] - entry) / risk)
             if U["DELIVERY_SHIFT_DOWN"][j] and j + 1 < n:
@@ -179,7 +181,8 @@ def one_exits(job):
     cost_atr = np.where(np.isfinite(cost_atr), cost_atr, np.nanmedian(cost_atr))
     if source == "walk":
         ts = df["ts"].to_numpy()
-        df = synth.matched_walk(df, seed=zlib.crc32(f"{venue}{sym}{iv}".encode()) % 100000).reset_index(drop=True)
+        df = synth.matched_walk(df, seed=zlib.crc32(f"{venue}{sym}{iv}".encode()) % 100000,
+                                steps=WALK_STEPS).reset_index(drop=True)
         df["ts"] = ts[:len(df)]
         cost_atr = cost_atr[:len(df)]
     rows = []
