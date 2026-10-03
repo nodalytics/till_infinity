@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import bisect
 import operator
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -75,7 +76,7 @@ from typing import Any
 import numpy as np
 
 from mcfl.candles import BODY, GRADE, QUARTILES, REL_FIELDS, SIZE, WGRADE, WICK, Table, frame
-from mcfl.core import (COMPOSITE_POINTS, NAMED_POINTS, NEG_FIELD, POINT_ALIASES, SIDES, Dir, Entity, Failure,
+from mcfl.core import (COMPOSITE_POINTS, NAMED_POINTS, NEG_FIELD, POINT_ALIASES, POINTS, SIDES, Dir, Entity, Failure,
                        attrs_of, make_id, swap_key, view)
 
 ZONE_BREAK_MAX = 20
@@ -158,7 +159,8 @@ _KEYS = {"dir": ("dir", None), "size": ("size", SIZE), "upper": ("upper", WICK),
          "beyond": ("beyond", None),
          # v2
          "overlap": ("overlap", "num"), "session": ("session", None), "dow": ("dow", None),
-         "vol": ("volume_class", SIZE), "effort": ("effort", None), "taker": ("taker", None)}
+         "vol": ("volume_class", SIZE), "effort": ("effort", None), "taker": ("taker", None),
+         "trend": ("trend", None)}
 FLAGS: set[str] = {"NR4", "NR7", "WR7"}
 """v2: boolean token columns a qualifier names bare (`CANDLE[NR7]`, `CANDLE[not WR7]`); modules add
 theirs."""
@@ -174,9 +176,17 @@ def _key(key: str, value: str) -> tuple[str, Any]:
     return _KEYS[key]
 
 
+_CELL = re.compile(r"^([ohlc])(≥|≤|>=|<=|>|<|=)p([ohlc])$")
+_CELL_OPS = {">": ("+",), "≥": ("+", "="), ">=": ("+", "="), "=": ("=",), "<": ("-",), "≤": ("-", "="), "<=": ("-", "=")}
+
+
 def _qual(item: str, cell: int | None) -> Clause:
     item = item.strip()
     pre = "" if cell is None else f"{cell}."
+    m = _CELL.match(item)
+    if m:  # v2: one cell of the point matrix, `o>pc`: this bar's open against the previous close
+        x, op, y = m.groups()
+        return C(f"{pre}@P:{x.upper()}{y.upper()}", "in", frozenset(_CELL_OPS[op]))
     neg = item.startswith("not ")
     name = POINT_ALIASES.get(item[4:].strip() if neg else item, item[4:].strip() if neg else item)
     if name in NAMED_POINTS or name in COMPOSITE_POINTS or name in FLAGS:
@@ -327,8 +337,12 @@ def _col(F: Table, x: Expr, t: np.ndarray) -> tuple[Any, np.ndarray]:
     i = t + k
     ok = (i >= 0) & (i < n)
     ic = np.clip(i, 0, max(n - 1, 0))
-    if f in REL_FIELDS:
+    if f in REL_FIELDS or f.startswith("@P:"):
         ok &= F["rel_valid"][ic]
+    if f.startswith("@P:"):  # a cell of the point matrix, read from the frame's own (flipped) matrix
+        j = POINTS.index(f[3]) * 4 + POINTS.index(f[4])
+        col = np.array([s[j] if s else "" for s in F["points"]], object)
+        return col[ic], ok
     return F[f][ic], ok
 
 

@@ -13,7 +13,7 @@ from mcfl.parse import parse
 COMMON = {"SWING", "STRUCTURE_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED", "RETRACE", "PULLBACK", "POOL", "POOL_TAKEN",
           "SWEEP_PROTECTED", "BALANCE", "IMBALANCE",
           "SESSION_OPEN", "SESSION_EXTREME", "SESSION_EXTREME_TAKEN", "PURGE",
-          "DISTRIBUTION", "CRT3"}
+          "DISTRIBUTION", "CRT3", "PATTERN"}
 #: rarer ones, checked entity by entity on a longer series
 RARE = {"CHARACTER_SHIFT", "DAX50", "DAX_SETUP", "RANGE", "RANGE_TEST", "ESCAPE", "FAILED_ESCAPE"}
 

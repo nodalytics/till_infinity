@@ -89,3 +89,20 @@ def ticks(df: pd.DataFrame, seed: int, rate: float = TICK_RATE, skew: float = 0.
     p = 0.5 + skew * np.where(r > 0, body / np.where(r > 0, r * sd, 1.0), 0.0)
     buy = rng.binomial(v.astype(np.int64), np.clip(p, 0.0, 1.0)).astype(float)
     return df.assign(volume=v, taker_buy_volume=buy)
+
+
+def gapped(n: int, sigma: float = 1.0, gap: float = 0.5, seed: int = 0, steps: int = STEPS) -> pd.DataFrame:
+    """v2: an iid walk whose bars open away from the last close - a session market's overnight gap. Each
+    bar opens at the previous close plus a N(0, (gap x sigma)^2) jump that is not traded (it is not in
+    the bar's high or low), then moves as `walk` does. Without gaps a third of the Japanese candlestick
+    vocabulary cannot occur at all."""
+    rng = np.random.default_rng(seed)
+    jump = rng.normal(0.0, gap * sigma, n)
+    inc = rng.normal(0.0, sigma / np.sqrt(steps), (n, steps))
+    o, h, l, c = (np.empty(n) for _ in range(4))
+    prev = START
+    for i in range(n):
+        path = prev + jump[i] + np.r_[0.0, np.cumsum(inc[i])]
+        o[i], h[i], l[i], c[i] = path[0], path.max(), path.min(), path[-1]
+        prev = c[i]
+    return pd.DataFrame({"open": o, "high": h, "low": l, "close": c, "volume": np.full(n, float(steps))})

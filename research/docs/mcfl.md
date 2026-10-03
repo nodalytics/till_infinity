@@ -796,6 +796,150 @@ DISTRIBUTION the first later LTF candle, up to the end of HTF period j + 1 + CRT
 other side; CRT3 the three, as in item 12. Periods are read from the LTF bars' own timestamps, so a
 purge is found at its LTF bar whether or not the HTF bar it falls in is complete.
 
+### 13. The candlestick vocabulary
+
+`vocabulary.py`. Every classical pattern is a row of a word table (`vocabulary.VOCAB`, run like
+`grammar.WORDS`) over the v1 candle words, their strength grades and the OHLC point relations. There
+is no new price code: where a pattern relates bars that are not neighbours (the point matrix relates
+adjacent bars only) it compares two tokens' lexemes, as v1's VOID word does (`0.close > -2.body_mid`).
+Every pattern is a **PATTERN** event: written once for its bullish (UP) side and run on the chart and
+on the chart flipped, the flipped instance being its twin under the twin's name; known at its last
+bar; parts the CANDLE (and BAR_RELATION) tokens it consumed; attributes
+
+- `name`, the pattern's name on its side (HAMMER on UP, SHOOTING_STAR on DOWN);
+- `pattern`, the pair's key, also the id's suffix (`PATTERN.U.57.hammer`), so several patterns can
+  share a bar;
+- `trend`, the STRUCTURE state (item 1) known at the bar before the pattern's first bar;
+- SIGNAL_BAR also `quality`.
+
+Text `PATTERN↑[HAMMER]`. A pattern with no direction (the dojis, DOJI_BAR) is one event with direction
+NONE. A pattern whose canonical form is bearish (ON_NECK, IN_NECK, THRUSTING, ADVANCE_BLOCK, STALLED,
+TWO_CROWS, UPSIDE_GAP_TWO_CROWS, IDENTICAL_THREE_CROWS) is written as its mirror and has the canon's
+meaning on its DOWN side; its UP side, the mirror image, keeps the name. The direction of a PATTERN is
+the direction of its signal, as TA-Lib signs its patterns (ADVANCE_BLOCK↓ is three rising bull bars),
+which for the reversal patterns is not the direction of the bars.
+
+**The trend.** Where the canon names one shape two ways by the trend before it, the trend is part of
+the production: HAMMER and HANGING_MAN are one shape (a long lower wick), INVERTED_HAMMER and
+SHOOTING_STAR another; written as HAMMER := shape after a DOWN structure and INVERTED_HAMMER := its
+mirror shape after a DOWN structure, their twins are SHOOTING_STAR (the inverted shape after UP) and
+HANGING_MAN (the hammer's shape after UP). BELT_HOLD also requires the down structure. Every other
+pattern carries the trend as an attribute, so the canon's "after a downtrend" is `PATTERN[trend=DOWN]`
+when it is wanted.
+
+**Building blocks** (UP side): long body `body≥STRONG` (the body's force grade, body / ATR against its
+rolling distribution); short `body≤MODERATE`; small `body≤WEAK`; doji `OPEN_EQ_CLOSE` (within the
+point tolerance, 0.05 ATR); wick ratios `wick.low.body≥2`; and, new in v2, **point-cell qualifiers**:
+`o>pc`, `c≤po`, `l>pc`, ... - one cell of the point matrix, this bar's o/h/l/c against the previous
+bar's, ABOVE / EQUAL / BELOW with the tolerance (`grammar` compiles `x op py` to a clause on that
+cell, read from the frame's own matrix, so it flips correctly).
+
+**Single bars**
+
+| pattern (UP / its twin) | production, UP side (cell: qualifiers) | also | in words |
+|---|---|---|---|
+| HAMMER / SHOOTING_STAR | `0: wick.low.body≥2, wick.up≤WEAK, body≤MODERATE, close≥Q3` | `STRUCTURE DOWN before` | a lower wick twice the body, little upper wick, after a down structure |
+| INVERTED_HAMMER / HANGING_MAN | `0: wick.up.body≥2, wick.low≤WEAK, body≤MODERATE, close≤Q2` | `STRUCTURE DOWN before` | the hammer's shape upside down after a down structure (its twin, the hammer's shape after an up structure, is the hanging man) |
+| SPINNING_TOP | `0: dir=BULL, body≤MODERATE, not OPEN_EQ_CLOSE, wick.up.body>1, wick.low.body>1` |  | a short body with both wicks longer than it |
+| HIGH_WAVE | `0: dir=BULL, body≤WEAK, not OPEN_EQ_CLOSE, wick.up≥STRONG, wick.low≥STRONG, wick.up.body≥3, wick.low.body≥3` |  | a small body with very long wicks both ways |
+| DOJI (no direction) | `0: OPEN_EQ_CLOSE` |  | open and close equal |
+| LONG_LEGGED_DOJI (no direction) | `0: OPEN_EQ_CLOSE, wick.up≥STRONG, wick.low≥STRONG` |  | a doji with strong wicks both ways |
+| DRAGONFLY_DOJI / GRAVESTONE_DOJI | `0: OPEN_EQ_CLOSE, CLOSE_AT_HIGH, wick.low≥MODERATE` |  | a doji at the bar's high with a lower wick (twin: at the low, an upper wick) |
+| FOUR_PRICE_DOJI (no direction) | `0: OPEN_EQ_CLOSE, OPEN_AT_HIGH, OPEN_AT_LOW` |  | open, high, low and close all equal |
+| TAKURI | `0: OPEN_EQ_CLOSE, wick.up≤WEAK, wick.low≥DOMINANT` |  | a dragonfly-like doji with a dominant lower wick |
+| BELT_HOLD | `0: dir=BULL, body≥STRONG, OPEN_AT_LOW` | `STRUCTURE DOWN before` | a long bull body opening at its low, after a down structure |
+| MARUBOZU | `0: dir=BULL, body≥STRONG, OPEN_AT_LOW, CLOSE_AT_HIGH` |  | FULL: a long body with no wick either way |
+| OPENING_MARUBOZU | `0: dir=BULL, body≥STRONG, OPEN_AT_LOW, not CLOSE_AT_HIGH` |  | no wick at the open's end |
+| CLOSING_MARUBOZU | `0: dir=BULL, body≥STRONG, CLOSE_AT_HIGH, not OPEN_AT_LOW` |  | no wick at the close's end |
+| LONG_LINE | `0: dir=BULL, body≥STRONG, wick.up≤MODERATE, wick.low≤MODERATE` |  | a long body, modest wicks |
+| SHORT_LINE | `0: dir=BULL, body≤WEAK, not OPEN_EQ_CLOSE, wick.up≤WEAK, wick.low≤WEAK` |  | a small body, small wicks |
+
+**Two bars**
+
+| pattern (UP / its twin) | production, UP side (cell: qualifiers) | also | in words |
+|---|---|---|---|
+| HARAMI | `-1: dir=BEAR, body≥STRONG; 0: body≤MODERATE, not OPEN_EQ_CLOSE, o≤po, o≥pc, c≤po, c≥pc` |  | a long bear body, then a short body inside it |
+| HARAMI_CROSS | `-1: dir=BEAR, body≥STRONG; 0: OPEN_EQ_CLOSE, o≤po, o≥pc` |  | a long bear body, then a doji inside it |
+| PIERCING / DARK_CLOUD | `-1: dir=BEAR, body≥STRONG; 0: dir=BULL, body≥STRONG, OPEN_BELOW_PREV_LOW, c<po` | `0.close > -1.body_mid` | a long bear, then a long bull opening under its low and closing above its body's middle |
+| ON_NECK | `-1: dir=BULL, body≥STRONG; 0: dir=BEAR, OPEN_ABOVE_PREV_HIGH, CLOSE_AT_PREV_HIGH` |  | canon bearish (DOWN): a long bear, a bull opening under its low and closing at it |
+| IN_NECK | `-1: dir=BULL, body≥STRONG; 0: dir=BEAR, OPEN_ABOVE_PREV_HIGH, CLOSE_AT_PREV_CLOSE` |  | canon bearish: the bull closes at the bear's close |
+| THRUSTING | `-1: dir=BULL, body≥STRONG; 0: dir=BEAR, OPEN_ABOVE_PREV_HIGH, c<pc` | `0.close > -1.body_mid` | canon bearish: the bull closes into the bear's body, short of its middle |
+| KICKER | `-1: dir=BEAR, body≥STRONG, OPEN_AT_HIGH, CLOSE_AT_LOW; 0: dir=BULL, body≥STRONG, OPEN_AT_LOW, CLOSE_AT_HIGH, LOW_ABOVE_PREV_HIGH` |  | a bear marubozu, then a bull marubozu wholly above it |
+| MEETING_LINES | `-1: dir=BEAR, body≥STRONG; 0: dir=BULL, body≥STRONG, CLOSE_AT_PREV_CLOSE` |  | counterattack: opposite long bodies closing at the same price |
+| SEPARATING_LINES | `-1: dir=BEAR; 0: dir=BULL, body≥STRONG, OPEN_AT_PREV_OPEN, OPEN_AT_LOW` |  | opposite bodies opening at the same price, the second a belt hold |
+| MATCHING_LOW / MATCHING_HIGH | `-1: dir=BEAR; 0: dir=BEAR, CLOSE_AT_PREV_CLOSE` |  | two bears closing at the same price |
+| HOMING_PIGEON | `-1: dir=BEAR, body≥STRONG; 0: dir=BEAR, body≤MODERATE, o≤po, c≥pc` |  | a long bear, then a short bear inside its body |
+| DOJI_STAR | `-1: dir=BEAR, body≥STRONG; 0: OPEN_EQ_CLOSE, OPEN_GAP_DOWN` |  | a long bear, then a doji opening below its close |
+| HIKKAKE | `-2: any; -1: rel=INSIDE; 0: HIGH_BELOW_PREV_HIGH, LOW_BELOW_PREV_LOW` |  | an inside bar, then a false break of it downward (a lower high and a lower low) |
+| MODIFIED_HIKKAKE | `-3: any; -2: rel=INSIDE, close≤Q1; -1: rel=INSIDE; 0: HIGH_BELOW_PREV_HIGH, LOW_BELOW_PREV_LOW` |  | the hikkake after two inside bars, the first closing near its low |
+
+**Three bars and more**
+
+| pattern (UP / its twin) | production, UP side (cell: qualifiers) | also | in words |
+|---|---|---|---|
+| THREE_WHITE_SOLDIERS / THREE_BLACK_CROWS | `-2: dir=BULL, body≥MODERATE, wick.up≤WEAK, close≥Q3; -1: dir=BULL, body≥MODERATE, wick.up≤WEAK, close≥Q3, c>pc, o≥po, o≤pc; 0: dir=BULL, body≥MODERATE, wick.up≤WEAK, close≥Q3, c>pc, o≥po, o≤pc` |  | three bulls, each closing higher near its high and opening within the last body |
+| ADVANCE_BLOCK | `-2: dir=BEAR; -1: dir=BEAR, c<pc, o≤po, o≥pc; 0: dir=BEAR, c<pc, o≤po, o≥pc` | `0.body_atr < -1.body_atr; -1.body_atr < -2.body_atr; 0.lower_atr > -2.lower_atr` | canon bearish: three bulls rising with shrinking bodies and growing upper wicks |
+| STALLED | `-2: dir=BEAR, body≥STRONG; -1: dir=BEAR, body≥STRONG, c<pc; 0: dir=BEAR, body≤WEAK, OPEN_AT_PREV_CLOSE` |  | canon bearish (deliberation): two long bulls, then a small one opening at the close |
+| THREE_INSIDE_UP / THREE_INSIDE_DOWN | `-2: dir=BEAR, body≥STRONG; -1: body≤MODERATE, o≤po, o≥pc, c≤po, c≥pc; 0: dir=BULL` | `0.close > -2.open` | a harami, then a close above the first open |
+| THREE_OUTSIDE_UP / THREE_OUTSIDE_DOWN | `-2: dir=BEAR; -1: dir=BULL, engulf=BULL; 0: dir=BULL, c>pc` |  | an engulfing, then a higher close |
+| MORNING_DOJI_STAR / EVENING_DOJI_STAR | `-2: dir=BEAR, body≥STRONG; -1: OPEN_EQ_CLOSE, OPEN_GAP_DOWN; 0: dir=BULL, body≥STRONG` | `0.close > -2.body_mid` | a long bear, a doji below its close, a long bull past the first body's middle |
+| ABANDONED_BABY | `-2: dir=BEAR, body≥STRONG; -1: OPEN_EQ_CLOSE, HIGH_BELOW_PREV_LOW; 0: dir=BULL, LOW_ABOVE_PREV_HIGH` | `0.close > -2.body_mid` | a doji wholly below a long bear and wholly below the bull after it |
+| TRI_STAR | `-2: OPEN_EQ_CLOSE; -1: OPEN_EQ_CLOSE, OPEN_GAP_DOWN; 0: OPEN_EQ_CLOSE, OPEN_GAP_UP` |  | three dojis, the middle one below the others |
+| THREE_LINE_STRIKE | `-3: dir=BULL; -2: dir=BULL, c>pc; -1: dir=BULL, c>pc; 0: dir=BEAR, o≥pc` | `0.close < -3.open` | three rising bulls, then a bear from their close to below the first open |
+| TWO_CROWS | `-2: dir=BEAR, body≥STRONG; -1: dir=BULL, o<pc, c<pc; 0: dir=BULL, o≥po, o≤pc` | `0.close > -2.close; 0.close < -2.open` | canon bearish: a long bull, a bear gapping above it, a bear opening in that one and closing in the first |
+| UPSIDE_GAP_TWO_CROWS | `-2: dir=BEAR, body≥STRONG; -1: dir=BULL, o<pc, c<pc; 0: dir=BULL, o<po, c>pc` | `0.close < -2.close` | canon bearish: a long bull, a bear gapping above, a bear engulfing it that keeps the gap |
+| STICK_SANDWICH | `-2: dir=BEAR; -1: dir=BULL, l>pc; 0: dir=BEAR` | `0.close <= (-2.close + 0.tol); 0.close >= (-2.close + (0.tol * -1.0))` | two bears closing at one price around a bull above them |
+| UNIQUE_THREE_RIVER | `-2: dir=BEAR, body≥STRONG; -1: dir=BEAR, o≤po, c≥pc, LOW_BELOW_PREV_LOW; 0: dir=BULL, body≤MODERATE, c<pc` | `0.open > -1.low` | a long bear, a bear harami with a lower low, a small bull under its close |
+| THREE_STARS_IN_SOUTH | `-2: dir=BEAR, body≥STRONG, wick.low≥STRONG; -1: dir=BEAR, body≤MODERATE, LOW_ABOVE_PREV_LOW, o≤ph; 0: dir=BEAR, body≤WEAK, wick.up≤WEAK, wick.low≤WEAK, rel=INSIDE` |  | three shrinking bears, each low higher, the last a small marubozu inside the second |
+| IDENTICAL_THREE_CROWS | `-2: dir=BULL; -1: dir=BULL, OPEN_AT_PREV_CLOSE, c>pc; 0: dir=BULL, OPEN_AT_PREV_CLOSE, c>pc` |  | canon bearish: three bears each opening at the last close |
+| TASUKI_GAP | `-2: dir=BULL; -1: dir=BULL, o>pc; 0: dir=BEAR, o≤pc, o≥po` | `0.close < -1.open; 0.close > -2.close` | a bull, a bull gapping above it, a bear from inside that one into the gap, not closing it |
+| SIDE_BY_SIDE_WHITE_LINES | `-2: dir=BULL; -1: dir=BULL, o>pc; 0: dir=BULL, OPEN_AT_PREV_OPEN` | `0.body_atr <= (-1.body_atr * 1.5); 0.body_atr >= (-1.body_atr * 0.6666666666666666)` | a bull, then two like bulls side by side above a gap |
+| RISING_THREE_METHODS / FALLING_THREE_METHODS | `-4: dir=BULL, body≥STRONG; -3: body≤MODERATE, dir=BEAR; -2: body≤MODERATE, c<pc; -1: body≤MODERATE, c<pc; 0: dir=BULL, body≥STRONG` | `-3.high <= -4.high; -3.low >= -4.low; -2.high <= -4.high; -2.low >= -4.low; -1.high <= -4.high; -1.low >= -4.low; 0.close > -4.close` | a long bull, three short falling bars within its range, a long bull closing above it |
+| MAT_HOLD | `-4: dir=BULL, body≥STRONG; -3: body≤MODERATE, o>pc; -2: body≤MODERATE, c<pc; -1: body≤MODERATE, c<pc; 0: dir=BULL, o>pc` | `-3.low > -4.low; -2.low > -4.low; -1.low > -4.low; 0.close > -3.high; 0.close > -2.high; 0.close > -1.high` | a long bull, three short bars above a gap holding above its low, a bull closing above them |
+| BREAKAWAY | `-4: dir=BEAR, body≥STRONG; -3: dir=BEAR, o<pc; -2: HIGH_BELOW_PREV_HIGH, LOW_BELOW_PREV_LOW; -1: HIGH_BELOW_PREV_HIGH, LOW_BELOW_PREV_LOW; 0: dir=BULL` | `0.close > -3.open; 0.close < -4.close` | a long bear, a bear gapping down, two lower bars, a bull closing inside the gap |
+| CONCEALING_BABY_SWALLOW | `-3: dir=BEAR, OPEN_AT_HIGH, CLOSE_AT_LOW; -2: dir=BEAR, OPEN_AT_HIGH, CLOSE_AT_LOW; -1: dir=BEAR, o<pc, wick.up≥MODERATE; 0: dir=BEAR` | `-1.high > -2.close; 0.high >= -1.high; 0.low <= -1.low` | two bear marubozu, a bear gapping down with a wick into the second, a bear swallowing it whole |
+| LADDER_BOTTOM | `-4: dir=BEAR; -3: dir=BEAR, o<po, c<pc; -2: dir=BEAR, o<po, c<pc; -1: dir=BEAR, wick.up≥MODERATE; 0: dir=BULL, o>po` | `0.close > -1.high` | three falling bears, a bear with an upper wick, a bull opening above its body and closing above it |
+
+**Reversal bars outside the Japanese canon**
+
+| pattern (UP / its twin) | production, UP side (cell: qualifiers) | also | in words |
+|---|---|---|---|
+| KEY_REVERSAL | `-9: any; -8: any; -7: any; -6: any; -5: any; -4: any; -3: any; -2: any; -1: any; 0: dir=BULL, LOW_BELOW_PREV_LOW, c>pc` | `0.low < -9.low; 0.low < -8.low; 0.low < -7.low; 0.low < -6.low; 0.low < -5.low; 0.low < -4.low; 0.low < -3.low; 0.low < -2.low` | a new 10-bar low, then a close above the previous close |
+| OUTSIDE_REVERSAL | `-1: any; 0: rel=OUTSIDE, dir=BULL, CLOSE_ABOVE_PREV_HIGH` |  | an outside bar closing above the previous high |
+| ISLAND_REVERSAL | `k = 1..4 island bars: -k: HIGH_BELOW_PREV_LOW; 0: LOW_ABOVE_PREV_HIGH, dir=BULL` | `the island bars' highs below the bar before the gap; 0.low above every island high` | a full gap down, 1 bar(s) wholly below it, a full gap up out of them |
+| TWO_BAR_REVERSAL | `-1: dir=BEAR, body≥STRONG; 0: dir=BULL, body≥STRONG, c≥po` |  | a long bear, then a long bull taking back its whole body |
+| THREE_BAR_REVERSAL | `-2: dir=BEAR; -1: LOW_BELOW_PREV_LOW; 0: dir=BULL, LOW_ABOVE_PREV_LOW, CLOSE_ABOVE_PREV_HIGH` |  | a bear, a lower low, a bull closing above that bar's high |
+| OOPS | `-1: any; 0: OPEN_BELOW_PREV_LOW, h≥pl` |  | Williams: an open below the previous low, then back up to it |
+| EXHAUSTION_BAR | `-3: dir=BEAR; -2: dir=BEAR; -1: dir=BEAR; 0: dir=BEAR, size≥VERY_LARGE, body≥STRONG, LOW_BELOW_PREV_LOW` |  | a very large bear bar at the end of a run of bears (the sellers' last push) |
+| CLIMAX_BAR | `-1: any; 0: size≥VERY_LARGE, vol≥VERY_LARGE, LOW_BELOW_PREV_LOW, close≥Q3` |  | a very large bar on very large volume to a new low, closing in its upper half |
+| SIGNAL_BAR | `0: dir=BULL, close=Q4, wick.up≤WEAK, conv≥MODERATE` |  | Brooks' bull signal bar; `quality` STRONG with a lower tail of a quarter of its range and at most half of it inside the previous bar |
+| TREND_BAR | `0: dir=BULL, body≥LARGE` |  | Brooks: a bar that is mostly body |
+| DOJI_BAR (no direction) | `0: body≤SMALL` |  | Brooks: a bar with a small body or none |
+
+**Fixtures** (`tests/test_vocabulary.py`): for every pattern, a token table from explicit bars after
+a quiet warm-up, with the pattern bars' rolling classes and grades set (neutral unless the fixture
+says otherwise) - it fires at its last bar with `known_at` there; one bar or one qualifier changed and
+it does not; and on the mirrored table it fires DOWN under its twin's name. On walks with gaps, the
+parse of the flipped chart has every pattern with its twin's name and direction, and more than 40
+patterns occur.
+
+**Validation against TA-Lib.** TA-Lib (`talib`) is not installed in the lab's environment and was not
+installed for this (the brief: no installs into the shared venv), so the agreement report against its
+CDL functions is not made. Where the definitions differ on purpose, they are: TA-Lib measures bodies
+and shadows against the average of the last 10 bars' real bodies or ranges (BodyLong, ShadowVeryShort
+...); MCFL grades against the rolling mean and sd of the same measure (Nautilus' scheme, period 10),
+and judges equality with 0.05 ATR (TA-Lib: a share of the average range). The comparison is the first
+thing to run where TA-Lib exists.
+
+**Gaps.** Generated bars open at the last close, as 24-hour markets' bars nearly do. A third of the
+Japanese vocabulary needs a gap between one bar's close and the next bar's open (PIERCING, DARK_CLOUD,
+the necks, KICKER, MEETING_LINES, DOJI_STAR, the doji stars, ABANDONED_BABY, TRI_STAR, the crows with a
+gap, STICK_SANDWICH, TASUKI_GAP, SIDE_BY_SIDE_WHITE_LINES, MAT_HOLD, BREAKAWAY, CONCEALING_BABY_SWALLOW,
+LADDER_BOTTOM, ISLAND_REVERSAL, OOPS) and **cannot occur at all** on such bars - while
+IDENTICAL_THREE_CROWS, whose canon needs each open at the last close, is merely three falling bears.
+`synth.gapped` adds an untraded overnight jump to each open; the study measures the vocabulary on it
+too.
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -894,7 +1038,7 @@ never NaN.
 | "invalidated" | FAIL | |
 | CISD (change in state of delivery) | DELIVERY_SHIFT | a close above the open of the last down run's first bar, at most 3 bars after the run; in a zone's reaction window it CONFIRMs the revisit |
 | displacement candle(s) | DISPLACE_C | two strong same-direction bodies closing in the outer quartile, or one extremely large dominant one |
-| pin bar, hammer / shooting star | PIN | |
+| pin bar, hammer / shooting star | PIN; v2: PATTERN[HAMMER] / [SHOOTING_STAR] (with the trend) | |
 | engulfing | ENGULF | |
 | inside bar break | INSIDE_BREAK | close beyond the mother bar after an inside bar |
 | morning / evening star | STAR | |
@@ -916,6 +1060,7 @@ never NaN.
 | effort vs result, absorption, "no supply" (v2) | effort = ABSORPTION / EASE / AGREE; vol | Wyckoff's effort and result |
 | CRT: range candle, purge (manipulation), distribution (v2) | RANGE_CANDLE (any CANDLE), PURGE, DISTRIBUTION, CRT3 | |
 | HTF bias, "trade with the 4h", a 15m zone inside a 4h break (v2) | ALIGN / CONFLICT, NESTED | causal: the HTF event known first |
+| the classical candlestick names (v2) | PATTERN[name] | item 13's table |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -1164,6 +1309,20 @@ GARCH and 152 of 2,710 under momentum.
   it is a check, not a relation the language offers.
 - **The multi-timeframe CRT** waits for the HTF range candle to be complete but not for the purge's HTF
   candle: the purge is an LTF event, found by the LTF bars' own periods.
+- **The candlestick vocabulary (item 13)** is one event type, PATTERN, with the name as an attribute
+  and the pair's key as the id suffix, rather than ~60 types: the flip maps a pattern to its twin by
+  swapping the name, and one type keeps the layer and ordering tables small. Thresholds are the
+  grammar's grades, not TA-Lib's averages: long body = force grade STRONG or more, short = MODERATE or
+  less, small = WEAK, doji = OPEN_EQ_CLOSE. The trend is in the production only where the name depends
+  on it (the hammer family) or the canon's definition is the trend plus a shape with another name
+  (BELT_HOLD vs OPENING_MARUBOZU); otherwise it is an attribute. A pattern with only a bearish canonical
+  name keeps that name on its UP mirror. THREE_LINE_STRIKE is TA-Lib's: three rising bulls and a bear
+  that wipes them out is the bullish one. ISLAND_REVERSAL is four rows (islands of 1-4 bars) sharing one
+  id, so one island is one event. KEY_REVERSAL needs a new 10-bar low and a close above the previous
+  close; EXHAUSTION_BAR a very large bear bar after three bears; CLIMAX_BAR a very large bar on very
+  large volume to a new low, closing in its upper half; SIGNAL_BAR Brooks' bull reversal bar with a
+  `quality` grade; TREND_BAR and DOJI_BAR the fuzzy body class (LARGE or more, SMALL or less).
+- **TA-Lib** is not installed and was not installed: no agreement report (see item 13).
 
 ### v1
 

@@ -43,7 +43,10 @@ SOURCES = {
     "walk": lambda n, s: synth.walk(n, seed=s),
     "garch": lambda n, s: synth.garch(n, seed=s),
     "trend": lambda n, s: synth.trend(n, seed=s),
+    "gapped": lambda n, s: synth.gapped(n, seed=s),
 }
+"""`gapped` is a walk whose bars open away from the last close (a session market); its null is the same
+generator matched in volatility, since gaps alone make the Japanese vocabulary occur."""
 
 
 def dress(df, seed: int):
@@ -342,9 +345,58 @@ def item10(m) -> dict:
     return {"streams": {"zone vs 4h legs": stream}, "rates": rates, "shares": shares}
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"10": item10, "12": item12, "3": item3, "9": item9, "8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
+R_LEVELS = (1, 2, 4, 10)
+HORIZON = 500
+"""P(N R): bars a pattern's trade is followed for, at most."""
+
+
+def mfe_r(ch: Chart, e: Entity, hi: np.ndarray, lo: np.ndarray, cl: np.ndarray) -> float | None:
+    """The most R a PATTERN reached its way before its stop: entry the close of its last bar, stop the
+    far end of its bars (the lowest low for UP, the highest high for DOWN), each later bar's stop
+    checked before its extreme. None without risk or a following bar."""
+    ats = [int(p.split(".")[2]) for p in e.parts if p.startswith("CANDLE.")]
+    t, s = e.known_at, (1 if e.dir.value == "UP" else -1)
+    if t + 1 >= ch.n:
+        return None
+    entry = cl[t]
+    stop = min(lo[a] for a in ats) if s > 0 else max(hi[a] for a in ats)
+    risk = s * (entry - stop)
+    if not risk > 0:
+        return None
+    best = 0.0
+    for k in range(t + 1, min(ch.n, t + 1 + HORIZON)):
+        if (lo[k] <= stop) if s > 0 else (hi[k] >= stop):
+            break
+        best = max(best, s * ((hi[k] if s > 0 else lo[k]) - entry) / risk)
+    return best
+
+
+def item13(ch: Chart) -> dict:
+    c = sorted(ch.of("CANDLE"), key=lambda e: e.at)
+    hi = np.array([e.get("high") for e in c])
+    lo = np.array([e.get("low") for e in c])
+    cl = np.array([e.get("close") for e in c])
+    rates = Counter()
+    shares = {}
+    by: dict[str, list[float]] = {}
+    for e in ch.of("PATTERN"):
+        name = f"{e.get('name')}{e.dir.arrow}"
+        rates[name] += 1
+        if e.dir.value != "NONE":
+            m = mfe_r(ch, e, hi, lo, cl)
+            if m is not None:
+                by.setdefault(name, []).append(m)
+    for name in sorted(by):
+        xs = by[name]
+        for N in R_LEVELS:
+            shares[f"{name} P(>={N}R) [1/(N+1) = {1 / (N + 1):.3f}]"] = (sum(x >= N for x in xs), len(xs))
+    return {"streams": {"patterns": _seq(ch, ("PATTERN",), lambda e: f"{e.get('name')}{e.dir.arrow}")},
+            "rates": rates, "shares": shares}
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"13": item13, "10": item10, "12": item12, "3": item3, "9": item9, "8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
                                              "5": item5}
-TITLES = {"10": "multiple timeframes (15m against 4h): NESTED, ALIGN / CONFLICT, 4h CRT", "12": "candle range theory (single timeframe)", "3": "volume: effort against result, taker skew", "9": "changepoints: FOCuS and CUSUM", "8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
+TITLES = {"13": "the candlestick vocabulary: frequency and P(N R) against walks", "10": "multiple timeframes (15m against 4h): NESTED, ALIGN / CONFLICT, 4h CRT", "12": "candle range theory (single timeframe)", "3": "volume: effort against result, taker skew", "9": "changepoints: FOCuS and CUSUM", "8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
           "7": "retracement depth", "6": "liquidity pools and the protected sweep",
           "5": "RANGE: boxes, tests and escapes"}
 
@@ -356,7 +408,12 @@ def _measure(job: tuple) -> dict:
     kind, src, n, s, rep, items = job
     base = SOURCES[src](n, s)
     if kind == "null":
-        df = synth.matched_walk(base, seed=1_000_003 * (rep + 1) + s)
+        nseed = 1_000_003 * (rep + 1) + s
+        if src == "gapped":
+            sd = float(np.std(np.diff(base["close"].to_numpy(float))))
+            df = synth.gapped(n, sigma=sd / np.sqrt(1 + 0.5 ** 2), seed=nseed)
+        else:
+            df = synth.matched_walk(base, seed=nseed)
         seed = 7_000_001 * (rep + 1) + s
     else:
         df, seed = base, s
@@ -399,18 +456,24 @@ def report_item(key: str, data: list[dict], nulls: list[list[dict]]) -> list[str
             xs = [1000 * sum(g["rates"][k] for g in nl) / sum(g["_bars"] for g in nl_full)
                   for nl, nl_full in zip(ns[1:], nulls[1:])]
             L.append(f"     {k:<40} {x:9.2f} {np.mean(xs):9.2f} {_z(x, xs):+6.1f}")
-    skeys = list(d0[0].get("shares", {}))
+    skeys = list(dict.fromkeys(k for d in d0 for k in d.get("shares", {})))
     if skeys:
-        L.append("   shares (data / null mean / z [data n]):")
+        L.append("   shares (data / null mean / z [data n / null n per set]):")
+        z0 = (0, 0)
         for k in skeys:
-            a = sum(d["shares"][k][0] for d in d0)
-            b = sum(d["shares"][k][1] for d in d0)
-            xs = []
+            a = sum(d["shares"].get(k, z0)[0] for d in d0)
+            b = sum(d["shares"].get(k, z0)[1] for d in d0)
+            xs, nbs = [], []
             for nl in ns[1:]:
-                na, nb = sum(g["shares"][k][0] for g in nl), sum(g["shares"][k][1] for g in nl)
+                na = sum(g["shares"].get(k, z0)[0] for g in nl)
+                nb = sum(g["shares"].get(k, z0)[1] for g in nl)
                 xs.append(na / nb if nb else float("nan"))
+                nbs.append(nb)
             x = a / b if b else float("nan")
-            L.append(f"     {k:<48} {x:7.3f} {np.nanmean(xs):7.3f} {_z(x, [v for v in xs if v == v]):+6.1f} [{b}]")
+            fin = [v for v in xs if v == v]
+            m = float(np.mean(fin)) if fin else float("nan")
+            L.append(f"     {k:<48} {x:7.3f} {m:7.3f} {_z(x, fin) if len(fin) > 1 else 0.0:+6.1f} "
+                     f"[{b} / {np.mean(nbs):.0f}]")
     return L
 
 
