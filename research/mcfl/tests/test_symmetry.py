@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import pytest
 from mcfl import synth
-from mcfl.core import Chart, Entity, Failure, Relation, Transition
+from mcfl.core import Chart, Entity, Failure, Relation, Transition, flip_value, swap_key
 from mcfl.parse import flip, parse
-
-PRICES = ("price", "level", "far", "near", "extreme_px")
 
 
 def _sid(x):
@@ -17,17 +15,15 @@ def _sid(x):
     return f"{head}.{'D' if d == 'U' else 'U' if d == 'D' else d}.{rest}"
 
 
-def _mirror_attr(k, v):
-    if k in PRICES and v is not None:
-        return -v
-    if k == "band":
-        return (-v[1], -v[0])
-    return _sid(v)
+def _mirror_attrs(attrs):
+    """Attribute names and values as the flipped chart has them (`core.swap_key`, `core.flip_value`:
+    the flip tables, tested on their own in test_candles.py), with ids mapped by direction."""
+    return tuple(sorted((swap_key(k), _sid(flip_value(k, v))) for k, v in attrs))
 
 
 def mirror(ch: Chart) -> Chart:
     ents = tuple(Entity(_sid(e.id), e.type, e.dir.flip(), e.at, e.known_at,
-                        tuple((k, _mirror_attr(k, v)) for k, v in e.attrs), e.force,
+                        _mirror_attrs(e.attrs), e.force,
                         tuple(_sid(p) for p in e.parts)) for e in ch.entities)
     return Chart(ch.n, ents,
                  tuple(Relation(r.kind, _sid(r.src), _sid(r.dst), r.known_at) for r in ch.relations),

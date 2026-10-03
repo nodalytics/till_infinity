@@ -7,12 +7,13 @@ from mcfl.lifecycle import ACCEPT_BARS, ZONE_EXPIRE
 from mcfl.parse import parse
 
 Z = f"ZONE.U.{F.ORIGIN_BAR}"
+LIFE = ("REVISIT", "REJECT_PATH", "ACCEPT", "FAIL", "EXPIRE")  # v1: the candle REJECT is not a state event
 DOWN_TO_ZONE = [103.5, 102.5, 101.5, 100.5, 99.5]  # the last bar's low, 99.25, reaches the band
 
 
 def _life(closes):
     ch = parse(F.bars(F.ZONE_UP + closes))
-    ev = [e for e in ch.entities if e.get("zone") == Z]
+    ev = [e for e in ch.entities if e.get("zone") == Z and e.type in LIFE]
     tr = [t for t in ch.transitions if t.zone == Z]
     return ch, ev, tr, dict(ch.states)[Z]
 
@@ -22,7 +23,7 @@ def test_revisit_reject_revisit_fail():
     ch, ev, tr, state = _life(DOWN_TO_ZONE + [100.5, 99.5, 98.5])
     assert [(e.type, e.at) for e in ev] == [
         ("REVISIT", start + 4),  # low 99.25 <= near 99.5
-        ("REJECT", start + 5),  # high 100.75 >= near + 1 ATR
+        ("REJECT_PATH", start + 5),  # high 100.75 >= near + 1 ATR
         ("REVISIT", start + 6),
         ("FAIL", start + 7),  # close 98.5 < far 98.75 - 0.1
     ]
