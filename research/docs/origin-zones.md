@@ -372,3 +372,37 @@ on the baseline swing points, which is what gave it away. A rule built on it was
 over 7,705 trades - **and that result is void**: the rule could not have been traded. The fix
 measures approach to the entry level and travel from closes before the return bar; with it the
 effect disappears (44-46% across quintiles), as it does on a random walk.
+
+## What else could give a zone direction? (2026-10-03, [`zone_context.py`](../ideas/zone_context.py))
+
+Break plus imbalance makes qualified zones only 2-4 points better than ordinary swing points, and
+both lose. So the desk asked what is missing. Five kinds of evidence were added to every zone event
+(all known before the entry), each read on qualified zones' first returns against ordinary swing
+points, before and after 2023. Plots: `.data/zone_context/`.
+
+| evidence | what was measured | qualified zones, R a trade (before / after 2023) |
+|---|---|---|
+| none - all first returns | | -0.122 / -0.125 |
+| **return-leg structure** | the pullback broke a minor low made after the break (a change of character against the zone) | with: -0.091 / -0.092; without: -0.179 / -0.183 |
+| | pullback efficiency, gaps, length | short, gap-free pullbacks worst (-0.20); longer ones about -0.09 |
+| **SMT divergence** | a correlated twin gave back 0.3 less of the same leg while this market reached its zone (7% of returns) | divergent -0.166 / -0.240, together -0.129 / -0.127 |
+| **order flow** (Binance, 12 perps, 45,274 returns, fees) | taker share and volume surge on the leg; taker share, volume and open interest on the return; funding | no quintile positive in both halves; thinnest returns least bad (-0.004 / -0.081) |
+| **anchors** | previous day/week high or low, week/month open, big round number, daily swing in the band | big round numbers least bad (-0.098 / -0.085); previous-day highs worst (-0.37 / -0.22) |
+| **FOCuS** | a change the zone's way dated at the origin; any in the leg; one against on the return | at the origin -0.025 / -0.099 (858 / 728); in the leg -0.073 / -0.084 |
+| **CUSUM** | an ignition the zone's way in the leg; against on the return | -0.175 / -0.088; -0.081 / -0.096 |
+| **flip** | the same fills traded against the break, the same risk | -0.24 to -0.80 everywhere; flipping young zones only, -0.17 to -0.37 |
+| **gap closeness** | bars and price distance from the zone to the first gap | flat; overlapping gaps least bad (-0.11 / -0.07) |
+| **freshness** | the age of the zone at its first return | revisited within 10 bars worst (-0.19 1h); 30-100 bars least bad (-0.03 to -0.10) |
+
+Three of these turn against the trader's reading: the change of character on the way back, SMT
+divergence and a young zone. Each of the less-bad cuts holds for ordinary swing points too, so it is
+how price arrives at a level, not something about zones.
+
+**Extraordinary swing points** (asked for last): the rarest tails of how long the low had stood
+(bars back to a lower one), the origin bar's range and tick volume, how stretched price was below its
+50-bar average, the speed of the fall in, displacement and relative force - thresholds from before
+2023. Rarity is the one direction that moves zones toward breakeven: the most stretched 2% -0.058 /
+-0.034, a long-standing low with a fast fall in -0.022 / -0.014, a long-standing low with a spike bar
+-0.090 / 0.000. None is positive in both halves; the two positive cells (the biggest origin spikes
++0.035 before, the heaviest origin volume +0.031 after) are positive in one half each, on 134 and 514
+trades, out of 63 tails and pairs tried.
