@@ -179,6 +179,24 @@ def _v2_compression(c: Entity, r: Entity | None) -> list[str]:
 V2_L1_TEXT.append(_v2_compression)
 
 
+def _v2_volume(c: Entity, r: Entity | None) -> list[str]:
+    from mcfl.candles import CODE
+    vc = c.get("volume_class")
+    if vc is None or vc == "WARMUP":
+        return []
+    out = [f"v:{CODE[vc]}"]
+    eff = {"ABSORPTION": "ABS", "EASE": "EASE", "AGREE": "AGR"}.get(c.get("effort"))
+    if eff:
+        out.append(eff)
+    tk = {"BUY": "tb", "SELL": "ts"}.get(c.get("taker"))
+    if tk:
+        out.append(tk)
+    return out
+
+
+V2_L1_TEXT.append(_v2_volume)
+
+
 def _v2_time(c: Entity, r: Entity | None) -> list[str]:
     from mcfl.timing import SESSION_CODE
     return [f"@{SESSION_CODE[c.get('session')]}.{c.get('dow')}"] if c.get("session") else []

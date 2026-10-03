@@ -48,7 +48,7 @@ SOURCES = {
 
 def dress(df, seed: int):
     """Timestamps and a tick volume, as every series in this study gets them."""
-    df = synth.ticks(df, seed=seed) if hasattr(synth, "ticks") else df
+    df = synth.ticks(df, seed=seed)
     return df.assign(ts=T0 + np.arange(len(df), dtype=np.int64) * SEC)
 
 
@@ -263,9 +263,28 @@ def item9(ch: Chart) -> dict:
             "rates": rates, "shares": shares}
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"9": item9, "8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
+def item3(ch: Chart) -> dict:
+    c = sorted(ch.of("CANDLE"), key=lambda e: e.at)
+    d = np.array([1 if e.dir.value == "UP" else -1 if e.dir.value == "DOWN" else 0 for e in c])
+    shares = {}
+    for k in ("ABSORPTION", "EASE", "AGREE", "NEUTRAL"):
+        ts = [e.at for e in c if e.get("effort") == k and e.at + 1 < ch.n]
+        shares[f"{k} bars"] = (len(ts), ch.n)
+        shares[f"after {k}, the next bar goes the same way"] = (
+            sum(d[t + 1] == d[t] for t in ts if d[t]), sum(1 for t in ts if d[t]))
+    for k in ("BUY", "SELL"):
+        ts = [e.at for e in c if e.get("taker") == k and e.at + 1 < ch.n]
+        want = 1 if k == "BUY" else -1
+        shares[f"after taker={k}, the next bar goes its way"] = (sum(d[t + 1] == want for t in ts), len(ts))
+    stream = [{"ABSORPTION": "A", "EASE": "E", "AGREE": "G", "NEUTRAL": "N"}.get(e.get("effort"), "W")
+              + {"UP": "+", "DOWN": "-", "NONE": "0"}[e.dir.value] for e in c[10:]]
+    rates = Counter(f"effort {e.get('effort')}" for e in c)
+    return {"streams": {"effort": stream}, "rates": rates, "shares": shares}
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"3": item3, "9": item9, "8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
                                              "5": item5}
-TITLES = {"9": "changepoints: FOCuS and CUSUM", "8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
+TITLES = {"3": "volume: effort against result, taker skew", "9": "changepoints: FOCuS and CUSUM", "8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
           "7": "retracement depth", "6": "liquidity pools and the protected sweep",
           "5": "RANGE: boxes, tests and escapes"}
 

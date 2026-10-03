@@ -67,8 +67,13 @@ LEVEL_RULES = {
 
 
 def flip(df: pd.DataFrame) -> pd.DataFrame:
-    """The chart upside down: prices negated, highs and lows swapped. flip(flip(df)) == df exactly."""
-    return df.assign(open=-df["open"], close=-df["close"], high=-df["low"], low=-df["high"])
+    """The chart upside down: prices negated, highs and lows swapped. flip(flip(df)) == df exactly.
+    v2: with taker volume, buyers and sellers trade places (the sell side is volume - buy if absent)."""
+    out = df.assign(open=-df["open"], close=-df["close"], high=-df["low"], low=-df["high"])
+    if "taker_buy_volume" in df:
+        sell = df["taker_sell_volume"] if "taker_sell_volume" in df else df["volume"] - df["taker_buy_volume"]
+        out = out.assign(taker_buy_volume=sell, taker_sell_volume=df["taker_buy_volume"])
+    return out
 
 
 def _f(x: float) -> float | None:
@@ -243,7 +248,9 @@ def parse(df: pd.DataFrame, v2: bool = True, changepoints: bool = False, sec: fl
     T = candles.table(df)
     if v2:
         from mcfl import timing
+        from mcfl import volume
         candles.compression(T)
+        volume.columns(T, df)
         timing.columns(T, df)
     cid, rid = candles.ids(T)
     toks = candles.entities(T)

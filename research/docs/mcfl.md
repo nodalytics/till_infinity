@@ -704,6 +704,24 @@ returns, which do not exist on the flipped (negative) chart; its mirror is the l
 one - tested. That is why the detectors are an option of the parse rather than part of every one:
 the package-wide flip test parses the negated chart.
 
+### 3. Volume: effort against result
+
+`volume.py`. Any volume column works: tick volume on CFDs, real or taker volume on exchanges. Three
+L1 qualifiers of the CANDLE:
+
+| qualifier | definition |
+|---|---|
+| **VOLUME** (`volume_class`) | the bar's volume in the rolling distribution of the last 10 bars' volumes, with the size classes' edges: NONE (zero), VERY_SMALL ≤ m - s, SMALL ≤ m - 0.5 s, MEDIUM ≤ m + 0.5 s, LARGE ≤ m + s, VERY_LARGE ≤ m + 2 s, else EXTREMELY_LARGE; WARMUP until the window is full, or with no volume |
+| **EFFORT_RESULT** (`effort`) | volume (effort) against size (result): ABSORPTION volume ≥ LARGE and size ≤ SMALL (much traded, little moved); EASE volume ≤ SMALL and size ≥ LARGE; AGREE both ≥ LARGE or both ≤ SMALL; NEUTRAL otherwise; WARMUP while either is |
+| **TAKER_SKEW** (`taker_skew`, `taker`) | with a `taker_buy_volume` column (and `taker_sell_volume`, else volume - buy): (buy - sell) / volume, and BUY at ≥ TAKER_MIN (**0.2**), SELL at ≤ -0.2, else BALANCED |
+
+Qualifiers `CANDLE[vol≥LARGE]`, `CANDLE[effort=ABSORPTION]`, `CANDLE[taker=BUY]`; the bar word
+carries `v:XL,ABS,tb`. Under the flip buyers and sellers trade places: `parse.flip` swaps the two taker
+columns, so BUY and SELL swap and the skew is negated exactly. Generated series have no volume of
+their own (each bar's is its sub-step count); `synth.ticks` gives them a tick volume (Poisson in the
+bar's range, with a lognormal burst) and a taker split leaning with the bar, so the null walks have the
+same kind of volume as the series compared with them.
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -821,6 +839,7 @@ never NaN.
 | Asian range, London open, NY session; "London took the Asian high" (v2) | session; SESSION_OPEN, SESSION_EXTREME, SESSION_EXTREME_TAKEN | fixed UTC hours |
 | a fast / slow return (v2) | REVISIT[pace=FAST] / [pace=SLOW] | tempo by rolling quartile |
 | "momentum ignition", a change in drift (v2) | FOCUS, FOCUS6, CUSUM_IGNITION | the desk's own detectors |
+| effort vs result, absorption, "no supply" (v2) | effort = ABSORPTION / EASE / AGREE; vol | Wyckoff's effort and result |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -1048,6 +1067,12 @@ GARCH and 152 of 2,710 under momentum.
   test parses. FOCUS's `at` is the detector's change start, so it can be well before its `known_at`.
   CUSUM's flip symmetry is tested under the log-price flip, which is the one its definition has. The
   bar length for FOCuS's threshold comes from the first two timestamps (known at bar 1), else an hour.
+- **Volume (item 3)** is graded like the size class (same period and edges), and EFFORT_RESULT reads
+  the two classes only; "≥ LARGE" and "≤ SMALL" include the extreme classes (and NONE). The taker side
+  needs no new direction: the flip swaps the buy and sell columns, so a taker skew is flip-symmetric
+  exactly. Generated bars get a tick volume from `synth.ticks`, built from the bar's range, so on them
+  volume carries nothing a walk's does not - the comparison calibrates the words, it cannot find an
+  effect.
 
 ### v1
 

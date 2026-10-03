@@ -19,6 +19,7 @@ RARE = {"CHARACTER_SHIFT", "DAX50", "DAX_SETUP", "RANGE", "RANGE_TEST", "ESCAPE"
 
 def series(n: int, seed: int, kind: str = "garch"):
     df = {"garch": synth.garch, "walk": synth.walk, "trend": synth.trend}[kind](n, seed=seed)
+    df = synth.ticks(df, seed=seed + 100)  # tick volume and a taker split
     return F.with_time(df, 900, start=1_700_000_000 - 1_700_000_000 % 86400)
 
 
