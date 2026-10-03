@@ -1,0 +1,9 @@
+{
+  "frozen": "2026-10-03",
+  "found_on": "research/ideas/turns.py: on MT5 (10 markets, 1h and 4h), major turns carry a forceful reversal bar (DISPLACE_C, BREACH_REVERT, DELIVERY_SHIFT the turn's way) far more than ordinary lows, beyond matched walks",
+  "signal": "at bar t (long; a short is the same on the flipped chart): the lowest low of bars t-2..t is at or below the lowest of t-11..t-3 (a 12-bar low), and bar t completes T1 DISPLACE_C up, T2 BREACH_REVERT up, T3 DELIVERY_SHIFT up, or T_any = any of them (MCFL v1, known_at = t)",
+  "trade": "enter at bar t+1's open; stop 0.1 ATR under that 3-bar low; targets 1R, 2R, 3R; out after 5 days; a bar touching stop and target is the stop; R net of costs (Binance 0.07% of price, MT5 the broker's spread floor)",
+  "primary": "T_any at 2R on Binance perpetuals (12 coins, 1h and 4h pooled)",
+  "baselines": ["the same signal on GARCH walks matched to each series (mcfl.synth.matched_walk)", "entering at every 12-bar low (the same low condition, no signal)"],
+  "passes_if": "primary R > 0 with day-bootstrap 90% interval above 0, positive in 2021-2023 and in 2024 on, and above both baselines"
+}
