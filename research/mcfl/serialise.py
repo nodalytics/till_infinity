@@ -63,6 +63,7 @@ V2_TEXT: dict[str, Any] = {
     "SESSION_OPEN": lambda e: e.get("session"),
     "SESSION_EXTREME": lambda e: e.get("session"),
     "SESSION_EXTREME_TAKEN": lambda e: e.get("session"),
+    "DISTRIBUTION": lambda e: f"{e.get('bars')}" + (f",mid:{e.get('mid_bars')}" if e.get("mid_bars", -1) >= 0 else ""),
 }
 for _t in ("REVISIT", "REJECT_PATH", "ACCEPT", "FAIL", "EXPIRE", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
            "ESCAPE", "FAILED_ESCAPE"):

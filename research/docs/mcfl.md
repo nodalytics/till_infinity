@@ -722,6 +722,20 @@ their own (each bar's is its sub-step count); `synth.ticks` gives them a tick vo
 bar's range, with a lognormal burst) and a taker split leaning with the bar, so the null walks have the
 same kind of volume as the series compared with them.
 
+### 12. Candle range theory (CRT)
+
+`crt.py`. **RANGE_CANDLE** is any CANDLE read as a box - its high, low and 50% mid. It is not a new
+entity: the candle is a part of what is built on it (usually a higher timeframe's candle, below).
+
+| entity | production / definition | `known_at` | attributes |
+|---|---|---|---|
+| **PURGE**↑ (↓ on the flipped chart) | a word over the v1 relation words of the next candle: `RANGE_CANDLE CANDLE[HIGH_ABOVE_PREV_HIGH, not CLOSE_ABOVE_PREV_HIGH, not CLOSE_BELOW_PREV_LOW]` - it trades beyond the range's high and closes back inside (close ≤ prev high and ≥ prev low, within the point tolerance). An outside candle closing inside purges both sides | the purge candle | `depth_atr` (beyond the high, ATR), `close_loc` (from the purged edge, 0, to the other, 1; slightly negative when the close is above the high within the tolerance), the box `upper_edge`, `lower_edge`, `range_mid` |
+| **DISTRIBUTION**↓ (after PURGE↑) | within CRT_N (**3**) candles after the purge, a low at or below the range's low - CRT's outcome event | the first such candle | `purge`, `bars`, `mid_bars` (bars after the purge at which the mid was first reached), `mid_same_bar` (first reached on the distributing candle itself, so the bar does not order them) |
+| **CRT3**↓ (L3) | `RANGE_CANDLE PURGE_UP DISTRIBUTION_DOWN`, a row of the rule table | the distribution's | `purge`, `bars`; its bar is the range candle's |
+
+Text `PURGE↑`, `DISTRIBUTION↓[2,mid:1]`, `CRT3↓`. Multi-timeframe CRT (an HTF range candle whose purge
+is seen on LTF candles) is item 10's `mtf.crt`, below.
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -840,6 +854,7 @@ never NaN.
 | a fast / slow return (v2) | REVISIT[pace=FAST] / [pace=SLOW] | tempo by rolling quartile |
 | "momentum ignition", a change in drift (v2) | FOCUS, FOCUS6, CUSUM_IGNITION | the desk's own detectors |
 | effort vs result, absorption, "no supply" (v2) | effort = ABSORPTION / EASE / AGREE; vol | Wyckoff's effort and result |
+| CRT: range candle, purge (manipulation), distribution (v2) | RANGE_CANDLE (any CANDLE), PURGE, DISTRIBUTION, CRT3 | |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -1073,6 +1088,11 @@ GARCH and 152 of 2,710 under momentum.
   exactly. Generated bars get a tick volume from `synth.ticks`, built from the bar's range, so on them
   volume carries nothing a walk's does not - the comparison calibrates the words, it cannot find an
   effect.
+- **CRT (item 12).** PURGE reads the brief's "close ≤ prev high ∧ close ≥ prev low" as the negations
+  of the v1 words CLOSE_ABOVE_PREV_HIGH and CLOSE_BELOW_PREV_LOW, so both inequalities hold within the
+  point tolerance. CRT_N = 3 candles after the purge, the purge candle itself not counted (its own
+  low below the range is a purge of the other side, not a distribution). DISTRIBUTION's direction is
+  the move's (down after a purge of the high), and so is CRT3's.
 
 ### v1
 

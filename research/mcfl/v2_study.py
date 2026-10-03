@@ -282,9 +282,35 @@ def item3(ch: Chart) -> dict:
     return {"streams": {"effort": stream}, "rates": rates, "shares": shares}
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"3": item3, "9": item9, "8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
+def item12(ch: Chart) -> dict:
+    from mcfl.crt import CRT_N
+    c = sorted(ch.of("CANDLE"), key=lambda e: e.at)
+    hi = np.array([e.get("high") for e in c])
+    lo = np.array([e.get("low") for e in c])
+    cl = np.array([e.get("close") for e in c])
+    pur = ch.of("PURGE")
+    dist = {d.get("purge"): d for d in ch.of("DISTRIBUTION")}
+    ok = [p for p in pur if p.at + CRT_N < ch.n]
+    shares = {"PURGE then DISTRIBUTION (CRT3) within 3": (sum(p.id in dist for p in ok), len(ok))}
+    ds = [dist[p.id] for p in ok if p.id in dist]
+    shares["... of those, the mid reached on an earlier bar"] = (sum(not d.get("mid_same_bar") for d in ds), len(ds))
+    shares["... distributed on the next candle"] = (sum(d.get("bars") == 1 for d in ds), len(ds))
+    # the baseline: a candle that closed inside the previous range WITHOUT a purge - how often does the
+    # following 3 reach the previous range's low (or high, for the mirror)?
+    base = hit = 0
+    for t in range(11, ch.n - CRT_N):
+        if lo[t - 1] <= cl[t] <= hi[t - 1] and hi[t] <= hi[t - 1] and lo[t] >= lo[t - 1]:
+            base += 2
+            hit += (lo[t + 1:t + CRT_N + 1] <= lo[t - 1]).any() + (hi[t + 1:t + CRT_N + 1] >= hi[t - 1]).any()
+    shares["baseline: an inside candle, the range's low (or high) within 3"] = (hit, base)
+    rates = Counter(f"{e.type}{e.dir.arrow}" for e in ch.of("PURGE", "DISTRIBUTION", "CRT3"))
+    return {"streams": {"crt": _seq(ch, ("PURGE", "DISTRIBUTION"), lambda e: e.type[0] + e.dir.arrow)},
+            "rates": rates, "shares": shares}
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"12": item12, "3": item3, "9": item9, "8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
                                              "5": item5}
-TITLES = {"3": "volume: effort against result, taker skew", "9": "changepoints: FOCuS and CUSUM", "8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
+TITLES = {"12": "candle range theory (single timeframe)", "3": "volume: effort against result, taker skew", "9": "changepoints: FOCuS and CUSUM", "8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
           "7": "retracement depth", "6": "liquidity pools and the protected sweep",
           "5": "RANGE: boxes, tests and escapes"}
 

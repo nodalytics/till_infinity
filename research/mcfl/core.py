@@ -85,7 +85,8 @@ SIDES = (Dir.UP, Dir.DOWN)
 # by the token frames (`candles.frame`), the grammar's clauses (`view`) and the symmetry test.
 NEG_FIELD = frozenset({"open", "high", "low", "close", "price", "level", "far", "near", "extreme_px",
                        # v2
-                       "body_mid", "range_mid", "peak", "taker_skew", "swept_level"})
+                       "body_mid", "range_mid", "peak", "taker_skew", "swept_level", "upper_edge",
+                       "lower_edge"})
 """Price fields: negated under the flip."""
 POINTS = "OHLC"
 """Order of the point-relation matrices, row-major: `points` is the bar's O, H, L, C (rows) against

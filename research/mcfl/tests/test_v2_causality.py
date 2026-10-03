@@ -12,7 +12,8 @@ from mcfl.parse import parse
 #: the v2 types each prefix test must see (so the test cannot pass by finding nothing)
 COMMON = {"SWING", "STRUCTURE_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED", "RETRACE", "PULLBACK", "POOL", "POOL_TAKEN",
           "SWEEP_PROTECTED", "BALANCE", "IMBALANCE",
-          "SESSION_OPEN", "SESSION_EXTREME", "SESSION_EXTREME_TAKEN"}
+          "SESSION_OPEN", "SESSION_EXTREME", "SESSION_EXTREME_TAKEN", "PURGE",
+          "DISTRIBUTION", "CRT3"}
 #: rarer ones, checked entity by entity on a longer series
 RARE = {"CHARACTER_SHIFT", "DAX50", "DAX_SETUP", "RANGE", "RANGE_TEST", "ESCAPE", "FAILED_ESCAPE"}
 

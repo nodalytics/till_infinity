@@ -286,6 +286,11 @@ def parse(df: pd.DataFrame, v2: bool = True, changepoints: bool = False, sec: fl
         from mcfl import ranges
         extra += ranges.run(T, cid)
         extra += timing.sessions(T, cid)
+        from mcfl import crt
+        pur = words(T, cid, rid, table_={"PURGE": crt.PURGE}, fr=fr)
+        dist = crt.distributions(fr, pur, cid)
+        crt3, _, _ = grammar(pur + dist + [e for e in toks if e.type == "CANDLE"], crt.RULES, n=len(df))
+        extra += pur + dist + crt3
     ents = toks + wds + level + zones + life + rejects + extra
     if v2 and changepoints:
         from mcfl import changepoints as CP

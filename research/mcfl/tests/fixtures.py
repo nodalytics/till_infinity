@@ -73,3 +73,16 @@ DAX_SHALLOW = WARMUP + zig([100.5, 104, 100, 104]) + zig([104, 103], 0.25) + zig
 # two swing highs at 103 (high 103.25, bars 24 and 32): EQUAL_HIGHS, then lows at 101 (EQUAL_LOWS at
 # 36), and a rise to 104 that takes the highs at bar 41 and closes through
 EQUAL_HIGHS = WARMUP + zig([100.5, 103, 101, 103, 101, 104])
+
+FINE = [100.0, 100.01] + WARMUP[2:]
+"""The warm-up with a 0.01 move at bar 1, so the running tick (and with it the point tolerance) is
+0.05 ATR from then on, not the 0.25 of the plain warm-up."""
+
+
+def ohlc(rows: list[tuple[float, float, float, float]]) -> pd.DataFrame:
+    return pd.DataFrame([dict(open=o, high=h, low=l, close=c, volume=1.0) for o, h, l, c in rows])
+
+
+def after(base: list[float], rows: list[tuple[float, float, float, float]]) -> pd.DataFrame:
+    """Closes `base` as bars, then explicit OHLC rows."""
+    return pd.concat([bars(base), ohlc(rows)], ignore_index=True)
