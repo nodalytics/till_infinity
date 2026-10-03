@@ -310,7 +310,8 @@ def events(df: pd.DataFrame, a: np.ndarray, side: int, spread: float, bias: np.n
         cu_leg = bool(((cu_up >= p) & (cu_up <= live)).any())
         lower = np.flatnonzero(l[max(0, p - 1000):p] < low)
         left_extent = p - (max(0, p - 1000) + lower[-1]) if len(lower) else min(p, 1000)
-        base = dict(side=side, p=p, ts=int(ts[p]), V=V, left_extent=left_extent, origin_tr=tr_[p] / A,
+        base = dict(side=side, p=p, ts=int(ts[p]), V=V, bos_level=level, bos_ts=int(ts[b]), atr_p=A,
+                    left_extent=left_extent, origin_tr=tr_[p] / A,
                     origin_vol=tv[p] / tv_med[p] if tv_med[p] and tv_med[p] > 0 else np.nan,
                     stretch=(ema50[p - 1] - low) / A if p >= 1 else np.nan, bos_close=(c[b] - level) / A, bos_follow=follow,
                     bos_bars=b - p, disp=disp, disp_eff=(ext - low) / max(path, 1e-12), n_gaps=len(big),
