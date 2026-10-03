@@ -206,6 +206,11 @@ A rule learned twice on 2026-10-03 (see memory `lookahead-in-conditioning-flags`
   - the rejection trade.
 
 **2. Outcomes and learning.**
+- **P(N R) for any N, from 0.1 to 1,000,000** (asked for by the desk).
+  - Every labelled entity, trade or sentence stores its continuous excursion: the most R reached in its favour before the stop (MFE_R, uncapped), the time each level was first reached, and MAE.
+  - P(+N R before −1R) = P(MFE_R ≥ N) is then a function of N, evaluated on any grid (log-spaced from 0.1 to 1e6), with an optional horizon (reached within T bars).
+  - Every curve is reported against the driftless martingale baseline P = 1/(N+1). For a random walk with no time limit, that is exact, so the gap at each N says where an edge lives.
+  - Report the largest N actually reached, and the sample size behind each point of the curve; beyond the data the curve is undefined, not zero.
 - Attach outcome labels to any entity or sentence: P(+1R before −1R), MFE / MAE in ATR, whipsaw, time to resolution. Use the production Episode definitions (`till_infinity/structures/reactions.py`, Episode) so research and the journal speak the same language.
 - Grammar induction: learn frequent productions from token streams (e.g. Sequitur, or MDL-guided pair merging), with a report of the learned rules and their description-length gain against walks.
 - A next-token model over sentences (n-gram with smoothing as the baseline; optionally a small sequence model) that predicts the next L2/L4 event, judged on held-out time and against walks.
