@@ -1,0 +1,338 @@
+MCFL v0 n-grams against matched iid walks: 10 series x 5000 bars per source, bins=on
+
+== walk  (data 48938 tokens, each null set 49002; R = 10)
+   order   KL data||null (bits)   null LOO KL median [max]   p
+   n=1     0.00057               0.00066 [0.00095]        0.583
+   n=2     0.01495               0.01518 [0.01731]        0.667
+   n=3     0.15540               0.15611 [0.15994]        0.667
+   n=4     0.45812               0.45728 [0.46485]        0.417
+   k=1|    0.01930               0.01926 [0.02123]        0.500
+   k=2|    0.18863               0.18723 [0.19008]        0.333
+   k=3|    0.43773               0.43551 [0.44199]        0.167
+   unigram rates per 1,000 tokens (data / null mean / z):
+     ACCEPT↑                          7.19     6.52    +1.8
+     ACCEPT↓                          6.72     6.58    +0.4
+     BREACH_REVERT↑                  26.46    26.44    +0.0
+     BREACH_REVERT↓                  27.26    26.66    +0.7
+     BREAK↑[force:mid]               21.93    21.78    +0.2
+     BREAK↑[force:strong]            10.50    10.47    +0.1
+     BREAK↑[force:weak]               4.88     4.42    +1.5
+     BREAK↓[force:mid]               21.27    21.77    -0.7
+     BREAK↓[force:strong]            10.22    10.42    -0.4
+     BREAK↓[force:weak]               4.03     4.43    -1.4
+     DISPLACE↑                       68.31    67.53    +0.7
+     DISPLACE↓                       68.07    67.47    +0.5
+     EXPIRE↑                          3.96     4.10    -0.2
+     EXPIRE↓                          3.41     3.75    -0.7
+     EXTREME↑                        92.50    92.05    +0.3
+     EXTREME↓                        92.97    92.56    +0.3
+     FAIL↑                           13.20    13.46    -0.4
+     FAIL↓                           12.77    13.49    -1.4
+     REJECT↑                         14.20    15.08    -1.3
+     REJECT↓                         15.06    15.29    -0.4
+     REVISIT↑[n:1]                   21.11    20.70    +0.6
+     REVISIT↑[n:2]                    8.32     8.21    +0.3
+     REVISIT↑[n:3+]                   4.03     5.26    -3.2
+     REVISIT↓[n:1]                   19.96    20.84    -1.3
+     REVISIT↓[n:2]                    8.09     8.24    -0.4
+     REVISIT↓[n:3+]                   5.76     5.50    +0.8
+     VOID↑[size:l]                   42.71    42.71    -0.0
+     VOID↑[size:m]                   76.14    75.81    +0.2
+     VOID↑[size:na]                   0.41     0.39    +0.2
+     VOID↑[size:s]                   59.46    58.03    +1.3
+     VOID↓[size:l]                   42.34    42.62    -0.3
+     VOID↓[size:m]                   74.24    74.30    -0.0
+     VOID↓[size:na]                   0.37     0.39    -0.1
+     VOID↓[size:s]                   58.48    58.26    +0.2
+     ZONE↑                           27.52    27.40    +0.2
+     ZONE↓                           26.14    27.07    -1.3
+   largest 2-gram differences (rate per 1,000 tokens, data / null / z):
+     VOID↓[size:m] EXPIRE↑                                            0.57     0.32    +3.1
+     REVISIT↓[n:3+] VOID↑[size:l]                                     0.63     0.37    +3.0
+     ACCEPT↑ VOID↑[size:s]                                            0.63     0.37    +3.0
+     BREACH_REVERT↓ BREACH_REVERT↓                                    0.49     0.26    +2.9
+     EXTREME↑ VOID↑[size:s]                                           3.41     2.79    +2.6
+     VOID↑[size:m] VOID↑[size:s]                                      5.68     4.90    +2.5
+     REVISIT↑[n:3+] FAIL↑                                             0.57     0.86    -2.2
+     VOID↑[size:s] EXPIRE↑                                            0.45     0.29    +2.1
+     VOID↓[size:s] VOID↑[size:s]                                      1.21     1.59    -2.1
+     VOID↓[size:m] REJECT↓                                            0.53     0.85    -2.0
+     ACCEPT↓ EXTREME↑                                                 2.06     1.69    +2.0
+     VOID↑[size:l] FAIL↓                                              1.76     1.42    +2.0
+   largest 3-gram differences (rate per 1,000 tokens, data / null / z):
+     VOID↓[size:s] EXTREME↓ DISPLACE↑                                 0.98     1.64    -3.6
+     VOID↓[size:l] VOID↓[size:l] VOID↓[size:m]                        0.67     0.34    +3.6
+     FAIL↑ VOID↓[size:l] REVISIT↑[n:1]                                0.25     0.55    -2.9
+     ACCEPT↑ VOID↑[size:s] EXTREME↓                                   0.45     0.25    +2.8
+     DISPLACE↓ BREACH_REVERT↓ VOID↓[size:m]                           1.02     0.69    +2.8
+     REVISIT↑[n:1] VOID↓[size:l] BREAK↓[force:strong]                 0.18     0.43    -2.7
+     VOID↑[size:l] FAIL↓ VOID↑[size:m]                                0.61     0.39    +2.6
+     ACCEPT↓ EXTREME↑ VOID↓[size:s]                                   0.47     0.28    +2.6
+     ZONE↑ VOID↑[size:m] VOID↑[size:s]                                0.69     0.44    +2.5
+     VOID↑[size:m] DISPLACE↑ BREACH_REVERT↑                           0.82     0.55    +2.5
+     EXTREME↑ VOID↓[size:s] VOID↓[size:m]                             0.47     0.29    +2.3
+     VOID↑[size:m] EXTREME↓ BREAK↑[force:weak]                        0.61     0.40    +2.3
+   largest 4-gram differences (rate per 1,000 tokens, data / null / z):
+     EXTREME↑ DISPLACE↓ BREACH_REVERT↓ VOID↓[size:m]                  0.59     0.31    +3.6
+     VOID↑[size:m] EXTREME↓ DISPLACE↑ VOID↑[size:s]                   0.78     0.50    +2.7
+     REVISIT↑[n:1] VOID↓[size:l] BREAK↓[force:strong] ZONE↓           0.18     0.43    -2.7
+     VOID↓[size:s] VOID↑[size:l] EXTREME↓ DISPLACE↑                   0.63     0.38    +2.6
+     DISPLACE↓ BREAK↓[force:mid] VOID↑[size:m] EXTREME↓               0.45     0.26    +2.4
+     BREAK↑[force:mid] ZONE↑ VOID↑[size:m] EXTREME↑                   0.57     0.37    +2.3
+     DISPLACE↑ BREAK↑[force:mid] ZONE↑ REVISIT↓[n:1]                  0.96     0.69    +2.3
+     DISPLACE↑ BREAK↑[force:mid] ZONE↑ ZONE↑                          0.65     0.44    +2.2
+     BREAK↑[force:mid] ZONE↑ VOID↑[size:m] VOID↑[size:s]              0.45     0.27    +2.1
+     EXTREME↓ VOID↑[size:m] DISPLACE↑ VOID↓[size:s]                   0.53     0.35    +2.1
+     DISPLACE↑ EXTREME↑ VOID↓[size:m] DISPLACE↓                       1.39     1.08    +2.1
+     VOID↑[size:m] DISPLACE↑ VOID↓[size:s] EXTREME↑                   0.47     0.30    +2.0
+   largest P(next | last 1) differences (data / null / z):
+     FAIL↓                                    -> REVISIT↓[n:1]       0.002  0.012    -2.9
+     BREACH_REVERT↓                           -> REVISIT↑[n:3+]      0.002  0.011    -2.9
+     BREAK↑[force:mid]                        -> REVISIT↓[n:3+]      0.017  0.008    +2.6
+     VOID↓[size:m]                            -> EXPIRE↑             0.008  0.004    +2.6
+     BREACH_REVERT↓                           -> BREACH_REVERT↓      0.018  0.010    +2.6
+     REVISIT↓[n:3+]                           -> VOID↑[size:l]       0.110  0.067    +2.5
+     EXTREME↑                                 -> VOID↑[size:s]       0.037  0.030    +2.5
+     REVISIT↑[n:3+]                           -> REJECT↓             0.000  0.024    -2.4
+     EXPIRE↓                                  -> BREAK↓[force:mid]   0.030  0.005    +2.4
+     VOID↑[size:m]                            -> VOID↑[size:s]       0.075  0.065    +2.4
+     VOID↓[size:s]                            -> VOID↑[size:s]       0.021  0.027    -2.3
+     REVISIT↓[n:3+]                           -> ACCEPT↓             0.060  0.032    +2.3
+   largest P(next | last 2) differences (data / null / z):
+     REVISIT↑[n:1] VOID↓[size:l]              -> BREAK↓[force:strong]  0.075  0.181    -3.5
+     VOID↓[size:s] EXTREME↓                   -> DISPLACE↑           0.166  0.247    -3.4
+     VOID↑[size:m] VOID↓[size:s]              -> VOID↓[size:s]       0.115  0.025    +3.1
+     VOID↓[size:l] VOID↓[size:l]              -> VOID↓[size:m]       0.292  0.162    +3.1
+     EXTREME↑ REJECT↓                         -> REVISIT↓[n:2]       0.283  0.116    +3.0
+     VOID↓[size:m] VOID↓[size:s]              -> EXTREME↓            0.118  0.195    -3.0
+     VOID↓[size:s] BREAK↓[force:mid]          -> EXTREME↓            0.079  0.008    +3.0
+     DISPLACE↑ EXTREME↓                       -> VOID↑[size:s]       0.246  0.103    +2.9
+     VOID↑[size:m] DISPLACE↑                  -> REVISIT↓[n:3+]      0.022  0.008    +2.9
+     BREACH_REVERT↑ VOID↑[size:l]             -> EXTREME↑            0.021  0.067    -2.8
+     FAIL↓ VOID↑[size:s]                      -> FAIL↓               0.000  0.056    -2.8
+     FAIL↑ VOID↓[size:l]                      -> REVISIT↑[n:1]       0.075  0.144    -2.8
+
+== garch  (data 48533 tokens, each null set 48713; R = 10)
+   order   KL data||null (bits)   null LOO KL median [max]   p
+   n=1     0.00069               0.00048 [0.00105]        0.250
+   n=2     0.01760               0.01482 [0.01684]        0.083
+   n=3     0.15874               0.15667 [0.16341]        0.417
+   n=4     0.46170               0.45706 [0.47188]        0.333
+   k=1|    0.02174               0.01947 [0.02071]        0.083
+   k=2|    0.18889               0.18781 [0.19060]        0.417
+   k=3|    0.43913               0.43685 [0.44116]        0.250
+   unigram rates per 1,000 tokens (data / null mean / z):
+     ACCEPT↑                          6.74     6.51    +0.6
+     ACCEPT↓                          6.16     6.70    -1.5
+     BREACH_REVERT↑                  26.17    26.47    -0.4
+     BREACH_REVERT↓                  26.44    26.81    -0.5
+     BREAK↑[force:mid]               21.14    22.04    -1.3
+     BREAK↑[force:strong]             9.87    10.19    -0.7
+     BREAK↑[force:weak]               4.76     4.60    +0.5
+     BREAK↓[force:mid]               22.34    22.08    +0.3
+     BREAK↓[force:strong]            10.43    10.37    +0.1
+     BREAK↓[force:weak]               4.86     4.45    +1.2
+     DISPLACE↑                       66.74    67.59    -0.7
+     DISPLACE↓                       66.94    67.68    -0.6
+     EXPIRE↑                          2.80     3.74    -1.6
+     EXPIRE↓                          4.33     4.01    +0.5
+     EXTREME↑                        92.10    92.53    -0.3
+     EXTREME↓                        93.52    92.82    +0.5
+     FAIL↑                           13.17    13.37    -0.4
+     FAIL↓                           13.29    13.49    -0.4
+     REJECT↑                         15.06    14.86    +0.4
+     REJECT↓                         14.71    14.88    -0.2
+     REVISIT↑[n:1]                   20.63    20.47    +0.2
+     REVISIT↑[n:2]                    8.26     8.14    +0.3
+     REVISIT↑[n:3+]                   5.17     5.15    +0.1
+     REVISIT↓[n:1]                   20.52    20.83    -0.5
+     REVISIT↓[n:2]                    7.77     8.23    -1.1
+     REVISIT↓[n:3+]                   5.13     5.03    +0.2
+     VOID↑[size:l]                   42.07    42.26    -0.2
+     VOID↑[size:m]                   74.30    75.70    -1.0
+     VOID↑[size:na]                   0.54     0.44    +0.9
+     VOID↑[size:s]                   57.20    57.91    -0.7
+     VOID↓[size:l]                   44.24    42.97    +1.3
+     VOID↓[size:m]                   79.12    74.93    +3.3
+     VOID↓[size:na]                   0.37     0.45    -0.8
+     VOID↓[size:s]                   60.23    58.17    +1.5
+     ZONE↑                           25.65    26.78    -1.5
+     ZONE↓                           27.24    27.35    -0.2
+   largest 2-gram differences (rate per 1,000 tokens, data / null / z):
+     VOID↑[size:m] REJECT↓                                            0.39     0.76    -3.0
+     REVISIT↓[n:1] EXTREME↑                                           0.78     0.48    +2.8
+     REJECT↑ BREACH_REVERT↓                                           0.49     0.29    +2.7
+     VOID↑[size:s] BREAK↑[force:mid]                                  1.05     1.59    -2.7
+     DISPLACE↓ BREAK↓[force:strong]                                   2.20     1.72    +2.6
+     BREACH_REVERT↑ EXTREME↑                                          1.13     1.57    -2.5
+     BREAK↓[force:mid] VOID↑[size:s]                                  0.49     0.31    +2.3
+     DISPLACE↑ VOID↑[size:s]                                          6.37     5.57    +2.3
+     EXTREME↓ REVISIT↑[n:2]                                           0.29     0.53    -2.3
+     ZONE↓ REVISIT↓[n:1]                                              0.43     0.72    -2.3
+     ACCEPT↑ VOID↑[size:s]                                            0.66     0.41    +2.3
+     EXTREME↑ REVISIT↓[n:1]                                           0.39     0.23    +2.3
+   largest 3-gram differences (rate per 1,000 tokens, data / null / z):
+     ACCEPT↑ VOID↑[size:s] EXTREME↓                                   0.56     0.29    +3.5
+     VOID↑[size:s] EXTREME↑ VOID↓[size:s]                             1.38     0.91    +3.4
+     BREACH_REVERT↓ VOID↓[size:l] REVISIT↑[n:1]                       0.72     0.41    +3.4
+     VOID↓[size:s] VOID↓[size:m] DISPLACE↓                            0.43     0.22    +3.2
+     EXTREME↑ VOID↓[size:m] VOID↓[size:s]                             0.43     0.22    +3.2
+     BREAK↓[force:strong] ZONE↓ EXTREME↑                              0.58     0.31    +3.0
+     VOID↑[size:l] DISPLACE↑ VOID↓[size:s]                            0.45     0.24    +2.9
+     DISPLACE↓ BREAK↓[force:strong] ZONE↓                             2.16     1.62    +2.9
+     EXTREME↑ DISPLACE↓ VOID↑[size:s]                                 1.15     1.72    -2.8
+     DISPLACE↑ VOID↑[size:s] EXTREME↑                                 1.57     1.14    +2.8
+     EXTREME↓ VOID↓[size:m] EXTREME↑                                  1.01     0.68    +2.8
+     EXTREME↓ VOID↑[size:s] VOID↑[size:m]                             0.45     0.26    +2.7
+   largest 4-gram differences (rate per 1,000 tokens, data / null / z):
+     VOID↓[size:m] BREAK↓[force:mid] ZONE↓ VOID↓[size:m]              0.58     0.31    +3.4
+     DISPLACE↑ VOID↑[size:s] EXTREME↑ DISPLACE↓                       0.49     0.26    +3.2
+     EXTREME↑ VOID↓[size:m] DISPLACE↓ BREAK↓[force:strong]            0.64     0.37    +3.2
+     EXTREME↓ DISPLACE↑ VOID↑[size:s] EXTREME↑                        0.74     0.47    +2.8
+     DISPLACE↓ BREAK↓[force:strong] ZONE↓ VOID↓[size:l]               0.45     0.25    +2.6
+     VOID↓[size:s] EXTREME↑ VOID↓[size:m] DISPLACE↓                   1.79     1.35    +2.6
+     DISPLACE↑ VOID↑[size:l] BREAK↑[force:strong] ZONE↑               0.66     0.43    +2.5
+     VOID↓[size:m] EXTREME↑ VOID↓[size:l] DISPLACE↓                   1.44     1.08    +2.4
+     BREACH_REVERT↑ EXTREME↓ DISPLACE↑ BREAK↑[force:mid]              0.45     0.25    +2.3
+     DISPLACE↑ VOID↑[size:m] VOID↓[size:m] EXTREME↑                   0.58     0.37    +2.3
+     EXTREME↑ DISPLACE↓ VOID↑[size:s] EXTREME↓                        0.78     1.13    -2.3
+     VOID↑[size:s] EXTREME↑ VOID↓[size:s] DISPLACE↓                   0.91     0.65    +2.2
+   largest P(next | last 1) differences (data / null / z):
+     BREAK↑[force:strong]                     -> ZONE↑               0.954  0.984    -3.7
+     VOID↑[size:m]                            -> REJECT↓             0.005  0.010    -3.2
+     ACCEPT↓                                  -> FAIL↓               0.007  0.031    -3.1
+     EXTREME↑                                 -> BREAK↑[force:strong]  0.001  0.003    -2.9
+     VOID↑[size:m]                            -> BREACH_REVERT↓      0.006  0.002    +2.9
+     REVISIT↓[n:1]                            -> EXTREME↑            0.038  0.023    +2.7
+     EXTREME↓                                 -> REVISIT↑[n:2]       0.003  0.006    -2.7
+     VOID↓[size:l]                            -> BREAK↓[force:weak]  0.003  0.007    -2.6
+     ZONE↓                                    -> REVISIT↓[n:1]       0.016  0.026    -2.6
+     BREACH_REVERT↑                           -> EXTREME↑            0.043  0.059    -2.6
+     DISPLACE↑                                -> VOID↑[size:s]       0.095  0.082    +2.6
+     VOID↑[size:s]                            -> BREAK↑[force:mid]   0.018  0.028    -2.6
+   largest P(next | last 2) differences (data / null / z):
+     EXTREME↓ VOID↓[size:m]                   -> EXTREME↑            0.405  0.270    +3.1
+     REJECT↑ VOID↑[size:s]                    -> DISPLACE↑           0.016  0.128    -3.1
+     BREACH_REVERT↓ VOID↓[size:l]             -> REVISIT↑[n:1]       0.169  0.098    +3.0
+     BREACH_REVERT↓ VOID↓[size:m]             -> VOID↑[size:l]       0.003  0.023    -3.0
+     REJECT↓ EXTREME↑                         -> DISPLACE↓           0.406  0.310    +3.0
+     VOID↓[size:l] VOID↓[size:m]              -> VOID↓[size:s]       0.067  0.128    -2.8
+     BREAK↓[force:strong] ZONE↓               -> EXTREME↑            0.056  0.031    +2.8
+     ACCEPT↓ BREACH_REVERT↑                   -> EXTREME↑            0.000  0.126    -2.7
+     VOID↓[size:s] REJECT↓                    -> VOID↓[size:l]       0.180  0.058    +2.7
+     EXTREME↑ DISPLACE↓                       -> VOID↑[size:s]       0.038  0.054    -2.6
+     DISPLACE↑ BREAK↑[force:strong]           -> REVISIT↓[n:1]       0.060  0.008    +2.6
+     BREAK↑[force:mid] ZONE↑                  -> ZONE↑               0.084  0.057    +2.6
+
+== trend  (data 50492 tokens, each null set 48902; R = 10)
+   order   KL data||null (bits)   null LOO KL median [max]   p
+   n=1     0.01610               0.00073 [0.00148]        0.083
+   n=2     0.04813               0.01518 [0.01691]        0.083
+   n=3     0.16873               0.15737 [0.16192]        0.083
+   n=4     0.41990               0.45886 [0.46623]        1.000
+   k=1|    0.03787               0.01965 [0.02050]        0.083
+   k=2|    0.18266               0.18846 [0.19137]        1.000
+   k=3|    0.41106               0.43707 [0.44067]        1.000
+   unigram rates per 1,000 tokens (data / null mean / z):
+     ACCEPT↑                          5.27     6.43    -3.2
+     ACCEPT↓                          5.39     6.60    -3.3
+     BREACH_REVERT↑                  22.26    26.36    -5.0
+     BREACH_REVERT↓                  22.26    26.65    -5.0
+     BREAK↑[force:mid]               18.28    21.67    -5.1
+     BREAK↑[force:strong]            12.64    10.14    +5.4
+     BREAK↑[force:weak]               3.47     4.53    -2.4
+     BREAK↓[force:mid]               18.91    22.32    -4.6
+     BREAK↓[force:strong]            12.00    10.29    +3.5
+     BREAK↓[force:weak]               3.66     4.51    -2.8
+     DISPLACE↑                       64.54    67.47    -2.5
+     DISPLACE↓                       63.71    67.52    -3.2
+     EXPIRE↑                          4.04     3.64    +0.5
+     EXPIRE↓                          4.04     4.07    -0.1
+     EXTREME↑                        84.77    92.37    -5.5
+     EXTREME↓                        85.02    92.14    -5.2
+     FAIL↑                           15.25    13.43    +3.5
+     FAIL↓                           14.72    13.46    +2.4
+     REJECT↑                         11.29    14.70    -4.9
+     REJECT↓                         10.93    15.61    -4.3
+     REVISIT↑[n:1]                   20.93    20.55    +0.6
+     REVISIT↑[n:2]                    6.99     8.13    -2.6
+     REVISIT↑[n:3+]                   3.15     5.03    -4.5
+     REVISIT↓[n:1]                   20.70    20.97    -0.4
+     REVISIT↓[n:2]                    6.56     8.30    -3.1
+     REVISIT↓[n:3+]                   3.19     5.54    -3.9
+     VOID↑[size:l]                   57.57    42.72   +15.9
+     VOID↑[size:m]                   83.56    74.60    +7.2
+     VOID↑[size:na]                   0.46     0.47    -0.1
+     VOID↑[size:s]                   59.20    58.26    +0.8
+     VOID↓[size:l]                   57.93    42.92   +13.7
+     VOID↓[size:m]                   82.77    75.69    +5.7
+     VOID↓[size:na]                   0.42     0.37    +0.5
+     VOID↓[size:s]                   58.86    58.45    +0.4
+     ZONE↑                           27.75    26.57    +1.6
+     ZONE↓                           27.53    27.52    +0.0
+   largest 2-gram differences (rate per 1,000 tokens, data / null / z):
+     VOID↓[size:l] VOID↓[size:l]                                      5.07     1.96   +14.0
+     VOID↑[size:l] VOID↑[size:l]                                      4.91     1.95   +12.6
+     VOID↓[size:l] VOID↓[size:m]                                      7.35     3.98   +11.8
+     VOID↑[size:l] VOID↑[size:m]                                      6.77     4.04    +9.5
+     EXTREME↑ DISPLACE↓                                              24.99    31.61    -8.2
+     EXTREME↓ VOID↑[size:l]                                          10.40     7.39    +7.7
+     VOID↑[size:l] DISPLACE↑                                         10.62     7.62    +7.6
+     EXTREME↑ VOID↓[size:l]                                          10.28     7.36    +7.5
+     EXTREME↓ DISPLACE↑                                              25.59    31.59    -7.5
+     VOID↓[size:l] DISPLACE↓                                         10.26     7.63    +6.6
+     VOID↑[size:m] VOID↑[size:l]                                      4.83     3.17    +6.5
+     VOID↓[size:m] VOID↓[size:l]                                      5.07     3.21    +6.2
+   largest 3-gram differences (rate per 1,000 tokens, data / null / z):
+     VOID↓[size:l] VOID↓[size:l] VOID↓[size:m]                        1.33     0.33   +12.0
+     VOID↓[size:l] VOID↓[size:l] VOID↓[size:l]                        0.91     0.21    +9.2
+     VOID↑[size:l] VOID↑[size:l] VOID↑[size:l]                        0.75     0.18    +9.1
+     EXTREME↓ VOID↑[size:l] DISPLACE↑                                 9.74     6.77    +8.0
+     ZONE↑ VOID↑[size:l] VOID↑[size:l]                                0.91     0.31    +7.5
+     EXTREME↑ VOID↓[size:l] DISPLACE↓                                 9.57     6.79    +7.5
+     VOID↑[size:l] VOID↑[size:l] VOID↑[size:m]                        0.99     0.36    +7.3
+     VOID↑[size:l] VOID↑[size:m] VOID↑[size:m]                        1.51     0.66    +7.3
+     VOID↓[size:l] DISPLACE↓ VOID↓[size:l]                            0.99     0.39    +6.7
+     FAIL↑ VOID↓[size:l] VOID↓[size:l]                                0.81     0.26    +6.7
+     VOID↓[size:m] DISPLACE↓ VOID↓[size:l]                            1.82     0.95    +6.3
+     VOID↑[size:l] EXTREME↓ VOID↑[size:l]                             1.58     0.80    +6.2
+   largest 4-gram differences (rate per 1,000 tokens, data / null / z):
+     EXTREME↑ VOID↓[size:l] DISPLACE↓ VOID↓[size:l]                   0.95     0.36    +6.8
+     VOID↑[size:l] EXTREME↓ VOID↑[size:l] DISPLACE↑                   1.52     0.74    +6.4
+     EXTREME↑ VOID↓[size:m] DISPLACE↓ VOID↓[size:l]                   1.64     0.84    +6.2
+     BREAK↓[force:strong] ZONE↓ VOID↓[size:l] VOID↓[size:m]           0.57     0.19    +6.0
+     VOID↑[size:m] EXTREME↓ VOID↑[size:l] DISPLACE↑                   1.98     1.09    +6.0
+     VOID↓[size:l] EXTREME↑ VOID↓[size:l] DISPLACE↓                   1.39     0.69    +5.7
+     VOID↓[size:m] EXTREME↑ VOID↓[size:l] DISPLACE↓                   2.14     1.16    +5.4
+     VOID↓[size:l] BREAK↓[force:strong] ZONE↓ VOID↓[size:l]           0.55     0.20    +5.2
+     EXTREME↓ VOID↑[size:m] DISPLACE↑ VOID↑[size:l]                   1.52     0.85    +5.1
+     EXTREME↓ VOID↑[size:l] DISPLACE↑ VOID↑[size:l]                   0.87     0.36    +5.0
+     EXTREME↓ VOID↑[size:l] DISPLACE↑ BREAK↑[force:strong]            1.01     0.49    +5.0
+     VOID↑[size:l] DISPLACE↑ BREAK↑[force:strong] ZONE↑               1.07     0.55    +4.9
+   largest P(next | last 1) differences (data / null / z):
+     EXTREME↓                                 -> VOID↑[size:l]       0.122  0.080    +9.2
+     EXTREME↑                                 -> VOID↓[size:l]       0.121  0.080    +9.0
+     VOID↓[size:l]                            -> VOID↓[size:l]       0.088  0.046    +9.0
+     VOID↑[size:l]                            -> VOID↑[size:l]       0.085  0.046    +7.6
+     EXTREME↑                                 -> DISPLACE↓           0.295  0.342    -6.7
+     DISPLACE↓                                -> VOID↓[size:l]       0.095  0.064    +6.4
+     DISPLACE↑                                -> VOID↑[size:l]       0.096  0.064    +6.0
+     VOID↓[size:l]                            -> VOID↓[size:m]       0.127  0.093    +5.9
+     EXTREME↓                                 -> DISPLACE↑           0.301  0.343    -5.9
+     EXTREME↑                                 -> VOID↓[size:m]       0.193  0.153    +5.7
+     EXTREME↓                                 -> VOID↑[size:m]       0.183  0.152    +5.5
+     FAIL↓                                    -> VOID↑[size:l]       0.367  0.278    +5.2
+   largest P(next | last 2) differences (data / null / z):
+     VOID↓[size:m] EXTREME↑                   -> VOID↓[size:l]       0.158  0.084    +5.7
+     VOID↑[size:m] EXTREME↓                   -> VOID↑[size:l]       0.143  0.082    +5.2
+     VOID↑[size:l] EXTREME↓                   -> VOID↑[size:l]       0.190  0.103    +5.0
+     VOID↑[size:l] DISPLACE↑                  -> BREAK↑[force:mid]   0.232  0.328    -4.9
+     VOID↓[size:m] DISPLACE↓                  -> VOID↓[size:l]       0.115  0.067    +4.7
+     ZONE↑ VOID↑[size:l]                      -> VOID↑[size:l]       0.213  0.099    +4.6
+     BREAK↓[force:strong] ZONE↓               -> VOID↓[size:l]       0.197  0.127    +4.6
+     FAIL↑ VOID↓[size:l]                      -> VOID↓[size:l]       0.161  0.068    +4.6
+     VOID↑[size:m] DISPLACE↑                  -> VOID↑[size:l]       0.112  0.069    +4.1
+     VOID↑[size:m] EXTREME↓                   -> DISPLACE↑           0.418  0.494    -4.1
+     VOID↓[size:l] EXTREME↑                   -> VOID↓[size:l]       0.171  0.096    +4.1
+     VOID↓[size:m] EXTREME↑                   -> DISPLACE↓           0.420  0.497    -4.0
+
