@@ -1,0 +1,13 @@
+{
+  "frozen": "2026-10-03",
+  "question": "do the two near-breakeven effects - a rare origin and a trending return - stack on the nested one (a 15m/30m zone inside a 4h break's leg) to cross zero?",
+  "rules": {
+    "S0": "inside a 4h break's leg (the baseline)",
+    "S1": "S0 and er_r >= its 60th percentile (Kaufman efficiency, 10 bars, before the return)",
+    "S2": "S0 and stretch >= its 80th percentile (the 50-bar EMA minus the origin low, ATR)",
+    "S3": "S0 and both"
+  },
+  "thresholds": "percentiles of all qualified 15m/30m first returns in the MT5 run (discovery), per timeframe, computed mechanically - no other choice made after seeing results",
+  "judged_once_on": "Binance perpetuals, 12 coins, 15m and 30m, 2021-01 to 2024-06 and 2024-07 on, fees 0.07%",
+  "passes_if": "R a trade > 0 on Binance 30m in both periods, and the day-bootstrap 90% interval of R over the whole Binance sample above 0"
+}

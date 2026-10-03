@@ -19,7 +19,10 @@ enter from a zone there that sits close to the break. Pre-registered before any 
                relation also for HTF-qualified breaks only. The broker's 15m starts 2024-07, so this
                is about 15 months; it is reported by month halves for stability
 
-  OUT=... MT5BT_DB=... MODE=run|plot python research/ideas/zone_nested.py
+  stack        the frozen test in `nested_stack.json`: rare origin and trending return stacked on the
+               nested effect, thresholds from the MT5 run, judged once on Binance (MODE=stack)
+
+  OUT=... MT5BT_DB=... MODE=run|plot|stack python research/ideas/zone_nested.py
 """
 from __future__ import annotations
 
@@ -257,9 +260,53 @@ def plot():
     print("plots written", flush=True)
 
 
+def stack():
+    """The frozen stacking test (`nested_stack.json`): thresholds from the MT5 run, judged on Binance."""
+    import json
+    rule = json.loads((HERE / "nested_stack.json").read_text())
+    mt5 = pd.read_pickle(os.environ["MT5_NESTED"])
+    binance = pd.read_pickle(os.environ["BINANCE_NESTED"])
+    mt5 = mt5[~mt5["family"].str.startswith("deriv")]
+    rng = np.random.default_rng(13)
+    split = pd.Timestamp("2024-07-01", tz="UTC").timestamp()
+    rows = []
+    for ltf in LTFS:
+        disc = mt5[mt5["ltf"] == ltf]
+        cuts = {"er": float(np.nanquantile(disc["er_r"].astype(float), 0.6)),
+                "stretch": float(np.nanquantile(disc["stretch"].astype(float), 0.8))}
+        print(f"{ltf} thresholds from MT5 (frozen): er_r >= {cuts['er']:.4f}, stretch >= {cuts['stretch']:.4f}")
+        for name, d in (("MT5 (discovery)", disc), ("Binance (judge)", binance[binance["ltf"] == ltf])):
+            ins = d["inside_4h"].astype(bool)
+            er_ok = d["er_r"].astype(float) >= cuts["er"]
+            st_ok = d["stretch"].astype(float) >= cuts["stretch"]
+            for key, m in (("all LTF zones", np.ones(len(d), bool)), ("S0", ins), ("S1", ins & er_ok),
+                           ("S2", ins & st_ok), ("S3", ins & er_ok & st_ok)):
+                x = d[m].copy()
+                if len(x) < 20:
+                    rows.append(dict(ltf=ltf, data=name, rule=key, n=len(x)))
+                    continue
+                x["day"] = x["ret_ts"] // 86400
+                days = x.groupby("day")["R"].agg(["sum", "count"])
+                boots = [days["sum"].values[s_].sum() / days["count"].values[s_].sum()
+                         for s_ in (rng.integers(0, len(days), len(days)) for _ in range(2000))]
+                lo, hi = np.quantile(boots, [0.05, 0.95])
+                rows.append(dict(ltf=ltf, data=name, rule=key, n=len(x), P1R=(x["best"] >= 1).mean(), R=x["R"].mean(),
+                                 lo=lo, hi=hi, R_before=x.loc[x["ret_ts"] < split, "R"].mean(),
+                                 R_after=x.loc[x["ret_ts"] >= split, "R"].mean()))
+    t = pd.DataFrame(rows).round(3)
+    pd.set_option("display.width", 250)
+    print(t.to_string(index=False))
+    t.to_csv(OUT / "stack.csv", index=False)
+    b30 = t[(t["ltf"] == "30m") & (t["data"] == "Binance (judge)")].set_index("rule")
+    for key in ("S1", "S2", "S3"):
+        r = b30.loc[key] if key in b30.index else None
+        ok = r is not None and r.get("R_before", -1) > 0 and r.get("R_after", -1) > 0 and r.get("lo", -1) > 0
+        print(f"{key}: {'PASSES' if ok else 'fails'} ({rule['rules'][key]})")
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    {"run": run, "plot": plot}[os.environ.get("MODE", "run")]()
+    {"run": run, "plot": plot, "stack": stack}[os.environ.get("MODE", "run")]()
 
 
 if __name__ == "__main__":
