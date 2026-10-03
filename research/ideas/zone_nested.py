@@ -40,14 +40,36 @@ import prims as P  # noqa: E402
 import zone_events as E  # noqa: E402
 
 OUT = Path(os.environ.get("OUT", ".data/zone_nested"))
+#: SOURCE=binance: the confirmation on Binance USD-M perpetuals (12 coins, 15m from 2021, fees 0.07%
+#: of price a trade) - pre-registered after the MT5 run: 15m/30m zones inside a 4h break's leg beat all
+#: 15m/30m zones and those against a 4h break do worst, judged on 2021 to 2024-06 (time the MT5 run never
+#: saw) and on 2024-07 on (its period, another venue)
+SOURCE = os.environ.get("SOURCE", "mt5")
+BIN = Path(os.environ.get("BINANCE", os.path.expanduser("~/till_infinity/data/binance")))
+COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "LTC", "DOT", "TRX")
+FEE = 0.0007
 LTFS = ("15m", "30m")
 HTFS = ("1h", "4h")
 SEC = {"15m": 900, "30m": 1800, "1h": 3600, "4h": 14400}
 NEAR = 0.5
 
 
+def _bin(sym, iv):
+    z = np.load(BIN / f"{sym}USDT.klines.{iv}.npz")
+    d = pd.DataFrame({k: z[k] for k in ("time", "open", "high", "low", "close", "volume")})
+    return d.rename(columns={"time": "ts"}).drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
+
+
 def bars(sym, iv):
     import run as R
+    if SOURCE == "binance":
+        if iv == "30m":
+            d = _bin(sym, "15m")
+            d["k"] = d["ts"] // 1800 * 1800
+            d = d.groupby("k").agg(open=("open", "first"), high=("high", "max"), low=("low", "min"),
+                                   close=("close", "last"), volume=("volume", "sum"))
+            return d.reset_index().rename(columns={"k": "ts"})
+        return _bin(sym, iv)
     if iv == "30m":
         d = R.load(sym, "15m")
         if d is None:
@@ -64,8 +86,9 @@ def bars(sym, iv):
 def evs(df, iv, spread):
     a = P.atr(df, 14)
     rows = []
+    frac = FEE if SOURCE == "binance" else None
     for side, frame in ((1, df), (-1, E.flip(df))):
-        rows += E.events(frame, a, side, spread, None, None, SEC[iv])
+        rows += E.events(frame, a, side, spread, None, None, SEC[iv], spread_frac=frac)
     d = pd.DataFrame(rows)
     if d.empty:
         return d, a
@@ -77,9 +100,14 @@ def one(sym):
     import run as R
     from mt5bt import load_specs
     R.DB = os.environ.get("MT5BT_DB")
-    spec = load_specs(R.DB).get(sym)
-    spread = R.spread_floor(sym, spec) * spec.point if spec is not None else 0.0
-    l15 = R.load(sym, "15m")
+    if SOURCE == "binance":
+        spread = 0.0
+        R.FAMILY.setdefault(sym, "crypto")
+        l15 = bars(sym, "15m")
+    else:
+        spec = load_specs(R.DB).get(sym)
+        spread = R.spread_floor(sym, spec) * spec.point if spec is not None else 0.0
+        l15 = R.load(sym, "15m")
     if l15 is None or len(l15) < 2000:
         return None
     start = int(l15["ts"].iloc[0])
@@ -142,15 +170,15 @@ def one(sym):
 def run():
     import run as R
     R.DB = os.environ.get("MT5BT_DB")
-    syms = [s for s in R.FAMILY if s not in R.FRESH]
+    syms = list(COINS) if SOURCE == "binance" else [s for s in R.FAMILY if s not in R.FRESH]
     with ProcessPoolExecutor(int(os.environ.get("WORKERS", 20))) as pool:
         got = [g for g in pool.map(one, syms) if g is not None]
     d = pd.concat(got, ignore_index=True)
     d.to_pickle(OUT / "nested.pkl.gz")
     d["scope"] = np.where(d["family"].str.startswith("deriv"), "deriv", "real")
     d["hit"] = (d["best"] >= 1).astype(float)
-    mid = d["ret_ts"].median()
-    d["half"] = np.where(d["ret_ts"] < mid, "first", "second")
+    mid = (pd.Timestamp("2024-07-01", tz="UTC").timestamp() if SOURCE == "binance" else d["ret_ts"].median())
+    d["half"] = np.where(d["ret_ts"] < mid, "first", "second")  # binance: before / from the MT5 window
     pd.set_option("display.width", 250)
     rows = []
     for (scope, ltf), g in d.groupby(["scope", "ltf"]):
