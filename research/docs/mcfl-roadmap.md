@@ -214,6 +214,16 @@ A rule learned twice on 2026-10-03 (see memory `lookahead-in-conditioning-flags`
 - Attach outcome labels to any entity or sentence: P(+1R before −1R), MFE / MAE in ATR, whipsaw, time to resolution. Use the production Episode definitions (`till_infinity/structures/reactions.py`, Episode) so research and the journal speak the same language.
 - Grammar induction: learn frequent productions from token streams (e.g. Sequitur, or MDL-guided pair merging), with a report of the learned rules and their description-length gain against walks.
 - A next-token model over sentences (n-gram with smoothing as the baseline; optionally a small sequence model) that predicts the next L2/L4 event, judged on held-out time and against walks.
+- **Machine learning on MCFL** (asked for by the desk):
+  - sequential pattern mining (PrefixSpan or SPADE) over sentences, each mined pattern ranked by its P(N R) curve against 1/(N+1);
+  - token and sentence embeddings, with a nearest-neighbour analogue engine that returns the outcomes of the most similar past sentences;
+  - gradient-boosted models on features from the parsed entity graph;
+  - optionally a small sequence model (HMM or transformer) for the next event.
+- **The same safeguards for all of these, mandatory:**
+  - held-out time and a second venue;
+  - Benjamini-Hochberg across every mined pattern;
+  - the identical pipeline run on matched random walks, which must find nothing (a miner that finds as much on walks has found noise);
+  - every input token's known_at at or before the decision.
 - Always report whether the learned structure or prediction beats the walk null.
 
 **3. Non-price information as events.**
