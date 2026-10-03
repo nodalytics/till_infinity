@@ -24,6 +24,18 @@ Construction (for a bullish zone; bearish is the same on the flipped chart):
               the origin that the leg took out), gap_pre (largest gap / the pre-zone mean range). bos_follow is the one feature
               from after the break (VALIDATED) and is kept apart; the formation-only model omits it.
               Force regimes are quartiles, read for an optimum, not assumed monotone
+  focus       (asked for later) production's FOCuS changepoints replayed: fc_origin - a change the
+              zone's way dated within 3 bars of the origin and fired by the time the zone is live;
+              fc_leg - any such fire during the leg; fc_lag - bars to it; fc_against - a fire against the
+              zone during the return leg; fc_with - a fire the zone's way in the 5 bars before the return
+  rarity      (asked for later) extraordinary swing points: left_extent (bars back since a lower low,
+              to 1000), origin_tr (the origin bar's range / ATR), origin_vol (its tick volume / the
+              50-bar median), stretch (the 50-bar EMA minus the origin low, ATR) - all known there
+  focus6      the same at threshold 6 (more fires), for robustness
+  cusum       (asked for later) CUSUM ignition (`survivors.cusum`, k 0.5 / h 5): cu_leg - it fired the
+              zone's way during the leg; cu_against - against it on the return leg; cu_with - the
+              zone's way in the 5 bars before the return
+  gap_dist    (asked for later) the first qualifying gap's distance above the zone's near edge, ATR
   prior leg   (asked for later) the fall into the origin, from the last swing high before it: pre_size
               (ATR), pre_speed (ATR a bar), pre_eff (net / summed close moves), pre_gaps (bearish
               gaps), v_ratio (displacement out / the fall in), v_speed (speed out / speed in) - a hard
@@ -63,10 +75,12 @@ Tests, in this order, each reported once:
      and P(1R) and mean R of its top fifth against V = 0 in the same period. A model that ranks
      in-sample and not out of sample is reported as that
 
+  flip        (asked for later) every fill also traded the other way: a resting sell at the same price,
+              its stop as far above, a 1R target - does the zone break more often than it holds?
   confirm     the one rule the study suggested, frozen in `zone_rule.json` before it was run, judged
               once on markets no zone study used (MODE=confirm)
 
-  OUT=... MT5BT_DB=... MODE=run|plot|confirm python research/ideas/zone_events.py
+  OUT=... MT5BT_DB=... MODE=run|plot|confirm|flip python research/ideas/zone_events.py
 """
 from __future__ import annotations
 
@@ -96,7 +110,7 @@ DEPTHS = (("d0", 0.0), ("d50", 0.5), ("d100", 1.0))
 #: future cannot prove the past was a strong zone
 FORMATION = ("bos_close", "bos_bars", "disp", "disp_eff", "speed", "eff_close", "vol_surprise", "rel_force",
              "obstacles", "n_gaps", "gap_max", "gap_pre", "d_zi", "d_ib", "width", "vol_pct",
-             "pre_size", "pre_speed", "pre_eff", "pre_gaps", "v_ratio", "v_speed")
+             "pre_size", "pre_speed", "pre_eff", "pre_gaps", "v_ratio", "v_speed", "gap_dist")
 VALIDATED = ("bos_follow",)
 RETURN = ("age", "travel", "approach", "fill_bars", "bias4h")
 FEATURES = FORMATION + VALIDATED + RETURN
@@ -128,16 +142,110 @@ def _outcome(h, l, c, f, entry, stop, H, spread):
     return min(best, 3.0), stopped
 
 
+def _outcome_against(h, l, c, f, entry, stop, H, spread):
+    """The flip: a resting SELL at the same entry, its stop the same distance above, filled on bar
+    f. The most R reached before the stop (0-3), whether stopped, and R with a 1R target."""
+    risk = stop - entry
+    if not risk > 0:
+        return np.nan, np.nan, np.nan
+    best, stopped = 0.0, False
+    end = min(len(c), f + H)
+    for k in range(f, end):
+        if h[k] >= stop:
+            stopped = True
+            break
+        low_ = c[k] if k == f else l[k]
+        best = max(best, (entry - low_ - spread) / risk)
+        if best >= 3:
+            break
+    if best >= 1:
+        R = 1.0 - spread / risk
+    elif stopped:
+        R = -1.0 - spread / risk
+    else:
+        R = (entry - c[min(len(c) - 1, f + H - 1)] - spread) / risk
+    return min(best, 3.0), stopped, R
+
+
+def anchors(df: pd.DataFrame) -> dict:
+    """Levels other participants watch, known at each bar (asked for later): the previous UTC day's
+    and week's high and low, this week's and month's open, and the daily 5/5 swing extremes known by
+    then. Computed on this chart's prices (on the flipped chart the roles swap with the sign)."""
+    t = pd.to_datetime(df["ts"], unit="s", utc=True)
+    g = pd.DataFrame({"h": df["high"].to_numpy(), "l": df["low"].to_numpy(), "o": df["open"].to_numpy()},
+                     index=t)
+    out = {}
+    naive = t.dt.tz_localize(None)
+    for name, freq in (("d", t.dt.floor("D")), ("w", naive.dt.to_period("W").dt.start_time.dt.tz_localize("UTC")),
+                       ("m", naive.dt.to_period("M").dt.start_time.dt.tz_localize("UTC"))):
+        key = pd.Series(freq.to_numpy(), index=t)
+        agg = g.groupby(key.to_numpy()).agg(h=("h", "max"), l=("l", "min"), o=("o", "first"))
+        prev = agg.shift(1)
+        out[f"p{name}h"] = prev["h"].reindex(key.to_numpy()).to_numpy()
+        out[f"p{name}l"] = prev["l"].reindex(key.to_numpy()).to_numpy()
+        out[f"{name}open"] = agg["o"].reindex(key.to_numpy()).to_numpy()
+    # daily swing extremes (5/5), known 5 days after
+    day = g.resample("1D").agg({"h": "max", "l": "min"}).dropna()
+    ph, pl = P.pivots(day["h"].to_numpy(), day["l"].to_numpy(), 5, 5)
+    dts = day.index.to_numpy()
+    out["dswing"] = [(dts[min(kn, len(dts) - 1)] + np.timedelta64(1, "D"), px) for kn, _, px in ph + pl]
+    out["t"] = t.to_numpy()
+    return out
+
+
+def _anchor_flags(an, k, lo, hi, price):
+    """Which anchors sit inside [lo, hi] at bar k."""
+    f = {}
+    for key in ("pdh", "pdl", "pwh", "pwl", "wopen", "mopen"):
+        v = an[key][k]
+        f["at_" + key] = bool(np.isfinite(v) and lo <= v <= hi)
+    mag = 5 * 10 ** (np.floor(np.log10(max(abs(price), 1e-12))) - 2)  # big figures: EURUSD 1.05, gold 50s
+    r = np.round(abs(price) / mag) * mag
+    f["at_round"] = bool(any(lo <= sgn * x <= hi for x in (r - mag, r, r + mag) for sgn in (1, -1)))
+    tk = an["t"][k]
+    f["at_dswing"] = any(when <= tk and lo <= px <= hi for when, px in an["dswing"])
+    f["at_any"] = any(f.values())
+    return f
+
+
 def events(df: pd.DataFrame, a: np.ndarray, side: int, spread: float, bias: np.ndarray | None,
-           live4h: list | None, sec: int) -> list[dict]:
-    """Every swing-low origin of this (long-terms) chart, its chain, its returns and their outcomes."""
+           live4h: list | None, sec: int, spread_frac: float | None = None) -> list[dict]:
+    """Every swing-low origin of this (long-terms) chart, its chain, its returns and their outcomes.
+    `spread_frac`: a cost as a fraction of price (fees on a perpetual) instead of a fixed spread."""
     o, h, l, c = (df[k].to_numpy() for k in ("open", "high", "low", "close"))
+    mph, mpl = P.pivots(h, l, 2, 2)  # minor swings, for the return leg's own structure
+    an = anchors(df)
+    # FOCuS changepoints (production's detector), the zone's way (up on this chart) and against it:
+    # each fire known on its bar, `at` the bar the change began
+    rr = np.r_[0.0, np.diff(c)]
+    scale = pd.Series(np.abs(rr)).ewm(span=100).mean().shift(1).to_numpy() * np.sqrt(np.pi / 2)
+    th = max(12.0 + 3.0 * np.log(3600.0 / sec), 3.0)
+    fu, fu_at = P.focus_series(rr, scale, th, True)
+    fd, _ = P.focus_series(rr, scale, th, False)
+    up_fires, dn_fires = np.flatnonzero(fu), np.flatnonzero(fd)
+    fu6, fu6_at = P.focus_series(rr, scale, 6.0, True)  # a more sensitive reading, for robustness
+    fd6, _ = P.focus_series(rr, scale, 6.0, False)
+    up6, dn6 = np.flatnonzero(fu6), np.flatnonzero(fd6)
+    # CUSUM ignition (the rule that replicated on Binance as a long timing edge; `survivors.cusum`):
+    # its fires the zone's way (side 1 on this chart) and against
+    from survivors import cusum as _cusum
+    cs = _cusum(df, a)
+    cu_up = np.sort(cs.loc[cs["side"] == 1, "i"].to_numpy())
+    cu_dn = np.sort(cs.loc[cs["side"] == -1, "i"].to_numpy())
+    mpl_known = np.array([x[0] for x in mpl]) if mpl else np.zeros(0, int)
     ts = df["ts"].to_numpy()
     n = len(df)
     H = max(1, int(5 * 86400 / sec))
     ph, pl = P.pivots(h, l, LR, LR)
     ph_known = np.array([x[0] for x in ph])
     vol = pd.Series(a / np.maximum(np.abs(c), 1e-12)).rolling(500, min_periods=100).rank(pct=True).to_numpy()
+    # rarity of a swing point (asked for later), all known at the origin: how far back the low is the
+    # lowest, how big the origin bar was, its tick volume, and how stretched price was below its mean
+    pc_ = np.r_[c[0], c[:-1]]
+    tr_ = np.maximum(h, pc_) - np.minimum(l, pc_)
+    tv = df["volume"].to_numpy(float) if "volume" in df else np.full(n, np.nan)
+    tv_med = pd.Series(tv).shift(1).rolling(50, min_periods=20).median().to_numpy()
+    ema50 = pd.Series(c).ewm(span=50, adjust=False).mean().to_numpy()
     rows = []
     for known, p, low in pl:
         A = a[p]
@@ -192,7 +300,19 @@ def events(df: pd.DataFrame, a: np.ndarray, side: int, spread: float, bias: np.n
             hit = np.flatnonzero(l[b + 1:min(n, b + 1 + EXPIRE)] <= g_lo)
             fill_bars = int(hit[0]) + 1 if len(hit) else -1
         live = max(known, b + 5)
-        base = dict(side=side, p=p, ts=int(ts[p]), V=V, bos_close=(c[b] - level) / A, bos_follow=follow,
+        # FOCuS alignment with the construction (asked for later), all known by `live`
+        leg_fires = up_fires[(up_fires >= p) & (up_fires <= live)]
+        fc_origin = bool(any(abs(fu_at[j2] - p) <= 3 for j2 in leg_fires))
+        fc_leg = bool(len(leg_fires))
+        fc_lag = int(leg_fires[0] - p) if len(leg_fires) else -1
+        leg6 = up6[(up6 >= p) & (up6 <= live)]
+        fc6_origin = bool(any(abs(fu6_at[j2] - p) <= 3 for j2 in leg6))
+        cu_leg = bool(((cu_up >= p) & (cu_up <= live)).any())
+        lower = np.flatnonzero(l[max(0, p - 1000):p] < low)
+        left_extent = p - (max(0, p - 1000) + lower[-1]) if len(lower) else min(p, 1000)
+        base = dict(side=side, p=p, ts=int(ts[p]), V=V, left_extent=left_extent, origin_tr=tr_[p] / A,
+                    origin_vol=tv[p] / tv_med[p] if tv_med[p] and tv_med[p] > 0 else np.nan,
+                    stretch=(ema50[p - 1] - low) / A if p >= 1 else np.nan, bos_close=(c[b] - level) / A, bos_follow=follow,
                     bos_bars=b - p, disp=disp, disp_eff=(ext - low) / max(path, 1e-12), n_gaps=len(big),
                     gap_max=max((g[1] for g in gaps), default=0.0) / A,
                     speed=disp / max(b - p, 1), eff_close=(c[b] - c[p]) / max(steps, 1e-12),
@@ -215,6 +335,7 @@ def events(df: pd.DataFrame, a: np.ndarray, side: int, spread: float, bias: np.n
         for bname, (far, near) in bounds.items():
             near = max(near, far + 0.05 * A)  # a band at least 0.05 ATR tall
             armed, k_ret, travel = True, 0, 0.0
+            peak = live
             k = live + 1
             while k < min(n, live + EXPIRE) and k_ret < RETURNS:
                 if c[k] < far - BUF * A:
@@ -222,17 +343,40 @@ def events(df: pd.DataFrame, a: np.ndarray, side: int, spread: float, bias: np.n
                 if not armed:
                     if c[k] >= near + REARM * A:
                         armed = True
-                    travel = max(travel, (c[k] - near) / A)
+                    if (c[k] - near) / A > travel:
+                        travel, peak = (c[k] - near) / A, k
                     k += 1
                     continue
                 if l[k] > near:
-                    travel = max(travel, (c[k] - near) / A)  # this bar's close is known before the next
+                    if (c[k] - near) / A > travel:  # this bar's close is known before the next
+                        travel, peak = (c[k] - near) / A, k
                     k += 1
                     continue
                 # a return
                 k_ret += 1
                 armed = False
-                feats = dict(base, bound=bname, ret=k_ret, width=(near - far) / A, age=k - live,
+                # how close the first qualifying gap sits to this zone, in price: from the near edge
+                # up to the gap's bottom (asked for later)
+                gap_dist = (h[big[0][0] - 2] - near) / A if big else np.nan
+                # the return leg's own structure (asked for later), from the peak since the zone went
+                # live to the bar before this one: did it break a minor swing low made after the BOS
+                # (a change of character against the zone), how efficiently it fell, and its gaps
+                lows_after = [x for x in mpl if x[1] > b and x[0] < k and x[1] < k]
+                n_counter = sum(1 for x in lows_after if (c[max(x[0], peak) + 1:k] < x[2]).any()) if k > peak + 1 else 0
+                seg = c[peak:k]
+                pb_eff = (seg[0] - seg[-1]) / max(np.abs(np.diff(seg)).sum(), 1e-12) if len(seg) > 1 else np.nan
+                pb_gaps = sum(1 for j2 in range(peak + 2, k) if h[j2] < l[j2 - 2] - GAP_MIN * A)
+                feats = dict(base, bound=bname, ret=k_ret, width=(near - far) / A, age=k - live, gap_dist=gap_dist,
+                             n_counter=n_counter, counter=n_counter > 0, pb_eff=pb_eff, pb_gaps=pb_gaps,
+                             pb_bars=k - peak, k_idx=k, peak_idx=peak, b_idx=b, peak_ts=int(ts[peak]),
+                             fc_origin=fc_origin, fc_leg=fc_leg, fc_lag=fc_lag,
+                             fc_against=bool(((dn_fires >= peak) & (dn_fires < k)).any()),
+                             fc_with=bool(((up_fires >= k - 5) & (up_fires < k)).any()),
+                             fc6_origin=fc6_origin, fc6_leg=bool(len(leg6)),
+                             fc6_against=bool(((dn6 >= peak) & (dn6 < k)).any()),
+                             cu_leg=cu_leg, cu_against=bool(((cu_dn >= peak) & (cu_dn < k)).any()),
+                             cu_with=bool(((cu_up >= k - 5) & (cu_up < k)).any()),
+                             **_anchor_flags(an, k, far - 0.25 * A, near + 0.25 * A, near),
                              travel=travel, approach=(c[max(0, k - 5)] - near) / A,
                              fill_bars=fill_bars if fill_bars < 0 or b + fill_bars <= k else -1,
                              bias4h=bool(bias[k]) if bias is not None else np.nan,
@@ -251,16 +395,20 @@ def events(df: pd.DataFrame, a: np.ndarray, side: int, spread: float, bias: np.n
                     if f < 0:
                         rows.append(dict(feats, depth=dname, filled=False, best=np.nan, stopped=np.nan, R=np.nan))
                         continue
-                    best, stopped = _outcome(h, l, c, f, entry, st_, H, spread)
+                    sp = spread if spread_frac is None else spread_frac * abs(entry)
+                    best, stopped = _outcome(h, l, c, f, entry, st_, H, sp)
                     # R a trade with a 1R target: +1 if it got there, else -1 when stopped, else the
                     # close after H bars
                     if best >= 1:
-                        R = 1.0 - spread / (entry - st_)
+                        R = 1.0 - sp / (entry - st_)
                     elif stopped:
-                        R = -1.0 - spread / (entry - st_)
+                        R = -1.0 - sp / (entry - st_)
                     else:
-                        R = (c[min(n - 1, f + H - 1)] - entry - spread) / (entry - st_)
-                    rows.append(dict(feats, depth=dname, filled=True, best=best, stopped=stopped, R=R))
+                        R = (c[min(n - 1, f + H - 1)] - entry - sp) / (entry - st_)
+                    # the flip (asked for later): against the BOS from the same fill, the same risk
+                    fb, fs, fR = _outcome_against(h, l, c, f, entry, entry + (entry - st_), H, sp)
+                    rows.append(dict(feats, depth=dname, filled=True, best=best, stopped=stopped, R=R,
+                                     flip_best=fb, flip_stopped=fs, flip_R=fR))
                 k += 1
     return rows
 
@@ -543,6 +691,21 @@ def plot():
         print(f"  {sym} {iv}: {len(zs)} qualified zones", flush=True)
 
 
+def flip_report(d: pd.DataFrame):
+    """With the BOS against against it: the flip's P(1R) and R beside the BOS-direction trade."""
+    pd.set_option("display.width", 250)
+    d = d[d["filled"] & (d["bound"] == "body") & ~d["family"].str.startswith("deriv")].copy()
+    d["hit"], d["fhit"] = (d["best"] >= 1).astype(float), (d["flip_best"] >= 1).astype(float)
+    d["half"] = np.where(d["ret_ts"] < SPLIT, "before 2023", "2023 on")
+    g = d.groupby(["iv", "depth", "ret", "V"]).agg(n=("hit", "size"), P1R_bos=("hit", "mean"), R_bos=("R", "mean"),
+                                                   P1R_flip=("fhit", "mean"), R_flip=("flip_R", "mean"))
+    print("\nthe flip - against the BOS from the same fill, same risk, 1R target; real markets")
+    print(g.round(3).to_string())
+    x = d[(d["depth"] == "d0") & (d["ret"] == 1)]
+    print(x.groupby(["iv", "V", "half"])["flip_R"].agg(["size", "mean"]).round(3).unstack("half").to_string())
+    print(x.groupby(["family", "V"])["flip_R"].agg(["size", "mean"]).round(3).unstack("V").to_string())
+
+
 def confirm(d: pd.DataFrame):
     """The frozen rule (`zone_rule.json`), judged once on markets no zone study used."""
     import json
@@ -600,6 +763,9 @@ def main():
         got = [g for g in pool.map(one, jobs) if g is not None and len(g)]
     d = pd.concat(got, ignore_index=True)
     d.to_pickle(OUT / "zone_events.pkl.gz")
+    if os.environ.get("MODE") == "flip":
+        flip_report(d)
+        return
     report(d)
 
 
