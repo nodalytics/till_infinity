@@ -13,7 +13,7 @@ from mcfl.parse import parse
 COMMON = {"SWING", "STRUCTURE_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED", "RETRACE", "PULLBACK", "POOL", "POOL_TAKEN",
           "SWEEP_PROTECTED"}
 #: rarer ones, checked entity by entity on a longer series
-RARE = {"CHARACTER_SHIFT", "DAX50", "DAX_SETUP"}
+RARE = {"CHARACTER_SHIFT", "DAX50", "DAX_SETUP", "RANGE", "RANGE_TEST", "ESCAPE", "FAILED_ESCAPE"}
 
 
 def series(n: int, seed: int, kind: str = "garch"):

@@ -355,7 +355,7 @@ is changed at a time, so each production is shown to pass, and to fail on streng
 | **ORIGIN** | the bar of a swing low (with a defined ATR) seen as the start of an up leg. Its band is the bar's low to its body top, widened to at least ORIGIN_MIN_HEIGHT = 0.05 ATR (zone_events' `body` bound) | `extreme`, `atr`, `far` (the low), `near` (the body top), `band` | p + 3 |
 | **LEG** | the bars from an origin until it BREAKs, is INVALIDATED (a bar trades below the origin's low; that bar is not part of it) or TIMEs OUT (p + 20). A leg still open at the last bar is not emitted | `origin`, `end`, `reason`, `ref`, `extreme_px`, `displacement_atr` | max(end, p + 3) |
 | **ZONE** | an ORIGIN the grammar accepts | `rule`, `far`, `near`, `band`, `atr`, `break_at`, `level`, `n_voids`, `magnitude`; `parts` | the latest `known_at` of its parts |
-| RANGE | reserved: the band between the EXTREME↑ and EXTREME↓ in force while neither is broken | | |
+| RANGE | v2: a box of k bars within x ATR, with its tests and escapes (v2 item 5 below; v0 reserved the name) | `high`, `low`, `height_atr`, `atr`, `bars` | the detecting bar |
 | EPISODE | a zone's whole sentence, origin to terminal state; still a serialisation (`serialise.episode`), not an entity | | |
 
 ## Relations
@@ -606,6 +606,25 @@ the set of protected lows equals that of the course's step 1 copied verbatim fro
 in one documented way: its break is v1's BREAK (the leg's close above the last swing high known at
 the origin, within LEG_MAX = 20 bars) where dax_smc allows 60.
 
+### 5. RANGE as a structure
+
+`ranges.py`; this replaces v0's reserved RANGE. A **RANGE** (L3, direction NONE) is detected causally
+at bar t when the RANGE_BARS (**k = 10**) bars ending at t lie within RANGE_ATR (**x = 2**) × ATR(14)
+at t, high to low. Its box is that window's highest high (`high`) and lowest low (`low`); its bar is
+the window's first, its `known_at` t, its parts the window's CANDLEs. One range is live at a time; the
+next window must start after the bar that confirmed the last one's escape. While it lives:
+
+| event | definition | `known_at` | attributes |
+|---|---|---|---|
+| **RANGE_TEST**↑ / ↓ | a bar whose high comes within TEST_ATR (**0.1**) × the range's ATR of the top (low of the bottom), closing inside - the first of each run of such bars | its bar | `range`, `level`, `count` (that edge's tests so far) |
+| **ESCAPE**↑ / ↓ | ESCAPE_HOLD (**m = 3**) consecutive closes beyond an edge, the first included; the range ends | the m-th close (bar + 2) | `range`, `level`, `upper_tests`, `lower_tests` |
+| **FAILED_ESCAPE**↑ / ↓ | a close beyond an edge, then a close back inside (at or within the edge) before m closes beyond. The range lives on; the failure counts as a test of that edge | the close back | `range`, `level`, `bars_out` |
+
+An escape's `at` is its first close beyond; its parts the CANDLEs from there to the bar that decided
+it. A RANGE whose last excursion is undecided at the end of the series has neither event yet. Text
+`RANGE·`, `RANGE_TEST↑[2]`, `ESCAPE↑`, `FAILED_ESCAPE↓`. The fixtures use the warm-up itself, which
+is a range (99.75 .. 100.75, ATR 1, known at bar 14 when the ATR first exists).
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -718,6 +737,7 @@ never NaN.
 | retracement, discount / premium, "the 50%" (v2) | RETRACE, PULLBACK[depth_bin], DAX50 | depth of a pullback in its leg |
 | equal highs / lows, liquidity, "buy-side / sell-side liquidity taken" (v2) | POOL, POOL_TAKEN[SWEPT / THROUGH] | |
 | protected low (the DAX course) (v2) | SWEEP_PROTECTED | `dax_smc.py` step 1, exactly |
+| range, consolidation, box; breakout / fakeout (v2) | RANGE; ESCAPE / FAILED_ESCAPE | |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -880,7 +900,7 @@ GARCH and 152 of 2,710 under momentum.
   entity inside a same-direction higher-timeframe ZONE, CONFLICT for the opposite, mapped with
   `prims.htf_index` so the higher bar is closed. The desk's 4h-bias filter is a special case; it
   helped nothing in [`origin-zones.md`](origin-zones.md), so this is to be measured, not assumed.
-- **RANGE and EPISODE as entities**, and whether lifecycle events should exist for failed
+- **EPISODE as an entity** (RANGE became one in v2), and whether lifecycle events should exist for failed
   candidates too, so that V = 0 origins have sentences comparable with zones'.
 
 ## Decisions the brief left open
@@ -921,6 +941,11 @@ GARCH and 152 of 2,710 under momentum.
   link to BREACH_REVERT is the list of the members' BREACH_REVERT events on that bar.
 - **SWEEP_PROTECTED's direction** is the direction of the move it protects (UP for a protected low),
   as ORIGIN↑ is a swing low; BREACH_REVERT keeps v0's convention (the breach's direction).
+- **RANGE (item 5).** k = 10 bars within x = 2 ATR (at the detecting bar), one live range at a time,
+  the box fixed at detection (a wick beyond it is a test or an excursion, not a wider box). "Holds m
+  bars" is m consecutive closes beyond, the first included (m = 3), so an ESCAPE is known two bars
+  after its first close beyond. A failed escape counts as a test of its edge. A RANGE has no
+  direction (Dir.NONE).
 
 ### v1
 

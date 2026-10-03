@@ -268,6 +268,8 @@ def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
         sw = pools.sweeps(fr, ext)
         setups, _, _ = grammar(sw + [e for e in level if e.type == "BREAK"] + pbs, pools.RULES, n=len(df))
         extra += pools.pools(fr, ext, level) + sw + setups
+        from mcfl import ranges
+        extra += ranges.run(T, cid)
     ents = sorted(toks + wds + level + zones + life + rejects + extra, key=sort_key)
     rels = sorted(relations(ents), key=lambda r: (r.known_at, r.kind, r.src, r.dst))
     return Chart(n=len(df), entities=tuple(ents), relations=tuple(rels),

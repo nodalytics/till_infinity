@@ -166,9 +166,50 @@ def ch_bars(ch: Chart) -> tuple[np.ndarray, np.ndarray]:
     return np.array([e.get("low") for e in c]), np.array([e.get("high") for e in c])
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"1": item1, "11": item11, "4": item4, "7": item7, "6": item6}
+def item5(ch: Chart) -> dict:
+    rs = ch.of("RANGE")
+    esc, fail = ch.of("ESCAPE"), ch.of("FAILED_ESCAPE")
+    shares = {"excursions that ESCAPE": (len(esc), len(esc) + len(fail)),
+              "ESCAPE up": (sum(e.dir.value == "UP" for e in esc), len(esc))}
+    # the escape goes the way of the edge tested last before it?
+    tests = sorted(ch.of("RANGE_TEST"), key=lambda e: e.at)
+    same = known = 0
+    for e in esc:
+        prior = [t for t in tests if t.get("range") == e.get("range") and t.at < e.at]
+        if prior:
+            known += 1
+            same += prior[-1].dir == e.dir
+    shares["ESCAPE through the edge tested last"] = (same, known)
+    # after an ESCAPE: does price reach one box height beyond the edge before closing back inside?
+    lo, hi = ch_bars(ch)
+    cl = np.array([e.get("close") for e in sorted(ch.of("CANDLE"), key=lambda e: e.at)])
+    ids = ch.by_id()
+    far = n_ok = 0
+    for e in esc:
+        r = ids[e.get("range")]
+        hgt = r.get("high") - r.get("low")
+        k = e.known_at + 1
+        up = e.dir.value == "UP"
+        for t in range(k, min(ch.n, k + 200)):
+            if (cl[t] <= r.get("high")) if up else (cl[t] >= r.get("low")):
+                n_ok += 1
+                break
+            if (hi[t] >= r.get("high") + hgt) if up else (lo[t] <= r.get("low") - hgt):
+                n_ok += 1
+                far += 1
+                break
+    shares["after ESCAPE, one box height on before closing back in"] = (far, n_ok)
+    rates = Counter(e.type for e in ch.of("RANGE", "RANGE_TEST", "ESCAPE", "FAILED_ESCAPE"))
+    return {"streams": {"range events": _seq(ch, ("RANGE", "RANGE_TEST", "ESCAPE", "FAILED_ESCAPE"),
+                                             lambda e: e.type[:3] + e.dir.arrow)},
+            "rates": rates, "shares": shares}
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
+                                             "5": item5}
 TITLES = {"1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
-          "7": "retracement depth", "6": "liquidity pools and the protected sweep"}
+          "7": "retracement depth", "6": "liquidity pools and the protected sweep",
+          "5": "RANGE: boxes, tests and escapes"}
 
 
 # ---------------------------------------------------------------- runs
