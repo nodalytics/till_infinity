@@ -80,6 +80,46 @@ Report which of the new tokens differ from the walk null.
     - Report CRT's base rate against the walk null. Earlier desk research recorded intraday CRT as negative, so this is a re-check, not a hope.
 
 
+13. **The complete candlestick vocabulary** (asked for by the desk).
+    - Every classical pattern is a production over v1 candle words, strength attributes and OHLC point relations. No new raw-price code.
+    - Where the canon defines it by the preceding trend, it is qualified by the item-1 STRUCTURE state.
+    - **Single bars:**
+      - HAMMER / HANGING_MAN and INVERTED_HAMMER / SHOOTING_STAR: one shape each, separated by prior trend;
+      - SPINNING_TOP, HIGH_WAVE;
+      - the DOJI family (LONG_LEGGED, DRAGONFLY, GRAVESTONE, FOUR_PRICE);
+      - BELT_HOLD;
+      - MARUBOZU (FULL / OPENING / CLOSING);
+      - LONG_LINE, SHORT_LINE, TAKURI.
+    - **Two bars:**
+      - HARAMI and HARAMI_CROSS;
+      - PIERCING and DARK_CLOUD;
+      - ON_NECK, IN_NECK, THRUSTING;
+      - KICKER;
+      - MEETING_LINES (counterattack), SEPARATING_LINES;
+      - MATCHING_LOW, HOMING_PIGEON, DOJI_STAR;
+      - HIKKAKE and MODIFIED_HIKKAKE.
+    - **Three bars and more:**
+      - THREE_WHITE_SOLDIERS / THREE_BLACK_CROWS, ADVANCE_BLOCK, STALLED;
+      - THREE_INSIDE and THREE_OUTSIDE up/down;
+      - MORNING/EVENING_DOJI_STAR, ABANDONED_BABY, TRI_STAR;
+      - THREE_LINE_STRIKE, TWO_CROWS, UPSIDE_GAP_TWO_CROWS;
+      - STICK_SANDWICH, UNIQUE_THREE_RIVER, THREE_STARS_IN_SOUTH, IDENTICAL_THREE_CROWS;
+      - TASUKI_GAP, SIDE_BY_SIDE_WHITE_LINES;
+      - RISING/FALLING_THREE_METHODS, MAT_HOLD, BREAKAWAY (five bars);
+      - CONCEALING_BABY_SWALLOW, LADDER_BOTTOM.
+    - **Reversal bars outside the Japanese canon:**
+      - KEY_REVERSAL, OUTSIDE_REVERSAL;
+      - ISLAND_REVERSAL (a gap, then a gap back);
+      - TWO_BAR_REVERSAL, THREE_BAR_REVERSAL;
+      - OOPS (Williams' gap reversal);
+      - EXHAUSTION_BAR, CLIMAX_BAR;
+      - Brooks' SIGNAL_BAR quality and TREND_BAR / DOJI_BAR.
+    - **Each needs:**
+      - a fixture that passes and one that fails;
+      - its flip twin (bullish ↔ bearish names);
+      - known_at at the last bar.
+    - **Validation:** an agreement report against TA-Lib's CDL functions where the definitions match. Document every disagreement and its cause (thresholds, averaging period). Report each pattern's frequency on real markets against walks, and its P(N R) curve against 1/(N+1).
+
 ## v3
 
 MCFL v3. The desk asked for all of these (2026-10-03). Build on merged v2, with the same rules:
@@ -206,9 +246,24 @@ A rule learned twice on 2026-10-03 (see memory `lookahead-in-conditioning-flags`
   - the rejection trade.
 
 **2. Outcomes and learning.**
+- **P(N R) for any N, from 0.1 to 1,000,000** (asked for by the desk).
+  - Every labelled entity, trade or sentence stores its continuous excursion: the most R reached in its favour before the stop (MFE_R, uncapped), the time each level was first reached, and MAE.
+  - P(+N R before −1R) = P(MFE_R ≥ N) is then a function of N, evaluated on any grid (log-spaced from 0.1 to 1e6), with an optional horizon (reached within T bars).
+  - Every curve is reported against the driftless martingale baseline P = 1/(N+1). For a random walk with no time limit, that is exact, so the gap at each N says where an edge lives.
+  - Report the largest N actually reached, and the sample size behind each point of the curve; beyond the data the curve is undefined, not zero.
 - Attach outcome labels to any entity or sentence: P(+1R before −1R), MFE / MAE in ATR, whipsaw, time to resolution. Use the production Episode definitions (`till_infinity/structures/reactions.py`, Episode) so research and the journal speak the same language.
 - Grammar induction: learn frequent productions from token streams (e.g. Sequitur, or MDL-guided pair merging), with a report of the learned rules and their description-length gain against walks.
 - A next-token model over sentences (n-gram with smoothing as the baseline; optionally a small sequence model) that predicts the next L2/L4 event, judged on held-out time and against walks.
+- **Machine learning on MCFL** (asked for by the desk):
+  - sequential pattern mining (PrefixSpan or SPADE) over sentences, each mined pattern ranked by its P(N R) curve against 1/(N+1);
+  - token and sentence embeddings, with a nearest-neighbour analogue engine that returns the outcomes of the most similar past sentences;
+  - gradient-boosted models on features from the parsed entity graph;
+  - optionally a small sequence model (HMM or transformer) for the next event.
+- **The same safeguards for all of these, mandatory:**
+  - held-out time and a second venue;
+  - Benjamini-Hochberg across every mined pattern;
+  - the identical pipeline run on matched random walks, which must find nothing (a miner that finds as much on walks has found noise);
+  - every input token's known_at at or before the decision.
 - Always report whether the learned structure or prediction beats the walk null.
 
 **3. Non-price information as events.**
@@ -251,3 +306,33 @@ A rule learned twice on 2026-10-03 (see memory `lookahead-in-conditioning-flags`
 - token text forms;
 - reproduction proofs where noted;
 - a walk or shuffle null for anything claiming information.
+
+
+## v5: detection methods from particle physics
+
+The desk asked for these. High-energy physics detects rare structured events in overwhelming noise
+without fooling itself, which is this desk's problem exactly. Build on merged v4, keeping every
+earlier rule.
+
+**Finding patterns.**
+1. **Trigger system.** A cheap level-1 trigger on L1 candle tokens and simple relations passes candidate windows; a high-level trigger runs the full grammar only on those. Document each trigger's rate and its efficiency against the full parse. This is the real-time design.
+2. **Track finding.**
+   - A Hough transform finds lines and channels through many EXTREMEs robustly. It is an alternative to two-swing LINEs, with outlier tolerance.
+   - Kalman tracking follows a level or line as it evolves, with uncertainty. Production's levels already use a Kalman filter (`till_infinity/structures/levels.py`).
+3. **Jet clustering.** An anti-kt-style clustering of entities in (time, price) under a documented distance gives composite objects with an "energy" (summed volume or ATR moves). Zones and ranges then emerge from data and are compared with the grammar's.
+4. **Invariant quantities.** Features invariant to price scale (ATR units, as now) and also to time scale, so one pattern means the same thing on 15m and 4h. Test the invariance by resampling.
+5. **Particle flow.** One event reconstruction from every source at once: price, volume, book, positioning, with each source's contribution recorded.
+
+**Not fooling ourselves.**
+6. **Signal injection and detector simulation.**
+   - Plant known patterns (with documented generators) into matched walks.
+   - For every MCFL detector, measure its efficiency (the share of planted patterns found) and its fake rate (detections in pure noise), as curves over the detector's thresholds.
+   - No detector ships without this.
+7. **Data-driven backgrounds.** Sideband estimates (the same detector on neighbouring time or price regions) and the ABCD method (two independent variables) as nulls, alongside the random walks.
+8. **Significance.**
+   - The look-elsewhere effect: global significance with the trials factor from every pattern or cell examined.
+   - Blind analysis: a pattern's selection is frozen before its signal region is examined, as with the desk's frozen rules.
+   - Report local and global sigma, with 5 sigma as the discovery bar.
+9. **Anomaly detection without labels.** CWoLa (train a classifier to separate a signal region from its sidebands) and autoencoder reconstruction error on sentence embeddings, to surface sentence types nobody has named. Each comes with a walk control.
+10. **Unfolding.** Correct measured pattern frequencies and outcome distributions for each detector's efficiency and fake rate (from item 6), with uncertainties.
+11. **Event displays.** One standard plot per detected event, showing every constituent token and the detector's decision path.
