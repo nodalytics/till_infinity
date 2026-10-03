@@ -114,7 +114,9 @@ def one(job):
         spec = load_specs(R.DB).get(sym)
         cost_frac, spread = None, (R.spread_floor(sym, spec) * spec.point if spec is not None else 0.0)
     if source == "walk":
-        df = synth.matched_walk(df, seed=zlib.crc32(f"{venue}{sym}{iv}".encode()) % 100000)
+        ts = df["ts"].to_numpy()
+        df = synth.matched_walk(df, seed=zlib.crc32(f"{venue}{sym}{iv}".encode()) % 100000).reset_index(drop=True)
+        df["ts"] = ts[:len(df)]  # the walk keeps the real series' clock, for the halves and the day bootstrap
     rows = []
     for side, frame in ((1, df), (-1, flip(df))):
         rows += trades(frame, side, cost_frac, spread, f"{venue}:{source}", sym, iv)
