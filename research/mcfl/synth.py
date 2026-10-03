@@ -1,0 +1,70 @@
+"""Bars we generate: the only data MCFL v0 has, and the null every count is compared against.
+
+Each bar is built from STEPS Gaussian sub-steps, so highs and lows come from a path rather than a
+formula: open is the previous close, high and low the path's extremes. Prices are arithmetic
+(additive), so a flip is the same process.
+"""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+STEPS = 8
+"""Sub-steps per bar; sets how wide a bar's range is against its close-to-close move."""
+START = 1000.0
+"""First open. Arithmetic prices: a walk of sigma 1 a bar wanders about sqrt(n) from here."""
+
+
+def bars_from_path(path: np.ndarray, steps: int = STEPS) -> pd.DataFrame:
+    """A price path sampled `steps` times per bar (length n * steps + 1) into OHLC bars."""
+    n = (len(path) - 1) // steps
+    seg = np.lib.stride_tricks.sliding_window_view(path, steps + 1)[::steps][:n]
+    return pd.DataFrame({"open": seg[:, 0], "high": seg.max(1), "low": seg.min(1), "close": seg[:, -1],
+                         "volume": np.full(n, float(steps))})
+
+
+def walk(n: int, sigma: float = 1.0, seed: int = 0, steps: int = STEPS) -> pd.DataFrame:
+    """An iid Gaussian walk: sigma per bar close to close. No structure of any kind."""
+    rng = np.random.default_rng(seed)
+    inc = rng.normal(0.0, sigma / np.sqrt(steps), n * steps)
+    return bars_from_path(START + np.r_[0.0, np.cumsum(inc)], steps)
+
+
+def garch(n: int, sigma: float = 1.0, alpha: float = 0.08, beta: float = 0.9, seed: int = 0,
+          steps: int = STEPS) -> pd.DataFrame:
+    """GARCH(1,1) per bar with unconditional sigma per bar: volatility clusters, direction does not."""
+    rng = np.random.default_rng(seed)
+    omega = sigma ** 2 * (1 - alpha - beta)
+    var, r_prev = sigma ** 2, 0.0
+    vols = np.empty(n)
+    for i in range(n):
+        var = omega + alpha * r_prev ** 2 + beta * var
+        vols[i] = np.sqrt(var)
+        r_prev = rng.normal(0.0, vols[i])
+    # the bar's sub-steps carry its volatility; the drawn r_prev only drives the recursion's shocks,
+    # so redraw the path from the per-bar vols to keep sub-steps and bar consistent
+    inc = rng.normal(0.0, 1.0, (n, steps)) * (vols / np.sqrt(steps))[:, None]
+    return bars_from_path(START + np.r_[0.0, np.cumsum(inc.ravel())], steps)
+
+
+def trend(n: int, sigma: float = 1.0, phi: float = 0.2, seed: int = 0, steps: int = STEPS) -> pd.DataFrame:
+    """AR(1) bar returns with coefficient phi: momentum, a structure a parser should be able to see.
+    The positive control for the walk null."""
+    rng = np.random.default_rng(seed)
+    eps = rng.normal(0.0, sigma * np.sqrt(1 - phi ** 2), n)
+    r = np.empty(n)
+    prev = 0.0
+    for i in range(n):
+        prev = phi * prev + eps[i]
+        r[i] = prev
+    # sub-steps: a Brownian bridge-free split - the bar's return spread evenly plus within-bar noise
+    noise = rng.normal(0.0, sigma / np.sqrt(steps), (n, steps))
+    noise -= noise.mean(1, keepdims=True)
+    inc = r[:, None] / steps + noise
+    return bars_from_path(START + np.r_[0.0, np.cumsum(inc.ravel())], steps)
+
+
+def matched_walk(df: pd.DataFrame, seed: int, steps: int = STEPS) -> pd.DataFrame:
+    """The null for `df`: an iid walk of the same length and the same close-to-close volatility."""
+    sigma = float(np.std(np.diff(df["close"].to_numpy(float))))
+    return walk(len(df), sigma=sigma, seed=seed, steps=steps)
