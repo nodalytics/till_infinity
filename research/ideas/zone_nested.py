@@ -149,12 +149,15 @@ def one(sym):
             hh = H[H["htf"] == htf]
             for col in ("inside", "near", "against", "after", "inside_q", "near_q"):
                 f[f"{col}_{htf}"] = False
+            f[f"inside_known_{htf}"] = np.nan  # when the earliest matching HTF break became knowable
             for n_, r in enumerate(f.itertuples()):
                 t0 = r.ts  # the LTF origin's time
                 lo, hi = min(near_edge[n_], far_edge[n_]), max(near_edge[n_], far_edge[n_])
                 legs = hh[(hh["ts"] <= t0) & (t0 <= hh["bos_ts"] + SEC[htf] - 1)]
                 same = legs[legs["side"] == r.side]
                 f.iat[n_, f.columns.get_loc(f"inside_{htf}")] = len(same) > 0
+                if len(same):
+                    f.iat[n_, f.columns.get_loc(f"inside_known_{htf}")] = float(same["end_ts"].min())
                 f.iat[n_, f.columns.get_loc(f"against_{htf}")] = (legs["side"] != r.side).any()
                 if len(same):
                     q = same[same["V"]]
@@ -277,6 +280,10 @@ def stack():
         print(f"{ltf} thresholds from MT5 (frozen): er_r >= {cuts['er']:.4f}, stretch >= {cuts['stretch']:.4f}")
         for name, d in (("MT5 (discovery)", disc), ("Binance (judge)", binance[binance["ltf"] == ltf])):
             ins = d["inside_4h"].astype(bool)
+            if os.environ.get("CAUSAL"):  # the HTF break must be known before the LTF entry (the return bar)
+                ins = ins & (d["inside_known_4h"].astype(float) <= d["ret_ts"].astype(float))
+                print(f"  {name} {ltf}: {int(d['inside_4h'].astype(bool).sum())} inside, "
+                      f"{int(ins.sum())} with the 4h break known before the entry")
             er_ok = d["er_r"].astype(float) >= cuts["er"]
             st_ok = d["stretch"].astype(float) >= cuts["stretch"]
             for key, m in (("all LTF zones", np.ones(len(d), bool)), ("S0", ins), ("S1", ins & er_ok),
