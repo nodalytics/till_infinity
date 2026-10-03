@@ -501,7 +501,7 @@ def main() -> None:
     for key in items:
         lines.append(f"== item {key}: {TITLES[key]}")
         for src, (data, nulls) in res.items():
-            lines.append(f"-- {src} against its matched walks")
+            lines.append(f"-- {src} against its null ({'matched gapped walks' if src == 'gapped' else 'matched iid walks'})")
             lines += report_item(key, data, nulls)
         lines.append("")
     text = "\n".join(lines)

@@ -1,4 +1,4 @@
-# MCFL v1 - Market Chart Formal Language
+# MCFL v2 - Market Chart Formal Language
 
 OHLC bars parsed into typed, causal events, structures and states, and written out as sentences
 that can be counted and compared. The specification, the definitions and what the walk null shows
@@ -15,7 +15,19 @@ are in [`research/docs/mcfl.md`](../docs/mcfl.md). It is a research instrument, 
 | `ngrams.py` | n-gram and next-token statistics against matched iid walks, with a calibrated null |
 | `candle_study.py` | candle words, point relations and candle productions against matched walks; REJECT vs REJECT_PATH; DISPLACE_C vs DISPLACE |
 | `plot.py` | a chart with every token drawn on it and the L1 strip under it, to `out/` |
-| `synth.py` | iid, GARCH and AR(1) momentum walks built from sub-steps; `matched_walk` |
+| `structure.py` | v2 items 1, 11: swing labels (SWING), STRUCTURE state and STRUCTURE_SHIFT, BREAK `vs_structure` (BOS), CHARACTER_SHIFT (CHoCH) |
+| `voids.py` | v2 item 4: the VOID lifecycle (VOID_PARTIAL, VOID_FILLED, VOID_INVERTED) |
+| `retrace.py` | v2 item 7: RETRACE, PULLBACK, depth bins, DAX50 |
+| `pools.py` | v2 item 6: POOL, POOL_TAKEN, SWEEP_PROTECTED (= dax_smc step 1), DAX_SETUP |
+| `ranges.py` | v2 item 5: RANGE, RANGE_TEST, ESCAPE, FAILED_ESCAPE |
+| `timing.py` | v2 item 8: session / day qualifiers, SESSION_OPEN / _EXTREME / _EXTREME_TAKEN, tempo and pace |
+| `changepoints.py` | v2 item 9: FOCUS, FOCUS6 (prims.focus_series), CUSUM_IGNITION (survivors.cusum), FOCUS_ZONE; `parse(df, changepoints=True)` |
+| `volume.py` | v2 item 3: VOLUME class, EFFORT_RESULT, TAKER_SKEW |
+| `crt.py` | v2 item 12: PURGE, DISTRIBUTION, CRT3 |
+| `mtf.py` | v2 item 10: `parse_mtf`, aggregation, CONTAINS_TF, ALIGN / CONFLICT, NESTED (causal) and the research form of inside_4h, multi-timeframe CRT |
+| `vocabulary.py` | v2 item 13: the candlestick vocabulary (PATTERN, 64 rows) |
+| `v2_study.py` | every v2 alphabet against matched walks (iid, GARCH, AR(1), gapped), P(N R) of the patterns; writes `out/v2.txt` |
+| `synth.py` | iid, GARCH and AR(1) momentum walks built from sub-steps; `matched_walk`; v2: `ticks` (tick and taker volume), `gapped` (overnight gaps) |
 | `tests/` | causality (every prefix), flip symmetry, grammar fixtures, lifecycle, JSON, n-grams, reproduction of `zone_events.py`'s V = 1; v1: class and grade boundaries, point relations, every production, BREAK age, and DELIVERY_SHIFT against `zones._cisd` |
 
 ```python
@@ -38,7 +50,8 @@ print(derivation(chart, z.id))              # the zone down to its candle words
 Run (the venv is the main checkout's; it has no matplotlib, so the plot runs on the system python):
 
 ```
-.venv/bin/python -m pytest -q research/mcfl/tests        # 132 tests, about 2 minutes
+.venv/bin/python -m pytest -q research/mcfl/tests        # 439 tests, about 10 minutes
+.venv/bin/python research/mcfl/v2_study.py                 # writes out/v2.txt
 .venv/bin/python research/mcfl/ngrams.py [--bins]          # writes out/ngrams[_bins].txt
 .venv/bin/python research/mcfl/candle_study.py             # writes out/candles.txt (about 30 minutes)
 python3 research/mcfl/plot.py --source garch --seed 3      # writes out/chart_garch_3.png

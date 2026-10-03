@@ -1208,6 +1208,47 @@ per 1,000 bars) while v0's does not move (128 against 132).
 **CONFIRMED.** A DELIVERY_SHIFT confirmed 260 of 2,946 revisits on walks (8.8%), 249 of 2,918 on
 GARCH and 152 of 2,710 under momentum.
 
+### v2: the new alphabets against the walk
+
+`research/mcfl/v2_study.py` ([`out/v2.txt`](../mcfl/out/v2.txt)): six 4,800-bar series per source -
+an iid walk, GARCH(1,1), AR(1) momentum (phi 0.2) and a gapped walk (`synth.gapped`, overnight jumps
+of 0.5 sigma) - each given 15-minute timestamps and a tick volume (`synth.ticks`) and parsed with the
+changepoints; nine null sets per source (iid walks matched in volatility; for the gapped walk, gapped
+walks), the data compared with the pool of eight and each null set with the others. p is floored at
+1/10. **Calibration first**: with eight null sets, the walk against its own null reaches the p floor
+on a few n-gram tests (the swing-label sequence at n = 2-3, the pool and range streams at n = 3) and
+|z| up to 3.5-4 on shares that cannot differ (the share of escapes upward on GARCH, z = -3.7). So a
+p at the floor or |z| under about 4 is noise here; the findings below are the ones well past that, or
+consistent across measures.
+
+| item | walk, GARCH, gapped walk | AR(1) momentum (the positive control) |
+|---|---|---|
+| 1 swing labels, STRUCTURE | every label and shift rate inside the null (|z| ≤ 1.8); time in UP / DOWN / MIXED 0.28-0.30 / 0.30 / 0.41 on all three, as on their nulls | fewer swings (EH, EL z ≈ -3), fewer shifts (z ≈ -4), less time MIXED (0.39 vs 0.41) |
+| 11 vs_structure, CHoCH | WITH 31%, AGAINST 22%, NONE 46% of breaks, as on the null; 9 CHoCH per 1,000 bars; the next break after a CHoCH goes its way 52-57% (null 55-57%) | the same shares; fewer NONE breaks (z = -4.5); next break after a CHoCH 59% vs 56% (z = 1.1) |
+| 4 VOID lifecycle | fill and inversion rates inside the null; 64-68% of voids are inverted on the bar they fill | many more voids (z = +20 to +28), each filled and entered more slowly (FILLED within 5 bars 45% vs 50%, z = -11) |
+| 7 retracement | RETRACE at revisits is 79-82% DEEP, the rest BEYOND (geometry: a revisit reaches the body top, near the origin); INSIDE pullbacks mostly DEEP; GARCH a little more BEYOND (z = +4.6) | fewer pullbacks (z = -4.4), more SHALLOW after-break pullbacks (23% vs 20%, z = +3.9) |
+| 6 pools, protected sweep | pool, take and sweep rates inside the null; 78-82% of pools taken within 100 bars, a third of takes close back (swept) | fewer pools, takes and protected sweeps (z = -3 to -4) |
+| 5 RANGE | 6-7 ranges per 1,000 bars; ~58% of excursions escape; after an escape price goes a box height on before closing back in 65-68% of the time, as on the null | far fewer ranges (z = -8.8); escapes hold more (67% vs 58%) and run on more (76% vs 65%) |
+| 2 compression | NR4/NR7/WR7 and the overlap runs inside the null; GARCH: after a WR7 the next 5 bars' mean range exceeds it 7.8% vs 5.0% (z = +11.5), after an NR7 slightly less often - volatility clustering, the one thing GARCH has | IMBALANCE runs twice as common (z = +16, +8), BALANCE rarer (z = -4.5) |
+| 8 sessions, tempo | breaks and session-extreme takes spread over the sessions as on the null (the clock means nothing to a walk, and the study shows it); pace does not change what a revisit becomes | a SLOW revisit becomes REJECT_PATH less often (34% vs 43%, z = -7.6) |
+| 9 changepoints | on walks and gapped walks FOCuS (12 + 3 ln 4 = 16.2) almost never fires (0.03 per 1,000 bars), FOCUS6 and CUSUM 1.3-1.7 per 1,000; what follows a fire is a coin (0.48-0.57) | GARCH and momentum double or triple the FOCUS6 and CUSUM rates (z = +6 to +14) and the FOCUS_ZONE share; the direction after a fire is still a coin at 5 and 20 bars |
+| 3 volume | with tick volume built from the range, effort words read as on the null (ABSORPTION 1.1%, EASE 1.4% of bars; the next bar a coin after each) | different only through the trend generator's bar construction (see v1's caution), not information in volume |
+| 12 CRT | a PURGE is followed by a DISTRIBUTION (the range's other side within 3 candles) **57-58% of the time on a walk** (gapped walk 61%), against 48% for an inside candle without a purge, identical on the null; in 65% it is the very next candle; the mid is reached on an earlier bar 24-28% of the time. CRT's base rate is geometry: the purge candle closes inside the range, often near the far side | CRT3 rarer (z ≈ -3), its hit rate unchanged (58%) |
+| 10 multiple timeframes, 15m vs 4h | the research (non-causal) flag marks 20-23% of 15m zones, the causal NESTED **0.4-1.1%**; on walks the research-flagged zones' first revisits reach REJECT_PATH before FAIL 59% against 54% for all zones and 58% on the null's - the same "edge" appears on the walks it was compared with, so it is selection, not information; the 4h CRT seen on 15m distributes 49-50% | the nested flags carry nothing either (all-zone REJECT_PATH 45% vs 51%) |
+| 13 candlestick vocabulary | every pattern occurs at the null's rate (GARCH: no rate beyond |z| = 3.5), except CLIMAX_BAR on the gapped walk, ↑ and ↓ moving opposite ways (z = -10.6, +6.5) in a process that is symmetric - its volume class varies between series more than eight null sets show; pooled over all patterns and trades, P(≥1R, 2R, 4R, 10R) = 0.49, 0.35, 0.23, 0.10 on walks, 0.49, 0.35, 0.22, 0.10 on GARCH, 0.48, 0.35, 0.22, 0.10 on gapped walks - the walk null's own 0.49, 0.35, 0.22, 0.10, against 1/(N+1) = 0.50, 0.33, 0.20, 0.09 (the discrete bars and the stop at the pattern's extreme put the finite-horizon walk a little above the continuous martingale at large N) | the continuation shapes gain: pooled P(≥1R) 0.54 vs 0.49, P(≥4R) 0.26 vs 0.22; LONG_LINE, MARUBOZU, KEY_REVERSAL, BELT_HOLD +4 to +10 z; HIKKAKE↑ worse (0.33 vs 0.41 at 1R) |
+
+**Which new tokens differ from the walk null?** On an iid walk, a GARCH walk and a gapped walk,
+**none** of the v2 alphabets does beyond the null's own spread, with two exceptions that are exactly
+what those processes contain: GARCH moves the volatility-sensitive words (WR7 followed by wide bars,
+more FOCuS and CUSUM fires, more RETRACE BEYOND), and nothing directional. Momentum, the positive
+control, moves almost every alphabet - swings, voids, ranges, imbalance runs, pools, pullbacks, the
+continuation candlesticks' P(N R) - so the instrument sees structure when there is some. The patterns'
+P(N R) on walks sits on the walk's own curve (0.49, 0.35, 0.22, 0.10 at 1, 2, 4, 10 R), which is the
+baseline any market measurement must beat, and slightly above 1/(N+1) for reasons of measurement.
+CRT's 57-61% "success" and the nested zone's research flag both reproduce on random walks: geometry
+and hindsight respectively. Real-market frequencies and P(N R) are not reported: no market data was
+used in this build.
+
 ## Open questions
 
 - **Is the grammar compressible?** A minimum-description-length test: does adding ZONE (or any
