@@ -46,6 +46,11 @@ the nearest opposite zone of the same kind. 1h to 1d, everything aligned with th
   candles  strong  (asked for later) the leg's candles are strong, not sloppy: bodies on average
                    60% of their range, 70% of bars in the move's direction, one body of 1 ATR+.
                    Run as a filter on top of the 4h bias
+  gap      (asked for later) nogap / hasgap: whether production's `gap` pass would have been one of
+           this zone's drawers - an open fair-value gap whose midpoint sits in the zone's band at
+           the trigger bar. `gap-levels.md` measures those levels holding 7.4 points worse on
+           110,299 production outcomes, so this is a filter with a negative sign. Both arms, on
+           top of the 4h bias
   smc      (asked for later) smc_pd: longs in the discount half of the 4h dealing range (shorts
            in the premium); smc_idm: inducement - an inner swing low formed after the break and
            swept on the way back; smc_kz (1h): the trigger closes in the London or New York
@@ -99,7 +104,7 @@ OUT = Path(os.environ.get("OUT", ".data/zones"))
 LR, MAXLEG, MINLEG, FVG_MIN, WINDOW, NEAR, EXPIRE = 3, 10, 3.0, 0.2, 12, 0.25, 300
 BUF = float(os.environ.get("BUF", 0.1))  # the stop past the zone, in ATR (0.3 / 0.5 / 1 tried after a wick stopped one)
 HOLD_BARS, FOLLOW = 3, 1.0  # a strong break: no close back through it for 3 bars, 1 ATR beyond it within 5
-TRIGGERS = ("touch", "pin", "engulf", "star", "inside", "reclaim", "cisd",
+TRIGGERS = ("touch", "touch_mid", "touch_far", "touch_deep", "pin", "engulf", "star", "inside", "reclaim", "cisd",
             "sweep", "double", "ifvg", "choch", "rsi_div", "displace", "tweezer", "outside", "climax")
 SEC = {"1h": 3600, "4h": 14400, "1d": 86400}
 
@@ -118,6 +123,7 @@ class Zone:
     clean: bool = False  # the leg's candles were strong (see `strong_leg`)
     ret: int = -1  # first return
     dead: int = -1  # the bar it failed (closed through), or expired
+    parts: tuple = ()  # for a level: the (bar, low, high) of each gap that made it
 
 
 def flip(df: pd.DataFrame) -> pd.DataFrame:
@@ -247,6 +253,85 @@ def zones_prod(df: pd.DataFrame, a: np.ndarray, stride: int = 4) -> list[Zone]:
     return sorted(out, key=lambda z: z.live)
 
 
+def gap_open_spans(df: pd.DataFrame, a: np.ndarray, min_vol: float = FVG_MIN) -> list[tuple]:
+    """Every qualifying fair-value gap as `(formed, dies, low, high)`, the bars it is open between.
+
+    This is what production's `gap` pass draws from (`structures/drawing/gaps.py`): a three-bar
+    band only the middle bar traded through, at least `min_vol` of the volatility unit wide, and
+    **dropped once later bars have filled it past half** - `gaps.OPEN_SHARE`. The fill is eaten
+    from the side price arrives from, which is the top of an up-gap and the bottom of a down-gap.
+
+    Reimplemented on ATR rather than called, because every threshold in this file is in ATR and
+    mixing two volatility conventions is how `forecasting.md` lost two headline results. If an
+    exact match to production is wanted, `prod_unit` is the other convention and is already here.
+
+    The fill scan is bounded at `EXPIRE` bars: production only ever sees its own window (500 or
+    1,500 bars), so a gap that has survived that long has left the question rather than answered
+    it.
+    """
+    h, l = df["high"].to_numpy(), df["low"].to_numpy()
+    n = len(df)
+    out = []
+    for k in range(2, n):
+        A = a[k - 1]
+        if not A > 0:
+            continue
+        up = l[k] - h[k - 2] > min_vol * A
+        down = l[k - 2] - h[k] > min_vol * A
+        if not (up or down):
+            continue
+        lo, hi = (h[k - 2], l[k]) if up else (h[k], l[k - 2])
+        span = hi - lo
+        rl, rh, dies = lo, hi, min(n, k + EXPIRE)
+        for j in range(k + 1, dies):
+            if up:
+                rh = max(rl, min(rh, l[j]))
+            else:
+                rl = min(rh, max(rl, h[j]))
+            if rh - rl < 0.5 * span:
+                dies = j
+                break
+        out.append((k, dies, lo, hi))
+    return out
+
+
+def gap_marked(df: pd.DataFrame, a: np.ndarray, st: pd.DataFrame) -> np.ndarray:
+    """True where production's `gap` pass would have been one of this zone's drawers.
+
+    `gap-levels.md`: on 110,299 resolved production outcomes a level the `gap` pass helped draw
+    held **56.6% against 68.4%**, and **-7.4 +- 1.4 points** after demeaning on instrument,
+    interval and level age - five sigma, and the only pass identity that separated from the other
+    six. That is a filter with a *negative* sign, which is the opposite of what `drawn_by_n` was
+    expected to provide, and the opposite sign is why it is worth running here: if the journal's
+    held-rate gap is real it should show up in R.
+
+    The test mirrors how production acquires the attribution rather than guessing at it. `gaps`
+    emits **the midpoint** of each open gap as a turning point, so `gap` becomes one of a level's
+    drawers when an open gap's midpoint falls inside the level's band. So: at the trigger bar, is
+    there a gap still open whose midpoint sits within this zone's band.
+
+    Judged at the trigger bar and not at the zone's birth, deliberately - that is when the filter
+    would be applied, and a gap that opens after the zone forms still marks it in production.
+    """
+    lo = np.minimum(st["zone_lo"].to_numpy(), st["zone_hi"].to_numpy())
+    hi = np.maximum(st["zone_lo"].to_numpy(), st["zone_hi"].to_numpy())
+    at = st["i"].to_numpy()
+    spans = gap_open_spans(df, a)
+    out = np.zeros(len(st), dtype=bool)
+    if not spans:
+        return out
+    formed = np.array([s[0] for s in spans])
+    dies = np.array([s[1] for s in spans])
+    mid = np.array([(s[2] + s[3]) / 2.0 for s in spans])
+    for r in range(len(st)):
+        live = (formed <= at[r]) & (dies > at[r])
+        if not live.any():
+            continue
+        m = mid[live]
+        out[r] = bool(((m >= lo[r]) & (m <= hi[r])).any())
+    return out
+
+
 def bias_4h(d4: pd.DataFrame) -> np.ndarray:
     """+1 after the 4h closes above its last known swing high, -1 after it closes below its last
     swing low: the direction of the mother cycle's last break of structure."""
@@ -288,6 +373,12 @@ def triggers(df: pd.DataFrame, a: np.ndarray, z: Zone, ex: dict | None = None) -
         return []
     found, low_since = {}, l[r]
     found["touch"] = dict(i=r - 1, entry=z.hi, stop_px=z.lo - BUF * A, limit=1)
+    # deeper resting entries (asked for with the levels): a buy below the near edge - at the zone's
+    # middle, its far edge, and half an ATR past the middle - each resting through the window,
+    # the stop always 0.6 ATR under the entry so R is the same size for every depth
+    mid = (z.hi + z.lo) / 2
+    for name, px in (("touch_mid", mid), ("touch_far", z.lo), ("touch_deep", mid - 0.5 * A)):
+        found[name] = dict(i=r - 1, entry=px, stop_px=px - 0.6 * A, limit=1, expires=WINDOW)
     for j in range(r, min(n - 1, r + WINDOW)):
         low_since = min(low_since, l[j])
         if c[j] < z.lo - BUF * A:
@@ -324,7 +415,7 @@ def triggers(df: pd.DataFrame, a: np.ndarray, z: Zone, ex: dict | None = None) -
         for k, hit in pats.items():
             if hit and k not in found:
                 found[k] = dict(i=j, entry=np.nan, stop_px=stop_px, limit=0)
-    return [dict(trigger=k, **v) for k, v in found.items()]
+    return [dict(trigger=k, **{"expires": 1, **v}) for k, v in found.items()]
 
 
 def _double(l, h, c, r, j, A):
@@ -412,9 +503,10 @@ def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
             entry = t["entry"] * z.side if np.isfinite(t["entry"]) else np.nan
             ref = entry if np.isfinite(entry) else c[t["i"]]
             rows.append(dict(i=t["i"], side=z.side, trigger=t["trigger"], entry=entry, limit=t["limit"],
+                             expires=t["expires"],
                              stop_px=stop_px, target_px=opposite_target(zs, z, t["i"], ref), zone_p=z.p,
                              zone_lo=z.lo, zone_hi=z.hi, zone_live=z.live, zone_ret=z.ret, clean=z.clean, age=age, approach=approach,
-                             inducement=bool(inner.any())))
+                             inducement=bool(inner.any()), n_gaps=len(z.parts)))
     return pd.DataFrame(rows)
 
 
@@ -443,10 +535,131 @@ def zones_fvg(df: pd.DataFrame, a: np.ndarray) -> list[Zone]:
     return out
 
 
+LEVEL_HALF, LEVEL_AWAY, LEVEL_GAP_BARS, LEVEL_EXPIRE, LEVEL_BACK = 0.25, 1.0, 10, 500, 300
+
+
+def _gaps(df: pd.DataFrame, a: np.ndarray) -> list[tuple[int, float, float]]:
+    """Every fair-value gap of 0.2+ ATR, either direction: (bar it completed on, low, high)."""
+    h, l = df["high"].to_numpy(), df["low"].to_numpy()
+    out = []
+    for k in range(2, len(df)):
+        A = a[k - 1]
+        if not A > 0:
+            continue
+        if l[k] - h[k - 2] >= FVG_MIN * A:
+            out.append((k, h[k - 2], l[k]))
+        elif l[k - 2] - h[k] >= FVG_MIN * A:
+            out.append((k, h[k], l[k - 2]))
+    return out
+
+
+def _level_zone(df, a, k, level, parts, n_parts, start=None):
+    """A horizontal level known at bar k as a zone: once price has gone 1 ATR away from it, the side
+    it went decides whether the level is support (a long) or resistance (a short); the band is the
+    level +-0.25 ATR; the first return to it is the one traded."""
+    h, l, c = (df[x].to_numpy() for x in ("high", "low", "close"))
+    A = a[k]
+    if not A > 0:
+        return None
+    live = -1
+    k0 = k if start is None else max(k, start)
+    for j in range(k0 + 1, min(len(df), k0 + LEVEL_EXPIRE)):
+        if abs(c[j] - level) >= LEVEL_AWAY * A:
+            live = j
+            break
+    if live < 0:
+        return None
+    side = 1 if c[live] > level else -1
+    near, far = level + side * LEVEL_HALF * A, level - side * LEVEL_HALF * A
+    z = Zone(side, k, far, near, k, level, k, live, np.nan, n_parts >= 3, parts=tuple(parts))
+    ext = c[live]
+    for j in range(live + 1, min(len(df), live + LEVEL_EXPIRE)):
+        if (l[j] <= near) if side > 0 else (h[j] >= near):
+            z.ret = j
+            break
+        ext = max(ext, h[j]) if side > 0 else min(ext, l[j])
+    z.leg_extreme = ext
+    return z
+
+
+def _proof(df, a, k, level, first):
+    """The bar a level proved itself: from the first gap that made it on, the first touch after
+    which price went LEVEL_BOUNCE ATR back the way it came before closing through the band (within
+    48 bars). -1 if it never did within LEVEL_EXPIRE bars of being known."""
+    h, l, c = (df[x].to_numpy() for x in ("high", "low", "close"))
+    A, X = a[k], float(os.environ.get("LEVEL_BOUNCE", 1.0))
+    lo, hi = level - LEVEL_HALF * A, level + LEVEL_HALF * A
+    inside = False
+    for j in range(max(first, 1), min(len(df), k + LEVEL_EXPIRE)):
+        touch = l[j] <= hi and h[j] >= lo
+        if touch and not inside:
+            side = 1 if c[j - 1] > level else -1
+            for m in range(j, min(len(df), j + 48)):
+                if side * (c[m] - level) < -(LEVEL_HALF + BUF) * A:
+                    break  # closed through: no bounce
+                if side * ((h[m] if side > 0 else l[m]) - level) >= X * A:
+                    return m
+        inside = touch
+    return -1
+
+
+def zones_fvglevel(df: pd.DataFrame, a: np.ndarray, mode: str | None = None) -> list[Zone]:
+    """Levels where fair-value gaps from different moves line up (the desk's idea, 2026-10-02).
+
+    aligned   a new gap whose band overlaps (within 0.1 ATR) the band of an earlier gap 10 to 300
+              bars older makes a level at the mean of their centres; later gaps there add to it
+              (`clean` once three or more). Filled or not does not matter - a move made each one
+    single    the null for alignment: a gap with no earlier gap at its height, as a level alone
+    random    the null for the gaps: for each aligned level, a level as far from the close as it
+              is, on a random side, known on the same bar
+    proven    an aligned level that has already bounced: a touch after which price went
+              LEVEL_BOUNCE (0.5 / 1 / 2) ATR back the way it came before closing through, any time
+              from its first gap on; the trade is the next return after that bounce completed
+    proven_random  the same proof asked of the random levels
+    One level per price: a new one within 0.25 ATR of a level not yet returned to is merged into it.
+    """
+    mode = mode or os.environ.get("LEVELS", "aligned")
+    gaps = _gaps(df, a)
+    h, l = df["high"].to_numpy(), df["low"].to_numpy()
+    rng = np.random.default_rng(len(df))
+    made, out = [], []  # made: [level, known bar, parts]
+    for n_, (k, lo, hi) in enumerate(gaps):
+        A = a[k]
+        partners = [g for g in gaps[:n_] if k - LEVEL_BACK <= g[0] <= k - LEVEL_GAP_BARS
+                    and g[1] <= hi + 0.1 * A and g[2] >= lo - 0.1 * A]
+        if mode in ("single",):
+            if partners:
+                continue
+            level, parts = (lo + hi) / 2, [(k, lo, hi)]
+        else:
+            if not partners:
+                continue
+            parts = partners + [(k, lo, hi)]
+            level = float(np.mean([(g[1] + g[2]) / 2 for g in parts]))
+            if mode in ("random", "proven_random"):  # as far from price as the aligned level, random side
+                ck = df["close"].iat[k]
+                level, parts = ck + rng.choice((-1, 1)) * abs(level - ck), [(k, lo, hi)]
+        if any(abs(level - m[0]) <= LEVEL_HALF * A and m[1] <= k for m in made if m[2] > k):
+            continue  # already a live level here
+        start = None
+        if mode.startswith("proven"):
+            start = _proof(df, a, k, level, min(p_[0] for p_ in parts) if mode == "proven" else k - LEVEL_BACK)
+            if start < 0:
+                continue
+        z = _level_zone(df, a, k, level, parts, len(parts) if mode in ("aligned", "proven") else 0, start)
+        if z is None:
+            continue
+        made.append((level, k, z.ret if z.ret >= 0 else z.live + LEVEL_EXPIRE))
+        out.append(z)
+    return out
+
+
 if os.environ.get("ZONES") == "prod":  # every mode below on production's origins instead
     zones = zones_prod  # noqa: F811
 elif os.environ.get("ZONES") == "fvg":  # or on fair-value gaps
     zones = zones_fvg  # noqa: F811
+elif os.environ.get("ZONES") == "fvglevel":  # or on levels where gaps line up (LEVELS=aligned|single|random)
+    zones = zones_fvglevel  # noqa: F811
 
 
 # ------------------------------------------------------------------------------------------ plot
@@ -701,7 +914,16 @@ def run_one(job):
     st["smc_idm"] = st["bias"] & st["inducement"]
     st["smc_all"] = st["bias"] & st["discount"] & st["inducement"] & (st["killzone"] if iv == "1h" else True)
     st["fast_old"] = st["bias"] & (st["approach"] >= 3) & (st["age"] >= 50)
-    filters = ["none", "bias", "strong", "smc_pd", "smc_idm", "smc_all", "fast_old"] + \
+    # `gap-levels.md`: production levels the `gap` pass helped draw held 7.4 points worse, five
+    # sigma. Both arms are run, because a filter whose two halves are not reported is a filter
+    # nobody can check - and under ZONES=fvg the zone *is* a gap, so `hasgap` is close to
+    # everything and `nogap` close to nothing, which is the expected degenerate case and not a
+    # fault.
+    st["marked"] = gap_marked(df, a, st)
+    st["nogap"] = st["bias"] & ~st["marked"]
+    st["hasgap"] = st["bias"] & st["marked"]
+    filters = ["none", "bias", "strong", "smc_pd", "smc_idm", "smc_all", "fast_old",
+               "nogap", "hasgap"] + \
         (["nest", "smc_kz"] if iv == "1h" else [])
     if iv == "1h":
         st["smc_kz"] = st["bias"] & st["killzone"]
@@ -759,11 +981,13 @@ def run(one=None, primary=("pin", "bias", "opp"), show="bias"):
                              first=r.loc[r["entry_ts"] < mid, "R"].mean(), second=r.loc[r["entry_ts"] >= mid, "R"].mean(),
                              win=(r["R"] > 0).mean(), p4=(r["R"] >= 4).mean(), p10=(r["R"] >= 10).mean(),
                              long_share=(r["side"] > 0).mean(),
-                             p_coin=boot_p(r, c, rng, 200) if len(c) >= 30 else np.nan,
-                             p_rt=boot_p(r, n_, rng, 200) if len(n_) >= 30 else np.nan))
+                             # 200 draws resolve p no finer than 1/201: a 0 is "below that", not
+                             # zero, and read as zero it passed tiny cells through BH unearned
+                             p_coin=max(boot_p(r, c, rng, 200), 1 / 201) if len(c) >= 30 else np.nan,
+                             p_rt=max(boot_p(r, n_, rng, 200), 1 / 201) if len(n_) >= 30 else np.nan))
     cells = pd.DataFrame(rows)
     # Benjamini-Hochberg over every cell, on the weaker of the two nulls
-    pmax = cells[["p_coin", "p_rt"]].max(axis=1).fillna(1.0).to_numpy()
+    pmax = cells[["p_coin", "p_rt"]].fillna(1.0).max(axis=1).to_numpy()  # a null too thin to test fails
     order = np.argsort(pmax)
     m = len(pmax)
     q = np.empty(m)
@@ -904,10 +1128,10 @@ def direction_one(job):
         if i + 1 >= len(df) or not a[i] > 0:
             continue
         ref = s.entry if s.limit else o[i + 1]
-        rows.append(dict(kind="setup", trigger=s.trigger, bias=bool(s.bias), side=s.side,
+        rows.append(dict(kind="setup", trigger=s.trigger, bias=bool(s.bias), side=s.side, n_gaps=s.n_gaps,
                          **dict(zip(cols, _paths(df, a, i, s.side, ref, SEC[iv]), strict=True))))
         for j in rng.choice(ok, 3):  # the same side at a random bar of this market
-            rows.append(dict(kind="random", trigger=s.trigger, bias=bool(s.bias), side=s.side,
+            rows.append(dict(kind="random", trigger=s.trigger, bias=bool(s.bias), side=s.side, n_gaps=s.n_gaps,
                              **dict(zip(cols, _paths(df, a, int(j), s.side, o[j + 1], SEC[iv]), strict=True))))
     out = pd.DataFrame(rows).assign(sym=sym, iv=iv, family=R.FAMILY.get(sym, "?"))
     print(f"  direction {sym} {iv}: {len(st)} setups", flush=True)
@@ -951,6 +1175,59 @@ def direction():
         w[(v, "edge")] = w[(v, "setup")] - w[(v, "random")]
     show = w[[(v, k) for v in val for k in ("setup", "edge")] + [("n", "setup")]].round(3)
     print(show.to_string())
+
+
+def plot_levels():
+    """Aligned-gap levels: every gap that made the level, the level, the first return and the next
+    60 bars - to check by eye that the levels are what the desk means."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+
+    import run as R
+    R.DB = os.environ.get("MT5BT_DB")
+    OUT.mkdir(parents=True, exist_ok=True)
+    for sym, iv in (("EURUSD", "1h"), ("XAUUSD", "4h"), ("US Tech 100", "1h"), ("GBPJPY", "4h"),
+                    ("BTCUSD", "4h"), ("Germany 40", "1h"), ("US SP 500", "1d"), ("Volatility 75 Index", "1h")):
+        df = R.load(sym, iv)
+        if df is None:
+            continue
+        df = df.reset_index(drop=True)
+        a = P.atr(df, 14)
+        zs = [z for z in zones_fvglevel(df, a, "aligned") if z.ret >= 0]
+        if not zs:
+            continue
+        rng = np.random.default_rng(zlib.crc32(sym.encode()))
+        fig, axes = plt.subplots(2, 2, figsize=(18, 11))
+        for ax, zi in zip(axes.flat, np.sort(rng.choice(len(zs), min(4, len(zs)), replace=False)), strict=False):
+            z = zs[zi]
+            first = min(p[0] for p in z.parts)
+            i0, i1 = max(0, first - 10), min(len(df) - 1, z.ret + 60)
+            w = df.iloc[i0:i1 + 1]
+            x = np.arange(i0, i1 + 1)
+            up = (w["close"] >= w["open"]).to_numpy()
+            ax.vlines(x, w["low"], w["high"], color="#555", lw=0.5)
+            ax.bar(x[up], (w["close"] - w["open"])[up], bottom=w["open"][up], color="#2a9d8f", width=0.7)
+            ax.bar(x[~up], (w["close"] - w["open"])[~up], bottom=w["open"][~up], color="#e76f51", width=0.7)
+            for k, lo, hi in z.parts:
+                ax.add_patch(Rectangle((k - 2, lo), 2, hi - lo, color="#f4a261", alpha=0.6))
+            level = z.bos_level
+            ax.hlines(level, first, i1, colors="#1d3557", lw=1.2)
+            ax.axhspan(min(z.lo, z.hi), max(z.lo, z.hi), color="#457b9d", alpha=0.12)
+            ax.axvline(z.p, color="purple", lw=0.8, ls=":")
+            ax.axvline(z.live, color="#999", lw=0.8, ls=":")
+            ax.scatter([z.ret], [z.hi], marker="^" if z.side > 0 else "v", s=110,
+                       color="green" if z.side > 0 else "red", zorder=5)
+            ax.set_title(f"{sym} {iv}  {len(z.parts)} gaps line up  level {level:.5g}  as "
+                         f"{'support' if z.side > 0 else 'resistance'}  returned "
+                         f"{pd.Timestamp(df['ts'].iat[z.ret], unit='s'):%Y-%m-%d %H:%M}", fontsize=10)
+        fig.suptitle("orange: each fair-value gap (filled later or not)   navy line: the level they make   "
+                     "purple dotted: level known   grey dotted: price 1 ATR away   triangle: first return", fontsize=11)
+        fig.tight_layout()
+        fig.savefig(OUT / f"levels_{sym.replace(' ', '_')}_{iv}.png", dpi=80)
+        plt.close(fig)
+        print(f"  {sym} {iv}: {len(zs)} levels returned to", flush=True)
 
 
 # ------------------------------------------------------------------------------------ volatility
@@ -1064,7 +1341,8 @@ def vol():
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    {"plot": plot, "run": run, "gallery": gallery, "direction": direction, "vol": vol}[os.environ.get("MODE", "plot")]()
+    {"plot": plot, "run": run, "gallery": gallery, "direction": direction, "vol": vol,
+     "levelplot": plot_levels}[os.environ.get("MODE", "plot")]()
 
 
 if __name__ == "__main__":

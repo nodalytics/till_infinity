@@ -157,8 +157,42 @@ def path(price: float, vol_bps: float, minutes: int, rand: random.Random) -> lis
         # wired up one way. At 3% every two hours it is 32 up and 34 down in
         # 226 calls - the symmetry is the part that matters.
         if i and i % 120 == 0:
-            base *= 1.0 + (0.03 if (i // 120) % 2 else -0.03)
+            move = 0.03 if (i // 120) % 2 else -0.03
+            base *= 1.0 + move
             rungs = [base * (1.0 + k * 0.004) for k in (-3, -2, -1, 0, 1, 2, 3)]
+            # **Price steps with the regime instead of drifting into it**, and
+            # that discontinuity is the whole point. The reversion rate below is
+            # 0.02, so `here` used to take about fifty minutes to walk to the new
+            # ladder - a continuous path, in which consecutive bars always overlap
+            # and **no instrument in this fixture ever gapped**. The `gap`
+            # formation draws from `high[i-1] < low[i+1]`, so it could not form a
+            # single level here, and when it joined `DEFAULT_FORMATION` the
+            # richness gate below caught it as a pass that drew nothing at all.
+            #
+            # That absence was a property of the generator, not of the formation:
+            # every instrument gaps - FX over the weekend, indices on an open -
+            # and `vol/ranges.py` is built around the fact.
+            #
+            # **Twelve units, not the whole 3%.** A gap needs the step to clear
+            # the upper wick of the bar before it and the lower wick of the bar
+            # after, and those wicks have a floor of `3e-4` of price against a
+            # unit of `vol_bps`, so two of them come to about seven units. Twelve
+            # clears that with room and is still a *tenth* of a percent - two
+            # orders below the regime move, so the ladder, the tide and the
+            # reversion all behave as they did.
+            #
+            # Jumping the full 3% was tried first and it broke a different pass:
+            # `vwap` then drew no level at all, because price spent the fixture
+            # leaping away from its own volume-weighted average and every
+            # candidate fell outside reach. One pass made visible by blinding
+            # another is not progress, which is what the gate below is for.
+            #
+            # Signed with the regime so price steps *away* and keeps going, which
+            # is what leaves the range untraded - `gaps` drops anything later bars
+            # filled past `OPEN_SHARE`. The alternating sign is kept, because the
+            # symmetry of `change_up_tf` against `change_down_tf` is what the note
+            # above is protecting and a one-sided jump would break it.
+            here += math.copysign(12.0 * unit, move)
         # A slow tide on top, so the ladder is visited in several regimes
         # rather than at one volatility - `regime` and `vol_stretch` have
         # nothing to separate otherwise.
