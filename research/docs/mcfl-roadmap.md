@@ -80,6 +80,46 @@ Report which of the new tokens differ from the walk null.
     - Report CRT's base rate against the walk null. Earlier desk research recorded intraday CRT as negative, so this is a re-check, not a hope.
 
 
+13. **The complete candlestick vocabulary** (asked for by the desk).
+    - Every classical pattern is a production over v1 candle words, strength attributes and OHLC point relations. No new raw-price code.
+    - Where the canon defines it by the preceding trend, it is qualified by the item-1 STRUCTURE state.
+    - **Single bars:**
+      - HAMMER / HANGING_MAN and INVERTED_HAMMER / SHOOTING_STAR: one shape each, separated by prior trend;
+      - SPINNING_TOP, HIGH_WAVE;
+      - the DOJI family (LONG_LEGGED, DRAGONFLY, GRAVESTONE, FOUR_PRICE);
+      - BELT_HOLD;
+      - MARUBOZU (FULL / OPENING / CLOSING);
+      - LONG_LINE, SHORT_LINE, TAKURI.
+    - **Two bars:**
+      - HARAMI and HARAMI_CROSS;
+      - PIERCING and DARK_CLOUD;
+      - ON_NECK, IN_NECK, THRUSTING;
+      - KICKER;
+      - MEETING_LINES (counterattack), SEPARATING_LINES;
+      - MATCHING_LOW, HOMING_PIGEON, DOJI_STAR;
+      - HIKKAKE and MODIFIED_HIKKAKE.
+    - **Three bars and more:**
+      - THREE_WHITE_SOLDIERS / THREE_BLACK_CROWS, ADVANCE_BLOCK, STALLED;
+      - THREE_INSIDE and THREE_OUTSIDE up/down;
+      - MORNING/EVENING_DOJI_STAR, ABANDONED_BABY, TRI_STAR;
+      - THREE_LINE_STRIKE, TWO_CROWS, UPSIDE_GAP_TWO_CROWS;
+      - STICK_SANDWICH, UNIQUE_THREE_RIVER, THREE_STARS_IN_SOUTH, IDENTICAL_THREE_CROWS;
+      - TASUKI_GAP, SIDE_BY_SIDE_WHITE_LINES;
+      - RISING/FALLING_THREE_METHODS, MAT_HOLD, BREAKAWAY (five bars);
+      - CONCEALING_BABY_SWALLOW, LADDER_BOTTOM.
+    - **Reversal bars outside the Japanese canon:**
+      - KEY_REVERSAL, OUTSIDE_REVERSAL;
+      - ISLAND_REVERSAL (a gap, then a gap back);
+      - TWO_BAR_REVERSAL, THREE_BAR_REVERSAL;
+      - OOPS (Williams' gap reversal);
+      - EXHAUSTION_BAR, CLIMAX_BAR;
+      - Brooks' SIGNAL_BAR quality and TREND_BAR / DOJI_BAR.
+    - **Each needs:**
+      - a fixture that passes and one that fails;
+      - its flip twin (bullish ↔ bearish names);
+      - known_at at the last bar.
+    - **Validation:** an agreement report against TA-Lib's CDL functions where the definitions match. Document every disagreement and its cause (thresholds, averaging period). Report each pattern's frequency on real markets against walks, and its P(N R) curve against 1/(N+1).
+
 ## v3
 
 MCFL v3. The desk asked for all of these (2026-10-03). Build on merged v2, with the same rules:
