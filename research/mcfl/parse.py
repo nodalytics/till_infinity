@@ -211,9 +211,13 @@ def relations(entities: list[Entity]) -> list[Relation]:
             rel("TOUCH", e, e.get("zone"))
         elif e.type == "FAIL":
             rel("INVALIDATE", e, e.get("zone"))
-        elif e.type == "ZONE":
+        elif e.type in ("ZONE", "POOL"):
             for part in e.parts:
                 rel("CONTAIN", e, part)
+        elif e.type == "POOL_TAKEN":  # v2: closed back, a touch (a sweep of the pool); else a cross
+            rel("TOUCH" if e.get("closed_back") else "CROSS", e, e.get("pool"))
+            for part in e.parts[1:]:
+                rel("LINK", e, part)  # the members' BREACH_REVERTs on the same bar: the same fact per swing
         elif e.type == "LEG":
             vs = voids[e.dir]
             lo = bisect.bisect_left(vs, (e.at + 2, ""))
@@ -260,6 +264,10 @@ def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
         pbs = retrace.pullbacks(fr, level, ext)
         dax, _, _ = grammar([e for e in level if e.type == "BREAK"] + pbs, retrace.RULES, n=len(df))
         extra += retrace.retraces(fr, zones, life) + pbs + dax
+        from mcfl import pools
+        sw = pools.sweeps(fr, ext)
+        setups, _, _ = grammar(sw + [e for e in level if e.type == "BREAK"] + pbs, pools.RULES, n=len(df))
+        extra += pools.pools(fr, ext, level) + sw + setups
     ents = sorted(toks + wds + level + zones + life + rejects + extra, key=sort_key)
     rels = sorted(relations(ents), key=lambda r: (r.known_at, r.kind, r.src, r.dst))
     return Chart(n=len(df), entities=tuple(ents), relations=tuple(rels),

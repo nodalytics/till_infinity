@@ -132,9 +132,43 @@ def item7(ch: Chart) -> dict:
             "rates": rates, "shares": shares}
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"1": item1, "11": item11, "4": item4, "7": item7}
+def item6(ch: Chart) -> dict:
+    taken = {e.get("pool"): e for e in ch.of("POOL_TAKEN")}
+    pools = ch.of("POOL")
+    shares = {}
+    for h in (20, 100):
+        ok = [p for p in pools if p.known_at + h < ch.n]
+        shares[f"POOL taken within {h} bars"] = (sum(1 for p in ok if p.id in taken and taken[p.id].at <= p.known_at + h),
+                                                 len(ok))
+    tk = list(taken.values())
+    shares["POOL_TAKEN closed back (swept)"] = (sum(1 for t in tk if t.get("closed_back")), len(tk))
+    sw = ch.of("SWEEP_PROTECTED")
+    shares["SWEEP_PROTECTED of swing lows/highs"] = (len(sw), len(ch.of("EXTREME")))
+    # does the protected low hold for 20 bars after it is known?
+    lo, hi = ch_bars(ch)
+    held = 0
+    ok = 0
+    for s in sw:
+        if s.known_at + 20 < ch.n:
+            ok += 1
+            seg = lo[s.known_at + 1:s.known_at + 21] if s.dir.value == "UP" else -hi[s.known_at + 1:s.known_at + 21]
+            held += bool((seg >= (s.get("level") if s.dir.value == "UP" else -s.get("level"))).all())
+    shares["protected level holds 20 bars"] = (held, ok)
+    rates = Counter(e.type for e in ch.of("POOL", "POOL_TAKEN", "SWEEP_PROTECTED", "DAX_SETUP"))
+    return {"streams": {"pools": _seq(ch, ("POOL", "POOL_TAKEN"), lambda e: e.type[5:6] + e.dir.arrow + (
+        ("S" if e.get("closed_back") else "T") if e.type == "POOL_TAKEN" else str(min(e.get("count"), 3))))},
+            "rates": rates, "shares": shares}
+
+
+def ch_bars(ch: Chart) -> tuple[np.ndarray, np.ndarray]:
+    """The bars' lows and highs, from the CANDLE lexemes."""
+    c = sorted(ch.of("CANDLE"), key=lambda e: e.at)
+    return np.array([e.get("low") for e in c]), np.array([e.get("high") for e in c])
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"1": item1, "11": item11, "4": item4, "7": item7, "6": item6}
 TITLES = {"1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
-          "7": "retracement depth"}
+          "7": "retracement depth", "6": "liquidity pools and the protected sweep"}
 
 
 # ---------------------------------------------------------------- runs

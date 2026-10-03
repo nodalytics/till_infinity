@@ -57,6 +57,8 @@ V2_TEXT: dict[str, Any] = {
     "BREAK": lambda e: e.get("vs_structure"),
     "RETRACE": lambda e: e.get("depth_bin"),
     "PULLBACK": lambda e: f"{e.get('phase')}:{e.get('depth_bin')}",
+    "POOL": lambda e: f"{e.get('kind')}:{e.get('count')}",
+    "POOL_TAKEN": lambda e: "SWEPT" if e.get("closed_back") else "THROUGH",
 }
 
 

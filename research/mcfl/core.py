@@ -31,11 +31,11 @@ LAYER = {
     "SESSION_OPEN": 2, "SESSION_EXTREME": 2, "SESSION_EXTREME_TAKEN": 2,
     "FOCUS": 2, "FOCUS6": 2, "CUSUM_IGNITION": 2,
     "PURGE": 2, "DISTRIBUTION": 2, "PATTERN": 2,
-    "RANGE": 3, "POOL": 3, "DAX50": 3, "CRT3": 3, "NESTED": 3,
+    "RANGE": 3, "POOL": 3, "DAX50": 3, "DAX_SETUP": 3, "CRT3": 3, "NESTED": 3,
 }
 V2_TYPES = ("SWING", "STRUCTURE_SHIFT", "CHARACTER_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
             "BALANCE", "IMBALANCE", "RANGE", "RANGE_TEST", "ESCAPE", "FAILED_ESCAPE", "POOL", "POOL_TAKEN",
-            "SWEEP_PROTECTED", "RETRACE", "PULLBACK", "DAX50", "SESSION_OPEN", "SESSION_EXTREME",
+            "SWEEP_PROTECTED", "RETRACE", "PULLBACK", "DAX50", "DAX_SETUP", "SESSION_OPEN", "SESSION_EXTREME",
             "SESSION_EXTREME_TAKEN", "FOCUS", "FOCUS6", "CUSUM_IGNITION", "PURGE", "DISTRIBUTION", "CRT3",
             "PATTERN", "NESTED")
 """The types v2 adds, in the order of the roadmap's items."""
@@ -51,7 +51,7 @@ ORDER = {t: i for i, t in enumerate(
      "SESSION_EXTREME_TAKEN", "FOCUS", "FOCUS6", "CUSUM_IGNITION",
      "SWING", "STRUCTURE_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
      "RANGE", "RANGE_TEST", "FAILED_ESCAPE", "ESCAPE", "POOL", "POOL_TAKEN", "SWEEP_PROTECTED",
-     "DISPLACE", "BREAK", "CHARACTER_SHIFT", "PULLBACK", "ORIGIN", "LEG", "ZONE", "DAX50",
+     "DISPLACE", "BREAK", "CHARACTER_SHIFT", "PULLBACK", "ORIGIN", "LEG", "ZONE", "DAX50", "DAX_SETUP",
      "REVISIT", "RETRACE", "REJECT_PATH", "REJECT", "ACCEPT", "FAIL", "EXPIRE",
      "DISTRIBUTION", "CRT3", "NESTED"))}
 
@@ -85,7 +85,7 @@ SIDES = (Dir.UP, Dir.DOWN)
 # by the token frames (`candles.frame`), the grammar's clauses (`view`) and the symmetry test.
 NEG_FIELD = frozenset({"open", "high", "low", "close", "price", "level", "far", "near", "extreme_px",
                        # v2
-                       "body_mid", "range_mid", "peak", "taker_skew"})
+                       "body_mid", "range_mid", "peak", "taker_skew", "swept_level"})
 """Price fields: negated under the flip."""
 POINTS = "OHLC"
 """Order of the point-relation matrices, row-major: `points` is the bar's O, H, L, C (rows) against
@@ -138,7 +138,7 @@ def point_twin(name: str) -> str:
 
 _PAIRS = (("HH", "LL"), ("BULL", "BEAR"), ("ABOVE", "BELOW"), ("Q1", "Q4"), ("Q2", "Q3"),
           # v2: swing labels, structure states, taker skew
-          ("LH", "HL"), ("EH", "EL"), ("UP", "DOWN"), ("BUY", "SELL"))
+          ("LH", "HL"), ("EH", "EL"), ("UP", "DOWN"), ("BUY", "SELL"), ("EQUAL_HIGHS", "EQUAL_LOWS"))
 SWAP_VALUE = {**{a: b for a, b in _PAIRS}, **{b: a for a, b in _PAIRS},
               **{n: point_twin(n) for n in NAMED_POINTS if point_twin(n) != n}}
 """Class values and named relations that trade places under the flip; every other value is its

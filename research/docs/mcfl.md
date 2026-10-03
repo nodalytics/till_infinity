@@ -582,6 +582,30 @@ known at the later of the two. The fixtures `DAX_DEEP` (a pullback to 0.8 of the
 `DAX_SHALLOW` (0.4: none) are in `tests/test_retrace.py`. With item 6's SWEEP_PROTECTED as the break's
 origin, steps 1-3 of the DAX checklist are a sentence (below).
 
+### 6. Liquidity pools and the protected sweep
+
+`pools.py`. Written for highs (EQUAL_HIGHS); lows are the flipped chart.
+
+| entity | definition | attributes | `known_at` | parts |
+|---|---|---|---|---|
+| **POOL** (L3), POOL↑ = EQUAL_HIGHS, POOL↓ = EQUAL_LOWS | when a swing high e becomes known, every earlier swing high within POOL_EQ_ATR (**0.1**) × ATR(14) at e of its price and still standing (no high strictly between them above the higher of the two) joins it. A third equal high makes a new POOL at its own bar (count 3); the earlier one is unchanged | `kind`, `count`, `level` (the highest member), `members`, `first` | e's (bar + 3) | the member EXTREMEs |
+| **POOL_TAKEN** (L2) | the first bar after the pool's last member with a high above `level` | `pool`, `level`, `closed_back` (close ≤ level: the pool was swept; else closed through), `depth_atr`, `breach_revert` (how many members had a BREACH_REVERT on that bar; those events are parts too, relation LINK) | its bar | the POOL (and those BREACH_REVERTs) |
+| **SWEEP_PROTECTED** (L2) | [`dax_smc.py`](../ideas/dax_smc.py) step 1, for a buy: a swing low s that trades below the last swing low q of the SWEEP_BACK (**40**) bars before it - q known by s, nothing below q between them - and closes back above q on s or the next bar. The low at s is PROTECTED. Direction UP: it protects an up move, like the ORIGIN at s | `swept` (q), `swept_level`, `level` (s's low), `origin` | s + 3 | q's and s's EXTREMEs |
+| **DAX_SETUP** (L3) | the DAX checklist's steps 1-3 as one production: `SWEEP_PROTECTED_UP BREAK_UP PULLBACK_UP[phase=INSIDE, depth≥0.5]` where BREAK.origin = the sweep's origin and PULLBACK.break = BREAK | `sweep`, `break`, `pullback`, `depth` | the latest part's | the three |
+
+A POOL_TAKEN that closed back links to BREACH_REVERT: v0's BREACH_REVERT is the same fact per
+swing (traded through, closed back, before any close beyond), so the take lists the members'
+on that bar - present exactly when the take closed back and the member had not been closed through
+before. Relations: POOL CONTAIN each member; POOL_TAKEN TOUCH the POOL when it closed back, CROSS when
+it closed through. Text `POOL↑[EQUAL_HIGHS:2]`, `POOL_TAKEN↑[SWEPT]` / `[THROUGH]`.
+
+**SWEEP_PROTECTED is dax_smc's protected low exactly**: on walks and GARCH walks, both directions,
+the set of protected lows equals that of the course's step 1 copied verbatim from
+`dax_smc.long_setups`, and every `protected` low of `dax_smc.setups` (all steps) is one of them
+(`tests/test_pools.py::test_sweep_protected_is_dax_smc_step_one`). DAX_SETUP differs from the course
+in one documented way: its break is v1's BREAK (the leg's close above the last swing high known at
+the origin, within LEG_MAX = 20 bars) where dax_smc allows 60.
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -692,6 +716,8 @@ never NaN.
 | market structure bullish / bearish (v2) | STRUCTURE UP / DOWN | last high HH and last low HL / LH and LL |
 | FVG filled / mitigated, inverted FVG (IFVG) (v2) | VOID_FILLED, VOID_PARTIAL, VOID_INVERTED | |
 | retracement, discount / premium, "the 50%" (v2) | RETRACE, PULLBACK[depth_bin], DAX50 | depth of a pullback in its leg |
+| equal highs / lows, liquidity, "buy-side / sell-side liquidity taken" (v2) | POOL, POOL_TAKEN[SWEPT / THROUGH] | |
+| protected low (the DAX course) (v2) | SWEEP_PROTECTED | `dax_smc.py` step 1, exactly |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -887,6 +913,14 @@ GARCH and 152 of 2,710 under momentum.
   swing low inside the leg (INSIDE) measured against the leg to the break, exactly as `dax_smc.py`
   measures its structural liquidity. Bins: 0.382 and 0.618 belong to the bin above; 1.0 is DEEP.
   The DAX rule's 50% is the number 0.5 (`depth≥0.5`), not the HALF bin, which starts at 0.382.
+- **Pools (item 6).** The tolerance is the swing labels' (0.1 ATR at the newer swing), measured
+  between the newest member and each earlier one. "Not yet traded through" is checked between each
+  member and the newest (no high strictly between them above the higher of the two); a pool grows
+  by new POOL entities (count 2, 3, ...) rather than by changing one, so every entity stays immutable.
+  POOL_TAKEN is the first high strictly above the level; "with a close back" is an attribute, and the
+  link to BREACH_REVERT is the list of the members' BREACH_REVERT events on that bar.
+- **SWEEP_PROTECTED's direction** is the direction of the move it protects (UP for a protected low),
+  as ORIGIN↑ is a swing low; BREACH_REVERT keeps v0's convention (the breach's direction).
 
 ### v1
 

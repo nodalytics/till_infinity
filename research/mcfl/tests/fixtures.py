@@ -69,3 +69,7 @@ def with_time(df: pd.DataFrame, sec: int = 900, start: int = 0) -> pd.DataFrame:
 DAX_DEEP = WARMUP + zig([100.5, 104, 100, 103, 101, 105, 103, 106])
 # the same leg pulling back only to 103 (low 102.75): 0.4 of it (HALF, above the 50%)
 DAX_SHALLOW = WARMUP + zig([100.5, 104, 100, 104]) + zig([104, 103], 0.25) + zig([103, 106])
+
+# two swing highs at 103 (high 103.25, bars 24 and 32): EQUAL_HIGHS, then lows at 101 (EQUAL_LOWS at
+# 36), and a rise to 104 that takes the highs at bar 41 and closes through
+EQUAL_HIGHS = WARMUP + zig([100.5, 103, 101, 103, 101, 104])
