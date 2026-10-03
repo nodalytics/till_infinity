@@ -37,7 +37,10 @@ def _all(chart):
 def test_every_prefix_is_the_full_parse_up_to_it(name, df):
     full = parse(df)
     assert len(full.of("ZONE")) > 0, "the fixture should exercise the grammar"
-    assert len([e for e in full.entities if e.type in ("REVISIT", "FAIL", "ACCEPT", "REJECT")]) > 0
+    assert len([e for e in full.entities if e.type in ("REVISIT", "FAIL", "ACCEPT", "REJECT_PATH")]) > 0
+    # v1: the token layer and the candle productions are under the same check
+    assert {"CANDLE", "BAR_RELATION", "PIN", "ENGULF", "INSIDE_BREAK", "DISPLACE_C",
+            "DELIVERY_SHIFT"} <= {e.type for e in full.entities}
     for T in range(len(df)):
         cut = parse(df.iloc[:T + 1])
         got, want = _all(cut), _upto(full, T)
@@ -70,3 +73,19 @@ def test_break_reference_known_before_the_break():
         ref = ids[b.get("ref")]
         assert ref.known_at < b.at
         assert b.known_at >= b.at
+
+
+def test_candle_reject_and_confirmation_are_causal():
+    """REJECT and the CONFIRMED transition are rare on 360 bars; check them on a longer series at
+    each one's known_at and one bar before."""
+    df = synth.garch(3000, seed=12)
+    full = parse(df)
+    rej = full.of("REJECT")
+    conf = [t for t in full.transitions if t.dst == "CONFIRMED"]
+    assert rej and conf
+    for e in rej[:12]:
+        assert e in set(parse(df.iloc[:e.known_at + 1]).entities)
+        assert e not in set(parse(df.iloc[:e.known_at]).entities)
+    for t in conf[:6]:
+        assert t in set(parse(df.iloc[:t.known_at + 1]).transitions)
+        assert t not in set(parse(df.iloc[:t.known_at]).transitions)

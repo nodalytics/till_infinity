@@ -1,0 +1,861 @@
+MCFL v1 candle layer against generated walks: 8 series x 5000 bars
+
+== Part 1: bar words against the null - 8 series x 5000 bars, R = 10
+
+-- walk against matched walk (null)
+   alphabet   symbols   KL n=1 [null median / max] p     n=2 [..] p      n=3 p    k=1 p   k=2 p
+   full         494   0.00966 [0.01094/0.01228] 1.000   0.5331 [0.5286/0.5336] 0.167     -     0.083     -  
+   full+s      3271   0.10111 [0.10030/0.10241] 0.250   0.4808 [0.4810/0.4830] 0.583     -     0.333     -  
+   coarse        18   0.00019 [0.00036/0.00055] 0.750   0.0071 [0.0064/0.0071] 0.167   0.750   0.083   0.750
+   coarse+s      51   0.00102 [0.00104/0.00140] 0.583   0.0362 [0.0363/0.0395] 0.583   0.750   0.333   0.833
+   rel           72   0.00089 [0.00140/0.00180] 1.000   0.0625 [0.0641/0.0677] 1.000   0.750   0.750   0.333
+   points       653   0.02088 [0.02173/0.02537] 0.750   0.3126 [0.3175/0.3221] 0.917     -     0.833     -  
+   [coarse] largest 1-gram differences (per 1,000 words: data / null / z)
+     U.l.l                                           89.76    87.54    +1.5
+     U.l.m                                           37.54    38.93    -1.4
+     U.l.s                                           18.28    19.09    -1.2
+     D.l.l                                           85.35    86.91    -1.1
+     D.s.l                                           40.60    39.76    +0.8
+     D.m.m                                           53.12    54.44    -0.8
+     D.l.m                                           38.82    38.17    +0.7
+     D.l.s                                           18.71    19.12    -0.6
+   [coarse] largest 2-gram differences (per 1,000 words: data / null / z)
+     D.l.l D.m.m                                      4.03     5.18    -3.2
+     D.l.m D.l.s                                      1.10     0.69    +3.1
+     U.l.m U.l.l                                      2.58     3.54    -3.1
+     D.m.m D.l.l                                      3.86     4.89    -2.9
+     U.s.l D.m.s                                      3.28     2.56    +2.9
+     D.s.m U.s.l                                      2.78     2.03    +2.8
+     U.l.m D.l.m                                      1.90     1.40    +2.7
+     D.m.s D.m.l                                      4.63     3.72    +2.7
+   [coarse] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.m.l U.s.s U.l.l                                0.78     0.42    +3.5
+     U.m.s D.l.l U.m.m                                0.58     0.27    +3.3
+     D.m.s D.m.l D.s.s                                0.55     0.29    +3.1
+     U.s.s U.l.l U.m.m                                0.73     0.41    +3.1
+     D.m.m U.s.s D.s.s                                0.70     0.40    +3.0
+     D.l.m D.l.l D.l.l                                0.60     0.26    +2.9
+     U.m.l U.l.l U.m.m                                0.53     0.29    +2.6
+     U.s.m D.l.l U.s.s                                0.60     0.36    +2.6
+   [coarse] largest P(next | last 1) differences (data / null / z)
+     D.l.l                -> D.m.m           0.047  0.060    -3.2
+     D.s.m                -> U.s.l           0.055  0.040    +2.9
+     U.l.m                -> D.l.m           0.051  0.036    +2.8
+     D.m.s                -> U.s.m           0.039  0.051    -2.8
+     U.l.m                -> U.l.l           0.069  0.091    -2.7
+     D.l.m                -> D.l.s           0.028  0.018    +2.7
+     U.s.l                -> D.m.s           0.081  0.064    +2.7
+     D.m.l                -> U.l.s           0.014  0.021    -2.6
+   [coarse+s] largest 1-gram differences (per 1,000 words: data / null / z)
+     D.l.m.w.lo                                      17.13    15.86    +2.0
+     D.l.l.w.lo                                       0.53     0.35    +1.8
+     D.m.s.w.hi                                      20.82    22.12    -1.7
+     U.l.l.s.hi                                      89.44    87.20    +1.5
+     D.m.s.w.lo                                      38.70    37.26    +1.5
+     U.l.m.w.lo                                       1.56     1.97    -1.5
+     U.m.l.s.hi                                      34.03    35.49    -1.4
+     U.m.m.s.hi                                       1.23     1.00    +1.4
+   [coarse+s] largest 2-gram differences (per 1,000 words: data / null / z)
+     D.l.l.s.lo D.m.m.w.lo                            3.57     4.76    -3.5
+     D.m.s.w.lo U.s.m.w.hi                            1.11     1.74    -3.0
+     D.m.m.w.lo D.l.l.s.lo                            3.29     4.22    -2.8
+     U.l.m.w.hi U.s.m.w.hi                            1.16     0.76    +2.7
+     U.l.m.s.hi U.l.l.s.hi                            1.23     1.81    -2.7
+     U.m.l.w.hi D.m.l.s.lo                            0.95     0.62    +2.7
+     D.m.s.w.lo U.l.l.s.hi                            4.27     3.43    +2.5
+     D.s.s.w.lo D.l.m.w.lo                            1.18     0.82    +2.5
+   [coarse+s] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.s.s.w.lo U.l.l.s.hi D.l.l.s.lo                 0.48     0.28    +2.4
+     U.l.l.s.hi D.s.s.w.lo D.l.l.s.lo                 0.58     0.37    +2.1
+     D.s.m.w.lo D.l.l.s.lo D.l.l.s.lo                 0.50     0.32    +2.1
+     U.l.l.s.hi D.l.l.s.lo U.s.m.w.hi                 0.53     0.37    +1.7
+     D.l.l.s.lo D.s.s.w.lo U.l.l.s.hi                 0.45     0.31    +1.6
+     U.l.l.s.hi D.m.m.w.lo U.l.l.s.hi                 0.53     0.33    +1.5
+     D.l.l.s.lo U.l.l.s.hi D.l.l.s.lo                 0.70     0.54    +1.4
+     D.m.s.w.lo U.l.l.s.hi D.l.l.s.lo                 0.48     0.33    +1.4
+   [coarse+s] largest P(next | last 1) differences (data / null / z)
+     D.m.s.w.lo           -> U.s.m.w.hi      0.029  0.047    -3.7
+     D.l.l.s.lo           -> D.m.m.w.lo      0.042  0.055    -3.5
+     U.s.s.w.hi           -> D.s.l.s.lo      0.007  0.002    +3.4
+     U.l.m.s.hi           -> D.l.s.w.lo      0.003  0.014    -2.9
+     U.s.s.w.lo           -> U.l.s.w.lo      0.011  0.004    +2.8
+     D.l.m.s.lo           -> U.l.m.w.hi      0.006  0.017    -2.7
+     U.m.s.w.hi           -> U.l.s.w.hi      0.006  0.013    -2.7
+     D.s.m.w.hi           -> U.s.l.s.hi      0.042  0.009    +2.7
+   [rel] largest 1-gram differences (per 1,000 words: data / null / z)
+     D.l.s/HH                                         3.76     4.56    -2.4
+     U.s.l/OUT                                        0.65     0.45    +1.8
+     U.l.l/LL                                         1.50     1.85    -1.6
+     U.s.m/OUT                                        1.30     1.08    +1.3
+     D.l.s/LL                                        10.29     9.64    +1.3
+     D.m.s/OUT                                        7.46     6.86    +1.3
+     U.s.m/IN                                        10.77    11.45    -1.3
+     U.s.l/LL                                         4.08     3.70    +1.3
+   [rel] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.s.s/IN U.s.s/LL                                0.63     0.34    +3.2
+     U.s.m/HH U.l.s/HH                                0.53     0.27    +3.1
+     U.m.s/HH D.s.s/LL                                0.50     0.93    -2.7
+     U.l.m/HH U.l.l/HH                                1.60     2.24    -2.7
+     D.m.s/HH D.m.l/LL                                1.65     1.11    +2.6
+     U.s.s/HH U.m.m/HH                                1.20     1.72    -2.5
+     D.s.s/LL U.l.l/HH                                3.78     3.09    +2.5
+     D.s.l/IN D.s.s/LL                                1.30     0.93    +2.4
+   [rel] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.l.l/HH D.s.s/HH U.l.l/HH                       0.58     0.32    +2.9
+     U.m.l/HH U.s.s/HH U.l.l/HH                       0.55     0.28    +2.7
+     U.l.l/HH D.s.s/HH D.l.l/LL                       0.58     0.35    +2.4
+     D.l.l/LL D.s.s/LL U.m.l/HH                       0.63     0.36    +2.4
+     D.l.l/LL D.l.l/LL D.m.s/LL                       0.53     0.30    +2.1
+     U.l.l/HH U.m.m/HH U.s.s/HH                       0.48     0.34    +1.5
+     U.l.l/HH U.s.s/HH U.l.l/HH                       0.33     0.48    -1.4
+     D.l.l/LL D.s.s/LL D.l.l/LL                       0.33     0.47    -1.4
+   [rel] largest P(next | last 1) differences (data / null / z)
+     U.l.m/HH             -> D.l.m/OUT       0.012  0.003    +3.3
+     D.s.s/LL             -> D.s.s/IN        0.005  0.012    -3.2
+     D.m.m/IN             -> U.m.m/HH        0.005  0.039    -3.1
+     U.l.m/OUT            -> D.l.s/HH        0.000  0.013    -3.0
+     D.m.l/LL             -> U.l.s/HH        0.001  0.005    -2.9
+     D.m.m/IN             -> D.s.l/LL        0.082  0.032    +2.9
+     U.s.s/HH             -> U.m.m/HH        0.029  0.042    -2.7
+     D.s.m/LL             -> U.s.l/OUT       0.005  0.001    +2.7
+   named point relations, per 1,000 bars (data / null / z):
+     OPEN_AT_PREV_CLOSE         1000.0   1000.0    +0.0
+     OPEN_GAP_UP                   0.0      0.0    +0.0
+     OPEN_GAP_DOWN                 0.0      0.0    +0.0
+     OPEN_AT_PREV_OPEN            47.4     48.4    -0.8
+     OPEN_ABOVE_PREV_HIGH          0.0      0.0    +0.0
+     OPEN_BELOW_PREV_LOW           0.0      0.0    +0.0
+     OPEN_AT_PREV_HIGH           233.9    231.8    +1.7
+     OPEN_AT_PREV_LOW            230.8    230.7    +0.1
+     CLOSE_AT_PREV_CLOSE          47.2     48.3    -0.8
+     CLOSE_AT_PREV_OPEN           33.8     34.1    -0.4
+     CLOSE_ABOVE_PREV_HIGH       288.7    285.5    +1.3
+     CLOSE_BELOW_PREV_LOW        284.1    284.3    -0.2
+     CLOSE_AT_PREV_HIGH           38.4     37.9    +0.4
+     CLOSE_AT_PREV_LOW            38.0     37.5    +1.1
+     HIGH_ABOVE_PREV_HIGH        452.4    452.3    +0.1
+     HIGH_AT_PREV_HIGH           100.4     98.2    +1.4
+     HIGH_BELOW_PREV_HIGH        447.2    449.5    -0.9
+     HIGH_AT_PREV_CLOSE          232.3    232.3    +0.0
+     HIGH_AT_PREV_OPEN            35.8     38.1    -2.0
+     HIGH_AT_PREV_LOW             51.2     53.3    -2.2
+     HIGH_BELOW_PREV_LOW           0.0      0.0    +0.0
+     LOW_BELOW_PREV_LOW          446.9    449.7    -0.9
+     LOW_AT_PREV_LOW             101.3     98.5    +2.3
+     LOW_ABOVE_PREV_LOW          451.9    451.8    +0.0
+     LOW_AT_PREV_CLOSE           234.3    231.9    +1.4
+     LOW_AT_PREV_OPEN             38.9     37.5    +1.2
+     LOW_AT_PREV_HIGH             53.5     52.9    +0.6
+     LOW_ABOVE_PREV_HIGH           0.0      0.0    +0.0
+     OPEN_AT_HIGH                232.3    232.3    +0.0
+     OPEN_AT_LOW                 234.3    231.9    +1.4
+     CLOSE_AT_HIGH               233.9    231.8    +1.5
+     CLOSE_AT_LOW                230.7    230.6    +0.0
+     OPEN_EQ_CLOSE                47.2     48.3    -0.8
+     BODY_MIRROR                  33.8     34.1    -0.4
+   candle productions per 1,000 bars (data / null / z), and P(next bar goes its way): data / null [n]
+     DELIVERY_SHIFT↑      199.10   195.61    +2.3     0.499 / 0.500 [7962]
+     DELIVERY_SHIFT↓      193.07   194.66    -0.8     0.498 / 0.501 [7721]
+     DISPLACE_C↑           31.15    30.80    +0.3     0.489 / 0.498 [1246]
+     DISPLACE_C↓           29.75    30.49    -1.1     0.489 / 0.500 [1190]
+     ENGULF↑              127.08   126.07    +0.8     0.501 / 0.496 [5082]
+     ENGULF↓              124.80   124.69    +0.1     0.503 / 0.502 [4989]
+     INSIDE_BREAK↑         29.05    28.75    +0.3     0.510 / 0.497 [1162]
+     INSIDE_BREAK↓         29.23    28.55    +1.1     0.470 / 0.506 [1168]
+     PIN↑                 118.17   117.27    +0.7     0.500 / 0.503 [4727]
+     PIN↓                 115.70   117.64    -1.8     0.503 / 0.500 [4627]
+     STAR↑                 12.90    11.79    +1.7     0.479 / 0.498 [516]
+     STAR↓                 11.68    11.99    -0.7     0.439 / 0.511 [467]
+
+-- garch against matched walk (null)
+   alphabet   symbols   KL n=1 [null median / max] p     n=2 [..] p      n=3 p    k=1 p   k=2 p
+   full         503   0.01024 [0.01034/0.01103] 0.667   0.5256 [0.5278/0.5367] 0.750     -     0.917     -  
+   full+s      3309   0.10425 [0.10063/0.10387] 0.083   0.4833 [0.4804/0.4829] 0.083     -     0.917     -  
+   coarse        18   0.00044 [0.00033/0.00039] 0.083   0.0059 [0.0065/0.0078] 0.917   0.750   1.000   0.583
+   coarse+s      49   0.00153 [0.00101/0.00138] 0.083   0.0366 [0.0357/0.0394] 0.333   0.083   0.250   0.083
+   rel           72   0.00120 [0.00137/0.00174] 0.917   0.0648 [0.0654/0.0668] 0.667   0.750   0.500   0.667
+   points       676   0.02214 [0.02163/0.02360] 0.500   0.3147 [0.3117/0.3232] 0.417     -     0.500     -  
+   [coarse] largest 1-gram differences (per 1,000 words: data / null / z)
+     D.l.s                                           20.89    19.34    +2.2
+     U.m.s                                           56.78    59.32    -2.1
+     U.l.m                                           36.67    38.54    -1.8
+     U.s.m                                           51.72    50.12    +1.4
+     D.l.l                                           89.51    87.47    +1.4
+     D.s.s                                           92.12    90.01    +1.3
+     U.l.s                                           18.16    18.98    -1.2
+     U.m.m                                           52.85    54.34    -1.2
+   [coarse] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.s.s U.l.s                                      1.03     1.59    -2.8
+     D.s.m U.s.l                                      2.43     1.88    +2.6
+     D.l.s U.l.l                                      2.55     1.98    +2.5
+     D.s.l D.l.l                                      4.23     3.50    +2.5
+     D.l.m U.m.l                                      1.65     2.22    -2.4
+     D.l.s D.m.s                                      1.40     1.03    +2.3
+     U.s.s D.l.l                                      8.64     7.72    +2.0
+     U.l.m U.s.l                                      1.28     1.68    -2.0
+   [coarse] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.s.s D.l.l U.s.m                                0.73     0.39    +3.4
+     D.m.s D.l.l D.l.l                                0.78     0.43    +3.3
+     D.l.m U.s.s D.s.s                                0.58     0.31    +3.1
+     D.m.l D.s.s D.m.m                                0.58     0.32    +2.9
+     D.l.l D.m.m D.m.s                                0.55     0.30    +2.9
+     D.s.s D.s.s D.m.s                                0.70     0.41    +2.9
+     U.s.s D.l.l D.s.l                                0.58     0.33    +2.8
+     U.s.s D.m.m D.m.l                                0.60     0.33    +2.7
+   [coarse] largest P(next | last 1) differences (data / null / z)
+     U.s.s                -> U.l.s           0.011  0.018    -3.0
+     D.l.m                -> U.m.l           0.043  0.058    -2.7
+     D.s.m                -> U.s.l           0.049  0.037    +2.5
+     U.s.s                -> D.l.l           0.097  0.085    +2.3
+     D.s.l                -> D.l.l           0.105  0.088    +2.3
+     U.s.m                -> U.l.s           0.014  0.021    -2.2
+     D.s.s                -> U.l.s           0.013  0.017    -2.1
+     D.s.s                -> U.l.m           0.030  0.036    -2.1
+   [coarse+s] largest 1-gram differences (per 1,000 words: data / null / z)
+     D.l.s.w.hi                                       7.69     6.52    +2.9
+     D.l.l.w.lo                                       0.58     0.33    +2.8
+     U.m.s.w.lo                                      20.42    22.22    -2.4
+     U.m.l.s.hi                                      33.23    35.16    -2.1
+     U.s.m.w.lo                                       4.45     3.85    +1.9
+     U.m.l.w.hi                                      27.43    25.96    +1.8
+     U.l.m.w.hi                                      14.89    15.97    -1.7
+     D.m.m.w.hi                                       4.67     4.08    +1.6
+   [coarse+s] largest 2-gram differences (per 1,000 words: data / null / z)
+     D.m.m.w.lo D.l.m.s.lo                            0.53     1.04    -3.2
+     U.l.l.s.hi U.s.s.w.hi                            4.04     5.07    -2.9
+     D.m.l.w.lo U.m.s.w.lo                            0.30     0.67    -2.8
+     U.s.m.w.hi U.m.l.w.hi                            1.61     1.15    +2.7
+     D.m.s.w.lo D.m.s.w.hi                            0.45     0.82    -2.6
+     U.s.s.w.lo D.m.s.w.hi                            0.38     0.71    -2.5
+     U.m.m.w.hi U.m.l.w.hi                            1.78     1.34    +2.4
+     U.m.l.w.hi D.l.s.w.lo                            0.50     0.30    +2.4
+   [coarse+s] largest 3-gram differences (per 1,000 words: data / null / z)
+     D.l.l.s.lo U.l.l.s.hi D.s.m.w.lo                 0.60     0.33    +3.0
+     D.m.m.w.lo D.l.l.s.lo D.l.l.s.lo                 0.60     0.34    +2.8
+     U.l.l.s.hi U.l.l.s.hi D.l.l.s.lo                 0.33     0.54    -1.9
+     D.s.s.w.lo D.l.l.s.lo D.l.l.s.lo                 0.55     0.38    +1.7
+     U.l.l.s.hi U.l.l.s.hi U.l.l.s.hi                 0.73     0.53    +1.7
+     U.l.l.s.hi D.l.l.s.lo U.l.l.s.hi                 0.73     0.53    +1.7
+     D.l.l.s.lo U.l.l.s.hi D.s.s.w.lo                 0.63     0.45    +1.6
+     D.l.l.s.lo D.s.s.w.lo D.l.l.s.lo                 0.58     0.41    +1.6
+   [coarse+s] largest P(next | last 1) differences (data / null / z)
+     D.m.m.w.lo           -> D.l.m.s.lo      0.011  0.021    -3.7
+     U.l.s.w.hi           -> U.m.s.w.lo      0.004  0.023    -3.6
+     D.m.s.w.lo           -> D.m.s.w.hi      0.012  0.022    -3.1
+     U.l.l.s.hi           -> U.s.s.w.hi      0.047  0.058    -3.0
+     D.s.s.w.hi           -> U.s.l.s.hi      0.010  0.004    +2.9
+     D.m.l.w.lo           -> U.m.s.w.lo      0.011  0.026    -2.7
+     U.s.s.w.lo           -> D.m.s.w.hi      0.011  0.021    -2.7
+     D.s.s.w.hi           -> U.m.s.w.hi      0.025  0.036    -2.5
+   [rel] largest 1-gram differences (per 1,000 words: data / null / z)
+     D.s.s/IN                                        20.96    18.90    +2.8
+     D.l.l/LL                                        77.64    74.43    +2.4
+     D.l.s/HH                                         5.48     4.70    +2.3
+     U.m.s/HH                                        28.33    30.09    -2.0
+     U.l.l/OUT                                        9.57     8.68    +1.6
+     U.l.m/IN                                         0.60     0.83    -1.6
+     U.l.m/HH                                        23.44    24.75    -1.6
+     U.l.s/OUT                                        4.08     4.60    -1.5
+   [rel] largest 2-gram differences (per 1,000 words: data / null / z)
+     D.m.s/LL U.s.s/IN                                1.50     0.96    +3.5
+     U.s.m/IN U.l.m/HH                                0.53     0.27    +3.2
+     U.l.m/HH U.s.m/HH                                0.40     0.86    -3.1
+     D.s.s/LL U.l.m/HH                                0.40     0.85    -3.1
+     D.l.s/HH U.l.l/HH                                0.65     0.36    +3.1
+     U.s.l/IN U.s.s/HH                                1.40     0.94    +3.0
+     D.m.s/LL D.m.m/LL                                1.65     1.16    +2.8
+     D.s.l/HH D.l.l/LL                                0.55     0.31    +2.8
+   [rel] largest 3-gram differences (per 1,000 words: data / null / z)
+     D.l.l/LL D.m.l/LL D.s.s/LL                       0.65     0.39    +2.7
+     U.l.l/HH U.l.l/HH U.l.l/HH                       0.70     0.45    +2.3
+     U.m.l/HH U.s.s/HH D.l.l/LL                       0.48     0.29    +2.2
+     D.l.l/LL D.s.s/LL U.m.l/HH                       0.53     0.37    +1.6
+     D.l.l/LL D.s.s/LL U.l.l/HH                       0.60     0.45    +1.4
+     D.l.l/LL D.l.l/LL D.m.s/LL                       0.50     0.35    +1.2
+     D.l.l/LL D.l.l/LL U.s.s/LL                       0.53     0.41    +1.1
+     U.l.l/HH U.l.l/HH U.s.s/HH                       0.70     0.57    +1.1
+   [rel] largest P(next | last 1) differences (data / null / z)
+     D.s.s/LL             -> U.l.m/HH        0.010  0.021    -3.7
+     D.s.m/IN             -> D.m.s/OUT       0.046  0.019    +3.2
+     D.m.s/LL             -> U.s.s/IN        0.050  0.032    +3.1
+     U.l.m/HH             -> U.s.m/HH        0.017  0.035    -3.0
+     U.m.m/HH             -> D.m.l/HH        0.000  0.005    -2.9
+     U.s.m/IN             -> U.l.l/HH        0.056  0.090    -2.8
+     U.s.l/IN             -> D.m.m/OUT       0.043  0.020    +2.8
+     U.s.s/HH             -> D.s.s/IN        0.019  0.011    +2.8
+   named point relations, per 1,000 bars (data / null / z):
+     OPEN_AT_PREV_CLOSE         1000.0   1000.0    +0.0
+     OPEN_GAP_UP                   0.0      0.0    +0.0
+     OPEN_GAP_DOWN                 0.0      0.0    +0.0
+     OPEN_AT_PREV_OPEN            48.0     48.7    -0.5
+     OPEN_ABOVE_PREV_HIGH          0.0      0.0    +0.0
+     OPEN_BELOW_PREV_LOW           0.0      0.0    +0.0
+     OPEN_AT_PREV_HIGH           230.2    232.2    -1.0
+     OPEN_AT_PREV_LOW            232.5    231.1    +0.9
+     CLOSE_AT_PREV_CLOSE          48.2     48.7    -0.3
+     CLOSE_AT_PREV_OPEN           33.8     34.2    -0.3
+     CLOSE_ABOVE_PREV_HIGH       281.0    284.7    -1.2
+     CLOSE_BELOW_PREV_LOW        288.9    284.0    +1.5
+     CLOSE_AT_PREV_HIGH           37.3     38.2    -1.2
+     CLOSE_AT_PREV_LOW            37.6     37.6    +0.0
+     HIGH_ABOVE_PREV_HIGH        446.2    451.0    -1.3
+     HIGH_AT_PREV_HIGH            98.7     98.6    +0.1
+     HIGH_BELOW_PREV_HIGH        455.1    450.4    +1.4
+     HIGH_AT_PREV_CLOSE          235.3    230.5    +2.8
+     HIGH_AT_PREV_OPEN            37.4     37.7    -0.4
+     HIGH_AT_PREV_LOW             53.7     52.2    +1.6
+     HIGH_BELOW_PREV_LOW           0.0      0.0    +0.0
+     LOW_BELOW_PREV_LOW          454.3    450.0    +1.3
+     LOW_AT_PREV_LOW              97.9     98.9    -0.6
+     LOW_ABOVE_PREV_LOW          447.8    451.1    -0.9
+     LOW_AT_PREV_CLOSE           229.8    231.0    -0.5
+     LOW_AT_PREV_OPEN             37.4     37.8    -0.3
+     LOW_AT_PREV_HIGH             51.9     53.0    -1.1
+     LOW_ABOVE_PREV_HIGH           0.0      0.0    +0.0
+     OPEN_AT_HIGH                235.3    230.5    +2.8
+     OPEN_AT_LOW                 229.8    231.0    -0.5
+     CLOSE_AT_HIGH               230.6    232.2    -0.8
+     CLOSE_AT_LOW                232.5    231.1    +0.9
+     OPEN_EQ_CLOSE                48.2     48.7    -0.3
+     BODY_MIRROR                  33.8     34.2    -0.3
+   candle productions per 1,000 bars (data / null / z), and P(next bar goes its way): data / null [n]
+     DELIVERY_SHIFT↑      191.60   196.64    -1.7     0.491 / 0.499 [7661]
+     DELIVERY_SHIFT↓      198.25   194.93    +1.8     0.510 / 0.496 [7929]
+     DISPLACE_C↑           30.20    30.71    -0.4     0.498 / 0.500 [1204]
+     DISPLACE_C↓           32.20    30.80    +1.7     0.501 / 0.491 [1288]
+     ENGULF↑              126.28   125.38    +0.5     0.488 / 0.500 [5051]
+     ENGULF↓              124.22   125.23    -0.7     0.515 / 0.497 [4967]
+     INSIDE_BREAK↑         29.00    28.72    +0.4     0.491 / 0.502 [1160]
+     INSIDE_BREAK↓         29.00    28.78    +0.2     0.499 / 0.496 [1160]
+     PIN↑                 118.12   117.59    +0.4     0.487 / 0.499 [4725]
+     PIN↓                 119.20   116.72    +1.7     0.502 / 0.499 [4767]
+     STAR↑                 12.53    12.07    +0.8     0.501 / 0.503 [501]
+     STAR↓                 11.97    11.94    +0.1     0.528 / 0.495 [479]
+
+-- trend against matched walk (null)
+   alphabet   symbols   KL n=1 [null median / max] p     n=2 [..] p      n=3 p    k=1 p   k=2 p
+   full         497   0.00956 [0.01084/0.01217] 1.000   0.5276 [0.5278/0.5390] 0.583     -     0.250     -  
+   full+s      3300   0.09775 [0.09957/0.10361] 0.833   0.4787 [0.4808/0.4822] 0.833     -     0.083     -  
+   coarse        18   0.00027 [0.00027/0.00047] 0.500   0.0299 [0.0060/0.0071] 0.083   0.083   0.083   0.083
+   coarse+s      52   0.00110 [0.00090/0.00119] 0.333   0.0582 [0.0350/0.0380] 0.083   0.083   0.083   0.083
+   rel           72   0.00874 [0.00130/0.00156] 0.083   0.0895 [0.0644/0.0669] 0.083   1.000   0.083   1.000
+   points       674   0.03410 [0.02241/0.02437] 0.083   0.3266 [0.3161/0.3227] 0.083     -     0.833     -  
+   [coarse] largest 1-gram differences (per 1,000 words: data / null / z)
+     U.s.l                                           38.74    40.30    -1.6
+     D.s.m                                           51.74    50.17    +1.4
+     U.l.l                                           88.81    86.99    +1.2
+     U.m.s                                           60.18    58.68    +1.2
+     D.l.l                                           85.13    86.82    -1.1
+     D.s.l                                           41.62    40.49    +1.1
+     U.s.s                                           88.38    89.98    -1.1
+     D.m.s                                           57.85    59.05    -1.0
+   [coarse] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.l.l U.l.l                                     13.07     7.12   +11.1
+     D.l.l D.l.l                                     11.85     7.10    +9.3
+     U.l.l D.l.l                                      3.36     7.23    -9.1
+     D.l.l U.l.l                                      3.38     7.27    -8.6
+     U.m.l U.l.l                                      7.84     5.17    +7.4
+     U.l.l D.m.l                                      3.11     5.44    -6.3
+     U.l.l U.m.l                                      7.54     5.32    +6.1
+     U.l.l U.l.m                                      4.88     3.23    +5.8
+   [coarse] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.m.l U.l.l U.l.l                                1.30     0.45    +8.0
+     U.l.l U.l.l U.m.l                                1.23     0.44    +7.5
+     D.l.l D.l.l D.l.l                                1.33     0.50    +7.4
+     D.l.l D.l.l D.m.l                                1.30     0.44    +7.0
+     U.l.l U.l.l U.l.l                                1.55     0.53    +6.7
+     D.l.m D.l.l D.l.l                                0.75     0.24    +6.6
+     D.l.l D.m.l D.s.m                                0.80     0.27    +6.2
+     U.l.l U.l.l U.m.m                                0.98     0.40    +5.8
+   [coarse] largest P(next | last 1) differences (data / null / z)
+     U.l.l                -> U.l.l           0.147  0.082   +12.2
+     U.l.l                -> D.l.l           0.038  0.083   -11.3
+     D.l.l                -> D.l.l           0.139  0.082   +10.7
+     D.l.l                -> U.l.l           0.040  0.084    -8.3
+     U.l.l                -> D.m.l           0.035  0.063    -7.6
+     U.m.l                -> U.l.l           0.129  0.084    +7.2
+     D.l.l                -> D.m.l           0.092  0.060    +6.0
+     U.l.l                -> U.m.l           0.085  0.061    +5.4
+   [coarse+s] largest 1-gram differences (per 1,000 words: data / null / z)
+     D.l.s.w.hi                                       5.55     6.64    -2.3
+     U.s.l.w.hi                                      35.41    37.20    -1.9
+     D.l.m.s.hi                                       0.50     0.33    +1.8
+     D.l.m.w.lo                                      16.68    15.71    +1.5
+     U.l.m.w.lo                                       1.53     1.86    -1.5
+     D.s.m.w.lo                                      47.79    46.28    +1.4
+     U.l.m.s.hi                                      21.27    20.28    +1.4
+     D.l.l.s.lo                                      84.64    86.53    -1.3
+   [coarse+s] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.l.l.s.hi U.l.l.s.hi                           12.88     7.05   +10.8
+     D.l.l.s.lo D.l.l.s.lo                           11.65     7.03    +9.2
+     U.l.l.s.hi D.l.l.s.lo                            3.32     7.14    -9.0
+     D.l.l.s.lo U.l.l.s.hi                            3.34     7.17    -8.2
+     U.m.l.s.hi U.l.l.s.hi                            5.27     3.34    +6.7
+     D.l.l.s.lo D.m.l.w.lo                            4.37     2.71    +6.4
+     D.l.l.s.lo D.l.m.s.lo                            2.46     1.50    +4.9
+     U.l.l.s.hi U.l.m.s.hi                            2.41     1.48    +4.9
+   [coarse+s] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.l.l.s.hi U.l.l.s.hi U.m.l.w.hi                 0.93     0.26    +8.4
+     D.l.l.s.lo D.l.l.s.lo D.m.l.w.lo                 0.93     0.26    +8.2
+     D.l.l.s.lo D.l.l.s.lo D.l.l.s.lo                 1.31     0.49    +7.3
+     U.l.l.s.hi U.l.l.s.hi U.m.m.w.hi                 0.98     0.35    +6.7
+     U.l.l.s.hi U.l.l.s.hi U.l.l.s.hi                 1.48     0.52    +6.6
+     U.m.l.s.hi U.l.l.s.hi U.l.l.s.hi                 0.88     0.31    +6.5
+     D.s.l.w.lo D.l.l.s.lo D.l.l.s.lo                 0.68     0.24    +5.6
+     U.l.l.s.hi U.l.l.s.hi U.s.l.w.hi                 0.80     0.30    +5.2
+   [coarse+s] largest P(next | last 1) differences (data / null / z)
+     U.l.l.s.hi           -> U.l.l.s.hi      0.146  0.081   +11.8
+     U.l.l.s.hi           -> D.l.l.s.lo      0.037  0.082   -11.2
+     D.l.l.s.lo           -> D.l.l.s.lo      0.138  0.081   +10.5
+     D.l.l.s.lo           -> U.l.l.s.hi      0.039  0.083    -7.9
+     U.m.l.s.hi           -> U.l.l.s.hi      0.149  0.094    +6.3
+     D.l.l.s.lo           -> D.m.l.w.lo      0.052  0.031    +5.9
+     U.m.m.w.hi           -> D.l.l.s.lo      0.057  0.085    -5.0
+     U.l.l.s.hi           -> D.m.l.w.lo      0.018  0.032    -4.9
+   [rel] largest 1-gram differences (per 1,000 words: data / null / z)
+     D.m.l/IN                                         4.61     7.39    -6.5
+     U.m.l/IN                                         4.61     7.21    -5.6
+     D.l.l/OUT                                        6.19     8.56    -5.1
+     D.l.l/HH                                         0.90     2.04    -5.0
+     U.l.l/OUT                                        6.51     8.59    -4.5
+     U.s.l/IN                                         8.84    10.97    -4.1
+     D.m.l/LL                                        51.44    47.08    +4.0
+     U.l.l/HH                                        79.67    74.30    +3.9
+   [rel] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.l.l/HH U.l.l/HH                               11.55     5.93   +11.9
+     D.l.l/LL D.l.l/LL                               10.74     6.02    +9.2
+     U.m.l/HH U.l.l/HH                                6.31     3.94    +7.6
+     U.l.l/HH U.l.m/HH                                4.43     2.74    +6.5
+     U.l.l/HH U.m.l/HH                                6.79     4.49    +6.3
+     D.l.l/LL D.l.m/LL                                4.41     2.80    +6.1
+     D.l.m/LL D.l.m/LL                                1.78     0.87    +6.0
+     D.l.l/LL D.m.l/LL                                6.94     4.36    +5.8
+   [rel] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.l.l/HH U.l.l/HH U.l.l/HH                       1.38     0.43    +8.6
+     D.l.l/LL D.l.l/LL D.l.l/LL                       1.20     0.43    +7.5
+     D.l.l/LL D.m.l/LL D.s.m/LL                       0.80     0.21    +7.2
+     U.l.l/HH U.l.l/HH U.m.l/HH                       1.03     0.36    +7.1
+     U.m.l/HH U.l.l/HH U.l.l/HH                       1.00     0.36    +6.7
+     D.l.l/LL D.l.l/LL D.m.l/LL                       1.18     0.38    +6.4
+     U.l.l/HH U.m.l/HH U.s.s/HH                       0.98     0.38    +6.1
+     U.l.l/HH U.l.l/HH U.m.m/HH                       0.90     0.33    +6.1
+   [rel] largest P(next | last 1) differences (data / null / z)
+     U.l.l/HH             -> U.l.l/HH        0.145  0.080   +11.0
+     D.l.l/LL             -> D.l.l/LL        0.140  0.081    +9.6
+     U.m.l/HH             -> U.l.l/HH        0.126  0.084    +6.1
+     U.l.l/HH             -> D.m.l/IN        0.023  0.042    -6.1
+     U.l.l/HH             -> D.l.l/LL        0.018  0.039    -5.7
+     D.l.l/LL             -> D.m.l/LL        0.090  0.059    +5.6
+     D.l.l/LL             -> D.l.m/LL        0.057  0.038    +5.1
+     U.l.l/HH             -> U.l.m/HH        0.056  0.037    +5.0
+   named point relations, per 1,000 bars (data / null / z):
+     OPEN_AT_PREV_CLOSE         1000.0   1000.0    +0.0
+     OPEN_GAP_UP                   0.0      0.0    +0.0
+     OPEN_GAP_DOWN                 0.0      0.0    +0.0
+     OPEN_AT_PREV_OPEN            47.8     47.7    +0.2
+     OPEN_ABOVE_PREV_HIGH          0.0      0.0    +0.0
+     OPEN_BELOW_PREV_LOW           0.0      0.0    +0.0
+     OPEN_AT_PREV_HIGH           229.1    232.0    -2.0
+     OPEN_AT_PREV_LOW            233.1    232.3    +0.4
+     CLOSE_AT_PREV_CLOSE          47.7     47.6    +0.1
+     CLOSE_AT_PREV_OPEN           31.5     34.7    -3.5
+     CLOSE_ABOVE_PREV_HIGH       303.2    284.5    +6.3
+     CLOSE_BELOW_PREV_LOW        300.0    285.4    +7.1
+     CLOSE_AT_PREV_HIGH           36.2     37.6    -1.5
+     CLOSE_AT_PREV_LOW            37.0     37.5    -0.5
+     HIGH_ABOVE_PREV_HIGH        457.3    450.7    +2.5
+     HIGH_AT_PREV_HIGH            86.6     98.5    -9.1
+     HIGH_BELOW_PREV_HIGH        456.1    450.8    +1.9
+     HIGH_AT_PREV_CLOSE          230.5    231.8    -0.7
+     HIGH_AT_PREV_OPEN            37.1     37.2    -0.1
+     HIGH_AT_PREV_LOW             64.8     53.2    +9.6
+     HIGH_BELOW_PREV_LOW           0.0      0.0    +0.0
+     LOW_BELOW_PREV_LOW          455.9    451.5    +1.9
+     LOW_AT_PREV_LOW              86.1     98.2    -6.6
+     LOW_ABOVE_PREV_LOW          458.0    450.2    +3.4
+     LOW_AT_PREV_CLOSE           231.9    231.2    +0.4
+     LOW_AT_PREV_OPEN             35.9     37.0    -1.1
+     LOW_AT_PREV_HIGH             62.4     53.2    +9.8
+     LOW_ABOVE_PREV_HIGH           0.0      0.0    +0.0
+     OPEN_AT_HIGH                230.5    231.8    -0.7
+     OPEN_AT_LOW                 231.9    231.2    +0.4
+     CLOSE_AT_HIGH               229.3    232.0    -1.8
+     CLOSE_AT_LOW                233.2    232.2    +0.4
+     OPEN_EQ_CLOSE                47.7     47.6    +0.1
+     BODY_MIRROR                  31.5     34.7    -3.5
+   candle productions per 1,000 bars (data / null / z), and P(next bar goes its way): data / null [n]
+     DELIVERY_SHIFT↑      179.60   195.00    -4.7     0.583 / 0.502 [7182]
+     DELIVERY_SHIFT↓      179.60   194.62    -5.2     0.584 / 0.501 [7183]
+     DISPLACE_C↑           38.30    30.95   +15.7     0.654 / 0.504 [1531]
+     DISPLACE_C↓           36.45    30.56    +7.4     0.662 / 0.495 [1458]
+     ENGULF↑              110.38   125.11    -8.1     0.582 / 0.502 [4414]
+     ENGULF↓              108.17   124.74   -12.2     0.583 / 0.503 [4326]
+     INSIDE_BREAK↑         25.95    28.62    -3.9     0.594 / 0.501 [1036]
+     INSIDE_BREAK↓         26.38    28.77    -3.6     0.624 / 0.501 [1055]
+     PIN↑                 114.42   117.61    -4.0     0.510 / 0.502 [4577]
+     PIN↓                 118.75   117.58    +1.5     0.512 / 0.497 [4750]
+     STAR↑                 11.47    12.17    -1.3     0.601 / 0.511 [459]
+     STAR↓                 12.07    12.00    +0.2     0.617 / 0.503 [483]
+
+-- trend0 against matched walk (null)
+   alphabet   symbols   KL n=1 [null median / max] p     n=2 [..] p      n=3 p    k=1 p   k=2 p
+   full         493   0.01068 [0.01101/0.01168] 0.583   0.5205 [0.5285/0.5361] 0.917     -     0.750     -  
+   full+s      3272   0.09934 [0.09918/0.10466] 0.500   0.4767 [0.4806/0.4846] 0.917     -     0.250     -  
+   coarse        18   0.00020 [0.00031/0.00039] 0.917   0.0056 [0.0064/0.0067] 1.000   0.667   0.917   0.667
+   coarse+s      52   0.00095 [0.00108/0.00145] 0.917   0.0366 [0.0358/0.0397] 0.333   0.500   0.583   0.667
+   rel           72   0.00103 [0.00132/0.00173] 0.917   0.0641 [0.0644/0.0674] 0.667   0.750   0.583   0.833
+   points       677   0.02513 [0.02115/0.02365] 0.083   0.3135 [0.3138/0.3239] 0.583     -     0.583     -  
+   [coarse] largest 1-gram differences (per 1,000 words: data / null / z)
+     U.m.s                                           56.55    58.80    -1.9
+     D.l.m                                           36.67    38.08    -1.5
+     U.s.l                                           41.25    40.14    +1.1
+     U.l.m                                           38.54    37.65    +0.9
+     U.m.m                                           55.45    54.42    +0.8
+     U.m.l                                           62.16    61.21    +0.8
+     U.l.l                                           86.08    87.12    -0.7
+     U.l.s                                           19.56    19.12    +0.6
+   [coarse] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.l.s U.l.s                                      0.60     0.36    +2.5
+     D.l.m U.m.l                                      1.73     2.33    -2.5
+     D.m.l D.m.l                                      2.93     3.74    -2.4
+     U.m.m U.m.l                                      4.18     3.50    +2.3
+     U.s.l U.l.l                                      4.18     3.51    +2.3
+     U.l.s D.m.l                                      1.40     1.04    +2.2
+     D.s.l D.m.s                                      3.01     2.45    +2.2
+     D.l.m D.m.m                                      1.45     1.93    -2.2
+   [coarse] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.s.s D.l.l D.m.m                                0.83     0.42    +4.0
+     D.s.s D.l.m U.s.s                                0.53     0.27    +3.1
+     D.s.s D.s.s U.m.m                                0.68     0.40    +2.8
+     D.l.l U.s.s D.m.l                                0.25     0.58    -2.7
+     D.s.s D.l.l U.s.m                                0.70     0.43    +2.7
+     U.l.l U.s.s D.s.m                                0.68     0.41    +2.7
+     U.s.s D.l.l U.s.l                                0.55     0.32    +2.6
+     D.s.m D.l.l D.s.s                                0.63     0.38    +2.5
+   [coarse] largest P(next | last 1) differences (data / null / z)
+     D.m.l                -> D.m.l           0.048  0.061    -2.5
+     D.s.l                -> D.m.s           0.074  0.061    +2.2
+     U.l.s                -> U.l.s           0.031  0.019    +2.1
+     U.m.m                -> U.m.l           0.075  0.064    +2.1
+     D.l.m                -> U.m.l           0.047  0.061    -2.0
+     D.l.m                -> D.m.m           0.040  0.051    -2.0
+     D.m.m                -> U.l.l           0.076  0.088    -2.0
+     U.l.s                -> D.m.l           0.072  0.054    +2.0
+   [coarse+s] largest 1-gram differences (per 1,000 words: data / null / z)
+     U.l.l.w.hi                                       0.50     0.35    +1.6
+     D.s.m.w.hi                                       4.42     3.93    +1.5
+     U.m.s.w.lo                                      20.70    21.84    -1.3
+     D.l.m.s.lo                                      18.84    20.00    -1.2
+     U.m.m.w.lo                                       3.79     4.17    -1.1
+     U.s.l.w.hi                                      38.05    36.95    +1.1
+     D.s.s.w.lo                                      54.90    56.24    -1.1
+     U.m.l.w.hi                                      26.62    25.70    +1.1
+   [coarse+s] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.s.s.w.hi D.l.s.w.lo                            1.03     0.64    +3.1
+     D.s.s.w.hi U.s.s.w.lo                            1.68     1.08    +2.7
+     D.s.l.w.lo D.m.l.s.lo                            1.86     1.36    +2.7
+     U.m.s.w.hi U.m.m.w.hi                            2.26     1.71    +2.7
+     U.m.l.w.hi U.m.l.w.hi                            1.21     0.83    +2.6
+     D.s.s.w.hi D.l.m.w.lo                            0.78     0.49    +2.6
+     D.l.l.s.lo D.m.l.s.lo                            3.06     2.46    +2.4
+     U.s.l.s.hi U.l.l.s.hi                            0.68     0.43    +2.4
+   [coarse+s] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.l.l.s.hi D.s.m.w.lo U.l.l.s.hi                 0.50     0.29    +2.4
+     D.s.s.w.lo D.l.l.s.lo D.l.l.s.lo                 0.58     0.35    +2.0
+     U.l.l.s.hi D.s.s.w.lo U.l.l.s.hi                 0.55     0.36    +1.7
+     U.l.l.s.hi U.l.l.s.hi D.l.l.s.lo                 0.38     0.57    -1.6
+     D.l.l.s.lo U.l.l.s.hi D.s.m.w.lo                 0.48     0.35    +1.3
+     D.l.l.s.lo U.s.s.w.hi D.l.l.s.lo                 0.55     0.42    +1.3
+     D.l.l.s.lo D.l.l.s.lo U.s.s.w.hi                 0.53     0.40    +1.2
+     U.l.l.s.hi U.l.l.s.hi D.m.m.w.lo                 0.50     0.38    +1.2
+   [coarse+s] largest P(next | last 1) differences (data / null / z)
+     U.m.s.w.hi           -> U.m.m.w.hi      0.063  0.046    +2.8
+     U.s.s.w.hi           -> D.l.s.w.lo      0.018  0.011    +2.8
+     D.s.s.w.hi           -> U.s.s.w.lo      0.049  0.032    +2.6
+     D.s.l.w.lo           -> D.m.l.s.lo      0.050  0.036    +2.6
+     U.l.s.w.lo           -> D.l.l.s.lo      0.067  0.111    -2.5
+     D.m.s.w.hi           -> D.s.s.w.lo      0.034  0.050    -2.5
+     U.m.l.s.hi           -> D.m.m.s.lo      0.006  0.002    +2.5
+     D.s.s.w.lo           -> U.s.l.s.hi      0.000  0.003    -2.4
+   [rel] largest 1-gram differences (per 1,000 words: data / null / z)
+     D.m.l/OUT                                        3.63     3.03    +2.2
+     D.s.s/IN                                        17.31    18.63    -1.9
+     D.s.l/HH                                         4.08     3.57    +1.7
+     D.l.m/IN                                         0.58     0.82    -1.7
+     D.m.l/HH                                         3.26     3.78    -1.7
+     U.l.s/LL                                         5.16     4.62    +1.5
+     U.m.m/HH                                        35.36    33.91    +1.4
+     U.l.m/OUT                                        9.47     8.71    +1.3
+   [rel] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.l.m/LL D.s.s/HH                                0.53     0.25    +3.5
+     U.m.m/HH D.l.m/OUT                               0.88     0.43    +3.2
+     D.m.l/LL U.s.s/IN                                1.63     1.15    +2.8
+     U.s.l/HH U.l.l/HH                                2.75     2.12    +2.7
+     U.m.m/HH D.m.l/LL                                2.00     1.51    +2.6
+     D.s.m/HH D.m.m/LL                                0.78     0.47    +2.5
+     D.s.m/LL U.s.m/LL                                0.65     0.39    +2.5
+     D.m.s/HH D.l.m/LL                                0.88     0.58    +2.4
+   [rel] largest 3-gram differences (per 1,000 words: data / null / z)
+     D.l.l/LL U.s.s/LL D.l.l/LL                       0.48     0.32    +1.7
+     D.l.l/LL D.s.s/LL U.l.l/HH                       0.35     0.53    -1.2
+     D.l.l/LL D.l.l/LL D.l.l/LL                       0.55     0.42    +1.2
+     U.m.l/HH U.l.l/HH U.s.s/HH                       0.45     0.35    +1.1
+     D.l.l/LL D.l.l/LL U.s.s/LL                       0.48     0.37    +1.1
+     U.l.l/HH D.s.s/HH D.l.l/LL                       0.45     0.35    +1.1
+     D.l.l/LL U.s.s/LL U.s.s/HH                       0.43     0.33    +1.0
+     U.l.l/HH U.s.s/HH D.l.l/LL                       0.38     0.47    -0.9
+   [rel] largest P(next | last 1) differences (data / null / z)
+     U.l.l/OUT            -> U.l.s/HH        0.000  0.017    -3.4
+     D.s.m/OUT            -> D.l.l/LL        0.273  0.078    +3.4
+     U.l.m/LL             -> D.s.s/HH        0.144  0.063    +3.2
+     D.l.m/OUT            -> U.m.l/IN        0.011  0.038    -3.2
+     D.s.s/IN             -> U.m.s/HH        0.010  0.027    -3.2
+     D.m.l/IN             -> U.s.l/IN        0.000  0.022    -3.1
+     D.s.s/LL             -> U.s.l/IN        0.001  0.004    -3.1
+     U.m.m/HH             -> D.l.m/OUT       0.025  0.013    +3.0
+   named point relations, per 1,000 bars (data / null / z):
+     OPEN_AT_PREV_CLOSE         1000.0   1000.0    +0.0
+     OPEN_GAP_UP                   0.0      0.0    +0.0
+     OPEN_GAP_DOWN                 0.0      0.0    +0.0
+     OPEN_AT_PREV_OPEN            49.0     48.6    +0.4
+     OPEN_ABOVE_PREV_HIGH          0.0      0.0    +0.0
+     OPEN_BELOW_PREV_LOW           0.0      0.0    +0.0
+     OPEN_AT_PREV_HIGH           235.4    231.4    +4.5
+     OPEN_AT_PREV_LOW            232.0    232.8    -0.4
+     CLOSE_AT_PREV_CLOSE          48.7     48.5    +0.2
+     CLOSE_AT_PREV_OPEN           32.3     34.6    -2.1
+     CLOSE_ABOVE_PREV_HIGH       286.6    283.3    +1.9
+     CLOSE_BELOW_PREV_LOW        286.3    286.5    -0.1
+     CLOSE_AT_PREV_HIGH           38.0     37.7    +0.3
+     CLOSE_AT_PREV_LOW            38.0     37.7    +0.3
+     HIGH_ABOVE_PREV_HIGH        451.9    449.9    +0.9
+     HIGH_AT_PREV_HIGH            98.1     97.8    +0.2
+     HIGH_BELOW_PREV_HIGH        450.0    452.3    -1.1
+     HIGH_AT_PREV_CLOSE          234.5    232.4    +1.7
+     HIGH_AT_PREV_OPEN            37.0     37.7    -0.6
+     HIGH_AT_PREV_LOW             54.8     53.6    +1.6
+     HIGH_BELOW_PREV_LOW           0.0      0.0    +0.0
+     LOW_BELOW_PREV_LOW          453.5    452.6    +0.4
+     LOW_AT_PREV_LOW              96.1     98.4    -1.9
+     LOW_ABOVE_PREV_LOW          450.3    449.0    +0.6
+     LOW_AT_PREV_CLOSE           231.2    231.0    +0.1
+     LOW_AT_PREV_OPEN             36.3     37.6    -1.7
+     LOW_AT_PREV_HIGH             53.4     53.0    +0.4
+     LOW_ABOVE_PREV_HIGH           0.0      0.0    +0.0
+     OPEN_AT_HIGH                234.5    232.4    +1.7
+     OPEN_AT_LOW                 231.2    231.0    +0.1
+     CLOSE_AT_HIGH               235.2    231.4    +3.7
+     CLOSE_AT_LOW                232.1    232.8    -0.3
+     OPEN_EQ_CLOSE                48.7     48.5    +0.2
+     BODY_MIRROR                  32.3     34.6    -2.1
+   candle productions per 1,000 bars (data / null / z), and P(next bar goes its way): data / null [n]
+     DELIVERY_SHIFT↑      193.40   195.36    -0.7     0.497 / 0.498 [7735]
+     DELIVERY_SHIFT↓      197.70   195.70    +0.7     0.502 / 0.499 [7908]
+     DISPLACE_C↑           30.75    30.76    -0.0     0.510 / 0.487 [1230]
+     DISPLACE_C↓           31.52    30.73    +1.8     0.506 / 0.502 [1261]
+     ENGULF↑              123.67   125.08    -0.7     0.508 / 0.502 [4946]
+     ENGULF↓              125.33   125.39    -0.1     0.509 / 0.499 [5013]
+     INSIDE_BREAK↑         28.60    28.74    -0.1     0.505 / 0.504 [1144]
+     INSIDE_BREAK↓         28.07    28.73    -1.2     0.484 / 0.494 [1123]
+     PIN↑                 118.83   117.36    +1.1     0.490 / 0.501 [4753]
+     PIN↓                 116.20   118.10    -1.2     0.500 / 0.502 [4645]
+     STAR↑                 12.20    12.09    +0.2     0.545 / 0.509 [488]
+     STAR↓                 11.85    12.28    -1.3     0.517 / 0.498 [474]
+
+-- trend|trend0 against matched trend0 (null)
+   alphabet   symbols   KL n=1 [null median / max] p     n=2 [..] p      n=3 p    k=1 p   k=2 p
+   full         497   0.01074 [0.01110/0.01142] 0.750   0.5284 [0.5284/0.5414] 0.500     -     0.250     -  
+   full+s      3300   0.09804 [0.09827/0.10337] 0.583   0.4783 [0.4806/0.4844] 0.833     -     0.583     -  
+   coarse        18   0.00026 [0.00023/0.00035] 0.333   0.0304 [0.0061/0.0068] 0.083   0.083   0.083   0.083
+   coarse+s      52   0.00099 [0.00103/0.00145] 0.583   0.0603 [0.0352/0.0384] 0.083   0.083   0.083   0.083
+   rel           72   0.00876 [0.00117/0.00140] 0.083   0.0901 [0.0637/0.0653] 0.083   1.000   0.083   1.000
+   points       674   0.03354 [0.02155/0.02423] 0.083   0.3242 [0.3123/0.3219] 0.083     -     1.000     -  
+   [coarse] largest 1-gram differences (per 1,000 words: data / null / z)
+     U.s.l                                           38.74    40.30    -1.5
+     D.s.l                                           41.62    40.13    +1.5
+     D.l.l                                           85.13    87.22    -1.4
+     D.s.m                                           51.74    50.45    +1.1
+     U.m.s                                           60.18    59.07    +0.9
+     D.l.s                                           18.68    19.31    -0.9
+     U.m.m                                           55.20    54.16    +0.9
+     U.l.s                                           19.59    19.01    +0.8
+   [coarse] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.l.l U.l.l                                     13.07     7.01   +14.2
+     U.m.l U.l.l                                      7.84     4.96    +8.2
+     D.l.l D.l.l                                     11.85     7.18    +8.1
+     D.l.l U.l.l                                      3.38     7.37    -7.4
+     U.l.l D.l.l                                      3.36     6.98    -7.4
+     D.l.l D.m.l                                      7.79     5.27    +6.9
+     D.l.l U.m.l                                      3.08     5.31    -6.1
+     U.l.l U.m.l                                      7.54     5.37    +5.9
+   [coarse] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.m.l U.l.l U.l.l                                1.30     0.35   +10.1
+     U.l.l U.l.l U.l.l                                1.55     0.47   +10.0
+     D.l.l D.l.l D.m.l                                1.30     0.43    +8.4
+     U.l.l U.l.l U.m.l                                1.23     0.44    +7.5
+     D.l.l D.l.l D.l.l                                1.33     0.55    +6.6
+     D.l.m D.l.l D.l.l                                0.75     0.26    +6.1
+     U.l.l U.l.l U.s.l                                0.80     0.29    +6.1
+     U.l.l U.l.l U.s.s                                1.45     0.67    +6.0
+   [coarse] largest P(next | last 1) differences (data / null / z)
+     U.l.l                -> U.l.l           0.147  0.080   +12.6
+     D.l.l                -> D.l.l           0.139  0.082    +9.5
+     U.m.l                -> U.l.l           0.129  0.081    +7.8
+     D.l.l                -> U.l.l           0.040  0.085    -7.5
+     U.l.l                -> D.l.l           0.038  0.080    -7.2
+     D.l.l                -> D.m.l           0.092  0.061    +6.8
+     D.l.l                -> U.m.l           0.036  0.061    -6.7
+     U.l.l                -> D.m.l           0.035  0.063    -5.8
+   [coarse+s] largest 1-gram differences (per 1,000 words: data / null / z)
+     D.l.s.w.hi                                       5.55     6.37    -2.0
+     U.l.s.w.lo                                       6.93     6.22    +1.8
+     U.s.l.w.hi                                      35.41    37.05    -1.7
+     D.l.l.s.lo                                      84.64    86.88    -1.5
+     D.s.l.w.lo                                      38.30    36.86    +1.5
+     U.l.m.s.hi                                      21.27    20.28    +1.4
+     U.l.m.w.lo                                       1.53     1.82    -1.3
+     U.m.l.w.hi                                      25.04    26.03    -1.2
+   [coarse+s] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.l.l.s.hi U.l.l.s.hi                           12.88     6.92   +13.8
+     D.l.l.s.lo D.l.l.s.lo                           11.65     7.11    +8.3
+     U.m.l.s.hi U.l.l.s.hi                            5.27     3.13    +7.7
+     D.l.l.s.lo U.l.l.s.hi                            3.34     7.31    -7.5
+     U.l.l.s.hi D.l.l.s.lo                            3.32     6.92    -7.0
+     D.l.l.s.lo D.m.l.w.lo                            4.37     2.70    +6.4
+     D.m.l.s.lo D.l.l.s.lo                            4.90     3.21    +5.2
+     U.m.m.w.hi U.l.l.s.hi                            5.55     3.97    +4.8
+   [coarse+s] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.l.l.s.hi U.l.l.s.hi U.l.l.s.hi                 1.48     0.45    +9.6
+     D.l.l.s.lo D.l.l.s.lo D.m.l.w.lo                 0.93     0.25    +8.7
+     U.m.l.s.hi U.l.l.s.hi U.l.l.s.hi                 0.88     0.23    +8.6
+     U.l.l.s.hi U.l.l.s.hi U.m.l.w.hi                 0.93     0.27    +6.8
+     D.l.l.s.lo D.l.l.s.lo D.l.l.s.lo                 1.31     0.55    +6.5
+     U.l.l.s.hi U.l.l.s.hi U.s.s.w.hi                 1.05     0.41    +6.4
+     U.l.l.s.hi U.l.l.s.hi U.s.l.w.hi                 0.80     0.28    +6.3
+     D.s.l.w.lo D.l.l.s.lo D.l.l.s.lo                 0.68     0.24    +5.7
+   [coarse+s] largest P(next | last 1) differences (data / null / z)
+     U.l.l.s.hi           -> U.l.l.s.hi      0.146  0.079   +12.5
+     D.l.l.s.lo           -> D.l.l.s.lo      0.138  0.082    +9.8
+     D.l.l.s.lo           -> U.l.l.s.hi      0.039  0.084    -7.5
+     U.m.l.s.hi           -> U.l.l.s.hi      0.149  0.089    +6.9
+     U.l.l.s.hi           -> D.l.l.s.lo      0.037  0.079    -6.9
+     D.l.l.s.lo           -> D.m.l.w.lo      0.052  0.031    +6.0
+     U.m.m.w.hi           -> D.l.l.s.lo      0.057  0.083    -4.7
+     D.l.l.s.lo           -> U.m.l.w.hi      0.020  0.032    -4.7
+   [rel] largest 1-gram differences (per 1,000 words: data / null / z)
+     D.m.l/IN                                         4.61     7.40    -6.5
+     U.m.l/IN                                         4.61     7.32    -6.3
+     U.l.l/OUT                                        6.51     8.80    -4.9
+     D.m.l/LL                                        51.44    46.82    +4.3
+     U.l.l/IN                                         1.30     2.30    -4.2
+     D.l.l/OUT                                        6.19     8.53    -4.0
+     D.l.m/LL                                        27.55    24.43    +3.9
+     U.s.l/IN                                         8.84    10.98    -3.7
+   [rel] largest 2-gram differences (per 1,000 words: data / null / z)
+     U.l.l/HH U.l.l/HH                               11.55     5.90   +14.4
+     D.l.l/LL D.l.l/LL                               10.74     6.13   +11.4
+     U.m.l/HH U.l.l/HH                                6.31     3.82    +7.9
+     D.l.l/LL D.m.l/LL                                6.94     4.41    +7.6
+     D.l.m/LL D.l.m/LL                                1.78     0.87    +6.2
+     U.l.l/HH U.l.m/HH                                4.43     2.81    +6.1
+     D.l.l/LL U.l.l/HH                                1.43     3.14    -6.1
+     U.l.l/HH U.m.l/HH                                6.79     4.62    +6.1
+   [rel] largest 3-gram differences (per 1,000 words: data / null / z)
+     U.l.l/HH U.l.l/HH U.l.l/HH                       1.38     0.36   +10.6
+     U.m.l/HH U.l.l/HH U.l.l/HH                       1.00     0.25    +9.5
+     D.l.l/LL D.l.l/LL D.m.l/LL                       1.18     0.37    +8.4
+     D.l.l/LL D.m.l/LL D.s.m/LL                       0.80     0.24    +7.2
+     U.l.l/HH U.l.l/HH U.m.l/HH                       1.03     0.36    +7.0
+     D.l.l/LL D.l.l/LL D.l.l/LL                       1.20     0.46    +6.9
+     U.l.l/HH U.l.l/HH U.s.l/HH                       0.70     0.23    +6.2
+     D.l.l/LL D.l.l/LL D.m.m/LL                       0.95     0.38    +5.9
+   [rel] largest P(next | last 1) differences (data / null / z)
+     U.l.l/HH             -> U.l.l/HH        0.145  0.079   +11.8
+     D.l.l/LL             -> D.l.l/LL        0.140  0.082   +10.2
+     D.l.l/LL             -> U.l.l/HH        0.019  0.042    -7.6
+     D.l.l/LL             -> D.m.l/LL        0.090  0.059    +6.6
+     U.m.l/HH             -> U.l.l/HH        0.126  0.081    +6.5
+     U.l.l/HH             -> D.l.l/LL        0.018  0.038    -6.4
+     D.l.l/LL             -> U.l.l/IN        0.007  0.020    -6.4
+     D.l.l/LL             -> U.m.l/IN        0.024  0.041    -5.3
+   named point relations, per 1,000 bars (data / null / z):
+     OPEN_AT_PREV_CLOSE         1000.0   1000.0    +0.0
+     OPEN_GAP_UP                   0.0      0.0    +0.0
+     OPEN_GAP_DOWN                 0.0      0.0    +0.0
+     OPEN_AT_PREV_OPEN            47.8     48.0    -0.2
+     OPEN_ABOVE_PREV_HIGH          0.0      0.0    +0.0
+     OPEN_BELOW_PREV_LOW           0.0      0.0    +0.0
+     OPEN_AT_PREV_HIGH           229.1    232.1    -1.5
+     OPEN_AT_PREV_LOW            233.1    232.0    +0.7
+     CLOSE_AT_PREV_CLOSE          47.7     48.0    -0.3
+     CLOSE_AT_PREV_OPEN           31.5     34.0    -4.5
+     CLOSE_ABOVE_PREV_HIGH       303.2    285.0   +10.1
+     CLOSE_BELOW_PREV_LOW        300.0    285.4    +6.6
+     CLOSE_AT_PREV_HIGH           36.2     37.1    -1.1
+     CLOSE_AT_PREV_LOW            37.0     38.0    -1.0
+     HIGH_ABOVE_PREV_HIGH        457.3    451.0    +2.6
+     HIGH_AT_PREV_HIGH            86.6     98.4    -7.9
+     HIGH_BELOW_PREV_HIGH        456.1    450.7    +2.4
+     HIGH_AT_PREV_CLOSE          230.5    231.3    -0.8
+     HIGH_AT_PREV_OPEN            37.1     37.1    -0.0
+     HIGH_AT_PREV_LOW             64.8     53.3   +16.8
+     HIGH_BELOW_PREV_LOW           0.0      0.0    +0.0
+     LOW_BELOW_PREV_LOW          455.9    450.8    +2.2
+     LOW_AT_PREV_LOW              86.1     98.3    -7.0
+     LOW_ABOVE_PREV_LOW          458.0    450.9    +2.6
+     LOW_AT_PREV_CLOSE           231.9    231.3    +0.3
+     LOW_AT_PREV_OPEN             35.9     37.3    -1.4
+     LOW_AT_PREV_HIGH             62.4     52.7   +15.7
+     LOW_ABOVE_PREV_HIGH           0.0      0.0    +0.0
+     OPEN_AT_HIGH                230.5    231.3    -0.8
+     OPEN_AT_LOW                 231.9    231.3    +0.3
+     CLOSE_AT_HIGH               229.3    232.1    -1.3
+     CLOSE_AT_LOW                233.2    232.0    +0.7
+     OPEN_EQ_CLOSE                47.7     48.0    -0.3
+     BODY_MIRROR                  31.5     34.0    -4.5
+   candle productions per 1,000 bars (data / null / z), and P(next bar goes its way): data / null [n]
+     DELIVERY_SHIFT↑      179.60   195.75    -7.9     0.583 / 0.501 [7182]
+     DELIVERY_SHIFT↓      179.60   195.08   -10.3     0.584 / 0.502 [7183]
+     DISPLACE_C↑           38.30    30.21    +7.8     0.654 / 0.498 [1531]
+     DISPLACE_C↓           36.45    30.65    +5.9     0.662 / 0.500 [1458]
+     ENGULF↑              110.38   126.03   -13.1     0.582 / 0.501 [4414]
+     ENGULF↓              108.17   124.79   -12.0     0.583 / 0.502 [4326]
+     INSIDE_BREAK↑         25.95    29.24    -3.7     0.594 / 0.494 [1036]
+     INSIDE_BREAK↓         26.38    29.16    -4.4     0.624 / 0.500 [1055]
+     PIN↑                 114.42   117.30    -2.8     0.510 / 0.501 [4577]
+     PIN↓                 118.75   117.50    +1.1     0.512 / 0.503 [4750]
+     STAR↑                 11.47    12.22    -1.8     0.601 / 0.496 [459]
+     STAR↓                 12.07    12.00    +0.2     0.617 / 0.502 [483]
+
+== Part 2: full parses - 8 series x 5000 bars
+
+-- walk: 2946 revisits
+   REJECT (candle) vs REJECT_PATH:  both 734  REJECT only 338  REJECT_PATH only 487  neither 1387
+   agreement 0.720, Cohen's kappa 0.413; P(REJECT_PATH | REJECT) 0.685 vs P(REJECT_PATH | no REJECT) 0.260
+   after a revisit with a REJECT: ACCEPT 0.091, FAIL 0.225, none 0.684  [1072]  (FAIL/ACCEPT of that revisit)
+   after a revisit without a REJECT: ACCEPT 0.258, FAIL 0.482, none 0.260  [1874]  (FAIL/ACCEPT of that revisit)
+   DISPLACE (v0, 2 ATR from an origin): 5444 events on 5297 bars (132.4 per 1,000 bars); DISPLACE_C: 2436 (60.9 per 1,000 bars; rules {'DISPLACE_C_RUN': 1194, 'DISPLACE_C_BAR': 1242})
+   share of DISPLACEs whose leg (origin..displace bar) holds a same-direction DISPLACE_C: 0.228
+   share of DISPLACE_Cs inside a same-direction DISPLACE leg: 0.501  (those legs cover 0.249 of bars per direction)
+   revisits CONFIRMED by a DELIVERY_SHIFT: 260 of 2946
+
+-- garch: 2918 revisits
+   REJECT (candle) vs REJECT_PATH:  both 782  REJECT only 278  REJECT_PATH only 465  neither 1393
+   agreement 0.745, Cohen's kappa 0.470; P(REJECT_PATH | REJECT) 0.738 vs P(REJECT_PATH | no REJECT) 0.250
+   after a revisit with a REJECT: ACCEPT 0.087, FAIL 0.181, none 0.732  [1060]  (FAIL/ACCEPT of that revisit)
+   after a revisit without a REJECT: ACCEPT 0.230, FAIL 0.518, none 0.252  [1858]  (FAIL/ACCEPT of that revisit)
+   DISPLACE (v0, 2 ATR from an origin): 5302 events on 5154 bars (128.8 per 1,000 bars); DISPLACE_C: 2496 (62.4 per 1,000 bars; rules {'DISPLACE_C_BAR': 1279, 'DISPLACE_C_RUN': 1217})
+   share of DISPLACEs whose leg (origin..displace bar) holds a same-direction DISPLACE_C: 0.233
+   share of DISPLACE_Cs inside a same-direction DISPLACE leg: 0.482  (those legs cover 0.243 of bars per direction)
+   revisits CONFIRMED by a DELIVERY_SHIFT: 249 of 2918
+
+-- trend: 2710 revisits
+   REJECT (candle) vs REJECT_PATH:  both 579  REJECT only 266  REJECT_PATH only 351  neither 1514
+   agreement 0.772, Cohen's kappa 0.484; P(REJECT_PATH | REJECT) 0.685 vs P(REJECT_PATH | no REJECT) 0.188
+   after a revisit with a REJECT: ACCEPT 0.077, FAIL 0.237, none 0.686  [845]  (FAIL/ACCEPT of that revisit)
+   after a revisit without a REJECT: ACCEPT 0.197, FAIL 0.614, none 0.189  [1865]  (FAIL/ACCEPT of that revisit)
+   DISPLACE (v0, 2 ATR from an origin): 5241 events on 5129 bars (128.2 per 1,000 bars); DISPLACE_C: 2990 (74.8 per 1,000 bars; rules {'DISPLACE_C_BAR': 1197, 'DISPLACE_C_RUN': 1793})
+   share of DISPLACEs whose leg (origin..displace bar) holds a same-direction DISPLACE_C: 0.258
+   share of DISPLACE_Cs inside a same-direction DISPLACE leg: 0.449  (those legs cover 0.235 of bars per direction)
+   revisits CONFIRMED by a DELIVERY_SHIFT: 152 of 2710
+

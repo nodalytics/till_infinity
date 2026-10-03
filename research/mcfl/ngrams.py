@@ -96,8 +96,10 @@ def pool(groups: Sequence[list[Stream]]) -> list[Stream]:
 
 # ---------------------------------------------------------------- the comparison
 
-def compare(data: list[Stream], nulls: list[list[Stream]], max_n: int = 4, max_k: int = 3) -> dict:
-    """`nulls` is R + 1 null sets, each matched to `data` series for series."""
+def compare(data: list[Stream], nulls: list[list[Stream]], max_n: int = 4, max_k: int = 3,
+            top: bool = True) -> dict:
+    """`nulls` is R + 1 null sets, each matched to `data` series for series. `top=False` skips the
+    tables of largest differences (slow for alphabets of thousands of words)."""
     R = len(nulls) - 1
     pool_d = pool(nulls[1:])
     rep: dict = {"R": R, "tokens": sum(map(len, data)), "null_tokens": sum(map(len, pool_d)) / R, "n": {}, "k": {}}
@@ -107,7 +109,8 @@ def compare(data: list[Stream], nulls: list[list[Stream]], max_n: int = 4, max_k
         obs = kl(d, ngrams(pool_d, n))
         loo = [kl(reps[i], sum((reps[j] for j in range(R + 1) if j != i), Counter())) for i in range(R + 1)]
         rep["n"][n] = {"kl": obs, "null_kl": loo, "p": (1 + sum(x >= obs for x in loo)) / (R + 2),
-                       "top": _top_ngrams(d, reps[1:], sum(map(len, data)), [sum(map(len, g)) for g in nulls[1:]])}
+                       "top": _top_ngrams(d, reps[1:], sum(map(len, data)), [sum(map(len, g)) for g in nulls[1:]])
+                       if top else []}
     for k in range(1, max_k + 1):
         d = next_counts(data, k)
         reps = [next_counts(g, k) for g in nulls]
@@ -121,7 +124,7 @@ def compare(data: list[Stream], nulls: list[list[Stream]], max_n: int = 4, max_k
         obs = cond_kl(d, merged(range(1, R + 1)))
         loo = [cond_kl(reps[i], merged(j for j in range(R + 1) if j != i)) for i in range(R + 1)]
         rep["k"][k] = {"kl": obs, "null_kl": loo, "p": (1 + sum(x >= obs for x in loo)) / (R + 2),
-                       "top": _top_next(d, reps[1:])}
+                       "top": _top_next(d, reps[1:]) if top else []}
     return rep
 
 
@@ -134,10 +137,10 @@ def _top_ngrams(d: Counter, reps: list[Counter], nd: int, nr: list[int]) -> list
     """Rate per 1,000 tokens in the data against the null sets' rates."""
     rows = []
     for g in set(d) | {g for r in reps for g in r}:
-        rates = [1000 * r[g] / t for r, t in zip(reps, nr)]
-        mean_count = float(np.mean([r[g] for r in reps]))
+        mean_count = sum(r[g] for r in reps) / len(reps)
         if d[g] + mean_count < MIN_COUNT:
             continue
+        rates = [1000 * r[g] / t for r, t in zip(reps, nr)]
         x = 1000 * d[g] / nd
         floor = 1000 * math.sqrt(max(mean_count, 1.0)) / float(np.mean(nr))  # Poisson, when the reps agree
         rows.append((" ".join(g), x, float(np.mean(rates)), _z(x, rates, floor)))
