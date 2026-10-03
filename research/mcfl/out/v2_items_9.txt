@@ -1,0 +1,60 @@
+MCFL v2 alphabets against matched iid walks: 2 series x 2000 bars per source, R = 3; 15m timestamps and tick volume on every series
+
+== item 9: changepoints: FOCuS and CUSUM
+-- walk against its matched walks
+   stream changepoints        31 tokens,   4 symbols   p: n=1:0.600 n=2:1.000 n=3:0.600 k=1:1.000 k=2:0.600
+   per 1,000 bars (data / null mean / z):
+     CUSUM_IGNITION↑                               2.00      1.33   +0.9
+     CUSUM_IGNITION↓                               2.25      1.42   +1.6
+     FOCUS6↑                                       1.50      1.75   -0.5
+     FOCUS6↓                                       2.00      1.33   +4.6
+     FOCUS_ZONE↑                                   0.25      0.08   +1.2
+     FOCUS_ZONE↓                                   0.00      0.17   -1.2
+     FOCUS↑                                        0.00      0.17   -1.2
+     FOCUS↓                                        0.00      0.00   +0.0
+   shares (data / null mean / z [data n]):
+     FOCUS: the close 5 bars after the fire is further its way     nan   0.000   +0.0 [0]
+     FOCUS: the close 20 bars after the fire is further its way     nan   0.000   +0.0 [0]
+     FOCUS6: the close 5 bars after the fire is further its way   0.643   0.417   +2.7 [14]
+     FOCUS6: the close 20 bars after the fire is further its way   0.714   0.533   +1.2 [14]
+     CUSUM_IGNITION: the close 5 bars after the fire is further its way   0.588   0.482   +1.0 [17]
+     CUSUM_IGNITION: the close 20 bars after the fire is further its way   0.765   0.430   +2.0 [17]
+     ZONEs with a FOCUS6 at the origin (FOCUS_ZONE)     0.005   0.005   -0.0 [204]
+-- garch against its matched walks
+   stream changepoints        61 tokens,   4 symbols   p: n=1:0.200 n=2:0.800 n=3:0.800 k=1:0.800 k=2:1.000
+   per 1,000 bars (data / null mean / z):
+     CUSUM_IGNITION↑                               5.25      1.42  +13.3
+     CUSUM_IGNITION↓                               2.75      1.17   +5.5
+     FOCUS6↑                                       4.00      1.17   +9.8
+     FOCUS6↓                                       3.25      2.00   +1.4
+     FOCUS_ZONE↑                                   1.00      0.08   +6.4
+     FOCUS_ZONE↓                                   0.50      0.50   +0.0
+     FOCUS↓                                        0.00      0.08   -0.6
+   shares (data / null mean / z [data n]):
+     FOCUS: the close 5 bars after the fire is further its way     nan   0.000   +0.0 [0]
+     FOCUS: the close 20 bars after the fire is further its way     nan   0.000   +0.0 [0]
+     FOCUS6: the close 5 bars after the fire is further its way   0.483   0.545   -0.8 [29]
+     FOCUS6: the close 20 bars after the fire is further its way   0.517   0.441   +0.4 [29]
+     CUSUM_IGNITION: the close 5 bars after the fire is further its way   0.531   0.462   +0.8 [32]
+     CUSUM_IGNITION: the close 20 bars after the fire is further its way   0.688   0.396   +1.0 [32]
+     ZONEs with a FOCUS6 at the origin (FOCUS_ZONE)     0.032   0.011   +4.1 [186]
+-- trend against its matched walks
+   stream changepoints        67 tokens,   4 symbols   p: n=1:0.600 n=2:0.600 n=3:0.600 k=1:0.600 k=2:0.600
+   per 1,000 bars (data / null mean / z):
+     CUSUM_IGNITION↑                               4.50      1.17   +6.4
+     CUSUM_IGNITION↓                               4.25      2.00   +4.5
+     FOCUS6↑                                       4.75      1.67   +5.3
+     FOCUS6↓                                       3.25      1.75   +3.5
+     FOCUS_ZONE↑                                   0.50      0.25   +0.0
+     FOCUS_ZONE↓                                   0.25      0.33   -0.6
+     FOCUS↑                                        0.00      0.17   -1.2
+     FOCUS↓                                        0.00      0.08   -0.6
+   shares (data / null mean / z [data n]):
+     FOCUS: the close 5 bars after the fire is further its way     nan   0.250   +nan [0]
+     FOCUS: the close 20 bars after the fire is further its way     nan   0.000   +0.0 [0]
+     FOCUS6: the close 5 bars after the fire is further its way   0.469   0.489   -0.1 [32]
+     FOCUS6: the close 20 bars after the fire is further its way   0.484   0.447   +0.8 [31]
+     CUSUM_IGNITION: the close 5 bars after the fire is further its way   0.514   0.468   +0.4 [35]
+     CUSUM_IGNITION: the close 20 bars after the fire is further its way   0.382   0.617   -2.9 [34]
+     ZONEs with a FOCUS6 at the origin (FOCUS_ZONE)     0.014   0.011   +1.4 [211]
+

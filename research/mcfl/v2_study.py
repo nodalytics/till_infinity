@@ -247,9 +247,25 @@ def item8(ch: Chart) -> dict:
     return {"streams": {"breaks by session": stream}, "rates": rates, "shares": shares}
 
 
-ITEMS: dict[str, Callable[[Chart], dict]] = {"8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
+def item9(ch: Chart) -> dict:
+    cl = np.array([e.get("close") for e in sorted(ch.of("CANDLE"), key=lambda e: e.at)])
+    rates = Counter(f"{e.type}{e.dir.arrow}" for e in ch.of("FOCUS", "FOCUS6", "CUSUM_IGNITION", "FOCUS_ZONE"))
+    shares = {}
+    for k in ("FOCUS", "FOCUS6", "CUSUM_IGNITION"):
+        for h in (5, 20):
+            ev = [e for e in ch.of(k) if e.known_at + h < ch.n]
+            shares[f"{k}: the close {h} bars after the fire is further its way"] = (
+                sum((cl[e.known_at + h] - cl[e.known_at]) * (1 if e.dir.value == "UP" else -1) > 0 for e in ev), len(ev))
+    zs = ch.of("ZONE")
+    shares["ZONEs with a FOCUS6 at the origin (FOCUS_ZONE)"] = (
+        len({e.get("of_zone") for e in ch.of("FOCUS_ZONE") if e.get("threshold") == 6.0}), len(zs))
+    return {"streams": {"changepoints": _seq(ch, ("FOCUS6", "CUSUM_IGNITION"), lambda e: e.type[0] + e.dir.arrow)},
+            "rates": rates, "shares": shares}
+
+
+ITEMS: dict[str, Callable[[Chart], dict]] = {"9": item9, "8": item8, "2": item2, "1": item1, "11": item11, "4": item4, "7": item7, "6": item6,
                                              "5": item5}
-TITLES = {"8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
+TITLES = {"9": "changepoints: FOCuS and CUSUM", "8": "sessions, session anchors and tempo", "2": "compression and expansion (NR4, NR7, WR7, overlap, BALANCE, IMBALANCE)", "1": "swing labels and STRUCTURE", "11": "vs_structure and CHARACTER_SHIFT", "4": "the VOID lifecycle",
           "7": "retracement depth", "6": "liquidity pools and the protected sweep",
           "5": "RANGE: boxes, tests and escapes"}
 
@@ -265,7 +281,7 @@ def _measure(job: tuple) -> dict:
         seed = 7_000_001 * (rep + 1) + s
     else:
         df, seed = base, s
-    ch = parse(dress(df, seed))
+    ch = parse(dress(df, seed), changepoints=True)
     return {k: ITEMS[k](ch) for k in items} | {"_bars": ch.n}
 
 

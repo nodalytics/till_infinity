@@ -230,9 +230,11 @@ def relations(entities: list[Entity]) -> list[Relation]:
     return out
 
 
-def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
-    """Bars (open, high, low, close[, volume]) to a Chart. The index is ignored: bars are 0..n-1.
-    `v2=False` gives the v1 chart alone (the v2 entities and attributes are left out)."""
+def parse(df: pd.DataFrame, v2: bool = True, changepoints: bool = False, sec: float | None = None) -> Chart:
+    """Bars (open, high, low, close[, volume][, ts][, taker_buy_volume]) to a Chart. The index is
+    ignored: bars are 0..n-1. `v2=False` gives the v1 chart alone (the v2 entities and attributes are
+    left out). `changepoints=True` adds FOCUS, FOCUS6, CUSUM_IGNITION and FOCUS_ZONE (v2 item 9);
+    `sec` is the bar's length in seconds for the FOCuS threshold (default: from `ts`, else an hour)."""
     from mcfl.grammar import CANDLE_RULES, RULES, frames, words
     from mcfl.grammar import apply as grammar
     from mcfl.lifecycle import run as lifecycle
@@ -278,6 +280,11 @@ def parse(df: pd.DataFrame, v2: bool = True) -> Chart:
         extra += ranges.run(T, cid)
         extra += timing.sessions(T, cid)
     ents = toks + wds + level + zones + life + rejects + extra
+    if v2 and changepoints:
+        from mcfl import changepoints as CP
+        cps = CP.focus(df, cid, CP.bar_seconds(df, sec)) + CP.cusum(df, cid)
+        fz, _, _ = grammar(zones + cps, CP.RULES, n=len(df))
+        ents += cps + fz
     if v2:
         ents = timing.tempo(ents)
     ents = sorted(ents, key=sort_key)

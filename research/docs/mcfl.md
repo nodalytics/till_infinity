@@ -681,6 +681,29 @@ that type known before it, SLOW at or over the 75th, NORMAL between, WARMUP with
 (**10**) of them. "A fast return" is then grammatical: `REVISIT[pace=FAST]`, and the text form is
 `REVISIT↑[FAST]`.
 
+### 9. Changepoints as events
+
+`changepoints.py`, with `parse(df, changepoints=True)`. The research detectors are called as they are
+(imported read-only); MCFL only turns their output into entities.
+
+| event | detector | `at` | `known_at` | attributes |
+|---|---|---|---|---|
+| **FOCUS**↑ / ↓ | production's FOCuS (`till_infinity.structures.learning.focus.Focus`) through [`prims.focus_series`](../ideas/prims.py), fed exactly what `zone_events.py` feeds it: x = the close-to-close change (0 on bar 0), scale = EWM(span 100) of abs(x) shifted one bar × √(π/2); ↑ looks for an increase, ↓ a decrease, each resetting after a fire; threshold **12 + 3 ln(3600 / sec)**, at least 3 | the bar the change started (the detector's `at`) | the bar it fired | `threshold`, `lag` |
+| **FOCUS6**↑ / ↓ | the same at threshold **6**, the sensitive variant | likewise | likewise | likewise |
+| **CUSUM_IGNITION**↑ / ↓ | [`survivors.cusum`](../ideas/survivors.py), k = **0.5**, h = **5**: the first bar the up (down) sum of log returns, drifting k σ, crosses h σ (σ the 60-bar sd lagged 30), re-armed at 0 | its bar | its bar | `k`, `h` |
+| **FOCUS_ZONE** (L3) | a production: `ZONE_UP FOCUS_UP` with the change starting within 3 bars of the zone's origin and fired by the zone's `known_at` (zone_events' `fc_origin`, made causal: it reads the fire only if known when the zone is); one row for FOCUS, one for FOCUS6 (the id's suffix is the threshold) | the zone's | the zone's | `of_zone`, `focus`, `threshold`, `lag` |
+
+`sec`, the bar's length, is given (`parse(..., sec=900)`) or read from the first two timestamps, else
+an hour (threshold 12). Parts: a FOCUS the CANDLEs from its start to its fire, a CUSUM its bar's.
+
+`tests/test_changepoints.py` checks that FOCUS and FOCUS6 equal `prims.focus_series` run with
+zone_events' own inputs, and CUSUM_IGNITION `survivors.cusum`, on walks, GARCH and momentum walks, at
+every fire, both directions. FOCUS is flip-symmetric under the arithmetic flip. CUSUM reads log
+returns, which do not exist on the flipped (negative) chart; its mirror is the log-price flip
+(prices inverted, 1 / p), under which CUSUM_IGNITION↓ of a chart is CUSUM_IGNITION↑ of the inverted
+one - tested. That is why the detectors are an option of the parse rather than part of every one:
+the package-wide flip test parses the negated chart.
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -797,6 +820,7 @@ never NaN.
 | NR4 / NR7, wide-range bar; balance / imbalance, overlapping or "clean" bars (v2) | NR4, NR7, WR7, overlap; BALANCE, IMBALANCE | |
 | Asian range, London open, NY session; "London took the Asian high" (v2) | session; SESSION_OPEN, SESSION_EXTREME, SESSION_EXTREME_TAKEN | fixed UTC hours |
 | a fast / slow return (v2) | REVISIT[pace=FAST] / [pace=SLOW] | tempo by rolling quartile |
+| "momentum ignition", a change in drift (v2) | FOCUS, FOCUS6, CUSUM_IGNITION | the desk's own detectors |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
@@ -1019,6 +1043,11 @@ GARCH and 152 of 2,710 under momentum.
 - **Tempo** is measured between consecutive events of one structure (the first since the structure was
   known), and FAST / SLOW are quartiles of the same event type's last 50 tempos, known strictly before
   it. A tie with a quartile is FAST (SLOW).
+- **Changepoints (item 9) are an option of the parse**, `changepoints=True`, not in every parse: they
+  import production's package, and CUSUM (log returns) is undefined on the negated chart the flip
+  test parses. FOCUS's `at` is the detector's change start, so it can be well before its `known_at`.
+  CUSUM's flip symmetry is tested under the log-price flip, which is the one its definition has. The
+  bar length for FOCuS's threshold comes from the first two timestamps (known at bar 1), else an hour.
 
 ### v1
 
