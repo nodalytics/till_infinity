@@ -22,6 +22,8 @@ the same day, also before the run. R4b (production's own `fade-to-value`) is an 
 | **Volatility 10 (1s)** | Exactly a walk, as it should be. R1: -0.107R confirmation (walks -0.137 / -0.124), P(2R) 0.335 against 1/3. Every rule's P(N R) sits on 1/(N+1) and on its walks. |
 | **Multiplicity** | 1,142 secondary cells (rule x exit x class x timeframe, confirmation). After Benjamini-Hochberg at q = 0.10, **9 survive, all on Range Break 100** (R2 and R5s). That instrument is a range generator, not a market, and its walks are the wrong null for it (see below). No market cell survives. |
 
+![P(+N R before -1R) for R1, its strong and weak terciles and R4b, against 1/(N+1) and the walks](img/lrc/pnr.png)
+
 **In plain words.** The rule finds the setup the desk draws: a trend from the regression channel, a
 close through a confirmed swing, a return to the broken level, a stop just beyond the pullback. On
 data it was not tuned on, that setup reaches +2R before -1R 32.0% of the time, against 33.3% on a
@@ -133,6 +135,8 @@ confirmation after.
 | KNOWN_BAD | 39,579 | -0.295 | | -0.310 | -0.330 | -0.266 | 0.334 | 0.204 | 0.094 |
 | 1/(N+1) | | | | | | | 0.333 | 0.200 | 0.091 |
 
+![R1 mean R per class with 90% intervals, and the iid and GARCH walks](img/lrc/r1_classes.png)
+
 ### R1, non-Deriv pool, by timeframe (confirmation)
 
 | | 15m | 30m | 1h | 4h | 1d |
@@ -198,6 +202,8 @@ the trend's side. Non-Deriv pool, every timeframe:
 | CHoCH level | **0.601** | 0.563 | 0.562 | 57,324 |
 | any other broken swing | 0.601 | 0.566 | 0.566 | 256,341 |
 
+![hold rates of plain swing, BOS, CHoCH and other broken levels, real against walks](img/lrc/holds.png)
+
 - **By age at the touch** (BOS): 0-20 bars 0.593, 20-100 bars 0.624, 100+ bars 0.630 (walks 0.561-0.571).
   Older levels hold more on real data, and not on walks.
 - **With a sweep** (a wick through, a close back): BOS 0.756 against 0.720 on walks; without, 0.446
@@ -246,11 +252,13 @@ the stop, the 2R target and the exit, with the trade's strength tercile.
   candle's own retrace, not a pullback after displacement. Exploratory, and not frozen: the subsets
   the desk would pick by eye (a wait of 4-20 bars, or a displacement above 1-2 ATR) sit on their
   walks too: P(2R) 0.320-0.323 against 0.318-0.324.
-- **The desk's own example.** No date was given, so it cannot be matched exactly. The rule's sells
+- **The desk's own example** (figure below). No date was given, so it cannot be matched exactly. The rule's sells
   nearest it on Volatility 10 (1s), at entry 9585.39 and stop 9605.03, are R2 on **2025-11-16**:
   sell 9584.32, stop 9602.32 at 30m and sell 9584.13, stop 9602.71 at 1h. Both are a lower high
   after a break, and both made +1.98R. The other is R5s on **2026-07-30** 4h: sell 9584.31, stop
   9605.00, which lost.
+
+![the rule's sells nearest the desk's example on Volatility 10 (1s)](img/lrc/desk_example.png)
 
 ### Range Break 100
 
@@ -304,6 +312,8 @@ the walks.** No anti-edge: the reversed trade loses as well.
 
 (P(N R) here counts +N R before the stop *within the 4-hour hold*, so every row, walks included, sits
 below 1/(N+1). Median reward:risk is 1.0 and the median stop is 1.49 ATR(15m).)
+
+![R4b mean R per class and entry timeframe, against its walks and the reversed trade](img/lrc/r4b_classes.png)
 
 By class (GATED, real against iid / GARCH walk): FX -0.149 (-0.182 / -0.139), METAL -0.189 (-0.096 /
 -0.096), INDEX -0.070 (-0.119 / -0.092), ENERGY -0.074 (-0.072 / -0.134), CRYPTO_CFD -0.121 (-0.145 /
