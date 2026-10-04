@@ -1,0 +1,10 @@
+{
+  "selected_on": "12 coins (turn_trade.COINS), real, before 2024-01-01, 1d and 4h pooled, net Sharpe",
+  "k": 1,
+  "entry": 2.0,
+  "exit": 0.5,
+  "hl_max": 10.0,
+  "discovery_sharpe_net": -2.14,
+  "discovery_sharpe_gross": -1.43,
+  "cells_tried": 36
+}
