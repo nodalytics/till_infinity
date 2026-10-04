@@ -1,0 +1,13 @@
+{
+  "frozen": "2026-10-04",
+  "question": "the three aged-zone tests on FX, metals and Deriv synthetics: does a fresh, long-waiting, untested zone deliver (aged_zone_rule.json), does a slow return with the higher timeframe aligned (aged_context_rule.json), and does sizing the stop to volatility at the return change it (aged_volstop_rule.json)",
+  "rules": "each test's zones, fills, exits, walks, attributes and pass conditions unchanged; only the data differs",
+  "data": "the broker's bars (mt5bt), 4h and 1d. Judged: FX_UNSEEN (AUDUSD USDCAD USDCHF NZDUSD EURJPY GBPJPY EURGBP AUDJPY USDCNH), METAL_UNSEEN (XAGUSD XPTUSD XPDUSD XCUUSD), DERIV_DIFFUSIVE (the volatility, step and drift-switch indices). Reported, not judged: FX_SEEN (EURUSD GBPUSD USDJPY) and XAUUSD (in the in-sample MT5 set where the aged pattern was read), DERIV_JUMPY (Boom, Crash, Jump, Range Break: bar fills miss their jumps)",
+  "primaries": {
+    "aged": "ALL origins, wait >= 10 days, E1: R > 0 with 90% interval above 0, both halves, above iid and GARCH walks, above wait < 2 days",
+    "context": "ALL origins, SLOW & ALIGNED, any wait, E1: R > 0 with interval above 0, both halves, above both walks, above the rest",
+    "volstop": "ALL origins, wait >= 10 days, V1, E1: R > 0 with interval above 0, both halves, above both walks, above V1 with wait < 2 days"
+  },
+  "multiplicity": "3 tests x 3 judged sets = 9 verdicts; a single pass is reported as such, not as a finding, unless it also passes in a second set",
+  "expectation_deriv": "Deriv's diffusive synthetics are published iid generators: every number should equal its walk's"
+}
