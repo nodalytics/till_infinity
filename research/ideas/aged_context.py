@@ -112,7 +112,7 @@ def one(key):
 def terciles(d, by):
     """v2 (aged_context2_rule.json): SLOW / MEDIUM / FAST as the thirds of `speed`, the cut-offs from the
     real rows of each group (no outcome is used), applied to that group's walks too."""
-    d = d.copy()
+    d = d.reset_index(drop=True)
     d["manner2"] = "MEDIUM"
     real = d["src"].str.endswith(":real")
     for _, idx in d.groupby(by).groups.items():
