@@ -2,7 +2,21 @@
   "frozen": "2026-10-04",
   "question": "do the 13 Expert Advisors of github.com/geraked/metatrader5 (MIT) carry an edge in their entry signal, beyond walks matched to each series, and is the author's grid-without-stops profit anything more than the grid's shape, which a random walk also shows until it blows up",
   "source": "the repo's Experts/*.mq5, Indicators/*.mq5 and Include/EAUtils.mqh, Cot.mqh, ported to Python in research/ideas/geraked_ind.py (indicators) and geraked_eas.py (signals), geraked_sim.py (trade, grid and account engines); every default input kept",
-  "eas": ["2MAAOS", "2MACDSTO", "2MOMEMA", "3MACD", "3MAF", "AFAOSMD", "BBRSI", "CEZLSMA", "COT1", "DHLAOS", "LRCMACD", "LRCUTB", "NWERSIASF"],
+  "eas": [
+    "2MAAOS",
+    "2MACDSTO",
+    "2MOMEMA",
+    "3MACD",
+    "3MAF",
+    "AFAOSMD",
+    "BBRSI",
+    "CEZLSMA",
+    "COT1",
+    "DHLAOS",
+    "LRCMACD",
+    "LRCUTB",
+    "NWERSIASF"
+  ],
   "timing": "every EA reads the last closed bar on the first tick of a new bar: the signal is computed on bar t's close and fills at bar t+1's open. Inputs that read the forming bar (Ask in 2MAAOS and NWERSIASF, a SL_SWING with start 0, DHLAOS's j = 0 scan, 3MAF's fractal at buffer 2) see only bar t+1's open. 2MAAOS and NWERSIASF poll on a timer within the bar; here they are checked at the open only",
   "path": "inside a bar price runs open -> low -> high -> close on an up bar and open -> high -> low -> close on a down bar; stops, targets, trails and grid levels are checked at those four vertices (exact for that path); a level crossed by a gap fills at the open",
   "mode_S": {
@@ -63,5 +77,6 @@
   "primary": "per EA: Mode S, MT5 non-Deriv pooled, 15m-1d pooled (COT1: its FX pairs on 15m)",
   "passes_if": "mean R > 0 after costs with the day-bootstrap 90% interval above 0; mean R > 0 before and after 2024-01-01; above the iid walk, the GARCH walk and the coin twin on the same cell; and Benjamini-Hochberg at q = 0.10 across the 13 EAs on the one-sided day-bootstrap p",
   "secondary": "every EA x asset class x timeframe cell of Mode S, BH at q = 0.10 across all of them (the count is reported); author cells; Mode G and Mode R are descriptive",
-  "split": "2024-01-01"
+  "split": "2024-01-01",
+  "amended_after_first_run": "2026-10-04, after the first full run and before the results were written up: an order whose stop sits inside the broker's stops level is refused, as the broker refuses it (TRADE_RETCODE_INVALID_STOPS): MT5 symbols use their spec's stops level (at least 10 points), Binance and stocks 1 bp of price. The first run let a stop a point or two from the fill through, and cost / a near-zero risk made a few hundred trades' R explode (to -10^8 on one Deriv cell), contaminating means and the Monte Carlo ruin. Everything was re-run with the refusal in the engine (2.4% of entries); the first run's primary verdicts were the same (no EA passes)"
 }

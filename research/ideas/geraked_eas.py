@@ -103,6 +103,8 @@ class Bars:
     ts: np.ndarray
     point: float
     day_ts: np.ndarray | None = None
+    min_stop: float = 0.0  # the broker's stops level, in price
+    min_frac: float = 0.0  # or a fraction of the price where there is no broker spec
     on: np.ndarray = field(init=False)  # the next bar's open: the price an order at bar t's close gets
 
     def __post_init__(self):
@@ -463,6 +465,8 @@ def orders(sig, b: Bars, meta: Meta, reverse: bool):
         side = -side
     ok = (side != 0) & np.isfinite(entry) & np.isfinite(sl) & (d > 0)
     ok &= np.where(side > 0, sl < entry, sl > entry)
+    # a stop inside the broker's stops level is refused (TRADE_RETCODE_INVALID_STOPS)
+    ok &= np.abs(entry - sl) >= np.maximum(b.min_stop, b.min_frac * np.abs(entry))
     ok &= np.where(np.isfinite(tp), np.where(side > 0, tp > entry, tp < entry), True)
     return dict(side=np.where(ok, side, 0), entry=entry, sl=sl, tp=tp, pd=pd_, r0=np.abs(entry - sl),
                 any_signal=(sig["buy"] | sig["sell"]))
@@ -589,7 +593,7 @@ def load(venue, sym, iv):
         cpx = FEE * df["close"].to_numpy(float)
         point = _tick(df["close"].to_numpy(float))
         spec = S.Spec(point=point, vpu=1.0, vol_min=0.001, vol_step=0.001, vol_max=1e6)
-        return dict(df=df, cost=cpx, point=point, spec=spec, day_ts=None, spread=None)
+        return dict(df=df, cost=cpx, point=point, spec=spec, day_ts=None, spread=None, min_stop=0.0, min_frac=1e-4)
     if venue == "stock":
         f = SEQLAB / f"{sym}.{iv}.npz"
         if not f.exists():
@@ -605,7 +609,7 @@ def load(venue, sym, iv):
         spec = S.Spec(point=point, vpu=cs, vol_min=float(sp.get("volume_min", 1.0)),
                       vol_step=float(sp.get("volume_min", 1.0)), vol_max=1e6)
         return dict(df=df, cost=STOCK_FEE * df["close"].to_numpy(float), point=point, spec=spec, day_ts=None,
-                    spread=None)
+                    spread=None, min_stop=0.0, min_frac=1e-4)
     import run as R
     from mt5bt import load_specs
     R.DB = os.environ.get("MT5BT_DB")
@@ -626,8 +630,9 @@ def load(venue, sym, iv):
     d1 = R.load(sym, "1d")
     spec = S.Spec(point=spec0.point, vpu=spec0.tick_value / spec0.tick_size, vol_min=spec0.volume_min,
                   vol_step=spec0.volume_step, vol_max=spec0.volume_max)
+    stops = max(float(getattr(spec0, "stops_level", 0) or 0), 10.0) * spec0.point
     return dict(df=df, cost=cpx, point=spec0.point, spec=spec, day_ts=None if d1 is None else d1["ts"].to_numpy(),
-                spread=df["spread"].to_numpy(float), floor_pts=floor)
+                spread=df["spread"].to_numpy(float), floor_pts=floor, min_stop=stops, min_frac=0.0)
 
 
 def _tick(x):
@@ -878,7 +883,8 @@ def one(job):
     atr_ = G.atr(h, l, c, 14)
     atr_ = np.where(np.isfinite(atr_), atr_, np.nanmedian(atr_))
     cost = cost_atr * atr_ if source != "real" else d["cost"]
-    b = Bars(o, h, l, c, df["ts"].to_numpy(np.int64), d["point"], d["day_ts"])
+    b = Bars(o, h, l, c, df["ts"].to_numpy(np.int64), d["point"], d["day_ts"], d.get("min_stop", 0.0),
+             d.get("min_frac", 0.0))
     V = S.path(o, h, l, c)
     spec = d["spec"]
     spread = d["spread"]
@@ -1052,7 +1058,7 @@ def run_cot(source):
         a = np.where(np.isfinite(a), a, np.nanmedian(a))
         b = Bars(o, h, l, c, df["ts"].to_numpy(np.int64), d["point"], d["day_ts"])
         ser[sym] = dict(b=b, V=S.path(o, h, l, c), atr=a, cost=ca * a if source != "real" else d["cost"],
-                        spec=d["spec"], pos={int(x): i for i, x in enumerate(b.ts)},
+                        spec=d["spec"], pos={int(x): i for i, x in enumerate(b.ts)}, min_stop=d.get("min_stop", 0.0),
                         day_ts=d["day_ts"] if d["day_ts"] is not None else (b.ts // 86400) * 86400)
     times = np.unique(np.concatenate([s["b"].ts for s in ser.values()]))
     wd = pd.to_datetime(times, unit="s").weekday
@@ -1090,7 +1096,7 @@ def run_cot(source):
                 if rev:
                     side, sl, tp = -side, tp, sl
                 r0 = abs(pin - sl)
-                if not r0 > 0:
+                if not r0 >= max(s_["min_stop"], 1e-12):
                     continue
                 if kind == "G":
                     m = META["COT1"]
