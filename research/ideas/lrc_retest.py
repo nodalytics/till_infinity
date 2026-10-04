@@ -842,12 +842,13 @@ def terciles(t, h):
     return cuts
 
 
-def cell(x, col, rng, mfe="mfe", draws=1000):
+def cell(x, col, rng, mfe="mfe", draws=1000, do_boot=True):
     x = x[x[col].notna()]
     R = x[col].to_numpy(float)
     if len(R) == 0:
         return dict(n=0)
-    lo, hi, p = boot(x["ts"].to_numpy(np.int64), R, rng, draws) if len(R) > 30 else (np.nan, np.nan, np.nan)
+    ok = do_boot and len(R) > 30
+    lo, hi, p = boot(x["ts"].to_numpy(np.int64), R, rng, draws) if ok else (np.nan, np.nan, np.nan)
     out = dict(n=len(R), R=R.mean(), lo=lo, hi=hi, p=p, win=(R > 0).mean())
     if mfe in x:
         m = x[mfe].to_numpy(float)
@@ -905,9 +906,9 @@ def agg():
                                 if name == "R3":
                                     continue
                                 x4 = x3[x3["src"] == "real"]
-                                c = cell(x4, f"tw_{ex}", rng, "tw_mfe")
+                                c = cell(x4, f"tw_{ex}", rng, "tw_mfe", do_boot=False)
                             else:
-                                c = cell(x3[x3["src"] == src], ex, rng)
+                                c = cell(x3[x3["src"] == src], ex, rng, do_boot=src == "real")
                             if c["n"]:
                                 rows.append(dict(rule=name, cls=cls, iv=iv, half=half, exit=ex, src=src, **c))
     tab = pd.DataFrame(rows)
@@ -923,7 +924,7 @@ def agg():
                     for src in ("real", "walk", "garch"):
                         x3 = x2[(x2["half"] == half) & (x2["src"] == src)]
                         for ter in ("WEAK", "MID", "STRONG"):
-                            c = cell(x3[x3["tercile"] == ter], "X2", rng)
+                            c = cell(x3[x3["tercile"] == ter], "X2", rng, do_boot=src == "real")
                             if c["n"]:
                                 srows.append(dict(rule=name, cls=cls, iv=iv, half=half, src=src, tercile=ter, **c))
     stab = pd.DataFrame(srows)
@@ -961,6 +962,9 @@ def verdicts(tab, stab, htab, cuts):
     p, d = g("R1", "NONDERIV", "ALL", "conf", "X2", "real"), g("R1", "NONDERIV", "ALL", "disc", "X2", "real")
     w, gw, tw = (g("R1", "NONDERIV", "ALL", "conf", "X2", s) for s in ("walk", "garch", "twin"))
     fr = g("R1", "FRESH", "ALL", "conf", "X2", "real")
+    if any(x is None for x in (p, d, w, gw, tw)):
+        print("P1: a cell is missing")
+        return
     ok = (p is not None and d is not None and p["R"] > 0 and p["lo"] > 0 and d["R"] > 0
           and p["R"] > w["R"] and p["R"] > gw["R"] and p["R"] > tw["R"])
     lines.append(f"P1 R1 X2 non-Deriv 15m-1d, confirmation: R {p['R']:+.4f} [{p['lo']:+.4f}, {p['hi']:+.4f}] n={int(p['n'])}; "
@@ -973,7 +977,7 @@ def verdicts(tab, stab, htab, cuts):
         return r.iloc[0] if len(r) else None
     sp, sd = s("R1", "NONDERIV", "ALL", "conf", "real", "STRONG"), s("R1", "NONDERIV", "ALL", "disc", "real", "STRONG")
     wk = s("R1", "NONDERIV", "ALL", "conf", "real", "WEAK")
-    if sp is not None and wk is not None:
+    if sp is not None and wk is not None and sd is not None:
         sw = {src: (s("R1", "NONDERIV", "ALL", "conf", src, "STRONG"), s("R1", "NONDERIV", "ALL", "conf", src, "WEAK"))
               for src in ("walk", "garch")}
         gap = sp["R"] - wk["R"]

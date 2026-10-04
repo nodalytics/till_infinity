@@ -25,7 +25,11 @@
       "BOS": "a close above the most recent confirmed swing high (the up-side break)",
       "entry": "a buy limit at the broken level, live from the bar after the break for N = 20 bars; fills on the first bar whose low reaches it, at min(open, level); a newer break of the same side cancels a pending order",
       "stop": "below the pullback's low: min(level, the lowest low from the break bar through the bar before the fill) - 0.1 ATR; skipped if entry - stop < 0.25 ATR; a stop touched on the fill bar is a loss",
-      "exits": {"X2 (primary)": "fixed target at entry + 2R; on the fill bar only if it closes there", "TR": "a 2-ATR trail behind the best high of completed bars after the fill bar", "BAND": "a sell limit at the upper band of the previous bar's LRC(100), from the bar after the fill"},
+      "exits": {
+        "X2 (primary)": "fixed target at entry + 2R; on the fill bar only if it closes there",
+        "TR": "a 2-ATR trail behind the best high of completed bars after the fill bar",
+        "BAND": "a sell limit at the upper band of the previous bar's LRC(100), from the bar after the fill"
+      },
       "cap": "100 bars in the trade, out at that bar's close",
       "variants (secondary)": "trend from LRC(50) and LRC(200)"
     },
@@ -73,5 +77,20 @@
   },
   "multiplicity": "every secondary cell (rule x exit x class x timeframe on confirmation) gets a one-sided day-bootstrap p for R > 0; Benjamini-Hochberg at q = 0.10 over all of them, the count stated; a BH survivor that does not also beat both walks is not a finding",
   "expectation_deriv": "Deriv's volatility indices are iid Brownian at their stated volatility (generators.md, deriving.md): every rule there should match its walks, before costs at zero. If R1 beats the walks on Deriv, suspect a bug or look-ahead first",
-  "amended_before_run": "2026-10-04, before any real-data run: the strength terciles (co-primary P2) and R5 with the hold-rate study were added at the desk's request; nothing had been run on real data"
+  "amended_before_run": "2026-10-04, before any real-data run: the strength terciles (co-primary P2) and R5 with the hold-rate study were added at the desk's request; nothing had been run on real data",
+  "addendum_R4b (frozen 2026-10-04 after R1-R5 had run, before R4b's own real-data run)": {
+    "what": "production's own fade-to-value: till_infinity/trading/strategies/swing.py FadeToValue, imported read-only and called through observe() / consider(); settings at production defaults (fade_min_touches 4, fade_max_distance_vol 8, fade_min_distance_vol 1.5, fade_buffer_vol 0.25)",
+    "levels": "production's structures Engine (till_infinity/structures/engine.py) replayed per series over 15m bars with 30m, 1h, 2h and 4h resampled from them, each bar delivered when it closes (the slower timeframe first at one instant); every actionable call (call.inference.actionable, as structures/service.py publishes) becomes Call.to_signal(...).to_dict(), the payload trading reads; every payload is observed, payloads on 15m and 30m are considered with a tick at the bar's close +/- half the spread",
+    "variants": {
+      "GATED": "production's consider() as is, quality() gates included",
+      "CORE": "the same with quality() returning None: value, distance, side, stop, target, hold only"
+    },
+    "not replayed": "service-level steps: confluence-zone grouping (one signal per zone) and the context-anchoring requirement, the 4h rejection candle, the break model's break_probability, origin / level-range / race extras, macro and release features; momentum is absent so its gate is skipped by design; break-even and trailing protection; account sizing limits. The book's 6-hour forgetting runs on a simulated clock",
+    "trade": "the Intent's side, stop and target; entered at the open of the first 15m bar after the call's bar closes, at the mid, the spread charged as cost; out at the stop (0.05 ATR(15m) slippage), the target, or the close when the Intent's hold (4h) runs out; a bar touching both counts as the stop; one open trade per series per variant",
+    "R": "against |entry - stop| from the Intent, net of the spread (MT5 floor, Deriv 1s tick spread, Binance 0.07%)",
+    "data": "15m bars of every class (FX, METAL, INDEX, ENERGY, CRYPTO_CFD majors, BINANCE 12, DERIV_1S, DERIV_DIFFUSIVE, DERIV_JUMPY, RANGE_BREAK), all available history; the alt-coin CFDs are not run (their 15m feed is the known-bad one)",
+    "nulls": "the same replay on an iid and a GARCH walk in log price matched to each series (64 sub-steps a bar, the real timestamps, the real cost in ATR units), and the coin twin (random side, same entry and distances)",
+    "report": "mean R after costs with day-bootstrap 90% intervals, P(+N R before -1R) for N in 0.5, 1, 2, 4, 10 against 1/(N+1), real vs walks vs twin, by class and entry timeframe; the reversed trade (opposite side, same distances) reported as a hypothesis for a later frozen test only",
+    "verdict": "does it lose on replayed trades as it lost live (-0.573R [-0.938, -0.207] over 30 closes, auditing.md), and does it lose more than the walks (an anti-edge)?"
+  }
 }
