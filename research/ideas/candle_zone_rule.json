@@ -1,0 +1,22 @@
+{
+  "frozen": "2026-10-04",
+  "idea": "the desk's zone: a red candle in the midst of rising greens (a green in the midst of falling reds) - the one bar where the run paused; when price comes back to it, it holds and the run resumes",
+  "origin": "bar r is red (close < open); the K bars before it and the K bars after it are all green (close > open); known at r + K. Shorts: the same on the flipped chart (a green among reds)",
+  "zone": "[low(r), open(r)] - the red candle's body and lower wick; stop low(r) - 0.1 ATR(r); any stop fill takes 0.05 ATR of slippage",
+  "families": {
+    "K3 (primary)": "K = 3",
+    "K2": "K = 2",
+    "K2_BIG": "K = 2 and the red body is at least 0.5 ATR(r) (a real pullback bar, not a doji)",
+    "ANY (baseline)": "any red candle, no run around it"
+  },
+  "activation": "after r + K, price must trade 1 ATR(r) above the zone top before trading below the zone's bottom, within 60 bars of r; the zone is live from the next bar",
+  "entry": "a limit buy at the zone top on the first bar, within 20 days of going live, that reaches it (at the open if it opens below); one trade per zone",
+  "exits": {"E1 (primary)": "a 2-ATR(r) trail behind completed bars' best high after the fill bar", "X2": "a fixed 2R target (on the fill bar only if it closes there)"},
+  "cap": "10 days in the trade",
+  "R": "against the nominal risk zone top - stop, net of costs (Binance 0.07% of price; MT5 and Deriv the broker's spread floor; walks the real series' cost in ATR units); the zone's risk in ATR is recorded",
+  "nulls": ["iid walk matched to each series", "GARCH(1,1) walk with the series' sigma", "both 256 sub-steps a bar, real timestamps"],
+  "data": "Binance perpetuals (12), MT5 (10 markets), Deriv synthetics (15; reported apart, never pooled), 1h, 4h, 1d",
+  "primary": "K3, E1, Binance, 1h/4h/1d pooled",
+  "passes_if": "R > 0 with day-bootstrap 90% interval above 0, positive before and after 2024-01-01, above ANY on the same data, and above K3 on both walks",
+  "also": "P(N R) for N in 0.5, 1, 2, 4, 10 against 1/(N+1); the same on MT5 and Deriv"
+}

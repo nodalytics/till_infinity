@@ -1,0 +1,14 @@
+{
+  "frozen": "2026-10-04",
+  "after": "turn_rule2.json failed (T_any, trail, Binance -0.045R against walk -0.046R). One cell of about 40, picked after looking, was positive: T1 (DISPLACE_C alone) on Binance 4h, +0.028R trail and +0.041R with the structure exit E2, against about -0.018R / -0.003R on the pooled walk. This tests that cell on data it has not seen",
+  "signal": "a 12-bar low knowable at bar t (lowest low of t-2..t at or below the lowest of t-11..t-3) and bar t completes DISPLACE_C up (MCFL v1, known_at = t); shorts on the flipped chart",
+  "entry_stop": "bar t+1's open; stop 0.1 ATR beyond the 3-bar low; every stop fill takes 0.05 ATR of slippage",
+  "exit": "E2: out at the next open after a DELIVERY_SHIFT against the trade (known_at), or at the stop; 10 days at most",
+  "costs": "0.07% of price a round trip; walks the real series' cost in ATR units at the same bar",
+  "data_primary": "Binance USDT perpetuals that none of the turn studies used: the Binance replication's sets (binance.py SET_A and SET_B) minus the 12 coins of turn_trade.py, 4h and 1d, full history from data.binance.vision",
+  "nulls": ["iid walk matched to each series", "GARCH(1,1) walk with the series' sigma (volatility clusters, direction does not)", "both 256 sub-steps a bar, real timestamps"],
+  "baseline": "every 12-bar low with the same entry, stop and exit, on the same data",
+  "primary": "fresh coins, 4h and 1d pooled",
+  "passes_if": "R > 0 with day-bootstrap 90% interval above 0, positive before and after 2024-01-01, above the baseline, and above the same cell on both walks",
+  "reported_not_judged": ["4h and 1d separately", "MT5 1d (10 markets, an unseen timeframe)", "the original 12 coins on 1d (an unseen timeframe)", "the trailing exit E1", "P(N R) for N in 0.5, 1, 2, 4, 10 against 1/(N+1)"]
+}

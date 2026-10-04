@@ -1,0 +1,25 @@
+{
+  "frozen": "2026-10-04",
+  "idea": "the desk: how price comes back to the zone, and the higher timeframe it sits in, decide whether it delivers. The losers in turn_zones' gallery mostly came back with one large bar straight through the zone",
+  "trades": "the aged-zone trades of aged_zone_rule.json, unchanged (same zones, fills, exits, walks and seeds)",
+  "return_manner": {
+    "known_at": "the bars before the fill bar only - never the fill bar's own range or close (the look-ahead lesson of origin-zones.md)",
+    "app5": "how far price fell into the zone over the 5 bars before the fill: (highest high of bars f-5..f-1, not before the zone went live) - zone top, in ATR(t)",
+    "big5": "bars among f-5..f-1 moving toward the zone with a body of at least 0.7 ATR of that bar",
+    "push": "DISPLACE_C or DELIVERY_SHIFT toward the zone completed in f-5..f-1 (MCFL v1)",
+    "FAST": "app5 >= 3, or big5 >= 2, or push",
+    "SLOW": "app5 < 1.5 and big5 == 0 and no push",
+    "MEDIUM": "the rest"
+  },
+  "htf": {
+    "pairs": "4h zones read the daily chart, 1d zones the weekly (UTC days; weeks from Monday), both resampled from the zone's own bars",
+    "known_at": "only higher-timeframe bars that closed at or before the fill bar's open",
+    "ALIGNED": "the last closed HTF close above its 20-bar SMA and that SMA higher than 5 HTF bars earlier (for shorts, the mirror: the zone's own flipped chart)",
+    "COUNTER": "below a falling SMA",
+    "NEUTRAL": "the rest",
+    "discount": "reported: the zone top in the lower half of the last 20 closed HTF bars' range"
+  },
+  "primary": "every origin (ALL), SLOW and ALIGNED, any wait, E1, fresh coins, 4h and 1d pooled",
+  "passes_if": "R > 0 with day-bootstrap 90% interval above 0, positive before and after 2024-01-01, above the same cell on iid and GARCH walks, and above the zones that are not SLOW and ALIGNED",
+  "also": "manner x HTF table, crossed with wait >= 10 days; the violent origins (SIG); P(N R) for N in 0.5, 1, 2, 4, 10 against 1/(N+1); Binance 12 and MT5 as in-sample"
+}

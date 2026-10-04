@@ -1,0 +1,8 @@
+{
+  "frozen": "2026-10-04",
+  "after": "turn_confirm_rule.json passed on 58 fresh coins: DISPLACE_C at a 12-bar low, structure exit E2, 4h and 1d pooled, +0.049R [+0.003, +0.100] against walks -0.019 / GARCH -0.005 and every low -0.115. The interval cleared zero by 0.003R, so it is replicated once more before anything else",
+  "signal_entry_stop_exit_costs_nulls": "unchanged from turn_confirm_rule.json",
+  "data": "SET_C: every USDT perpetual in data.binance.vision's archive with a 4h file for 2022-12 and for 2026-08 (listed before 2023, still trading), excluding the 70 coins any earlier study used and stablecoin or index contracts - 73 coins, 4h and 1d, full history",
+  "primary": "SET_C, 4h and 1d pooled, E2",
+  "passes_if": "R > 0 with day-bootstrap 90% interval above 0, positive before and after 2024-01-01, above every 12-bar low with E2, and above the same cell on iid and GARCH walks"
+}
