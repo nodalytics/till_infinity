@@ -24,7 +24,7 @@ def _mirror_attrs(attrs):
 def mirror(ch: Chart) -> Chart:
     ents = tuple(Entity(_sid(e.id), e.type, e.dir.flip(), e.at, e.known_at,
                         _mirror_attrs(e.attrs), e.force,
-                        tuple(_sid(p) for p in e.parts)) for e in ch.entities)
+                        tuple(_sid(p) for p in e.parts), e.time) for e in ch.entities)  # time: unchanged
     return Chart(ch.n, ents,
                  tuple(Relation(r.kind, _sid(r.src), _sid(r.dst), r.known_at) for r in ch.relations),
                  tuple(Failure(_sid(f.candidate), f.rule.replace("_UP", "_X").replace("_DOWN", "_UP").replace("_X", "_DOWN"),
@@ -37,7 +37,7 @@ def _fix_rule(e: Entity) -> Entity:
     if e.type != "ZONE":
         return e
     return Entity(e.id, e.type, e.dir, e.at, e.known_at,
-                  tuple((k, f"ZONE_{e.dir.value}" if k == "rule" else v) for k, v in e.attrs), e.force, e.parts)
+                  tuple((k, f"ZONE_{e.dir.value}" if k == "rule" else v) for k, v in e.attrs), e.force, e.parts, e.time)
 
 
 @pytest.mark.parametrize("seed", [1, 4])

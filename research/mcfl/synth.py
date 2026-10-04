@@ -106,3 +106,77 @@ def gapped(n: int, sigma: float = 1.0, gap: float = 0.5, seed: int = 0, steps: i
         o[i], h[i], l[i], c[i] = path[0], path.max(), path.min(), path[-1]
         prev = c[i]
     return pd.DataFrame({"open": o, "high": h, "low": l, "close": c, "volume": np.full(n, float(steps))})
+
+
+# ---------------------------------------------------------------- the time core: walks on a market's calendar
+
+def gaps(ts: np.ndarray) -> np.ndarray:
+    """Per bar, whether it opens after a hole in the clock (a gap longer than the bar's spacing)."""
+    d = np.diff(np.asarray(ts, np.int64))
+    if not len(d):
+        return np.zeros(len(ts), bool)
+    step = d[d > 0].min() if (d > 0).any() else 1
+    return np.r_[False, d > step]
+
+
+def hour_sigma(df: pd.DataFrame) -> tuple[np.ndarray, float]:
+    """A market's intraday volatility profile: the sd of close-to-close changes of the bars that open
+    in each UTC hour (bars after a hole in the clock left out), and the sd of the jump from the last
+    close to the open across those holes. An hour with fewer than 20 bars takes the median sd."""
+    ts = df["ts"].to_numpy(np.int64)
+    c, o = df["close"].to_numpy(float), df["open"].to_numpy(float)
+    g = gaps(ts)
+    dc = np.r_[np.nan, np.diff(c)]
+    hr = (ts // 3600) % 24
+    sig = np.full(24, np.nan)
+    for h in range(24):
+        x = dc[(hr == h) & ~g]
+        x = x[np.isfinite(x)]
+        if len(x) >= 20:
+            sig[h] = float(np.std(x))
+    sig[~np.isfinite(sig)] = np.nanmedian(sig) if np.isfinite(sig).any() else float(np.nanstd(dc))
+    jump = o[1:][g[1:]] - c[:-1][g[1:]]
+    return sig, float(np.std(jump)) if len(jump) >= 5 else 0.0
+
+
+def profiled(ts: np.ndarray, sigma_hour: np.ndarray, gap_sigma: float = 0.0, seed: int = 0,
+             steps: int = STEPS, garch: tuple[float, float] | None = None, start: float = START) -> pd.DataFrame:
+    """An iid walk on the given timestamps whose volatility follows an hour-of-day profile: each bar's
+    sub-steps carry sigma_hour[its UTC hour], and a bar opening after a hole in the clock opens away
+    from the last close by an untraded N(0, gap_sigma^2) jump (as `gapped`). The null for a time
+    effect: the same calendar and the same intraday volatility, and nothing else - no clustering, no
+    direction, no memory. `garch=(alpha, beta)` multiplies the profile by a GARCH(1,1) variance of
+    mean 1, so volatility also clusters (a stricter null: real markets cluster)."""
+    ts = np.asarray(ts, np.int64)
+    n = len(ts)
+    rng = np.random.default_rng(seed)
+    sig = np.asarray(sigma_hour, float)[(ts // 3600) % 24]
+    if garch is not None:
+        a, b = garch
+        z = rng.normal(0.0, 1.0, n)
+        var = np.empty(n)
+        v = 1.0
+        for i in range(n):
+            var[i] = v
+            v = (1 - a - b) + a * v * z[i] ** 2 + b * v
+        sig = sig * np.sqrt(var / var.mean())
+    inc = rng.normal(0.0, 1.0, (n, steps)) * (sig / np.sqrt(steps))[:, None]
+    jump = np.where(gaps(ts), rng.normal(0.0, gap_sigma, n) if gap_sigma > 0 else 0.0, 0.0)
+    start = start + np.r_[0.0, np.cumsum(inc.sum(1) + jump)[:-1]] + jump
+    path = start[:, None] + np.c_[np.zeros(n), np.cumsum(inc, 1)]
+    return pd.DataFrame({"open": path[:, 0], "high": path.max(1), "low": path.min(1), "close": path[:, -1],
+                         "volume": np.full(n, float(steps)), "ts": ts})
+
+
+def matched_profiled(df: pd.DataFrame, seed: int, steps: int = STEPS, garch: tuple[float, float] | None = None
+                     ) -> pd.DataFrame:
+    """The time-core null for `df`: a `profiled` walk on df's own timestamps with df's own hour-of-day
+    volatility and overnight jumps, from df's first open."""
+    sig, jump = hour_sigma(df)
+    return profiled(df["ts"].to_numpy(np.int64), sig, jump, seed, steps, garch, float(df["open"].iloc[0]))
+
+
+def matched_on_calendar(df: pd.DataFrame, seed: int, steps: int = STEPS) -> pd.DataFrame:
+    """The plain null on df's own timestamps: `matched_walk`, one volatility for every hour. Against it
+    any intraday volatility pattern reads as a time effect."""
+    return matched_walk(df, seed, steps).assign(ts=df["ts"].to_numpy(np.int64))

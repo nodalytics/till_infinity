@@ -1,7 +1,16 @@
-# MCFL v2: a formal language for what a chart shows, and what a walk shows too
+# MCFL v2 and the time core: a formal language for what a chart shows, and what a walk shows too
 
 Code: [`research/mcfl/`](../mcfl/README.md). Specification written 2026-10-03 with v0 of the parser
-and extended the same day to v1 and v2. Run on generated bars only; no market data was used.
+and extended the same day to v1 and v2; the time core added 2026-10-04. v0-v2 were run on generated
+bars only; the time core's study is the first run on market data (twelve MT5 markets, below).
+
+**What the time core adds** ([Time core](#time-core)): every entity is an interval in bars and in UTC
+with its `known_at_ts` and its trading against calendar time; EPISODE; Allen's interval relations as
+clause operators; calendar tokens and a configurable holiday calendar; WINDOW anchors (sessions, ICT
+killzones and macros), day, week and month opens and HTF_CLOSE - now the clock every multi-timeframe
+relation reads by; remaining time and HTF progress; TIMEOUT, STALL, SESSION_FIRST_MOVE, LATE / EARLY;
+the bar, wall-clock, trading, volume and event clocks with volume and tick bars; and seasonality: a
+time-of-day volatility class, TEMPO_STATE and an hour rate on every event.
 
 **What v2 adds** (the thirteen items of [`mcfl-roadmap.md`](mcfl-roadmap.md), section v2; their
 definitions are in [v2](#v2-structure-lifecycles-time-timeframes-and-the-candlestick-vocabulary)
@@ -561,7 +570,7 @@ depth = (P - x) / (P - L)       SHALLOW < 0.382 <= HALF < 0.618 <= DEEP <= 1 < B
 | event | where | P, x | `known_at` | parts |
 |---|---|---|---|---|
 | **RETRACE** | every REVISIT of a zone, at the revisit bar t | P = the highest high from the origin to t - 1, x = low[t]; L = the zone's far edge | t | the REVISIT |
-| **PULLBACK** `phase=INSIDE` | per BREAK: the last swing low strictly between its origin p and the break bar b, above the origin's low (the DAX course's "structural liquidity") | P = the highest high of p..b (the leg to the break), x = the swing's price | max(the break's, the swing's) | the BREAK and the EXTREME |
+| **PULLBACK** `phase=INSIDE` | per BREAK: the last swing low strictly between its origin p and the break bar b, above the origin's low and confirmed by the break's known_at (the DAX course's "structural liquidity"; the confirmation clause was added with the time core, which found the leak - see its decisions) | P = the highest high of p..b (the leg to the break), x = the swing's price | the break's | the BREAK and the EXTREME |
 | **PULLBACK** `phase=AFTER` | per BREAK: the first swing low after b | P = the highest high of p..that swing | max(the break's, the swing's) | the BREAK and the EXTREME |
 
 Attributes `depth` (a number) and `depth_bin`, `peak`, `level` (x), and `revisit`, `count` or `break`,
@@ -940,6 +949,135 @@ IDENTICAL_THREE_CROWS, whose canon needs each open at the last close, is merely 
 `synth.gapped` adds an untraded overnight jump to each open; the study measures the vocabulary on it
 too.
 
+## Time core
+
+The roadmap's time core (between v2 and v3): time as a dimension of the language, not a tag on bars.
+Built on merged v2 with its rules - `known_at` on everything (now also `known_at_ts`), every new
+entity under the truncation tests, flip symmetry (time is unchanged by the flip), productions in the
+rule table, and every new alphabet judged against walks given the same calendar
+([below](#time-core-real-markets-against-walks-on-the-same-calendar)). `parse(df)` includes it;
+`parse(df, time=False)` is the v2 chart, entity for entity. The calendar parts need a `ts` column
+(bar open, UTC seconds); without one an entity still gets its interval in bars, and EPISODE, TIMEOUT
+and STALL (one baseline for all bars) still exist.
+
+### 1. Time in the core
+
+`clocks.py`. **The clock.** Each bar has a length L known at it: `close_ts - ts` when the bars carry
+their closes (volume and tick bars do), else the `sec` given, else the running minimum of the gaps
+between opens. Bar 0 has no gap yet and takes the coarsest standard bar its open is aligned to (1m
+... 1d; an hour if none), too long rather than too short, so nothing is stamped as known before it
+could be. Whether a period has ended is the opposite question, and there bar 0's unobserved length
+counts as 0 (`Clock.seen`): a guess must not close a session early.
+
+**Every entity is an interval** (`core.Span`, the new `Entity.time`):
+
+| field | meaning |
+|---|---|
+| `start`, `end` | bars, inclusive. An event's (L2) interval is the tokens it consumed and its own bar (a BREAK its leg, a PATTERN its bars, a STALL the confined bars; an event that consumed no token - a POOL_TAKEN, a SWING, a TIMEOUT - its own bar). A structure's (L3) is its derivation (ZONE origin to break, POOL first member to newest, RANGE its window). Exceptions: an EXTREME is its own bar (its window's right side is confirmation), a LEG runs from its origin to its end, a WINDOW has no last bar until it closes (`end` None) |
+| `start_ts`, `end_ts` | the open of `start`, the close of `end` (a WINDOW: its scheduled start and end) |
+| `known_at_ts` | the close of the `known_at` bar |
+| `trade_sec`; `bars`, `seconds`, `gap_sec` | trading time (the bars' lengths summed) against calendar time; their difference is the clock's gaps - weekends, closures |
+| `hour_rate` | item 8 |
+
+Clauses read them by name (`known_at_ts`, `dur_bars`, `dur_sec`, `gap_sec`, `interval`,
+`interval_ts`, `hour_rate`). **EPISODE** (L3) makes the lifecycles intervals: a ZONE to its ACCEPT,
+FAIL or EXPIRE, a VOID to its VOID_INVERTED, a RANGE to its ESCAPE, known when that event is;
+`of`, `outcome`, `events`, parts the structure and the ending event. JSON round-trips the spans.
+
+### 2. Interval relations (Allen's algebra)
+
+`intervals.py`. On half-open intervals - bars [start, end + 1), time [start_ts, end_ts) - exactly
+one of BEFORE, MEETS, OVERLAPS, STARTS, DURING, FINISHES, EQUALS and the inverses AFTER, MET_BY,
+OVERLAPPED_BY, STARTED_BY, CONTAINS, FINISHED_BY holds; WITHIN (STARTS, DURING, FINISHES or EQUALS)
+is what a trader means by "during", HOLDS its inverse. Allen's CONTAINS is not v0's materialised
+CONTAIN (parthood). `relate(x, y, "bar" | "time")` on demand; on the wall clock a weekend is time
+(the Friday and Sunday bars are BEFORE, on the bar clock they MEET); an open WINDOW relates to
+nothing on the bar clock. Every relation is a clause operator, so productions use them:
+
+```
+IN_WINDOW_UP := REVISIT_UP WINDOW[kind=SESSION]   where WINDOW.interval_ts HOLDS REVISIT.interval_ts
+```
+
+`REVISIT DURING SESSION[LONDON]` is `IN_WINDOW[name=LONDON]` of that row. Rows: REVISIT in a
+session, SESSION_EXTREME_TAKEN in a killzone (ICT's raid), POOL_TAKEN in a macro window; attributes
+`of`, `of_type`, `window`, `kind`, `name`, `rel` (the exact Allen relation). Decided at the event's
+known_at, from windows open by then.
+
+### 3. Calendar tokens
+
+`calendars.py`, CANDLE qualifiers from the bar's open in UTC: `minute`, `hour`, `wom` (week of month,
+days 1-7 are 1), `month` (JAN..DEC), `quarter` (QTR1..QTR4 - not Q1..Q4, the close quartiles the
+flip swaps), `month_end` / `quarter_end` / `year_end` (the date is the period's last business day),
+and `holiday` / `half_day` by the calendar's own local date. A `Calendar` is configuration: time zone,
+holidays and half-days, closed weekends or not. NYSE (the default) lists 2024-2026 as published
+(Good Friday 2024 makes Thursday 28 March the month's end); CRYPTO has none. `CANDLE[hour=8]`,
+`CANDLE[month=DEC]`, `CANDLE[month_end]`, `CANDLE[not holiday]`.
+
+### 4. Time anchors as events
+
+`anchors.py`.
+
+| entity | definition | `known_at` |
+|---|---|---|
+| **WINDOW** (L3, NONE) | a calendar window's instance at its first bar (a bar is in it when its open is): SESSION (v2's UTC hours), KILLZONE (ICT, New York time with daylight saving: ASIA_KZ 20-24, LONDON_KZ 02-05, NY_AM_KZ 07-10, LONDON_CLOSE_KZ 10-12, NY_PM_KZ 13:30-16), MACRO (02:33-03:00, 04:03-04:30, 08:50-09:10, 09:50-10:10, 10:50-11:10, 11:50-12:10, 13:10-13:40, 15:15-15:45 New York). `kind`, `name`, `sched_start`, `sched_end`, `open` | its first bar: the calendar has announced its end |
+| **WINDOW_CLOSE** (NONE) | the instance's last bar; a session's close is WINDOW_CLOSE[kind=SESSION]. `window`, `close`, `high`, `low`, `complete` | that bar when its close reaches the scheduled end, else the next bar (bars missing at the end) |
+| **DAY_OPEN** (NONE) | the first bar of a day, `clock` UTC or NY (midnight New York) | its bar |
+| **WEEK_OPEN** (NONE) | the first bar of the trading week, which starts Sunday 17:00 New York | its bar |
+| **MONTH_OPEN** (NONE) | the first bar of a UTC month | its bar |
+| **HTF_CLOSE** (NONE) | every higher-timeframe bar's close: period `ts // tf` (default 1h, 4h, 1d, each longer than the bar), with the HTF bar's `open`, `high`, `low`, `close`, `bars`, `period_ts` | its last bar when that bar's close reaches the period's end, else the next bar |
+
+An open event is at the bar whose period differs from the previous bar's (bar 0 only when it opens at
+the period's start). **HTF_CLOSE is the shared clock of every multi-timeframe relation.** `mtf.py`
+now takes `MTF.known` from the LTF chart's HTF_CLOSE events and reads an HTF entity only through
+`MTF.visible(h, t)`; counted periods (no timestamps) get their own HTF_CLOSE events.
+`tests/test_time_mtf.py` checks every MTF output against the LTF chart's HTF_CLOSE events alone,
+independently of `MTF.known`, and shows that an MTF whose closes are moved an hour early fails it.
+
+### 5. Elapsed and remaining time
+
+`clocks.age(chart, e, t)`: bars, seconds, trading seconds and session WINDOWs since e became known.
+In productions an age is a clause on the stamped fields (`C("known_at_ts", "<=", ("+",
+"zone.known_at_ts", 3600))`). CANDLE qualifiers, in seconds from the bar's close: `left_session`,
+`left_day` (to UTC midnight), `left_<tf>` and `prog_<tf>` (the share of the HTF bar elapsed:
+`CANDLE[prog.4h≥0.75]`), and `killzone`, `macro` (the window's name or NONE).
+
+### 6. Time-based events
+
+`timed.py`.
+
+| event | definition | at / `known_at` |
+|---|---|---|
+| **TIMEOUT** | rows of the rule table, each a structure and absent slots, decided TIMEOUT_BARS (**48**) bars after the structure is known: a ZONE with no REVISIT, a VOID with no VOID_PARTIAL, a RANGE with no excursion (FAILED_ESCAPE or ESCAPE: its edges are tested within a few bars almost always) - `kind`, `of`, `bars`; the RANGE row has no direction. Two grammar options make it a row: `timed` (the event is the decide bar, only once the series reaches it) and `sym` | the decide bar, both |
+| **STALL** (NONE) | the bar's confinement c - bars back, itself included, inside STALL_ATR (**1**) ATR at the bar, at most 192 - first exceeds the STALL_Q (**90th**) percentile of the c of the last 120 bars that opened in the same UTC hour (at least 30). `bars`, `usual`, `hour` | its bar |
+| **SESSION_FIRST_MOVE** ↑/↓ | in each SESSION and KILLZONE instance, the first EXTREME whose bar is inside it (a swing high: the first move was up). `kind`, `name`, `window`, `extreme`, `price`, `open`, `move_atr`, `bars`. Whether it was a Judas swing is an outcome, measured by the study, not part of the definition | the extreme's |
+| **LATE** / **EARLY** | an event of BREAK, DISPLACE, ZONE, CHARACTER_SHIFT, SESSION_EXTREME_TAKEN, POOL_TAKEN or SESSION_FIRST_MOVE whose `hour_rate` is under **0.5**: LATE when its hour is after the type's usual hour (the circular mean of its recent hours), EARLY before. `of`, `of_type`, `hour`, `hour_rate`, `usual_hour` | the event's |
+
+### 7. Several clocks
+
+Bar time (`bar`), wall-clock time (`time`, the bar's close), trading time (`trade`), volume time
+(`volume`, cumulative) and event time (`event`, one step per event known): `clocks.reading(chart,
+clock)` is the same event sentence with each token at its known_at on that clock. `volume_bars(df,
+size)` builds bars of equal volume (a source bar is not split; each is known at the source bar that
+completes it) and `tick_bars(ticks, n)` bars of n ticks; both carry `close_ts`, so the parse runs on
+them unchanged - the same grammar, on another clock (and TIMEOUT's 48 bars are then 48 volume bars).
+`in_source` maps an entity back to the source bar it was known at; the tests check the volume-bar
+parse is causal in source time.
+
+### 8. Seasonality and tempo states
+
+`seasonal.py`; every baseline is causal, per UTC hour of the day, over a fixed number of values known
+strictly before.
+
+| | definition |
+|---|---|
+| **tod_vol**, **tod_ratio** (CANDLE) | the bar's range against the last 80 bars that opened in the same hour: NORMAL inside their 10th-90th percentiles, UNUSUAL outside, WARMUP under 40; `tod_ratio` = range / their median. `CANDLE[tod=UNUSUAL]` |
+| **TEMPO_STATE** (NONE) | events per hour (EXTREME, VOID, BREAK, DISPLACE, BREACH_REVERT, DELIVERY_SHIFT known in the last 4 hours of wall-clock time) against the same hour's last 80 rates: FAST above the 80th percentile, SLOW below the 20th, else NORMAL; an event where the state changes. `state`, `rate`, `lo`, `hi` |
+| **hour_rate** (`Span`, every event) | 24 x the share of the type's last 400 events (known strictly before) that happened in this hour; 1 is the type's average hour. `BREAK[hour_rate<0.5]` is "rare for this hour". None for tokens and the calendar's anchors |
+| `profile(chart)` | the market's time-of-day volatility profile: median range per hour over the median |
+
+Any time effect is judged against walks on the same calendar with the same hour-of-day volatility
+(`synth.profiled`, `synth.matched_profiled`).
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -1249,6 +1387,88 @@ CRT's 57-61% "success" and the nested zone's research flag both reproduce on ran
 and hindsight respectively. Real-market frequencies and P(N R) are not reported: no market data was
 used in this build.
 
+### Time core: real markets against walks on the same calendar
+
+`research/mcfl/time_study.py` ([`out/time.txt`](../mcfl/out/time.txt)), run on the lab on
+2026-10-04: twelve markets of MT5 15-minute bars (UTC; EURUSD, GBPUSD, USDJPY, XAUUSD, US SP 500, US
+Tech 100, Germany 40, US Oil, BTCUSD, ETHUSD, and Deriv's Volatility 75 Index and Step Index -
+markets in their own right, reported as such, not as controls), July 2024 to October 2026, cut into
+115 chunks of 6,000 bars (690,000 bars). Each chunk was parsed with the time core, and so were six
+walks of each of three kinds **on the chunk's own timestamps** (weekends, closures and holidays
+carried over): **profile** - iid, with the chunk's own hour-of-day volatility (sd of close-to-close
+changes per UTC hour) and its own overnight jumps, the null the brief asked for; **clustered** - the
+same with GARCH(1,1) on top; **flat** - one volatility for every hour, the plain matched walk on the
+calendar. 2,185 parses. z = (real - walk mean) / max(sd over the six walk sets, the real number's own
+binomial or Poisson error). Numbers below are pooled over all markets unless named.
+
+**Calibration.** Everything the calendar decides (WINDOW, WINDOW_CLOSE, the opens, HTF_CLOSE, the base
+shares of bars per session, killzone, macro, month-end, Monday) is identical on real and walk, as it
+must be. Several non-time counts differ on every market, Deriv's included, and are **not time
+effects**: real charts have far fewer VOID episodes (206 against 335 per 1,000 bars), fewer zone
+FAILs (19 against 29) and fewer zone TIMEOUTs (14 against 20). Deriv's synthetics, whose hours are
+all alike, show the same gaps, so they come from how the bars are built (a 15-minute bar from ticks
+against the walk's eight sub-steps; v1's caution), not from the clock.
+
+**What the flat walk would have called a time effect, and the profile walk explains.**
+
+| measure | real | profile walk | flat walk |
+|---|---|---|---|
+| BREAK hour concentration (chi-square / n against the bars) | 0.046 | 0.028 (z +12) | **0.0004** (z +275) |
+| REVISITs in OVERLAP (12-16 UTC; 17% of bars) | 0.280 | 0.267 (+4.9) | 0.169 (+47) |
+| session high or low taken inside an ICT killzone (61% of bars) | 0.675 | 0.658 (+5.1) | 0.598 (+31) |
+| STALL per 1,000 bars | 37.1 | 37.0 (+0.4) | 33.8 (+14) |
+| DISPLACE marked EARLY / LATE per 1,000 bars | 4.3 / 4.2 | 4.1 / 4.0 | 1.5 / 2.3 (+36, +25) |
+
+Against the flat walk every one of these is an enormous "time effect"; against a walk with the same
+hour-of-day volatility most of it is gone. Breaks, revisits, raids and stalls go where the volatility
+is. What is left after the profile walk is small (killzone raids 67.5% against 65.8%, OVERLAP
+revisits 28.0% against 26.7%) and **absent on Deriv** (raids in killzones 59.4% and 59.3% against
+59.7% and 60.3% on their walks; BREAK hour concentration 0.005 against 0.005), as it should be for a
+market without a day.
+
+**Time effects beyond the profile.**
+- **Session extremes form early, not late.** A walk puts a session's high and low near its ends (the
+  arcsine law): 33.8% of them in the session's first quarter, 32.0% in the last, on the profile walk.
+  Real sessions put 35.1% in the first quarter (z +6.4) and **29.5% in the last (z -13.6)**; the
+  shortfall in the last quarter is there on every non-Deriv market (crypto most: ETHUSD 24.8% against
+  31.8%, BTCUSD 26.6% against 31.4%) and on neither Deriv index (33.4%, 33.0% against 33.4%, 33.3%).
+- **Mondays have fewer breaks than their bars** (16.8% of breaks on 17.7% of bars, z -5.7). The walk
+  has no day-of-week profile (only hour-of-day), so this is the known day-of-week volatility, not
+  something the language adds.
+- **Bars UNUSUAL for their hour** are 23.3% against 22.1% (z +21; GARCH clustering takes it to 22.6%):
+  real volatility has regimes the hour baseline does not know. Step Index is the exception (21.3%).
+- **The event clock is burstier than the bar clock**: variance / mean of events per 16 bars 0.89
+  against 0.72 (and 0.72 with GARCH), Deriv 0.77. Partly bar construction again (Deriv has it).
+- Null: BREAKs on month-end days (4.0% of breaks on 4.0% of bars), BREAKs in the last quarter of a
+  4h bar (24.4% on 25.4% of bars), pools taken inside a macro window (4.9% on 5.3% of bars - **ICT's
+  macro windows hold nothing**), the share of zones that TIMEOUT once zones are counted (39.6% against
+  39.6%), time in FAST and SLOW tempo (18.2% and 17.3% against 18.0% and 17.2%).
+
+**The first move (the "Judas" swing).** The session's first swing is the session's own extreme 44.5%
+of the time, as on the walk (44.7%). It reverses back through the session's open before going beyond
+its own extreme 50.4% of the time against 47.2% (z +7.7) - but Deriv does too (49.8%, 50.5% against
+47.3%, 47.4%), so this is short-horizon behaviour of real bars, not of sessions. **As a signal it
+loses to the walk.** Fading the first move (entry at the close of the bar that confirms the swing, the
+stop at the swing's extreme, the market's best excursion before the stop):
+
+| P(≥ N R) | 1 | 2 | 3 | 4 | 5 | 10 |
+|---|---|---|---|---|---|---|
+| 1/(N+1) | 0.500 | 0.333 | 0.250 | 0.200 | 0.167 | 0.091 |
+| fade, any session (29,769) | 0.486 | 0.334 | 0.250 | **0.200** | 0.164 | **0.078** |
+| ... profile walk | 0.489 | 0.342 | 0.263 | 0.214 | 0.179 | 0.088 |
+| fade, any killzone (35,479) | 0.485 | 0.331 | 0.251 | 0.200 (z -5.8) | 0.165 | 0.077 (z -4.9) |
+| fade, LONDON (7,369) | 0.484 | 0.329 | 0.247 | 0.197 | 0.162 | 0.077 |
+| BREAK, all (54,156) | 0.495 | 0.328 | 0.241 | 0.186 | 0.147 | 0.053 |
+| ... profile walk | 0.498 | 0.339 | 0.255 | 0.199 | 0.158 | 0.055 |
+| BREAK, LATE (2,405) / EARLY (2,187) | 0.489 / 0.484 | 0.314 / 0.315 | 0.231 / 0.228 | 0.168 / 0.176 | 0.130 / 0.148 | 0.047 / 0.052 |
+
+Every curve sits on or under the walk's own and at or under 1/(N+1); fading the first move is 1 point
+under the walk at 4R and 10R (z -3 to -6 pooled; no market is above it at 10R by more than 0.5
+points). Breaks at a rare hour for breaks (LATE, EARLY) are no better than breaks. **No time alphabet
+here is a signal.** What the time core does show is how much of a "time-of-day effect" is volatility
+on the clock: almost all of it, which is why the flat matched walk must not be the null for any
+time-of-day claim.
+
 ## Open questions
 
 - **Is the grammar compressible?** A minimum-description-length test: does adding ZONE (or any
@@ -1267,6 +1487,43 @@ used in this build.
   candidates too, so that V = 0 origins have sentences comparable with zones'.
 
 ## Decisions the brief left open
+
+### Time core
+
+- **Time is a field, not attributes.** `Entity.time` is a `core.Span`, stamped once at the end of the
+  parse (`clocks.stamp`), so no v2 constructor changed and `parse(df, time=False)` is the v2 chart. It is
+  part of the entity's equality, so the truncation tests cover it; the flip test carries it unchanged
+  (`tests/test_symmetry.mirror` now copies it), which is the brief's "time is unchanged by the flip".
+- **Bar 0's length** is a guess when nothing gives it (the coarsest standard bar its open is aligned
+  to): too long for `known_at_ts`, counted as zero trading time and as unobserved for deciding that a
+  period has ended. Every other bar's length is the running minimum of gaps, known at it. Bars that
+  carry `close_ts` (volume and tick bars) are exact.
+- **Intervals.** An event's interval is the tokens it consumed, a structure's its derivation; an
+  EXTREME is its own bar. So a BREAK is its leg and `BREAK DURING killzone` would mean the whole leg
+  ran inside it - which is why the killzone row of IN_WINDOW is a session extreme taken (an instant),
+  not a break.
+- **Windows are known when they open**, with a scheduled end (the calendar announces it), and have no
+  last bar until their WINDOW_CLOSE. Allen relations to an open window are on the wall clock only. A
+  bar belongs to a window when its open is inside it; IN_WINDOW asks the bar's whole interval to be.
+- **Killzones and macros are in New York time** with daylight saving (pandas' zone data); v2's sessions
+  stay in fixed UTC hours, as v2 defined them. The trading week starts Sunday 17:00 New York.
+- **Holidays are configuration** (`calendars.Calendar`); only NYSE 2024-2026 and CRYPTO are built in.
+  The study used NYSE for every market that closes and CRYPTO for the rest, including Germany 40 (no
+  Xetra calendar was written).
+- **TIMEOUT** needed two grammar options, `timed` (the event is the decide bar, emitted only once the
+  series reaches it - an absence cannot be decided early) and `sym` (a range has no direction). A
+  RANGE times out when it is not left within 48 bars; "no test" almost never happens.
+- **LATE / EARLY** come from the same hour baseline as `hour_rate` (the last 400 events of the type
+  known before); LATE and EARLY split the rare hours by which side of the type's usual hour they fall.
+  Without a day of week in the baseline.
+- **The multi-timeframe retrofit** changes no v2 number: `MTF.known` already completed periods the same
+  way; it is now read off HTF_CLOSE events, and `mtf.groups` uses the same `anchors.periods`.
+- **A v2 leak found on the way.** The calendar truncation test caught PULLBACK[phase=INSIDE] taking the
+  last swing low before the break even when that swing was confirmed after it (up to three bars), so a
+  prefix had been given a pullback the full parse later replaced. The INSIDE pullback is now the last
+  swing confirmed by the break's known_at, known then (`retrace.py`); DAX50 follows. It reproduced with
+  `time=False` and without timestamps; the v2 test series had not hit it. The v2 study's INSIDE-pullback
+and DAX50 numbers (`out/v2.txt`) predate the fix and were not rerun.
 
 ### v2
 
