@@ -14,6 +14,13 @@ Every HTF entity is read in LTF time: its bar spans the LTF bars of its HTF bar(
 the LTF bar at which its HTF `known_at` bar is complete (`MTF.known`). HTF ids are prefixed with the
 label (`4h:BREAK.U.66.o57`).
 
+THE SHARED CLOCK (time core, item 4). `MTF.known` is read off the LTF chart's HTF_CLOSE[tf] events
+(`anchors.py`): HTF bar j's facts are knowable at the LTF bar of its HTF_CLOSE and not before, and
+every relation below asks `MTF.visible(h, t)` - h's HTF_CLOSE is known by LTF bar t - before it reads
+an HTF entity. Without timestamps the periods are counted (`factor`) and their closes are HTF_CLOSE
+events of the MTF itself, at each period's last bar. `tests/test_time_mtf.py` holds every output to
+it independently of `known`, and shows that an MTF whose closes are moved a bar early fails it.
+
 RELATIONS (`MTF.relations`), each known when both ends are:
     CONTAINS_TF(H, L)  the HTF entity spans L's bar. Materialised for HTF CANDLE -> its LTF CANDLEs (the
                        aggregation's derivation); computed on demand for any pair (`MTF.contains`). An
@@ -77,8 +84,13 @@ class MTF:
         return f"{self.label}:{e.id}"
 
     def known_ltf(self, e: Entity) -> int:
-        """The LTF bar at which an HTF entity is known."""
+        """The LTF bar at which an HTF entity is known: its HTF known_at bar's HTF_CLOSE."""
         return self.known[e.known_at]
+
+    def visible(self, e: Entity, t: int) -> bool:
+        """May an LTF reading at bar t use HTF entity e? Only at or after the HTF_CLOSE that makes it
+        knowable."""
+        return self.known[e.known_at] <= t
 
     def span(self, e: Entity) -> tuple[int, int]:
         """The LTF bars an HTF entity spans."""
@@ -123,26 +135,17 @@ def period_keys(df: pd.DataFrame, htf_sec: int | None, factor: int | None) -> np
 
 def groups(df: pd.DataFrame, htf_sec: int | None, factor: int | None,
            ltf_sec: int | None = None) -> list[tuple[int, int, int, int, int]]:
-    """Complete HTF bars as (first LTF bar, last LTF bar, LTF bar it is known at, HTF open ts, period)."""
+    """Complete HTF bars as (first LTF bar, last LTF bar, LTF bar it is known at, HTF open ts, period):
+    the periods of `anchors.periods`, the same rule as the HTF_CLOSE anchors, on the bars' observed
+    lengths (`ltf_sec` when given)."""
     n = len(df)
     out = []
     if htf_sec is not None and "ts" in df:
+        from mcfl.anchors import periods
+        from mcfl.clocks import bar_lengths
         ts = df["ts"].to_numpy(np.int64)
-        if ltf_sec is None:
-            ltf_sec = int(ts[1] - ts[0]) if n >= 2 else htf_sec
-        key = ts // htf_sec
-        starts = [0] + [i for i in range(1, n) if key[i] != key[i - 1]]
-        for j, a in enumerate(starts):
-            b = (starts[j + 1] - 1) if j + 1 < len(starts) else n - 1
-            end = (key[a] + 1) * htf_sec
-            if ts[b] + ltf_sec >= end:
-                known = b
-            elif j + 1 < len(starts):
-                known = starts[j + 1]
-            else:
-                continue  # the period is not over yet
-            out.append((a, b, known, int(key[a] * htf_sec), int(key[a])))
-        return out
+        ct = df["close_ts"].to_numpy(np.int64) if "close_ts" in df else None
+        return periods(ts, bar_lengths(ts, ltf_sec, ct, seen=True), htf_sec)
     if factor is None:
         raise ValueError("give htf_sec (with a ts column) or factor")
     for a in range(0, n - factor + 1, factor):
@@ -178,7 +181,7 @@ def nested(m: MTF) -> list[Entity]:
     out = []
     for z in m.ltf.of("ZONE"):
         hs = sorted((h for h in _break_legs(m, z.dir)
-                     if m.span(h)[0] <= z.at <= m.span(h)[1] and m.known_ltf(h) <= z.known_at),
+                     if m.visible(h, z.known_at) and m.span(h)[0] <= z.at <= m.span(h)[1]),
                     key=lambda h: (m.known_ltf(h), h.at, h.id))
         if hs:
             h = hs[0]
@@ -265,12 +268,14 @@ def align(m: MTF, types: tuple[str, ...] = ("ZONE", "BREAK")) -> list[Relation]:
     out = []
     for e in m.ltf.of(*types):
         i = bisect.bisect_right(ks, e.known_at) - 1
-        if i >= 0 and sh[i].get("to") in ("UP", "DOWN"):
+        if i >= 0 and m.visible(sh[i], e.known_at) and sh[i].get("to") in ("UP", "DOWN"):
             kind = "ALIGN" if sh[i].get("to") == e.dir.value else "CONFLICT"
             out.append(Relation(kind, e.id, m.hid(sh[i]), e.known_at))
         for h in legs:
+            if not m.visible(h, e.known_at):
+                continue
             a, b = m.span(h)
-            if a <= e.at <= b and m.known_ltf(h) <= e.known_at:
+            if a <= e.at <= b:
                 out.append(Relation("ALIGN" if h.dir is e.dir else "CONFLICT", e.id, m.hid(h), e.known_at))
     return out
 
@@ -298,7 +303,7 @@ def crt(m: MTF) -> list[Entity]:
             continue
         for side, d in zip((1, -1), SIDES):
             hi, lo = (H.get("high"), H.get("low")) if side > 0 else (-H.get("low"), -H.get("high"))
-            u = next((int(t) for t in nxt if t >= m.known[j]
+            u = next((int(t) for t in nxt if m.visible(H, int(t))
                       and side * (lc[t].get("high") if side > 0 else lc[t].get("low")) > hi
                       and lo <= side * lc[t].get("close") <= hi), None)
             if u is None:
@@ -331,7 +336,12 @@ def parse_mtf(df: pd.DataFrame, htf_sec: int | None = None, factor: int | None =
               htf: pd.DataFrame | None = None, ltf_sec: int | None = None, changepoints: bool = False) -> MTF:
     """Parse the LTF bars, build (or take) the HTF bars, parse them, and relate the two charts."""
     df = df.reset_index(drop=True)
-    ltf = parse(df, changepoints=changepoints)
+    timed = htf_sec is not None and "ts" in df
+    if timed:
+        from mcfl.anchors import HTF_TFS, tf_label
+        ltf = parse(df, changepoints=changepoints, sec=ltf_sec, htf=tuple(sorted({*HTF_TFS, htf_sec})))
+    else:
+        ltf = parse(df, changepoints=changepoints)
     if htf is None:
         gs = groups(df, htf_sec, factor, ltf_sec)
         hdf = aggregate(ltf, df, gs)
@@ -340,13 +350,33 @@ def parse_mtf(df: pd.DataFrame, htf_sec: int | None = None, factor: int | None =
         hdf = htf.iloc[:len(gs)].reset_index(drop=True)
     hch = parse(hdf) if len(hdf) else Chart(n=0, entities=())
     pk = tuple(int(x) for x in period_keys(df, htf_sec, factor))
-    m = MTF(ltf, hch, label, tuple(g[0] for g in gs), tuple(g[1] for g in gs), tuple(g[2] for g in gs),
+    if timed:
+        # the shared clock: each HTF bar is knowable at its HTF_CLOSE on the LTF chart
+        closes = {e.get("period_ts"): e for e in ltf.of("HTF_CLOSE") if e.get("tf") == tf_label(htf_sec)}
+        known = tuple(closes[g[3]].known_at for g in gs)
+        own: list[Entity] = []
+    else:
+        own = [_count_close(ltf, g, label) for g in gs]
+        known = tuple(e.known_at for e in own)
+    m = MTF(ltf, hch, label, tuple(g[0] for g in gs), tuple(g[1] for g in gs), known,
             tuple(g[4] for g in gs), pk, hdf)
     rels = contains_candles(m) + align(m)
-    ents = nested(m) + crt(m)
+    ents = own + nested(m) + crt(m)
+    if ltf.clock is not None:
+        from mcfl.clocks import stamp
+        ents = stamp(ents, ltf.clock)
     return MTF(ltf, hch, label, m.first, m.last, m.known, m.keys, m.pkey, hdf,
                tuple(sorted(rels, key=lambda r: (r.known_at, r.kind, r.src, r.dst))),
                tuple(sorted(ents, key=lambda e: (e.known_at, e.at, e.id))))
+
+
+def _count_close(ltf: Chart, g: tuple[int, int, int, int, int], label: str) -> Entity:
+    """A counted period's HTF_CLOSE (no timestamps): at its last bar, the bar clock's close."""
+    c = sorted(ltf.of("CANDLE"), key=lambda e: e.at)[g[0]:g[1] + 1]
+    return Entity(make_id("HTF_CLOSE", Dir.NONE, g[1], label), "HTF_CLOSE", Dir.NONE, g[1], g[2], attrs_of({
+        "tf": label, "period": g[4], "open": c[0].get("open"), "high": max(e.get("high") for e in c),
+        "low": min(e.get("low") for e in c), "close": c[-1].get("close"), "bars": len(c)}),
+        parts=tuple(e.id for e in c))
 
 
 def _map(df: pd.DataFrame, htf: pd.DataFrame, htf_sec: int, ltf_sec: int | None) -> list[tuple[int, int, int, int, int]]:

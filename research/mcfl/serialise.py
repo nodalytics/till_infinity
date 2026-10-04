@@ -20,7 +20,7 @@ from dataclasses import asdict
 from typing import Any
 
 from mcfl.candles import word
-from mcfl.core import Chart, Dir, Entity, Failure, Force, Relation, Transition, freeze, sort_key
+from mcfl.core import Chart, Dir, Entity, Failure, Force, Relation, Span, Transition, freeze, sort_key
 
 SENTENCE_TYPES = ("EXTREME", "BREACH_REVERT", "VOID", "DISPLACE", "BREAK", "ZONE",
                   "REVISIT", "REJECT_PATH", "ACCEPT", "FAIL", "EXPIRE")
@@ -271,6 +271,8 @@ def to_dict(chart: Chart) -> dict:
             d["force"] = asdict(e.force)
         if e.parts:
             d["parts"] = list(e.parts)
+        if e.time is not None:
+            d["time"] = asdict(e.time)
         return d
     return {"mcfl": 1, "n": chart.n,
             "entities": [ent(e) for e in chart.entities],
@@ -284,7 +286,8 @@ def from_dict(d: dict) -> Chart:
     def ent(x: dict) -> Entity:
         return Entity(x["id"], x["type"], Dir(x["dir"]), x["at"], x["known_at"],
                       tuple(sorted((k, freeze(v)) for k, v in x["attrs"].items())),
-                      Force(**x["force"]) if "force" in x else None, tuple(x.get("parts", ())))
+                      Force(**x["force"]) if "force" in x else None, tuple(x.get("parts", ())),
+                      Span(**x["time"]) if "time" in x else None)
     return Chart(n=d["n"], entities=tuple(ent(x) for x in d["entities"]),
                  relations=tuple(Relation(**r) for r in d["relations"]),
                  failures=tuple(Failure(**f) for f in d["failures"]),

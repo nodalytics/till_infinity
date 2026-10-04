@@ -86,3 +86,36 @@ def ohlc(rows: list[tuple[float, float, float, float]]) -> pd.DataFrame:
 def after(base: list[float], rows: list[tuple[float, float, float, float]]) -> pd.DataFrame:
     """Closes `base` as bars, then explicit OHLC rows."""
     return pd.concat([bars(base), ohlc(rows)], ignore_index=True)
+
+
+# ---------------------------------------------------------------- the time core
+
+WINTER_MONDAY = 1_704_067_200 + 0 * 86400  # 2024-01-01 00:00 UTC, a Monday (New York on EST)
+SUMMER_MONDAY = 1_717_977_600  # 2024-06-10 00:00 UTC, a Monday (New York on EDT)
+
+
+def closed(t: int, market: str) -> bool:
+    """Whether a market is shut at UTC second t: `fx` from Friday 21:00 to Sunday 22:00 UTC; `index`
+    also every day 21:00-22:00; `crypto` never."""
+    wd, h = int((t // 86400 + 3) % 7), int((t % 86400) // 3600)
+    weekend = (wd == 4 and h >= 21) or wd == 5 or (wd == 6 and h < 22)
+    if market == "crypto":
+        return False
+    if market == "index":
+        return weekend or h == 21
+    return weekend
+
+
+def calendar_ts(n: int, sec: int = 900, start: int = WINTER_MONDAY, market: str = "fx") -> np.ndarray:
+    """n bar opens every `sec` seconds from `start`, skipping the market's closures."""
+    out, t = [], start
+    while len(out) < n:
+        if not closed(t, market):
+            out.append(t)
+        t += sec
+    return np.array(out, np.int64)
+
+
+def with_calendar(df: pd.DataFrame, sec: int = 900, start: int = WINTER_MONDAY, market: str = "fx") -> pd.DataFrame:
+    """The bars with a `ts` column on a market's calendar (weekends and closures are gaps)."""
+    return df.assign(ts=calendar_ts(len(df), sec, start, market))
