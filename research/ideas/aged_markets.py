@@ -82,6 +82,9 @@ def run():
     keys = [(src, sym, iv, g) for (src, sym, iv), g in z.groupby(["src", "sym", "iv"])]
     cx = pd.concat(pool(X.one, keys), ignore_index=True)
     vs = pd.concat(pool(V.one, keys), ignore_index=True)
+    cx["scope"] = cx["sym"].map(SCOPE)
+    cx = X.terciles(cx, ["scope", "iv"])
+    cx["manner"] = cx["manner2"]
     for d in (z, cx, vs):
         d["scope"] = d["sym"].map(SCOPE)
         d["source"] = d["src"].str.split(":").str[1]

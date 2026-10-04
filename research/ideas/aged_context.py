@@ -1,6 +1,7 @@
 """How price comes back to an aged zone, and its higher-timeframe context.
 
-Frozen in `aged_context_rule.json` before this ran. Reads `aged_zones.py`'s trades, rebuilds each
+Frozen in `aged_context_rule.json` before its first run, whose SLOW / FAST cut-offs turned out to be
+absolute and left SLOW nearly empty; v2 (`aged_context2_rule.json`) splits a measured speed into thirds. Reads `aged_zones.py`'s trades, rebuilds each
 series (the same walks and seeds) and attaches, known at the fill: the manner of the return from the
 bars before the fill bar, and the higher timeframe from its closed bars only.
 
@@ -90,6 +91,9 @@ def one(key):
         for _, r in g.iterrows():
             t, f, live = int(r.t), int(r.f), int(r.live)
             top = low3[t] + TZ.WIDTH * a[t]
+            s10 = max(live, f - 10)
+            now = a[f - 1] if f > 0 and a[f - 1] > 0 else a[t]
+            speed = (h[s10:f].max() - top) / (now * np.sqrt(f - s10)) if f > s10 else 0.0
             s0 = max(live, f - 5)
             if f <= s0:
                 app5, big5, push = 0.0, 0, False
@@ -99,15 +103,29 @@ def one(key):
                 push = bool(push_bar[s0:f].any())
             manner = ("FAST" if app5 >= 3 or big5 >= 2 or push else
                       "SLOW" if app5 < 1.5 and big5 == 0 else "MEDIUM")
-            out.append(dict(r.to_dict(), app5=app5, big5=big5, push=push, manner=manner, htf=st[f],
+            out.append(dict(r.to_dict(), app5=app5, big5=big5, push=push, manner=manner, speed=speed, htf=st[f],
                             discount=bool(np.isfinite(mid[f]) and top <= mid[f])))
     print(f"  {src} {sym} {iv}: {len(out)}", flush=True)
     return pd.DataFrame(out)
 
 
-def score(d, rng):
+def terciles(d, by):
+    """v2 (aged_context2_rule.json): SLOW / MEDIUM / FAST as the thirds of `speed`, the cut-offs from the
+    real rows of each group (no outcome is used), applied to that group's walks too."""
+    d = d.copy()
+    d["manner2"] = "MEDIUM"
+    real = d["src"].str.endswith(":real")
+    for _, idx in d.groupby(by).groups.items():
+        g = d.loc[idx]
+        q1, q2 = g.loc[real.loc[idx], "speed"].quantile([1 / 3, 2 / 3])
+        d.loc[idx[g["speed"].to_numpy() <= q1], "manner2"] = "SLOW"
+        d.loc[idx[g["speed"].to_numpy() >= q2], "manner2"] = "FAST"
+    return d
+
+
+def score(d, rng, col="manner"):
     rows = []
-    d = d.assign(SLOW_ALIGNED=(d["manner"] == "SLOW") & (d["htf"] == "ALIGNED"))
+    d = d.assign(manner=d[col], SLOW_ALIGNED=(d[col] == "SLOW") & (d["htf"] == "ALIGNED"))
     for src, g in d.groupby("src"):
         for fam in ("ALL", "SIG"):
             x0 = g[g[fam]] if fam == "SIG" else g
@@ -136,9 +154,11 @@ def run():
     with ProcessPoolExecutor(int(os.environ.get("WORKERS", 8))) as pool:
         got = [g for g in pool.map(one, keys) if g is not None and len(g)]
     x = pd.concat(got, ignore_index=True)
-    x.to_pickle(OUT / "aged_context.pkl.gz")
-    t = score(x, np.random.default_rng(91))
-    t.to_csv(OUT / "aged_context.csv", index=False)
+    x["venue"] = x["src"].str.split(":").str[0]
+    x = terciles(x, ["venue", "iv"])
+    x.to_pickle(OUT / "aged_context2.pkl.gz")
+    t = score(x, np.random.default_rng(91), col="manner2")
+    t.to_csv(OUT / "aged_context2.csv", index=False)
     pd.set_option("display.width", 260)
     pd.set_option("display.max_rows", 600)
     print(t.to_string(index=False))
