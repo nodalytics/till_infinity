@@ -1,0 +1,14 @@
+{
+  "frozen": "2026-10-04",
+  "after": "pca-residuals study C (branch research/pca-residuals): DISPLACE_C's edge on the 131 fresh coins is all market factor (market part +0.056R, coin residual -0.016R [-0.025, -0.006]). Read after its run and NOT pre-registered there: the daily long signals traded on the market instead of the alt made +274 bps net [+3, +544] on an equal-weight basket and +275 bps [+26, +532] on BTC; daily shorts on BTC lost (-78 bps); 4h and pooled sides were not significant",
+  "hypothesis": "a violent bullish turn on alts (DISPLACE_C at a 12-bar low, daily) times a turn in the whole crypto market; buying the market on it earns without the alt's own drag",
+  "signal": "at a daily close (00:00 UTC), any coin in the universe completes DISPLACE_C up at a 12-bar low (turn_trade's T1, long side; MCFL v1, known at the close)",
+  "trade_M1 (primary)": "buy BTCUSDT at the next daily open; exit when the alt's own frozen trade exits (E2: its stop 0.1 ATR under the alt's 3-bar low, or an opposite DELIVERY_SHIFT on the alt, out at the next open; 10 days at most) - the mirror exit is causal, it is known when it happens; one BTC position per signal",
+  "trade_M2": "the same on an equal-weight basket of the universe's live coins",
+  "trade_B (breadth, secondary)": "on a daily close where at least 3 coins signal, buy BTC at the next open and hold 5 days",
+  "costs": "0.07% of price per round trip (taker both sides); funding ignored in the forward log and reported where available",
+  "measure": "net bps per trade and per signal-day, mean and day-bootstrap 90% interval; also R against the alt's risk distance scaled to BTC's ATR",
+  "historical_check": "signal sources the variant was not read on: the 12 original Binance coins (turn_trade.COINS, 1d, all history) traded into BTCUSDT perpetual (Binance 12 data) - judged before the forward log is read",
+  "forward": "the lab paper log (paper_displace.py) records every daily DISPLACE_C up signal on the live coins from 2026-10-04; MODE=score computes M1, M2 and B forward",
+  "passes_if": "historical check: M1 net > 0 with its 90% interval above 0 and positive before and after 2024-01-01, above the same holding windows entered on random days (a random-entry twin with the same count and hold); forward: M1 net > 0 after at least 100 signals"
+}
