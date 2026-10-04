@@ -1,0 +1,77 @@
+{
+  "frozen": "2026-10-04",
+  "question": "the desk's setup: a linear regression channel gives the trend; price breaks a prior confirmed swing in the trend's direction (BOS), pulls back to the broken level (the 'second entry'), and is traded there with a tight structural stop and a ~2R target. Does it reach +N R before -1R more often than 1/(N+1) and than the same rule on matched walks, on data it was not tuned on? Plus: the RSI + LRC rule as published, the counter-trend 'fade to value' the desk lost on, the strength of the moves around the break, and earlier BOS / CHoCH levels as support and resistance",
+  "orientation": "every rule is written for the up side (uptrend, long) and run on the chart and on the flipped chart (mcfl.parse.flip); a downtrend sell is the up-side rule on the flipped chart",
+  "indicators": {
+    "ATR": "ATR(14), Wilder (EWM alpha 1/14) of the true range; 'ATR' in a rule is ATR at the last completed bar before the entry decision",
+    "LRC(L)": "at bar t, the least-squares line through the closes t-L+1..t (x = bar index). slope b = the line's slope per bar; mid = the line's value at t (the endpoint, = Pine ta.linreg(close, L, 0), = the DGT 'curve'); dev = the root-mean-square residual about the line (population, / L, as LonesomeTheBlue's efXI515C); upper / lower band = mid +/- 2 dev (efXI515C default 2; DGT draws 1, 2 and 3). Only closes up to t enter: the value at t is known at t's close",
+    "trend": "LRC(100) slope sign at the last completed bar: up when b > 0, down when b < 0 (efXI515C colours and alerts on sign(slope)). Secondary lengths 50 and 200 (DGT's two defaults)",
+    "swing": "a 3/3 pivot as MCFL's EXTREME: high[p] > high of the 3 bars before it and >= high of the 3 bars after it (lows mirrored); known at p + 3",
+    "labels and structure": "as mcfl/structure.py v2: each swing is labelled against the previous swing of its kind with tol 0.1 ATR (HH/EH/LH, LL/EL/HL); the state is UP (last high HH and last low HL), DOWN (LH and LL) or MIXED; established after 2 consecutive labels holding it",
+    "break": "the first close beyond the most recent confirmed swing high (known_at < the break bar); each swing breaks at most once. BOS = a break WITH the structure state at the break bar; CHoCH = the first break AGAINST an established state in that state's run (MCFL v2 CHARACTER_SHIFT); the level is the broken swing's price",
+    "RSI": "RSI(14), Wilder (Pine ta.rsi)"
+  },
+  "costs": {
+    "MT5": "the broker's spread floor (mt5bt run.spread_floor: median tick spread, else the quoted spread); where that is 0, the median of the bars' own spread column; one spread per round trip",
+    "Deriv 1s indices": "the median tick spread from the lab's research.db ticks (fixed spreads)",
+    "Binance and fresh coins": "0.07% of price per round trip",
+    "slippage": "0.05 ATR adverse on every stop fill",
+    "drop": "a symbol-timeframe whose median cost exceeds 0.5 ATR is dropped and listed",
+    "walks": "the real series' cost in ATR units at the same bar index, times the walk's ATR"
+  },
+  "rules": {
+    "R1 (primary)": {
+      "trend": "LRC(100) up at the break bar",
+      "BOS": "a close above the most recent confirmed swing high (the up-side break)",
+      "entry": "a buy limit at the broken level, live from the bar after the break for N = 20 bars; fills on the first bar whose low reaches it, at min(open, level); a newer break of the same side cancels a pending order",
+      "stop": "below the pullback's low: min(level, the lowest low from the break bar through the bar before the fill) - 0.1 ATR; skipped if entry - stop < 0.25 ATR; a stop touched on the fill bar is a loss",
+      "exits": {"X2 (primary)": "fixed target at entry + 2R; on the fill bar only if it closes there", "TR": "a 2-ATR trail behind the best high of completed bars after the fill bar", "BAND": "a sell limit at the upper band of the previous bar's LRC(100), from the bar after the fill"},
+      "cap": "100 bars in the trade, out at that bar's close",
+      "variants (secondary)": "trend from LRC(50) and LRC(200)"
+    },
+    "R2": "as R1, but the entry is a confirmed higher low (MCFL HL label) formed after the break: a swing low at p with break < p <= break + 20, labelled HL, whose low is within 1 ATR of the broken level; buy at the open of p + 4 (the bar after it is known); stop = low[p] - 0.1 ATR, min risk 0.25 ATR; same exits and cap",
+    "R3": "the published RSI + LRC strategy, as written: basis = ta.linreg(close, 100, 0), dev = ta.stdev(close, 100) (population sd of the closes, not the residuals), bands basis +/- 1 dev; long when close <= lower and RSI(14) < 30, entered at the next open; closed at the next open after close >= upper and RSI(14) > 70; one position per side; no stop (the article has none). Mirrored for shorts as the article's text describes. R is measured against a nominal 1 ATR; a 500-bar cap",
+    "R4 (the contrast case)": "fade to value, counter-trend: LRC(100) DOWN at the previous bar; the first bar whose low touches the previous bar's lower 2-dev band (the bar before did not); a buy limit at that band (min(open, band)); stop 1 ATR below the entry; exits X2 (2R, primary), TR (2-ATR trail), MID (a sell limit at the previous bar's LRC midline, 'value'); 100-bar cap",
+    "R5": {
+      "levels": "every BOS-up and CHoCH-up level (a broken swing high, now support), each live from its own break bar; at most the 10 most recent live levels per type and side; a level dies 500 bars after its break, after one trade, or when a close goes 1 ATR below it before it arms",
+      "arming": "a level arms on the first bar at least 20 bars after its break (beyond R1's retest window) whose low is above it",
+      "entry (R5)": "LRC(100) up at the previous bar; the first touch after arming: a buy limit at the level, min(open, level)",
+      "stop": "level - 0.5 ATR (min risk 0.25 ATR after a gap fill)",
+      "entry (R5s, sweep then reject)": "the touch bar's low goes below the level and it closes back above: buy at the next open, stop = that bar's low - 0.1 ATR, min risk 0.25 ATR; LRC(100) up at the touch bar",
+      "exits": "X2 (primary), TR, BAND as R1; 100-bar cap"
+    }
+  },
+  "strength (amended before the run, same day: 'the stronger the move before and after the BOS, the stronger the level')": {
+    "before": "the leg that formed the broken swing: from the last confirmed swing low before the swing high's pivot to the swing high; size in ATR (at the pivot) and speed (size / bars)",
+    "after": "the displacement through the break: from the level to the highest high over the break bar .. min(entry bar - 1, break + 20); size in ATR (at the break) and speed (size / bars from the break to that high); the entry bar never counts",
+    "score": "the sum of four percentile ranks (before size, before speed, after size, after speed), each ranked against the real non-Deriv R1 discovery trades (before 2024-01-01) of the same timeframe",
+    "terciles": "WEAK / MID / STRONG cut at the 1/3 and 2/3 quantiles of the score on those same real discovery trades, per timeframe; applied unchanged to confirmation, the walks, R2 and R5's levels",
+    "hypothesis": "STRONG beats WEAK in mean R and P(N R) on confirmation data, by more than the same split does on the walks"
+  },
+  "hold rate (R5 part 1)": {
+    "levels": "plain swing lows (a confirmed swing low, support), BOS-up levels, CHoCH-up levels and other breaks, each touched from above for the first time after arming (plain: from p + 4; broken: the first bar after the break with the low above the level)",
+    "outcome": "HOLD when a high reaches level + 1 ATR before a close at or below level - 1 ATR (the touch bar's high does not count, its close does; within a bar the high is taken first); undecided after 500 bars is dropped",
+    "splits": "type x age at touch (0-20, 20-100, 100-500 bars) x strength tercile (broken levels) x sweep (the touch bar's low below the level and its close back above) x LRC(100) with the level's side; real vs iid and GARCH walks, per class and timeframe",
+    "reference": "earlier studies: plain real swing levels hold ~0.58 against ~0.565 on walks; the question is whether BOS / CHoCH levels hold more than that"
+  },
+  "P(N R)": "the share of trades whose price reaches entry + N R before the stop (gross of cost; the fill bar counts only for the stop; a bar touching both counts as the stop), within 1000 bars, for N in 0.5, 1, 2, 4, 10, against 1/(N+1), the walks and the coin twin",
+  "nulls": {
+    "iid": "an iid Gaussian walk matched to each series (sigma of close changes), 256 sub-steps a bar, the real timestamps, the real cost in ATR units",
+    "garch": "a GARCH(1,1) walk with the same sigma (volatility clusters, direction does not), same construction",
+    "coin twin": "every real trade re-run with a random side (seeded) at the same fill bar, entry and risk distance, same exits"
+  },
+  "data": {
+    "classes": "FX (12 MT5 pairs), METAL (XAU XAG XPT XPD XCU), INDEX (7 MT5 indices), ENERGY (US Oil, UK Brent Oil), CRYPTO_CFD (BTC ETH SOL at every timeframe; the 32 alt-coin CFDs at 1h, 4h, 1d), BINANCE (12 perpetuals), FRESH (58 fresh coins, 4h and 1d, extra confirmation); DERIV_1S (Volatility 10/25/50/75/100 (1s), fetched read-only from the bridge into data/lrc_bars.db), DERIV_DIFFUSIVE (Volatility 10/25/50/75/100, Step 100/200/500, Drift Switch 10/20/30), DERIV_JUMPY (Jump 50, Boom 1000, Crash 1000), RANGE_BREAK (Range Break 100) each on its own line",
+    "known bad": "the 32 alt-coin crypto CFDs at 15m and 30m (the MT5 15m feed from 2025-08: a coarse price grid, no spread, one tick is several R): reported apart as KNOWN_BAD, never pooled",
+    "timeframes": "15m, 30m, 1h, 4h, 1d; 30m is resampled from 15m where the source has no 30m (MT5, Binance); the 1s indices' 30m is the bridge's",
+    "split": "discovery before 2024-01-01, confirmation from it"
+  },
+  "primaries": {
+    "P1": "R1, X2, LRC(100), pooled over the non-Deriv classes (FX, METAL, INDEX, ENERGY, CRYPTO_CFD, BINANCE) and 15m-1d, judged on confirmation",
+    "P2 (co-primary, amended before the run)": "R1, STRONG tercile, X2, the same pool, judged on confirmation",
+    "passes_if": "R > 0 with a 90% day-bootstrap interval above 0 on confirmation; R > 0 on discovery too (both halves); and R above the iid walk, the GARCH walk and the coin twin on confirmation. P2 also needs STRONG - WEAK > 0 on confirmation and greater than the walks' STRONG - WEAK. FRESH coins are reported as extra confirmation"
+  },
+  "multiplicity": "every secondary cell (rule x exit x class x timeframe on confirmation) gets a one-sided day-bootstrap p for R > 0; Benjamini-Hochberg at q = 0.10 over all of them, the count stated; a BH survivor that does not also beat both walks is not a finding",
+  "expectation_deriv": "Deriv's volatility indices are iid Brownian at their stated volatility (generators.md, deriving.md): every rule there should match its walks, before costs at zero. If R1 beats the walks on Deriv, suspect a bug or look-ahead first",
+  "amended_before_run": "2026-10-04, before any real-data run: the strength terciles (co-primary P2) and R5 with the hold-rate study were added at the desk's request; nothing had been run on real data"
+}
