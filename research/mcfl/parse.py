@@ -307,6 +307,9 @@ def parse(df: pd.DataFrame, v2: bool = True, changepoints: bool = False, sec: fl
         dist = crt.distributions(fr, pur, cid)
         crt3, _, _ = grammar(pur + dist + [e for e in toks if e.type == "CANDLE"], crt.RULES, n=len(df))
         extra += pur + dist + crt3
+        from mcfl import sweeps as SW  # the sweeps study's entities
+        extra += SW.run(fr, ext, level, zones, life, [e for e in wds if e.type == "VOID"], vev, sw, wds, cid,
+                        grammar, len(df))
         from mcfl import vocabulary
         vocabulary.columns(T, st)  # the body's middle, and the STRUCTURE state each bar knows
         extra += words(T, cid, rid, table_=vocabulary.VOCAB, fr=frames(T))

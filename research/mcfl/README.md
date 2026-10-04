@@ -24,6 +24,7 @@ are in [`research/docs/mcfl.md`](../docs/mcfl.md). It is a research instrument, 
 | `changepoints.py` | v2 item 9: FOCUS, FOCUS6 (prims.focus_series), CUSUM_IGNITION (survivors.cusum), FOCUS_ZONE; `parse(df, changepoints=True)` |
 | `volume.py` | v2 item 3: VOLUME class, EFFORT_RESULT, TAKER_SKEW |
 | `crt.py` | v2 item 12: PURGE, DISTRIBUTION, CRT3 |
+| `sweeps.py` | the sweeps study: CLOSE_REVERT (turtle soup), SWEEP_SHIFT (rule-table rows: a sweep then DISPLACE_C / DELIVERY_SHIFT the other way), INDUCEMENT, BREAKER_RETEST / RECLAIM (a broken zone's or FVG's first return), PROTECTED (STRONG / SWEEP_STRONG / WEAK) and PROTECTED_TAKEN; tests in `tests/test_sweeps.py` |
 | `mtf.py` | v2 item 10: `parse_mtf`, aggregation, CONTAINS_TF, ALIGN / CONFLICT, NESTED (causal) and the research form of inside_4h, multi-timeframe CRT |
 | `vocabulary.py` | v2 item 13: the candlestick vocabulary (PATTERN, 64 rows) |
 | `v2_study.py` | every v2 alphabet against matched walks (iid, GARCH, AR(1), gapped), P(N R) of the patterns; writes `out/v2.txt` |
