@@ -98,11 +98,81 @@ def stream(feed, frames):
     return heapq.merge(*(gen(iv, df) for iv, df in frames.items()), key=lambda x: x[0])
 
 
+def SPEC(feed):
+    """A neutral instrument: one money unit per price unit per lot, so sizing never refuses a trade.
+    (The first replay used tick_value 1 on a 1e-10 tick, which made production's sizing refuse wide
+    stops on high-priced series as below the minimum volume: see `redecide`.)"""
+    from till_infinity.trading.models import SymbolSpec
+    if os.environ.get("OLD_SPEC"):  # the first replay's spec, to check that redecide reproduces it
+        return SymbolSpec(symbol=feed, digits=10, point=1e-10, tick_size=1e-10, tick_value=1.0, volume_min=1e-6,
+                          volume_max=1e12, volume_step=1e-6, contract_size=1.0)
+    return SymbolSpec(symbol=feed, digits=10, point=1e-10, tick_size=1e-10, tick_value=1e-10, volume_min=1e-12,
+                      volume_max=1e18, volume_step=1e-12, contract_size=1.0)
+
+
+def redecide_one(path):
+    """Production's FadeToValue re-run on the logged calls, without replaying the engine: each logged
+    15m / 30m call is rebuilt as its payload, the strategy's valuation book is set to the levels it held
+    at that moment (everything within 12 vol units; fair value looks within 8), and `consider` is called
+    in the original order, so the quality gates' running floors see the same sequence."""
+    import logging
+    logging.disable(logging.WARNING)
+    from till_infinity.trading.book import Seen
+    from till_infinity.trading.models import Intent, Side, Tick
+    patch_clock()
+    log = pd.read_pickle(path)  # our own replay logs
+    tag = path.stem
+    venue, rest = tag.split("_", 1)
+    sym, source = rest.rsplit("_", 1)
+    sym = sym.replace("-", " ")
+    df, spread = log["bars"], float(log["spread"])
+    feed = sym.lower().replace(" ", "_")
+    strats = strategies()
+    shape = strats["GATED"].shape
+    spec = SPEC(feed)
+    out, refusals = [], {}
+    snaps = log["snaps"]
+    skip = {"t", "iv", "spot", "book"}
+    for r in snaps.to_dict("records"):
+        Clock.now = r["t"]
+        feats = {k: v for k, v in r.items() if k not in skip and isinstance(v, int | float) and np.isfinite(v)}
+        payload = {"shape": str(shape), "feed": feed, "venue": "replay", "interval": r["iv"], "time": r["t"],
+                   "features": feats, "confluence": [], "level_id": ""}
+        close = r["spot"]
+        tick = Tick(feed, bid=close - spread / 2, ask=close + spread / 2, time=r["t"])
+        for name, st in strats.items():
+            st.book._levels[feed] = sorted((Seen(price=b[0], interval=b[1], probability=b[2], strength=b[3],
+                                                 touches=b[4], when=b[5]) for b in r["book"]), key=lambda x: x.price)
+            st.observe(payload)  # the snapshot was taken just before this call was observed, as in the replay
+            v = st.consider(payload, spec=spec, tick=tick, equity=1e9)
+            if isinstance(v, Intent):
+                out.append(dict(variant=name, t=r["t"], iv=r["iv"], side=1 if v.side is Side.BUY else -1, entry=v.entry,
+                                mid=close, stop=v.stop, target=v.target, hold=float(v.hold or 0.0) or 4 * 3600.0,
+                                distance_vol=float(v.features.get("distance_vol", np.nan))))
+            else:
+                k = (name, str(getattr(v, "gate", "") or type(v).__name__))
+                refusals[k] = refusals.get(k, 0) + 1
+    rows = simulate(df, out, spread, zlib.crc32(f"{tag}twin".encode()) % 100000)
+    d = pd.DataFrame(rows)
+    if len(d):
+        d["venue"], d["sym"], d["src"], d["cls"] = venue, sym, source, L.klass(venue, sym, "15m")
+    pd.to_pickle(dict(trades=d, refusals=refusals, calls=len(log["calls"]), bars=len(df)), OUT / "parts2" / f"{tag}.pkl")
+    return tag, f"{len(out)} intents, {len(d)} trades"
+
+
+def redecide():
+    (OUT / "parts2").mkdir(parents=True, exist_ok=True)
+    logs = sorted((OUT / "logs").glob("*.pkl"))
+    with ProcessPoolExecutor(int(os.environ.get("WORKERS", 12))) as pool:
+        for tag, msg in pool.map(redecide_one, logs, chunksize=1):
+            print(f"  {tag}: {msg}", flush=True)
+
+
 def replay(feed, df15, spread_px):
     """Every Intent each variant produces: (variant, call time, interval, side, entry, stop, target, hold)."""
     from till_infinity.structures import zma as zm
     from till_infinity.structures.engine import Engine
-    from till_infinity.trading.models import Intent, Side, SymbolSpec, Tick
+    from till_infinity.trading.models import Intent, Side, Tick
     patch_clock()
     frames = {"15m": df15}
     for iv in IVS[1:]:
@@ -110,8 +180,7 @@ def replay(feed, df15, spread_px):
     engine = Engine(intervals=IVS)
     engine.consensus.single_source = frozenset({feed})
     strats = strategies()
-    spec = SymbolSpec(symbol=feed, digits=10, point=1e-10, tick_size=1e-10, tick_value=1.0, volume_min=1e-6,
-                      volume_max=1e12, volume_step=1e-6, contract_size=1.0)
+    spec = SPEC(feed)
     out, refusals, calls_n = [], {}, 0
     calls, snaps = [], []
     for (_key, bar) in stream(feed, frames):
@@ -289,7 +358,7 @@ def run():
 def agg():
     rng = np.random.default_rng(44)
     T, refusals = [], {}
-    for p in sorted((OUT / "parts").glob("*.pkl")):
+    for p in sorted((OUT / os.environ.get("PARTS", "parts2")).glob("*.pkl")):
         d = pd.read_pickle(p)  # our own parts
         if d.get("dropped") or not len(d["trades"]):
             continue
@@ -359,7 +428,7 @@ def plot():
 
 
 def main():
-    {"run": run, "agg": agg, "plot": plot}[os.environ.get("MODE", "run")]()
+    {"run": run, "redecide": redecide, "agg": agg, "plot": plot}[os.environ.get("MODE", "run")]()
 
 
 if __name__ == "__main__":
