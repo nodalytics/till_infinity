@@ -38,3 +38,51 @@ INVALIDATED = WARMUP + RISE + FALL + LEG_INVALID + AFTER
 # closes above the high at 101.0 having travelled 1.55 (under 2 ATR) from the origin: no DISPLACE
 SHALLOW = WARMUP + [100.7, 100.5, 100.3, 100.1, 99.95, 100.2, 100.85, 101.0, 101.1, 101.2]
 SHALLOW_ORIGIN = len(WARMUP) + 4
+
+
+# ---------------------------------------------------------------- v2
+
+def zig(points: list[float], step: float = 0.5) -> list[float]:
+    """Closes moving in `step`s from each point to the next: a zigzag whose turns are 3/3 swings
+    when each leg is at least four steps long."""
+    out: list[float] = []
+    for a, b in zip(points, points[1:]):
+        k = int(round(abs(b - a) / step))
+        s = 1.0 if b > a else -1.0
+        out += [a + s * step * (i + 1) for i in range(k)]
+    return out
+
+
+# an up trend (HH HL HH HL HH), a fall that breaks the last higher low (the CHoCH, bar 67), a lower
+# high and a lower low (DOWN), and two breaks down with the new structure (BOS, bars 87 and 103)
+TREND_CHOCH_BOS = WARMUP + zig([100.5, 103, 101.5, 105, 103, 107, 105, 109, 101, 104, 99, 102, 96])
+CHOCH_BAR = 67
+
+
+def with_time(df: pd.DataFrame, sec: int = 900, start: int = 0) -> pd.DataFrame:
+    """The bars with a `ts` column (bar open, epoch seconds), every `sec` seconds from `start`."""
+    return df.assign(ts=start + np.arange(len(df), dtype=np.int64) * sec)
+
+# a swing high at 104 (high 104.25), an origin at 100 (low 99.75), a rise to 103 and a pullback to 101
+# (a swing low, low 100.75) inside the leg, then the close above 104.25 at bar 51: the pullback is
+# 0.8 of the leg to the break (DEEP, past the DAX 50%)
+DAX_DEEP = WARMUP + zig([100.5, 104, 100, 103, 101, 105, 103, 106])
+# the same leg pulling back only to 103 (low 102.75): 0.4 of it (HALF, above the 50%)
+DAX_SHALLOW = WARMUP + zig([100.5, 104, 100, 104]) + zig([104, 103], 0.25) + zig([103, 106])
+
+# two swing highs at 103 (high 103.25, bars 24 and 32): EQUAL_HIGHS, then lows at 101 (EQUAL_LOWS at
+# 36), and a rise to 104 that takes the highs at bar 41 and closes through
+EQUAL_HIGHS = WARMUP + zig([100.5, 103, 101, 103, 101, 104])
+
+FINE = [100.0, 100.01] + WARMUP[2:]
+"""The warm-up with a 0.01 move at bar 1, so the running tick (and with it the point tolerance) is
+0.05 ATR from then on, not the 0.25 of the plain warm-up."""
+
+
+def ohlc(rows: list[tuple[float, float, float, float]]) -> pd.DataFrame:
+    return pd.DataFrame([dict(open=o, high=h, low=l, close=c, volume=1.0) for o, h, l, c in rows])
+
+
+def after(base: list[float], rows: list[tuple[float, float, float, float]]) -> pd.DataFrame:
+    """Closes `base` as bars, then explicit OHLC rows."""
+    return pd.concat([bars(base), ohlc(rows)], ignore_index=True)

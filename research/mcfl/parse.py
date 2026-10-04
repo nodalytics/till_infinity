@@ -67,8 +67,13 @@ LEVEL_RULES = {
 
 
 def flip(df: pd.DataFrame) -> pd.DataFrame:
-    """The chart upside down: prices negated, highs and lows swapped. flip(flip(df)) == df exactly."""
-    return df.assign(open=-df["open"], close=-df["close"], high=-df["low"], low=-df["high"])
+    """The chart upside down: prices negated, highs and lows swapped. flip(flip(df)) == df exactly.
+    v2: with taker volume, buyers and sellers trade places (the sell side is volume - buy if absent)."""
+    out = df.assign(open=-df["open"], close=-df["close"], high=-df["low"], low=-df["high"])
+    if "taker_buy_volume" in df:
+        sell = df["taker_sell_volume"] if "taker_sell_volume" in df else df["volume"] - df["taker_buy_volume"]
+        out = out.assign(taker_buy_volume=sell, taker_sell_volume=df["taker_buy_volume"])
+    return out
 
 
 def _f(x: float) -> float | None:
@@ -211,9 +216,13 @@ def relations(entities: list[Entity]) -> list[Relation]:
             rel("TOUCH", e, e.get("zone"))
         elif e.type == "FAIL":
             rel("INVALIDATE", e, e.get("zone"))
-        elif e.type == "ZONE":
+        elif e.type in ("ZONE", "POOL"):
             for part in e.parts:
                 rel("CONTAIN", e, part)
+        elif e.type == "POOL_TAKEN":  # v2: closed back, a touch (a sweep of the pool); else a cross
+            rel("TOUCH" if e.get("closed_back") else "CROSS", e, e.get("pool"))
+            for part in e.parts[1:]:
+                rel("LINK", e, part)  # the members' BREACH_REVERTs on the same bar: the same fact per swing
         elif e.type == "LEG":
             vs = voids[e.dir]
             lo = bisect.bisect_left(vs, (e.at + 2, ""))
@@ -226,26 +235,76 @@ def relations(entities: list[Entity]) -> list[Relation]:
     return out
 
 
-def parse(df: pd.DataFrame) -> Chart:
-    """Bars (open, high, low, close[, volume]) to a Chart. The index is ignored: bars are 0..n-1."""
+def parse(df: pd.DataFrame, v2: bool = True, changepoints: bool = False, sec: float | None = None) -> Chart:
+    """Bars (open, high, low, close[, volume][, ts][, taker_buy_volume]) to a Chart. The index is
+    ignored: bars are 0..n-1. `v2=False` gives the v1 chart alone (the v2 entities and attributes are
+    left out). `changepoints=True` adds FOCUS, FOCUS6, CUSUM_IGNITION and FOCUS_ZONE (v2 item 9);
+    `sec` is the bar's length in seconds for the FOCuS threshold (default: from `ts`, else an hour)."""
     from mcfl.grammar import CANDLE_RULES, RULES, frames, words
     from mcfl.grammar import apply as grammar
     from mcfl.lifecycle import run as lifecycle
 
     df = df.reset_index(drop=True)
     T = candles.table(df)
+    if v2:
+        from mcfl import timing
+        from mcfl import volume
+        candles.compression(T)
+        volume.columns(T, df)
+        timing.columns(T, df)
     cid, rid = candles.ids(T)
     toks = candles.entities(T)
     fr = frames(T)
     wds = words(T, cid, rid, fr=fr)
     ext = [e for e in wds if e.type == "EXTREME"]
     level = [e for side in (1, -1) for e in _side(fr[side], ext, side, cid)]
+    extra: list[Entity] = []
+    vtrans: list = []
+    if v2:
+        from mcfl.grammar import WORDS2
+        extra += words(T, cid, rid, table_=WORDS2, fr=fr)
+        from mcfl import structure as S
+        swings = S.labels(ext, T["atr"])
+        sshift, st, cnt, rnid = S.shifts(swings, len(df))
+        level = S.annotate_breaks(level, st)
+        extra += swings + sshift + S.character_shifts([e for e in level if e.type == "BREAK"], st, cnt, rnid)
+        from mcfl import voids
+        vev, vtrans = voids.run(fr, [e for e in wds if e.type == "VOID"], cid)
+        extra += vev
     zones, failures, pending = grammar([e for e in wds if e.type in ("EXTREME", "VOID")] + level, RULES)
     life, transitions, states = lifecycle(T, zones, failures, cid, [e for e in wds if e.type == "DELIVERY_SHIFT"])
     rejects, _, _ = grammar([e for e in toks if e.type == "CANDLE"] + zones + life, CANDLE_RULES, n=len(df))
-    ents = sorted(toks + wds + level + zones + life + rejects, key=sort_key)
+    if v2:
+        from mcfl import retrace
+        pbs = retrace.pullbacks(fr, level, ext)
+        dax, _, _ = grammar([e for e in level if e.type == "BREAK"] + pbs, retrace.RULES, n=len(df))
+        extra += retrace.retraces(fr, zones, life) + pbs + dax
+        from mcfl import pools
+        sw = pools.sweeps(fr, ext)
+        setups, _, _ = grammar(sw + [e for e in level if e.type == "BREAK"] + pbs, pools.RULES, n=len(df))
+        extra += pools.pools(fr, ext, level) + sw + setups
+        from mcfl import ranges
+        extra += ranges.run(T, cid)
+        extra += timing.sessions(T, cid)
+        from mcfl import crt
+        pur = words(T, cid, rid, table_={"PURGE": crt.PURGE}, fr=fr)
+        dist = crt.distributions(fr, pur, cid)
+        crt3, _, _ = grammar(pur + dist + [e for e in toks if e.type == "CANDLE"], crt.RULES, n=len(df))
+        extra += pur + dist + crt3
+        from mcfl import vocabulary
+        vocabulary.columns(T, st)  # the body's middle, and the STRUCTURE state each bar knows
+        extra += words(T, cid, rid, table_=vocabulary.VOCAB, fr=frames(T))
+    ents = toks + wds + level + zones + life + rejects + extra
+    if v2 and changepoints:
+        from mcfl import changepoints as CP
+        cps = CP.focus(df, cid, CP.bar_seconds(df, sec)) + CP.cusum(df, cid)
+        fz, _, _ = grammar(zones + cps, CP.RULES, n=len(df))
+        ents += cps + fz
+    if v2:
+        ents = timing.tempo(ents)
+    ents = sorted(ents, key=sort_key)
     rels = sorted(relations(ents), key=lambda r: (r.known_at, r.kind, r.src, r.dst))
     return Chart(n=len(df), entities=tuple(ents), relations=tuple(rels),
                  failures=tuple(sorted(failures, key=lambda f: (f.known_at, f.candidate))),
-                 transitions=tuple(sorted(transitions, key=lambda t: (t.known_at, t.zone, t.at))),
+                 transitions=tuple(sorted(transitions + vtrans, key=lambda t: (t.known_at, t.zone, t.at))),
                  states=tuple(sorted(states.items())), pending=tuple(sorted(pending)))

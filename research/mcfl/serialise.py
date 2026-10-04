@@ -47,19 +47,52 @@ def _bin(x: float | None, bins: tuple) -> str:
     return next(name for edge, name in bins if x < edge)
 
 
-def token(e: Entity, bins: bool = False) -> str:
+# ---------------------------------------------------------------- v2 token text
+
+#: Each v2 type's text qualifier: what says which one it is, printed in brackets after the type and
+#: arrow by `token(e, v2=True)`. v1 text is unchanged unless asked.
+V2_TEXT: dict[str, Any] = {
+    "SWING": lambda e: e.get("label"),
+    "STRUCTURE_SHIFT": lambda e: f"{e.get('from')}>{e.get('to')}",
+    "BREAK": lambda e: e.get("vs_structure"),
+    "RETRACE": lambda e: e.get("depth_bin"),
+    "PULLBACK": lambda e: f"{e.get('phase')}:{e.get('depth_bin')}",
+    "POOL": lambda e: f"{e.get('kind')}:{e.get('count')}",
+    "POOL_TAKEN": lambda e: "SWEPT" if e.get("closed_back") else "THROUGH",
+    "RANGE_TEST": lambda e: str(e.get("count")),
+    "SESSION_OPEN": lambda e: e.get("session"),
+    "SESSION_EXTREME": lambda e: e.get("session"),
+    "SESSION_EXTREME_TAKEN": lambda e: e.get("session"),
+    "DISTRIBUTION": lambda e: f"{e.get('bars')}" + (f",mid:{e.get('mid_bars')}" if e.get("mid_bars", -1) >= 0 else ""),
+    "PATTERN": lambda e: e.get("name") + (f":{e.get('quality')}" if e.get("quality") else ""),
+}
+for _t in ("REVISIT", "REJECT_PATH", "ACCEPT", "FAIL", "EXPIRE", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
+           "ESCAPE", "FAILED_ESCAPE"):
+    V2_TEXT[_t] = lambda e: e.get("pace") if e.get("pace") not in (None, "WARMUP") else None
+_rt = V2_TEXT["RANGE_TEST"]
+V2_TEXT["RANGE_TEST"] = lambda e: ":".join(x for x in (_rt(e), e.get("pace")) if x and x != "WARMUP")
+
+
+def _v2(e: Entity) -> str:
+    f = V2_TEXT.get(e.type)
+    q = f(e) if f is not None else None
+    return f"[{q}]" if q else ""
+
+
+def token(e: Entity, bins: bool = False, v2: bool = False) -> str:
+    """`BREAK↑`, binned `BREAK↑[force:strong,age:mid,took:1]`, with v2 qualifiers `BREAK↑[WITH]`
+    (both: `BREAK↑[force:strong,age:mid,took:1][WITH]`)."""
     t = f"{e.type}{e.dir.arrow}"
-    if not bins:
-        return t
-    if e.type == "BREAK" and e.force is not None:
-        return (f"{t}[force:{_bin(e.force.magnitude, FORCE_BINS)},age:{_bin(e.get('ref_age'), AGE_BINS)},"
-                f"took:{_bin(e.get('swings_taken'), TOOK_BINS)}]")
-    if e.type == "VOID":
-        return f"{t}[size:{_bin(e.get('size_atr'), VOID_BINS)}]"
-    if e.type == "REVISIT":
-        k = e.get("count")
-        return f"{t}[n:{k if k < 3 else '3+'}]"
-    return t
+    if bins:
+        if e.type == "BREAK" and e.force is not None:
+            t = (f"{t}[force:{_bin(e.force.magnitude, FORCE_BINS)},age:{_bin(e.get('ref_age'), AGE_BINS)},"
+                 f"took:{_bin(e.get('swings_taken'), TOOK_BINS)}]")
+        elif e.type == "VOID":
+            t = f"{t}[size:{_bin(e.get('size_atr'), VOID_BINS)}]"
+        elif e.type == "REVISIT":
+            k = e.get("count")
+            t = f"{t}[n:{k if k < 3 else '3+'}]"
+    return t + _v2(e) if v2 else t
 
 
 def sentence(chart: Chart, types: tuple[str, ...] = SENTENCE_TYPES) -> list[Entity]:
@@ -81,8 +114,8 @@ def _origin_at(e: Entity) -> int:
     return int(o.split(".")[2]) if o else -1
 
 
-def tokens(chart: Chart, bins: bool = False, types: tuple[str, ...] = SENTENCE_TYPES) -> list[str]:
-    return [token(e, bins) for e in sentence(chart, types)]
+def tokens(chart: Chart, bins: bool = False, types: tuple[str, ...] = SENTENCE_TYPES, v2: bool = False) -> list[str]:
+    return [token(e, bins, v2) for e in sentence(chart, types)]
 
 
 def episode(chart: Chart, zone_id: str, bins: bool = False) -> list[str]:
@@ -124,26 +157,77 @@ def _by_bar(chart: Chart) -> tuple[dict[int, Entity], dict[int, Entity]]:
     return c, r
 
 
-def bar_words(chart: Chart) -> list[str]:
+def bar_words(chart: Chart, v2: bool = False) -> list[str]:
     """One word a bar: `BULL(L,T,N,S)/HH` - direction(size, body, upper wick, lower wick)/relation
     to the previous bar (IN, OUT, HH, LL; +E when the body engulfs). The first bar has no relation;
-    warm-up bars print their classes as W."""
+    warm-up bars print their classes as W. `v2=True` appends the v2 L1 qualifiers (`v2_word`)."""
     c, r = _by_bar(chart)
+    if v2:
+        return [word(c.get(t), r.get(t)) + v2_word(c.get(t), r.get(t)) for t in range(chart.n)]
     return [word(c.get(t), r.get(t)) for t in range(chart.n)]
+
+
+V2_L1_TEXT: list = []
+"""Functions (candle, relation) -> list of codes, each adding a v2 L1 qualifier to the bar word."""
+
+
+def _v2_compression(c: Entity, r: Entity | None) -> list[str]:
+    out = [k for k in ("NR4", "NR7", "WR7") if c.get(k)]
+    if r is not None and r.get("overlap") is not None:
+        out.append(f"ov{r.get('overlap'):.2f}")
+    return out
+
+
+V2_L1_TEXT.append(_v2_compression)
+
+
+def _v2_volume(c: Entity, r: Entity | None) -> list[str]:
+    from mcfl.candles import CODE
+    vc = c.get("volume_class")
+    if vc is None or vc == "WARMUP":
+        return []
+    out = [f"v:{CODE[vc]}"]
+    eff = {"ABSORPTION": "ABS", "EASE": "EASE", "AGREE": "AGR"}.get(c.get("effort"))
+    if eff:
+        out.append(eff)
+    tk = {"BUY": "tb", "SELL": "ts"}.get(c.get("taker"))
+    if tk:
+        out.append(tk)
+    return out
+
+
+V2_L1_TEXT.append(_v2_volume)
+
+
+def _v2_time(c: Entity, r: Entity | None) -> list[str]:
+    from mcfl.timing import SESSION_CODE
+    return [f"@{SESSION_CODE[c.get('session')]}.{c.get('dow')}"] if c.get("session") else []
+
+
+V2_L1_TEXT.append(_v2_time)
+
+
+def v2_word(c: Entity | None, r: Entity | None) -> str:
+    """The v2 L1 qualifiers of a bar as text: ` #NR7,ov0.82,...` - NR4 / NR7 / WR7, the overlap with
+    the previous bar, then the volume, effort and session codes when the chart has them."""
+    if c is None:
+        return ""
+    codes = [x for f in V2_L1_TEXT for x in f(c, r)]
+    return " #" + ",".join(codes) if codes else ""
 
 
 def bar_sentence(chart: Chart) -> str:
     return " ".join(bar_words(chart))
 
 
-def interleaved(chart: Chart, types: tuple[str, ...] = V1_TYPES, bins: bool = False) -> list[str]:
+def interleaved(chart: Chart, types: tuple[str, ...] = V1_TYPES, bins: bool = False, v2: bool = False) -> list[str]:
     """The bar words with every L2/L3 event of `types` placed after the word of the bar at which it
     became known (its known_at), in the event sentence's order - so a reader sees an EXTREME three
     words after its own bar, when it could first have been known."""
     ws = bar_words(chart)
     at: dict[int, list[str]] = {}
     for e in sentence(chart, types):
-        at.setdefault(e.known_at, []).append(token(e, bins))
+        at.setdefault(e.known_at, []).append(token(e, bins, v2))
     out = []
     for t, w in enumerate(ws):
         out.append(w)

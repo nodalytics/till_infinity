@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import bisect
 import operator
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -75,7 +76,7 @@ from typing import Any
 import numpy as np
 
 from mcfl.candles import BODY, GRADE, QUARTILES, REL_FIELDS, SIZE, WGRADE, WICK, Table, frame
-from mcfl.core import (COMPOSITE_POINTS, NAMED_POINTS, NEG_FIELD, POINT_ALIASES, SIDES, Dir, Entity, Failure,
+from mcfl.core import (COMPOSITE_POINTS, NAMED_POINTS, NEG_FIELD, POINT_ALIASES, POINTS, SIDES, Dir, Entity, Failure,
                        attrs_of, make_id, swap_key, view)
 
 ZONE_BREAK_MAX = 20
@@ -125,6 +126,8 @@ class Word:
     rels: tuple[int, ...] = ()  # BAR_RELATION offsets consumed
     unless: tuple[Clause, ...] = ()  # a context that must not hold as a whole (cells it reads may be absent)
     attrs: Callable[[Table, int, int], dict] | None = None  # semantic action: (frame, bar, side) -> attributes
+    sym: bool = False  # v2: a word with no direction (BALANCE, a doji): one event, Dir.NONE, where it holds both ways
+    suffix: str = ""  # v2: an id suffix, so several words of one head can share a bar (PATTERN.U.57.hammer)
 
     @property
     def span(self) -> int:
@@ -153,7 +156,14 @@ _KEYS = {"dir": ("dir", None), "size": ("size", SIZE), "upper": ("upper", WICK),
          "wick.up.share": ("upper_share_g", WGRADE), "wick.low.share": ("lower_share_g", WGRADE),
          "wick.up.body": ("upper_body", "num"), "wick.low.body": ("lower_body", "num"),
          "close": ("close_q", QUARTILES), "rel": ("rel", None), "engulf": ("engulf", None),
-         "beyond": ("beyond", None)}
+         "beyond": ("beyond", None),
+         # v2
+         "overlap": ("overlap", "num"), "session": ("session", None), "dow": ("dow", None),
+         "vol": ("volume_class", SIZE), "effort": ("effort", None), "taker": ("taker", None),
+         "trend": ("trend", None)}
+FLAGS: set[str] = {"NR4", "NR7", "WR7"}
+"""v2: boolean token columns a qualifier names bare (`CANDLE[NR7]`, `CANDLE[not WR7]`); modules add
+theirs."""
 _OPS = (("≥", ">="), ("≤", "<="), (">=", ">="), ("<=", "<="), ("!=", "!="), ("≠", "!="), ("=", "=="),
         (">", ">"), ("<", "<"))
 
@@ -166,12 +176,20 @@ def _key(key: str, value: str) -> tuple[str, Any]:
     return _KEYS[key]
 
 
+_CELL = re.compile(r"^([ohlc])(≥|≤|>=|<=|>|<|=)p([ohlc])$")
+_CELL_OPS = {">": ("+",), "≥": ("+", "="), ">=": ("+", "="), "=": ("=",), "<": ("-",), "≤": ("-", "="), "<=": ("-", "=")}
+
+
 def _qual(item: str, cell: int | None) -> Clause:
     item = item.strip()
     pre = "" if cell is None else f"{cell}."
+    m = _CELL.match(item)
+    if m:  # v2: one cell of the point matrix, `o>pc`: this bar's open against the previous close
+        x, op, y = m.groups()
+        return C(f"{pre}@P:{x.upper()}{y.upper()}", "in", frozenset(_CELL_OPS[op]))
     neg = item.startswith("not ")
     name = POINT_ALIASES.get(item[4:].strip() if neg else item, item[4:].strip() if neg else item)
-    if name in NAMED_POINTS or name in COMPOSITE_POINTS:
+    if name in NAMED_POINTS or name in COMPOSITE_POINTS or name in FLAGS:
         return C(pre + name, "==", not neg)
     for sym, op in _OPS:
         if sym in item:
@@ -202,6 +220,44 @@ def q(spec: str, cell: int | None = None) -> tuple[Clause, ...]:
     """`CANDLE[dir=BULL, body≥STRONG, close=Q4, wick.up≤WEAK]` as clauses on token cell `cell`
     (a word) or on the slot's own entity (`cell=None`, a rule)."""
     return tuple(_qual(x, cell) for x in _items(spec, "CANDLE"))
+
+
+ENTITY_ORDERS: dict[str, tuple[str, tuple[str, ...]]] = {}
+"""v2: ordered attribute values for entity qualifiers, `key -> (attribute, values in order)`; each
+module registers its own (retrace: depth -> depth_bin SHALLOW < HALF < DEEP < BEYOND)."""
+
+
+def qe(spec: str) -> tuple[Clause, ...]:
+    """v2: an entity qualifier, `TYPE[key op value, ...]`, as clauses on a rule slot's entity. A
+    number compares with the attribute itself (`PULLBACK[depth≥0.5]`); a value of a registered order
+    compares by rank (`PULLBACK[depth≥HALF]` is HALF, DEEP or BEYOND); anything else is (in)equality
+    with the attribute (`PULLBACK[phase=INSIDE]`)."""
+    head = spec.split("[", 1)[0].strip()
+    out = []
+    for item in _items(spec, head):
+        item = item.strip()
+        for sym, op in _OPS:
+            if sym in item:
+                key, value = (x.strip() for x in item.split(sym, 1))
+                break
+        else:
+            raise ValueError(f"cannot read qualifier {item!r}")
+        try:
+            out.append(C(key, op, float(value)))
+            continue
+        except ValueError:
+            pass
+        if key in ENTITY_ORDERS and value in ENTITY_ORDERS[key][1]:
+            col, order = ENTITY_ORDERS[key]
+            if op in ("==", "!="):
+                out.append(C(col, op, value))
+            else:
+                i = order.index(value)
+                keep = {">=": order[i:], "<=": order[:i + 1], ">": order[i + 1:], "<": order[:i]}[op]
+                out.append(C(col, "in", frozenset(keep)))
+        else:
+            out.append(C(key, op, value))
+    return tuple(out)
 
 
 def run(spec: str) -> tuple[tuple[int, ...], tuple[Clause, ...], tuple[Clause, ...]]:
@@ -281,8 +337,12 @@ def _col(F: Table, x: Expr, t: np.ndarray) -> tuple[Any, np.ndarray]:
     i = t + k
     ok = (i >= 0) & (i < n)
     ic = np.clip(i, 0, max(n - 1, 0))
-    if f in REL_FIELDS:
+    if f in REL_FIELDS or f.startswith("@P:"):
         ok &= F["rel_valid"][ic]
+    if f.startswith("@P:"):  # a cell of the point matrix, read from the frame's own (flipped) matrix
+        j = POINTS.index(f[3]) * 4 + POINTS.index(f[4])
+        col = np.array([s[j] if s else "" for s in F["points"]], object)
+        return col[ic], ok
     return F[f][ic], ok
 
 
@@ -331,11 +391,23 @@ def words(T: Table, cid: list[str], rid: list[str | None], names: Iterable[str] 
     out, seen = [], set()
     for name in names:
         w = table_[name]
+        if w.sym:
+            both = word_mask(w, fr[1]) & word_mask(w, fr[-1])
+            for t in np.flatnonzero(both):
+                t = int(t)
+                eid = make_id(w.head, Dir.NONE, t, w.suffix)
+                if eid in seen:
+                    continue
+                seen.add(eid)
+                attrs = w.attrs(fr[1], t, 1) if w.attrs else {"rule": name}
+                parts = tuple(cid[t + k] for k in sorted(w.cells)) + tuple(rid[t + k] for k in sorted(w.rels))
+                out.append(Entity(eid, w.head, Dir.NONE, t, t + w.span, attrs_of(attrs), parts=parts))
+            continue
         for side, d in zip((1, -1), SIDES):
             F = fr[side]
             for t in np.flatnonzero(word_mask(w, F)):
                 t = int(t)
-                eid = make_id(w.head, d, t)
+                eid = make_id(w.head, d, t, w.suffix)
                 if eid in seen:
                     continue
                 seen.add(eid)
@@ -649,3 +721,26 @@ def _build(rule: Rule, anc: Entity, bound: dict[str, list[Entity]], d: Dir) -> E
         suffix = f"{rule.suffix[0]}{_eval(rule.suffix[1], bound, 1)}"
     return Entity(make_id(rule.head, d, at, suffix), rule.head, d, at, known,
                   attrs_of(attrs), parts=tuple(e.id for e in parts))
+
+
+# ---------------------------------------------------------------- v2 words
+
+BALANCE_K = 3
+"""Bars in a BALANCE or IMBALANCE run."""
+BALANCE_MIN = 0.75
+"""BALANCE: each bar has at least this share of its range inside the previous bar's."""
+IMBALANCE_MAX = 0.25
+"""IMBALANCE: each bar has at most this share inside the previous bar's, extending it one way."""
+
+_BAL = run(f"RUN[k≥{BALANCE_K}, overlap≥{BALANCE_MIN}]")
+_IMB = run(f"RUN[k≥{BALANCE_K}, overlap≤{IMBALANCE_MAX}, rel=HH]")
+
+WORDS2: dict[str, Word] = {
+    # v2 item 2: runs of overlapping and of non-overlapping bars
+    "BALANCE": Word("BALANCE", _BAL[0], _BAL[1], rels=_BAL[0], unless=_BAL[2], sym=True,
+                    attrs=lambda F, t, side: {"bars": BALANCE_K}),
+    "IMBALANCE": Word("IMBALANCE", _IMB[0], _IMB[1], rels=_IMB[0], unless=_IMB[2],
+                      attrs=lambda F, t, side: {"bars": BALANCE_K}),
+}
+"""BALANCE   := RUN[k≥3, overlap≥0.75]            k overlapping bars (no direction)
+IMBALANCE_UP := RUN[k≥3, overlap≤0.25, rel=HH]  k bars each mostly above the last, higher highs"""

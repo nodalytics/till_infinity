@@ -1,7 +1,18 @@
-# MCFL v1: a formal language for what a chart shows, and what a walk shows too
+# MCFL v2: a formal language for what a chart shows, and what a walk shows too
 
 Code: [`research/mcfl/`](../mcfl/README.md). Specification written 2026-10-03 with v0 of the parser
-and extended the same day to v1. Run on generated bars only; no market data was used.
+and extended the same day to v1 and v2. Run on generated bars only; no market data was used.
+
+**What v2 adds** (the thirteen items of [`mcfl-roadmap.md`](mcfl-roadmap.md), section v2; their
+definitions are in [v2](#v2-structure-lifecycles-time-timeframes-and-the-candlestick-vocabulary)
+below): swing-structure labels and a STRUCTURE state, the BREAK's relation to it and the CHoCH;
+compression and expansion words; volume (effort against result); the VOID lifecycle; RANGE as a
+structure; liquidity pools and the DAX course's protected sweep; retracement depth; sessions, days
+and tempo; FOCuS and CUSUM changepoints as events; multiple timeframes, with the desk's nested-zone
+finding as one production in a causal form; candle range theory; and the classical candlestick
+vocabulary as productions over the v1 words. v0 and v1 are unchanged (`parse(df, v2=False)` gives
+the v1 chart; the default parse adds the v2 entities and attributes). Every v2 entity has a
+`known_at`, is under the truncation test, and is flip-symmetric.
 
 **What v1 adds.** v0 started at events: an EXTREME, a VOID, a BREAK, each computed from prices.
 v1 puts a token layer under them, so a chart reads as one sentence from the bars up. Every bar is
@@ -344,7 +355,7 @@ is changed at a time, so each production is shown to pass, and to fail on streng
 | **ORIGIN** | the bar of a swing low (with a defined ATR) seen as the start of an up leg. Its band is the bar's low to its body top, widened to at least ORIGIN_MIN_HEIGHT = 0.05 ATR (zone_events' `body` bound) | `extreme`, `atr`, `far` (the low), `near` (the body top), `band` | p + 3 |
 | **LEG** | the bars from an origin until it BREAKs, is INVALIDATED (a bar trades below the origin's low; that bar is not part of it) or TIMEs OUT (p + 20). A leg still open at the last bar is not emitted | `origin`, `end`, `reason`, `ref`, `extreme_px`, `displacement_atr` | max(end, p + 3) |
 | **ZONE** | an ORIGIN the grammar accepts | `rule`, `far`, `near`, `band`, `atr`, `break_at`, `level`, `n_voids`, `magnitude`; `parts` | the latest `known_at` of its parts |
-| RANGE | reserved: the band between the EXTREME↑ and EXTREME↓ in force while neither is broken | | |
+| RANGE | v2: a box of k bars within x ATR, with its tests and escapes (v2 item 5 below; v0 reserved the name) | `high`, `low`, `height_atr`, `atr`, `bars` | the detecting bar |
 | EPISODE | a zone's whole sentence, origin to terminal state; still a serialisation (`serialise.episode`), not an entity | | |
 
 ## Relations
@@ -446,6 +457,489 @@ a `known_at`, because it depends on where the series stops.
 On six 5,000-bar random walks the 1,604 zones ended 878 FAILED, 388 ACCEPTED, 288 EXPIRED, and the
 rest still live.
 
+## v2: structure, lifecycles, time, timeframes and the candlestick vocabulary
+
+The items in the roadmap's build order. Each is written for the up side and run on the chart and on
+the chart flipped, like everything else; each entity's `known_at` is the first bar it could be known,
+checked by the truncation tests (`tests/test_causality.py`, `tests/test_v2_causality.py`). Text forms
+are `token(e, v2=True)`: the type, the arrow, then the qualifier that says which one it is in brackets.
+Non-directional v2 entities (BALANCE, RANGE, a DOJI) have direction NONE, which v1 allowed only for
+L1 tokens.
+
+### 1. Swing-structure labels and the STRUCTURE state
+
+`structure.py`. Each EXTREME after the first of its kind is labelled against the previous EXTREME of
+its kind (by bar), with tol = SWING_EQ_ATR (**0.1**) × ATR(14) at the later swing:
+
+| kind | label | condition | flip twin |
+|---|---|---|---|
+| high (EXTREME↑) | HH | price > previous high + tol | LL |
+| | EH | within tol | EL |
+| | LH | price < previous high - tol | HL |
+| low (EXTREME↓) | LL | price < previous low - tol | HH |
+| | EL | within tol | EH |
+| | HL | price > previous low + tol | LH |
+
+A label is a **SWING** event: `at` and `known_at` the EXTREME's (bar + 3), `parts` the previous
+EXTREME and this one, attributes `label`, `price`, `prev` (the previous EXTREME's id), `diff_atr`
+(signed, positive further out) and `bars` between them. Text `SWING↑[HH]`.
+
+The **STRUCTURE** state (L4) is read from the last high label and the last low label known:
+
+| state | condition |
+|---|---|
+| UP | last high HH and last low HL |
+| DOWN | last high LH and last low LL |
+| MIXED | anything else, including an EH or EL (an equal high is not a higher high), and before both kinds have a label |
+
+Labels known on the same bar (a bar can be both a swing high and a swing low) are applied together
+and the state read once, so their order cannot matter. **STRUCTURE_SHIFT** is the event of a change:
+at the latest labelled bar, known at the labels' `known_at`, attributes `from`, `to` and `run` (the
+labels the previous state held), parts the SWING events that caused it; direction UP when the state
+rose in the order DOWN < MIXED < UP, DOWN when it fell. Text `STRUCTURE_SHIFT↑[MIXED>UP]`. The
+state known at any bar is `structure.structure_at(chart, t)` (and, inside the parser, the token
+table's `trend` column, which the candlestick vocabulary reads).
+
+### 11. vs_structure, BOS and CHARACTER_SHIFT (CHoCH)
+
+Every BREAK gets `vs_structure` and `structure`, read from the STRUCTURE state known at the break's
+own bar b (labels with `known_at` ≤ b):
+
+| `vs_structure` | condition | trader term |
+|---|---|---|
+| WITH | the state is the break's direction (UP and BREAK↑) | **BOS**: a BREAK with WITH is the trader's break of structure |
+| AGAINST | the state is the other direction | |
+| NONE | the state is MIXED | |
+
+Text `BREAK↑[WITH]`.
+
+**CHARACTER_SHIFT** (alias CHoCH): the first AGAINST BREAK while an **established** UP or DOWN state
+holds, once per run of that state. A state is established once ESTABLISH_LABELS (**2**) consecutive
+labels have held it, the label that set it counting; a run ends at the next STRUCTURE_SHIFT. Breaks
+are taken in the order they became known (known_at, then bar, then the earliest origin), so a prefix
+sees the same first one; at most one per bar. Direction the break's, `known_at` the break's, `parts`
+the BREAK; attributes `break`, `structure` (the state it went against), `run`, `level`.
+
+The fixture `TREND_CHOCH_BOS` (`tests/test_structure.py`): an up trend labelled HH HL HH HL HH
+(state UP from bar 41, established at 49), BOS↑ at 43 and 55 (WITH), a fall that breaks the last
+higher low at bar 67 (AGAINST: the CHARACTER_SHIFT↓), then LL and LH (MIXED at 77, DOWN at 83), and
+breaks down at 87 and 103 that are WITH - the BOS in the new direction - and not further CHoCHs. A
+break against a state that only one label holds is AGAINST without being a CHoCH.
+
+### 4. The VOID lifecycle
+
+`voids.py`. Every VOID is followed from the bar after it to its end:
+
+```
+UNTOUCHED --VOID_PARTIAL--> PARTIAL --VOID_FILLED--> FILLED --VOID_INVERTED--> INVERTED (terminal)
+```
+
+For a VOID↑ at bar k (down mirrored), `near` = its top l[k] (the edge price meets first on the way
+back), `far` = its bottom h[k-2]:
+
+| event | the first bar t > k with | attributes | `known_at` |
+|---|---|---|---|
+| VOID_PARTIAL | l[t] < near (price entered the gap; a low exactly at the edge has not) | `void`, `share` = (near - l[t]) / (near - far), capped at 1 | t |
+| VOID_FILLED | l[t] ≤ far (traded through it) | `void`, `share` (1) | t |
+| VOID_INVERTED | c[t] < far (a close beyond its far side: the IFVG) | `void`, `beyond_atr` = (far - c[t]) / ATR | t |
+
+Each implies the ones before it, so one bar can make two or three transitions; all are recorded, in
+order, at its close. `parts` is that bar's CANDLE. Each transition is also a
+`Transition(void, src, dst, at, known_at, event)` in `Chart.transitions` (keyed by the VOID's id), so a
+void's state at any bar is `voids.void_state(chart, void_id, t)` - None before the VOID is known,
+UNTOUCHED from then. Exact comparisons, no tolerance, as v1's VOID itself.
+
+### 7. Retracement depth
+
+`retrace.py`. For an up structure (down mirrored): the leg runs from the structure's low L to the
+peak P, the retracement from P down to the pullback's low x, and
+
+```
+depth = (P - x) / (P - L)       SHALLOW < 0.382 <= HALF < 0.618 <= DEEP <= 1 < BEYOND (past the origin)
+```
+
+| event | where | P, x | `known_at` | parts |
+|---|---|---|---|---|
+| **RETRACE** | every REVISIT of a zone, at the revisit bar t | P = the highest high from the origin to t - 1, x = low[t]; L = the zone's far edge | t | the REVISIT |
+| **PULLBACK** `phase=INSIDE` | per BREAK: the last swing low strictly between its origin p and the break bar b, above the origin's low (the DAX course's "structural liquidity") | P = the highest high of p..b (the leg to the break), x = the swing's price | max(the break's, the swing's) | the BREAK and the EXTREME |
+| **PULLBACK** `phase=AFTER` | per BREAK: the first swing low after b | P = the highest high of p..that swing | max(the break's, the swing's) | the BREAK and the EXTREME |
+
+Attributes `depth` (a number) and `depth_bin`, `peak`, `level` (x), and `revisit`, `count` or `break`,
+`phase`. Text `RETRACE↑[DEEP]`, `PULLBACK↑[INSIDE:HALF]`.
+
+Both are qualifiers through the v2 **entity qualifier** syntax (`grammar.qe`), the rule-table form
+of v1's CANDLE[...]: `TYPE[key op value, ...]`, where a number compares with the attribute
+(`PULLBACK[depth≥0.5]`), a value of a registered order compares by rank (`PULLBACK[depth≥HALF]` is
+HALF, DEEP or BEYOND) and anything else is equality (`PULLBACK[phase=INSIDE]`). So **the DAX 50%
+rule** ([`dax_smc.py`](../ideas/dax_smc.py) step 3: the structural liquidity is valid at or below the
+50% of the leg, protected low to the break's high) is one row of the rule table:
+
+```
+DAX50_UP := BREAK_UP PULLBACK_UP[phase=INSIDE, depth≥0.5]       where PULLBACK.break == BREAK.id
+```
+
+known at the later of the two. The fixtures `DAX_DEEP` (a pullback to 0.8 of the leg: DAX50) and
+`DAX_SHALLOW` (0.4: none) are in `tests/test_retrace.py`. With item 6's SWEEP_PROTECTED as the break's
+origin, steps 1-3 of the DAX checklist are a sentence (below).
+
+### 6. Liquidity pools and the protected sweep
+
+`pools.py`. Written for highs (EQUAL_HIGHS); lows are the flipped chart.
+
+| entity | definition | attributes | `known_at` | parts |
+|---|---|---|---|---|
+| **POOL** (L3), POOL↑ = EQUAL_HIGHS, POOL↓ = EQUAL_LOWS | when a swing high e becomes known, every earlier swing high within POOL_EQ_ATR (**0.1**) × ATR(14) at e of its price and still standing (no high strictly between them above the higher of the two) joins it. A third equal high makes a new POOL at its own bar (count 3); the earlier one is unchanged | `kind`, `count`, `level` (the highest member), `members`, `first` | e's (bar + 3) | the member EXTREMEs |
+| **POOL_TAKEN** (L2) | the first bar after the pool's last member with a high above `level` | `pool`, `level`, `closed_back` (close ≤ level: the pool was swept; else closed through), `depth_atr`, `breach_revert` (how many members had a BREACH_REVERT on that bar; those events are parts too, relation LINK) | its bar | the POOL (and those BREACH_REVERTs) |
+| **SWEEP_PROTECTED** (L2) | [`dax_smc.py`](../ideas/dax_smc.py) step 1, for a buy: a swing low s that trades below the last swing low q of the SWEEP_BACK (**40**) bars before it - q known by s, nothing below q between them - and closes back above q on s or the next bar. The low at s is PROTECTED. Direction UP: it protects an up move, like the ORIGIN at s | `swept` (q), `swept_level`, `level` (s's low), `origin` | s + 3 | q's and s's EXTREMEs |
+| **DAX_SETUP** (L3) | the DAX checklist's steps 1-3 as one production: `SWEEP_PROTECTED_UP BREAK_UP PULLBACK_UP[phase=INSIDE, depth≥0.5]` where BREAK.origin = the sweep's origin and PULLBACK.break = BREAK | `sweep`, `break`, `pullback`, `depth` | the latest part's | the three |
+
+A POOL_TAKEN that closed back links to BREACH_REVERT: v0's BREACH_REVERT is the same fact per
+swing (traded through, closed back, before any close beyond), so the take lists the members'
+on that bar - present exactly when the take closed back and the member had not been closed through
+before. Relations: POOL CONTAIN each member; POOL_TAKEN TOUCH the POOL when it closed back, CROSS when
+it closed through. Text `POOL↑[EQUAL_HIGHS:2]`, `POOL_TAKEN↑[SWEPT]` / `[THROUGH]`.
+
+**SWEEP_PROTECTED is dax_smc's protected low exactly**: on walks and GARCH walks, both directions,
+the set of protected lows equals that of the course's step 1 copied verbatim from
+`dax_smc.long_setups`, and every `protected` low of `dax_smc.setups` (all steps) is one of them
+(`tests/test_pools.py::test_sweep_protected_is_dax_smc_step_one`). DAX_SETUP differs from the course
+in one documented way: its break is v1's BREAK (the leg's close above the last swing high known at
+the origin, within LEG_MAX = 20 bars) where dax_smc allows 60.
+
+### 5. RANGE as a structure
+
+`ranges.py`; this replaces v0's reserved RANGE. A **RANGE** (L3, direction NONE) is detected causally
+at bar t when the RANGE_BARS (**k = 10**) bars ending at t lie within RANGE_ATR (**x = 2**) × ATR(14)
+at t, high to low. Its box is that window's highest high (`high`) and lowest low (`low`); its bar is
+the window's first, its `known_at` t, its parts the window's CANDLEs. One range is live at a time; the
+next window must start after the bar that confirmed the last one's escape. While it lives:
+
+| event | definition | `known_at` | attributes |
+|---|---|---|---|
+| **RANGE_TEST**↑ / ↓ | a bar whose high comes within TEST_ATR (**0.1**) × the range's ATR of the top (low of the bottom), closing inside - the first of each run of such bars | its bar | `range`, `level`, `count` (that edge's tests so far) |
+| **ESCAPE**↑ / ↓ | ESCAPE_HOLD (**m = 3**) consecutive closes beyond an edge, the first included; the range ends | the m-th close (bar + 2) | `range`, `level`, `upper_tests`, `lower_tests` |
+| **FAILED_ESCAPE**↑ / ↓ | a close beyond an edge, then a close back inside (at or within the edge) before m closes beyond. The range lives on; the failure counts as a test of that edge | the close back | `range`, `level`, `bars_out` |
+
+An escape's `at` is its first close beyond; its parts the CANDLEs from there to the bar that decided
+it. A RANGE whose last excursion is undecided at the end of the series has neither event yet. Text
+`RANGE·`, `RANGE_TEST↑[2]`, `ESCAPE↑`, `FAILED_ESCAPE↓`. The fixtures use the warm-up itself, which
+is a range (99.75 .. 100.75, ATR 1, known at bar 14 when the ATR first exists).
+
+### 2. Compression and expansion words
+
+`candles.compression` adds four L1 qualifiers to the token table; `grammar.WORDS2` holds the runs.
+
+| qualifier | token | definition |
+|---|---|---|
+| **NR4**, **NR7** | CANDLE | the bar's range (h - l) is strictly narrower than each of the 3 (6) bars before it: the narrowest of the last 4 (7). Ties are not |
+| **WR7** | CANDLE | strictly wider than each of the 6 before it |
+| **overlap** | BAR_RELATION | the share of the bar's range inside the previous bar's: (min(h, ph) - max(l, pl))+ / (h - l); a zero-range bar is 1 inside the previous range, 0 outside; none on bar 0 |
+
+In the qualifier syntax the flags are bare names (`CANDLE[NR7]`, `CANDLE[not WR7]`) and overlap is a
+number (`CANDLE[overlap≥0.75]`). The runs are words over them, firing once per run where it reaches k:
+
+| event | production (up side) | direction | parts |
+|---|---|---|---|
+| **BALANCE** | `RUN[k≥3, overlap≥0.75]` - three bars each at least BALANCE_MIN (**0.75**) inside the one before | none (NONE): one event where it holds both ways | the three CANDLEs and BAR_RELATIONs |
+| **IMBALANCE** | `RUN[k≥3, overlap≤0.25, rel=HH]` - three bars each at most IMBALANCE_MAX (**0.25**) inside the one before, each a higher high | UP; DOWN on the flipped chart (LL) | likewise |
+
+A non-directional word is a `Word(..., sym=True)`: it is evaluated on both frames and emitted once,
+with direction NONE, where it holds in both. The bar word carries the qualifiers after a `#` with
+`bar_words(chart, v2=True)`: `BULL(M,M,M,M){...}/IN|... #NR4,ov1.00` (overlap printed to two
+decimals).
+
+### 8. Time and tempo
+
+`timing.py`. Time words need a `ts` column (each bar's open, epoch seconds, UTC); a chart without one
+has none. Tempo needs only bars.
+
+**SESSION** and **DAY_OF_WEEK** are L1 qualifiers of every CANDLE (`session`, `dow`), from the UTC hour
+and day of the bar's open, with fixed hours (no daylight saving):
+
+| session | UTC hours | code |
+|---|---|---|
+| ASIA | 22:00 - 07:00 | AS |
+| LONDON | 07:00 - 12:00 | LN |
+| OVERLAP | 12:00 - 16:00 (London and New York both open) | OV |
+| NY | 16:00 - 22:00 | NY |
+
+Qualifiers `CANDLE[session=LONDON]`, `CANDLE[dow=FRI]`; the bar word ends `@LN.MON`. A session
+**instance** is a run of consecutive bars with one session (a gap over 12 hours starts a new one).
+
+| event | definition | `known_at` | attributes |
+|---|---|---|---|
+| **SESSION_OPEN** (NONE) | the first bar of each instance | that bar | `session`, `price` (its open) |
+| **SESSION_EXTREME**↑ / ↓ | an instance's high / low, at the bar that made it (the first on a tie) | the first bar of the next instance: when the clock has shown the session over | `session`, `price`, `start`, `end`; parts the instance's CANDLEs |
+| **SESSION_EXTREME_TAKEN**↑ / ↓ (SESSION_HIGH_TAKEN, SESSION_LOW_TAKEN) | the first bar, from the next instance on and before the same session's next instance, whose high is above the session high (low below the low) | its bar | `extreme`, `session`, `level`, `closed_back` |
+
+**Tempo.** Every lifecycle event of a structure gets `tempo`, the bars since the previous event of the
+same structure: a zone's REVISIT, REJECT_PATH, ACCEPT, FAIL and EXPIRE since the zone qualified or its
+last event; a VOID's transitions since the void or its last transition; a RANGE's tests and escapes
+since the range was known or its last event. And `pace`, by a rolling quantile of the same event
+type: FAST when the tempo is at or under the 25th percentile of the last TEMPO_WINDOW (**50**) tempos of
+that type known before it, SLOW at or over the 75th, NORMAL between, WARMUP with fewer than TEMPO_MIN
+(**10**) of them. "A fast return" is then grammatical: `REVISIT[pace=FAST]`, and the text form is
+`REVISIT↑[FAST]`.
+
+### 9. Changepoints as events
+
+`changepoints.py`, with `parse(df, changepoints=True)`. The research detectors are called as they are
+(imported read-only); MCFL only turns their output into entities.
+
+| event | detector | `at` | `known_at` | attributes |
+|---|---|---|---|---|
+| **FOCUS**↑ / ↓ | production's FOCuS (`till_infinity.structures.learning.focus.Focus`) through [`prims.focus_series`](../ideas/prims.py), fed exactly what `zone_events.py` feeds it: x = the close-to-close change (0 on bar 0), scale = EWM(span 100) of abs(x) shifted one bar × √(π/2); ↑ looks for an increase, ↓ a decrease, each resetting after a fire; threshold **12 + 3 ln(3600 / sec)**, at least 3 | the bar the change started (the detector's `at`) | the bar it fired | `threshold`, `lag` |
+| **FOCUS6**↑ / ↓ | the same at threshold **6**, the sensitive variant | likewise | likewise | likewise |
+| **CUSUM_IGNITION**↑ / ↓ | [`survivors.cusum`](../ideas/survivors.py), k = **0.5**, h = **5**: the first bar the up (down) sum of log returns, drifting k σ, crosses h σ (σ the 60-bar sd lagged 30), re-armed at 0 | its bar | its bar | `k`, `h` |
+| **FOCUS_ZONE** (L3) | a production: `ZONE_UP FOCUS_UP` with the change starting within 3 bars of the zone's origin and fired by the zone's `known_at` (zone_events' `fc_origin`, made causal: it reads the fire only if known when the zone is); one row for FOCUS, one for FOCUS6 (the id's suffix is the threshold) | the zone's | the zone's | `of_zone`, `focus`, `threshold`, `lag` |
+
+`sec`, the bar's length, is given (`parse(..., sec=900)`) or read from the first two timestamps, else
+an hour (threshold 12). Parts: a FOCUS the CANDLEs from its start to its fire, a CUSUM its bar's.
+
+`tests/test_changepoints.py` checks that FOCUS and FOCUS6 equal `prims.focus_series` run with
+zone_events' own inputs, and CUSUM_IGNITION `survivors.cusum`, on walks, GARCH and momentum walks, at
+every fire, both directions. FOCUS is flip-symmetric under the arithmetic flip. CUSUM reads log
+returns, which do not exist on the flipped (negative) chart; its mirror is the log-price flip
+(prices inverted, 1 / p), under which CUSUM_IGNITION↓ of a chart is CUSUM_IGNITION↑ of the inverted
+one - tested. That is why the detectors are an option of the parse rather than part of every one:
+the package-wide flip test parses the negated chart.
+
+### 3. Volume: effort against result
+
+`volume.py`. Any volume column works: tick volume on CFDs, real or taker volume on exchanges. Three
+L1 qualifiers of the CANDLE:
+
+| qualifier | definition |
+|---|---|
+| **VOLUME** (`volume_class`) | the bar's volume in the rolling distribution of the last 10 bars' volumes, with the size classes' edges: NONE (zero), VERY_SMALL ≤ m - s, SMALL ≤ m - 0.5 s, MEDIUM ≤ m + 0.5 s, LARGE ≤ m + s, VERY_LARGE ≤ m + 2 s, else EXTREMELY_LARGE; WARMUP until the window is full, or with no volume |
+| **EFFORT_RESULT** (`effort`) | volume (effort) against size (result): ABSORPTION volume ≥ LARGE and size ≤ SMALL (much traded, little moved); EASE volume ≤ SMALL and size ≥ LARGE; AGREE both ≥ LARGE or both ≤ SMALL; NEUTRAL otherwise; WARMUP while either is |
+| **TAKER_SKEW** (`taker_skew`, `taker`) | with a `taker_buy_volume` column (and `taker_sell_volume`, else volume - buy): (buy - sell) / volume, and BUY at ≥ TAKER_MIN (**0.2**), SELL at ≤ -0.2, else BALANCED |
+
+Qualifiers `CANDLE[vol≥LARGE]`, `CANDLE[effort=ABSORPTION]`, `CANDLE[taker=BUY]`; the bar word
+carries `v:XL,ABS,tb`. Under the flip buyers and sellers trade places: `parse.flip` swaps the two taker
+columns, so BUY and SELL swap and the skew is negated exactly. Generated series have no volume of
+their own (each bar's is its sub-step count); `synth.ticks` gives them a tick volume (Poisson in the
+bar's range, with a lognormal burst) and a taker split leaning with the bar, so the null walks have the
+same kind of volume as the series compared with them.
+
+### 12. Candle range theory (CRT)
+
+`crt.py`. **RANGE_CANDLE** is any CANDLE read as a box - its high, low and 50% mid. It is not a new
+entity: the candle is a part of what is built on it (usually a higher timeframe's candle, below).
+
+| entity | production / definition | `known_at` | attributes |
+|---|---|---|---|
+| **PURGE**↑ (↓ on the flipped chart) | a word over the v1 relation words of the next candle: `RANGE_CANDLE CANDLE[HIGH_ABOVE_PREV_HIGH, not CLOSE_ABOVE_PREV_HIGH, not CLOSE_BELOW_PREV_LOW]` - it trades beyond the range's high and closes back inside (close ≤ prev high and ≥ prev low, within the point tolerance). An outside candle closing inside purges both sides | the purge candle | `depth_atr` (beyond the high, ATR), `close_loc` (from the purged edge, 0, to the other, 1; slightly negative when the close is above the high within the tolerance), the box `upper_edge`, `lower_edge`, `range_mid` |
+| **DISTRIBUTION**↓ (after PURGE↑) | within CRT_N (**3**) candles after the purge, a low at or below the range's low - CRT's outcome event | the first such candle | `purge`, `bars`, `mid_bars` (bars after the purge at which the mid was first reached), `mid_same_bar` (first reached on the distributing candle itself, so the bar does not order them) |
+| **CRT3**↓ (L3) | `RANGE_CANDLE PURGE_UP DISTRIBUTION_DOWN`, a row of the rule table | the distribution's | `purge`, `bars`; its bar is the range candle's |
+
+Text `PURGE↑`, `DISTRIBUTION↓[2,mid:1]`, `CRT3↓`. Multi-timeframe CRT (an HTF range candle whose purge
+is seen on LTF candles) is item 10's `mtf.crt`, below.
+
+### 10. Multiple timeframes
+
+`mtf.py`: `parse_mtf(df, htf_sec=14400, label="4h")` parses the lower timeframe (LTF), builds the
+higher timeframe (HTF) from it, parses that, and relates the two; `parse_mtf(df, ..., htf=bars)`
+takes the HTF chart's own bars instead and maps them onto the LTF bars by time.
+
+**Aggregation.** An HTF bar is built from the LTF CANDLE tokens' lexemes: the first open, the highest
+high, the lowest low, the last close, the summed volume (and taker volumes). Bars are grouped by time
+(`ts // htf_sec`), or by count (`factor`) without timestamps. An HTF bar is **complete** - and anything
+read from it known - at the LTF bar that closes its period (that bar's `ts` plus the LTF bar length
+reaches the period's end), or, when bars are missing at the end, at the next period's first bar; by
+count, at its last bar. The incomplete last bar is never used. The HTF chart is then parsed as any
+chart, so its CANDLE words are fuzzy classes against the HTF's own history, and every HTF entity is
+read in LTF time: `MTF.span(e)` (the LTF bars of its HTF bars - a BREAK's leg from its origin to its
+break bar, a LEG's origin to end, a ZONE's origin to break, a RANGE's window) and
+`MTF.known_ltf(e)` (the LTF bar at which its HTF `known_at` bar is complete). HTF ids are prefixed
+with the label: `4h:BREAK.U.66.o57`.
+
+| relation | meaning | `known_at` |
+|---|---|---|
+| CONTAINS_TF(H, L) | the HTF entity's span holds L's bar. Materialised for each HTF CANDLE → the LTF CANDLEs it was built from (the aggregation's derivation); on demand for any pair (`MTF.contains`) | the later of the two |
+| ALIGN / CONFLICT (L, H) | an LTF ZONE or BREAK against (a) the HTF STRUCTURE state known when L is: ALIGN when it is L's direction, CONFLICT when opposite, nothing when MIXED (H the STRUCTURE_SHIFT that set it); (b) an HTF BREAK whose leg spans L's bar **and which is known by L's known_at**: ALIGN same direction, CONFLICT opposite | L's |
+
+**NESTED** (L3, `MTF.entities`): the desk's strongest finding (`zone_nested.py`, "inside_4h") as one
+production, in its causal form:
+
+```
+NESTED_UP := ZONE_UP@LTF   where ZONE.at in span(BREAK_UP@HTF)  and  known_ltf(BREAK) <= ZONE.known_at
+```
+
+an LTF ZONE whose ORIGIN lies inside the leg of an HTF BREAK of the same direction - and only once that
+HTF break was knowable when the LTF zone was. Parts the ZONE and the HTF BREAK (the first known),
+attributes `of_zone`, `htf_break`, `htf_breaks`, `tf`. `mtf.nested_flags(m, mode)` gives the flag for
+every LTF zone in four forms:
+
+| mode | the HTF break must be | causal? |
+|---|---|---|
+| `causal` (default; = NESTED) | known by the LTF zone's `known_at` | yes |
+| `entry` | known by the zone's first REVISIT (zone_nested's own later correction, CAUSAL=1) | for a trade entered at the revisit; not for the zone |
+| `leg` | any whose leg spans the origin, whenever known | no |
+| `research` | `leg`, among the HTF breaks zone_events recorded - those whose own HTF zone was later returned to (`zone_events_recorded`: 5 bars after the break exist and one of its four bounds was revisited before a close through it) | no: it reads the future twice |
+
+**The research form reproduces `inside_4h` exactly**: `tests/test_mtf.py` runs `zone_nested.evs` on
+the 15m walk and on its 4h aggregation and the flag's own leg test, and every LTF zone zone_nested
+flags (qualified first returns filled at the near edge, body bound; 150-200 per series) has the same
+flag, on two walks and two GARCH walks of 4,800 bars. **The causal form disagrees, and by a lot**: an
+LTF zone qualifies within hours of its origin, while the HTF break whose leg holds that origin is
+usually known days later, so on those walks the research form flags 49-84 zones per series and the
+causal form 1-3; most research-flagged zones (over 50 in two series) are flagged only through breaks
+the zone could not have known (`test_causal_and_research_forms_disagree`). This is the desk's lesson in
+the language's terms: the conditioning event of a cross-timeframe relation must be known before the
+entity it conditions.
+
+**Multi-timeframe CRT** (`MTF.entities`): an HTF CANDLE j is the RANGE_CANDLE; its PURGE is seen on the
+LTF, on the first LTF candle of the next HTF period (CONTAINS_TF) whose high is beyond the HTF candle's
+high and whose close is back inside the HTF range - at that LTF bar, before the HTF candle closes;
+DISTRIBUTION the first later LTF candle, up to the end of HTF period j + 1 + CRT_N, at the HTF range's
+other side; CRT3 the three, as in item 12. Periods are read from the LTF bars' own timestamps, so a
+purge is found at its LTF bar whether or not the HTF bar it falls in is complete.
+
+### 13. The candlestick vocabulary
+
+`vocabulary.py`. Every classical pattern is a row of a word table (`vocabulary.VOCAB`, run like
+`grammar.WORDS`) over the v1 candle words, their strength grades and the OHLC point relations. There
+is no new price code: where a pattern relates bars that are not neighbours (the point matrix relates
+adjacent bars only) it compares two tokens' lexemes, as v1's VOID word does (`0.close > -2.body_mid`).
+Every pattern is a **PATTERN** event: written once for its bullish (UP) side and run on the chart and
+on the chart flipped, the flipped instance being its twin under the twin's name; known at its last
+bar; parts the CANDLE (and BAR_RELATION) tokens it consumed; attributes
+
+- `name`, the pattern's name on its side (HAMMER on UP, SHOOTING_STAR on DOWN);
+- `pattern`, the pair's key, also the id's suffix (`PATTERN.U.57.hammer`), so several patterns can
+  share a bar;
+- `trend`, the STRUCTURE state (item 1) known at the bar before the pattern's first bar;
+- SIGNAL_BAR also `quality`.
+
+Text `PATTERN↑[HAMMER]`. A pattern with no direction (the dojis, DOJI_BAR) is one event with direction
+NONE. A pattern whose canonical form is bearish (ON_NECK, IN_NECK, THRUSTING, ADVANCE_BLOCK, STALLED,
+TWO_CROWS, UPSIDE_GAP_TWO_CROWS, IDENTICAL_THREE_CROWS) is written as its mirror and has the canon's
+meaning on its DOWN side; its UP side, the mirror image, keeps the name. The direction of a PATTERN is
+the direction of its signal, as TA-Lib signs its patterns (ADVANCE_BLOCK↓ is three rising bull bars),
+which for the reversal patterns is not the direction of the bars.
+
+**The trend.** Where the canon names one shape two ways by the trend before it, the trend is part of
+the production: HAMMER and HANGING_MAN are one shape (a long lower wick), INVERTED_HAMMER and
+SHOOTING_STAR another; written as HAMMER := shape after a DOWN structure and INVERTED_HAMMER := its
+mirror shape after a DOWN structure, their twins are SHOOTING_STAR (the inverted shape after UP) and
+HANGING_MAN (the hammer's shape after UP). BELT_HOLD also requires the down structure. Every other
+pattern carries the trend as an attribute, so the canon's "after a downtrend" is `PATTERN[trend=DOWN]`
+when it is wanted.
+
+**Building blocks** (UP side): long body `body≥STRONG` (the body's force grade, body / ATR against its
+rolling distribution); short `body≤MODERATE`; small `body≤WEAK`; doji `OPEN_EQ_CLOSE` (within the
+point tolerance, 0.05 ATR); wick ratios `wick.low.body≥2`; and, new in v2, **point-cell qualifiers**:
+`o>pc`, `c≤po`, `l>pc`, ... - one cell of the point matrix, this bar's o/h/l/c against the previous
+bar's, ABOVE / EQUAL / BELOW with the tolerance (`grammar` compiles `x op py` to a clause on that
+cell, read from the frame's own matrix, so it flips correctly).
+
+**Single bars**
+
+| pattern (UP / its twin) | production, UP side (cell: qualifiers) | also | in words |
+|---|---|---|---|
+| HAMMER / SHOOTING_STAR | `0: wick.low.body≥2, wick.up≤WEAK, body≤MODERATE, close≥Q3` | `STRUCTURE DOWN before` | a lower wick twice the body, little upper wick, after a down structure |
+| INVERTED_HAMMER / HANGING_MAN | `0: wick.up.body≥2, wick.low≤WEAK, body≤MODERATE, close≤Q2` | `STRUCTURE DOWN before` | the hammer's shape upside down after a down structure (its twin, the hammer's shape after an up structure, is the hanging man) |
+| SPINNING_TOP | `0: dir=BULL, body≤MODERATE, not OPEN_EQ_CLOSE, wick.up.body>1, wick.low.body>1` |  | a short body with both wicks longer than it |
+| HIGH_WAVE | `0: dir=BULL, body≤WEAK, not OPEN_EQ_CLOSE, wick.up≥STRONG, wick.low≥STRONG, wick.up.body≥3, wick.low.body≥3` |  | a small body with very long wicks both ways |
+| DOJI (no direction) | `0: OPEN_EQ_CLOSE` |  | open and close equal |
+| LONG_LEGGED_DOJI (no direction) | `0: OPEN_EQ_CLOSE, wick.up≥STRONG, wick.low≥STRONG` |  | a doji with strong wicks both ways |
+| DRAGONFLY_DOJI / GRAVESTONE_DOJI | `0: OPEN_EQ_CLOSE, CLOSE_AT_HIGH, wick.low≥MODERATE` |  | a doji at the bar's high with a lower wick (twin: at the low, an upper wick) |
+| FOUR_PRICE_DOJI (no direction) | `0: OPEN_EQ_CLOSE, OPEN_AT_HIGH, OPEN_AT_LOW` |  | open, high, low and close all equal |
+| TAKURI | `0: OPEN_EQ_CLOSE, wick.up≤WEAK, wick.low≥DOMINANT` |  | a dragonfly-like doji with a dominant lower wick |
+| BELT_HOLD | `0: dir=BULL, body≥STRONG, OPEN_AT_LOW` | `STRUCTURE DOWN before` | a long bull body opening at its low, after a down structure |
+| MARUBOZU | `0: dir=BULL, body≥STRONG, OPEN_AT_LOW, CLOSE_AT_HIGH` |  | FULL: a long body with no wick either way |
+| OPENING_MARUBOZU | `0: dir=BULL, body≥STRONG, OPEN_AT_LOW, not CLOSE_AT_HIGH` |  | no wick at the open's end |
+| CLOSING_MARUBOZU | `0: dir=BULL, body≥STRONG, CLOSE_AT_HIGH, not OPEN_AT_LOW` |  | no wick at the close's end |
+| LONG_LINE | `0: dir=BULL, body≥STRONG, wick.up≤MODERATE, wick.low≤MODERATE` |  | a long body, modest wicks |
+| SHORT_LINE | `0: dir=BULL, body≤WEAK, not OPEN_EQ_CLOSE, wick.up≤WEAK, wick.low≤WEAK` |  | a small body, small wicks |
+
+**Two bars**
+
+| pattern (UP / its twin) | production, UP side (cell: qualifiers) | also | in words |
+|---|---|---|---|
+| HARAMI | `-1: dir=BEAR, body≥STRONG; 0: body≤MODERATE, not OPEN_EQ_CLOSE, o≤po, o≥pc, c≤po, c≥pc` |  | a long bear body, then a short body inside it |
+| HARAMI_CROSS | `-1: dir=BEAR, body≥STRONG; 0: OPEN_EQ_CLOSE, o≤po, o≥pc` |  | a long bear body, then a doji inside it |
+| PIERCING / DARK_CLOUD | `-1: dir=BEAR, body≥STRONG; 0: dir=BULL, body≥STRONG, OPEN_BELOW_PREV_LOW, c<po` | `0.close > -1.body_mid` | a long bear, then a long bull opening under its low and closing above its body's middle |
+| ON_NECK | `-1: dir=BULL, body≥STRONG; 0: dir=BEAR, OPEN_ABOVE_PREV_HIGH, CLOSE_AT_PREV_HIGH` |  | canon bearish (DOWN): a long bear, a bull opening under its low and closing at it |
+| IN_NECK | `-1: dir=BULL, body≥STRONG; 0: dir=BEAR, OPEN_ABOVE_PREV_HIGH, CLOSE_AT_PREV_CLOSE` |  | canon bearish: the bull closes at the bear's close |
+| THRUSTING | `-1: dir=BULL, body≥STRONG; 0: dir=BEAR, OPEN_ABOVE_PREV_HIGH, c<pc` | `0.close > -1.body_mid` | canon bearish: the bull closes into the bear's body, short of its middle |
+| KICKER | `-1: dir=BEAR, body≥STRONG, OPEN_AT_HIGH, CLOSE_AT_LOW; 0: dir=BULL, body≥STRONG, OPEN_AT_LOW, CLOSE_AT_HIGH, LOW_ABOVE_PREV_HIGH` |  | a bear marubozu, then a bull marubozu wholly above it |
+| MEETING_LINES | `-1: dir=BEAR, body≥STRONG; 0: dir=BULL, body≥STRONG, CLOSE_AT_PREV_CLOSE` |  | counterattack: opposite long bodies closing at the same price |
+| SEPARATING_LINES | `-1: dir=BEAR; 0: dir=BULL, body≥STRONG, OPEN_AT_PREV_OPEN, OPEN_AT_LOW` |  | opposite bodies opening at the same price, the second a belt hold |
+| MATCHING_LOW / MATCHING_HIGH | `-1: dir=BEAR; 0: dir=BEAR, CLOSE_AT_PREV_CLOSE` |  | two bears closing at the same price |
+| HOMING_PIGEON | `-1: dir=BEAR, body≥STRONG; 0: dir=BEAR, body≤MODERATE, o≤po, c≥pc` |  | a long bear, then a short bear inside its body |
+| DOJI_STAR | `-1: dir=BEAR, body≥STRONG; 0: OPEN_EQ_CLOSE, OPEN_GAP_DOWN` |  | a long bear, then a doji opening below its close |
+| HIKKAKE | `-2: any; -1: rel=INSIDE; 0: HIGH_BELOW_PREV_HIGH, LOW_BELOW_PREV_LOW` |  | an inside bar, then a false break of it downward (a lower high and a lower low) |
+| MODIFIED_HIKKAKE | `-3: any; -2: rel=INSIDE, close≤Q1; -1: rel=INSIDE; 0: HIGH_BELOW_PREV_HIGH, LOW_BELOW_PREV_LOW` |  | the hikkake after two inside bars, the first closing near its low |
+
+**Three bars and more**
+
+| pattern (UP / its twin) | production, UP side (cell: qualifiers) | also | in words |
+|---|---|---|---|
+| THREE_WHITE_SOLDIERS / THREE_BLACK_CROWS | `-2: dir=BULL, body≥MODERATE, wick.up≤WEAK, close≥Q3; -1: dir=BULL, body≥MODERATE, wick.up≤WEAK, close≥Q3, c>pc, o≥po, o≤pc; 0: dir=BULL, body≥MODERATE, wick.up≤WEAK, close≥Q3, c>pc, o≥po, o≤pc` |  | three bulls, each closing higher near its high and opening within the last body |
+| ADVANCE_BLOCK | `-2: dir=BEAR; -1: dir=BEAR, c<pc, o≤po, o≥pc; 0: dir=BEAR, c<pc, o≤po, o≥pc` | `0.body_atr < -1.body_atr; -1.body_atr < -2.body_atr; 0.lower_atr > -2.lower_atr` | canon bearish: three bulls rising with shrinking bodies and growing upper wicks |
+| STALLED | `-2: dir=BEAR, body≥STRONG; -1: dir=BEAR, body≥STRONG, c<pc; 0: dir=BEAR, body≤WEAK, OPEN_AT_PREV_CLOSE` |  | canon bearish (deliberation): two long bulls, then a small one opening at the close |
+| THREE_INSIDE_UP / THREE_INSIDE_DOWN | `-2: dir=BEAR, body≥STRONG; -1: body≤MODERATE, o≤po, o≥pc, c≤po, c≥pc; 0: dir=BULL` | `0.close > -2.open` | a harami, then a close above the first open |
+| THREE_OUTSIDE_UP / THREE_OUTSIDE_DOWN | `-2: dir=BEAR; -1: dir=BULL, engulf=BULL; 0: dir=BULL, c>pc` |  | an engulfing, then a higher close |
+| MORNING_DOJI_STAR / EVENING_DOJI_STAR | `-2: dir=BEAR, body≥STRONG; -1: OPEN_EQ_CLOSE, OPEN_GAP_DOWN; 0: dir=BULL, body≥STRONG` | `0.close > -2.body_mid` | a long bear, a doji below its close, a long bull past the first body's middle |
+| ABANDONED_BABY | `-2: dir=BEAR, body≥STRONG; -1: OPEN_EQ_CLOSE, HIGH_BELOW_PREV_LOW; 0: dir=BULL, LOW_ABOVE_PREV_HIGH` | `0.close > -2.body_mid` | a doji wholly below a long bear and wholly below the bull after it |
+| TRI_STAR | `-2: OPEN_EQ_CLOSE; -1: OPEN_EQ_CLOSE, OPEN_GAP_DOWN; 0: OPEN_EQ_CLOSE, OPEN_GAP_UP` |  | three dojis, the middle one below the others |
+| THREE_LINE_STRIKE | `-3: dir=BULL; -2: dir=BULL, c>pc; -1: dir=BULL, c>pc; 0: dir=BEAR, o≥pc` | `0.close < -3.open` | three rising bulls, then a bear from their close to below the first open |
+| TWO_CROWS | `-2: dir=BEAR, body≥STRONG; -1: dir=BULL, o<pc, c<pc; 0: dir=BULL, o≥po, o≤pc` | `0.close > -2.close; 0.close < -2.open` | canon bearish: a long bull, a bear gapping above it, a bear opening in that one and closing in the first |
+| UPSIDE_GAP_TWO_CROWS | `-2: dir=BEAR, body≥STRONG; -1: dir=BULL, o<pc, c<pc; 0: dir=BULL, o<po, c>pc` | `0.close < -2.close` | canon bearish: a long bull, a bear gapping above, a bear engulfing it that keeps the gap |
+| STICK_SANDWICH | `-2: dir=BEAR; -1: dir=BULL, l>pc; 0: dir=BEAR` | `0.close <= (-2.close + 0.tol); 0.close >= (-2.close + (0.tol * -1.0))` | two bears closing at one price around a bull above them |
+| UNIQUE_THREE_RIVER | `-2: dir=BEAR, body≥STRONG; -1: dir=BEAR, o≤po, c≥pc, LOW_BELOW_PREV_LOW; 0: dir=BULL, body≤MODERATE, c<pc` | `0.open > -1.low` | a long bear, a bear harami with a lower low, a small bull under its close |
+| THREE_STARS_IN_SOUTH | `-2: dir=BEAR, body≥STRONG, wick.low≥STRONG; -1: dir=BEAR, body≤MODERATE, LOW_ABOVE_PREV_LOW, o≤ph; 0: dir=BEAR, body≤WEAK, wick.up≤WEAK, wick.low≤WEAK, rel=INSIDE` |  | three shrinking bears, each low higher, the last a small marubozu inside the second |
+| IDENTICAL_THREE_CROWS | `-2: dir=BULL; -1: dir=BULL, OPEN_AT_PREV_CLOSE, c>pc; 0: dir=BULL, OPEN_AT_PREV_CLOSE, c>pc` |  | canon bearish: three bears each opening at the last close |
+| TASUKI_GAP | `-2: dir=BULL; -1: dir=BULL, o>pc; 0: dir=BEAR, o≤pc, o≥po` | `0.close < -1.open; 0.close > -2.close` | a bull, a bull gapping above it, a bear from inside that one into the gap, not closing it |
+| SIDE_BY_SIDE_WHITE_LINES | `-2: dir=BULL; -1: dir=BULL, o>pc; 0: dir=BULL, OPEN_AT_PREV_OPEN` | `0.body_atr <= (-1.body_atr * 1.5); 0.body_atr >= (-1.body_atr * 0.6666666666666666)` | a bull, then two like bulls side by side above a gap |
+| RISING_THREE_METHODS / FALLING_THREE_METHODS | `-4: dir=BULL, body≥STRONG; -3: body≤MODERATE, dir=BEAR; -2: body≤MODERATE, c<pc; -1: body≤MODERATE, c<pc; 0: dir=BULL, body≥STRONG` | `-3.high <= -4.high; -3.low >= -4.low; -2.high <= -4.high; -2.low >= -4.low; -1.high <= -4.high; -1.low >= -4.low; 0.close > -4.close` | a long bull, three short falling bars within its range, a long bull closing above it |
+| MAT_HOLD | `-4: dir=BULL, body≥STRONG; -3: body≤MODERATE, o>pc; -2: body≤MODERATE, c<pc; -1: body≤MODERATE, c<pc; 0: dir=BULL, o>pc` | `-3.low > -4.low; -2.low > -4.low; -1.low > -4.low; 0.close > -3.high; 0.close > -2.high; 0.close > -1.high` | a long bull, three short bars above a gap holding above its low, a bull closing above them |
+| BREAKAWAY | `-4: dir=BEAR, body≥STRONG; -3: dir=BEAR, o<pc; -2: HIGH_BELOW_PREV_HIGH, LOW_BELOW_PREV_LOW; -1: HIGH_BELOW_PREV_HIGH, LOW_BELOW_PREV_LOW; 0: dir=BULL` | `0.close > -3.open; 0.close < -4.close` | a long bear, a bear gapping down, two lower bars, a bull closing inside the gap |
+| CONCEALING_BABY_SWALLOW | `-3: dir=BEAR, OPEN_AT_HIGH, CLOSE_AT_LOW; -2: dir=BEAR, OPEN_AT_HIGH, CLOSE_AT_LOW; -1: dir=BEAR, o<pc, wick.up≥MODERATE; 0: dir=BEAR` | `-1.high > -2.close; 0.high >= -1.high; 0.low <= -1.low` | two bear marubozu, a bear gapping down with a wick into the second, a bear swallowing it whole |
+| LADDER_BOTTOM | `-4: dir=BEAR; -3: dir=BEAR, o<po, c<pc; -2: dir=BEAR, o<po, c<pc; -1: dir=BEAR, wick.up≥MODERATE; 0: dir=BULL, o>po` | `0.close > -1.high` | three falling bears, a bear with an upper wick, a bull opening above its body and closing above it |
+
+**Reversal bars outside the Japanese canon**
+
+| pattern (UP / its twin) | production, UP side (cell: qualifiers) | also | in words |
+|---|---|---|---|
+| KEY_REVERSAL | `-9: any; -8: any; -7: any; -6: any; -5: any; -4: any; -3: any; -2: any; -1: any; 0: dir=BULL, LOW_BELOW_PREV_LOW, c>pc` | `0.low < -9.low; 0.low < -8.low; 0.low < -7.low; 0.low < -6.low; 0.low < -5.low; 0.low < -4.low; 0.low < -3.low; 0.low < -2.low` | a new 10-bar low, then a close above the previous close |
+| OUTSIDE_REVERSAL | `-1: any; 0: rel=OUTSIDE, dir=BULL, CLOSE_ABOVE_PREV_HIGH` |  | an outside bar closing above the previous high |
+| ISLAND_REVERSAL | `k = 1..4 island bars: -k: HIGH_BELOW_PREV_LOW; 0: LOW_ABOVE_PREV_HIGH, dir=BULL` | `the island bars' highs below the bar before the gap; 0.low above every island high` | a full gap down, 1 bar(s) wholly below it, a full gap up out of them |
+| TWO_BAR_REVERSAL | `-1: dir=BEAR, body≥STRONG; 0: dir=BULL, body≥STRONG, c≥po` |  | a long bear, then a long bull taking back its whole body |
+| THREE_BAR_REVERSAL | `-2: dir=BEAR; -1: LOW_BELOW_PREV_LOW; 0: dir=BULL, LOW_ABOVE_PREV_LOW, CLOSE_ABOVE_PREV_HIGH` |  | a bear, a lower low, a bull closing above that bar's high |
+| OOPS | `-1: any; 0: OPEN_BELOW_PREV_LOW, h≥pl` |  | Williams: an open below the previous low, then back up to it |
+| EXHAUSTION_BAR | `-3: dir=BEAR; -2: dir=BEAR; -1: dir=BEAR; 0: dir=BEAR, size≥VERY_LARGE, body≥STRONG, LOW_BELOW_PREV_LOW` |  | a very large bear bar at the end of a run of bears (the sellers' last push) |
+| CLIMAX_BAR | `-1: any; 0: size≥VERY_LARGE, vol≥VERY_LARGE, LOW_BELOW_PREV_LOW, close≥Q3` |  | a very large bar on very large volume to a new low, closing in its upper half |
+| SIGNAL_BAR | `0: dir=BULL, close=Q4, wick.up≤WEAK, conv≥MODERATE` |  | Brooks' bull signal bar; `quality` STRONG with a lower tail of a quarter of its range and at most half of it inside the previous bar |
+| TREND_BAR | `0: dir=BULL, body≥LARGE` |  | Brooks: a bar that is mostly body |
+| DOJI_BAR (no direction) | `0: body≤SMALL` |  | Brooks: a bar with a small body or none |
+
+**Fixtures** (`tests/test_vocabulary.py`): for every pattern, a token table from explicit bars after
+a quiet warm-up, with the pattern bars' rolling classes and grades set (neutral unless the fixture
+says otherwise) - it fires at its last bar with `known_at` there; one bar or one qualifier changed and
+it does not; and on the mirrored table it fires DOWN under its twin's name. On walks with gaps, the
+parse of the flipped chart has every pattern with its twin's name and direction, and more than 40
+patterns occur.
+
+**Validation against TA-Lib.** TA-Lib (`talib`) is not installed in the lab's environment and was not
+installed for this (the brief: no installs into the shared venv), so the agreement report against its
+CDL functions is not made. Where the definitions differ on purpose, they are: TA-Lib measures bodies
+and shadows against the average of the last 10 bars' real bodies or ranges (BodyLong, ShadowVeryShort
+...); MCFL grades against the rolling mean and sd of the same measure (Nautilus' scheme, period 10),
+and judges equality with 0.05 ATR (TA-Lib: a share of the average range). The comparison is the first
+thing to run where TA-Lib exists.
+
+**Gaps.** Generated bars open at the last close, as 24-hour markets' bars nearly do. A third of the
+Japanese vocabulary needs a gap between one bar's close and the next bar's open (PIERCING, DARK_CLOUD,
+the necks, KICKER, MEETING_LINES, DOJI_STAR, the doji stars, ABANDONED_BABY, TRI_STAR, the crows with a
+gap, STICK_SANDWICH, TASUKI_GAP, SIDE_BY_SIDE_WHITE_LINES, MAT_HOLD, BREAKAWAY, CONCEALING_BABY_SWALLOW,
+LADDER_BOTTOM, ISLAND_REVERSAL, OOPS) and **cannot occur at all** on such bars - while
+IDENTICAL_THREE_CROWS, whose canon needs each open at the last close, is merely three falling bears.
+`synth.gapped` adds an untraded overnight jump to each open; the study measures the vocabulary on it
+too.
+
 ## Serialisation
 
 **The chart sentence** (`serialise.tokens`, `to_text`): every L2 event plus a ZONE token when a
@@ -544,7 +1038,7 @@ never NaN.
 | "invalidated" | FAIL | |
 | CISD (change in state of delivery) | DELIVERY_SHIFT | a close above the open of the last down run's first bar, at most 3 bars after the run; in a zone's reaction window it CONFIRMs the revisit |
 | displacement candle(s) | DISPLACE_C | two strong same-direction bodies closing in the outer quartile, or one extremely large dominant one |
-| pin bar, hammer / shooting star | PIN | |
+| pin bar, hammer / shooting star | PIN; v2: PATTERN[HAMMER] / [SHOOTING_STAR] (with the trend) | |
 | engulfing | ENGULF | |
 | inside bar break | INSIDE_BREAK | close beyond the mother bar after an inside bar |
 | morning / evening star | STAR | |
@@ -552,6 +1046,23 @@ never NaN.
 | marubozu | OPEN_AT_LOW and CLOSE_AT_HIGH (bull) | within-bar point relations |
 | doji | OPEN_EQ_CLOSE | |
 | gap | OPEN_GAP_UP / OPEN_GAP_DOWN; a full gap HIGH_BELOW_PREV_LOW / LOW_ABOVE_PREV_HIGH | |
+| higher high, lower low, ... (v2) | SWING↑[HH], SWING↓[LL], ... | labels of 3/3 swings |
+| market structure bullish / bearish (v2) | STRUCTURE UP / DOWN | last high HH and last low HL / LH and LL |
+| FVG filled / mitigated, inverted FVG (IFVG) (v2) | VOID_FILLED, VOID_PARTIAL, VOID_INVERTED | |
+| retracement, discount / premium, "the 50%" (v2) | RETRACE, PULLBACK[depth_bin], DAX50 | depth of a pullback in its leg |
+| equal highs / lows, liquidity, "buy-side / sell-side liquidity taken" (v2) | POOL, POOL_TAKEN[SWEPT / THROUGH] | |
+| protected low (the DAX course) (v2) | SWEEP_PROTECTED | `dax_smc.py` step 1, exactly |
+| range, consolidation, box; breakout / fakeout (v2) | RANGE; ESCAPE / FAILED_ESCAPE | |
+| NR4 / NR7, wide-range bar; balance / imbalance, overlapping or "clean" bars (v2) | NR4, NR7, WR7, overlap; BALANCE, IMBALANCE | |
+| Asian range, London open, NY session; "London took the Asian high" (v2) | session; SESSION_OPEN, SESSION_EXTREME, SESSION_EXTREME_TAKEN | fixed UTC hours |
+| a fast / slow return (v2) | REVISIT[pace=FAST] / [pace=SLOW] | tempo by rolling quartile |
+| "momentum ignition", a change in drift (v2) | FOCUS, FOCUS6, CUSUM_IGNITION | the desk's own detectors |
+| effort vs result, absorption, "no supply" (v2) | effort = ABSORPTION / EASE / AGREE; vol | Wyckoff's effort and result |
+| CRT: range candle, purge (manipulation), distribution (v2) | RANGE_CANDLE (any CANDLE), PURGE, DISTRIBUTION, CRT3 | |
+| HTF bias, "trade with the 4h", a 15m zone inside a 4h break (v2) | ALIGN / CONFLICT, NESTED | causal: the HTF event known first |
+| the classical candlestick names (v2) | PATTERN[name] | item 13's table |
+| BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
+| CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
 ## What the walk null shows
 
@@ -697,6 +1208,47 @@ per 1,000 bars) while v0's does not move (128 against 132).
 **CONFIRMED.** A DELIVERY_SHIFT confirmed 260 of 2,946 revisits on walks (8.8%), 249 of 2,918 on
 GARCH and 152 of 2,710 under momentum.
 
+### v2: the new alphabets against the walk
+
+`research/mcfl/v2_study.py` ([`out/v2.txt`](../mcfl/out/v2.txt)): six 4,800-bar series per source -
+an iid walk, GARCH(1,1), AR(1) momentum (phi 0.2) and a gapped walk (`synth.gapped`, overnight jumps
+of 0.5 sigma) - each given 15-minute timestamps and a tick volume (`synth.ticks`) and parsed with the
+changepoints; nine null sets per source (iid walks matched in volatility; for the gapped walk, gapped
+walks), the data compared with the pool of eight and each null set with the others. p is floored at
+1/10. **Calibration first**: with eight null sets, the walk against its own null reaches the p floor
+on a few n-gram tests (the swing-label sequence at n = 2-3, the pool and range streams at n = 3) and
+|z| up to 3.5-4 on shares that cannot differ (the share of escapes upward on GARCH, z = -3.7). So a
+p at the floor or |z| under about 4 is noise here; the findings below are the ones well past that, or
+consistent across measures.
+
+| item | walk, GARCH, gapped walk | AR(1) momentum (the positive control) |
+|---|---|---|
+| 1 swing labels, STRUCTURE | every label and shift rate inside the null (|z| ≤ 1.8); time in UP / DOWN / MIXED 0.28-0.30 / 0.30 / 0.41 on all three, as on their nulls | fewer swings (EH, EL z ≈ -3), fewer shifts (z ≈ -4), less time MIXED (0.39 vs 0.41) |
+| 11 vs_structure, CHoCH | WITH 31%, AGAINST 22%, NONE 46% of breaks, as on the null; 9 CHoCH per 1,000 bars; the next break after a CHoCH goes its way 52-57% (null 55-57%) | the same shares; fewer NONE breaks (z = -4.5); next break after a CHoCH 59% vs 56% (z = 1.1) |
+| 4 VOID lifecycle | fill and inversion rates inside the null; 64-68% of voids are inverted on the bar they fill | many more voids (z = +20 to +28), each filled and entered more slowly (FILLED within 5 bars 45% vs 50%, z = -11) |
+| 7 retracement | RETRACE at revisits is 79-82% DEEP, the rest BEYOND (geometry: a revisit reaches the body top, near the origin); INSIDE pullbacks mostly DEEP; GARCH a little more BEYOND (z = +4.6) | fewer pullbacks (z = -4.4), more SHALLOW after-break pullbacks (23% vs 20%, z = +3.9) |
+| 6 pools, protected sweep | pool, take and sweep rates inside the null; 78-82% of pools taken within 100 bars, a third of takes close back (swept) | fewer pools, takes and protected sweeps (z = -3 to -4) |
+| 5 RANGE | 6-7 ranges per 1,000 bars; ~58% of excursions escape; after an escape price goes a box height on before closing back in 65-68% of the time, as on the null | far fewer ranges (z = -8.8); escapes hold more (67% vs 58%) and run on more (76% vs 65%) |
+| 2 compression | NR4/NR7/WR7 and the overlap runs inside the null; GARCH: after a WR7 the next 5 bars' mean range exceeds it 7.8% vs 5.0% (z = +11.5), after an NR7 slightly less often - volatility clustering, the one thing GARCH has | IMBALANCE runs twice as common (z = +16, +8), BALANCE rarer (z = -4.5) |
+| 8 sessions, tempo | breaks and session-extreme takes spread over the sessions as on the null (the clock means nothing to a walk, and the study shows it); pace does not change what a revisit becomes | a SLOW revisit becomes REJECT_PATH less often (34% vs 43%, z = -7.6) |
+| 9 changepoints | on walks and gapped walks FOCuS (12 + 3 ln 4 = 16.2) almost never fires (0.03 per 1,000 bars), FOCUS6 and CUSUM 1.3-1.7 per 1,000; what follows a fire is a coin (0.48-0.57) | GARCH and momentum double or triple the FOCUS6 and CUSUM rates (z = +6 to +14) and the FOCUS_ZONE share; the direction after a fire is still a coin at 5 and 20 bars |
+| 3 volume | with tick volume built from the range, effort words read as on the null (ABSORPTION 1.1%, EASE 1.4% of bars; the next bar a coin after each) | different only through the trend generator's bar construction (see v1's caution), not information in volume |
+| 12 CRT | a PURGE is followed by a DISTRIBUTION (the range's other side within 3 candles) **57-58% of the time on a walk** (gapped walk 61%), against 48% for an inside candle without a purge, identical on the null; in 65% it is the very next candle; the mid is reached on an earlier bar 24-28% of the time. CRT's base rate is geometry: the purge candle closes inside the range, often near the far side | CRT3 rarer (z ≈ -3), its hit rate unchanged (58%) |
+| 10 multiple timeframes, 15m vs 4h | the research (non-causal) flag marks 20-23% of 15m zones, the causal NESTED **0.4-1.1%**; on walks the research-flagged zones' first revisits reach REJECT_PATH before FAIL 59% against 54% for all zones and 58% on the null's - the same "edge" appears on the walks it was compared with, so it is selection, not information; the 4h CRT seen on 15m distributes 49-50% | the nested flags carry nothing either (all-zone REJECT_PATH 45% vs 51%) |
+| 13 candlestick vocabulary | every pattern occurs at the null's rate (GARCH: no rate beyond |z| = 3.5), except CLIMAX_BAR on the gapped walk, ↑ and ↓ moving opposite ways (z = -10.6, +6.5) in a process that is symmetric - its volume class varies between series more than eight null sets show; pooled over all patterns and trades, P(≥1R, 2R, 4R, 10R) = 0.49, 0.35, 0.23, 0.10 on walks, 0.49, 0.35, 0.22, 0.10 on GARCH, 0.48, 0.35, 0.22, 0.10 on gapped walks - the walk null's own 0.49, 0.35, 0.22, 0.10, against 1/(N+1) = 0.50, 0.33, 0.20, 0.09 (the discrete bars and the stop at the pattern's extreme put the finite-horizon walk a little above the continuous martingale at large N) | the continuation shapes gain: pooled P(≥1R) 0.54 vs 0.49, P(≥4R) 0.26 vs 0.22; LONG_LINE, MARUBOZU, KEY_REVERSAL, BELT_HOLD +4 to +10 z; HIKKAKE↑ worse (0.33 vs 0.41 at 1R) |
+
+**Which new tokens differ from the walk null?** On an iid walk, a GARCH walk and a gapped walk,
+**none** of the v2 alphabets does beyond the null's own spread, with two exceptions that are exactly
+what those processes contain: GARCH moves the volatility-sensitive words (WR7 followed by wide bars,
+more FOCuS and CUSUM fires, more RETRACE BEYOND), and nothing directional. Momentum, the positive
+control, moves almost every alphabet - swings, voids, ranges, imbalance runs, pools, pullbacks, the
+continuation candlesticks' P(N R) - so the instrument sees structure when there is some. The patterns'
+P(N R) on walks sits on the walk's own curve (0.49, 0.35, 0.22, 0.10 at 1, 2, 4, 10 R), which is the
+baseline any market measurement must beat, and slightly above 1/(N+1) for reasons of measurement.
+CRT's 57-61% "success" and the nested zone's research flag both reproduce on random walks: geometry
+and hindsight respectively. Real-market frequencies and P(N R) are not reported: no market data was
+used in this build.
+
 ## Open questions
 
 - **Is the grammar compressible?** A minimum-description-length test: does adding ZONE (or any
@@ -708,14 +1260,110 @@ GARCH and 152 of 2,710 under momentum.
   `ORIGIN↑ DISPLACE↑ VOID↑ BREAK↑ REVISIT↑ REJECT↑` has the same continuation distribution on EURUSD
   1h and BTC 4h, the language is scale-free and pooling is legitimate; if not, sentences need an
   asset/timeframe context, which is a different language.
-- **Does a multi-timeframe ALIGN/CONFLICT relation work?** ALIGN(a, b) for a lower-timeframe
-  entity inside a same-direction higher-timeframe ZONE, CONFLICT for the opposite, mapped with
-  `prims.htf_index` so the higher bar is closed. The desk's 4h-bias filter is a special case; it
-  helped nothing in [`origin-zones.md`](origin-zones.md), so this is to be measured, not assumed.
-- **RANGE and EPISODE as entities**, and whether lifecycle events should exist for failed
+- **Does a multi-timeframe ALIGN/CONFLICT relation work?** v2 defines it (item 10), causally; whether
+  it carries anything is to be measured on markets, not assumed. The desk's 4h-bias filter, a special
+  case, helped nothing in [`origin-zones.md`](origin-zones.md).
+- **EPISODE as an entity** (RANGE became one in v2), and whether lifecycle events should exist for failed
   candidates too, so that V = 0 origins have sentences comparable with zones'.
 
 ## Decisions the brief left open
+
+### v2
+
+- **v2 is part of the default parse.** `parse(df)` adds every v2 entity and attribute (FOCuS and
+  CUSUM only with `changepoints=True`, multiple timeframes through `mtf.py`), so the v1 truncation
+  and flip tests cover v2 as well; `parse(df, v2=False)` is the v1 chart, entity for entity.
+- **Swing labels (item 1).** The equality tolerance is SWING_EQ_ATR = 0.1 ATR at the later swing,
+  not v1's EQ_ATR (0.05, for adjacent price points): swings are further apart in time and price. An
+  equal high or low makes the state MIXED - the brief's UP is HH and HL, and an equal high is not a
+  higher one. The first swing of each kind has no label. Labels known on one bar are applied together.
+- **STRUCTURE_SHIFT's direction** is the direction the state moved in the order DOWN < MIXED < UP
+  (UP → MIXED is a shift down), so every shift has one and the flip maps it.
+- **vs_structure reads the state at the break's bar**, not at its known_at (a break can be known up
+  to three bars later, when its origin swing is confirmed). Both are causal; the bar is what a trader
+  means by "the structure when it broke".
+- **CHoCH (item 11)**: "established" counts labels, not shifts, and includes the label that set the
+  state; "first" is per run of the state and in the order breaks became known, so a truncated parse
+  finds the same one. At most one per bar (two legs breaking on one bar make one CHoCH, the longer
+  leg's).
+- **VOID transitions are exact** (no tolerance), like the VOID: entering is a low strictly below
+  the near edge, filling a low at or below the far edge, inverting a close strictly below it. A void
+  is followed to the end of the series (no expiry); INVERTED is terminal. The transitions go into
+  `Chart.transitions` beside the zones', keyed by the VOID's id.
+- **Retracement (item 7).** On a REVISIT the leg's peak is the highest high from the origin to the bar
+  before the revisit (the revisit bar's own high may come after its low). After a BREAK, the
+  pullback measured is the first swing low after the break (AFTER), and, for the DAX rule, the last
+  swing low inside the leg (INSIDE) measured against the leg to the break, exactly as `dax_smc.py`
+  measures its structural liquidity. Bins: 0.382 and 0.618 belong to the bin above; 1.0 is DEEP.
+  The DAX rule's 50% is the number 0.5 (`depth≥0.5`), not the HALF bin, which starts at 0.382.
+- **Pools (item 6).** The tolerance is the swing labels' (0.1 ATR at the newer swing), measured
+  between the newest member and each earlier one. "Not yet traded through" is checked between each
+  member and the newest (no high strictly between them above the higher of the two); a pool grows
+  by new POOL entities (count 2, 3, ...) rather than by changing one, so every entity stays immutable.
+  POOL_TAKEN is the first high strictly above the level; "with a close back" is an attribute, and the
+  link to BREACH_REVERT is the list of the members' BREACH_REVERT events on that bar.
+- **SWEEP_PROTECTED's direction** is the direction of the move it protects (UP for a protected low),
+  as ORIGIN↑ is a swing low; BREACH_REVERT keeps v0's convention (the breach's direction).
+- **RANGE (item 5).** k = 10 bars within x = 2 ATR (at the detecting bar), one live range at a time,
+  the box fixed at detection (a wick beyond it is a test or an excursion, not a wider box). "Holds m
+  bars" is m consecutive closes beyond, the first included (m = 3), so an ESCAPE is known two bars
+  after its first close beyond. A failed escape counts as a test of its edge. A RANGE has no
+  direction (Dir.NONE).
+- **Compression (item 2).** NR and WR are strict (a tie is neither) and count the bar itself in its
+  4 or 7. OVERLAP is a BAR_RELATION attribute (it relates two bars); NR4 / NR7 / WR7 are CANDLE
+  attributes. BALANCE / IMBALANCE use k = 3 and thresholds 0.75 / 0.25 (the walk's overlap quartiles
+  are 0.25 and 0.79, so each bar of a run is in the top or bottom quarter); IMBALANCE's direction is
+  that of the bars' higher highs (rel = HH), BALANCE has none.
+- **Sessions (item 8)** use fixed UTC hours, no daylight saving, read from the bar's open. SESSION is a
+  CANDLE attribute (a qualifier), not a separate token per bar: one token per bar is the CANDLE, and a
+  second L1 token type would only repeat its bar. A session's extremes are known at the first bar of
+  the next session (the bar that shows the clock passed), and are watched for a take until the same
+  session comes round again. SESSION_HIGH_TAKEN and SESSION_LOW_TAKEN are one type with two directions,
+  so the flip maps them onto each other.
+- **Tempo** is measured between consecutive events of one structure (the first since the structure was
+  known), and FAST / SLOW are quartiles of the same event type's last 50 tempos, known strictly before
+  it. A tie with a quartile is FAST (SLOW).
+- **Changepoints (item 9) are an option of the parse**, `changepoints=True`, not in every parse: they
+  import production's package, and CUSUM (log returns) is undefined on the negated chart the flip
+  test parses. FOCUS's `at` is the detector's change start, so it can be well before its `known_at`.
+  CUSUM's flip symmetry is tested under the log-price flip, which is the one its definition has. The
+  bar length for FOCuS's threshold comes from the first two timestamps (known at bar 1), else an hour.
+- **Volume (item 3)** is graded like the size class (same period and edges), and EFFORT_RESULT reads
+  the two classes only; "≥ LARGE" and "≤ SMALL" include the extreme classes (and NONE). The taker side
+  needs no new direction: the flip swaps the buy and sell columns, so a taker skew is flip-symmetric
+  exactly. Generated bars get a tick volume from `synth.ticks`, built from the bar's range, so on them
+  volume carries nothing a walk's does not - the comparison calibrates the words, it cannot find an
+  effect.
+- **CRT (item 12).** PURGE reads the brief's "close ≤ prev high ∧ close ≥ prev low" as the negations
+  of the v1 words CLOSE_ABOVE_PREV_HIGH and CLOSE_BELOW_PREV_LOW, so both inequalities hold within the
+  point tolerance. CRT_N = 3 candles after the purge, the purge candle itself not counted (its own
+  low below the range is a purge of the other side, not a distribution). DISTRIBUTION's direction is
+  the move's (down after a purge of the high), and so is CRT3's.
+- **Multiple timeframes (item 10).** The HTF chart is parsed on its own bars (so its words are HTF
+  words) and read in LTF time through two maps, span and known; the two charts stay separate objects
+  (`MTF`), with HTF ids prefixed by the timeframe, rather than one chart with mixed bar clocks.
+  CONTAINS_TF is materialised only for candles (any other pair is on demand; all pairs would be
+  quadratic). ALIGN/CONFLICT are materialised for LTF ZONEs and BREAKs. NESTED is causal by default:
+  the HTF break must be known, in LTF time, by the LTF zone's known_at - the brief's rule. The
+  research's flag is kept as a non-causal form (`nested_flags(mode="research")`), with the selection of
+  HTF breaks zone_events made (only those later returned to), because reproducing it exactly needs it;
+  it is a check, not a relation the language offers.
+- **The multi-timeframe CRT** waits for the HTF range candle to be complete but not for the purge's HTF
+  candle: the purge is an LTF event, found by the LTF bars' own periods.
+- **The candlestick vocabulary (item 13)** is one event type, PATTERN, with the name as an attribute
+  and the pair's key as the id suffix, rather than ~60 types: the flip maps a pattern to its twin by
+  swapping the name, and one type keeps the layer and ordering tables small. Thresholds are the
+  grammar's grades, not TA-Lib's averages: long body = force grade STRONG or more, short = MODERATE or
+  less, small = WEAK, doji = OPEN_EQ_CLOSE. The trend is in the production only where the name depends
+  on it (the hammer family) or the canon's definition is the trend plus a shape with another name
+  (BELT_HOLD vs OPENING_MARUBOZU); otherwise it is an attribute. A pattern with only a bearish canonical
+  name keeps that name on its UP mirror. THREE_LINE_STRIKE is TA-Lib's: three rising bulls and a bear
+  that wipes them out is the bullish one. ISLAND_REVERSAL is four rows (islands of 1-4 bars) sharing one
+  id, so one island is one event. KEY_REVERSAL needs a new 10-bar low and a close above the previous
+  close; EXHAUSTION_BAR a very large bear bar after three bears; CLIMAX_BAR a very large bar on very
+  large volume to a new low, closing in its upper half; SIGNAL_BAR Brooks' bull reversal bar with a
+  `quality` grade; TREND_BAR and DOJI_BAR the fuzzy body class (LARGE or more, SMALL or less).
+- **TA-Lib** is not installed and was not installed: no agreement report (see item 13).
 
 ### v1
 
