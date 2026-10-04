@@ -57,14 +57,31 @@ def exits(df):
     return out
 
 
+def source(coin):
+    """A signal source's daily bars: the 12 original coins from turn_trade, or SET_D from the cache."""
+    if os.environ.get("SET") != "D":
+        return TT._bin(coin, "1d")
+    z = np.load(Path(os.environ["CACHE"]) / f"{coin}USDT.1d.npz")
+    return pd.DataFrame({k: z[k] for k in ("ts", "open", "high", "low", "close", "volume")}).reset_index(drop=True)
+
+
+def coins():
+    if os.environ.get("SET") != "D":
+        return [c for c in TT.COINS if c != "BTC"]
+    import json
+    rule = json.load(open(HERE / "market_mirror_rule.json"))
+    cache = Path(os.environ["CACHE"])
+    return [c for c in rule["addendum_set_d"]["coins"] if (cache / f"{c}USDT.1d.npz").exists()]
+
+
 def run():
     OUT.mkdir(parents=True, exist_ok=True)
     btc = TT._bin("BTC", "1d").set_index("ts")
     sig = []
-    for coin in TT.COINS:
-        if coin == "BTC":
+    for coin in coins():
+        df = source(coin)
+        if len(df) < 60:
             continue
-        df = TT._bin(coin, "1d")
         for t, entry_ts, exit_ts in exits(df):
             sig.append(dict(coin=coin, ts=t, entry=entry_ts, exit=exit_ts))
     s = pd.DataFrame(sig)
@@ -98,11 +115,12 @@ def run():
         return np.quantile(b, [0.05, 0.95])
 
     lo, hi = boot(s["bps"].to_numpy(), s["ts"].to_numpy())
-    split = pd.Timestamp("2024-01-01", tz="UTC").timestamp()
+    split = (pd.Timestamp("2024-01-01", tz="UTC").timestamp() if os.environ.get("SET") != "D"
+             else float(np.median(np.unique(s["ts"]))))  # SET_D: the halves of its own signal dates
     before, after = s.loc[s["ts"] < split, "bps"].mean(), s.loc[s["ts"] >= split, "bps"].mean()
     s.to_csv(OUT / "mirror_trades.csv", index=False)
     ok = s["bps"].mean() > 0 and lo > 0 and before > 0 and after > 0 and s["bps"].mean() > np.quantile(tw, 0.95)
-    print(f"M1 (12 original coins -> BTC, 1d): n={len(s)} on {s['ts'].nunique()} days; net {s['bps'].mean():+.1f} bps "
+    print(f"M1 ({'SET_D' if os.environ.get('SET') == 'D' else '12 original coins'} -> BTC, 1d): n={len(s)} on {s['ts'].nunique()} days; net {s['bps'].mean():+.1f} bps "
           f"[{lo:+.1f}, {hi:+.1f}]; before 2024 {before:+.1f}, after {after:+.1f}; random-entry twin mean "
           f"{np.mean(tw):+.1f} (95th pct {np.quantile(tw, 0.95):+.1f}) -> {'PASSES' if ok else 'fails'}")
     print(f"B (>= 3 coins on a close, hold {HOLD_B}d): n={len(bb)} days; net {np.mean(bb):+.1f} bps" if bb else "B: no days")
