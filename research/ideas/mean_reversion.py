@@ -1195,6 +1195,103 @@ def plot_gallery(plt):
             plt.close(fig)
 
 
+# ---------------------------------------------------------------- the gap check (registered in mr_selected.json)
+
+def _gap_one(job):
+    """The gap fade three ways: as frozen; (a) charged the gap bar's own recorded spread; (b) entered at the
+    gap bar's close, stop and target prices unchanged."""
+    from mcfl import synth
+    sym, iv, source, fam, cost_px = job
+    df, cpx = load("mt5", sym, iv, cost_px)
+    if df is None:
+        return None
+    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    sp = pd.read_sql_query("SELECT ts, spread FROM bars WHERE symbol = ? AND interval = ?", conn, params=(sym, iv))
+    spec = conn.execute("SELECT spec FROM specs WHERE symbol = ?", (sym,)).fetchone()
+    conn.close()
+    point = float(json.loads(spec[0])["point"])
+    bar_px = df[["ts"]].merge(sp.drop_duplicates("ts"), on="ts", how="left")["spread"].fillna(0).to_numpy(float) * point
+    a_real = atr(*(df[k].to_numpy(float) for k in ("high", "low", "close")))
+    if float(np.nanmedian((cpx / np.maximum(a_real, 1e-12))[50:])) > MAX_COST:
+        return None
+    gm = synth.gaps(df["ts"].to_numpy(np.int64))
+    key = f"mt5{sym}{iv}{source}"
+    frame = make_source(df, source, zlib.crc32(key.encode()) % 100000)
+    n = len(frame)
+    rows = []
+    for side, f in ((1, frame), (-1, flip(frame))):
+        o, h, l, c = (f[k].to_numpy(float) for k in ("open", "high", "low", "close"))
+        a = atr(h, l, c, 14)
+        _, hu, _ = regimes(c)
+        ts = f["ts"].to_numpy(np.int64)
+        s_ = np.flatnonzero(gm[:n])
+        s_ = s_[(s_ >= 1) & (s_ < n - 1)]
+        g = o[s_] - c[s_ - 1]
+        s_ = s_[g <= -GAP_ATR * a[s_ - 1]]
+        t = s_ - 1
+        H = max(1, int(GAP_HOURS * 3600 / SEC[iv]))
+        stop = o[s_] - ((c[t] - o[s_]) + PAD * a[t])
+        target = c[t]
+        X = np.zeros(n, bool)
+        base_c = cpx[t] / np.maximum(a_real[t], 1e-12) * a[t]  # the real cost in ATR, on this frame's ATR
+        bar_c = np.maximum(cpx[t], bar_px[s_]) / np.maximum(a_real[t], 1e-12) * a[t]
+        for name, e, entry, cost_px_ in (("frozen", s_, o[s_], base_c), ("a_bar_spread", s_, o[s_], bar_c),
+                                          ("b_close_entry", s_ + 1, c[s_], base_c)):
+            ok = (entry > stop) & (entry < target) & (e < n) & (a[t] > 0)
+            risk = entry - stop
+            ok &= (risk >= MIN_RISK * a[t]) & (risk <= MAX_RISK * a[t])
+            ee, en, rk, tt = e[ok], entry[ok], risk[ok], t[ok]
+            if not len(ee):
+                continue
+            # (b) enters at the gap bar's close: the next bar is the first one it can exit on
+            own, st, op, xb, xs = sim(o, h, l, c, ee, en, rk, SLIP * a[tt], X, H if name != "b_close_entry" else H - 1,
+                                      target[ok])
+            rows.append(pd.DataFrame({"check": name, "sym": sym, "iv": iv, "fam": fam, "source": source, "side": side,
+                                      "ts": ts[np.minimum(ee, n - 1)], "hu": hu[tt], "own": own, "st": st,
+                                      "cost": cost_px_[ok] / rk}))
+    return pd.concat(rows, ignore_index=True) if rows else None
+
+
+def gapcheck():
+    RUN, _, _ = _universe()
+    costs = json.loads((OUT / "costs.json").read_text())
+    jobs = [(s, iv, src, fam, costs[s][0]) for src in ("real", "iid", "garch") for iv in ("15m", "1h")
+            for s, fam in RUN.FAMILY.items() if fam in GAP_FAMS and costs.get(s, [None])[0] is not None]
+    with ProcessPoolExecutor(WORKERS) as pool:
+        d = pd.concat([x for x in pool.map(_gap_one, jobs) if x is not None], ignore_index=True)
+    d.to_pickle(OUT / "gapcheck.pkl")
+    d["day"] = d["ts"] // 86400
+    d["period"] = np.where(d["ts"] < SPLIT, "disc", "conf")
+    rows = []
+    rng = 11
+    for (check, fam, iv, period_, src), g in d.groupby(["check", "fam", "iv", "period", "source"]):
+        for var, m in (("gap", np.ones(len(g), bool)), ("gap|H>=0.45", g["hu"].to_numpy() >= HU_T)):
+            x = g[m]
+            for ex in ("own", "st"):
+                R = (x[ex] - x["cost"]).to_numpy()
+                dd = pd.DataFrame({"day": x["day"].to_numpy(), "R": R, "N": 1.0}).groupby("day").sum()
+                mR, se = cluster(dd["R"].to_numpy(), dd["N"].to_numpy())
+                lo, hi = boot_ci(dd["R"].to_numpy(), dd["N"].to_numpy(), rng) if src == "real" else (np.nan, np.nan)
+                cum = np.cumsum(dd["N"].to_numpy())
+                half = cum <= cum[-1] / 2 if len(cum) else np.array([], bool)
+                rows.append(dict(check=check, variant=var, fam=fam, iv=iv, period=period_, source=src, exit=ex, n=len(x),
+                                 R=mR, blo=lo, bhi=hi, gross=float(np.mean(x[ex])) if len(x) else np.nan,
+                                 cost=float(x["cost"].mean()) if len(x) else np.nan,
+                                 R_h1=dd["R"][half].sum() / max(dd["N"][half].sum(), 1),
+                                 R_h2=dd["R"][~half].sum() / max(dd["N"][~half].sum(), 1),
+                                 R_long=float(np.mean(R[x["side"].to_numpy() > 0])) if (x["side"] > 0).any() else np.nan,
+                                 R_short=float(np.mean(R[x["side"].to_numpy() < 0])) if (x["side"] < 0).any() else np.nan))
+    t = pd.DataFrame(rows)
+    t.to_csv(OUT / "gapcheck.csv", index=False)
+    pd.set_option("display.width", 250)
+    pd.set_option("display.max_rows", 500)
+    w = t.pivot_table(index=["check", "variant", "fam", "iv", "period", "exit"], columns="source", values="R").reset_index()
+    r = t[t["source"] == "real"].merge(w[["check", "variant", "fam", "iv", "period", "exit", "iid", "garch"]],
+                                       on=["check", "variant", "fam", "iv", "period", "exit"])
+    print(r[["check", "variant", "fam", "iv", "period", "exit", "n", "R", "blo", "bhi", "gross", "cost", "R_h1", "R_h2",
+             "R_long", "R_short", "iid", "garch"]].round(3).to_string(index=False))
+
+
 # ---------------------------------------------------------------- smoke
 
 def smoke():
@@ -1221,7 +1318,7 @@ def smoke():
 
 
 def main():
-    {"discover": discover, "confirm": confirm, "plot": plot, "smoke": smoke, "compute": compute}[os.environ.get("MODE", "discover")]()
+    {"discover": discover, "confirm": confirm, "plot": plot, "smoke": smoke, "compute": compute, "gapcheck": gapcheck}[os.environ.get("MODE", "discover")]()
 
 
 if __name__ == "__main__":
