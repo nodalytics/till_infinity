@@ -120,6 +120,50 @@ Report which of the new tokens differ from the walk null.
       - known_at at the last bar.
     - **Validation:** an agreement report against TA-Lib's CDL functions where the definitions match. Document every disagreement and its cause (thresholds, averaging period). Report each pattern's frequency on real markets against walks, and its P(N R) curve against 1/(N+1).
 
+## Time core (after v2, before v3)
+
+The desk asked for time to be a dimension of the language, not a tag on bars. v0-v2 record `at` and
+`known_at` as bar numbers; v2 adds sessions, day of week, session-extreme events and tempo as bar
+attributes. This version makes time first-class in the core, because v3's multi-timeframe and
+session work builds on it. The usual rules apply:
+- known_at on everything;
+- causality and truncation tests;
+- flip symmetry (time is unchanged by the flip);
+- the rule table;
+- each new alphabet against walks with the same calendar.
+
+1. **Time in the core.**
+   - Every entity carries its wall-clock `start`, `end` and `known_at_ts` (UTC) beside bar numbers, and its duration in bars and in seconds.
+   - Structures (LEG, ZONE, RANGE, EPISODE, and the v2 lifecycles) become intervals with a start and an end.
+   - Gaps in the clock (weekends, closures) are explicit: duration in trading time vs calendar time.
+2. **Interval relations (Allen's algebra).** BEFORE, MEETS, OVERLAPS, DURING, STARTS, FINISHES, EQUALS and their inverses between any two intervals, usable in productions (e.g. `REVISIT DURING SESSION[LONDON]`).
+3. **Calendar tokens.**
+   - Minute and hour of day.
+   - Session, day of week, week of month, month, quarter.
+   - Month-, quarter- and year-end; holidays and half-days, from a configurable calendar.
+4. **Time anchors as events.**
+   - Session open and close; daily open (UTC and New York midnight); weekly and monthly open.
+   - **HTF_CLOSE[tf]**: every higher-timeframe bar close, the moment its facts become knowable. Every multi-timeframe relation must read HTF facts only at or after the matching HTF_CLOSE; this is the shared clock for the causality rule learned on 2026-10-03.
+   - Killzones and macro windows (ICT-style), with start and end events.
+5. **Elapsed and remaining time** as attributes and qualifiers:
+   - age since any event (bars, seconds, sessions);
+   - time until the session close, the daily close, or the current HTF bar's close;
+   - an HTF bar's progress (e.g. 75% of a 4h bar elapsed).
+6. **Time-based events:**
+   - TIMEOUT: nothing happened within N;
+   - STALL: confined longer than usual for this market and hour;
+   - SESSION_FIRST_MOVE: the session's first swing, the "Judas" swing;
+   - LATE / EARLY: an event outside its usual hours.
+7. **Several clocks.**
+   - Bar time and clock time; volume time (bars of equal volume) and tick time where data allow.
+   - Event time: one step per event. The same sentence can be read on any clock.
+   - The parse runs unchanged on volume bars (connects to v3 I).
+8. **Seasonality and tempo states:**
+   - a time-of-day volatility profile per market (NORMAL / UNUSUAL for this hour);
+   - the market's tempo (events per hour against its own hour-of-day baseline);
+   - time-of-day baselines for every event rate, so "rare for this hour" is a qualifier.
+   - Any time effect is judged against walks given the same calendar and the same intraday volatility profile.
+
 ## v3
 
 MCFL v3. The desk asked for all of these (2026-10-03). Build on merged v2, with the same rules:
