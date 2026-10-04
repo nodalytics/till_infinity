@@ -1,0 +1,70 @@
+{
+  "frozen": "2026-10-04",
+  "question": "do classic mean-reversion rules (Connors RSI(2), Bollinger, z-score/OU, IBS, N down closes, Keltner and VWAP fades, regime filters, pairs, index gap fades) earn after costs on real markets, beyond matched iid and GARCH walks and a random-side twin, while each finds reversion on a mean-reverting positive control",
+  "prior": "battery.md (RSI(2) and Bollinger reversion at default exits: no survivor), imported-ideas.md (every reversion rule fails), chan.md (variance-ratio/Hurst regime separates nothing; FX cointegration is not there at a tradeable speed), zma.md (an OU z-score works on an OU control, not on real series), sequencing.md (short-horizon reversal is bid-ask bounce), deriving.md (Range Break 100 has a real range). This run differs in using each rule's own market-decided exit, a structural stop, P(N R) tails, GARCH walks on the real calendar and a positive control for every rule",
+  "data": {
+    "mt5": "the broker's bars (mt5bt.db) for every symbol in run.FAMILY: FX 12, metals 5 (XAU XAG XPT XPD XCU), indices 7, energy 2, crypto CFDs 35 (BTC ETH SOL and run.FRESH), Deriv 15; at 15m, 1h, 4h and 1d where the DB has >= 400 bars",
+    "binance": "the 12 coins of turn_trade.COINS, USDT perpetual klines at 15m, 1h, 4h and 1d (2021 onward)",
+    "fresh": "the 131 fresh Binance coins of turn_confirm (FRESH 58 + SET_C 73) at 4h and 1d, every date: confirmation only",
+    "discovery": "entry before 2024-01-01 (MT5 indices, energy and the 15m bars of every MT5 symbol start in 2024: they have no discovery data)",
+    "confirmation": "entry on or after 2024-01-01, plus the fresh coins (every date) for crypto cells at 4h and 1d",
+    "deriv": "Deriv synthetics reported apart (all dates), never pooled with real markets and never eligible for selection; Range Break 100 is the expected positive (deriving.md) and is reported per symbol as a property of its generator"
+  },
+  "costs": {
+    "mt5": "run.spread_floor per symbol (median tick spread where ticks are held, else the broker's quoted spread) x point, charged once per trade; where that is 0 (the zero-spread crypto CFDs) the fallback is the median of the bars' positive spreads x point",
+    "binance": "0.07% of price per trade (turn_trade.FEE)",
+    "drop": "a symbol-timeframe whose median cost exceeds 0.5 ATR(14) is dropped and listed",
+    "stop_slippage": "0.05 ATR(14) of the signal bar, adverse, on every stop fill",
+    "units": "cost in R = cost / risk, the real series' cost in ATR units applied to the walks bar by bar"
+  },
+  "indicators": "ATR(14) Wilder; RSI(2) Wilder; SMA 5/20/50/200; population sd 20/50; EMA(20) and ATR(10) for Keltner; IBS = (C-L)/(H-L); rolling VWAP of typical price x bar volume over one day of bars (96 at 15m, 24 at 1h). Every value uses bars up to and including the signal bar's close",
+  "entries": {
+    "convention": "signal at bar t's close, entry at bar t+1's open. Long rules below; shorts by symmetry (the same code on the chart negated). State rules enter on the bar their condition becomes true (true at t, false at t-1); event rules on every bar the event occurs. Trades may overlap",
+    "rsi2": "RSI(2) < 10; exit on a close above SMA(5)",
+    "rsi2_ma": "RSI(2) < 10 and close > SMA(200) (short: RSI(2) > 90 and below SMA(200)); exit on a close above SMA(5)  [Connors]",
+    "bb": "close below SMA(20) - 2 sd(20); exit on a close at or above SMA(20). (z of close vs the 20-bar mean beyond -2 is the same rule, so z20 is not run separately)",
+    "z50": "z = (close - SMA(50)) / sd(50) < -2; exit on a close at or above SMA(50)",
+    "z50_ou": "z50, taken only when the OU half-life fitted on the trailing 200 closes (OLS of dC on C_lag) is <= 50 bars",
+    "kelt": "close below EMA(20) - 2 ATR(10); exit on a close at or above EMA(20)",
+    "vwap": "15m and 1h only: (close - VWAP) / sd(close - VWAP over one day of bars) < -2; exit on a close at or above VWAP",
+    "ibs1": "event: IBS < 0.2; exit at the next open after the entry bar (one bar held)",
+    "ibsrev": "event: IBS < 0.2; exit on the first close with IBS > 0.8",
+    "down3": "event: exactly the 3rd consecutive lower close; exit on the first higher close",
+    "down4": "as down3 with 4",
+    "down5": "as down3 with 5",
+    "gap": "15m and 1h, MT5 FX, metals, indices and energy: the first bar after a hole in the clock (session open, daily break, weekend) whose open is >= 0.5 ATR(14) below the prior close; enter at that open; exit when price trades back to the prior close (a limit at the prior close) or at the close of the bar 8 hours after entry. Stop for R: the gap size + 0.1 ATR beyond the open"
+  },
+  "regime_variants": "every rule above also split by the trailing 100-bar variance ratio VR(4) < 0.9 vs >= 0.9 and the trailing 100-bar Hurst exponent (slope of log sd(C[t]-C[t-k]) on log k, k = 1,2,4,8,16) < 0.45 vs >= 0.45, measured at the signal bar: 4 subsets per rule, the complement being the check",
+  "exits": {
+    "own": "the rule's own exit, filled at the next open after the exit close; time stop: out at the close of the 20th bar held (gap: 8 hours); no price stop",
+    "stop": "the same plus a structural stop at the signal bar's low - 0.1 ATR(14) (short: high + 0.1 ATR), checked first within each bar, filled at min(open, stop) - 0.05 ATR",
+    "R": "R = (exit - entry) / risk - cost / risk, risk = entry - structural stop (both exits use the same risk unit). Trades whose entry opens below the signal bar's low (risk < 0.1 ATR) or with risk > 10 ATR are skipped"
+  },
+  "tails": "P(N R), N = 0.5, 1, 2, 4, 10: the share of trades whose price reaches entry + N risk before the structural stop, within 100 bars of entry, regardless of the rule's exit (stop checked first within a bar). On a martingale this is 1/(N+1) less the 100-bar truncation; the walks give the exact null",
+  "pairs": {
+    "pairs": "FX EURUSD-GBPUSD, AUDUSD-NZDUSD, EURUSD-USDCHF, EURJPY-GBPJPY; metals XAUUSD-XAGUSD, XPTUSD-XPDUSD; indices US SP 500-US Tech 100, US SP 500-Wall Street 30, Germany 40-UK 100; energy US Oil-UK Brent Oil; crypto CFD BTCUSD-ETHUSD; Binance all 66 pairs of the 12 coins; at 15m, 1h, 4h, 1d. Confirmation adds each fresh coin against BTCUSDT at 4h and 1d",
+    "fit": "log closes on the common timestamps; OLS log Y = a + b log X on the trailing W bars (W = 500; 250 at 1d), re-fitted every 25 bars with data up to the re-fit bar; residual sd; Dickey-Fuller t of the window's residuals (no constant)",
+    "rule": "z = (log Y - a - b log X) / sd; enter when z first reaches <= -2 (long Y, short b X) or >= +2 (the mirror), at the next open, the fit frozen at entry; exit at the next open after z crosses 0; stop at the next open after |z| >= 4; time stop at the 100th bar's close",
+    "variants": "pair (every signal) and pair_coint (only when the last re-fit's DF t < -2.86)",
+    "R": "R = side x (spread at exit - spread at entry) / (2 sd) - cost, cost = (cost fraction of Y + |b| x cost fraction of X) / (2 sd); P(N R) on closes, stop at -1R, 100 bars",
+    "walks": "each leg an independent iid (or GARCH 0.08/0.9) walk of its own log-return sd on the joined timestamps; positive control: Y = X + an OU spread (half-life 20 bars, innovation sd = Y's bar sd)"
+  },
+  "controls": {
+    "iid": "mcfl.synth.matched_profiled: an iid walk on the series' own timestamps with its hour-of-day volatility profile and its jumps over holes in the clock, 256 sub-steps a bar, the real bar volume carried over",
+    "garch": "the same with GARCH(1,1) alpha 0.08, beta 0.90 multiplying the profile",
+    "coin_twin": "the same entry and risk, a random side (seeded), out at the real trade's own-exit bar or at its own stop",
+    "momentum": "the opposite side of every trade with the same exit timing (and its stop on the other side)",
+    "drift": "long and short trades are reported apart; a rule that pays only long in a rising sample is drift, not reversion",
+    "positive": "OU (half-life 20 bars) and AR(1) bar returns with phi = -0.2 (mcfl.synth.trend), each matched in bar sd and on the real timestamps of a panel (EURUSD, XAUUSD, US SP 500, BTCUSDT at 15m, 1h, 4h, 1d), 256 sub-steps, the real cost. Every rule should earn gross on at least one of them; one that does not cannot detect reversion"
+  },
+  "cells": "rule variant (13 rules x {all, VR<0.9, VR>=0.9, H<0.45, H>=0.45} = 65, plus pair and pair_coint) x exit (own, stop; pairs own only) x timeframe (15m, 1h, 4h, 1d) x family (fx, metal, index, energy, crypto CFD, binance). Also reported pooled across timeframes and across families (Deriv and fresh excluded from the pools)",
+  "statistics": "mean net R; SE clustered by day; one-sided p for R > 0 from the clustered SE; day-bootstrap 90% interval (2000 draws) for judged cells; halves split at the cell's median entry time",
+  "selection": "discovery cells with n >= 30; Benjamini-Hochberg at q = 0.10 across all of them on the p above; eligible = BH-significant AND R above the same cell's iid walk, GARCH walk and coin twin AND both discovery halves > 0; the selected cell is the eligible cell with the highest discovery R. If none is eligible, the cell with the highest discovery R among those above both walks and the twin with n >= 100 is carried as an exploratory primary, judged identically and labelled as such. The selection is written to mr_selected.json and committed before the confirmation is read",
+  "primaries": {
+    "P1": "rsi2_ma, own exit (Connors: no stop, close above SMA(5), 20-bar time stop), MT5 indices, 1d, confirmation set (all index data are 2024 onward)",
+    "P2": "the cell chosen by the selection rule above, on its confirmation set (the same family and timeframe from 2024, plus fresh coins if it is a crypto cell at 4h or 1d)"
+  },
+  "passes_if": "R > 0 after costs with the day-bootstrap 90% interval above 0, both confirmation halves > 0, R above the same cell on iid and on GARCH walks, and above the coin twin",
+  "multiplicity": "the number of cells tried is reported with BH at q = 0.10 for discovery and, separately, for the confirmation of every cell (reported, not judged)",
+  "plots": "P(N R) per rule family real vs iid vs GARCH vs coin twin vs 1/(N+1); mean R (real - walk) per rule x timeframe, discovery vs confirmation; the positive-control panel; two pairs' z-scores with entries and exits; 6 winners and 6 losers for each primary"
+}
