@@ -67,6 +67,7 @@ from .context import Context
 from .manage import Move, Take
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
+from .regression import card_line as trend_card
 from .risk import Guard
 from .sessions import Sessions
 from .shadow import ShadowGates
@@ -4446,6 +4447,10 @@ class Trader:
             *envelope.card_lines(intent.features, _money_price),
             *shocks.card_line(intent.features),
             *expansion.card_line(intent.features),
+            # Which way the line price is on points, and how well it fits.
+            # Renders nothing until something publishes the fit, which is
+            # deliberate: see `trading/regression.py` on why it gates nothing yet.
+            *trend_card(intent.features),
             rule,
         ]
         await self.bus.publish(
