@@ -42,7 +42,7 @@ RULE = HERE / "tail_rule.json"
 SELECTED = Path(os.environ.get("SELECTED", str(HERE / "tail_selected.json")))
 WORKERS = int(os.environ.get("WORKERS", 12))
 
-SEC = {"1h": 3600, "4h": 14400, "1d": 86400}
+SEC = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 SPLIT = pd.Timestamp("2024-01-01", tz="UTC").timestamp()
 HORIZON_DAYS = 20
 DISC_END = SPLIT - HORIZON_DAYS * 86400  # no discovery trade's 20-day window reaches 2024
@@ -57,6 +57,7 @@ SOURCES = ("real", "iid", "garch")
 MIN_N, MIN_WALK_N, K, Q = 300, 100, 15, 0.05
 VARIANTS = ("ALL", "X12", "RZ")
 EXCLUDE = {"CANDLE", "BAR_RELATION", "EPISODE"}
+SEG_MAX, SEG_LEN, SEG_WARM = 60_000, 50_000, 5_000  # longer series are parsed in segments (memory)
 
 COINS = ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "LTC", "DOT", "TRX")
 MT5_DISC = ("EURUSD GBPUSD USDJPY AUDUSD USDCAD USDCHF NZDUSD EURJPY GBPJPY EURGBP AUDJPY USDCNH "
@@ -159,16 +160,24 @@ def key_of(e):
 
 
 def parse_events(df):
-    """Every directional event: its cell name, direction, known_at and its first CANDLE part's bar."""
+    """Every directional event: its cell name, direction, known_at and its first CANDLE part's bar.
+    A series longer than SEG_MAX bars is parsed in SEG_LEN-bar segments, each read with the SEG_WARM
+    bars before it as warm-up; an event is kept from the segment in which it became known."""
     from mcfl.parse import parse
-    ch = parse(df, changepoints=True)
+    n = len(df)
+    segs = [(0, n)] if n <= SEG_MAX else [(a, min(n, a + SEG_LEN)) for a in range(0, n, SEG_LEN)]
     rows = []
-    for e in ch.entities:
-        k = key_of(e)
-        if k is None or not 0 <= e.known_at < len(df):
-            continue
-        bars = [int(p.split(".")[2]) for p in e.parts if p.startswith("CANDLE.")]
-        rows.append((k, 1 if e.dir.value == "UP" else -1, int(e.known_at), min(bars) if bars else -1))
+    for a, b in segs:
+        w = max(0, a - SEG_WARM)
+        ch = parse(df.iloc[w:b].reset_index(drop=True), changepoints=True)
+        for e in ch.entities:
+            k = key_of(e)
+            t = int(e.known_at) + w
+            if k is None or not a <= t < b:
+                continue
+            bars = [int(p.split(".")[2]) + w for p in e.parts if p.startswith("CANDLE.")]
+            rows.append((k, 1 if e.dir.value == "UP" else -1, t, min(bars) if bars else -1))
+        del ch
     ev = pd.DataFrame(rows, columns=["key", "d", "t", "p0"])
     return ev.sort_values(["key", "d", "t", "p0"]).drop_duplicates(["key", "d", "t"]).reset_index(drop=True)
 
@@ -207,12 +216,13 @@ def frame_arrays(df, f):
     return (o, h, l, c) if f > 0 else (-o, -l, -h, -c)
 
 
-def outcomes(o, h, l, c, a, cost_px, t, stop, H, chunk=4000):
+def outcomes(o, h, l, c, a, cost_px, t, stop, H, chunk=None):
     """Longs (in this frame) entered at the open of t+1 with initial stop `stop`: the most R reached
     before the initial stop within H bars (a bar that reaches the stop counts as stopped first), and E1
     (a 2-ATR(t) trail behind completed bars' best high, 0.05 ATR slippage on stop fills, out at the
     close of t+H at most) net of the round-trip cost. R against the initial risk."""
     n = len(c)
+    chunk = chunk or max(500, 4_000_000 // H)
     pad = lambda x: np.r_[x, np.full(H + 2, np.nan)]  # noqa: E731
     op, hp, lp = pad(o), pad(h), pad(l)
     m = len(t)
@@ -408,7 +418,9 @@ def bh(p, q=Q):
 # ---------------------------------------------------------------- jobs
 
 def disc_jobs():
-    return [("binance", c, iv) for c in COINS for iv in SEC] + [("mt5", m, iv) for m in MT5_DISC for iv in SEC]
+    """MT5 holds no 15m bars before 2024: its 15m is confirmation only."""
+    return [("binance", c, iv) for c in COINS for iv in SEC] + \
+        [("mt5", m, iv) for m in MT5_DISC for iv in SEC if iv != "15m"]
 
 
 def deriv_jobs():
@@ -420,12 +432,13 @@ def conf_jobs():
     the discovery markets from 2024-01-01."""
     return ([("fresh", c, iv, None) for c in FRESH for iv in ("4h", "1d")] +
             [("mt5", m, iv, None) for m in MT5_NEW for iv in SEC] +
-            [(v, s, iv, SPLIT) for v, s, iv in disc_jobs()])
+            [("binance", c, iv, SPLIT) for c in COINS for iv in SEC] +
+            [("mt5", m, iv, SPLIT) for m in MT5_DISC for iv in SEC])
 
 
 def _size(job):
     venue, sym, iv = job[:3]
-    return {"1h": 0, "4h": 1, "1d": 2}[iv]
+    return {"15m": 0, "1h": 1, "4h": 2, "1d": 3}[iv]
 
 
 def scan_one(job):
@@ -523,6 +536,11 @@ def discover():
               f"share with ex5 > 0: {(e['ex5'] > 0).mean():.2f}")
         print(e.sort_values("ex5", ascending=False)[["key", "mode", "variant", "iv", "n", "p5", "pw5", "ex5", "p10", "pw10",
                                                      "ex10", "R", "z5", "pv5", "bh"]].head(30).round(4).to_string(index=False))
+        for iv in SEC:
+            f = e[e["iv"] == iv]
+            if len(f):
+                print(f"   {iv}: {len(f)} eligible, {int(f['bh'].sum())} survive BH; mean ex4 {f['ex4'].mean():+.4f}, "
+                      f"ex5 {f['ex5'].mean():+.4f}, ex10 {f['ex10'].mean():+.4f}; share ex5 > 0 {(f['ex5'] > 0).mean():.2f}")
     print("\nSELECTED:")
     print(pick[cols].round(4).to_string(index=False))
 
