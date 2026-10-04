@@ -66,5 +66,10 @@
   },
   "passes_if": "R > 0 after costs with the day-bootstrap 90% interval above 0, both confirmation halves > 0, R above the same cell on iid and on GARCH walks, and above the coin twin",
   "multiplicity": "the number of cells tried is reported with BH at q = 0.10 for discovery and, separately, for the confirmation of every cell (reported, not judged)",
-  "plots": "P(N R) per rule family real vs iid vs GARCH vs coin twin vs 1/(N+1); mean R (real - walk) per rule x timeframe, discovery vs confirmation; the positive-control panel; two pairs' z-scores with entries and exits; 6 winners and 6 losers for each primary"
+  "plots": "P(N R) per rule family real vs iid vs GARCH vs coin twin vs 1/(N+1); mean R (real - walk) per rule x timeframe, discovery vs confirmation; the positive-control panel; two pairs' z-scores with entries and exits; 6 winners and 6 losers for each primary",
+  "amended_before_run": {
+    "date": "2026-10-04",
+    "what": "reporting only, at the desk's request: every result is also reported per asset class (FX, metals, indices, energy, crypto CFDs, Binance perpetuals, Deriv) and pooled, per timeframe (15m, 1h, 4h, 1d, Binance 15m included) and pooled; Deriv split into DIFFUSIVE (Volatility, Step, Drift Switch indices) and JUMPY (Jump 50, Boom 1000, Crash 1000) with Range Break 100 on its own line; the heatmap and the P(N R) plots get an asset-class facet. The broker DB holds no stock bars, so there is no stock class",
+    "when": "the trade computation (which prints only trade counts) had already started on the frozen rules; this note was written before any aggregate result was read. Rules, cells, selection, primaries and pass conditions are unchanged"
+  }
 }
