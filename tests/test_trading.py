@@ -9761,3 +9761,12 @@ def test_the_floor_never_compounds_the_two_estimates():
     payload, features = _payload_at(now - 10 * 900, probability=0.95)
     Trader._age_break_risk(payload, features, now)
     assert features == {"break_probability": 0.95}
+
+
+def test_fade_to_value_enters_at_the_hour_and_is_judged_above_it():
+    """The swing contract this class states at the top: "entry on 1h; 2h, 4h ...
+    are compulsory context". 1h was added as an entry on 2026-10-04 and left the
+    context set the same day, so the two halves still do different jobs."""
+    fade = td.STRATEGIES["fade-to-value"]
+    assert "1h" in fade.entries
+    assert fade.context == ("2h", "4h")
