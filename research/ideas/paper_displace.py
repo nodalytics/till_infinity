@@ -86,7 +86,9 @@ def klines(client, coin, iv, start=None, limit=LOOKBACK):
         params["startTime"] = int(start * 1000)
     r = _get(client, SPOT, params)
     if isinstance(r, list) and r:
-        return _frame(r, sec)
+        d = _frame(r, sec)
+        if start is not None or (d is not None and len(d) and d["ts"].iat[-1] + 2 * sec >= time.time()):
+            return d  # live on Binance spot (or a historical request); otherwise delisted there: try OKX
     if start is not None:  # OKX's recent-candles endpoint has no start; it serves the last 300 bars only
         return None
     r = _get(client, OKX, dict(instId=f"{name}-USDT-SWAP", bar=OKX_IV[iv], limit=min(limit, 300)))
