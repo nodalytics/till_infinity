@@ -15,6 +15,15 @@ Every test below was pre-registered in the script's docstring, or in a frozen JS
 before it ran. Controls are walks matched to each series (`mcfl.synth.matched_walk`), carrying the real
 timestamps and, for the trades, the real costs in ATR units.
 
+> **Correction, 2026-10-04 (found by the sweeps study).** MCFL labels BREACH_REVERT by the side of the swept
+> swing: DOWN is a swing low traded through and closed back above, the bullish one. `turn_trade.ups` read
+> the UP label, so **T2 in sections 2-3 (and `T_any`, `SIG` in the zone and Deriv studies) took the wrong
+> side**: a swing *high* swept at a 12-bar low, which fired on about 15 of 1,658 lows on a test walk against
+> 177 for the right side. The table in section 1 lists the same event as "BREACH_REVERT" when it is the
+> UP-labelled (bearish) one. **DISPLACE_C (T1) and DELIVERY_SHIFT (T3) are labelled the other way (UP =
+> bullish) and are unaffected**, so the result that passed on fresh coins (DISPLACE_C, `turn_confirm_rule.json`)
+> stands. `ups()` is fixed; T2 and T_any have not been re-run with the right side.
+
 ## 1. What turns share (`ideas/turns.py`)
 
 A **major turn low** is the lowest low of 10 bars either side, after which price rallies 3 ATR before
