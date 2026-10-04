@@ -126,8 +126,8 @@ def once(ivs):
         for iv in ivs:
             for coin in COINS:
                 df = klines(client, coin, iv)
-                if df is None or len(df) < 100:
-                    continue
+                if df is None or len(df) < 100 or df["ts"].iat[-1] + 2 * IV[iv][1] < time.time():
+                    continue  # missing, too short, or stale (delisted on this source)
                 for s in signals(df):
                     if (coin, iv, s["side"], s["bar_ts"]) not in seen:
                         new.append(dict(logged_at=int(time.time()), sym=coin, iv=iv, **s,
