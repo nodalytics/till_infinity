@@ -11,7 +11,7 @@ The results:
   narrowly failed a second set of 73, and stayed positive on the daily in all three sets.
 - **Where DISPLACE_C's edge lives:** a later study ([pca-residuals.md](pca-residuals.md)) found it sits
   entirely in the crypto market factor. A frozen rule that buys BTC on the alts' daily signal passed on
-  coins it was not found on. It now runs forward in a paper log.
+  two sets of coins it was not found on. It now runs forward in a paper log.
 
 On reading the walk control, see [walks-and-edge.md](walks-and-edge.md). Matching the walks means the
 trade reaches N R no more often than 1/(N+1), so its expected value is zero before costs. It does not
@@ -135,8 +135,17 @@ the run, so a rule was frozen:
 - The sample is small, and signals cluster because alts turn together.
 - ETH's 5 signals carry part of the mean.
 
-A second check, on 274 Binance perpetuals no study has used (SET_D, an addendum frozen before its run),
-is running.
+**Second check, on 274 Binance perpetuals no study had used** (SET_D, an addendum frozen before its
+run; mostly younger listings):
+- M1 makes **+281 bps net a trade [+75, +530]**: 991 trades on 288 days, +427 and +127 in the two
+  halves of its own signal dates.
+- The random-day twin makes +55 (the 95th percentile is +96).
+- **It passes.**
+- B makes +136 bps over 71 days.
+
+Two independent sets of signal sources now agree: daily violent bullish turns on alts time BTC.
+BTC's own drift is in the twin, so the excess over it is the signal. Every signal still trades the same
+BTC path, so the forward log remains the test that matters.
 
 ## 7. Paper logs (lab)
 
