@@ -1,0 +1,19 @@
+{
+ "variant": "gap|H>=0.45",
+ "fam": "fx",
+ "iv": "1h",
+ "exit": "own",
+ "exploratory": false,
+ "discovery": {
+  "n": 540,
+  "R": 0.4698237336542526,
+  "p": 5.26199502992665e-26,
+  "iid": -0.07329281270704233,
+  "garch": -0.14566159550892002,
+  "twin": -0.06536440776954233
+ },
+ "cells_tried": 1525,
+ "bh_rejections": 10,
+ "eligible": 10,
+ "pre_registered_check": "written before the confirmation was read: the selected cell is the FX 1h gap fade, and its discovery trades fall on 156 distinct days in about 170 weeks (weekend reopenings), where MT5's bid bars open below the tradable price while the reopening spread is wide (gaptrade.md, calendar-returns.md). A diagnostic is run on the same trades and judged the same way: (a) charging the gap bar's own recorded spread (a floor for that bar) instead of the symbol's median, and (b) entering at the gap bar's close, after the first hour, with the stop and target unchanged. If the confirmation passes but (a) or (b) does not, the pass is the reopening spread on bid bars, not reversion"
+}

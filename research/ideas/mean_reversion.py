@@ -893,32 +893,74 @@ def confirm():
                                                            "twin", "P4", "iid_P4"]].round(3).to_string(index=False))
     full = tables("all")
     full.to_csv(OUT / "all_cells.csv", index=False)
+    class_summary(pd.read_csv(OUT / "discovery_cells.csv"), "DISCOVERY")
+    class_summary(t, "CONFIRMATION")
+    class_summary(full, "ALL DATES")
+    per_iv = full[full["variant"].isin(BASE + PAIR_RULES) & (full["fam"] == "all")]
+    for ex in ("own", "st"):
+        print(f"\nALL DATES, real markets pooled, exit {ex}: net R per timeframe (real - walks in the second table)")
+        y = per_iv[per_iv["exit"] == ex]
+        print(y.pivot_table(index="variant", columns="iv", values="R").round(3).to_string())
+        print(y.pivot_table(index="variant", columns="iv", values="excess").round(3).to_string())
     deriv()
     controls()
 
 
+DERIV_JUMPY = ("Jump 50 Index", "Boom 1000 Index", "Crash 1000 Index")
+RANGE_BREAK = "Range Break 100 Index"
+
+
+def deriv_group(sym):
+    return "RANGE_BREAK_100" if sym == RANGE_BREAK else ("DERIV_JUMPY" if sym in DERIV_JUMPY else "DERIV_DIFFUSIVE")
+
+
 def deriv():
+    """Deriv apart, all dates: per symbol and per group (diffusive, jumpy, Range Break 100 alone)."""
     keys = ("variant", "sym", "iv")
     res = {}
     for src in ("real", "iid", "garch"):
         d = load_trades(src)
-        d = d[d["fam"] == "deriv"]
-        d = d[d["rule"].isin(BASE)]
+        d = d[(d["fam"] == "deriv") & d["rule"].isin(BASE)]
         dt = day_table(d, by=("sym",))
         dt = dt[~dt["variant"].str.contains("|", regex=False)]
+        dt = pd.concat([dt, dt.assign(sym=dt["sym"].map(deriv_group))], ignore_index=True)
         res[src] = cell_stats(pd.concat([dt, dt.assign(iv="all")]), keys)
     r = res["real"]
     for src in ("iid", "garch"):
-        w = res[src][[*keys, "exit", "R", "P4"]].rename(columns={"R": f"{src}_R", "P4": f"{src}_P4"})
+        w = res[src][[*keys, "exit", "R", *[f"P{N}" for N in NS]]]
+        w = w.rename(columns={c: f"{src}_{c}" for c in w.columns if c not in (*keys, "exit")})
         r = r.merge(w, on=[*keys, "exit"], how="left")
+    r["excess"] = r["R"] - r[["iid_R", "garch_R"]].mean(axis=1)
     r.to_csv(OUT / "deriv_cells.csv", index=False)
-    a = r[(r["iv"] == "all")]
-    print("\nDERIV (all dates, all timeframes pooled), per symbol, own exit: R real / iid / garch")
-    piv = a[a["exit"] == "own"].pivot_table(index="sym", columns="variant", values="R")
-    print(piv.round(3).to_string())
-    rb = a[a["sym"] == "Range Break 100 Index"]
-    print("\nRange Break 100:")
-    print(rb[["variant", "exit", "n", "R", "lo", "hi", "iid_R", "garch_R", "twin", "P4", "iid_P4"]].round(3).to_string(index=False))
+    groups = ("DERIV_DIFFUSIVE", "DERIV_JUMPY", "RANGE_BREAK_100")
+    for ex in ("own", "st"):
+        a = r[(r["iv"] == "all") & (r["exit"] == ex)]
+        print(f"\nDERIV (all dates, all timeframes), exit {ex}, per symbol: net R")
+        print(a[~a["sym"].isin(groups)].pivot_table(index="sym", columns="variant", values="R").round(3).to_string())
+        g = a[a["sym"].isin(groups)]
+        print(f"\nDERIV groups, exit {ex}: R, iid, garch, twin, P4 (iid)")
+        print(g.sort_values(["sym", "variant"])[["sym", "variant", "n", "R", "lo", "hi", "iid_R", "garch_R", "twin",
+                                                  "P4", "iid_P4", "P10", "iid_P10"]].round(3).to_string(index=False))
+    rb = r[(r["sym"] == "RANGE_BREAK_100") & (r["iv"] != "all")]
+    print("\nRange Break 100 per timeframe:")
+    print(rb.sort_values(["variant", "exit", "iv"])[["variant", "iv", "exit", "n", "R", "lo", "hi", "iid_R", "garch_R",
+                                                     "twin", "P4", "iid_P4"]].round(3).to_string(index=False))
+
+
+def class_summary(t, label):
+    """Base rules, every timeframe pooled, one column per asset class and pooled: real net R and real - walk."""
+    x = t[t["variant"].isin(BASE + PAIR_RULES) & (t["iv"] == "all")]
+    for ex in ("own", "st"):
+        y = x[x["exit"] == ex]
+        if not len(y):
+            continue
+        cols = [c for c in (*FAMS, "fresh", "all") if c in set(y["fam"])]
+        print(f"\n{label}, exit {ex}: net R per asset class (all timeframes)")
+        print(y.pivot_table(index="variant", columns="fam", values="R").reindex(columns=cols).round(3).to_string())
+        print(f"{label}, exit {ex}: real - mean(iid, GARCH) R")
+        print(y.pivot_table(index="variant", columns="fam", values="excess").reindex(columns=cols).round(3).to_string())
+        print(f"{label}, exit {ex}: P(4R) real - walks (tail excess)")
+        print(y.pivot_table(index="variant", columns="fam", values="tail4").reindex(columns=cols).round(3).to_string())
 
 
 def controls():
@@ -968,51 +1010,66 @@ def plot():
     disc = pd.read_csv(OUT / "discovery_cells.csv")
     conf = pd.read_csv(OUT / "confirmation_cells.csv")
     rules = [r for r in BASE + PAIR_RULES]
-    # 1. P(N R) per rule family, real markets pooled, every timeframe and date
-    fig, axes = plt.subplots(3, 5, figsize=(26, 14), sharey=True)
-    for ax, rule in zip(axes.flat, rules, strict=False):
-        r = full[(full["variant"] == rule) & (full["fam"] == "all") & (full["iv"] == "all") & (full["exit"] == "own")]
-        if not len(r):
+    classes = (*FAMS, "fresh", "all")
+    names = {"fx": "FX", "metal": "metals", "index": "indices", "energy": "energy", "crypto": "crypto CFDs",
+             "binance": "Binance perpetuals", "fresh": "fresh Binance coins", "all": "real markets pooled"}
+    dv = pd.read_csv(OUT / "deriv_cells.csv")
+    dv = dv.assign(fam=dv["sym"])
+    # 1. P(N R) per rule, one figure per asset class (and the Deriv groups): every timeframe and date
+    for cls, src_t in [(c, full) for c in classes] + [(g, dv) for g in ("DERIV_DIFFUSIVE", "DERIV_JUMPY", "RANGE_BREAK_100")]:
+        fig, axes = plt.subplots(3, 5, figsize=(26, 14), sharey=True)
+        for ax, rule in zip(axes.flat, rules, strict=False):
+            r = src_t[(src_t["variant"] == rule) & (src_t["fam"] == cls) & (src_t["iv"] == "all") & (src_t["exit"] == "own")]
+            if not len(r):
+                ax.set_visible(False)
+                continue
+            r = r.iloc[0]
+            ax.plot(NS, [r[f"P{N}"] for N in NS], "-o", label=f"real  R {r['R']:+.3f} (n {int(r['n'])})")
+            ax.plot(NS, [r[f"iid_P{N}"] for N in NS], "--s", label=f"iid  R {r['iid_R']:+.3f}")
+            ax.plot(NS, [r[f"garch_P{N}"] for N in NS], ":^", label=f"garch  R {r['garch_R']:+.3f}")
+            ax.plot(NS, [r[f"tP{N}"] for N in NS], "-.x", label=f"coin twin  R {r['twin']:+.3f}")
+            ax.plot(NS, [1 / (N + 1) for N in NS], color="grey", lw=0.8, label="1/(N+1)")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.set_title(f"{rule}: P(+N R before -1R, 100 bars)", fontsize=10)
+            ax.legend(fontsize=7)
+        for ax in axes.flat[len(rules):]:
             ax.set_visible(False)
-            continue
-        r = r.iloc[0]
-        ax.plot(NS, [r[f"P{N}"] for N in NS], "-o", label=f"real  R {r['R']:+.3f} (n {int(r['n'])})")
-        ax.plot(NS, [r[f"iid_P{N}"] for N in NS], "--s", label=f"iid  R {r['iid_R']:+.3f}")
-        ax.plot(NS, [r[f"garch_P{N}"] for N in NS], ":^", label=f"garch  R {r['garch_R']:+.3f}")
-        ax.plot(NS, [r[f"tP{N}"] for N in NS], "-.x", label=f"coin twin  R {r['twin']:+.3f}")
-        ax.plot(NS, [1 / (N + 1) for N in NS], color="grey", lw=0.8, label="1/(N+1)")
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.set_title(f"{rule}: P(+N R before -1R, 100 bars)", fontsize=10)
-        ax.legend(fontsize=7)
-    for ax in axes.flat[len(rules):]:
-        ax.set_visible(False)
-    fig.suptitle("mean reversion, real markets pooled (FX, metals, indices, energy, crypto CFDs, Binance; all timeframes "
-                 "and dates): P(N R) real vs iid and GARCH walks vs coin twin; mean net R (own exit) in the legend")
-    fig.tight_layout()
-    fig.savefig(OUT / "mr_pnr.png", dpi=70)
-    plt.close(fig)
-    # 2. heatmap: real - walk R per rule x timeframe, discovery vs confirmation, both exits
-    fig, axes = plt.subplots(2, 2, figsize=(16, 14))
+        fig.suptitle(f"mean reversion, {names.get(cls, cls)} (all timeframes and dates): P(N R) real vs iid and GARCH "
+                     "walks vs coin twin vs 1/(N+1); mean net R (own exit) in the legend")
+        fig.tight_layout()
+        fig.savefig(OUT / f"mr_pnr_{cls}.png", dpi=60)
+        plt.close(fig)
+    # 2. heatmap: real - walk R per rule x timeframe, discovery vs confirmation, faceted by asset class
     cols = list(IVS) + ["all"]
-    for i, ex in enumerate(("own", "st")):
-        for j, (name, t) in enumerate((("discovery (before 2024)", disc), ("confirmation (2024 on + fresh coins)", conf))):
-            ax = axes[i, j]
-            x = t[(t["fam"] == "all") & (t["exit"] == ex) & t["variant"].isin(rules)]
-            m = x.pivot_table(index="variant", columns="iv", values="excess").reindex(index=rules, columns=cols)
-            nn = x.pivot_table(index="variant", columns="iv", values="R").reindex(index=rules, columns=cols)
-            lim = 0.3
-            im = ax.imshow(m.to_numpy(float), cmap="RdBu", vmin=-lim, vmax=lim, aspect="auto")
-            for (a_, b_), v in np.ndenumerate(m.to_numpy(float)):
-                if np.isfinite(v):
-                    ax.text(b_, a_, f"{v:+.2f}\n({nn.to_numpy(float)[a_, b_]:+.2f})", ha="center", va="center", fontsize=7)
-            ax.set_xticks(range(len(cols)), cols)
-            ax.set_yticks(range(len(rules)), rules)
-            ax.set_title(f"{name}, exit {ex}: real - mean(iid, GARCH) R (real net R)", fontsize=10)
-            fig.colorbar(im, ax=ax, fraction=0.03)
-    fig.suptitle("mean R excess over matched walks per rule x timeframe, real markets pooled (Deriv apart)")
-    fig.tight_layout()
-    fig.savefig(OUT / "mr_heatmap.png", dpi=70)
+
+    def heat(ax, x, title, lim=0.3):
+        m = x.pivot_table(index="variant", columns="iv", values="excess").reindex(index=rules, columns=cols)
+        nn = x.pivot_table(index="variant", columns="iv", values="R").reindex(index=rules, columns=cols)
+        im = ax.imshow(m.to_numpy(float), cmap="RdBu", vmin=-lim, vmax=lim, aspect="auto")
+        for (a_, b_), v in np.ndenumerate(m.to_numpy(float)):
+            if np.isfinite(v):
+                ax.text(b_, a_, f"{v:+.2f}\n({nn.to_numpy(float)[a_, b_]:+.2f})", ha="center", va="center", fontsize=6)
+        ax.set_xticks(range(len(cols)), cols)
+        ax.set_yticks(range(len(rules)), rules, fontsize=7)
+        ax.set_title(title, fontsize=9)
+        return im
+
+    for ex in ("own", "st"):
+        fig, axes = plt.subplots(len(classes), 2, figsize=(15, 6.2 * len(classes)))
+        for i, cls in enumerate(classes):
+            for j, (name, t) in enumerate((("discovery (before 2024)", disc), ("confirmation (2024 on; fresh coins all dates)", conf))):
+                im = heat(axes[i, j], t[(t["fam"] == cls) & (t["exit"] == ex)], f"{names[cls]}: {name}")
+            fig.colorbar(im, ax=axes[i, :], fraction=0.02)
+        fig.suptitle(f"real - mean(iid, GARCH) net R per rule x timeframe (real net R in brackets), exit {ex}, per asset class")
+        fig.savefig(OUT / f"mr_heatmap_{ex}.png", dpi=55, bbox_inches="tight")
+        plt.close(fig)
+    fig, axes = plt.subplots(1, 3, figsize=(24, 9))
+    for ax, g in zip(axes, ("DERIV_DIFFUSIVE", "DERIV_JUMPY", "RANGE_BREAK_100"), strict=False):
+        im = heat(ax, dv[(dv["fam"] == g) & (dv["exit"] == "own")], f"{g} (all dates), exit own")
+    fig.colorbar(im, ax=axes, fraction=0.02)
+    fig.suptitle("Deriv synthetics, reported apart: real - mean(iid, GARCH) net R (real net R)")
+    fig.savefig(OUT / "mr_heatmap_deriv.png", dpi=60, bbox_inches="tight")
     plt.close(fig)
     # 3. positive controls
     pc = pd.read_csv(OUT / "positive_controls.csv")
