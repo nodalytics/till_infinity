@@ -232,6 +232,8 @@ def walk15(df, source, seed):
 
 
 def one(job):
+    import logging
+    logging.disable(logging.WARNING)  # the engine's own warnings, once per series, are not results
     venue, sym, source = job
     tag = f"{venue}_{sym}_{source}".replace(" ", "-")
     part = OUT / "parts" / f"{tag}.pkl"
@@ -277,6 +279,7 @@ def run():
     js = jobs()
     if os.environ.get("ONLY"):
         js = [j for j in js if os.environ["ONLY"] in "_".join(j)]
+    js.sort(key=lambda j: j[0] != "binance")  # the longest histories first, so the pool drains evenly
     with ProcessPoolExecutor(int(os.environ.get("WORKERS", 12))) as pool:
         for tag, msg in pool.map(one, js, chunksize=1):
             print(f"  {tag}: {msg}", flush=True)
