@@ -1,0 +1,14 @@
+{
+  "frozen": "2026-10-04",
+  "after": "aged_zone_rule.json failed: zones first returned to after >= 10 days lost -0.187R on fresh coins against walks -0.137 / -0.114, while reaching 2R more often (0.350 against 0.321 / 0.316). Read after its run: the zone's stop (0.1 ATR under the low) and trail are sized to the volatility at the turn; a zone retested months later meets a different volatility regime (crypto's drifts, the walks' does not), so its stop is too tight for today's bars and its excursions look large in R",
+  "zones_and_fills": "unchanged from aged_zone_rule.json (the same trades: origin, 3-ATR proven departure, first return within 180 days, limit at the zone top)",
+  "a_now": "ATR(14) at the bar before the fill bar - known before the fill",
+  "variants": {
+    "V1 (primary)": "stop at zone top - 0.6 a_now (the zone's original risk of 0.5 + 0.1 ATR, re-measured in today's volatility)",
+    "V2": "stop at min(zone bottom - 0.1 a_now, zone top - 0.6 a_now): beyond the zone and at least 0.6 a_now"
+  },
+  "exits": "E1 a 2 a_now trail (primary) and X2 a fixed 2R, 10 days, stop slippage 0.05 a_now, costs as before; R against the new risk",
+  "primary": "every origin (ALL), wait >= 10 days, V1, E1, fresh coins, 4h and 1d pooled",
+  "passes_if": "R > 0 with day-bootstrap 90% interval above 0, positive before and after 2024-01-01, above the same cell on iid and GARCH walks, and above the same variant with a wait under 2 days",
+  "also": "all wait buckets, V2, X2, SIG, P(N R) for N in 0.5, 1, 2, 4, 10 against 1/(N+1); a_now / ATR(t) by bucket (how much volatility moved while the zone waited); Binance 12 and MT5 as in-sample"
+}
