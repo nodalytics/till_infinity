@@ -122,6 +122,11 @@ Report which of the new tokens differ from the walk null.
 
 ## Time core (after v2, before v3)
 
+**Done (2026-10-04)**, all eight items: specification in [`mcfl.md`](mcfl.md#time-core), code in
+`research/mcfl/` (`clocks.py`, `intervals.py`, `calendars.py`, `anchors.py`, `timed.py`, `seasonal.py`,
+the HTF_CLOSE retrofit of `mtf.py`), findings against walks on the same calendar in
+[`mcfl.md`](mcfl.md#time-core-real-markets-against-walks-on-the-same-calendar).
+
 The desk asked for time to be a dimension of the language, not a tag on bars. v0-v2 record `at` and
 `known_at` as bar numbers; v2 adds sessions, day of week, session-extreme events and tempo as bar
 attributes. This version makes time first-class in the core, because v3's multi-timeframe and
