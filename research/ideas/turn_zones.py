@@ -43,6 +43,51 @@ def atr(df, n=14):
     return pd.Series(tr).ewm(alpha=1 / n, adjust=False).mean().to_numpy()
 
 
+def exits(o, h, l, c, f, top, stop, a_t, cost_atr_f, hold):
+    """A limit buy at `top` filled on bar f, its stop at `stop`: E1 (the fill bar's stop, then a 2-ATR trail
+    behind completed bars' best high), the most R it reached, and X2 (a fixed 2R target, on the fill bar
+    only if it closes there). R against the nominal risk top - stop, net of cost."""
+    n = len(c)
+    risk = top - stop
+    entry = min(o[f], top)
+    cost = cost_atr_f / risk
+    res = {}
+    # E1: the fill bar's stop, then a 2-ATR trail behind completed bars' best high
+    R, mfe, best, st = None, max(0.0, (c[f] - entry) / risk), max(entry, c[f]), stop
+    if l[f] <= stop:
+        R = (min(entry, stop) - SLIP * a_t - entry) / risk
+    else:
+        for j in range(f + 1, min(n, f + 1 + hold)):
+            st = max(st, best - 2 * a_t)
+            if l[j] <= st:
+                R = (min(o[j], st) - SLIP * a_t - entry) / risk
+                break
+            best = max(best, h[j])
+            mfe = max(mfe, (h[j] - entry) / risk)
+        if R is None:
+            R = (c[min(n - 1, f + hold)] - entry) / risk
+    res["E1"], res["mfe"] = R - cost, mfe
+    # X2: a fixed 2R target; on the fill bar only if it closes there
+    tgt = entry + 2 * risk
+    if l[f] <= stop:
+        R = (min(entry, stop) - SLIP * a_t - entry) / risk
+    elif c[f] >= tgt:
+        R = 2.0
+    else:
+        R = None
+        for j in range(f + 1, min(n, f + 1 + hold)):
+            if l[j] <= stop:
+                R = (min(o[j], stop) - SLIP * a_t - entry) / risk
+                break
+            if h[j] >= tgt:
+                R = (max(o[j], tgt) - entry) / risk
+                break
+        if R is None:
+            R = (c[min(n - 1, f + hold)] - entry) / risk
+    res["X2"] = R - cost
+    return res
+
+
 def zones(df, side, cost_atr, src, sym, iv):
     """One row per (12-bar low, activation) that is returned to: the zone, its fill and both exits."""
     o, h, l, c = (df[k].to_numpy(float) for k in ("open", "high", "low", "close"))
@@ -79,42 +124,7 @@ def zones(df, side, cost_atr, src, sym, iv):
             f = next((j for j in range(live, min(n, live + ret_bars)) if l[j] <= top), None)
             if f is None:
                 continue
-            entry = min(o[f], top)
-            cost = cost_atr[f] * a[f] / risk
-            res = {}
-            # E1: the fill bar's stop, then a 2-ATR trail behind completed bars' best high
-            R, mfe, best, st = None, max(0.0, (c[f] - entry) / risk), max(entry, c[f]), stop
-            if l[f] <= stop:
-                R = (min(entry, stop) - SLIP * a[t] - entry) / risk
-            else:
-                for j in range(f + 1, min(n, f + 1 + hold)):
-                    st = max(st, best - 2 * a[t])
-                    if l[j] <= st:
-                        R = (min(o[j], st) - SLIP * a[t] - entry) / risk
-                        break
-                    best = max(best, h[j])
-                    mfe = max(mfe, (h[j] - entry) / risk)
-                if R is None:
-                    R = (c[min(n - 1, f + hold)] - entry) / risk
-            res["E1"], res["mfe"] = R - cost, mfe
-            # X2: a fixed 2R target; on the fill bar only if it closes there
-            tgt = entry + 2 * risk
-            if l[f] <= stop:
-                R = (min(entry, stop) - SLIP * a[t] - entry) / risk
-            elif c[f] >= tgt:
-                R = 2.0
-            else:
-                R = None
-                for j in range(f + 1, min(n, f + 1 + hold)):
-                    if l[j] <= stop:
-                        R = (min(o[j], stop) - SLIP * a[t] - entry) / risk
-                        break
-                    if h[j] >= tgt:
-                        R = (max(o[j], tgt) - entry) / risk
-                        break
-                if R is None:
-                    R = (c[min(n - 1, f + hold)] - entry) / risk
-            res["X2"] = R - cost
+            res = exits(o, h, l, c, f, top, stop, a[t], cost_atr[f] * a[f], hold)
             rows.append(dict(src=src, sym=sym, iv=iv, side=side, t=t, live=live, f=f, ts=int(ts[f]), act=act,
                              SIG=sig, RZ=rz, wait=f - live, **res))
     return rows
