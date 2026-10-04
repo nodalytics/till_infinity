@@ -1,0 +1,22 @@
+{
+  "registered": "2026-10-04",
+  "before": "written and committed before any reopen tick was fetched for the replay or any replay result was read; only a five-request probe of the bridge's tick history was made (it serves ticks from somewhere between 2024-11 and 2025-02 onward, and EURUSD's 2025-06-01 reopen opened at a 11.4-pip spread against the bar's recorded 1.4)",
+  "question": "the FX 1h gap fade (mr_selected.json: gap|H>=0.45, fx, 1h, own exit) passed its frozen confirmation (+0.461R [+0.387, +0.531], n = 585) and both registered checks, but MT5's bars are bid prices and their spread field is the bar's minimum. Is it tradeable at the price a trader actually gets at the reopen?",
+  "ticks": {
+    "source": "the lab's MT5 bridge, /symbols/ticks/{symbol}/range (copy_ticks_range), read-only, one request per window, at least 1 s apart",
+    "pairs": "the 12 FX pairs of the confirmation cell (run.FAMILY fx): EURUSD GBPUSD USDJPY AUDUSD USDCAD USDCHF NZDUSD EURJPY GBPJPY EURGBP AUDJPY USDCNH",
+    "windows": "every reopen of each pair's 1h bars after a hole of 24 hours or more (weekends, holidays), from 2024-11-01 to 2026-10-02: from 15 minutes before the reopen bar's open to 3 hours after it. DST is handled by taking the reopen time from the bars themselves (21:00 UTC in summer, 22:00 in winter)",
+    "store": "data/reopen_ticks.db (ticks(sym, ts_ms, bid, ask), windows(sym, reopen_ts, status, n)); never mt5bt.db"
+  },
+  "spread_measure": "per reopen and pair: the first tick's spread, the median spread over the first 1, 5, 15 and 60 minutes, and the spread 60 minutes in; against the reopen bar's recorded spread field and the symbol's weekday spread floor (costs.json); in pips, in ATR(14, 1h) at Friday's last bar, and for trades in R",
+  "replay": {
+    "trades": "every confirmation trade of the frozen cell (rule gap, Hurst >= 0.45, FX, 1h, entry on or after 2024-01-01) whose reopen window has ticks",
+    "levels": "unchanged from the frozen trade: target = Friday's last close (bid), stop = the reopen bar's open -/+ (gap + 0.1 ATR), risk = gap + 0.1 ATR; the R unit is the frozen risk",
+    "entries": "T0: the first tick at or after the reopen, buying at the ask (long) or selling at the bid (short). T5, T15, T60: the first tick at or after 5, 15 and 60 minutes; a trade whose target or stop was already touched (long: bid >= target or bid <= stop; short: ask <= target or ask >= stop) before the entry is skipped and counted",
+    "exits": "tick by tick inside the window: a long sells at the bid (stop: the first bid <= stop, filled at that bid; target: a limit filled at the target when the bid reaches it), a short buys at the ask; after the window, the 1h bid bars as frozen, a short's ask taken as bid + the weekday spread floor, stop fills 0.05 ATR adverse; time stop at the close of the 8th bar from the reopen bar, as frozen",
+    "R": "side x (exit - entry) / frozen risk; the spread is inside the prices, so no further cost is charged",
+    "compare": "on the same trades: the frozen R, check (a) (the bar's recorded spread charged) and check (b) (entry at the reopen bar's close)"
+  },
+  "verdict": "the gap fade counts as tradeable only if T0 or a later entry has mean R > 0 with its day-bootstrap 90% interval above 0, with Benjamini-Hochberg at q = 0.10 across the four entries (one-sided p from the day-clustered SE). If none does, the frozen pass is attributed to the bid-bar fill at the reopen (a measurement artefact: the bars' open is not a price anyone could buy at), not to reversion",
+  "caveat_registered": "ticks cover only the part of the confirmation period from roughly 2025 on, so the replay is a subset of the 585 trades; the subset's frozen R is reported next to the full set's"
+}

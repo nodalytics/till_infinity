@@ -1,0 +1,121 @@
+{
+  "name": "fuzzy_trade",
+  "frozen": "2026-10-04, before any real-data run (one smoke test on a generated iid walk only)",
+  "question": "Does a fuzzy inference system - expert rules (FIS-1) or rules learned by Wang-Mendel (FIS-2) - pick a trade side that beats a coin twin, matched iid and GARCH walks, and the same rules with hard thresholds?",
+  "inputs": {
+    "causality": "every input is known at bar t's close; entry is at bar t+1's open",
+    "warmup_bars": 60,
+    "definitions": {
+      "ATR": "Wilder ATR(14) as an EWM with alpha 1/14 of the true range",
+      "TR": "(close - EMA(50) of close) / ATR(14): trend as distance from the average",
+      "SLOPE": "(EMA50[t] - EMA50[t-5]) / (5 ATR14[t]): the average's slope in ATR a bar",
+      "MOM": "Wilder RSI(14) - 50",
+      "VOL": "log(ATR(5) / ATR(50)), both Wilder: the volatility state (compression below, expansion above)",
+      "RPOS": "(close - lowest low of 20 bars) / (highest high - lowest low), bar t included; 0.5 on a zero range",
+      "CDIR": "MCFL candle direction as a signed body share (close - open) / (high - low), 0 on a zero range",
+      "CLOC": "MCFL close location (close - low) / (high - low), the continuous form of the close quartile; 0.5 on a zero range",
+      "CFORCE": "MCFL body force: z of |close - open| / ATR(14) in its rolling 10-bar window with the current bar in (mcfl.candles._rolling, PERIOD 10, as force_g)",
+      "CSIZE": "MCFL size: z of the range high - low in the same rolling 10-bar window (as the size class); computed, used by no rule",
+      "DSL": "(close - the last confirmed swing low) / ATR(14); a swing low is the lowest low of 3 bars either side, known 3 bars after it",
+      "DSH": "(the last confirmed swing high - close) / ATR(14)",
+      "SWING": "(DSL - DSH) / (|DSL| + |DSH|): -1 at the swing low, +1 at the swing high"
+    },
+    "breakpoint_quantiles": {
+      "source": "every pre-2024 bar (label horizon inside 2023) of the MT5 non-Deriv real series, 1h, 4h and 1d pooled",
+      "signed_b": 0.67,
+      "signed_c": 0.90,
+      "vol": [0.10, 0.50, 0.90],
+      "dist": [0.25, 0.50, 0.90],
+      "note": "signed inputs (TR, SLOPE, MOM) use quantiles of |x| so the sets are mirror-symmetric; DIST pools the positive DSL and DSH values"
+    }
+  },
+  "sets": {
+    "ramp(x, a, b)": "0 at or below a, 1 at or above b, linear between",
+    "X_POS / X_NEG (X in TR, SLOPE, MOM)": "ramp(x, 0, b) / ramp(-x, 0, b); FLAT is what is left",
+    "X_EXT_POS / X_EXT_NEG": "ramp(x, b, c) / ramp(-x, b, c): EXTENDED, overbought / oversold",
+    "VOL_COMPRESSED / VOL_EXPANDED": "1 - ramp(VOL, q10, q50) / ramp(VOL, q50, q90)",
+    "RPOS_LOW / RPOS_HIGH": "1 - ramp(RPOS, 0.2, 0.5) / ramp(RPOS, 0.5, 0.8)",
+    "BULL / BEAR": "ramp(CDIR, 0, 0.5) / ramp(-CDIR, 0, 0.5)",
+    "FORCE_STRONG": "ramp(CFORCE, 0, 1): 0.5 at MCFL's STRONG edge (z = 0.5), 1 at DOMINANT (z = 1)",
+    "CLOSE_HIGH / CLOSE_LOW": "ramp(CLOC, 0.5, 1) / ramp(1 - CLOC, 0.5, 1): 0.5 at MCFL's Q4 / Q1 edge (0.75 / 0.25)",
+    "STRONG_BULL / STRONG_BEAR": "min(BULL, FORCE_STRONG, CLOSE_HIGH) / min(BEAR, FORCE_STRONG, CLOSE_LOW)",
+    "NEAR_SUPPORT": "on DSL: 1 from 0 to dist q25, falling to 0 at q50; below the swing low (a sweep) 1 at 0 falling to 0 at -q25",
+    "NEAR_RESIST": "the same on DSH",
+    "UPTREND": "min(SLOPE_POS, 1 - TR_NEG)"
+  },
+  "fis1": {
+    "kind": "Mamdani-style rules with AND = min, NOT = 1 - mu; zero-order (singleton) consequents on the long strength, defuzzified by the weighted average (the centroid of singletons)",
+    "long_strength": "L = sum(w_r c_r) / (background_weight + sum(w_r)); the background rule says 'otherwise long is WEAK' (c = 0)",
+    "short": "the short strength S is the same rule base on the flipped chart (prices negated, highs and lows swapped), which mirrors every input",
+    "score": "L - S, in [-1, 1]",
+    "background_weight": 0.25,
+    "consequents": {"WEAK": 0.0, "MEDIUM": 0.5, "STRONG": 1.0},
+    "rules": [
+      {"name": "L1_pullback_in_uptrend", "if": "UPTREND and RPOS_LOW and not MOM_NEG", "then": 1.0, "source": "buy the dip in an uptrend (trend filter + pullback; fuzzy-trading literature, e.g. Dourra and Siy 2002; Chang and Liu 2008)"},
+      {"name": "L2_trend_momentum", "if": "UPTREND and MOM_POS and not MOM_EXT_POS", "then": 0.5, "source": "momentum with the trend, not overbought"},
+      {"name": "L3_bull_candle_at_support", "if": "not SLOPE_NEG and NEAR_SUPPORT and STRONG_BULL", "then": 1.0, "source": "a strong bullish candle at support (the fuzzy candlestick-pattern literature, e.g. Lee et al.)"},
+      {"name": "L4_compression_breakout", "if": "VOL_COMPRESSED and RPOS_HIGH and STRONG_BULL", "then": 1.0, "source": "volatility contraction then a forceful break up"},
+      {"name": "L5_oversold_reversal", "if": "MOM_EXT_NEG and STRONG_BULL", "then": 0.5, "source": "RSI oversold with a bullish reversal candle"},
+      {"name": "L6_exhaustion", "if": "TR_POS and TR_EXT_POS and STRONG_BEAR", "then": 0.0, "source": "uptrend, close extended, strong bear candle: long is WEAK"},
+      {"name": "L7_downtrend", "if": "SLOPE_NEG and TR_NEG", "then": 0.0, "source": "do not buy a downtrend"},
+      {"name": "L8_overbought_at_resistance", "if": "MOM_EXT_POS and NEAR_RESIST", "then": 0.0, "source": "overbought into resistance"},
+      {"name": "L9_expanding_selloff", "if": "VOL_EXPANDED and STRONG_BEAR", "then": 0.0, "source": "do not buy a volatile sell-off"}
+    ],
+    "threshold": 0.5,
+    "threshold_grid": [0.3, 0.4, 0.5, 0.6, 0.7],
+    "crisp_version": "every elementary set's membership replaced by 1[mu >= 0.5] (the hard threshold at each set's crossover) before the rules; the same rules, background weight, score and thresholds"
+  },
+  "fis2": {
+    "kind": "Wang-Mendel rule learning on 8 inputs, each with 3 Ruspini triangular sets (shoulders at the outer peaks): 3^8 = 6561 cells",
+    "inputs": ["TR", "SLOPE", "MOM", "VOL", "RPOS", "CDIR", "CFORCE", "SWING"],
+    "peaks": {"TR, SLOPE, MOM": "(-b, 0, b)", "VOL": "(q10, q50, q90)", "RPOS": "(0.2, 0.5, 0.8)", "CDIR": "(-0.5, 0, 0.5)", "CFORCE": "(-1, 0, 1)", "SWING": "(-0.5, 0, 0.5)"},
+    "label_bars": 24,
+    "label_atr": 1.5,
+    "target": "+1 when the high reaches close + 1.5 ATR(14) before the low reaches close - 1.5 ATR within the next 24 bars, -1 the other way, 0 neither or both on one bar",
+    "training": "MT5 non-Deriv real bars before 2024-01-01 (label horizon ending before it), 1h, 4h and 1d pooled",
+    "learning": "each sample generates the rule of its max-membership cell with degree = product of those memberships; conflicts resolved by the degree-weighted mean consequent (in [-1, 1]); a cell needs total degree >= min_support to hold a rule",
+    "min_support": 20,
+    "inference": "score = sum over cells of (product membership x consequent) / sum of product membership over cells holding a rule; 0 when none fires",
+    "baseline": "logistic regression (sklearn, C = 1) on the same 8 crisp inputs, standardised on training, fit on resolved (+1 / -1) training bars; score = 2p - 1",
+    "threshold_quantile": 0.9,
+    "threshold_quantile_grid": [0.8, 0.9, 0.95],
+    "threshold_rule": "trade when |score| crosses the given quantile of |score| on the training bars (computed for FIS-2 and the logistic separately)",
+    "scored_on": "2024-01-01 onward for AUC; trades reported before and after the split, the 'after' half being out of sample for FIS-2 and the logistic"
+  },
+  "trade": {
+    "entry": "a crossing: |score| reaches the threshold at bar t's close on a side it was not on at t-1; enter at t+1's open on the score's side; every crossing is taken (overlap allowed)",
+    "stop": "beyond the last 3 bars' extreme (bars t-2..t) with a 0.1 ATR(14)[t] pad; skipped if the open is already beyond it",
+    "stop_pad_atr": 0.1,
+    "slip_atr": 0.05,
+    "exits": {
+      "E1": "primary: the initial stop on the entry bar, then a 2-ATR(t) trail behind completed bars' best high (low for shorts)",
+      "X2": "fixed 2R target against the initial stop; stop first when both on one bar"
+    },
+    "max_hold_days": 10,
+    "costs": "MT5: the broker's spread floor (run.spread_floor) in price; Binance: 0.07% of price; R net of cost / risk",
+    "P_NR": "P(the trade's best excursion under E1 reaches N R) for N in 0.5, 1, 2, 4, 10, against 1/(N+1)"
+  },
+  "controls": {
+    "walks": "synth.walk (iid) and synth.garch matched to each series (sigma = sd of close-to-close changes), 256 sub-steps a bar, the real timestamps, the real cost in ATR units; the FIS runs unchanged with the breakpoints and FIS-2 rules from real training data",
+    "walk_steps": 256,
+    "coin_twin": "the same entry bars as each system at each threshold, a random side (seeded per series), the same stop rule and exits",
+    "crisp": "the FIS-1 rules with hard thresholds (fis1.crisp_version)"
+  },
+  "data": {
+    "mt5": "every symbol in run.FAMILY (FX, metals, indices, energy, crypto CFDs; Deriv synthetics reported apart, never a control), 1h, 4h, 1d, the broker's bars in MT5BT_DB",
+    "binance": "the 12 perpetuals in turn_trade.COINS, 1h, 4h, 1d"
+  },
+  "primary": {
+    "cell": "FIS-1, |score| >= 0.5, MT5 non-Deriv pooled, all timeframes, E1",
+    "pass": "mean R > 0 with the day-bootstrap 90% interval above 0; positive before and after 2024-01-01; above its coin twin, above the iid walk and the GARCH walk (same system on them), and above the crisp version"
+  },
+  "secondary": {
+    "cells": "every real cell of FIS-1, crisp, FIS-2 and the logistic x threshold grid x exit (E1, X2) x pool (MT5 pooled, MT5 fx / metal / index / energy / crypto, Deriv, Binance), the primary excluded; FIS-2 held-out AUC against the logistic's",
+    "p_value": "one-sided day-bootstrap: the share of 2000 resampled means at or below 0",
+    "multiple_testing": "Benjamini-Hochberg over all secondary cells at q = 0.10; a cell counts only if it survives BH and beats its coin twin, iid walk and GARCH walk"
+  },
+  "report": {
+    "bh_q": 0.10,
+    "sample_share": 0.3
+  }
+}

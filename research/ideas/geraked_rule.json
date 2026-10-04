@@ -1,0 +1,82 @@
+{
+  "frozen": "2026-10-04",
+  "question": "do the 13 Expert Advisors of github.com/geraked/metatrader5 (MIT) carry an edge in their entry signal, beyond walks matched to each series, and is the author's grid-without-stops profit anything more than the grid's shape, which a random walk also shows until it blows up",
+  "source": "the repo's Experts/*.mq5, Indicators/*.mq5 and Include/EAUtils.mqh, Cot.mqh, ported to Python in research/ideas/geraked_ind.py (indicators) and geraked_eas.py (signals), geraked_sim.py (trade, grid and account engines); every default input kept",
+  "eas": [
+    "2MAAOS",
+    "2MACDSTO",
+    "2MOMEMA",
+    "3MACD",
+    "3MAF",
+    "AFAOSMD",
+    "BBRSI",
+    "CEZLSMA",
+    "COT1",
+    "DHLAOS",
+    "LRCMACD",
+    "LRCUTB",
+    "NWERSIASF"
+  ],
+  "timing": "every EA reads the last closed bar on the first tick of a new bar: the signal is computed on bar t's close and fills at bar t+1's open. Inputs that read the forming bar (Ask in 2MAAOS and NWERSIASF, a SL_SWING with start 0, DHLAOS's j = 0 scan, 3MAF's fractal at buffer 2) see only bar t+1's open. 2MAAOS and NWERSIASF poll on a timer within the bar; here they are checked at the open only",
+  "path": "inside a bar price runs open -> low -> high -> close on an up bar and open -> high -> low -> close on a down bar; stops, targets, trails and grid levels are checked at those four vertices (exact for that path); a level crossed by a gap fills at the open",
+  "mode_S": {
+    "role": "PRIMARY - the entry signal with its own coded exits",
+    "settings": "IgnoreSL = IgnoreTP = false, Grid = false, the EA's own Reverse, Trail and TrailingStopLevel (50% of the coded stop distance, from breakeven on), CloseOrders/CloseOnProfit and MinPosInterval as coded; one position at a time per series",
+    "R": "the coded stop distance at the fill (|entry - SL|); R net of cost; any stop fill takes 0.05 ATR(14) of adverse slippage",
+    "reverse": "the EA's own Reverse semantics: the opposite side with SL at the coded TP and TP at the coded SL; where an EA codes no TP (CEZLSMA) the stop is mirrored at the same distance",
+    "tail": "P(N R) for N in 0.5, 1, 2, 4, 10 = share of entries whose price reaches +N R before the coded initial stop (first passage, before costs, exits ignored, to the end of data); on a martingale it is 1/(N+1)"
+  },
+  "mode_G": {
+    "role": "the author's defaults: the account in money with the grid as coded",
+    "settings": "each EA's default inputs (IgnoreSL/IgnoreTP, Grid, GridVolMult, GridMaxLvl, GridTrailingStopLevel, Trail, Reverse, CloseOrders); risk 1% (RISK_DEFAULT: min(balance, free margin) x 1% / coded stop distance, the lot grid of the broker's spec); the author's own Risk is also run on the author's own cells",
+    "account": "10,000 USD, leverage 1:100 on every instrument, margin = lots x contract value at the fill / 100; no new order when free margin is short (NO_MONEY); stop-out at 50% margin level closes the whole grid; spread paid on every fill, no swap or commission",
+    "measures": "CAGR, max drawdown of equity at bar closes, worst open-equity drawdown (equity at each adverse vertex against its running peak), days to the first stop-out, ruin (equity at or below 10% of the start: trading stops), share of grid cycles that reach GridMaxLvl",
+    "walks": "the identical engine on the same matched walks as Mode S (price level matched: walks are geometric from the real first price), same spec, same cost in ATR units"
+  },
+  "mode_R": {
+    "role": "the risk-management layer (EAUtils.mqh / EATemplate*.mq5), one factor at a time on each EA's Mode S signals",
+    "base": "Mode S (coded stop, coded TP, the EA's trail), RISK_DEFAULT 1%, no martingale, no equity limit, no spread limit, one position",
+    "factors": {
+      "stop": "SL_SWING, SL_AR, SL_MR, SL_FIXED_POINT with the EA's SLLookback/SLDev (10 / 60 points where it has none), TP = TPCoef x the new distance",
+      "trail": "off, 25%, 50%, 75%",
+      "sizing": "RISK_DEFAULT 1%, RISK_EQUITY 1%, FIXED_VOL (the lots the first trade gets at 1%, fixed), MIN_AMOUNT (one lot step per equity / Risk, Risk set so the first trade matches)",
+      "martingale": "on, martingaleRisk 4% (after a losing deal: 2 x the last loss / the new TP distance, capped at 4% of balance)",
+      "equity_limit": "EquityDrawdownLimit 5% (no grid), and 20% with the author's grid",
+      "spread_limit": "skip a signal whose bar spread exceeds 2x the series' median bar spread (MT5 only)",
+      "multiple_open": "MultipleOpenPos = true with MarginLimit 300% (single-symbol EAs)",
+      "grid": "the author's grid with stops ignored, risk 1% (= Mode G) as the reference line",
+      "news": "skipped: the lab holds no economic calendar",
+      "knn": "Knn.mqh is used by no EA: not tested"
+    },
+    "measures": "mean R a trade and P(N R) against 1/(N+1); account CAGR, max drawdown, worst open-equity drawdown; Monte Carlo ruin from 2,000 resampled 1,000-trade sequences (P(touching -50%), P(ending below the start)); real and both walks",
+    "expectation": "on a martingale no stop, trail, sizing or martingale scheme creates expectancy (E[net] = -(c/2) x turnover): on the walks every factor should keep mean R at minus costs while drawdown and ruin move; on real data a factor that moves R beyond what the walks show is reported as an interaction with something real"
+  },
+  "COT1": {
+    "data": "CFTC Traders in Financial Futures, futures only (fut_fin_txt), Dealer (primary class) and Leveraged Funds (secondary), fetched from cftc.gov; the 8 currency contracts the EA lists",
+    "lag": "the EA's own window: on Monday/Tuesday it reads the report dated Monday-Wednesday of the previous week (Tuesday's positions, released Friday); entries from Monday 00:00 UTC (03:00 server time), checked every 15 minutes Monday and Tuesday",
+    "signals": "per class: of the latest report, the two currencies with a positive net change and the highest long share against the two with a negative net change and the highest short share; their pairs that exist at this broker (buy green/red, or sell red/green); one position at a time across symbols, one deal a symbol a week",
+    "bars": "managed on 15m bars of the 12 FX pairs; its walks are matched walks of those pairs carrying the same signals"
+  },
+  "data": {
+    "mt5": "the broker's bars (mt5bt.db) for every symbol in run.FAMILY: fx 12, metal 5, index 7, energy 2, crypto_cfd 35, deriv 15; 15m, 1h, 4h, 1d",
+    "binance": "12 perpetuals (turn_trade.COINS) 15m, 1h, 4h, 1d",
+    "stock": "the broker's stock CFD bars on the lab (seqlab, 1h and 1d only): 50 tickers drawn once with numpy seed 7 from the .N/.OQ files",
+    "author_cells": "each EA's Test/ symbol and timeframe where the broker has it: 2MAAOS EURUSD+USDCAD 4h; 2MACDSTO NZDUSD 3h (resampled from 1h); 3MACD AUDUSD 5m; 3MAF USDCAD 15m; BBRSI XAUUSD 5m; CEZLSMA AUDUSD 15m; DHLAOS AUDUSD 5m; NWERSIASF USDCAD+AUDUSD 2h (resampled from 1h); COT1 FX daily (as above). Not available: EURCAD, EURCHF, NZDCAD (AFAOSMD 30m), AUDCAD (LRCUTB). 2MOMEMA and LRCMACD have no Test folder. The broker's 5m history is about six months"
+  },
+  "classes": {
+    "report": "every result per asset class and pooled: fx, metal, index, energy, crypto_cfd, binance, stock, deriv_diffusive (Volatility 10/25/50/75/100, Step, Step 200, Step 500, Drift Switch 10/20/30), deriv_jumpy (Boom 1000, Crash 1000, Jump 50), and Range Break 100 on its own line",
+    "pooled": "MT5 non-Deriv = fx + metal + index + energy + crypto_cfd; Deriv never pooled with it"
+  },
+  "costs": "MT5: the broker's spread floor (run.spread_floor); where it is zero (crypto CFDs, XPT, XPD, XCU) the series' median bar spread, frozen; a series whose cost exceeds 0.5 x its median ATR(14) is dropped and listed. Binance 0.07% of price a trade. Stocks: the bars carry no spread, so 0.05% of price a trade, frozen. Stop fills 0.05 ATR(14) of slippage. Walks pay the real series' cost in ATR units at the same bar",
+  "controls": {
+    "iid": "a Gaussian walk in log price matched to the series' sigma, 256 sub-steps a bar, the real timestamps, starting at the real first price",
+    "garch": "GARCH(1,1) (alpha 0.08, beta 0.9) with the same sigma, otherwise the same",
+    "coin": "the EA's real fills with a random side, the same stop distance, TP multiple, trail and close rule",
+    "reversed": "Reverse flipped"
+  },
+  "primary": "per EA: Mode S, MT5 non-Deriv pooled, 15m-1d pooled (COT1: its FX pairs on 15m)",
+  "passes_if": "mean R > 0 after costs with the day-bootstrap 90% interval above 0; mean R > 0 before and after 2024-01-01; above the iid walk, the GARCH walk and the coin twin on the same cell; and Benjamini-Hochberg at q = 0.10 across the 13 EAs on the one-sided day-bootstrap p",
+  "secondary": "every EA x asset class x timeframe cell of Mode S, BH at q = 0.10 across all of them (the count is reported); author cells; Mode G and Mode R are descriptive",
+  "split": "2024-01-01",
+  "amended_after_first_run": "2026-10-04, after the first full run and before the results were written up: an order whose stop sits inside the broker's stops level is refused, as the broker refuses it (TRADE_RETCODE_INVALID_STOPS): MT5 symbols use their spec's stops level (at least 10 points), Binance and stocks 1 bp of price. The first run let a stop a point or two from the fill through, and cost / a near-zero risk made a few hundred trades' R explode (to -10^8 on one Deriv cell), contaminating means and the Monte Carlo ruin. Everything was re-run with the refusal in the engine (2.4% of entries); the first run's primary verdicts were the same (no EA passes)"
+}
