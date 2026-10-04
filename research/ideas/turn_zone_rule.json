@@ -1,0 +1,29 @@
+{
+  "frozen": "2026-10-04",
+  "after": "turning-points.md: violent turns (DISPLACE_C, BREACH_REVERT, DELIVERY_SHIFT the turn's way; a range shock in the top decile) mark major turns beyond walks, but entering at the turn trades like a walk",
+  "question": "does the origin of a violent turn, marked as a zone, hold on the first return better than the origin of an ordinary low, and better than walks",
+  "origin": "a 12-bar low knowable at bar t (lowest low of t-2..t at or below the lowest of t-11..t-3); the zone is [bottom, bottom + 0.5 ATR(t)] with bottom = that 3-bar low. Highs are the same on the flipped chart",
+  "families": {
+    "ALL": "every 12-bar low (the baseline origin)",
+    "SIG": "bar t completes DISPLACE_C, BREACH_REVERT or DELIVERY_SHIFT up (MCFL v1, known_at = t)",
+    "RZ": "bar t's range_z (range against the mean and sd of the 10 ranges before it) at or above the MT5 VIOLENT threshold for its timeframe from violence.py: 1h 3.109, 4h 2.699, 1d 2.022",
+    "SIG_RZ": "both"
+  },
+  "activation": {
+    "proven (primary)": "price rallies 3 ATR(t) above the bottom before trading below it, within 60 bars; the zone is live from the bar after the rally completes",
+    "left": "price trades 1.5 ATR(t) above the bottom before trading below it, within 60 bars; live from the bar after"
+  },
+  "entry": "the first bar, within 20 days of going live, whose low reaches the zone top: a limit buy at the top (at the open if the bar opens below it); one trade per zone, its first return only",
+  "stop": "bottom - 0.1 ATR(t); any stop fill takes 0.05 ATR(t) of adverse slippage; a stop touched on the fill bar is a loss",
+  "exits": {
+    "E1 (primary)": "a 2-ATR(t) trail behind the best high of completed bars after the fill bar",
+    "X2": "a fixed 2R target; on the fill bar it counts only if the bar closes at or beyond it"
+  },
+  "cap": "10 days in the trade",
+  "R": "against the nominal risk top - stop, net of costs (Binance 0.07% of price; MT5 the broker's spread floor; walks the real series' cost in ATR units at the same bar)",
+  "nulls": ["iid walk matched to each series (mcfl.synth.matched_walk)", "GARCH(1,1) walk with the series' sigma (volatility clusters, direction does not)", "both with 256 sub-steps a bar and the real timestamps"],
+  "also": "P(N R) for N in 0.5, 1, 2, 4, 10 (the most R reached before the exit) against 1/(N+1); MT5 reported, never pooled into the primary",
+  "data": "Binance perpetuals (12 coins) and MT5 (10 markets), 1h, 4h, 1d",
+  "primary": "SIG, proven, E1, Binance, 1h/4h/1d pooled",
+  "passes_if": "R > 0 with day-bootstrap 90% interval above 0, positive before and after 2024-01-01, above ALL proven E1 on the same data, and above the same cell on both walks"
+}
