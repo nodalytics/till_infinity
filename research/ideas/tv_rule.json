@@ -1,0 +1,67 @@
+{
+  "frozen": "2026-10-04",
+  "after": "bos-predict.md (the three indicators rebuilt as features added nothing to the side of a break beyond geometry); turning-points.md and the zone studies (every zone family so far trades like walks after costs)",
+  "question": "traded as the natural strategy each one implies, do three TradingView indicators - Levels Likely to Break (Zeiierman), Weinstein Stage Cycle Tracker (MarkitTick) and FVG Magnet Engine (Neblok), rebuilt from their public descriptions - earn R on the broker's bars, beyond a baseline that removes the indicator's claimed information and beyond iid and GARCH walks",
+  "script": "research/ideas/tv_indicators.py (MODE=run|plot; SMOKE=sym:iv:source for one series)",
+  "data": {
+    "bars": "the broker's bars (mt5bt, run.load), every symbol in run.FAMILY, on 1h, 4h and 1d; a series is used if run.load returns it (>= 400 bars). XCUUSD has no 1d",
+    "judged": "MT5 non-Deriv, pooled: fx (12), metal (5), index (7), energy (2), crypto (35)",
+    "reported_apart": "deriv (15 Deriv synthetics): a real market whose diffusive members are published iid generators; reported, never judged, never a control",
+    "costs": "per bar, in price: run.spread_floor x point (the median tick spread, else the broker's quoted spread). Where that floor is 0 (the 32 FRESH crypto CFDs, XPTUSD, XPDUSD, XCUUSD) the median of the bars' own spread column x point is used instead - amended in this freeze, because a zero cost on 37 symbols would flatter them. Charged once per trade at the fill bar, in R. Every stop fill takes 0.05 ATR of adverse slippage (turn_zones.SLIP)"
+  },
+  "nulls": {
+    "iid": "mcfl.synth.walk, 256 sub-steps a bar, sigma = sd of the real series' log close changes, exponentiated from the real first close (a geometric walk); the real timestamps; synthetic volume from mcfl.synth.ticks",
+    "garch": "mcfl.synth.garch (alpha 0.08, beta 0.90), the same sigma, 256 sub-steps, exponentiated the same way; real timestamps; synth.ticks volume",
+    "why_geometric": "Weinstein's default slope is a % change, which an arithmetic walk that crosses zero breaks; and the crypto CFDs moved 10-100x, so one arithmetic sigma does not match them. exp() is monotone, so the bars are exactly the exponentiated walk bars",
+    "cost_on_walks": "the real series' cost in ATR units at the same bar, times the walk's ATR",
+    "pipeline": "identical on every source: same indicators, events, entries, stops, exits and cut-offs (the Z deciles are learnt per source)"
+  },
+  "common": {
+    "atr": "turn_zones.atr: Wilder ATR(14) of true range",
+    "pivots": "3/3 swing pivots (the desk's swing): high[p] above the 3 highs before and at or above the 3 after; known at p+3. Lows mirrored",
+    "sides": "long and short, read from the real chart; a short is simulated on the negated chart",
+    "hold": "300 bars at most for every exit (run.py MAXHOLD), then out at that bar's close",
+    "E1": "turn_zones.exits E1: the stop on the entry bar, then a trailing stop 2 ATR(signal bar) behind the best high of completed bars",
+    "X2": "turn_zones.exits X2: a fixed 2R target",
+    "market_entry": "the next bar's open, passed to turn_zones.exits as a limit at that open (so the entry bar's MFE is counted from its close, conservatively)",
+    "min_risk": "every structural stop is moved, if needed, to at least 0.25 ATR from the entry, so that the spread and slippage do not dominate R",
+    "P(N R)": "share of trades whose most favourable excursion before the exit reaches N R, N = 0.5, 1, 2, 4, 10, against 1/(N+1); also realised P(R >= 4) and P(R >= 10)",
+    "interval": "turn_trade.boot: 2,000 day-bootstrap draws (trades grouped by UTC day of the entry), 90%"
+  },
+  "Z_levels_likely_to_break": {
+    "levels": "at the confirmation bar b of a pivot high p: the most recent earlier pivot high p' with p-100 <= p' <= p-5 (a minimum gap of 5 bars), priced within 0.25 ATR(b) of high[p], and with no close above high[p'] from p'+1 to b (repeated pivots). The level: centre = mean of the two, far edge = their max, near edge = their min; a resistance. Lows mirrored (support). A level lives 300 bars after b",
+    "pressure": "at a bar t for a level with centre m (s = +1 resistance, -1 support; A = ATR(t)); equal-weight mean of seven [0,1] components: proximity 1/(1 + max(0, s(m - c)/A)); movement toward clip(s(c[t] - c[t-5])/(3A), -1, 1)/2 + 1/2; relative volume clip(v/mean(v of the 20 bars before)/3, 0, 1); directional pressure (s x mean 5-bar close location + 1)/2; absorption clip(mean over 5 bars of relvol x max(0, 1 - range/A) on bars within 0.5 A of m, 0, 1); compression clip(1 - (5-bar high - low)/(5A), 0, 1); fresh touches clip(number of the last 20 bars reaching m -/+ 0.25 A / 5, 0, 1). The components are BOS G2's (bos_predict.py); the weights are ours (the description gives none)",
+    "break": "the first close beyond the far edge within 300 bars after b (no ATR buffer: the indicator's default)",
+    "Z_strategy": "on a break at bar t whose pressure at t-1 (before the break, what the indicator would have shown) is in the top decile, enter the break's way at t+1's open; stop beyond the level's other side: near edge -/+ 0.1 ATR(t) (min_risk applies); exits E1 (primary) and X2",
+    "deciles": "the top-decile cut-off is the 90th percentile of pressure at t-1 over all breaks before 2024-01-01 of the non-Deriv MT5 markets, per source and per interval (so each walk learns its own)",
+    "baseline": "the same trade on every break of a repeated-pivot level regardless of pressure",
+    "fade_secondary": "the first touch of a level after it is live (a close at least 1 ATR(b) from the centre on its side, before any break), when pressure at the bar before the touch is in the bottom decile (pre-2024 cut-off over first touches, as above): a limit at the centre against the level, stop beyond the far edge + 0.1 ATR (min_risk), E1 and X2; baseline every first touch"
+  },
+  "W_weinstein_stages": {
+    "settings": "SMA(30) of close; 30-bar breakout (close above the highest high of the 30 bars before) and breakdown; optional ADX and volume filters off (the indicator's defaults)",
+    "slope_pct": "primary variant (the indicator's default): slope = % change of the SMA over 4 bars, rising above +0.5, falling below -0.5",
+    "slope_atr": "secondary variant (the BOS study's): bos_predict.weinstein unchanged - the slope in ATR as a z against its own 500-bar sd, flat band +-0.5",
+    "machine": "bos_predict.weinstein's machine, unchanged (failed breakout = a close below the broken 30-bar high within 10 bars of entering 2; 'MA stops rising/falling' requires that it rose/fell at some bar of the stage)",
+    "W_strategy": "long at t+1's open when bar t enters Stage 2, short when it enters Stage 4; stop beyond the MA: SMA(t) -/+ 0.1 ATR(t) (min_risk applies), fixed",
+    "exits": "STG (primary, the strategy's own market exit): out at the next open after the first bar on which the stage is no longer 2 (4); the stop; 300 bars. E1 and X2 as alternatives",
+    "baseline": "every fresh 30-bar breakout (close above the 30-bar high, the bar before not) long and fresh breakdown short, with the same stop and exits (STG = out when the stage is not 2 / 4). Note: with the filters off, every breakout outside Stage 2 enters Stage 2, so the stage's information is which breakouts to skip and when to leave"
+  },
+  "F_fvg_magnet": {
+    "gaps": "3-candle FVGs: up gap at k if low[k] > high[k-2], zone [high[k-2], low[k]]; down gap if high[k] < low[k-2], zone [high[k], low[k-2]]; size >= 0.25 ATR(k); known at k's close",
+    "fill": "CE (the zone's midpoint) is reached by a later bar's low (up gap) / high (down gap) within the fill window of 150 bars after k; full fill = the far edge reached",
+    "odds": "per series, keyed by (up/down, size bucket <0.5, 0.5-1, 1-2, 2+ ATR): among the series' gaps whose 150-bar window has closed by t (so every outcome is known - unlike bos_predict's learning from resolved gaps, which leaned toward fills), those still unfilled at the live gap's age (age thresholds 0 1 2 3 5 8 13 21 34 55 89 bars: the largest threshold at or below the age), the share filled within the window, (fills + 1)/(n + 2); shown only when n >= 30",
+    "F_strategy": "at bar t's close, the nearest live (unfilled, not expired) gap by distance from the close to its CE; if that distance is >= 1 ATR(t) and its CE odds are >= 0.70, enter toward the gap at t+1's open, once per gap. Target the CE; stop at the same distance on the other side (break-even near 50% plus costs); out at the gap's expiry (k + 150) at that bar's close. Exit BR (the bracket, primary); E1 from the same entry and stop as an alternative",
+    "full_secondary": "the same with full-fill odds, the far edge as target and its distance",
+    "baseline": "the first bar each gap is the nearest and >= 1 ATR away, ignoring the odds, same bracket",
+    "coin_twin": "the F entries' times and brackets with a random side (seeded per series)",
+    "calibration": "predicted odds at a gap's birth (when shown) against its realised fill within the window, and at F/baseline entries against the realised fill, in bins of 0.1, real against walks"
+  },
+  "primaries": {
+    "Z": "Z top decile, E1, MT5 non-Deriv pooled, 1h/4h/1d pooled; baseline: every break, E1",
+    "W": "W slope_pct Stage-2/4 entries, STG exit, same pool; baseline: every fresh breakout/breakdown, STG",
+    "F": "F CE, BR exit, same pool; baseline: nearest-gap entries ignoring the odds, BR"
+  },
+  "pass": "R > 0 with its 90% day-bootstrap interval above 0, R > 0 before and after 2024-01-01, R above its baseline's R, above the iid walk's R and above the GARCH walk's R (the same cell on the walks)",
+  "secondary": "each strategy's other exits, variants (Z fade, W slope_atr, F full), the baselines and coin twin, per family (fx, metal, index, energy, crypto), per interval, and deriv apart. Every real secondary cell gets a one-sided bootstrap p for R > 0; Benjamini-Hochberg at q = 0.10 across all of them, and the number of cells is stated",
+  "plots": "P(N R) real vs iid vs GARCH vs baseline per family for each primary; 6 winners and 6 losers per strategy on real MT5 charts with the indicator's state, entry, stop and exit; the FVG calibration"
+}

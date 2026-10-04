@@ -3,12 +3,15 @@
 `turn_confirm_rule.json` passed on 58 fresh coins (+0.049R, 4h and 1d). This logs the signal forward,
 as it would have been seen live, on those coins and the second replication's 73 (`SET_C`), so the
 result can be judged on bars that did not exist when it was found. Prices come from Bybit's public
-klines (bytick.com; the research machine cannot reach it), so it runs on this machine.
+klines (bytick.com) on this machine, or with SOURCE=binance from Binance spot and OKX on the research
+machine, which cannot reach Bybit.
 
   MODE=once   check the last closed 4h (and, at 00:00 UTC, 1d) bar of every coin; append new signals
   MODE=loop   the same after every 4h close, forever (nohup it; it stops when this machine sleeps)
   MODE=score  re-fetch each logged signal's bars and trade it as `turn_trade.trades_exits` does
               (entry at the next open, stop 0.1 ATR beyond the 3-bar extreme, E2 and E1, 10 days)
+  MODE=market the frozen market-mirror rule forward (`market_mirror_rule.json`): daily long signals
+              traded on BTC (M1), an equal-weight basket (M2), and breadth (B)
 
   OUT=.data/paper python research/ideas/paper_displace.py
 """
@@ -39,27 +42,61 @@ LOOKBACK = 300
 CATCH_UP = 3  # also check the bars before the last closed one, in case a run was missed
 
 
-def klines(client, coin, iv, start=None, limit=LOOKBACK):
-    """Closed bars, oldest first; None if Bybit does not list the coin."""
-    code, sec = IV[iv]
-    params = dict(category="linear", symbol=f"{coin}USDT", interval=code, limit=limit)
-    if start is not None:
-        params["start"] = int(start * 1000)
+SOURCE = os.environ.get("SOURCE", "bybit")  # "binance" on the research machine (Bybit is blocked there)
+SPOT = "https://data-api.binance.vision/api/v3/klines"
+OKX = "https://www.okx.com/api/v5/market/candles"
+SPOT_NAME = {"1000LUNC": "LUNC", "1000XEC": "XEC", "1000SHIB": "SHIB", "LUNA2": "LUNA"}
+SPOT_IV = {"4h": "4h", "1d": "1d"}
+OKX_IV = {"4h": "4H", "1d": "1Dutc"}
+
+
+def _get(client, url, params):
     for _ in range(3):
         try:
-            r = client.get(API, params=params, timeout=20).json()
-            break
+            r = client.get(url, params=params, timeout=20)
+            return r.json() if r.status_code == 200 else None
         except Exception:  # noqa: BLE001 - a flaky public endpoint; retry, then skip the coin
             time.sleep(2)
-    else:
-        return None
-    rows = r.get("result", {}).get("list") or []
-    if r.get("retCode") != 0 or not rows:
+    return None
+
+
+def _frame(rows, sec):
+    if not rows:
         return None
     d = pd.DataFrame([x[:6] for x in rows], columns=["ts", "open", "high", "low", "close", "volume"]).astype(float)
     d["ts"] = (d["ts"] // 1000).astype(np.int64)
     d = d.sort_values("ts").drop_duplicates("ts").reset_index(drop=True)
     return d[d["ts"] + sec <= time.time()].reset_index(drop=True)
+
+
+def klines(client, coin, iv, start=None, limit=LOOKBACK):
+    """Closed bars, oldest first; None if the source does not list the coin. Bybit perpetuals by default;
+    with SOURCE=binance, Binance spot (its public market-data mirror; the prices track the perpetual
+    within a fraction of a percent, and R is scale-free) and OKX perpetuals for coins Binance spot lacks."""
+    code, sec = IV[iv]
+    if SOURCE == "bybit":
+        params = dict(category="linear", symbol=f"{coin}USDT", interval=code, limit=limit)
+        if start is not None:
+            params["start"] = int(start * 1000)
+        r = _get(client, API, params)
+        if not r or r.get("retCode") != 0:
+            return None
+        return _frame(r.get("result", {}).get("list") or [], sec)
+    name = SPOT_NAME.get(coin, coin)
+    params = dict(symbol=f"{name}USDT", interval=SPOT_IV[iv], limit=min(limit, 1000))
+    if start is not None:
+        params["startTime"] = int(start * 1000)
+    r = _get(client, SPOT, params)
+    if isinstance(r, list) and r:
+        d = _frame(r, sec)
+        if start is not None or (d is not None and len(d) and d["ts"].iat[-1] + 2 * sec >= time.time()):
+            return d  # live on Binance spot (or a historical request); otherwise delisted there: try OKX
+    if start is not None:  # OKX's recent-candles endpoint has no start; it serves the last 300 bars only
+        return None
+    r = _get(client, OKX, dict(instId=f"{name}-USDT-SWAP", bar=OKX_IV[iv], limit=min(limit, 300)))
+    if not r or r.get("code") != "0":
+        return None
+    return _frame(r.get("data") or [], sec)
 
 
 def signals(df):
@@ -93,8 +130,8 @@ def once(ivs):
         for iv in ivs:
             for coin in COINS:
                 df = klines(client, coin, iv)
-                if df is None or len(df) < 100:
-                    continue
+                if df is None or len(df) < 100 or df["ts"].iat[-1] + 2 * IV[iv][1] < time.time():
+                    continue  # missing, too short, or stale (delisted on this source)
                 for s in signals(df):
                     if (coin, iv, s["side"], s["bar_ts"]) not in seen:
                         new.append(dict(logged_at=int(time.time()), sym=coin, iv=iv, **s,
@@ -149,13 +186,59 @@ def score():
               f"E1 {c['E1'].mean():+.3f}R; P(>=4R) {(c['mfe'] >= 4).mean():.3f}")
 
 
+def score_market():
+    """The frozen market-mirror rule (`market_mirror_rule.json`), forward: every logged daily long signal
+    buys BTC (M1) and an equal-weight basket of the live coins (M2) at the next daily open and exits when
+    the alt's own E2 trade exits; B buys BTC for 5 days on closes where 3+ coins signal. Net of 7 bps."""
+    import httpx
+    import market_mirror as MM
+    log = pd.read_csv(LOG)
+    log = log[(log["iv"] == "1d") & (log["side"] == 1)]
+    if not len(log):
+        print("no daily long signals logged yet")
+        return
+    start = int(log["bar_ts"].min()) - 200 * 86400
+    rows = []
+    with httpx.Client() as client:
+        btc = klines(client, "BTC", "1d", start=start, limit=1000)
+        opens = {}
+        for coin in COINS:
+            d = klines(client, coin, "1d", start=start, limit=1000)
+            if d is not None and len(d):
+                opens[coin] = d.set_index("ts")["open"]
+        b_open = btc.set_index("ts")["open"]
+        for coin, g in log.groupby("sym"):
+            d = klines(client, coin, "1d", start=start, limit=1000)
+            if d is None:
+                continue
+            ex = {t: (e, x) for t, e, x in MM.exits(d)}
+            for t in g["bar_ts"]:
+                if t not in ex:
+                    continue
+                e, x = ex[t]
+                done = x <= int(b_open.index[-1]) and x < d["ts"].iat[-1]
+                m1 = (b_open.get(x, np.nan) / b_open.get(e, np.nan) - 1) * 1e4 - MM.FEE_BPS
+                basket = [(o.get(x, np.nan) / o.get(e, np.nan) - 1) for o in opens.values()]
+                m2 = np.nanmean(basket) * 1e4 - MM.FEE_BPS if basket else np.nan
+                rows.append(dict(sym=coin, bar_ts=int(t), entry_ts=e, exit_ts=x, M1_bps=m1, M2_bps=m2, complete=done))
+    d = pd.DataFrame(rows)
+    d.to_csv(OUT / "market_mirror_forward.csv", index=False)
+    c = d[d["complete"]] if len(d) else d
+    cnt = log.groupby("bar_ts").size()
+    bdays = [t for t in cnt[cnt >= 3].index if t + (MM.HOLD_B + 1) * 86400 <= int(b_open.index[-1])]
+    bb = [(b_open[t + (MM.HOLD_B + 1) * 86400] / b_open[t + 86400] - 1) * 1e4 - MM.FEE_BPS for t in bdays
+          if t + 86400 in b_open.index and t + (MM.HOLD_B + 1) * 86400 in b_open.index]
+    print(f"{len(log)} daily long signals; {len(c)} complete: M1 {c['M1_bps'].mean():+.1f} bps, "
+          f"M2 {c['M2_bps'].mean():+.1f} bps; B {len(bb)} days {np.mean(bb) if bb else float('nan'):+.1f} bps")
+
+
 def main():
     mode = os.environ.get("MODE", "once")
     if mode == "once":
         hour = pd.Timestamp.now(tz="UTC").hour
         once(("4h", "1d") if hour < 4 else ("4h",))
     else:
-        {"loop": loop, "score": score}[mode]()
+        {"loop": loop, "score": score, "market": score_market}[mode]()
 
 
 if __name__ == "__main__":
