@@ -1,0 +1,42 @@
+{
+  "frozen": "2026-10-04",
+  "before": "any run of tail_scan.py on real data (tested only on generated walks: the barrier probabilities of a GARCH walk sit at 1/(N+1) within noise for N >= 3)",
+  "question": "Which MCFL patterns reach high R multiples MORE OFTEN than randomness allows? On a martingale P(+N R before -1 R) = 1/(N+1) for any rule, so the edge sought is P(>= N R) at large N above both 1/(N+1) and the same pattern on matched walks - rare is fine",
+  "patterns": {
+    "events": "every directional entity of mcfl.parse(df, changepoints=True) (v1 productions, v2 alphabets, the 64-row candlestick vocabulary, the time core) except the per-bar tokens CANDLE and BAR_RELATION and the EPISODE wrapper; NONE-direction entities are skipped",
+    "cell_names": "the entity type, except PATTERN:<name>, SWING:<label>, BREAK:<vs_structure>, POOL_TAKEN:SWEEP|TAKE (closed back or not), IN_WINDOW|LATE|EARLY:<of_type>, TIMEOUT:<kind>. About 115-125 names occur; the list is whatever the parser emits on the data",
+    "dedupe": "one event per (name, direction, known_at)",
+    "modes": "W: traded in the event's direction; F: faded (the opposite direction). UP and DOWN events pooled within a mode (a DOWN event is the UP event of the flipped chart)",
+    "variants": {
+      "ALL": "every event",
+      "X12": "the event's known_at bar is at a 12-bar extreme against its direction (UP: lowest low of t-2..t at or below the lowest of t-11..t-3; DOWN mirrored) - turn_trade.py's 12-bar low",
+      "RZ": "the known_at bar's range z (range minus the mean of the 10 bars before, over their std) is at or above the 90th percentile of the z of the 1,000 bars before it (min 200): top decile, causal"
+    },
+    "cells": "name x mode (2) x variant (3) x timeframe (1h, 4h, 1d): about 2,100"
+  },
+  "trade": {
+    "entry": "the open of known_at + 1; signal bars from bar 50 on, ATR(t) > 0",
+    "stop": "beyond the pattern's own bars: the extreme against the trade of the bars from the event's first CANDLE part to known_at, if that part is at most 5 bars before known_at; otherwise (no CANDLE parts, or a longer pattern) the 3-bar extreme t-2..t; minus (plus for shorts) 0.1 ATR(t). Trades whose entry is already beyond the stop are skipped. Every stop fill takes 0.05 ATR(t) of slippage",
+    "horizon": "20 days: 480 bars at 1h, 120 at 4h, 20 at 1d",
+    "tail_measure": "MFE = the most R reached before the initial stop within the horizon (a bar that reaches the stop counts as stopped before its high); P(>= N R) = share of trades with MFE >= N, a barrier probability directly comparable to 1/(N+1). N in 0.5, 1, 2, 3, 4, 5, 10, 20. Also P_net(>= N R) with the target moved out by the round-trip cost, for N = 4, 5, 10",
+    "exit_E1": "a 2-ATR(t) trail behind completed bars' best high, the initial stop on the entry bar, out at the close of the horizon's last bar at most; R net of the round-trip cost",
+    "costs": "Binance 0.07% of price a round trip; MT5 the broker's spread floor (run.spread_floor); walks the real series' cost in ATR units at the same bar"
+  },
+  "nulls": ["iid Gaussian walk (synth.walk) and GARCH(1,1) walk (synth.garch) per series, sigma the real close-to-close std, 256 sub-steps a bar, real timestamps, volume 0, parsed and traded identically", "1/(N+1)"],
+  "discovery": {
+    "data": "Binance 12 (turn_trade.COINS) and MT5 EURUSD GBPUSD USDJPY AUDUSD USDCAD USDCHF NZDUSD EURJPY GBPJPY EURGBP AUDJPY USDCNH XAUUSD XAGUSD XPTUSD XPDUSD BTCUSD ETHUSD SOLUSD; 1h, 4h, 1d; signal bars before 2023-12-12 (so no 20-day window reaches 2024). The broker's indices and oils start in 2024 and so belong to confirmation only",
+    "pooling": "per cell, all discovery markets pooled; each series parsed once over its full history (every event is causal by known_at) and its events cached",
+    "eligible": "n_real >= 300 and n >= 100 on each walk",
+    "tail_excess": "ex_N = P_real(>= N R) - max(P_iid, P_garch), at N = 4, 5, 10 (and every N reported)",
+    "p_value": "one-sided z = ex_5 / sqrt(var_real + var_walk), each variance day-clustered (trades grouped by the signal's UTC day across all markets), the walk being the one with the larger P(>= 5R)",
+    "multiplicity": "Benjamini-Hochberg q = 0.05 across all eligible discovery cells, at N = 5",
+    "selection": "K = 15: the BH survivors with the largest ex_5; if fewer than 15 survive, the rest are the eligible non-survivors with the largest ex_5, marked as such (if none survive, the top 15 are carried and the report says so). Written to tail_selected.json and committed before the confirmation run"
+  },
+  "confirmation": {
+    "data": "never looked at in discovery: the 131 fresh Binance coins (turn_confirm FRESH 58 + SET_C 73; 4h and 1d), the Binance 12 and the discovery MT5 markets from 2024-01-01, and the MT5 markets discovery did not use (US SP 500, US Tech 100, Wall Street 30, Germany 40, UK 100, Japan 225, Australia 200, US Oil, UK Brent Oil, XCUUSD and the 32 other crypto CFDs of run.FRESH), all history. Each selected cell is tested at its own timeframe, all confirmation data pooled",
+    "passes_if": "ex_5 > 0 with its 90% day-bootstrap interval above 0 (real and each walk resampled by day apart); P_real(>= 5R) above 1/6 and above both walks; mean E1 R > 0 after costs; and Benjamini-Hochberg q = 0.05 over the K bootstrap p-values (share of bootstrap ex_5 <= 0)",
+    "reported_not_judged": ["ex at every N, P_net", "each confirmation subset apart (fresh coins, Binance 12 from 2024, MT5 from 2024, MT5 unseen markets)", "E1 R with its day-bootstrap interval, before and after 2024"]
+  },
+  "deriv": "the same scan on the broker's 15 Deriv synthetics (Volatility 10/25/50/75/100, Step, Step 200/500, Drift Switch 10/20/30, Jump 50, Boom 1000, Crash 1000, Range Break 100), all history, BH apart; a real market built from published iid generators (generators.md): excess should be about 0, anything else is checked for bugs. Not used for selection",
+  "plots": ["heatmap of ex_5 and ex_10 (patterns x timeframe x mode, variant ALL) on discovery, Deriv beside it; the variants X12 and RZ apart", "discovery against confirmation ex_5 and ex_10 for the K", "P(>= N R) curves, N = 0.5..20, log axes: real, iid, GARCH, 1/(N+1), discovery and confirmation side by side", "a gallery of real trades that reached 5R and of typical losers for the top cells"]
+}
