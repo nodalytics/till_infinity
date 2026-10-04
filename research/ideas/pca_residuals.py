@@ -233,17 +233,21 @@ def fetch_one(job):
         return
     b = pd.concat(parts).drop_duplicates("ts").sort_values("ts")
     b = b[b["volume"] > 0]
-    np.savez(path, ts=(b["ts"].to_numpy() // 1000).astype(np.int64),
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp.npz")
+    np.savez(tmp, ts=(b["ts"].to_numpy() // 1000).astype(np.int64),
              **{c: b[c].to_numpy(float) for c in ("open", "high", "low", "close", "volume")})
+    os.replace(tmp, path)
     print(f"  {sym} {what}: {len(b)} bars", flush=True)
 
 
 def fetch():
-    jobs = [(c, w) for w in ("funding", "1h", "15m") for c in FRESH]
+    whats = os.environ.get("FETCH_WHAT", "funding,1h,15m").split(",")
+    coins = FRESH[::-1] if os.environ.get("FETCH_REVERSE") else FRESH
+    jobs = [(c, w) for w in whats for c in coins]
     with ThreadPoolExecutor(4) as pool:
         list(pool.map(fetch_one, jobs))
     (OUT / "fetch.done").parent.mkdir(parents=True, exist_ok=True)
-    (OUT / "fetch.done").write_text("ok")
+    (OUT / f"fetch{os.environ.get('FETCH_WHAT', '')}.done").write_text("ok")
 
 
 def load_coin(coin, iv):
@@ -668,8 +672,8 @@ def discover():
         for ci, cell in enumerate(r1["cells"]):
             a = daily(r1, ci, end=SPLIT)
             b = daily(r4, ci, end=SPLIT)
-            pooled = pd.concat([a["net"], b["net"]], axis=1).fillna(0).mean(1)
-            pg = pd.concat([a["gross"], b["gross"]], axis=1).fillna(0).mean(1)
+            pooled = _pooled(a, b, "net")
+            pg = _pooled(a, b, "gross")
             rows.append(dict(k=k, entry=cell[0], exit=cell[1], hl_max=cell[2], sharpe_net=sharpe(pooled),
                              sharpe_gross=sharpe(pg), ann_net=pooled.mean() * 365, ann_gross=pg.mean() * 365,
                              sharpe_1d=sharpe(a["net"]), sharpe_4h=sharpe(b["net"]),
@@ -817,14 +821,19 @@ def displace_one(job_):
     cost_atr = fee_px / np.maximum(np.asarray(candles.table(df)["atr"], float), 1e-12)
     cost_atr = np.where(np.isfinite(cost_atr), cost_atr, np.nanmedian(cost_atr))
     rows = []
+    ups = TT.ups
     for side, frame in ((1, df), (-1, flip(df))):
-        ref = pd.DataFrame(TT.trades_exits(frame, side, cost_atr, "fresh:real", coin, iv))
+        U = ups(frame, both=True)
+        TT.ups = lambda _df, both=False, _U=U: _U  # one MCFL parse a side, shared with trades_exits
+        try:
+            ref = pd.DataFrame(TT.trades_exits(frame, side, cost_atr, "fresh:real", coin, iv))
+        finally:
+            TT.ups = ups
         ref = ref[ref["T1"]] if len(ref) else ref
         o, h, l, c = (frame[k].to_numpy(float) for k in ("open", "high", "low", "close"))
         n = len(frame)
         atr = np.asarray(candles.table(frame)["atr"], float)
         low3 = pd.Series(l).rolling(3).min().to_numpy()
-        U = TT.ups(frame, both=True)
         H = max(1, int(10 * 86400 / IVSEC[iv]))
         for _, r in ref.iterrows():
             t = int(r["t"])
@@ -895,9 +904,552 @@ def displace():
     (OUT / "displace.done").write_text("ok")
 
 
+
+# ------------------------------------------------------------------------------------------ report
+
+def _cell(res, sel):
+    want = (sel["entry"], sel["exit"], sel["hl_max"])
+    for i, c in enumerate(res["cells"]):
+        if np.allclose(c, want):
+            return i
+    raise KeyError(want)
+
+
+def _pooled(a, b, col="net"):
+    return pd.concat([a[col], b[col]], axis=1).sort_index().fillna(0).mean(1)
+
+
+def book_row(name, g, rng, start=None, end=None):
+    x = g
+    if start is not None:
+        x = x[x.index >= start // 86400]
+    if end is not None:
+        x = x[x.index < end // 86400]
+    if not len(x):
+        return dict(cell=name)
+    lo, hi, p = block_boot(x["net"].to_numpy(), sharpe, rng)
+    return dict(cell=name, days=len(x), sharpe_gross=sharpe(x["gross"]), sharpe_net=sharpe(x["net"]), lo=lo, hi=hi, p=p,
+                ann_gross=x["gross"].mean() * 365, ann_fee=x["cost"].mean() * 365, ann_fund=x["fund"].mean() * 365,
+                ann_net=x["net"].mean() * 365, turn_day=x["turn"].mean(), npos=x["npos"].mean() if "npos" in x else np.nan,
+                maxdd=max_dd(x["net"].to_numpy()))
+
+
+def _daily_sel(name, sel):
+    r = load_run(name)
+    return daily(r, _cell(r, sel)), r
+
+
+def bh(p, q=0.10):
+    p = np.asarray(p, float)
+    o = np.argsort(p)
+    m = len(p)
+    thr = q * (np.arange(1, m + 1)) / m
+    ok = p[o] <= thr
+    k = np.flatnonzero(ok).max() + 1 if ok.any() else 0
+    rej = np.zeros(m, bool)
+    rej[o[:k]] = True
+    return rej
+
+
+def crash_days(ew_daily, n=10, gap=7):
+    s = ew_daily.sort_values()
+    out = []
+    for d, v in s.items():
+        if all(abs(d - e) >= gap for e in out):
+            out.append(d)
+        if len(out) == n:
+            break
+    return sorted(out)
+
+
+def _above_adj(d):
+    """Eigenvalues (of the top 5) above the Marchenko-Pastur edge once PC1's variance is taken out of the
+    noise bulk (Laloux et al.: the bulk's variance is 1 - lambda1 / N)."""
+    edge = (1 - d["pc1"]) * d["lam_plus"]
+    return sum((d[c] * d["n"] > edge).astype(int) for c in ("pc1", "pc2", "pc3", "pc4", "pc5") if c in d)
+
+
+def report():
+    rng = np.random.default_rng(61)
+    sel = json.loads(SELECTED.read_text())
+    ks = sel["k"]
+    lines = []
+    pd.set_option("display.width", 250)
+    pd.set_option("display.max_columns", 40)
+    pd.set_option("display.max_rows", 300)
+
+    def emit(title, t):
+        lines.append(f"\n## {title}\n")
+        lines.append(t if isinstance(t, str) else t.to_string(index=False))
+        print(lines[-2], lines[-1], sep="\n", flush=True)
+
+    # --- study A
+    rows = []
+    for f in sorted((OUT / "spectra").glob("*.csv")):
+        d = pd.read_csv(f)
+        if not len(d):
+            continue
+        rows.append(dict(universe=f.stem, windows=len(d), n=d["n"].median(), enb=d["enb"].median(), pr=d["pr"].median(),
+                         enb_frac=(d["enb"] / d["n"]).median(), pc1=d["pc1"].median(), pc1_p90=d["pc1"].quantile(0.9),
+                         pc2=d["pc2"].median(), pc3=d["pc3"].median(), pc4=d.get("pc4", pd.Series([np.nan])).median(),
+                         pc5=d.get("pc5", pd.Series([np.nan])).median(), top5=d[[c for c in ("pc1", "pc2", "pc3", "pc4", "pc5") if c in d]].sum(1).median(),
+                         above_mp=d["above_mp"].median(), above_mp_adj=_above_adj(d).median(),
+                         lam1_over_edge=(d["lam1"] / d["lam_plus"]).median()))
+    A = pd.DataFrame(rows).round(3)
+    emit("A. Effective number of bets (medians over rolling windows)", A)
+    for f in sorted((OUT / "spectra").glob("crypto_1d.csv")):
+        d = pd.read_csv(f)
+        d["year"] = pd.to_datetime(d["ts"], unit="s").dt.year
+        emit("A. crypto 1d by year", d.groupby("year")[["n", "pc1", "enb", "pr", "above_mp"]].median().round(3).reset_index())
+
+    # crash spikes: PC1 share (30-day windows) the day before each of the 10 worst equal-weight days
+    # against 7 days after
+    P1 = panel(ALL, "1d")
+    C1 = P1["close"]
+    ewd = pd.Series(np.nanmean(C1[1:] / C1[:-1] - 1, 1), index=P1["ts"][1:] // 86400).dropna()
+    ewd = ewd[ewd.index >= 18262]  # from 2020: enough coins for an index
+    cds = crash_days(ewd, RULE.get("crash_n", 10))
+    sp = {}
+    for nm in ("crypto_4h_short", "crypto_1d_short", "crypto_1d"):
+        f = OUT / "spectra" / f"{nm}.csv"
+        if f.exists():
+            d = pd.read_csv(f)
+            sp[nm] = pd.Series(d["pc1"].to_numpy(), index=d["ts"].to_numpy() // 86400)
+    rows = []
+    for cd in cds:
+        r = dict(day=str(pd.Timestamp(cd * 86400, unit="s").date()), ew=ewd.loc[cd])
+        for nm, s_ in sp.items():
+            before = s_[s_.index < cd]
+            after = s_[(s_.index >= cd) & (s_.index <= cd + 7)]
+            r[f"{nm}_before"] = before.iloc[-1] if len(before) else np.nan
+            r[f"{nm}_after"] = after.max() if len(after) else np.nan
+            r[f"{nm}_pctile_after"] = (s_ < r[f"{nm}_after"]).mean() if len(after) else np.nan
+        rows.append(r)
+    crash = pd.DataFrame(rows)
+    emit("A. PC1 share around the 10 worst equal-weight crypto days (after = max over the next 7 days)", crash.round(3))
+
+    # --- study B
+    disc = pd.read_csv(OUT / "discovery.csv")
+    emit("B. Discovery (12 coins, before 2024, 1d+4h pooled, net): top 10 of 36 cells", disc.head(10).round(3))
+    emit("B. selected", json.dumps(sel))
+
+    books = {}
+    for uni in ("u143", "u12"):
+        for src in ("real", "ou", "iid", "shuffle"):
+            for iv in ("1d", "4h", "1h", "15m"):
+                nm = f"{uni}_{iv}_{src}_k{ks}"
+                if (OUT / "runs" / f"{nm}.npz").exists():
+                    books[(uni, src, iv)] = _daily_sel(nm, sel)[0]
+    rows = []
+    for (uni, src, iv), g in books.items():
+        if uni == "u12":
+            rows.append(dict(universe=uni, source=src, iv=iv, sample="2024+", **book_row("", g, rng, start=SPLIT)))
+            rows.append(dict(universe=uni, source=src, iv=iv, sample="pre-2024", **book_row("", g, rng, end=SPLIT)))
+        else:
+            rows.append(dict(universe=uni, source=src, iv=iv, sample="all", **book_row("", g, rng)))
+    for uni in ("u143", "u12"):
+        for src in ("real", "ou", "iid", "shuffle"):
+            if (uni, src, "1d") in books and (uni, src, "4h") in books:
+                a, b = books[(uni, src, "1d")], books[(uni, src, "4h")]
+                pooled = pd.DataFrame({c: _pooled(a, b, c) for c in ("gross", "cost", "fund", "net", "turn", "npos")})
+                books[(uni, src, "pool")] = pooled
+                if uni == "u12":
+                    rows.append(dict(universe=uni, source=src, iv="1d+4h", sample="2024+", **book_row("", pooled, rng, start=SPLIT)))
+                    rows.append(dict(universe=uni, source=src, iv="1d+4h", sample="pre-2024", **book_row("", pooled, rng, end=SPLIT)))
+                else:
+                    rows.append(dict(universe=uni, source=src, iv="1d+4h", sample="all", **book_row("", pooled, rng)))
+                    rows.append(dict(universe=uni, source=src, iv="1d+4h", sample="pre-2024", **book_row("", pooled, rng, end=SPLIT)))
+                    rows.append(dict(universe=uni, source=src, iv="1d+4h", sample="2024+", **book_row("", pooled, rng, start=SPLIT)))
+    B = pd.DataFrame(rows).drop(columns=["cell"]).round(4)
+    B.to_csv(OUT / "books.csv", index=False)
+    emit("B. Books with the selected cell (Sharpe annualised on days; ann_* are yearly returns on unit gross)", B)
+
+    # primary
+    prim = books[("u143", "real", "pool")]
+    r1 = load_run(f"u143_1d_real_k{ks}")
+    pc1d = daily(r1, _cell(r1, sel))["pc1"]
+    j = pd.concat([prim["net"], pc1d], axis=1, keys=["y", "x"]).dropna()
+    X = np.column_stack([np.ones(len(j)), j["x"].to_numpy()])
+    coef = np.linalg.lstsq(X, j["y"].to_numpy(), rcond=None)[0]
+
+    def alpha(rows_):
+        Xb = np.column_stack([np.ones(len(rows_)), rows_[:, 1]])
+        return np.linalg.lstsq(Xb, rows_[:, 0], rcond=None)[0][0] * 365
+
+    alo, ahi, ap = block_boot(j[["y", "x"]].to_numpy(), alpha, rng)
+    s_lo, s_hi, s_p = block_boot(prim["net"].to_numpy(), sharpe, rng)
+    sh = sharpe(prim["net"])
+    pre = sharpe(prim["net"][prim.index < SPLIT // 86400])
+    post = sharpe(prim["net"][prim.index >= SPLIT // 86400])
+    nul = sharpe(books[("u143", "iid", "pool")]["net"])
+    ok = sh > 0 and s_lo > 0 and pre > 0 and post > 0 and sh > nul and alo > 0
+    prim_txt = (f"PRIMARY (selected cell k={ks} entry {sel['entry']} exit {sel['exit']} hl<={sel['hl_max']}; fresh coins, "
+                f"PCA on 143, 1d+4h pooled, net): Sharpe {sh:+.2f} [{s_lo:+.2f}, {s_hi:+.2f}], gross Sharpe "
+                f"{sharpe(prim['gross']):+.2f}; ann gross {prim['gross'].mean() * 365:+.2%}, fees {prim['cost'].mean() * 365:.2%}, "
+                f"funding {prim['fund'].mean() * 365:+.2%}, net {prim['net'].mean() * 365:+.2%}; before 2024 {pre:+.2f}, after "
+                f"{post:+.2f}; iid null {nul:+.2f}; alpha on PC1 {coef[0] * 365:+.2%}/yr [{alo:+.2%}, {ahi:+.2%}], beta "
+                f"{coef[1]:+.3f} -> {'PASSES' if ok else 'fails'}")
+    emit("B. PRIMARY", prim_txt)
+
+    # BH across the secondary cells
+    sec = []
+    for k in RULE["grid"]["k"]:
+        a_, b_ = load_run(f"u143_1d_real_k{k}"), load_run(f"u143_4h_real_k{k}")
+        for ci, cell in enumerate(a_["cells"]):
+            if k == ks and np.allclose(cell, (sel["entry"], sel["exit"], sel["hl_max"])):
+                continue
+            pooled = _pooled(daily(a_, ci), daily(b_, ci))
+            sec.append(dict(cell=f"u143 1d+4h k{k} e{cell[0]} x{cell[1]} hl{cell[2]:g}", sharpe=sharpe(pooled),
+                            p=block_boot(pooled.to_numpy(), sharpe, rng, draws=500)[2]))
+    for uni, iv in (("u143", "1h"), ("u143", "15m"), ("u12", "1d"), ("u12", "4h"), ("u12", "1h"), ("u12", "15m")):
+        if (uni, "real", iv) in books:
+            g = books[(uni, "real", iv)]
+            if uni == "u12":
+                g = g[g.index >= SPLIT // 86400]
+            sec.append(dict(cell=f"{uni} {iv} selected" + (" 2024+" if uni == "u12" else ""), sharpe=sharpe(g["net"]),
+                            p=block_boot(g["net"].to_numpy(), sharpe, rng, draws=500)[2]))
+    S_ = pd.DataFrame(sec)
+    S_["bh_reject"] = bh(S_["p"].to_numpy(), RULE.get("bh_q", 0.10))
+    emit(f"B. Secondary cells: {len(S_)} tried, {int(S_['bh_reject'].sum())} survive BH at q=0.10",
+         S_.sort_values("p").round(4))
+
+    # tails of the primary book
+    ewp = pd.Series(daily(r1, _cell(r1, sel))["ew"])
+    j2 = pd.concat([prim["net"], ewp], axis=1, keys=["book", "ew"]).dropna()
+    worst = j2["ew"] <= j2["ew"].quantile(0.01)
+    wk = j2.groupby(j2.index // 7).sum()
+    dn, up = j2[j2["ew"] < 0], j2[j2["ew"] > 0]
+    bdn = np.polyfit(dn["ew"], dn["book"], 1)[0]
+    bup = np.polyfit(up["ew"], up["book"], 1)[0]
+    tail = [f"max drawdown {max_dd(prim['net'].to_numpy()):+.2%} (unit gross, summed returns); worst day "
+            f"{prim['net'].min():+.2%} on {pd.Timestamp(prim['net'].idxmin() * 86400, unit='s').date()}; worst week {wk['book'].min():+.2%}",
+            f"on the 1% worst equal-weight days ({int(worst.sum())}): book mean {j2.loc[worst, 'book'].mean():+.3%} a day "
+            f"(all days {j2['book'].mean():+.3%}); index mean {j2.loc[worst, 'ew'].mean():+.2%}",
+            f"beta to the index on down days {bdn:+.3f}, on up days {bup:+.3f}; skew of daily net {pd.Series(prim['net']).skew():+.2f}"]
+    s4 = sp.get("crypto_4h_short")
+    if s4 is not None:
+        sw = s4.groupby(s4.index // 7).last().diff()
+        top = sw[sw >= sw.quantile(0.95)].index
+        bw = prim["net"].groupby(prim.index // 7).sum()
+        tail.append(f"weeks with the top 5% rise in the 30-day PC1 share ({len(top)}): book {bw.reindex(top).mean():+.3%} a week "
+                    f"against {bw.mean():+.3%} on all weeks")
+    for cd in cds:
+        day_ = pd.Timestamp(cd * 86400, unit='s').date()
+        if cd < prim.index.min():
+            tail.append(f"  crash {day_}: index {ewd.loc[cd]:+.1%}; before the book's first day")
+            continue
+        w_ = prim["net"][(prim.index >= cd) & (prim.index < cd + 7)]
+        tail.append(f"  crash {day_}: index {ewd.loc[cd]:+.1%}; book that day "
+                    f"{prim['net'].get(cd, np.nan):+.2%}, next 7 days {w_.sum():+.2%}")
+    emit("B. Tails of the primary book", "\n".join(tail))
+
+    # R trades
+    rows = []
+    for uni in ("u143", "u12"):
+        for src in ("real", "ou", "iid", "shuffle"):
+            for iv in ("1d", "4h", "1h", "15m"):
+                f = OUT / "runs" / f"{uni}_{iv}_{src}_k{ks}.rtrades.pkl"
+                if not f.exists():
+                    continue
+                x = pd.read_pickle(f)
+                if uni == "u12":
+                    x = x[x["ts"] >= SPLIT]
+                if not len(x):
+                    continue
+                lo, hi = TT.boot(x, rng) if len(x) > 30 else (np.nan, np.nan)
+                rows.append(dict(universe=uni, source=src, iv=iv, n=len(x), R=x["R"].mean(), lo=lo, hi=hi,
+                                 win=(x["R"] > 0).mean(), stop=(x["how"] == "stop").mean(), long_R=x.loc[x["side"] > 0, "R"].mean(),
+                                 short_R=x.loc[x["side"] < 0, "R"].mean(), **{f"P{N}R": x[f"P{N}R"].mean() for N in NS}))
+    RT = pd.DataFrame(rows).round(3)
+    RT.to_csv(OUT / "rtrades.csv", index=False)
+    emit("B. Single-name R trades (u12: 2024+). 1/(N+1): " + ", ".join(f"{N}R {1 / (N + 1):.3f}" for N in NS), RT)
+
+    # --- study C
+    f = OUT / "displace.pkl.gz"
+    if f.exists():
+        d = pd.read_pickle(f)
+        rows = []
+        for (st, iv, side), g in d.groupby(["set", "iv", "side"]):
+            rows.append(_c_row(st, iv, side, g, rng))
+        for (iv, side), g in d.groupby(["iv", "side"]):
+            rows.append(_c_row("all131", iv, side, g, rng))
+        for side, g in d.groupby("side"):
+            rows.append(_c_row("all131", "4h+1d", side, g, rng))
+        for st, g in d.groupby("set"):
+            rows.append(_c_row(st, "4h+1d", 0, g, rng))
+        rows.append(_c_row("all131", "4h+1d", 0, d, rng))
+        Ct = pd.DataFrame(rows).round(4)
+        Ct.to_csv(OUT / "displace.csv", index=False)
+        emit("C. DISPLACE_C (E2) split into market beta and residual, in R (side 0 = both)", Ct)
+        emit("C. Market timing and the signal traded on the market itself", _c_timing(d, rng))
+    (OUT / "report.txt").write_text("\n".join(lines))
+
+
+def _c_timing(d, rng):
+    """Does the trade's side time the common market move over its holding period, and does the same
+    signal traded on the market (the equal-weight basket, or BTC) keep the edge? Returns per trade in
+    basis points of notional: the alt as traded (R x risk), the market with the same side and holding
+    period. Costs: the alt's as in turn_confirm (0.07% once); the market 0.07% a side."""
+    out = []
+    for iv in ("4h", "1d", "4h+1d"):
+        g = d if iv == "4h+1d" else d[d["iv"] == iv]
+        for side in (1, -1, 0):
+            x = g if side == 0 else g[g["side"] == side]
+            x = x.dropna(subset=["mkt_ew", "mkt_btc"])
+            if len(x) < 30:
+                continue
+            r = dict(iv=iv, side=side, n=len(x))
+            if side == 0:  # regress the side on the index's return over the trade
+                for m in ("ew", "btc"):
+                    M = x[f"mkt_{m}"].to_numpy()
+                    b = np.polyfit(M / M.std(), x["side"].to_numpy(), 1)[0]
+                    r[f"slope_side_on_{m}_per_sd"] = b
+                    r[f"hit_{m}"] = float((np.sign(M) == x["side"]).mean())
+            alt = x["R"] * x["risk_frac"] * 1e4
+            r["alt_bps"] = alt.mean()
+            lo, hi = TT.boot(x.assign(R=alt), rng)
+            r.update(alt_lo=lo, alt_hi=hi)
+            for m in ("ew", "btc"):
+                gm = x["side"] * x[f"mkt_{m}"] * 1e4
+                net = gm - 2 * FEE * 1e4
+                r[f"{m}_gross_bps"] = gm.mean()
+                r[f"{m}_net_bps"] = net.mean()
+                lo, hi = TT.boot(x.assign(R=net), rng)
+                r[f"{m}_net_lo"], r[f"{m}_net_hi"] = lo, hi
+            r["alt_cost_bps"] = (FEE * 1e4)  # turn_confirm: 0.07% of price once a trade
+            out.append(r)
+    return pd.DataFrame(out).round(3)
+
+
+def _c_row(st, iv, side, g, rng):
+    g = g if side == 0 else g[g["side"] == side]
+    r = dict(set=st, iv=iv, side=side, n=len(g), R=g["R"].mean())
+    lo, hi = TT.boot(g.assign(R=g["R"]), rng) if len(g) > 30 else (np.nan, np.nan)
+    r.update(lo=lo, hi=hi)
+    for m in ("ew", "btc"):
+        if f"Rres_{m}" in g:
+            x = g.dropna(subset=[f"Rres_{m}"])
+            r[f"beta_{m}"] = x[f"beta_{m}"].mean()
+            r[f"Rbeta_{m}"] = x[f"Rbeta_{m}"].mean()
+            r[f"Rres_{m}"] = x[f"Rres_{m}"].mean()
+            if len(x) > 30:
+                rl, rh = TT.boot(x.assign(R=x[f"Rres_{m}"]), rng)
+                r[f"res_lo_{m}"], r[f"res_hi_{m}"] = rl, rh
+    r["R_before"] = g.loc[g["ts"] < SPLIT, "R"].mean()
+    r["R_after"] = g.loc[g["ts"] >= SPLIT, "R"].mean()
+    if "Rres_ew" in g:
+        r["res_before"] = g.loc[g["ts"] < SPLIT, "Rres_ew"].mean()
+        r["res_after"] = g.loc[g["ts"] >= SPLIT, "Rres_ew"].mean()
+    return r
+
+
+
+def plot():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    sel = json.loads(SELECTED.read_text())
+    ks = sel["k"]
+    PL = OUT / "plots"
+    PL.mkdir(parents=True, exist_ok=True)
+    day = lambda x: pd.to_datetime(np.atleast_1d(np.asarray(x)) * 86400, unit="s")  # noqa: E731
+    P1 = panel(ALL, "1d")
+    C1 = P1["close"]
+    ewd = pd.Series(np.nanmean(C1[1:] / C1[:-1] - 1, 1), index=P1["ts"][1:] // 86400).dropna()
+    cds = crash_days(ewd[ewd.index >= 18262], 10)
+
+    # 1. spectra against Marchenko-Pastur
+    names = ["crypto_1d", "crypto_4h", "fx_1d", "fx_4h", "macro_1d", "macro_4h", "deriv_1d", "deriv_4h"]
+    fig, axes = plt.subplots(2, 4, figsize=(22, 9))
+    for ax, nm in zip(axes.flat, names):
+        f = OUT / "spectra" / f"{nm}.eig.npy"
+        if not f.exists():
+            ax.set_visible(False)
+            continue
+        e = np.load(f)
+        if not len(e):
+            continue
+        q = float(np.median(e[:, 1]))
+        lo, hi = mp_edges(q)
+        top = e[:, 0][e[:, 0] > 3 * hi]
+        xs = e[:, 0][e[:, 0] <= 3 * hi]
+        ax.hist(xs, bins=60, density=True, color="#8ab", alpha=0.8, label="eigenvalues (every window)")
+        x = np.linspace(max(lo, 1e-4), hi, 400)
+        scale = len(e) / max(len(xs), 1)
+        ax.plot(x, mp_density(x, q) * scale, "r-", lw=1.5, label=f"Marchenko-Pastur q={q:.2f}")
+        ax.axvline(hi, color="r", ls=":", lw=1)
+        d = pd.read_csv(OUT / "spectra" / f"{nm}.csv")
+        v = float((1 - d["pc1"]).median())  # the bulk's variance once the market is out (Laloux et al.)
+        xa = np.linspace(max(lo, 1e-4) * v, hi * v, 400)
+        ax.plot(xa, mp_density(xa / v, q) / v * scale, "m--", lw=1.2, label=f"MP with the market out (var {v:.2f})")
+        ax.set_title(f"{nm}: median N {d['n'].median():.0f}; λ1 median {d['lam1'].median():.1f} (edge {hi:.2f}); "
+                     f"{len(top)} values > 3x edge", fontsize=9)
+        ax.legend(fontsize=7)
+    fig.suptitle("Correlation eigenvalues in non-overlapping 90-day windows against the random-matrix bulk "
+                 "(values beyond 3x the edge are counted, not drawn)")
+    fig.tight_layout()
+    fig.savefig(PL / "spectra_mp.png", dpi=80)
+    plt.close(fig)
+
+    # 2. PC1 share over time with crashes; 3. effective bets
+    fig, axes = plt.subplots(3, 1, figsize=(16, 12), sharex=True)
+    for nm, col in (("crypto_1d", "C0"), ("crypto_4h_short", "C1"), ("fx_1d", "C2"), ("macro_1d", "C3"), ("deriv_1d", "C4")):
+        f = OUT / "spectra" / f"{nm}.csv"
+        if not f.exists():
+            continue
+        d = pd.read_csv(f)
+        t = day(d["ts"] // 86400)
+        axes[0].plot(t, d["pc1"], color=col, lw=0.8, label=nm)
+        axes[1].plot(t, d["enb"], color=col, lw=0.8, label=f"{nm} exp(entropy)")
+        axes[1].plot(t, d["pr"], color=col, lw=0.8, ls="--")
+        axes[2].plot(t, d["enb"] / d["n"], color=col, lw=0.8, label=nm)
+    for cd in cds:
+        for ax in axes:
+            ax.axvline(day(cd)[0], color="k", lw=0.6, ls=":")
+    axes[0].set_ylabel("PC1 share of variance")
+    axes[0].set_title("PC1 share (crypto: 90-day and 30-day windows; dotted: the 10 worst equal-weight crypto days)")
+    axes[1].set_ylabel("effective bets")
+    axes[1].set_yscale("log")
+    axes[1].set_title("Effective number of independent bets: exp(entropy) solid, participation ratio dashed")
+    axes[2].set_ylabel("exp(entropy) / N")
+    for ax in axes:
+        ax.legend(fontsize=7, ncol=3)
+    fig.tight_layout()
+    fig.savefig(PL / "pc1_share_and_bets.png", dpi=80)
+    plt.close(fig)
+
+    # 4. s-score examples
+    nm = f"u143_1d_real_k{ks}"
+    r = load_run(nm)
+    S = np.load(OUT / "runs" / f"{nm}.S.npy")
+    ci = _cell(r, sel)
+    tr = r["trades"][r["trades"][:, 0] == ci]
+    counts = pd.Series(tr[:, 1]).value_counts()
+    fig, axes = plt.subplots(2, 1, figsize=(16, 9))
+    for ax, i in zip(axes, counts.index[:2]):
+        t = day(r["ts"] // 86400)
+        ax.plot(t, S[:, i], lw=0.7, color="#456")
+        for v, c in ((sel["entry"], "r"), (-sel["entry"], "g"), (sel["exit"], "r"), (-sel["exit"], "g")):
+            ax.axhline(v, color=c, lw=0.8, ls="-" if abs(v) == sel["entry"] else ":")
+        for _, _, side, t0, t1 in tr[tr[:, 1] == i]:
+            ax.plot(t[t0], S[t0, i], "^" if side > 0 else "v", color="g" if side > 0 else "r", ms=6)
+            ax.plot(t[t1], S[t1, i] if np.isfinite(S[t1, i]) else 0, "x", color="k", ms=5)
+        ax.set_title(f"{r['coins'][i]}USDT 1d s-score (k={ks}); triangles: entries (long up, short down), x: exits")
+        ax.set_ylim(-5, 5)
+    fig.tight_layout()
+    fig.savefig(PL / "sscore_examples.png", dpi=80)
+    plt.close(fig)
+
+    # 5. equity curves; 6. drawdowns
+    books = {}
+    for uni in ("u143", "u12"):
+        for src in ("real", "ou", "iid", "shuffle"):
+            try:
+                a, b = (_daily_sel(f"{uni}_{iv}_{src}_k{ks}", sel)[0] for iv in ("1d", "4h"))
+            except (OSError, FileNotFoundError):
+                continue
+            books[(uni, src)] = pd.DataFrame({c: _pooled(a, b, c) for c in ("gross", "net")})
+    panels = (("discovery: 12 coins, before 2024", "u12", None, SPLIT), ("confirmation: 12 coins, 2024+", "u12", SPLIT, None),
+              ("confirmation: 131 fresh coins (PCA on 143)", "u143", None, None))
+    fig, axes = plt.subplots(2, 3, figsize=(22, 10))
+    for col, (title, uni, st, en) in enumerate(panels):
+        for row, kind in enumerate(("gross", "net")):
+            ax = axes[row, col]
+            ax2 = ax.twinx()
+            for src, c in (("real", "k"), ("iid", "C0"), ("shuffle", "C2"), ("ou", "C3")):
+                g = books.get((uni, src))
+                if g is None:
+                    continue
+                x = g[kind]
+                if st is not None:
+                    x = x[x.index >= st // 86400]
+                if en is not None:
+                    x = x[x.index < en // 86400]
+                (ax2 if src == "ou" else ax).plot(day(x.index), x.cumsum(), color=c, lw=1.2 if src == "real" else 0.9,
+                                                  ls="--" if src == "ou" else "-", label=f"{src} (Sharpe {sharpe(x):+.2f})")
+            ax.set_title(f"{title}, {kind}, 1d+4h pooled", fontsize=10)
+            ax.legend(loc="upper left", fontsize=8)
+            ax2.legend(loc="lower right", fontsize=8)
+            ax2.set_ylabel("OU positive control (right axis)", color="C3", fontsize=8)
+            ax.axhline(0, color="#999", lw=0.5)
+    fig.suptitle(f"Residual book (k={ks}, entry {sel['entry']}, exit {sel['exit']}, half-life <= {sel['hl_max']:g}): "
+                 "summed daily returns on unit gross")
+    fig.tight_layout()
+    fig.savefig(PL / "equity.png", dpi=80)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(16, 5))
+    for (uni, src), c in ((("u143", "real"), "k"), (("u12", "real"), "C1"), (("u143", "iid"), "C0")):
+        g = books.get((uni, src))
+        if g is None:
+            continue
+        eq = g["net"].cumsum()
+        ax.fill_between(day(eq.index), eq - eq.cummax(), 0, color=c, alpha=0.3, label=f"{uni} {src} net")
+    for cd in cds:
+        ax.axvline(day(cd)[0], color="r", lw=0.6, ls=":")
+    ax.set_title("Drawdown of the pooled residual book, net (dotted: the 10 worst equal-weight crypto days)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(PL / "drawdown.png", dpi=80)
+    plt.close(fig)
+
+    # 7. DISPLACE_C beta / residual
+    f = OUT / "displace.csv"
+    if f.exists():
+        c = pd.read_csv(f)
+        c = c[c["set"] == "all131"]
+        fig, ax = plt.subplots(figsize=(13, 5))
+        labs, xs = [], np.arange(0)
+        rows = [(iv, sd) for iv in ("4h", "1d", "4h+1d") for sd in (1, -1, 0)]
+        for j, (iv, sd) in enumerate(rows):
+            x = c[(c["iv"] == iv) & (c["side"] == sd)]
+            if not len(x):
+                continue
+            x = x.iloc[0]
+            ax.bar(j - 0.27, x["R"], 0.25, color="#555", label="total R" if j == 0 else None)
+            ax.bar(j, x["Rbeta_ew"], 0.25, color="C0", label="market (beta) part" if j == 0 else None)
+            ax.bar(j + 0.27, x["Rres_ew"], 0.25, color="C3", label="residual" if j == 0 else None)
+            if np.isfinite(x.get("res_lo_ew", np.nan)):
+                ax.errorbar(j + 0.27, x["Rres_ew"], [[x["Rres_ew"] - x["res_lo_ew"]], [x["res_hi_ew"] - x["Rres_ew"]]], color="k", capsize=3)
+            labs.append(f"{iv} {'long' if sd > 0 else 'short' if sd < 0 else 'both'}\nn={int(x['n'])}")
+            xs = np.append(xs, j)
+        ax.set_xticks(xs, labs, fontsize=8)
+        ax.axhline(0, color="k", lw=0.6)
+        ax.set_ylabel("mean R a trade")
+        ax.set_title("DISPLACE_C at a 12-bar low, structure exit, 131 fresh coins: market beta (equal-weight index) against residual (90% day-bootstrap)")
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(PL / "displace_split.png", dpi=80)
+        plt.close(fig)
+
+    # 8. P(N R)
+    f = OUT / "rtrades.csv"
+    if f.exists():
+        t = pd.read_csv(f)
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+        for ax, uni in zip(axes, ("u143", "u12")):
+            for src, c in (("real", "k"), ("iid", "C0"), ("shuffle", "C2"), ("ou", "C3")):
+                x = t[(t["universe"] == uni) & (t["source"] == src)]
+                if not len(x):
+                    continue
+                w = x["n"] / x["n"].sum()
+                ax.plot(NS, [(x[f"P{N}R"] * w).sum() for N in NS], "o-", color=c, label=f"{src} (n={int(x['n'].sum())})")
+            ax.plot(NS, [1 / (N + 1) for N in NS], "k:", label="1/(N+1)")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.set_xlabel("N")
+            ax.set_ylabel("P(+N R before -1R)")
+            ax.set_title(f"{uni}: single-name trades, every timeframe pooled" + (" (2024+)" if uni == "u12" else ""))
+            ax.legend()
+        fig.tight_layout()
+        fig.savefig(PL / "pnr.png", dpi=80)
+        plt.close(fig)
+    print("plots written", flush=True)
+
+
 def main():
     {"fetch": fetch, "smoke": smoke, "spectra": spectra, "discover": discover, "confirm": confirm,
-     "displace": displace}[os.environ.get("MODE", "smoke")]()
+     "displace": displace, "report": report, "plot": plot}[os.environ.get("MODE", "smoke")]()
 
 
 if __name__ == "__main__":
