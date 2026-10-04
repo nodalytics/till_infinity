@@ -3,7 +3,8 @@
 `turn_confirm_rule.json` passed on 58 fresh coins (+0.049R, 4h and 1d). This logs the signal forward,
 as it would have been seen live, on those coins and the second replication's 73 (`SET_C`), so the
 result can be judged on bars that did not exist when it was found. Prices come from Bybit's public
-klines (bytick.com; the research machine cannot reach it), so it runs on this machine.
+klines (bytick.com) on this machine, or with SOURCE=binance from Binance spot and OKX on the research
+machine, which cannot reach Bybit.
 
   MODE=once   check the last closed 4h (and, at 00:00 UTC, 1d) bar of every coin; append new signals
   MODE=loop   the same after every 4h close, forever (nohup it; it stops when this machine sleeps)
@@ -39,27 +40,59 @@ LOOKBACK = 300
 CATCH_UP = 3  # also check the bars before the last closed one, in case a run was missed
 
 
-def klines(client, coin, iv, start=None, limit=LOOKBACK):
-    """Closed bars, oldest first; None if Bybit does not list the coin."""
-    code, sec = IV[iv]
-    params = dict(category="linear", symbol=f"{coin}USDT", interval=code, limit=limit)
-    if start is not None:
-        params["start"] = int(start * 1000)
+SOURCE = os.environ.get("SOURCE", "bybit")  # "binance" on the research machine (Bybit is blocked there)
+SPOT = "https://data-api.binance.vision/api/v3/klines"
+OKX = "https://www.okx.com/api/v5/market/candles"
+SPOT_NAME = {"1000LUNC": "LUNC", "1000XEC": "XEC", "1000SHIB": "SHIB", "LUNA2": "LUNA"}
+SPOT_IV = {"4h": "4h", "1d": "1d"}
+OKX_IV = {"4h": "4H", "1d": "1Dutc"}
+
+
+def _get(client, url, params):
     for _ in range(3):
         try:
-            r = client.get(API, params=params, timeout=20).json()
-            break
+            r = client.get(url, params=params, timeout=20)
+            return r.json() if r.status_code == 200 else None
         except Exception:  # noqa: BLE001 - a flaky public endpoint; retry, then skip the coin
             time.sleep(2)
-    else:
-        return None
-    rows = r.get("result", {}).get("list") or []
-    if r.get("retCode") != 0 or not rows:
+    return None
+
+
+def _frame(rows, sec):
+    if not rows:
         return None
     d = pd.DataFrame([x[:6] for x in rows], columns=["ts", "open", "high", "low", "close", "volume"]).astype(float)
     d["ts"] = (d["ts"] // 1000).astype(np.int64)
     d = d.sort_values("ts").drop_duplicates("ts").reset_index(drop=True)
     return d[d["ts"] + sec <= time.time()].reset_index(drop=True)
+
+
+def klines(client, coin, iv, start=None, limit=LOOKBACK):
+    """Closed bars, oldest first; None if the source does not list the coin. Bybit perpetuals by default;
+    with SOURCE=binance, Binance spot (its public market-data mirror; the prices track the perpetual
+    within a fraction of a percent, and R is scale-free) and OKX perpetuals for coins Binance spot lacks."""
+    code, sec = IV[iv]
+    if SOURCE == "bybit":
+        params = dict(category="linear", symbol=f"{coin}USDT", interval=code, limit=limit)
+        if start is not None:
+            params["start"] = int(start * 1000)
+        r = _get(client, API, params)
+        if not r or r.get("retCode") != 0:
+            return None
+        return _frame(r.get("result", {}).get("list") or [], sec)
+    name = SPOT_NAME.get(coin, coin)
+    params = dict(symbol=f"{name}USDT", interval=SPOT_IV[iv], limit=min(limit, 1000))
+    if start is not None:
+        params["startTime"] = int(start * 1000)
+    r = _get(client, SPOT, params)
+    if isinstance(r, list) and r:
+        return _frame(r, sec)
+    if start is not None:  # OKX's recent-candles endpoint has no start; it serves the last 300 bars only
+        return None
+    r = _get(client, OKX, dict(instId=f"{name}-USDT-SWAP", bar=OKX_IV[iv], limit=min(limit, 300)))
+    if not r or r.get("code") != "0":
+        return None
+    return _frame(r.get("data") or [], sec)
 
 
 def signals(df):
