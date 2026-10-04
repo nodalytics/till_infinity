@@ -8,6 +8,9 @@ information. The one kind of violence that real markets add beyond walks is a ra
 the bar's own recent ranges. Swing structure (HH/HL against LH/LL) does not persist beyond chance: real
 markets make the next extreme *less* often than walks do.
 
+Not to be confused with [turns.md](turns.md), which asks whether a *weekly* major turn can be forecast
+from daily state. This page reads the bar at the turn itself.
+
 Every test below was pre-registered in the script's docstring, or in a frozen JSON for the trades,
 before it ran. Controls are walks matched to each series (`mcfl.synth.matched_walk`), carrying the real
 timestamps and, for the trades, the real costs in ATR units.
