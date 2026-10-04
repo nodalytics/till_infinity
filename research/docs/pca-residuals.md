@@ -28,14 +28,14 @@ risk, and that a signal can be beta in a costume.
 - **Correlations spike in crashes.** After 6 of the 10 worst equal-weight crypto days, the 30-day PC1
   share reached its top decile within a week. On 2020-03-12 it reached 0.96, and on 2025-10-10 0.88.
 - **The article's trade fails.** The primary, the fresh-coin residual book at 1d and 4h pooled, makes:
-  - **net Sharpe −0.97 [−1.59, −0.29]** and gross +0.27;
+  - **net Sharpe −0.97 [−1.59, −0.30]** and gross +0.27;
   - +5.3% a year gross, against 20.2% fees and 4.3% funding, so −19.2% net;
   - −1.21 before 2024 and −0.55 after;
-  - against PC1, **alpha −20.7% a year [−34.3%, −7.1%]**, with beta +0.006. The hedge works; there
+  - against PC1, **alpha −20.7% a year [−34.2%, −6.4%]**, with beta +0.006. The hedge works; there
     is no alpha to keep.
 - **Discovery had already said no.** On the 12 coins before 2024, all 36 cells lost *gross*, with
   Sharpe −0.9 to −1.8. The pick (k=1, entry 2.0, exit 0.5, half-life ≤ 10 bars) was the least bad, at
-  −2.14 net. Confirmation: 39 secondary cells, every one negative, **none survives BH**.
+  −2.14 net. Confirmation: 41 secondary cells, every one negative, **none survives BH**.
 - **A faint residual reversion exists at 4h, and fees eat it.** On the fresh coins at 4h the book is
   +0.58 Sharpe gross, against −0.48 on the iid null and −0.29 on the shuffle. But it turns over 1.36×
   a day, which costs 35% a year against 15% gross.
@@ -47,7 +47,7 @@ risk, and that a signal can be beta in a costume.
   - On the 22 worst index days it loses −0.64% a day, against −0.06% on all days.
   - Skew is −0.95. The worst day is −9.8% (2021-01-15) and the worst week −12.3%.
   - In the weeks of the steepest rise in PC1's share it loses −0.57% a week, against −0.37%.
-  - The bleed, not the crashes, dominates its −136% (summed) drawdown.
+  - The bleed, not the crashes, dominates its −144% (summed) drawdown.
 - **Single-name R version: below the walk.**
   - Fresh coins: **−0.17R [−0.26, −0.08]** at 1d and **−0.19R [−0.24, −0.15]** at 4h.
   - iid null: +0.05R. OU control: +0.25 to +0.42R.
@@ -200,7 +200,7 @@ bootstrap; returns are a year's sum on unit gross):
 
 | book | sample | gross Sharpe | net Sharpe [90%] | gross / yr | fees / yr | funding / yr | net / yr | turnover / day | positions |
 |---|---|---|---|---|---|---|---|---|---|
-| **fresh coins, real** | all | +0.27 | **−0.97 [−1.64, −0.31]** | +5.3% | 20.2% | 4.3% | −19.2% | 0.79 | 11.7 |
+| **fresh coins, real** | all | +0.27 | **−0.97 [−1.59, −0.30]** | +5.3% | 20.2% | 4.3% | −19.2% | 0.79 | 11.7 |
 | fresh coins, real | before 2024 | −0.18 | −1.21 | −3.9% | 19.4% | 3.3% | −26.6% | | |
 | fresh coins, real | 2024+ | +1.11 | −0.55 [−1.49, +0.41] | +18.0% | 21.3% | 5.7% | −9.0% | | |
 | fresh coins, OU control | all | +11.94 | **+10.47** | +220% | 28.1% | 0.2% | +192% | 1.10 | 7.9 |
@@ -218,7 +218,7 @@ By timeframe (fresh coins all dates; 12 coins 2024+):
 | fresh 1d | −0.19 | −0.56 | −0.21 / −0.53 | −0.61 / −0.85 | +4.37 / +4.08 | 6.1% |
 | fresh 4h | **+0.58** | −0.90 | −0.48 / −2.18 | −0.29 / −2.05 | +12.6 / +10.9 | 34.8% |
 | fresh 1h | **+1.80** | −3.69 | +0.51 / −5.98 | −0.84 / −7.41 | +21.8 / +15.7 | 141% |
-| fresh 15m | still running on the lab at the time of writing | | | | | |
+| fresh 15m | **+6.48** | −16.2 | −0.25 / −26.0 | −0.32 / −24.1 | +32.8 / +14.9 | 581% |
 | 12 coins 1d | −0.34 | −0.55 | +0.13 / −0.08 | −0.79 / −1.05 | +0.86 / +0.62 | 4.3% |
 | 12 coins 4h | +0.13 | −1.21 | −0.47 / −1.87 | +0.68 / −0.74 | +3.10 / +1.61 | 25.7% |
 | 12 coins 1h | −0.26 | −6.61 | −0.91 / −7.15 | −0.92 / −7.26 | +5.44 / −1.00 | 107% |
@@ -227,20 +227,26 @@ By timeframe (fresh coins all dates; 12 coins 2024+):
 - **The primary fails every leg** except "above the iid null" (−0.97 against −1.94):
   - the interval is below zero;
   - both halves are negative;
-  - alpha on PC1 is −20.7% a year [−34.3%, −7.1%], with beta +0.006.
-- **Real gross beats both nulls at 4h and more at 1h** (1h: +1.80 against +0.51 and −0.84; single-name
-  1h −0.28R over 61,323 trades, P(≥4R) 0.209, P(≥10R) 0.091). At 4h it is +0.58 against −0.48 and −0.29, strongest
-  after 2024 (pooled gross +1.11). That is a small residual reversion. But the book has to turn over
-  1.4× a day to harvest it, and the fee is twice the gross. At 1h and 15m the OU control itself
-  cannot pay the fee: a 10-bar half-life at 15m is a 2.5-hour trade.
+  - alpha on PC1 is −20.7% a year [−34.2%, −6.4%], with beta +0.006.
+- **Real gross beats both nulls at 4h, more at 1h and most at 15m.**
+  - 1h: +1.80 against +0.51 and −0.84; single-name −0.28R over 61,323 trades, P(≥4R) 0.209, P(≥10R) 0.091.
+  - 15m: +6.48 against −0.25 and −0.32; single-name −0.55R [−0.57, −0.53] over 253,046 trades,
+    P(≥4R) 0.219 and P(≥10R) 0.094, against 0.229 and 0.109 on the iid null.
+  - 4h: +0.58 against −0.48 and −0.29, strongest after 2024 (pooled gross +1.11).
+  - That is a small residual reversion, larger the shorter the bar. But the book has to turn over
+    1.4× a day at 4h to harvest it, and the fee is twice the gross; at 15m it turns over 23× a day,
+    and the fees (581% a year) are more than three times the gross (172%).
+  - On the 12 coins at 1h and 15m even the OU control cannot pay the fee: a 10-bar half-life at 15m
+    is a 2.5-hour trade. On the fresh coins it still can (+15.7 and +14.9 net), because its reversion
+    is far stronger than anything in the real residual.
 - **Funding costs the real book 4.3% a year,** against about zero on the synthetic panels, whose
   positions are unrelated to the real funding. The real fades sit on the side that pays.
-- **BH:** 39 secondary cells tried, the other 35 grid cells on the primary sample and the selected
+- **BH:** 41 secondary cells tried, the other 35 grid cells on the primary sample and the selected
   cell's 1h/15m/12-coin books. Every Sharpe is negative (−0.55 to −23.4), and **none survives** at
   q = 0.10.
 
 **Tails of the primary book** (`drawdown.png`):
-- **Drawdown and skew:** max drawdown −136% of unit gross summed over 6.5 years, a steady bleed.
+- **Drawdown and skew:** max drawdown −144% of unit gross summed over 6.5 years, a steady bleed.
   Worst day −9.8% (2021-01-15), worst week −12.3%, skew −0.95.
 - **Worst index days:** on the 22 worst equal-weight days (1%; index mean −17.8%) the book loses
   −0.64% a day, against −0.06% on all days. Its beta to the index is +0.016 on down days and −0.009
