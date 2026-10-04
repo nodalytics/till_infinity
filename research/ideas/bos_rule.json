@@ -1,0 +1,67 @@
+{
+  "frozen": "2026-10-04",
+  "after": "turning-points.md and ladder.md: the side has been a coin flip at every turn and every level; expansion.md: volatility expansion is forecastable (AUC 0.78); models.md: a small logistic regression beats trees and MLPs on this desk's features",
+  "question": "can a break of structure (BOS: a close beyond the live swing high or swing low) be predicted before it happens - when (a) and which way (b) - beyond what the geometry of the two levels already says, and beyond iid and GARCH walks",
+  "levels": {
+    "swings": "MCFL v2 EXTREMEs (3/3 pivots: 3 bars either side, known 3 bars after the swing, at known_at)",
+    "H": "at bar t: the most recent (by swing bar) swing high known by t with no close above its price on any bar after the swing up to t (unbroken); so H >= close[t]",
+    "L": "the mirror: the most recent known swing low with no close below it since the swing",
+    "frozen": "H and L are fixed at t for the labels; later swings do not move them"
+  },
+  "sample": {
+    "bars": "every bar t from bar 300 (warm-up) where H and L both exist and t + 60 is inside the series; 4h every bar, 1h every 3rd bar (t % 3 == 0)",
+    "flip": "none: the chart is not flipped, labels stay up/down as they are, features are written with H-side and L-side columns (and antisymmetric ones such as the 5-bar move) so the linear model can be symmetric but is not forced to be"
+  },
+  "targets": {
+    "a_timing": "a close beyond H or beyond L within N bars after t (bars t+1..t+N); N = 24 on 1h, 12 on 4h (two days of 4h, one day of 1h)",
+    "b_side": "among bars whose first close beyond H or L comes within 60 bars, 1 if that first close is above H, 0 if below L"
+  },
+  "features": {
+    "note": "all known at t's close; ATR is Wilder's (ewm alpha 1/n) of true range; every price distance is in ATR(14) at t unless said; non-finite values become 0 (relative volume 1), all clipped to [-50, 50]",
+    "G0 geometry (baseline)": ["dH = (H - close)/ATR14", "dL = (close - L)/ATR14", "log1p(dH)", "log1p(dL)", "log((dH + 0.05)/(dL + 0.05))", "ATR5/ATR50", "log1p(bars since H's swing)", "log1p(bars since L's swing)", "is_4h"],
+    "G1 volatility": ["(max high - min low of the last 10 bars)/ATR50", "ATR5/ATR20", "Bollinger width (4 sd of 20 closes, in ATR50) as a percentile of its last 100 values", "ATR14/ATR100"],
+    "G2 levels likely to break (Zeiierman, re-implemented)": {
+      "repeated pivot flag, H and L": "an earlier swing of the same side whose bar is within 100 bars before the level's swing and at least 5 bars from it, priced within 0.25 ATR14(t) of the level",
+      "movement toward": "(close[t] - close[t-5])/ATR14 (positive toward H, negative toward L)",
+      "relative volume": "volume[t] / mean volume of the 20 bars before t",
+      "directional pressure": "mean close location ((c-l)-(h-c))/(h-l) over the last 5 bars; and the same weighted by each bar's relative volume",
+      "absorption, H and L": "mean over the last 5 bars of relvol x max(0, 1 - range/ATR14(t)) on bars whose high is within 0.5 ATR of H (for H), whose low is within 0.5 ATR of L (for L)",
+      "compression": "(max high - min low of the last 5 bars)/ATR14",
+      "fresh touches, H and L": "number of the last 20 bars whose high reached H - 0.25 ATR (for H), whose low reached L + 0.25 ATR (for L)"
+    },
+    "G3 Weinstein stage (MarkitTick, re-implemented)": {
+      "MA": "SMA(30) of close",
+      "slope": "(SMA[t] - SMA[t-4])/ATR14 (in ATR, not %, so arithmetic walks are scale-free), as a z against its own sd over the 500 bars before t",
+      "flat band": "rising if slope z > +0.5, falling if < -0.5, else flat (the band scales per timeframe through the slope's own sd)",
+      "breakout / breakdown": "close above the highest high / below the lowest low of the 30 bars before t",
+      "machine": "starts in 1 at bar 0. 1: breakdown -> 4, breakout -> 2. 2: breakdown -> 4; failed breakout (within 10 bars of entering 2, a close below the 30-bar high it broke) -> 1; the MA stops rising (it has been rising at some bar since entering 2 and now is not) -> 3. 3: breakdown -> 4, breakout -> 2. 4: breakout -> 2; the MA stops falling (it has been falling at some bar since entering 4 and now is not) -> 1. Checked in that order, one transition a bar",
+      "features": ["one-hot stage 1-4", "log1p(bars in stage)", "slope z (clipped +-5)", "(close - SMA)/ATR14", "breakout flag", "breakdown flag"]
+    },
+    "G4 FVG magnet (Neblok, re-implemented)": {
+      "gaps": "up gap at k: low[k] > high[k-2], zone [high[k-2], low[k]]; down gap: high[k] < low[k-2], zone [high[k], low[k-2]]; size >= 0.25 ATR14(k); known at k",
+      "filled": "up gap: the first bar after k whose low <= high[k-2]; down gap: whose high >= low[k-2]; looked for 150 bars, after which the gap expires unfilled",
+      "live at t": "formed at k <= t, not filled by t, t - k < 150; above price if its middle is above close[t], else below",
+      "per side (above, below), the nearest live gap by distance to its near edge": ["present flag", "distance in ATR (0 inside the zone; 10 when none; capped 10)", "size in ATR at formation (capped 3)", "log1p(age)", "learned fill rate"],
+      "learned fill rate": "keyed by (gap type up/down, size bucket <0.5, 0.5-1, 1-2, 2+ ATR, age bucket 0-9, 10-49, 50-149 bars): among gaps of the series resolved (filled, or expired at k+150) by t that survived unfilled to the age bucket's start, (1 + filled)/(2 + count); 0 when no gap on that side",
+      "magnet pull": "fill rate/(1 + distance) above minus the same below"
+    },
+    "G5 MCFL violence": ["DISPLACE_C, DELIVERY_SHIFT, BREACH_REVERT, each up and each down (MCFL parse, known_at), completed on any of the last 5 bars: 6 flags", "range_z of bar t: (range - mean)/sd of the 10 ranges before it, clipped +-10"],
+    "G6 structure sentence": "the last three MCFL v2 swing labels known at t (HH LH EH LL HL EL), one-hot per position: 18 flags"
+  },
+  "model": "logistic regression, features standardised on the training rows, L2 with C = 1.0, lbfgs; one model per venue and per source, 1h and 4h pooled (is_4h in G0)",
+  "walk_forward": "train on bars whose label window ends before 2024-01-01 (ts + 61 bars < split, a purge), score bars at or after 2024-01-01. MT5's US SP 500, US Tech 100, Germany 40 and US Oil begin 2024-01-22: test rows only",
+  "feature_sets": ["G0", "G0+G1", "G0+G2", "G0+G3", "G0+G4", "G0+G5", "G0+G6", "G0+all"],
+  "score": "held-out AUC of each set; 'beyond geometry' = AUC(G0+X) - AUC(G0) on the same rows, with a day-bootstrap 90% interval (resample test days with replacement, 1000 draws, the same draws for every set)",
+  "nulls": {
+    "iid": "mcfl.synth.walk with the series' close-to-close sd, 256 sub-steps a bar, the real timestamps",
+    "garch": "mcfl.synth.garch (alpha 0.08, beta 0.90) with the same sigma, 256 sub-steps, real timestamps",
+    "volume": "walks get synthetic volume from mcfl.synth.ticks so the volume features exist",
+    "pipeline": "identical: same features, labels, split and model, fitted on each walk family per venue"
+  },
+  "predicts_if": "a group's real held-out gain over G0 has its 90% interval above 0 AND its point gain is larger than its gain on the iid walks AND larger than on the GARCH walks (same venue, same target)",
+  "primary": "(b) side, G0+all vs G0, Binance (12 perpetuals, 1h and 4h pooled)",
+  "secondary": ["(a) timing, every set, Binance", "each group separately, both targets", "MT5 (10 markets), both targets", "held-out AUC per timeframe and per test half (2024; 2025 on), reported not gated"],
+  "also": "calibration of the side model (G0+all and G0, Binance real, held out) in deciles of predicted P(up first); a gallery of held-out Binance 4h examples",
+  "follow_up_only_if_b_passes": "in the top decile of P(up first), long at t+1's open with the stop beyond L (and the mirror short in the bottom decile), exits frozen separately before any trade runs. Not run unless the primary passes",
+  "data": "Binance perpetuals (BTC ETH SOL BNB XRP DOGE ADA AVAX LINK LTC DOT TRX), 2021 on; MT5 (EURUSD GBPUSD USDJPY XAUUSD US SP 500 US Tech 100 Germany 40 US Oil BTCUSD ETHUSD); 1h and 4h"
+}
