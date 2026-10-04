@@ -768,7 +768,7 @@ def pooled(t):
     if not len(t):
         return t
     real = t[~t["fam"].isin(["deriv", "fresh"])]
-    a = real.assign(iv="all")
+    a = t[t["fam"] != "deriv"].assign(iv="all")  # fresh coins pool across their timeframes, never into "all" markets
     b = real.assign(fam="all")
     c = real.assign(iv="all", fam="all")
     return pd.concat([t, a, b, c], ignore_index=True)
