@@ -3,7 +3,9 @@ walks and against real markets.
 
 Frozen in `sweep_rule.json` before any real-data run; the patterns are MCFL entities (`mcfl/sweeps.py`
 and the v2 entities it reuses). Deriv's synthetics are a real market whose generators are published:
-the expectation is that every pattern occurs at the rate a walk produces it and predicts nothing.
+the expectation is that every pattern occurs at the rate a walk produces it and predicts nothing. Every
+asset class (Deriv diffusive, jumpy and Range Break; FX, metals, indices, energy, crypto CFDs, Binance
+perpetuals) runs the same tests against its own walks; 15m, 1h, 4h and 1d.
 
   base      events per 1,000 bars of every pattern, real against iid, GARCH and bar-bootstrap walks
   predict   P(the nearest standing swing low is swept within 10 bars): geometry (G0) against G0 + causal
@@ -13,7 +15,7 @@ the expectation is that every pattern occurs at the rate a walk produces it and 
   protected strong, weak and sweep-strong lows: P(held until the next break of structure)
   spikes    Boom / Crash spikes and Jump jumps on one-minute bars: rate, clustering, predictability
 
-  OUT=... MT5BT_DB=... RESEARCH_DB=... MODE=run|plot|smoke python research/ideas/sweeps.py
+  OUT=... MT5BT_DB=... RESEARCH_DB=... BINANCE=... MODE=run|report|plot|smoke python research/ideas/sweeps.py
 """
 from __future__ import annotations
 
@@ -40,8 +42,24 @@ DIFFUSIVE = ("Volatility 10 Index", "Volatility 25 Index", "Volatility 50 Index"
              "Drift Switch Index 20", "Drift Switch Index 30")
 JUMPY = ("Boom 1000 Index", "Crash 1000 Index", "Jump 50 Index", "Range Break 100 Index")
 DERIV = DIFFUSIVE + JUMPY
-REAL = ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "XAUUSD", "XAGUSD", "US SP 500", "US Tech 100", "Germany 40",
-        "Japan 225", "BTCUSD", "ETHUSD", "SOLUSD")
+#: asset classes (amended before the run, see sweep_rule.json): each a venue and its symbols
+CLASSES = {
+    "diffusive": ("deriv", DIFFUSIVE),
+    "jumpy": ("deriv", ("Boom 1000 Index", "Crash 1000 Index", "Jump 50 Index")),
+    "rangebreak": ("deriv", ("Range Break 100 Index",)),
+    "fx": ("mt5", ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURJPY", "GBPJPY", "EURGBP",
+                   "AUDJPY", "USDCNH")),
+    "metal": ("mt5", ("XAUUSD", "XAGUSD", "XPTUSD", "XPDUSD")),
+    "index": ("mt5", ("US SP 500", "US Tech 100", "Wall Street 30", "Germany 40", "UK 100", "Japan 225", "Australia 200")),
+    "energy": ("mt5", ("US Oil", "UK Brent Oil")),
+    "crypto_cfd": ("mt5", ("BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "LTCUSD", "BNBUSD")),
+    "binance": ("binance", ("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "LTC", "DOT", "TRX")),
+}
+CLASS_OF = {(v, s): c for c, (v, syms) in CLASSES.items() for s in syms}
+DERIV_CLASSES = ("diffusive", "jumpy", "rangebreak")
+REAL_CLASSES = ("fx", "metal", "index", "energy", "crypto_cfd", "binance")
+MAX_BARS = 100_000
+FEE = 0.0007  # Binance: turn_trade's cost, a share of price a trade
 NULLS = ("walk", "garch", "boot")
 WALK_STEPS = 256
 PAD, SLIP, MINRISK, TRAIL = 0.1, 0.05, 0.2, 2.0
@@ -58,8 +76,8 @@ SESSION_IVS = ("15m", "1h")
 GRADES = ("WEAK", "STRONG", "SWEEP_STRONG")
 
 
-def scope(sym):
-    return "diffusive" if sym in DIFFUSIVE else "jumpy" if sym in JUMPY else "real"
+def scope(venue, sym):
+    return CLASS_OF[(venue, sym)]
 
 
 def hold_bars(iv):
@@ -68,18 +86,28 @@ def hold_bars(iv):
 
 # ---------------------------------------------------------------- data and nulls
 
-def load(sym, iv):
-    """The broker's bars and the spread floor in price."""
+def load(venue, sym, iv):
+    """The bars (the most recent MAX_BARS) and each bar's cost in price: the broker's spread floor, or on
+    Binance FEE of the price."""
+    if venue == "binance":
+        from turn_trade import _bin
+        try:
+            df = _bin(sym, iv)
+        except OSError:
+            return None, None
+        df = df[["ts", "open", "high", "low", "close", "volume"]].iloc[-MAX_BARS:].reset_index(drop=True)
+        df["ts"] = df["ts"].astype(np.int64)
+        return df, FEE * df["close"].to_numpy(float)
     import run as R
     from mt5bt import load_specs
     R.DB = os.environ.get("MT5BT_DB")
     df = R.load(sym, iv)
     if df is None:
         return None, None
-    df = df.reset_index(drop=True)[["ts", "open", "high", "low", "close", "volume"]]
+    df = df.reset_index(drop=True)[["ts", "open", "high", "low", "close", "volume"]].iloc[-MAX_BARS:].reset_index(drop=True)
     df["ts"] = df["ts"].astype(np.int64)
     spec = load_specs(R.DB).get(sym)
-    return df, (R.spread_floor(sym, spec) * spec.point if spec is not None else 0.0)
+    return df, np.full(len(df), R.spread_floor(sym, spec) * spec.point if spec is not None else 0.0)
 
 
 def boot_bars(df, seed):
@@ -419,12 +447,22 @@ def counts(ch, n, iv):
     return c
 
 
+def part_path(job):
+    venue, sym, iv, source, _ = job
+    return OUT / "parts" / f"{venue}_{sym.replace(' ', '_')}_{iv}_{source}.pkl"
+
+
 def one(job):
+    """One series and source: its counts, and its trades, protected lows and prediction rows written to
+    a part file (read back class by class by the report)."""
     from mcfl import candles
     from mcfl.parse import parse
     venue, sym, iv, source, do_pred = job
+    path = part_path(job)
+    if path.exists():
+        return pd.read_pickle(path)["counts"]
     try:
-        df, fee_px = load(sym, iv)
+        df, fee_px = load(venue, sym, iv)
     except Exception as ex:  # noqa: BLE001
         print(f"  load failed {sym} {iv}: {ex}", flush=True)
         return None
@@ -438,10 +476,10 @@ def one(job):
     n = len(df)
     ch = parse(df, sec=SEC[iv])
     atr = np.asarray(candles.table(df)["atr"], float)
-    tag = dict(venue=venue, scope=scope(sym), src=source, sym=sym, iv=iv)
+    tag = dict(venue=venue, scope=scope(venue, sym), src=source, sym=sym, iv=iv)
     mid = int(df["ts"].iloc[n // 2])
     cnt = dict(tag, n=n, mid=mid, **counts(ch, n, iv))
-    T = pd.DataFrame(trade_rows(df, ch, iv, cost_atr, atr, spike_sides(sym)))
+    T = pd.DataFrame(trade_rows(df, ch, iv, cost_atr, atr, spike_sides(sym) if venue == "deriv" else ()))
     if len(T):
         T = T.assign(**tag, mid=mid)
     Pr = pd.DataFrame(protected_rows(ch, df, atr))
@@ -450,12 +488,29 @@ def one(job):
     X = predict_rows(df, ch, iv, atr) if do_pred else pd.DataFrame()
     if len(X):
         X = X.assign(**tag, mid=mid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    pd.to_pickle({"counts": cnt, "trades": compact(T), "protected": compact(Pr), "predict": compact(X)}, tmp)
+    tmp.rename(path)
     print(f"  {venue} {source} {sym} {iv}: {n} bars, {len(T)} trades, {len(Pr)} protected, {len(X)} rows", flush=True)
-    return cnt, compact(T), compact(Pr), compact(X)
+    return cnt
 
 
-CATS = {"venue": ("deriv", "mt5"), "scope": ("diffusive", "jumpy", "real"), "src": ("real",) + NULLS + ("pub",),
-        "sym": DERIV + REAL, "iv": IVS, "pattern": PATTERNS, "grade": GRADES,
+def parts(classes, what, cols=None):
+    """One output of every part of the given classes, concatenated (our own pickles)."""
+    out = []
+    for c in classes:
+        venue, syms = CLASSES[c]
+        for sym in syms:
+            for p in sorted((OUT / "parts").glob(f"{venue}_{sym.replace(' ', '_')}_*.pkl")):
+                d = pd.read_pickle(p)[what]
+                if len(d):
+                    out.append(d if cols is None else d[[k for k in cols if k in d]])
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
+
+
+CATS = {"venue": ("deriv", "mt5", "binance"), "scope": tuple(CLASSES), "src": ("real",) + NULLS + ("pub",),
+        "sym": tuple(dict.fromkeys(s for _, syms in CLASSES.values() for s in syms)), "iv": IVS, "pattern": PATTERNS, "grade": GRADES,
         "outcome": ("held", "lost", "censored"), "sweep_type": ("BREACH_REVERT", "CLOSE_REVERT"),
         "shift_type": ("DISPLACE_C", "DELIVERY_SHIFT")}
 
@@ -478,16 +533,13 @@ def compact(d):
 def jobs_all():
     out = []
     for iv in IVS:
-        for sym in DERIV:
-            for src in ("real",) + NULLS:
-                out.append(("deriv", sym, iv, src, src in ("real", "walk", "garch")))
-            if sym.startswith("Volatility"):
-                out.append(("deriv", sym, iv, "pub", False))
-        for sym in REAL:
-            for src in ("real",) + NULLS:
-                out.append(("mt5", sym, iv, src, src in ("real", "walk", "garch")))
-    # the longest first, so the pool ends together
-    return sorted(out, key=lambda j: IVS.index(j[2]))
+        for c, (venue, syms) in CLASSES.items():
+            for sym in syms:
+                for src in ("real",) + NULLS:
+                    out.append((venue, sym, iv, src, src in ("real", "walk", "garch")))
+                if sym.startswith("Volatility"):
+                    out.append((venue, sym, iv, "pub", False))
+    return out
 
 
 # ---------------------------------------------------------------- spikes (pattern 10)
@@ -601,29 +653,15 @@ def run():
     for key, pos in (("ONLY", 1), ("ONLY_IV", 2), ("ONLY_SRC", 3)):  # smoke runs: a subset of the jobs
         if os.environ.get(key):
             jobs = [j for j in jobs if j[pos] in os.environ[key].split(",")]
+    # the biggest series first, so the pool ends together
+    jobs = sorted(jobs, key=lambda j: (IVS.index(j[2]), j[0] != "binance"))
     workers = int(os.environ.get("WORKERS", 8))
-    C, T, P, X = [], [], [], []
     with ProcessPoolExecutor(workers) as pool:
-        for g in pool.map(one, jobs):
-            if g is None:
-                continue
-            C.append(g[0])
-            for lst, d in zip((T, P, X), g[1:]):
-                if len(d):
-                    lst.append(d)
-    C = pd.DataFrame(C)
-    T = pd.concat(T, ignore_index=True)
-    P = pd.concat(P, ignore_index=True)
-    X = pd.concat(X, ignore_index=True) if X else pd.DataFrame()
-    C.to_csv(OUT / "counts.csv", index=False)
-    T.to_pickle(OUT / "trades.pkl.gz")
-    P.to_pickle(OUT / "protected.pkl.gz")
-    if len(X):
-        X.to_pickle(OUT / "predict_rows.pkl.gz")
-    S = spikes() if os.environ.get("RESEARCH_DB") else pd.DataFrame()
-    if len(S):
-        S.to_csv(OUT / "spikes.csv", index=False)
-    report(C, T, P, X, S)
+        C = [g for g in pool.map(one, jobs) if g is not None]
+    pd.DataFrame(C).to_csv(OUT / "counts.csv", index=False)
+    if os.environ.get("RESEARCH_DB") and not (OUT / "spikes.csv").exists():
+        spikes().to_csv(OUT / "spikes.csv", index=False)
+    report()
 
 
 def base_rates(C):
@@ -692,31 +730,12 @@ def predict_report(X, rng):
     return pd.DataFrame(rows)
 
 
-def report(C, T, P, X, S):
-    rng = np.random.default_rng(71)
-    pd.set_option("display.width", 300)
-    pd.set_option("display.max_rows", 2000)
-    pd.set_option("display.max_columns", 60)
-    # (a) base rates
-    B = base_rates(C)
-    B.to_csv(OUT / "base_rates.csv", index=False)
-    piv = B.groupby(["scope", "pattern", "src"])["per_1000"].mean().unstack("src")
-    for s in ("walk", "garch", "boot", "pub"):
-        if s in piv:
-            piv[f"real/{s}"] = piv["real"] / piv[s]
-    piv.round(3).to_csv(OUT / "base_rates_pivot.csv")
-    print("\n(a) events per 1,000 bars, mean over symbols and timeframes:")
-    print(piv.round(3).to_string())
-    pv2 = B.groupby(["scope", "iv", "pattern", "src"])["per_1000"].mean().unstack("src")
-    pv2.round(3).to_csv(OUT / "base_rates_by_tf.csv")
-    # (b) prediction
-    Pd = predict_report(X, rng)
-    if len(Pd):
-        Pd.to_csv(OUT / "predict.csv", index=False)
-        print("\n(b) prediction, held-out AUC gain of G0+G1 over G0:")
-        print(Pd.round(4).to_string(index=False))
-    # (c) trades
-    T = T.copy()
+TRADE_COLS = ("pattern", "side", "k", "ts", "mid", "risk_atr", "cost", "E1", "X2", "E1w", "X2w", "mfe", "limit", "rev1",
+              "rev2", "venue", "scope", "src", "sym", "iv")
+
+
+def trade_tables(T, rng):
+    """Per class, source and pattern, pooled over timeframes and per timeframe: E (next open) and L (limit)."""
     E = T[~T["limit"] | T["pattern"].str.startswith("P7")]
     L = T[T["limit"] & ~T["pattern"].str.startswith("P7")]
     tabs = []
@@ -727,75 +746,131 @@ def report(C, T, P, X, S):
             dd = d[d[ex].notna()]
             if not len(dd):
                 continue
-            t1 = trade_table(dd, rng, ("scope", "src", "pattern"), ex).assign(entry=name, iv="pooled")
-            t2 = trade_table(dd, rng, ("scope", "src", "pattern", "iv"), ex).assign(entry=name)
-            tabs += [t1, t2]
-    TT = pd.concat(tabs, ignore_index=True)
-    TT.to_csv(OUT / "trades_pooled.csv", index=False)
-    print("\n(c) trades, pooled over symbols (E entry, E1 trail):")
-    show = TT[(TT["entry"] == "E") & (TT["exit"] == "E1")]
-    print(show.pivot_table(index=["scope", "pattern", "iv"], columns="src", values="R").round(3).to_string())
-    print("\nreversal k=1 ATR the trade's way first (0.5 = coin):")
-    print(show[show["iv"] == "pooled"].pivot_table(index=["scope", "pattern"], columns="src", values="rev1").round(3).to_string())
-    # cells: Deriv pattern x symbol x timeframe, E entry, E1 (E1w on jumpy)
+            tabs.append(trade_table(dd, rng, ("scope", "src", "pattern"), ex).assign(entry=name, iv="pooled"))
+            tabs.append(trade_table(dd, rng, ("scope", "src", "pattern", "iv"), ex).assign(entry=name))
+    return pd.concat(tabs, ignore_index=True)
+
+
+def cell_table(T, rng, verdict):
+    """Every real cell (pattern x symbol x timeframe; E entry, E1 - E1w on the jumpy indices) with its walks."""
+    E = T[~T["limit"] | T["pattern"].str.startswith("P7")]
+    wm = {ex: E.groupby(["src", "sym", "iv", "pattern"], observed=True)[ex].mean() for ex in ("E1", "E1w") if ex in E}
     cells = []
-    D = E[E["venue"] == "deriv"]
-    wm = {ex: D.groupby(["src", "sym", "iv", "pattern"], observed=True)[ex].mean() for ex in ("E1", "E1w") if ex in D}
-    for (sym, iv, pat), g in D[D["src"] == "real"].groupby(["sym", "iv", "pattern"], observed=True):
-        ex = "E1w" if sym in JUMPY else "E1"
+    for (sym, iv, pat), g in E[E["src"] == "real"].groupby(["sym", "iv", "pattern"], observed=True):
+        ex = verdict(sym)
         y = g.assign(R=g[ex])
-        if len(y) < 30:
+        if len(y) < 30 or y["R"].isna().all():
             continue
         lo, hi, p = boot(y, rng)
         w = {s_: wm[ex].get((s_, sym, iv, pat), np.nan) for s_ in ("walk", "garch")}
-        cells.append(dict(sym=sym, iv=iv, pattern=pat, exit=ex, n=len(y), R=y["R"].mean(), lo=lo, hi=hi, p=p,
-                          R_h1=y.loc[y["ts"] < y["mid"], "R"].mean(), R_h2=y.loc[y["ts"] >= y["mid"], "R"].mean(),
-                          R_walk=w["walk"], R_garch=w["garch"]))
-    Cl = pd.DataFrame(cells)
-    Cl["bh"] = bh(Cl["p"].to_numpy())
+        cells.append(dict(scope=g["scope"].iloc[0], sym=sym, iv=iv, pattern=pat, exit=ex, n=len(y), R=y["R"].mean(),
+                          lo=lo, hi=hi, p=p, R_h1=y.loc[y["ts"] < y["mid"], "R"].mean(),
+                          R_h2=y.loc[y["ts"] >= y["mid"], "R"].mean(), R_walk=w["walk"], R_garch=w["garch"]))
+    return pd.DataFrame(cells)
+
+
+def protected_table(P):
+    rows = []
+    P = P.assign(scope=P["scope"].astype(str), src=P["src"].astype(str), iv=P["iv"].astype(str),
+                 grade=P["grade"].astype(str))
+    for (sc, src, iv, g), x in pd.concat([P.assign(iv="pooled"), P]).groupby(["scope", "src", "iv", "grade"]):
+        dec = x[x["outcome"].astype(str) != "censored"]
+        rows.append(dict(scope=sc, src=src, iv=iv, grade=g, n=len(x), held=(dec["outcome"].astype(str) == "held").mean(),
+                         held50=pd.to_numeric(x["held50"], errors="coerce").mean(), dist=x["dist"].median(),
+                         swept_share=x["swept"].mean(), bos_share=x["bos"].astype(float).mean()))
+    for (sc, src), x in P[P["bos"].astype(bool)].groupby(["scope", "src"]):
+        dec = x[x["outcome"].astype(str) != "censored"]
+        rows.append(dict(scope=sc, src=src, iv="pooled", grade="STRONG_BOS", n=len(x),
+                         held=(dec["outcome"].astype(str) == "held").mean(),
+                         held50=pd.to_numeric(x["held50"], errors="coerce").mean(), dist=x["dist"].median(),
+                         swept_share=x["swept"].mean(), bos_share=1.0))
+    return pd.DataFrame(rows)
+
+
+def report():
+    rng = np.random.default_rng(71)
+    pd.set_option("display.width", 300)
+    pd.set_option("display.max_rows", 3000)
+    pd.set_option("display.max_columns", 60)
+    C = pd.read_csv(OUT / "counts.csv")
+    # (a) base rates
+    B = base_rates(C)
+    B.to_csv(OUT / "base_rates.csv", index=False)
+    piv = B.groupby(["scope", "pattern", "src"])["per_1000"].mean().unstack("src")
+    for s in ("walk", "garch", "boot", "pub"):
+        if s in piv:
+            piv[f"real/{s}"] = piv["real"] / piv[s]
+    piv.round(3).to_csv(OUT / "base_rates_pivot.csv")
+    print("\n(a) events per 1,000 bars, mean over symbols and timeframes, per class:")
+    print(piv.round(3).to_string())
+    B.groupby(["scope", "iv", "pattern", "src"])["per_1000"].mean().unstack("src").round(3).to_csv(OUT / "base_rates_by_tf.csv")
+    # (b) prediction, class by class
+    preds = []
+    for c in CLASSES:
+        X = parts([c], "predict")
+        if len(X):
+            preds.append(predict_report(X, rng))
+        del X
+    Pd = pd.concat(preds, ignore_index=True)
+    Pd.to_csv(OUT / "predict.csv", index=False)
+    print("\n(b) prediction, held-out AUC gain of G0+G1 over G0:")
+    print(Pd.round(4).to_string(index=False))
+    # (c) trades, class by class
+    TT, Cl, PR = [], [], []
+    for c in CLASSES:
+        T = parts([c], "trades", TRADE_COLS)
+        if not len(T):
+            continue
+        TT.append(trade_tables(T, rng))
+        Cl.append(cell_table(T, rng, lambda sym: "E1w" if sym in JUMPY else "E1"))
+        if c == "diffusive":  # the primary
+            E = T[~T["limit"] & (T["pattern"] == "P6_SHIFT")]
+            prim = {}
+            for s_ in ("real", "walk", "garch", "boot"):
+                y = E[E["src"] == s_].assign(R=lambda d: d["E1"])
+                lo, hi, p = boot(y, rng)
+                prim[s_] = dict(n=len(y), R=y["R"].mean(), lo=lo, hi=hi, p=p, R_h1=y.loc[y["ts"] < y["mid"], "R"].mean(),
+                                R_h2=y.loc[y["ts"] >= y["mid"], "R"].mean(),
+                                **{f"R_{iv}": y.loc[y["iv"] == iv, "R"].mean() for iv in IVS},
+                                R_3tf=y.loc[y["iv"] != "1d", "R"].mean())
+        del T
+        P = parts([c], "protected")
+        if len(P):
+            PR.append(protected_table(P))
+    TT = pd.concat(TT, ignore_index=True)
+    TT.to_csv(OUT / "trades_pooled.csv", index=False)
+    show = TT[(TT["entry"] == "E") & (TT["exit"] == "E1")]
+    print("\n(c) trades, mean R pooled over symbols (E entry, E1 trail):")
+    print(show.pivot_table(index=["scope", "pattern", "iv"], columns="src", values="R").round(3).to_string())
+    print("\nreversal: k = 1 ATR the trade's way first (0.5 = coin):")
+    print(show[show["iv"] == "pooled"].pivot_table(index=["scope", "pattern"], columns="src", values="rev1").round(3).to_string())
+    Cl = pd.concat(Cl, ignore_index=True)
+    Cl["family"] = np.where(Cl["scope"].isin(DERIV_CLASSES), "deriv", "real")
+    Cl["bh"] = False
+    for fam, g in Cl.groupby("family"):  # BH within Deriv (the frozen family) and within the real classes
+        Cl.loc[g.index, "bh"] = bh(g["p"].to_numpy())
     Cl["passes"] = (Cl["R"] > 0) & (Cl["lo"] > 0) & (Cl["R_h1"] > 0) & (Cl["R_h2"] > 0) & (Cl["R"] > Cl["R_walk"]) & \
         (Cl["R"] > Cl["R_garch"]) & Cl["bh"]
     Cl.to_csv(OUT / "cells.csv", index=False)
-    print(f"\nDeriv cells (pattern x symbol x timeframe): {len(Cl)}; BH-significant {int(Cl['bh'].sum())}; "
-          f"passing every rule {int(Cl['passes'].sum())}")
-    if Cl["passes"].any():
-        print(Cl[Cl["passes"]].round(3).to_string(index=False))
-    # the primary
-    prim = {}
-    for s in ("real", "walk", "garch", "boot"):
-        x = E[(E["scope"] == "diffusive") & (E["src"] == s) & (E["pattern"] == "P6_SHIFT")]
-        y = x.assign(R=x["E1"])
-        lo, hi, p = boot(y, rng)
-        prim[s] = dict(n=len(y), R=y["R"].mean(), lo=lo, hi=hi, p=p, R_h1=y.loc[y["ts"] < y["mid"], "R"].mean(),
-                       R_h2=y.loc[y["ts"] >= y["mid"], "R"].mean(),
-                       **{f"R_{iv}": y.loc[y["iv"] == iv, "R"].mean() for iv in IVS},
-                       R_3tf=y.loc[y["iv"] != "1d", "R"].mean())
+    for fam, g in Cl.groupby("family"):
+        print(f"\n{fam} cells (pattern x symbol x timeframe): {len(g)}; BH-significant {int(g['bh'].sum())}; "
+              f"passing every rule {int(g['passes'].sum())}")
+        if g["passes"].any():
+            print(g[g["passes"]].round(3).to_string(index=False))
     r = prim["real"]
-    ok = r["R"] > 0 and r["lo"] > 0 and r["R_h1"] > 0 and r["R_h2"] > 0 and r["R"] > prim["walk"]["R"] and r["R"] > prim["garch"]["R"]
+    ok = r["R"] > 0 and r["lo"] > 0 and r["R_h1"] > 0 and r["R_h2"] > 0 and r["R"] > prim["walk"]["R"] and \
+        r["R"] > prim["garch"]["R"]
     json.dump({"primary": prim, "passes": bool(ok)}, open(OUT / "primary.json", "w"), indent=1, default=float)
     print(f"\nPRIMARY (P6_SHIFT, Deriv diffusive, E then E1, 15m-1d pooled): R {r['R']:+.3f} [{r['lo']:+.3f}, {r['hi']:+.3f}] "
-          f"n={r['n']}, halves {r['R_h1']:+.3f} / {r['R_h2']:+.3f}; walk {prim['walk']['R']:+.3f}, garch {prim['garch']['R']:+.3f}, "
-          f"boot {prim['boot']['R']:+.3f} -> {'PASSES' if ok else 'fails'}")
-    # protected
-    P = P.copy()
-    rows = []
-    for (sc, src, iv, g), x in pd.concat([P.assign(iv_="pooled"), P.assign(iv_=P["iv"])]).groupby(["scope", "src", "iv_", "grade"], observed=True):
-        dec = x[x["outcome"] != "censored"]
-        rows.append(dict(scope=sc, src=src, iv=iv, grade=g, n=len(x), held=(dec["outcome"] == "held").mean(),
-                         held50=x["held50"].dropna().astype(float).mean(), dist=x["dist"].median(),
-                         swept_share=x["swept"].mean(), bos_share=x["bos"].mean()))
-    for (sc, src), x in P[P["bos"].astype(bool)].groupby(["scope", "src"], observed=True):
-        dec = x[x["outcome"] != "censored"]
-        rows.append(dict(scope=sc, src=src, iv="pooled", grade="STRONG_BOS", n=len(x), held=(dec["outcome"] == "held").mean(),
-                         held50=x["held50"].dropna().astype(float).mean(), dist=x["dist"].median(),
-                         swept_share=x["swept"].mean(), bos_share=1.0))
-    PR = pd.DataFrame(rows)
+          f"n={r['n']}, halves {r['R_h1']:+.3f} / {r['R_h2']:+.3f}; walk {prim['walk']['R']:+.3f}, "
+          f"garch {prim['garch']['R']:+.3f}, boot {prim['boot']['R']:+.3f} -> {'PASSES' if ok else 'fails'}")
+    PR = pd.concat(PR, ignore_index=True)
     PR.to_csv(OUT / "protected.csv", index=False)
     print("\nprotected lows: P(held until the next break of structure):")
     print(PR[PR["iv"] == "pooled"].pivot_table(index=["scope", "grade"], columns="src", values="held").round(3).to_string())
-    if len(S):
+    if (OUT / "spikes.csv").exists():
         print("\nspikes (one-minute bars, 60 days):")
-        print(S.round(4).to_string(index=False))
+        print(pd.read_csv(OUT / "spikes.csv").round(4).to_string(index=False))
     print("1/(N+1):", {N: round(1 / (N + 1), 3) for N in NS})
 
 
@@ -806,68 +881,81 @@ def plot():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     cols = {"real": "#1d3557", "walk": "#a8dadc", "garch": "#e9c46a", "boot": "#e76f51", "pub": "#2a9d8f"}
+    classes = list(CLASSES)
     B = pd.read_csv(OUT / "base_rates.csv")
-    pats = [p for p in PATTERNS] + [f"P9_{g}" for g in GRADES]
-    fig, axes = plt.subplots(3, 1, figsize=(22, 15))
-    for ax, sc in zip(axes, ("diffusive", "jumpy", "real")):
+    pats = list(PATTERNS) + [f"P9_{g}" for g in GRADES]
+    # base rates: one panel per asset class
+    fig, axes = plt.subplots(len(classes), 1, figsize=(22, 4.2 * len(classes)))
+    for ax, sc in zip(axes, classes):
         g = B[B["scope"] == sc].groupby(["pattern", "src"])["per_1000"].mean().unstack("src").reindex(pats)
         x = np.arange(len(pats))
         srcs = [s for s in cols if s in g]
         w = 0.8 / len(srcs)
         for i, s in enumerate(srcs):
             ax.bar(x + (i - len(srcs) / 2 + 0.5) * w, g[s], w, color=cols[s], label=s)
-        ax.set_xticks(x, pats, rotation=30, fontsize=8)
+        ax.set_xticks(x, pats, rotation=20, fontsize=8)
         ax.set_yscale("log")
-        ax.set_title(f"{'Deriv ' if sc != 'real' else 'real markets (positive control) '}{sc}: events per 1,000 bars, mean over symbols and timeframes")
-        ax.legend(fontsize=8)
+        ax.set_title(f"{sc}: events per 1,000 bars, mean over symbols and timeframes", fontsize=10)
+        ax.legend(fontsize=7, ncol=5)
     fig.tight_layout()
-    fig.savefig(OUT / "sweeps_base_rates.png", dpi=80)
+    fig.savefig(OUT / "sweeps_base_rates.png", dpi=70)
     plt.close(fig)
-    # base-rate ratio real / walk per pattern and timeframe
-    fig, axes = plt.subplots(1, 3, figsize=(22, 7), sharey=True)
-    for ax, sc in zip(axes, ("diffusive", "jumpy", "real")):
+    # the ratio to the walk, per class and timeframe
+    fig, axes = plt.subplots(3, 3, figsize=(24, 20), sharey=True)
+    for ax, sc in zip(axes.flat, classes):
         g = B[B["scope"] == sc].groupby(["iv", "pattern", "src"])["per_1000"].mean().unstack("src")
         for iv, m in zip(IVS, "osD^"):
-            r = (g.loc[iv]["real"] / g.loc[iv]["walk"]).reindex(pats)
-            ax.plot(r.values, range(len(pats)), m, label=f"{iv} real/walk")
-            if sc == "jumpy":
-                rb = (g.loc[iv]["real"] / g.loc[iv]["boot"]).reindex(pats)
-                ax.plot(rb.values, range(len(pats)), m, mfc="none", color="#e76f51", label=f"{iv} real/boot")
+            if iv not in g.index.get_level_values(0):
+                continue
+            ax.plot((g.loc[iv]["real"] / g.loc[iv]["walk"]).reindex(pats).values, range(len(pats)), m, label=f"{iv} /walk")
+            if "boot" in g:
+                ax.plot((g.loc[iv]["real"] / g.loc[iv]["boot"]).reindex(pats).values, range(len(pats)), m, mfc="none",
+                        color="#e76f51", label=f"{iv} /boot")
         ax.axvline(1, color="grey", lw=0.8)
         ax.set_yticks(range(len(pats)), pats, fontsize=8)
         ax.set_xscale("log")
-        ax.set_title(f"{sc}: rate on the real series / rate on its walk (1 = no difference)")
-        ax.legend(fontsize=7)
+        ax.set_title(f"{sc}: rate on the real series / on its walk (filled) and its bar bootstrap (open)", fontsize=10)
+        ax.legend(fontsize=6, ncol=2)
     fig.tight_layout()
-    fig.savefig(OUT / "sweeps_base_ratio.png", dpi=80)
+    fig.savefig(OUT / "sweeps_base_ratio.png", dpi=70)
     plt.close(fig)
-    # prediction gains
-    if (OUT / "predict.csv").exists():
-        Pd = pd.read_csv(OUT / "predict.csv")
-        fig, axes = plt.subplots(1, 3, figsize=(20, 6))
-        for ax, tg in zip(axes, ("y_sweep", "y_take", "y_sweep|take")):
-            g = Pd[Pd["target"] == tg]
-            labels = []
-            for i, (_, r) in enumerate(g.iterrows()):
-                ax.errorbar([i], [r["gain"]], yerr=[[r["gain"] - r["lo"]], [r["hi"] - r["gain"]]], fmt="o",
-                            color=cols.get(r["src"], "k"))
-                labels.append(f"{r['scope']}\n{r['src']}\nG0 {r['auc_G0']:.3f}")
-            ax.axhline(0, color="grey", lw=0.8)
-            ax.set_xticks(range(len(labels)), labels, fontsize=7)
-            ax.set_title(f"{tg}: held-out AUC gain of G0+G1 over geometry (90% day bootstrap)")
-        fig.tight_layout()
-        fig.savefig(OUT / "sweeps_predict.png", dpi=80)
-        plt.close(fig)
-    # P(N R) per pattern, real vs walks
+    # prediction gains, per class
+    Pd = pd.read_csv(OUT / "predict.csv")
+    fig, axes = plt.subplots(3, 1, figsize=(22, 15))
+    for ax, tg in zip(axes, ("y_sweep", "y_take", "y_sweep|take")):
+        g = Pd[Pd["target"] == tg]
+        labels = []
+        for i, sc in enumerate(classes):
+            for j, src in enumerate(("real", "walk", "garch")):
+                r = g[(g["scope"] == sc) & (g["src"] == src)]
+                if not len(r):
+                    continue
+                r = r.iloc[0]
+                xx = i + (j - 1) * 0.25
+                ax.errorbar([xx], [r["gain"]], yerr=[[r["gain"] - r["lo"]], [r["hi"] - r["gain"]]], fmt="o",
+                            color=cols[src], label=src if i == 0 else None)
+            rr = g[(g["scope"] == sc) & (g["src"] == "real")]
+            labels.append(f"{sc}\nG0 {rr['auc_G0'].iloc[0]:.3f}" if len(rr) else sc)
+        ax.axhline(0, color="grey", lw=0.8)
+        ax.set_xticks(range(len(classes)), labels, fontsize=8)
+        ax.legend(fontsize=8)
+        ax.set_title(f"{tg}: held-out AUC gain of G0+G1 over geometry alone (90% day bootstrap); real vs walks, per class")
+    fig.tight_layout()
+    fig.savefig(OUT / "sweeps_predict.png", dpi=70)
+    plt.close(fig)
+    # P(N R) per pattern, real vs walks, one figure per class
     TT = pd.read_csv(OUT / "trades_pooled.csv")
-    for sc in ("diffusive", "jumpy", "real"):
+    for sc in classes:
         tp = [p for p in PATTERNS if len(TT[(TT["scope"] == sc) & (TT["pattern"] == p)])]
+        if not tp:
+            continue
         k = int(np.ceil(len(tp) / 5))
         fig, axes = plt.subplots(k, 5, figsize=(24, 4.6 * k), sharey=True, squeeze=False)
+        ex = "E1w" if sc in ("jumpy", "rangebreak") else "E1"
         for ax, p in zip(axes.flat, tp):
             for s, col in cols.items():
                 r = TT[(TT["scope"] == sc) & (TT["src"] == s) & (TT["pattern"] == p) & (TT["entry"] == "E")
-                       & (TT["exit"] == "E1") & (TT["iv"] == "pooled")]
+                       & (TT["exit"] == ex) & (TT["iv"] == "pooled")]
                 if len(r):
                     r = r.iloc[0]
                     ax.plot(NS, [r[f"P{N}R"] for N in NS], "-o", color=col, label=f"{s} R {r['R']:+.3f} (n {int(r['n'])})")
@@ -877,27 +965,44 @@ def plot():
             ax.legend(fontsize=7)
         for ax in axes.flat[len(tp):]:
             ax.axis("off")
-        fig.suptitle(f"{sc}: P(trade reaches N R) after each pattern, E entry, 2-ATR trail; mean R in the legend")
+        fig.suptitle(f"{sc}: P(trade reaches N R) after each pattern, next-open entry, 2-ATR trail ({ex}); mean R in the legend")
         fig.tight_layout()
-        fig.savefig(OUT / f"sweeps_pnr_{sc}.png", dpi=80)
+        fig.savefig(OUT / f"sweeps_pnr_{sc}.png", dpi=70)
         plt.close(fig)
-    # protected hold rates
+    # the mean R of every pattern, per class: real against its walks
+    fig, axes = plt.subplots(3, 3, figsize=(24, 18), sharex=True)
+    for ax, sc in zip(axes.flat, classes):
+        ex = "E1w" if sc in ("jumpy", "rangebreak") else "E1"
+        g = TT[(TT["scope"] == sc) & (TT["entry"] == "E") & (TT["exit"] == ex) & (TT["iv"] == "pooled")]
+        for j, src in enumerate(("real", "walk", "garch", "boot")):
+            r = g[g["src"] == src].set_index("pattern").reindex(PATTERNS)
+            y = np.arange(len(PATTERNS)) + (j - 1.5) * 0.18
+            ax.errorbar(r["R"], y, xerr=[r["R"] - r["lo"], r["hi"] - r["R"]], fmt="o", ms=4, color=cols[src], label=src)
+        ax.axvline(0, color="grey", lw=0.8)
+        ax.set_yticks(range(len(PATTERNS)), PATTERNS, fontsize=8)
+        ax.set_title(f"{sc}: mean R a trade ({ex}), 90% day-bootstrap interval", fontsize=10)
+        ax.legend(fontsize=7)
+    fig.tight_layout()
+    fig.savefig(OUT / "sweeps_R_by_class.png", dpi=70)
+    plt.close(fig)
+    # protected hold rates, per class
     PR = pd.read_csv(OUT / "protected.csv")
-    fig, axes = plt.subplots(1, 3, figsize=(20, 6), sharey=True)
-    for ax, sc in zip(axes, ("diffusive", "jumpy", "real")):
+    fig, axes = plt.subplots(3, 3, figsize=(22, 15), sharey=True)
+    grades = list(GRADES) + ["STRONG_BOS"]
+    for ax, sc in zip(axes.flat, classes):
         g = PR[(PR["scope"] == sc) & (PR["iv"] == "pooled")]
-        grades = list(GRADES) + ["STRONG_BOS"]
         x = np.arange(len(grades))
         srcs = [s for s in cols if s in set(g["src"])]
-        w = 0.8 / len(srcs)
+        w = 0.8 / max(1, len(srcs))
         for i, s in enumerate(srcs):
             v = g[g["src"] == s].set_index("grade").reindex(grades)["held"]
             ax.bar(x + (i - len(srcs) / 2 + 0.5) * w, v, w, color=cols[s], label=s)
-        ax.set_xticks(x, grades)
-        ax.set_title(f"{sc}: P(protected low holds until the next break of structure)")
-        ax.legend(fontsize=8)
+        ax.set_xticks(x, grades, fontsize=8)
+        ax.set_ylim(0.3, 0.8)
+        ax.set_title(f"{sc}: P(protected low holds until the next break of structure)", fontsize=10)
+        ax.legend(fontsize=7)
     fig.tight_layout()
-    fig.savefig(OUT / "sweeps_protected.png", dpi=80)
+    fig.savefig(OUT / "sweeps_protected.png", dpi=70)
     plt.close(fig)
     if (OUT / "spikes.csv").exists():
         S = pd.read_csv(OUT / "spikes.csv")
@@ -912,25 +1017,26 @@ def plot():
         axes[2].bar(np.arange(len(S)) + 0.2, S["auc_shuffled"], 0.4, label="same, indicator shuffled", color="#a8dadc")
         axes[2].axhline(0.5, color="grey")
         axes[2].set_ylim(0.4, 0.6)
+        axes[2].set_xticks(np.arange(len(S)), S["feed"])
         axes[2].legend(fontsize=8)
         for ax in axes:
             ax.tick_params(axis="x", rotation=60, labelsize=7)
         fig.tight_layout()
-        fig.savefig(OUT / "sweeps_spikes.png", dpi=80)
+        fig.savefig(OUT / "sweeps_spikes.png", dpi=70)
         plt.close(fig)
     gallery()
     print("plots written", flush=True)
 
 
 def gallery():
-    """Six Deriv trades per main pattern, winners and losers: the swept level, the wick, entry, stop, exit."""
+    """Six Deriv trades per main pattern, three winners and three losers: the swept level, the wick, the
+    entry, the stop and the exit."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from mcfl import candles
-    from mcfl.parse import flip
-    T = pd.read_pickle(OUT / "trades.pkl.gz")
-    T = T[(T["venue"] == "deriv") & (T["src"] == "real") & ~T["limit"] & (T["iv"].isin(["1h", "4h"]))]
+    T = parts(DERIV_CLASSES, "trades")
+    T = T[(T["src"] == "real") & ~T["limit"] & T["iv"].isin(["1h", "4h"])]
     rng = np.random.default_rng(9)
     cache = {}
     for pat in ("P1_SFP", "P2_TURTLE", "P3_POOL", "P4_CRT", "P6_SHIFT", "P8_BRK_ZONE", "P8_REC_ZONE", "P8_BRK_VOID"):
@@ -942,34 +1048,38 @@ def gallery():
                           lose.iloc[rng.choice(len(lose), min(3, len(lose)), replace=False)]])
         fig, axes = plt.subplots(2, 3, figsize=(21, 10))
         for ax, (_, r) in zip(axes.flat, pick.iterrows()):
-            key = (r.sym, r.iv)
+            key = (r.venue, r.sym, r.iv)
             if key not in cache:
-                cache[key] = load(r.sym, r.iv)[0]
-            df = cache[key]
-            frame = df if r.side > 0 else flip(df)
-            atr = np.asarray(candles.table(df)["atr"], float)
-            k, f, ex = int(r.k), int(r.f), int(r.ex)
-            i0, i1 = max(0, k - 30), min(len(df) - 1, max(ex, f) + 10)
+                d = load(*key)[0]
+                cache[key] = (d, np.asarray(candles.table(d)["atr"], float))
+            df, atr = cache[key]
+            k, f, ex, a0, s = int(r.k), int(r.f), int(r.ex), int(r.a), int(r.side)
+            i0, i1 = max(0, min(a0, k) - 25), min(len(df) - 1, max(ex, f) + 10)
             w = df.iloc[i0:i1 + 1]
             x = np.arange(i0, i1 + 1)
             up = (w["close"] >= w["open"]).to_numpy()
             ax.vlines(x, w["low"], w["high"], color="#555", lw=0.6)
             ax.bar(x[up], (w["close"] - w["open"])[up], bottom=w["open"][up], color="#2a9d8f", width=0.7)
             ax.bar(x[~up], (w["close"] - w["open"])[~up], bottom=w["open"][~up], color="#e76f51", width=0.7)
-            s = r.side
-            entry = frame["open"].iat[f]
-            stop = entry - r.risk_atr * atr[k]
-            ax.hlines(s * entry, f, ex, colors="k", lw=1.2, label="entry")
-            ax.hlines(s * stop, f, ex, colors="red", lw=1.2, label="initial stop")
+            entry = df["open"].iat[f]
+            stop = entry - s * r.risk_atr * atr[k]
+            wick = df["low"].iloc[a0:k + 1].min() if s > 0 else df["high"].iloc[a0:k + 1].max()
+            if pat.startswith("P8_BRK"):
+                wick = df["low"].iat[k] if s > 0 else df["high"].iat[k]
+            if np.isfinite(r.level):
+                ax.hlines(r.level, i0, k, colors="#6a4c93", lw=1.2, ls="--", label="swept level")
+            ax.plot([a0, k], [wick, wick], color="orange", lw=2.5, label="the sweep's wick")
+            ax.hlines(entry, f, ex, colors="k", lw=1.2, label="entry (next open)")
+            ax.hlines(stop, f, ex, colors="red", lw=1.2, label="initial stop")
             ax.axvline(k, color="purple", lw=1, ls=":", label="pattern known")
-            ax.plot([ex], [df["close"].iat[ex]], "bx", ms=10, label="E1 exit")
+            ax.plot([ex], [df["close"].iat[ex]], "bx", ms=10, label="trailing exit")
             ax.set_title(f"{r.sym} {r.iv} {'long' if s > 0 else 'short'} -> {r.E1:+.2f}R trail, {r.X2:+.2f}R at 2R  "
                          f"{pd.Timestamp(int(r.ts), unit='s'):%Y-%m-%d %H:%M}", fontsize=9)
-            ax.legend(fontsize=7)
-        fig.suptitle(f"{pat} on Deriv (3 winners, 3 losers): purple dotted - the bar the pattern is known; black - entry at the "
-                     "next open; red - stop beyond the sweep's wick; blue x - the trailing exit", fontsize=11)
+            ax.legend(fontsize=6)
+        fig.suptitle(f"{pat} on Deriv synthetics (3 winners, 3 losers by the trail): dashed - the swept level; orange - "
+                     "the wick; purple dotted - the bar the pattern is known; black - entry; red - stop; x - exit", fontsize=11)
         fig.tight_layout()
-        fig.savefig(OUT / f"sweeps_gallery_{pat}.png", dpi=75)
+        fig.savefig(OUT / f"sweeps_gallery_{pat}.png", dpi=70)
         plt.close(fig)
 
 
@@ -1005,7 +1115,7 @@ def smoke():
 
 
 def main():
-    {"run": run, "plot": plot, "smoke": smoke}[os.environ.get("MODE", "run")]()
+    {"run": run, "report": report, "plot": plot, "smoke": smoke}[os.environ.get("MODE", "run")]()
 
 
 if __name__ == "__main__":
