@@ -1,0 +1,28 @@
+{
+  "frozen": "2026-10-04",
+  "after": "bos-predict.md (real single swing levels see a break on 70-73% of sampled bars against 75-76% on walks) and the zone studies (every zone family so far trades like walks after costs)",
+  "question": "do levels built by clustering past swing pivots (support/resistance where several swings sat) hold - reject on their first touch - more often than single swing levels and than the same levels on iid and GARCH walks; and does trading their bounce or their break earn R beyond single levels and walks",
+  "script": "research/ideas/cluster_levels.py (MODE=run|plot; SMOKE=sym:iv:source); data, costs, walks, sides, ATR, pivots, hold, E1, X2, min_risk, P(N R), interval and slippage exactly as tv_rule.json 'data', 'nulls' and 'common'",
+  "levels": {
+    "pool": "at the confirmation bar b of every 3/3 pivot (high or low), the prices of all pivots (highs and lows together: support and resistance swap) with pivot bar in [b - 300, b - 3] plus the new one",
+    "clusters": "1-D clustering in ATR(b) units, causal: sort the prices, cut wherever two neighbours are more than 0.25 ATR apart, then split any group wider than 1 ATR at its largest internal gap until none is",
+    "level": "the cluster containing the new pivot: centre = mean of its member prices, edges = min and max, strength n = its member count (n = 1 is a plain single swing level), newest member = the new pivot. A resistance if the centre is above close[b], else a support; it lives 300 bars after b",
+    "kde_peak_levels": "not run (volume-at-price on CFD tick volume is a range proxy; left for a follow-up)",
+    "strength_bins": "1 (single), 2, 3, 4+"
+  },
+  "hold": {
+    "live": "after b, a close at least 1 ATR(b) from the centre on the level's side, before any close beyond its far edge",
+    "touch": "the first bar after live whose high (resistance) / low (support) reaches the centre",
+    "measure": "from the touch bar f, with A = ATR(f): held if price reverses 1 A from the centre (low <= centre - A for a resistance, from bar f+1) before a close 1 A beyond it (close >= centre + A, from bar f); broken if the close comes first; unresolved after 300 bars",
+    "compare": "hold rate = held / (held + broken), by strength, real against iid and GARCH walks, MT5 non-Deriv pooled and per family; the question is whether real clusters hold more than walk clusters, and whether clusters hold more than singles by more on real data than on walks"
+  },
+  "trades": {
+    "bounce": "at the touch: a limit at the centre against the level (sell a resistance, buy a support), stop beyond the far edge + 0.1 ATR(f-1) (min_risk 0.25 ATR); exits E1 and X2 (turn_zones.exits with the fill bar = the touch bar)",
+    "break": "the first close beyond the far edge within 300 bars after b (live not required): enter the break's way at the next open, stop beyond the near edge - 0.1 ATR(t) (min_risk); E1 and X2",
+    "overlap": "every pivot spawns its own level, so a later pivot joining a cluster makes a new, stronger level over the same prices; trades can overlap. Reported, not deduplicated"
+  },
+  "primary": "bounce at clusters of n >= 3, E1, MT5 non-Deriv pooled, 1h/4h/1d pooled. Baseline: bounce at single swing levels (n = 1), E1",
+  "pass": "as tv_rule.json: R > 0 with its 90% day-bootstrap interval above 0, R > 0 before and after 2024-01-01, above its baseline, above the iid and GARCH walks' same cell",
+  "secondary": "bounce and break by strength bin, X2, per family, per interval, deriv apart; hold rates. One-sided bootstrap p for every real trade cell, Benjamini-Hochberg at q = 0.10 across them together with tv_rule.json's secondary cells, count stated",
+  "plots": "hold rate by strength, real vs walks, per family; P(N R) real vs iid vs GARCH vs singles per family for the primary; 6 winners and 6 losers on real MT5 charts with the cluster's members, centre, entry, stop and exit"
+}

@@ -50,7 +50,11 @@ def ups(df, both=False):
     out["DELIVERY_SHIFT_DOWN"] = np.zeros(n, bool)
     for e in parse(df).entities:
         if e.type in out and 0 <= e.known_at < n:
-            if getattr(e.dir, "name", str(e.dir)).upper() in ("UP", "U"):
+            up = getattr(e.dir, "name", str(e.dir)).upper() in ("UP", "U")
+            # BREACH_REVERT is labelled by the swept swing's side: DOWN is a swing low traded through and
+            # closed back above - the bullish one. Until 2026-10-04 this read UP (a swing high swept), so T2
+            # in turn_rule*.json and the studies built on ups() took the wrong, nearly empty side.
+            if (not up) if e.type == "BREACH_REVERT" else up:
                 out[e.type][e.known_at] = True
             elif e.type == "DELIVERY_SHIFT":
                 out["DELIVERY_SHIFT_DOWN"][e.known_at] = True

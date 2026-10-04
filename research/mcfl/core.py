@@ -36,6 +36,9 @@ LAYER = {
     "HTF_CLOSE": 2, "WINDOW_CLOSE": 2, "DAY_OPEN": 2, "WEEK_OPEN": 2, "MONTH_OPEN": 2,
     "TIMEOUT": 2, "STALL": 2, "SESSION_FIRST_MOVE": 2, "LATE": 2, "EARLY": 2, "TEMPO_STATE": 2,
     "WINDOW": 3, "EPISODE": 3, "IN_WINDOW": 3,
+    # the sweeps study (see SWEEP_TYPES)
+    "CLOSE_REVERT": 2, "INDUCEMENT": 2, "BREAKER_RETEST": 2, "RECLAIM": 2, "PROTECTED_TAKEN": 2,
+    "SWEEP_SHIFT": 3, "PROTECTED": 3,
 }
 V2_TYPES = ("SWING", "STRUCTURE_SHIFT", "CHARACTER_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
             "BALANCE", "IMBALANCE", "RANGE", "RANGE_TEST", "ESCAPE", "FAILED_ESCAPE", "POOL", "POOL_TAKEN",
@@ -46,6 +49,10 @@ V2_TYPES = ("SWING", "STRUCTURE_SHIFT", "CHARACTER_SHIFT", "VOID_PARTIAL", "VOID
 TIME_TYPES = ("EPISODE", "IN_WINDOW", "WINDOW", "WINDOW_CLOSE", "DAY_OPEN", "WEEK_OPEN", "MONTH_OPEN", "HTF_CLOSE",
               "TIMEOUT", "STALL", "SESSION_FIRST_MOVE", "LATE", "EARLY", "TEMPO_STATE")
 """The types the time core adds, in the order of the roadmap's items (1, 2, 4, 6, 8)."""
+SWEEP_TYPES = ("CLOSE_REVERT", "SWEEP_SHIFT", "INDUCEMENT", "BREAKER_RETEST", "RECLAIM", "PROTECTED",
+               "PROTECTED_TAKEN")
+"""The types the sweeps study adds (`sweeps.py`): the close-beyond failure, the sweep and shift,
+inducement, a broken structure's return, and protected lows and highs."""
 CALENDAR_TYPES = ("WINDOW", "WINDOW_CLOSE", "DAY_OPEN", "WEEK_OPEN", "MONTH_OPEN", "HTF_CLOSE")
 """Anchors the calendar alone decides: the same on a walk given the same timestamps."""
 TOKEN_TYPES = tuple(k for k, v in LAYER.items() if v == 1)
@@ -57,13 +64,15 @@ ORDER = {t: i for i, t in enumerate(
     ("CANDLE", "BAR_RELATION",
      # time core: the clock's anchors are observed first - a period closes before the next one opens
      "HTF_CLOSE", "WINDOW_CLOSE", "DAY_OPEN", "WEEK_OPEN", "MONTH_OPEN", "WINDOW",
-     "EXTREME", "BREACH_REVERT", "VOID", "PIN", "ENGULF", "INSIDE_BREAK", "STAR", "DISPLACE_C",
+     "EXTREME", "BREACH_REVERT", "CLOSE_REVERT", "VOID", "PIN", "ENGULF", "INSIDE_BREAK", "STAR", "DISPLACE_C",
      "DELIVERY_SHIFT", "PATTERN", "BALANCE", "IMBALANCE", "PURGE", "SESSION_OPEN", "SESSION_EXTREME",
      "SESSION_EXTREME_TAKEN", "FOCUS", "FOCUS6", "CUSUM_IGNITION",
      "STALL", "SWING", "SESSION_FIRST_MOVE", "STRUCTURE_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
      "RANGE", "RANGE_TEST", "FAILED_ESCAPE", "ESCAPE", "POOL", "POOL_TAKEN", "SWEEP_PROTECTED",
-     "DISPLACE", "BREAK", "CHARACTER_SHIFT", "PULLBACK", "ORIGIN", "LEG", "ZONE", "DAX50", "DAX_SETUP", "FOCUS_ZONE",
-     "REVISIT", "RETRACE", "REJECT_PATH", "REJECT", "ACCEPT", "FAIL", "EXPIRE",
+     "SWEEP_SHIFT",
+     "DISPLACE", "BREAK", "CHARACTER_SHIFT", "PROTECTED", "PULLBACK", "ORIGIN", "LEG", "ZONE", "DAX50", "DAX_SETUP", "FOCUS_ZONE",
+     "REVISIT", "INDUCEMENT", "RETRACE", "REJECT_PATH", "REJECT", "ACCEPT", "FAIL", "EXPIRE",
+     "BREAKER_RETEST", "RECLAIM", "PROTECTED_TAKEN",
      "DISTRIBUTION", "CRT3", "NESTED",
      "TIMEOUT", "EPISODE", "IN_WINDOW", "TEMPO_STATE", "LATE", "EARLY"))}
 
