@@ -84,6 +84,28 @@ FRESH = tuple(c for c in _A + _B if c not in COINS) + tuple(_C)  # turn_confirm'
 
 # ---------------------------------------------------------------- data
 
+DERIV_JUMPY = ("Jump 50 Index", "Boom 1000 Index", "Crash 1000 Index", "Range Break 100 Index")
+
+
+def classes_of(venue, sym):
+    """Asset classes a series reports under (reporting only; selection pools them). Range Break 100 is
+    in the jumpy Deriv class and also alone, its generator having a real range."""
+    if venue in ("binance", "fresh"):
+        return ["Binance perps"]
+    if sym in DERIV:
+        return (["Deriv jumpy"] + (["Range Break 100"] if sym.startswith("Range Break") else [])
+                if sym in DERIV_JUMPY else ["Deriv diffusive"])
+    if sym in ("US Oil", "UK Brent Oil"):
+        return ["energy"]
+    if sym in ("US SP 500", "US Tech 100", "Wall Street 30", "Germany 40", "UK 100", "Japan 225", "Australia 200"):
+        return ["indices"]
+    if sym.startswith(("XAU", "XAG", "XPT", "XPD", "XCU")):
+        return ["metals"]
+    if len(sym) == 6 and sym[:3] in ("EUR", "GBP", "USD", "AUD", "NZD"):
+        return ["FX"]
+    return ["crypto CFDs"]
+
+
 def load(venue, sym, iv):
     """The real series and its cost per bar in price (a round trip)."""
     if venue == "binance":
@@ -606,6 +628,7 @@ def confirm():
     d = pd.concat(got, ignore_index=True)
     d["sub"] = np.select([d["venue"] == "fresh", d["sym"].isin(MT5_NEW), d["venue"] == "binance"],
                          ["fresh coins", "MT5 unseen markets", "Binance 12 from 2024"], "MT5 from 2024")
+    d["class"] = [classes_of(v, s)[0] for v, s in zip(d["venue"], d["sym"])]
     d.to_pickle(OUT / "tail_confirm_trades.pkl.gz")
     evaluate(d, sel)
 
@@ -620,6 +643,12 @@ def evaluate(d, sel):
             subs = [("all", x[x["set"] == tag])]
             if tag == "CONF":
                 subs += [(u, x[(x["set"] == tag) & (x["sub"] == u)]) for u in sorted(x.loc[x["set"] == tag, "sub"].unique())]
+            if "class" in x:  # reporting only: per asset class (Range Break 100 also alone)
+                y0 = x[x["set"] == tag]
+                for u in sorted(y0["class"].unique()):
+                    subs.append((f"class:{u}", y0[y0["class"] == u]))
+                if tag == "DERIV":
+                    subs.append(("class:Range Break 100", y0[y0["sym"] == "Range Break 100 Index"]))
             for sub, y in subs:
                 R, I, G = (y[y["source"] == src] for src in SOURCES)
                 if len(R) < 30 or not len(I) or not len(G):
@@ -719,6 +748,26 @@ def plot():
     fig.tight_layout()
     fig.savefig(OUT / "tail_heatmap_variants.png", dpi=80)
     plt.close(fig)
+    if (OUT / "tail_discovery_classes.csv").exists():
+        tc = pd.read_csv(OUT / "tail_discovery_classes.csv")
+        facets = [(a, b) for a, b in tc[["set", "class"]].drop_duplicates().itertuples(index=False)]
+        fig, axes = plt.subplots(1, len(facets), figsize=(3.2 * len(facets) + 4, max(12, len(keys) * 0.16)))
+        for ax, (tag, cl) in zip(np.atleast_1d(axes), facets):
+            x = tc[(tc["set"] == tag) & (tc["class"] == cl) & (tc["variant"] == "ALL")]
+            M = np.full((len(keys), len(cols)), np.nan)
+            for j, (iv, m) in enumerate(cols):
+                y = x[(x["iv"] == iv) & (x["mode"] == m) & (x["n"] >= MIN_N)].set_index("key")["ex5"]
+                for i, k in enumerate(keys):
+                    if k in y.index:
+                        M[i, j] = y[k]
+            ax.imshow(np.clip(M, -0.04, 0.04), aspect="auto", cmap="RdBu_r", norm=TwoSlopeNorm(0, -0.04, 0.04))
+            ax.set_xticks(range(len(cols)), [f"{iv} {m}" for iv, m in cols], rotation=60, fontsize=6)
+            ax.set_yticks(range(len(keys)), keys if ax is np.atleast_1d(axes)[0] else [""] * len(keys), fontsize=5)
+            ax.set_title(f"{'disc' if tag == 'DISC' else 'Deriv'}: {cl}", fontsize=8)
+        fig.suptitle(f"P(>= 5R) real - max(iid, GARCH) per asset class (variant ALL, n >= {MIN_N}; colour clipped at +-0.04)")
+        fig.tight_layout()
+        fig.savefig(OUT / "tail_heatmap_classes.png", dpi=75)
+        plt.close(fig)
     if not (OUT / "tail_confirm.csv").exists():
         print("plots written (discovery only)", flush=True)
         return
@@ -746,6 +795,26 @@ def plot():
         ax.set_title(f"the selected {len(sel)} cells, N = {N} (green: confirmed)")
     fig.tight_layout()
     fig.savefig(OUT / "tail_scatter.png", dpi=80)
+    plt.close(fig)
+    # each selected cell's excess per asset class, discovery and confirmation
+    ncol = 4
+    nrow = int(np.ceil(len(sel) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(26, 4 * nrow), squeeze=False)
+    for i, s in enumerate(sel):
+        ax = axes[i // ncol, i % ncol]
+        q = c[(c["key"] == s["key"]) & (c["mode"] == s["mode"]) & (c["variant"] == s["variant"]) & (c["iv"] == s["iv"])
+              & c["sub"].str.startswith("class:")]
+        lab = [f"{r['set'][:4]} {r['sub'][6:]} ({int(r['n'])})" for _, r in q.iterrows()]
+        yy = np.arange(len(q))
+        ax.barh(yy - 0.2, q["ex5"], 0.4, color="#264653", label="P(>=5R) excess")
+        ax.barh(yy + 0.2, q["ex10"], 0.4, color="#e9c46a", label="P(>=10R) excess")
+        ax.set_yticks(yy, lab, fontsize=6)
+        ax.axvline(0, color="grey", lw=0.8)
+        ax.set_title(label(s["key"].replace("PATTERN:", ""), s["mode"], s["variant"], s["iv"]), fontsize=8)
+        ax.legend(fontsize=6)
+    fig.suptitle("selected cells: tail excess over the larger walk, per asset class (n real trades in brackets)")
+    fig.tight_layout()
+    fig.savefig(OUT / "tail_selected_classes.png", dpi=70)
     plt.close(fig)
     # P(N R) curves
     ncol = 4
@@ -819,6 +888,28 @@ def draw_trade(ax, df, r, s):
 
 # ---------------------------------------------------------------- smoke
 
+def classes():
+    """Reporting only: the discovery scan (and Deriv's) again from the cached events, per asset class."""
+    OUT.mkdir(parents=True, exist_ok=True)
+    jobs = [(v, s, iv, src, None, DISC_END, f"DISC|{c}") for v, s, iv in disc_jobs() for src in SOURCES
+            for c in classes_of(v, s)] + \
+           [(v, s, iv, src, None, None, f"DERIV|{c}") for v, s, iv in deriv_jobs() for src in SOURCES
+            for c in classes_of(v, s)]
+    jobs.sort(key=_size)
+    t = scan_table(run_merge(scan_one, jobs))
+    t["class"] = t["set"].str.split("|").str[1]
+    t["set"] = t["set"].str.split("|").str[0]
+    t["eligible"] = (t["n"] >= MIN_N) & (t["n_iid"] >= MIN_WALK_N) & (t["n_garch"] >= MIN_WALK_N)
+    t.to_csv(OUT / "tail_discovery_classes.csv", index=False)
+    pd.set_option("display.width", 250)
+    for (tag, c, iv), x in t.groupby(["set", "class", "iv"]):
+        e = x[x["eligible"]]
+        if len(e):
+            print(f"{tag:5s} {c:16s} {iv:3s}: {len(x)} cells, {len(e)} eligible; mean ex4 {e['ex4'].mean():+.4f} ex5 "
+                  f"{e['ex5'].mean():+.4f} ex10 {e['ex10'].mean():+.4f}; share ex5 > 0 {(e['ex5'] > 0).mean():.2f}; "
+                  f"z5 > 3: {int((e['z5'] > 3).sum())}")
+
+
 def smoke():
     venue, sym, iv, source = os.environ["SMOKE"].split(",")
     t0 = time.time()
@@ -834,7 +925,7 @@ def smoke():
 
 
 def main():
-    {"discover": discover, "confirm": confirm, "plot": plot, "smoke": smoke}[os.environ.get("MODE", "discover")]()
+    {"discover": discover, "confirm": confirm, "plot": plot, "smoke": smoke, "classes": classes}[os.environ.get("MODE", "discover")]()
 
 
 if __name__ == "__main__":
