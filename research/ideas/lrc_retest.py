@@ -805,6 +805,11 @@ def collect():
         if len(d["holds"]):
             H.append(d["holds"])
     t = pd.concat(T, ignore_index=True)
+    # R2 (two breaks can share the first higher low after them) and R5s (one touch bar can sweep two
+    # levels) can produce the same trade twice: one fill, entry and stop is one trade
+    n0 = len(t)
+    t = t.drop_duplicates(subset=["src", "venue", "sym", "iv", "side", "rule", "f", "entry", "stop"]).reset_index(drop=True)
+    print(f"duplicate trades dropped: {n0 - len(t)} of {n0}", flush=True)
     h = pd.concat(H, ignore_index=True)
     for d in (t, h):
         d["half"] = np.where(d["ts"] < SPLIT, "disc", "conf")
@@ -1143,19 +1148,28 @@ def plot_holds(htab):
     _ = classes
 
 
-def gallery(t, rule, sel_, fname, title):
-    """Six winners and six losers, drawn as the desk would see them."""
+def _sample(sub, rng, k=6):
+    """k trades at random, split evenly over the timeframes present."""
+    ivs = sorted(sub["iv"].unique())
+    per = max(1, k // len(ivs))
+    got = [g.iloc[rng.choice(len(g), min(per, len(g)), replace=False)] for _, g in sub.groupby("iv")]
+    return pd.concat(got).head(k)
+
+
+def gallery(t, rule, sel_, fname, title, picks=None):
+    """Six winners and six losers at random (or the given `picks`), drawn as the desk would see them."""
     import matplotlib.pyplot as plt
-    x = t[(t["rule"] == rule) & (t["src"] == "real") & sel_(t)]
+    x = t[t["rule"].isin(rule if isinstance(rule, tuple) else (rule,)) & (t["src"] == "real") & sel_(t)]
     if rule == "R1":
         x = x[x[f"t{TREND_L}"].astype(bool)]
     if not len(x):
         return
     rng = np.random.default_rng(7)
-    for tag, sub in (("winners", x[x["X2"] > 0]), ("losers", x[x["X2"] <= 0])):
+    groups = (("picked", x),) if picks else (("winners", x[x["X2"] > 0]), ("losers", x[x["X2"] <= 0]))
+    for tag, sub in groups:
         if not len(sub):
             continue
-        pick = sub.iloc[np.sort(rng.choice(len(sub), min(6, len(sub)), replace=False))]
+        pick = sub if picks else _sample(sub, rng)
         fig, axes = plt.subplots(2, 3, figsize=(24, 12))
         for ax, (_, r) in zip(axes.flat, pick.iterrows()):
             df, _c = load(r["venue"], r["sym"], r["iv"])
@@ -1185,7 +1199,7 @@ def gallery(t, rule, sel_, fname, title):
             ax.plot(xx, s * (yfit - BAND_K * dev[f - 1]), color="purple", lw=0.8)
             lev, ent, stp = r["level"], r["entry"], r["stop"]
             risk = ent - stp
-            name = "BOS" if rule != "R5" else str(r.get("btype", "BOS"))
+            name = str(r.get("btype", "BOS")) if r["rule"] in ("R5", "R5s") else "BOS"
             ax.hlines(s * lev, p, f, colors="black", lw=1.2, label=f"broken swing / {name} level")
             ax.plot([p], [s * lev], "kv" if s > 0 else "k^", ms=8)
             ax.axvline(b, color="orange", lw=1, ls=":", label="break (close beyond)")
@@ -1196,7 +1210,10 @@ def gallery(t, rule, sel_, fname, title):
             ax.plot([xb], [s * (ent + xr * risk)], "x", color="k", ms=10, mew=2, label="exit (net of cost)")
             ax.set_xlim(i0 - 1, i1 + 1)
             when = pd.Timestamp(int(r["ts"]), unit="s", tz="UTC")
-            ax.set_title(f"{r['sym']} {r['iv']} {'buy' if s > 0 else 'sell'} {when:%Y-%m-%d %H:%M}  "
+            if r["rule"] == "R2" and np.isfinite(r.get("q", np.nan)):
+                ax.plot([int(r["q"])], [s * frame["low"].iat[int(r["q"])]], "o", color="orange", ms=9,
+                        mfc="none", mew=2, label="the confirmed higher low / lower high")
+            ax.set_title(f"{r['rule']} {r['sym']} {r['iv']} {'buy' if s > 0 else 'sell'} {when:%Y-%m-%d %H:%M}  "
                          f"strength {r.get('tercile') or 'n/a'}  risk {r['risk_atr']:.2f} ATR -> {xr:+.2f}R", fontsize=9)
             ax.legend(fontsize=6, loc="best")
         fig.suptitle(f"{title} ({tag}): black - the broken swing and its level; orange dotted - the break; "
@@ -1223,6 +1240,13 @@ def plot():
             "R1 on XAUUSD, M15/M30")
     gallery(t, "R5", lambda d: d["cls"].isin(NONDERIV) & d["iv"].isin(["1h", "4h"]), "lrc_gallery_r5",
             "R5: a pullback to an earlier BOS / CHoCH level, non-Deriv 1h/4h")
+    # the rule's trades nearest the desk's own example (sell 9585.39, stop 9605.03 on Volatility 10 (1s)):
+    # a sell whose entry is within 2 points and whose stop is within 4 points of it
+    ex = t[(t["sym"] == v10) & (t["src"] == "real") & (t["side"] == -1) & t["rule"].isin(["R1", "R2", "R5", "R5s"])
+           & ((-t["entry"] - 9585.39).abs() < 2) & ((-t["stop"] - 9605.03).abs() < 4)]
+    if len(ex):
+        gallery(ex, ("R1", "R2", "R5", "R5s"), lambda d: d["sym"] == v10, "lrc_gallery_desk_example",
+                "the rule's sells nearest the desk's example (entry 9585.39, stop 9605.03)", picks=True)
     print("plots written", flush=True)
 
 
