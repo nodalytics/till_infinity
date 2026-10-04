@@ -32,6 +32,10 @@ LAYER = {
     "FOCUS": 2, "FOCUS6": 2, "CUSUM_IGNITION": 2,
     "PURGE": 2, "DISTRIBUTION": 2, "PATTERN": 2,
     "RANGE": 3, "POOL": 3, "DAX50": 3, "DAX_SETUP": 3, "FOCUS_ZONE": 3, "CRT3": 3, "NESTED": 3,
+    # the time core (see TIME_TYPES)
+    "HTF_CLOSE": 2, "WINDOW_CLOSE": 2, "DAY_OPEN": 2, "WEEK_OPEN": 2, "MONTH_OPEN": 2,
+    "TIMEOUT": 2, "STALL": 2, "SESSION_FIRST_MOVE": 2, "LATE": 2, "EARLY": 2, "TEMPO_STATE": 2,
+    "WINDOW": 3, "EPISODE": 3, "IN_WINDOW": 3,
 }
 V2_TYPES = ("SWING", "STRUCTURE_SHIFT", "CHARACTER_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
             "BALANCE", "IMBALANCE", "RANGE", "RANGE_TEST", "ESCAPE", "FAILED_ESCAPE", "POOL", "POOL_TAKEN",
@@ -39,6 +43,11 @@ V2_TYPES = ("SWING", "STRUCTURE_SHIFT", "CHARACTER_SHIFT", "VOID_PARTIAL", "VOID
             "SESSION_EXTREME_TAKEN", "FOCUS", "FOCUS6", "CUSUM_IGNITION", "FOCUS_ZONE", "PURGE", "DISTRIBUTION", "CRT3",
             "PATTERN", "NESTED")
 """The types v2 adds, in the order of the roadmap's items."""
+TIME_TYPES = ("EPISODE", "IN_WINDOW", "WINDOW", "WINDOW_CLOSE", "DAY_OPEN", "WEEK_OPEN", "MONTH_OPEN", "HTF_CLOSE",
+              "TIMEOUT", "STALL", "SESSION_FIRST_MOVE", "LATE", "EARLY", "TEMPO_STATE")
+"""The types the time core adds, in the order of the roadmap's items (1, 2, 4, 6, 8)."""
+CALENDAR_TYPES = ("WINDOW", "WINDOW_CLOSE", "DAY_OPEN", "WEEK_OPEN", "MONTH_OPEN", "HTF_CLOSE")
+"""Anchors the calendar alone decides: the same on a walk given the same timestamps."""
 TOKEN_TYPES = tuple(k for k, v in LAYER.items() if v == 1)
 EVENT_TYPES = tuple(k for k, v in LAYER.items() if v == 2)
 STRUCTURE_TYPES = tuple(k for k, v in LAYER.items() if v == 3)
@@ -46,14 +55,17 @@ RELATIONS = ("BEFORE", "AFTER", "TOUCH", "CROSS", "CONTAIN", "INVALIDATE")
 #: tie-break inside one bar: what is observed comes before what is interpreted from it
 ORDER = {t: i for i, t in enumerate(
     ("CANDLE", "BAR_RELATION",
+     # time core: the clock's anchors are observed first - a period closes before the next one opens
+     "HTF_CLOSE", "WINDOW_CLOSE", "DAY_OPEN", "WEEK_OPEN", "MONTH_OPEN", "WINDOW",
      "EXTREME", "BREACH_REVERT", "VOID", "PIN", "ENGULF", "INSIDE_BREAK", "STAR", "DISPLACE_C",
      "DELIVERY_SHIFT", "PATTERN", "BALANCE", "IMBALANCE", "PURGE", "SESSION_OPEN", "SESSION_EXTREME",
      "SESSION_EXTREME_TAKEN", "FOCUS", "FOCUS6", "CUSUM_IGNITION",
-     "SWING", "STRUCTURE_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
+     "STALL", "SWING", "SESSION_FIRST_MOVE", "STRUCTURE_SHIFT", "VOID_PARTIAL", "VOID_FILLED", "VOID_INVERTED",
      "RANGE", "RANGE_TEST", "FAILED_ESCAPE", "ESCAPE", "POOL", "POOL_TAKEN", "SWEEP_PROTECTED",
      "DISPLACE", "BREAK", "CHARACTER_SHIFT", "PULLBACK", "ORIGIN", "LEG", "ZONE", "DAX50", "DAX_SETUP", "FOCUS_ZONE",
      "REVISIT", "RETRACE", "REJECT_PATH", "REJECT", "ACCEPT", "FAIL", "EXPIRE",
-     "DISTRIBUTION", "CRT3", "NESTED"))}
+     "DISTRIBUTION", "CRT3", "NESTED",
+     "TIMEOUT", "EPISODE", "IN_WINDOW", "TEMPO_STATE", "LATE", "EARLY"))}
 
 
 class Dir(str, Enum):
@@ -218,6 +230,56 @@ class Force:
 
 
 @dataclass(frozen=True)
+class Span:
+    """The time core's item 1: an entity as an interval of bars and of wall-clock time.
+
+    `start` and `end` are bars (inclusive); the interval in time is [open of `start`, close of `end`),
+    in UTC epoch seconds. `known_at_ts` is the close of the `known_at` bar - the moment the entity
+    could first be known. `trade_sec` is the trading time inside the interval (the bars' own lengths
+    summed), against the calendar time `seconds`; the difference is the clock's gaps (weekends,
+    closures). A calendar WINDOW is known when it opens: its wall-clock end is scheduled
+    (`end_ts`), its last bar not yet seen (`end` None). `hour_rate` (item 8) is how common the
+    entity's type has been at its hour of day: 24 x the share of the type's recent events that fell
+    in that hour (1 is uniform), None for tokens, without timestamps or in warm-up. All are
+    attributes of time, so the price flip leaves them unchanged."""
+    start: int
+    end: int | None
+    start_ts: int | None = None
+    end_ts: int | None = None
+    known_at_ts: int | None = None
+    trade_sec: int | None = None
+    hour_rate: float | None = None
+
+    @property
+    def bars(self) -> int | None:
+        return None if self.end is None else self.end - self.start + 1
+
+    @property
+    def seconds(self) -> int | None:
+        """Calendar time from the first bar's open to the last bar's close."""
+        return None if self.start_ts is None or self.end_ts is None else self.end_ts - self.start_ts
+
+    @property
+    def gap_sec(self) -> int | None:
+        """Calendar time minus trading time: the closures inside the interval."""
+        s = self.seconds
+        return None if s is None or self.trade_sec is None else s - self.trade_sec
+
+
+#: Time fields a clause can read by name (`Entity.field`), and how
+TIME_FIELDS = {
+    "start": lambda s: s.start, "end": lambda s: s.end, "start_ts": lambda s: s.start_ts,
+    "end_ts": lambda s: s.end_ts, "known_at_ts": lambda s: s.known_at_ts, "trade_sec": lambda s: s.trade_sec,
+    "hour_rate": lambda s: s.hour_rate, "dur_bars": lambda s: s.bars, "dur_sec": lambda s: s.seconds,
+    "gap_sec": lambda s: s.gap_sec,
+    "interval": lambda s: None if s.end is None else (s.start, s.end + 1),
+    "interval_ts": lambda s: None if s.start_ts is None or s.end_ts is None else (s.start_ts, s.end_ts),
+}
+"""`interval` is the half-open bar interval [start, end + 1), `interval_ts` [start_ts, end_ts): the
+operands of the interval relations (`intervals.py`)."""
+
+
+@dataclass(frozen=True)
 class Entity:
     """One event (L2) or structure (L3). Attributes are a sorted tuple of pairs so the dataclass
     stays frozen and hashable; read them with `get`."""
@@ -229,6 +291,7 @@ class Entity:
     attrs: tuple[tuple[str, Any], ...] = ()
     force: Force | None = None
     parts: tuple[str, ...] = ()  # constituent ids, for structures
+    time: Span | None = None  # the time core: its interval in bars and in time (`clocks.stamp`)
 
     def __post_init__(self) -> None:
         if self.known_at < self.at:
@@ -248,7 +311,16 @@ class Entity:
         """A field or an attribute by name - what the grammar's clauses read."""
         if key in ("id", "type", "dir", "at", "known_at"):
             return getattr(self, key)
+        if key in TIME_FIELDS:
+            return None if self.time is None else TIME_FIELDS[key](self.time)
+        if key == "id_suffix":  # what tells apart same-type entities on one bar (`ZONE.U.57.z3` -> z3)
+            rest = self.id.split(".", 3)
+            return rest[3] if len(rest) > 3 else ""
         return self.get(key)
+
+    @property
+    def known_at_ts(self) -> int | None:
+        return None if self.time is None else self.time.known_at_ts
 
 
 @dataclass(frozen=True)
@@ -290,6 +362,7 @@ class Chart:
     transitions: tuple[Transition, ...] = ()
     states: tuple[tuple[str, str], ...] = ()
     pending: tuple[str, ...] = field(default=())  # candidates still FORMING at the last bar
+    clock: Any = field(default=None, compare=False, repr=False)  # time core: the bars' `clocks.Clock`
 
     def by_id(self) -> dict[str, Entity]:
         return {e.id: e for e in self.entities}

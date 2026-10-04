@@ -11,9 +11,10 @@ RETRACE (L2), on every REVISIT of a zone at bar t: P = the highest high from the
 before t, x = low[t]. Known at t; parts the REVISIT.
 
 PULLBACK (L2), two per BREAK at most, from origin p to break b:
-    INSIDE  the last swing low (EXTREME, opposite direction) strictly between p and b and above the
-            origin's low - the DAX course's "structural liquidity". P = the highest high of p..b (the
-            leg to the break), x = its price. Known at max(the break's known_at, the swing's).
+    INSIDE  the last swing low (EXTREME, opposite direction) strictly between p and b, above the
+            origin's low and confirmed by the time the break is known - the DAX course's "structural
+            liquidity". P = the highest high of p..b (the leg to the break), x = its price. Known at
+            the break's known_at.
     AFTER   the first swing low after b. P = the highest high of p..that swing, x = its price. Known
             at max(the break's known_at, the swing's).
 Attributes: `break`, `phase`, `depth`, `depth_bin`, `peak`, `level` (x); parts the BREAK and the
@@ -83,7 +84,11 @@ def pullbacks(fr: dict[int, Table], level: list[Entity], ext: list[Entity]) -> l
             p = int(b.get("origin").split(".")[2])
             low = l[p]
             i0, i1 = bisect.bisect_right(ats, p), bisect.bisect_left(ats, b.at)
-            inner = [e for e in lows[i0:i1] if side * e.get("price") > low]
+            # only swings confirmed by the time the break is known: a swing just before the break is
+            # confirmed up to three bars after it, and a later "last swing" would replace, with hindsight,
+            # the pullback a reader at the break had already been given (found by the time core's
+            # calendar truncation test, 2026-10-04)
+            inner = [e for e in lows[i0:i1] if side * e.get("price") > low and e.known_at <= b.known_at]
             cands = []
             if inner:
                 cands.append(("INSIDE", inner[-1], float(h[p:b.at + 1].max())))
