@@ -31,6 +31,7 @@ RZ = {"1h": 3.109, "4h": 2.699, "1d": 2.022}  # violence.py's MT5 VIOLENT thresh
 WIDTH, STOP_PAD, SLIP = 0.5, 0.1, 0.05
 RALLY = {"proven": 3.0, "left": 1.5}
 LIVE_BARS = 60
+RET_DAYS = float(os.environ.get("RET_DAYS", 20))  # how long a live zone waits for its first return
 NS = (0.5, 1, 2, 4, 10)
 WALK_STEPS = 256
 FAMILIES = ("ALL", "SIG", "RZ", "SIG_RZ")
@@ -100,7 +101,7 @@ def zones(df, side, cost_atr, src, sym, iv):
     rm = pd.Series(rng_).rolling(10).mean().shift(1).to_numpy()
     rs = pd.Series(rng_).rolling(10).std().shift(1).to_numpy()
     U = ups(df)
-    ret_bars = int(20 * 86400 / SEC[iv])
+    ret_bars = int(RET_DAYS * 86400 / SEC[iv])
     hold = max(1, int(10 * 86400 / SEC[iv]))
     rows = []
     for t in np.flatnonzero(low3 <= prior):
@@ -126,7 +127,8 @@ def zones(df, side, cost_atr, src, sym, iv):
                 continue
             res = exits(o, h, l, c, f, top, stop, a[t], cost_atr[f] * a[f], hold)
             rows.append(dict(src=src, sym=sym, iv=iv, side=side, t=t, live=live, f=f, ts=int(ts[f]), act=act,
-                             SIG=sig, RZ=rz, wait=f - live, **res))
+                             SIG=sig, RZ=rz, wait=f - live, dep=live - t,
+                             away=(h[live:f].max() - bottom) / a[t] if f > live else np.nan, **res))
     return rows
 
 

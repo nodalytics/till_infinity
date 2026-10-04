@@ -4,6 +4,7 @@ Frozen in `turn_confirm_rule.json` before this ran: the one positive cell of `tu
 test (Binance 4h), re-tested on fresh Binance coins at 4h and 1d against iid and GARCH walks.
 
   OUT=... MT5BT_DB=... MODE=fetch|run python research/ideas/turn_confirm.py
+  SET=C ...   the second replication on 73 more coins (`turn_confirm2_rule.json`)
 """
 from __future__ import annotations
 
@@ -33,7 +34,11 @@ SET_A = ("BTC ETH SOL AAVE ADA ALGO APE APT AVAX BAT BCH BNB COMP DOGE DOT DASH 
          "LTC NEO NEAR SAND 1000SHIB TRU TRX UNI XLM XMR XRP XTZ ZEC").split()
 SET_B = ("ATOM EOS RUNE KAVA AXS MANA GALA CRV SNX MKR LDO GRT EGLD HBAR ICP THETA VET KSM ZIL CHZ ENJ "
          "1INCH SUSHI YFI OP ARB INJ FTM MATIC QTUM ONT OMG WAVES ICX ZRX COTI").split()
-FRESH = tuple(c for c in SET_A + SET_B if c not in TT.COINS)
+SET_C = ("1000LUNC 1000XEC ALICE ALPHA ANKR API3 ARPA AR ATA BAKE BAL BAND BEL BLZ BNX C98 CELO CELR CHR CTK CTSI CVC "
+         "CVX DAR DENT DGB DUSK DYDX ENS FLM FLOW FTT GMT GTC HOT IOST IOTX JASMY KLAY KNC LINA LIT LPT LRC LUNA2 MASK "
+         "MTL NKN OCEAN OGN ONE PEOPLE QNT RAY REEF REN RLC ROSE RSR RVN SC SFP SKL SPELL STG STMX STORJ TLM TRB UNFI "
+         "WOO XEM ZEN").split()  # the second replication (turn_confirm2_rule.json)
+FRESH = tuple(SET_C) if os.environ.get("SET") == "C" else tuple(c for c in SET_A + SET_B if c not in TT.COINS)
 MONTHS = pd.period_range("2019-09", "2026-09", freq="M")
 IVS = ("4h", "1d")
 NS = (0.5, 1, 2, 4, 10)
@@ -138,9 +143,10 @@ def one(job):
 
 def run():
     OUT.mkdir(parents=True, exist_ok=True)
-    jobs = [("fresh", c, iv, s) for s in ("real", "walk", "garch") for iv in IVS for c in FRESH] + \
-           [("binance", c, "1d", s) for s in ("real", "walk", "garch") for c in TT.COINS] + \
-           [("mt5", m, "1d", s) for s in ("real", "walk", "garch") for m in TT.MT5]
+    jobs = [("fresh", c, iv, s) for s in ("real", "walk", "garch") for iv in IVS for c in FRESH]
+    if os.environ.get("SET") != "C":
+        jobs += [("binance", c, "1d", s) for s in ("real", "walk", "garch") for c in TT.COINS] + \
+                [("mt5", m, "1d", s) for s in ("real", "walk", "garch") for m in TT.MT5]
     with ProcessPoolExecutor(int(os.environ.get("WORKERS", 20))) as pool:
         got = [g for g in pool.map(one, jobs) if g is not None and len(g)]
     d = pd.concat(got, ignore_index=True)
