@@ -1,0 +1,15 @@
+{
+  "frozen": "2026-10-03",
+  "after": "turn_rule.json failed narrowly with fixed R targets (Binance T_any 2R -0.015R [-0.036, +0.005]; MT5 -0.031R) while lifting 12-bar-low entries by +0.11 to +0.15R",
+  "signal": "unchanged: a 12-bar low (lowest of t-2..t at or below lowest of t-11..t-3) and bar t completes DISPLACE_C, BREACH_REVERT or DELIVERY_SHIFT the turn's way (T_any; T1-T3 reported)",
+  "entry_stop": "unchanged: bar t+1's open; stop 0.1 ATR beyond the 3-bar low",
+  "exits": {
+    "E1 (primary)": "trailing: after each completed bar the stop moves to max(current stop, best high of completed bars since entry - 2 ATR(t)); out when a bar trades through it (at the open on a gap)",
+    "E2": "structure: out at the next open after a DELIVERY_SHIFT against the trade (MCFL v1, known_at), or at the initial stop"
+  },
+  "cap": "10 days",
+  "costs": "Binance 0.07% of price; MT5 the spread floor; walks the real series' cost in ATR units at the same bar",
+  "also": "P(N R) for N in 0.5, 1, 2, 4, 10 (the most R reached before the exit) against 1/(N+1)",
+  "passes_if": "T_any with E1 on Binance (1h and 4h pooled): R > 0 with day-bootstrap 90% interval above 0, positive in 2021-2023 and 2024 on, above the walk and above all 12-bar lows with the same exit",
+  "amended_before_run": "2026-10-03, before any real-data run: a smoke test showed the trailing exit 'earning' +0.6R a trade on driftless walks built from 8 sub-steps a bar - stops filled exactly at the stop while the coarse path jumped across it (+0.18R at 64 steps, +0.10R at 256). So: every stop fill takes 0.05 ATR of adverse slippage on all sources, and the walk null uses 256 sub-steps a bar"
+}
