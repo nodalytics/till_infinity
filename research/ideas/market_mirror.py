@@ -127,5 +127,17 @@ def run():
     print(s.groupby("coin")["bps"].agg(["count", "mean"]).round(1).to_string())
 
 
+def fetch():
+    """SET_D's daily bars from data.binance.vision into CACHE (turn_confirm's fetcher)."""
+    from concurrent.futures import ThreadPoolExecutor
+    import json
+    import turn_confirm as C
+    C.CACHE = Path(os.environ["CACHE"])
+    C.CACHE.mkdir(parents=True, exist_ok=True)
+    rule = json.load(open(HERE / "market_mirror_rule.json"))
+    with ThreadPoolExecutor(6) as pool:
+        list(pool.map(C.fetch_one, [(c, "1d") for c in rule["addendum_set_d"]["coins"]]))
+
+
 if __name__ == "__main__":
-    run()
+    {"run": run, "fetch": fetch}[os.environ.get("MODE", "run")]()
