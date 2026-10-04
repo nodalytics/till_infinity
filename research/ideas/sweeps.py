@@ -451,7 +451,28 @@ def one(job):
     if len(X):
         X = X.assign(**tag, mid=mid)
     print(f"  {venue} {source} {sym} {iv}: {n} bars, {len(T)} trades, {len(Pr)} protected, {len(X)} rows", flush=True)
-    return cnt, T, Pr, X
+    return cnt, compact(T), compact(Pr), compact(X)
+
+
+CATS = {"venue": ("deriv", "mt5"), "scope": ("diffusive", "jumpy", "real"), "src": ("real",) + NULLS + ("pub",),
+        "sym": DERIV + REAL, "iv": IVS, "pattern": PATTERNS, "grade": GRADES,
+        "outcome": ("held", "lost", "censored"), "sweep_type": ("BREACH_REVERT", "CLOSE_REVERT"),
+        "shift_type": ("DISPLACE_C", "DELIVERY_SHIFT")}
+
+
+def compact(d):
+    """Fixed categories for the labels and 32-bit numbers, so a million-row concat stays small."""
+    if not len(d):
+        return d
+    for k, v in CATS.items():
+        if k in d:
+            d[k] = pd.Categorical(d[k], categories=v)
+    for k in d.columns:
+        if d[k].dtype == np.float64 and k not in ("ts", "ts_end", "mid"):
+            d[k] = d[k].astype(np.float32)
+        elif d[k].dtype == np.int64 and k not in ("ts", "ts_end", "mid"):
+            d[k] = d[k].astype(np.int32)
+    return d
 
 
 def jobs_all():
@@ -560,7 +581,7 @@ def bh(p, q=0.10):
 
 def trade_table(T, rng, by, ex_col):
     rows = []
-    for key, g in T.groupby(list(by)):
+    for key, g in T.groupby(list(by), observed=True):
         y = g.assign(R=g[ex_col])
         lo, hi, p = boot(y, rng) if len(y) > 30 else (np.nan, np.nan, np.nan)
         r = dict(zip(by, key if isinstance(key, tuple) else (key,)), exit=ex_col, n=len(y), R=y["R"].mean(),
@@ -635,7 +656,7 @@ def predict_report(X, rng):
         X[f"iv_{iv}"] = (X["iv"] == iv).astype(float)
     G0 = ["dist", "ldist", "dist2"] + [f"iv_{iv}" for iv in IVS]
     rows = []
-    for (sc, src), g in X.groupby(["scope", "src"]):
+    for (sc, src), g in X.groupby(["scope", "src"], observed=True):
         g = g.replace([np.inf, -np.inf], np.nan).dropna(subset=G0 + G1)
         tr, te = g[g["ts_end"] < g["mid"]], g[g["ts"] >= g["mid"]]
         for target, sub_tr, sub_te in (("y_sweep", tr, te), ("y_take", tr, te),
@@ -719,8 +740,8 @@ def report(C, T, P, X, S):
     # cells: Deriv pattern x symbol x timeframe, E entry, E1 (E1w on jumpy)
     cells = []
     D = E[E["venue"] == "deriv"]
-    wm = {ex: D.groupby(["src", "sym", "iv", "pattern"])[ex].mean() for ex in ("E1", "E1w") if ex in D}
-    for (sym, iv, pat), g in D[D["src"] == "real"].groupby(["sym", "iv", "pattern"]):
+    wm = {ex: D.groupby(["src", "sym", "iv", "pattern"], observed=True)[ex].mean() for ex in ("E1", "E1w") if ex in D}
+    for (sym, iv, pat), g in D[D["src"] == "real"].groupby(["sym", "iv", "pattern"], observed=True):
         ex = "E1w" if sym in JUMPY else "E1"
         y = g.assign(R=g[ex])
         if len(y) < 30:
@@ -758,12 +779,12 @@ def report(C, T, P, X, S):
     # protected
     P = P.copy()
     rows = []
-    for (sc, src, iv, g), x in pd.concat([P.assign(iv_="pooled"), P.assign(iv_=P["iv"])]).groupby(["scope", "src", "iv_", "grade"]):
+    for (sc, src, iv, g), x in pd.concat([P.assign(iv_="pooled"), P.assign(iv_=P["iv"])]).groupby(["scope", "src", "iv_", "grade"], observed=True):
         dec = x[x["outcome"] != "censored"]
         rows.append(dict(scope=sc, src=src, iv=iv, grade=g, n=len(x), held=(dec["outcome"] == "held").mean(),
                          held50=x["held50"].dropna().astype(float).mean(), dist=x["dist"].median(),
                          swept_share=x["swept"].mean(), bos_share=x["bos"].mean()))
-    for (sc, src), x in P[P["bos"]].groupby(["scope", "src"]):
+    for (sc, src), x in P[P["bos"].astype(bool)].groupby(["scope", "src"], observed=True):
         dec = x[x["outcome"] != "censored"]
         rows.append(dict(scope=sc, src=src, iv="pooled", grade="STRONG_BOS", n=len(x), held=(dec["outcome"] == "held").mean(),
                          held50=x["held50"].dropna().astype(float).mean(), dist=x["dist"].median(),
