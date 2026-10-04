@@ -481,6 +481,9 @@ class Rule:
     at: str | None = None  # the slot whose bar is the event's bar (default the anchor)
     suffix: tuple[str, Expr] | None = None  # id suffix: (prefix, expression)
     attrs: Callable[[dict[str, list[Entity]], Dir], dict] | None = None
+    timed: bool = False  # time core: the event is the decide bar itself (TIMEOUT: nothing came by then),
+    #                      at and known there, and only once the series has reached it
+    sym: bool = False  # time core: the event has no direction (a RANGE's TIMEOUT)
 
     def bnf(self, d: Dir) -> str:
         names = {s.name: s for s in self.slots}
@@ -688,6 +691,8 @@ def apply(entities: list[Entity], rules: dict[str, Rule] | None = None,
                     upto = max(hz.known_at, anc.known_at)
                 else:
                     upto = _eval(rule.decide, {rule.anchor: [anc]}, 1) if rule.decide is not None else anc.known_at
+                    if rule.timed and (n is None or upto > n - 1):
+                        continue  # the time has not run out within the series
                     if n is not None:
                         upto = min(upto, n - 1)
                 bound, slot, why = match(rule, anc, idx, upto, d)
@@ -696,17 +701,19 @@ def apply(entities: list[Entity], rules: dict[str, Rule] | None = None,
                     if rule.report:
                         failed.append(Failure(anc.id, rname, slot.name, why, upto))
                     continue
-                e = _build(rule, anc, bound, d)
+                e = _build(rule, anc, bound, d, upto)
                 if e.id not in seen:
                     seen.add(e.id)
                     built.append(e)
     return built, failed, pending
 
 
-def _build(rule: Rule, anc: Entity, bound: dict[str, list[Entity]], d: Dir) -> Entity:
+def _build(rule: Rule, anc: Entity, bound: dict[str, list[Entity]], d: Dir, upto: int | None = None) -> Entity:
     parts = [e for n in rule.sequence for e in bound[n]]
     known = max(e.known_at for e in parts)
     at = bound[rule.at][0].at if rule.at else anc.at
+    if rule.timed:
+        at = known = upto
     if rule.attrs is not None:
         attrs = rule.attrs(bound, d)
     else:
@@ -719,6 +726,8 @@ def _build(rule: Rule, anc: Entity, bound: dict[str, list[Entity]], d: Dir) -> E
     suffix = ""
     if rule.suffix is not None:
         suffix = f"{rule.suffix[0]}{_eval(rule.suffix[1], bound, 1)}"
+    if rule.sym:
+        d = Dir.NONE
     return Entity(make_id(rule.head, d, at, suffix), rule.head, d, at, known,
                   attrs_of(attrs), parts=tuple(e.id for e in parts))
 

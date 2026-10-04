@@ -235,23 +235,39 @@ def relations(entities: list[Entity]) -> list[Relation]:
     return out
 
 
-def parse(df: pd.DataFrame, v2: bool = True, changepoints: bool = False, sec: float | None = None) -> Chart:
-    """Bars (open, high, low, close[, volume][, ts][, taker_buy_volume]) to a Chart. The index is
-    ignored: bars are 0..n-1. `v2=False` gives the v1 chart alone (the v2 entities and attributes are
-    left out). `changepoints=True` adds FOCUS, FOCUS6, CUSUM_IGNITION and FOCUS_ZONE (v2 item 9);
-    `sec` is the bar's length in seconds for the FOCuS threshold (default: from `ts`, else an hour)."""
+def parse(df: pd.DataFrame, v2: bool = True, changepoints: bool = False, sec: float | None = None,
+          time: bool = True, cal=None, htf: tuple[int, ...] | None = None) -> Chart:
+    """Bars (open, high, low, close[, volume][, ts][, close_ts][, taker_buy_volume]) to a Chart. The
+    index is ignored: bars are 0..n-1. `v2=False` gives the v1 chart alone (the v2 entities and
+    attributes are left out). `changepoints=True` adds FOCUS, FOCUS6, CUSUM_IGNITION and FOCUS_ZONE (v2
+    item 9); `sec` is the bar's length in seconds, for the FOCuS threshold and the clock (default:
+    from `ts`, else an hour). `time=False` leaves the time core out (no spans, no time entities);
+    `cal` is its market calendar (`calendars.Calendar`, default NYSE) and `htf` the higher timeframes
+    whose closes are anchors (seconds; default 1h, 4h, 1d)."""
     from mcfl.grammar import CANDLE_RULES, RULES, frames, words
     from mcfl.grammar import apply as grammar
     from mcfl.lifecycle import run as lifecycle
 
     df = df.reset_index(drop=True)
     T = candles.table(df)
+    clk = None
+    if time:
+        from mcfl import clocks
+        clk = clocks.Clock.of(df, sec)
+    timed_on = time and v2 and clk.ts is not None
     if v2:
         from mcfl import timing
         from mcfl import volume
         candles.compression(T)
         volume.columns(T, df)
         timing.columns(T, df)
+        if timed_on:
+            from mcfl import anchors, calendars, seasonal
+            htf = anchors.HTF_TFS if htf is None else tuple(htf)
+            lay = anchors.layout(clk.ts)
+            calendars.columns(T, clk.ts, cal)
+            anchors.columns(T, clk.ts, clk.length, lay, htf)
+            seasonal.columns(T, clk.ts)
     cid, rid = candles.ids(T)
     toks = candles.entities(T)
     fr = frames(T)
@@ -302,9 +318,36 @@ def parse(df: pd.DataFrame, v2: bool = True, changepoints: bool = False, sec: fl
         ents += cps + fz
     if v2:
         ents = timing.tempo(ents)
+    if time:
+        ents = _time_core(ents, T, clk, cid, ext, v2, timed_on, lay if timed_on else None, htf, grammar, len(df))
     ents = sorted(ents, key=sort_key)
     rels = sorted(relations(ents), key=lambda r: (r.known_at, r.kind, r.src, r.dst))
     return Chart(n=len(df), entities=tuple(ents), relations=tuple(rels),
                  failures=tuple(sorted(failures, key=lambda f: (f.known_at, f.candidate))),
                  transitions=tuple(sorted(transitions + vtrans, key=lambda t: (t.known_at, t.zone, t.at))),
-                 states=tuple(sorted(states.items())), pending=tuple(sorted(pending)))
+                 states=tuple(sorted(states.items())), pending=tuple(sorted(pending)), clock=clk)
+
+
+def _time_core(ents: list[Entity], T: candles.Table, clk, cid: list[str], ext: list[Entity], v2: bool, timed_on: bool,
+               lay, htf, grammar, n: int) -> list[Entity]:
+    """The time core's entities, then every entity stamped with its span (`clocks.stamp`), then what
+    reads the spans: the interval productions, LATE / EARLY and the tempo state."""
+    from mcfl import clocks
+    if v2:
+        from mcfl import timed
+        need = {"ZONE", "REVISIT", "VOID", "VOID_PARTIAL", "RANGE", "RANGE_TEST", "FAILED_ESCAPE", "ESCAPE"}
+        outs, _, _ = grammar([e for e in ents if e.type in need], timed.RULES, n=n)
+        extra = clocks.episodes(ents) + outs + timed.stalls(T, clk.ts, cid)
+        if timed_on:
+            from mcfl import anchors
+            anc = anchors.events(T, clk.ts, clk.seen, lay, cid, htf)
+            extra += anc + timed.first_moves(T, lay, ext, [e for e in anc if e.type == "WINDOW"])
+        ents = ents + extra
+    ents = clocks.stamp(ents, clk)
+    if not timed_on:
+        return ents
+    from mcfl import intervals, seasonal, timed
+    need = {"REVISIT", "SESSION_EXTREME_TAKEN", "POOL_TAKEN", "WINDOW"}
+    inw, _, _ = grammar([e for e in ents if e.type in need], intervals.rules(intervals.max_bars(clk.ts)), n=n)
+    late = inw + timed.off_hours(ents, clk.ts) + seasonal.tempo_states(ents, clk.ts, clk.seen, cid)
+    return ents + clocks.stamp(late, clk)
