@@ -1,0 +1,59 @@
+{
+  "frozen": "2026-10-04",
+  "after": "lrc-retest.md R4b: production's fade-to-value replayed through its own engine and strategy code (the untuned baseline, committed and reported before this was run)",
+  "question": "does fade-to-value fit the structures service if the two are tuned to each other? Fade-to-value consumes exactly what structures publishes: levels with touches, probability, strength, zones, vol_bps and risk_vol",
+  "data": "the replay logs of lrc_fade.py: for each series and source (real, iid walk, GARCH walk) the 15m bars, every actionable call, and every 15m / 30m call with the valuation book (the levels production's FadeToValue held: price, interval, probability, strength, touches, last seen) within 12 vol units of spot",
+  "decision": "for each logged 15m / 30m call: value = the book level with the most touches (ties to the nearest) among those passing the value definition; distance d = (value - spot) / unit, unit = spot x vol_bps / 10000; trade toward value when |d| >= min distance; stop = production's stop_for(the call's level, side, multiple x risk_vol x unit, zone edge, clearance x unit); refused when price is already past the stop or the target is behind price (as production)",
+  "search": {
+    "min_touches": [2, 4, 8],
+    "min_probability": [0.0, 0.6],
+    "min_strength_q": [0, 0.5],
+    "max_age_h": [1, 6],
+    "level_intervals": ["all", "1h+", "2h+"],
+    "min_agree": [1, 2],
+    "max_distance_vol": [4, 8],
+    "min_distance_vol": [1.0, 1.5, 2.0, 3.0],
+    "stop_clearance_vol": [0.25, 0.5],
+    "stop_risk_vol_multiple": [1, 2],
+    "target": [0.25, 0.0, 0.5, "trail"],
+    "entry_interval": ["15m", "30m", "both"],
+    "trend": ["none", "with", "against"],
+    "regime": ["none", "low", "high"]
+  },
+  "search_notes": {
+    "min_strength_q": "a quantile of the strength of every book level in the real discovery logs (0 = no threshold)",
+    "max_age_h": "hours since the book last saw the level (production forgets at 6)",
+    "level_intervals": "which timeframes a value level may come from: all, 1h/2h/4h only (the context timeframes), 2h/4h only",
+    "min_agree": "distinct timeframes the book holds within 0.35 vol (production's merge distance) of the value level, itself included",
+    "target": "the value minus a buffer of 0.25 (production), 0 (the full value) or 0.5 vol units; or no target and a 2-unit trail behind completed bars' best high",
+    "trend": "LRC(100) slope sign on 1h bars resampled from the 15m bars, at the last completed 1h bar: none, trade with it, trade against it",
+    "regime": "structures' own vol_stretch feature on the call: none, below 1 (low), 1 or above (high)",
+    "entry_interval": "the call's timeframe; context is the level-interval dimension above",
+    "hold": "production's 4h (16 15m bars), out at the close if neither stop nor target",
+    "not searched": "production's quality() gates (stateful percentile floors; left at off, as R4b CORE), break-even and trail protection, sizing"
+  },
+  "configurations": 497664,
+  "production_default_in_the_space": "touches>=4, prob>=0, strength q0, age<=6h, levels all, agree>=1, max 8, min 1.5, clearance 0.25, x1 risk_vol, target value-0.25, entry both, trend none, regime none",
+  "objective": {
+    "data": "discovery only: the 12 Binance perpetuals before 2024-01-01 (the only 15m history before 2024)",
+    "score": "mean R after costs over the discovery trades",
+    "min_trades": 300,
+    "eligible": "P(+2R before the stop, within the hold) at or above the same configuration's on the reference walk: the iid walk for real data; for the walks, the other walk",
+    "trades": "every qualifying call is a trade (overlaps allowed) during tuning; confirmation reports this and one-open-trade-per-series"
+  },
+  "walks": "the identical search and objective run on the iid and the GARCH walk logs; the best walk configuration's in-sample score is the overfitting allowance",
+  "confirm": {
+    "top_k": 5,
+    "data": "2024-01-01 onward: the 12 Binance perpetuals (same symbols, unseen time) and every class the tuning never saw (FX, METAL, INDEX, ENERGY, CRYPTO_CFD, DERIV_1S, DERIV_DIFFUSIVE, DERIV_JUMPY, RANGE_BREAK, reported apart; the non-Deriv unseen pool judged)",
+    "passes_if": "the single selected configuration: R > 0 after costs with its 90% day-bootstrap interval above 0 on confirmation (Binance 2024+ and the unseen non-Deriv pool, each), R > 0 in discovery, its discovery score above the walks' best in-sample score (the allowance), its confirmation R above the walks' own tuned configurations on their confirmation data and above the untuned R4b baseline (production's defaults, CORE) on the same data",
+    "multiplicity": "BH at q = 0.10 over the top-5 configurations x the two confirmation sets; the search size (497,664) is stated beside every number"
+  },
+  "holds": {
+    "question": "do structures' quality scores predict a level's hold rate beyond walks?",
+    "calls": "every actionable call in the logs, every timeframe",
+    "hold": "the side price arrived from: from above (support) HOLD when a high reaches level + 1 unit before a close at or below level - 1 unit, from below mirrored; scanned on 15m bars from the first bar after the call, up to 500 bars; undecided dropped",
+    "called": "the call's own direction (up / down) reaching 1 unit before a close 1 unit the other way",
+    "deciles": "of probability and of strength, cut on the real discovery calls (Binance before 2024) and applied unchanged to everything, walks included",
+    "reading": "a top decile that holds clearly more than the same decile on walks is the mechanism the strategy needs; if not, no tuning can create one"
+  }
+}
