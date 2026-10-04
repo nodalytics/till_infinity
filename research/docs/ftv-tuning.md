@@ -71,9 +71,11 @@ The selected real configuration: min touches 2, probability >= 0.6, any strength
 **2h/4h levels only**, 1 timeframe, max 4 and min 1 vol, stop 0.5 clearance and 2x `risk_vol`,
 **target the full value**, **30m entries**, any trend, **high-volatility regime**. The top five are
 all variants of it: 2h/4h value levels and 30m entries in the high regime. Its in-sample interval is
-[-0.040, +0.099]. The tuning surface is `.data/lrc/ftv/ftv_surface.png`. Real data sits between the
+[-0.040, +0.099]. The tuning surface is below. Real data sits between the
 two walks along every dimension and is closer to GARCH than to iid. That says volatility clustering
 is what separates real from iid, not direction.
+
+![the tuning surface: every configuration's discovery mean R, real against the same search on walks](img/ftv/ftv_surface.png)
 
 ### Confirmation (2024+, mean R after costs, 90% day-bootstrap interval)
 
@@ -100,8 +102,9 @@ Against the frozen pass conditions:
 
 The selection does improve on production's defaults in one sense. Fewer, wider, 30m trades toward
 2h/4h value cost about 0.02R less than the defaults on the unseen classes (-0.133 against -0.157)
-and 0.21R less on Binance. It still loses on the unseen classes and is flat on Binance. That is cost management, not an edge. Plot:
-`.data/lrc/ftv/ftv_selected_pnr.png`.
+and 0.21R less on Binance. It still loses on the unseen classes and is flat on Binance. That is cost management, not an edge. 
+
+![the selected configuration's P(N R) in discovery and confirmation](img/ftv/ftv_selected_pnr.png)
 
 ### Do structures' scores predict a hold? (every actionable call, non-Deriv)
 
@@ -134,7 +137,7 @@ same number to within 0.01.
 - So the scores rank levels by how mechanically easy the hold test is, not by how much more than
   chance they hold. That is why tuning thresholds on them finds nothing that survives.
 
-Plot: `.data/lrc/ftv/ftv_holds_deciles.png`.
+![hold rate by structures' probability and strength deciles, real against walks](img/ftv/ftv_holds_deciles.png)
 
 ## Caveats
 
