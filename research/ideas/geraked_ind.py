@@ -290,7 +290,8 @@ def nadaraya_watson(c, bandwidth=8.0, mult=3.0, window=500):
     mid[window - 1:] = _win(c, window) @ g[::-1] / g.sum()
     dev = np.abs(c - mid)
     band = np.full(n, np.nan)
-    band[2 * window - 2:] = _win(dev[window - 1:], window).sum(1) / window * mult
+    if n >= 2 * window - 1:
+        band[2 * window - 2:] = _win(dev[window - 1:], window).sum(1) / window * mult
     return mid + band, mid - band
 
 

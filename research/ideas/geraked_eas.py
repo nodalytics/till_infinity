@@ -954,7 +954,7 @@ def fetch_cot():
     import io
     import urllib.request
     import zipfile
-    urls = ["https://www.cftc.gov/files/dea/history/fut_fin_txt_2006_2016.zip"] + \
+    urls = ["https://www.cftc.gov/files/dea/history/fin_fut_txt_2006_2016.zip"] + \
         [f"https://www.cftc.gov/files/dea/history/fut_fin_txt_{y}.zip" for y in range(2017, 2027)]
     frames = []
     for u in urls:
