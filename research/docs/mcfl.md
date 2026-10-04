@@ -12,6 +12,12 @@ relation reads by; remaining time and HTF progress; TIMEOUT, STALL, SESSION_FIRS
 the bar, wall-clock, trading, volume and event clocks with volume and tick bars; and seasonality: a
 time-of-day volatility class, TEMPO_STATE and an hour rate on every event.
 
+**What the sweeps study adds** ([Sweeps](#sweeps-failed-breaks-sweep-and-shift-inducement-broken-structures-protected-levels)):
+the close-beyond failure (CLOSE_REVERT), a sweep followed by a shift the other way (SWEEP_SHIFT, rows of
+the rule table), INDUCEMENT at a zone's first revisit, a broken zone's or FVG's first return
+(BREAKER_RETEST, RECLAIM) and protected lows and highs graded STRONG, SWEEP_STRONG or WEAK (PROTECTED,
+PROTECTED_TAKEN) - with the same causality, symmetry and brute-force tests.
+
 **What v2 adds** (the thirteen items of [`mcfl-roadmap.md`](mcfl-roadmap.md), section v2; their
 definitions are in [v2](#v2-structure-lifecycles-time-timeframes-and-the-candlestick-vocabulary)
 below): swing-structure labels and a STRUCTURE state, the BREAK's relation to it and the CHoCH;
@@ -949,6 +955,35 @@ IDENTICAL_THREE_CROWS, whose canon needs each open at the last close, is merely 
 `synth.gapped` adds an untraded overnight jump to each open; the study measures the vocabulary on it
 too.
 
+## Sweeps: failed breaks, sweep and shift, inducement, broken structures, protected levels
+
+`sweeps.py`, added for the sweeps study ([sweeps.md](sweeps.md)), on merged v2 and the time core with
+their rules: every entity has a `known_at`, is under the truncation tests (`tests/test_sweeps.py`
+checks each at its `known_at` and one bar before; the every-prefix test of `test_v2_causality.py`
+covers them too), is flip-symmetric (`test_v2_symmetry.py` compares every entity of the parse), and
+the one production over entities is rows of the rule table. `core.SWEEP_TYPES` lists them. Each is
+also checked against a brute-force restatement of its definition on GARCH walks.
+
+What MCFL already had for the desk's sweep vocabulary, and which the study reuses rather than
+repeats: the wick sweep or swing failure (SFP) is **BREACH_REVERT**; equal highs or lows swept is
+**POOL_TAKEN[SWEPT]**; the candle-range sweep is **PURGE** (an HTF candle's: `mtf.crt`); a session raid
+is **SESSION_EXTREME_TAKEN** with `closed_back`; the Judas swing is **SESSION_FIRST_MOVE**; the DAX
+course's protected low is **SWEEP_PROTECTED**; the inverse FVG is **VOID_INVERTED**.
+
+| entity | definition (written for a low / an up structure; the other side is the flipped chart) | attributes | `known_at` | direction |
+|---|---|---|---|---|
+| **CLOSE_REVERT** (L2), the close-beyond failure ("turtle soup") | a swing low (EXTREME↓, price P, known at k) whose first close under P after k is at u, and one of the next TURTLE_N (**3**) bars closes back at or above P: at the first such bar v. Once per extreme. Parts the tokens u..v | `extreme`, `level`, `through` (u), `bars` (v - u), `depth_atr` | v | the breach's, as BREACH_REVERT: CLOSE_REVERT↓ is a low closed through and reclaimed |
+| **SWEEP_SHIFT** (L3), sweep then shift | `(BREACH_REVERT↓ \| CLOSE_REVERT↓) (DISPLACE_C↑ \| DELIVERY_SHIFT↑)` where `shift.at - SHIFT_K ≤ sweep.at ≤ shift.at` (SHIFT_K = **3**): four rows of the rule table, tried BREACH_REVERT before CLOSE_REVERT and DISPLACE_C before DELIVERY_SHIFT; the first that matches makes the one event of that bar and direction, binding its earliest sweep | `sweep`, `sweep_type`, `shift`, `shift_type`, `level` (swept), `bars` | the shift's bar | the shift's (the reversal's): SWEEP_SHIFT↑ follows a low swept |
+| **INDUCEMENT** (L2) | at a ZONE↑'s first REVISIT (bar r): a swing low above the zone's near edge, known before it was taken, whose first take (a low under it) is within INDUCE_N (**10**) bars before r or on r; the latest-taken is bound (the lowest on a tie). Parts the ZONE, the REVISIT and the EXTREME | `zone`, `revisit`, `extreme`, `level`, `taken_at`, `bars`, `gap_atr` | r | the zone's |
+| **BREAKER_RETEST** (L2) | a ZONE↑ broken by its FAIL, or a VOID↑ by its VOID_INVERTED, at bar f; the first bar t in f+1 .. f+BREAKER_MAX (**100**) whose high reaches the far edge again, closing at or under it: the broken structure is now the other side's level (the breaker; for a void, the inverse FVG's retest) | `of`, `kind` (ZONE or VOID), `level` (the edge), `broke_at`, `bars`, `wick_atr` | t | the structure's (a lifecycle event keeps its structure's direction: BREAKER_RETEST↑ is bearish) |
+| **RECLAIM** (L2), the failed break | the same first return, closing back above the edge | as BREAKER_RETEST | t | the structure's |
+| **PROTECTED** (L3) | for the leg from every swing low p: **STRONG** when the leg BROKE structure without trading under p (the low that caused the break; the trader's BOS when the BREAK is WITH); **SWEEP_STRONG** when also the low at p swept the previous swing low (SWEEP_PROTECTED) and the leg DISPLACED 2 ATR at or before the break; **WEAK** when the leg timed out (LEG_MAX bars, no break, never under p). A leg that traded under p makes none, and none is made if the low was traded under before it could be graded. Parts the LEG and, if any, the BREAK, SWEEP_PROTECTED and DISPLACE | `grade`, `level`, `origin`, `break`, `bos` | STRONG: its BREAK's; SWEEP_STRONG: the latest of its parts; WEAK: the leg's end | UP (it protects an up move, like the ORIGIN at p) |
+| **PROTECTED_TAKEN** (L2) | the first bar after the PROTECTED is known whose low is under its level | `protected`, `grade`, `level`, `closed_back` (swept rather than broken), `bars` | its bar | the PROTECTED's |
+
+Whether a protected low held until the next break of structure, whether an inducement made the zone
+hold, and what a sweep was worth are outcomes, measured in [`ideas/sweeps.py`](../ideas/sweeps.py), not
+part of the definitions. Text forms are the default (`CLOSE_REVERT↓`, `SWEEP_SHIFT↑`, ...).
+
 ## Time core
 
 The roadmap's time core (between v2 and v3): time as a dimension of the language, not a tag on bars.
@@ -1200,6 +1235,11 @@ never NaN.
 | HTF bias, "trade with the 4h", a 15m zone inside a 4h break (v2) | ALIGN / CONFLICT, NESTED | causal: the HTF event known first |
 | the classical candlestick names (v2) | PATTERN[name] | item 13's table |
 | BOS (v2, exactly) | BREAK[WITH] | a break in the direction of the structure |
+| turtle soup, close-beyond failure (sweeps) | CLOSE_REVERT | a swing closed through and reclaimed within 3 bars |
+| sweep then displacement / CISD, "manipulation then distribution" (sweeps) | SWEEP_SHIFT | a sweep and, within 3 bars, DISPLACE_C or DELIVERY_SHIFT the other way |
+| inducement (sweeps) | INDUCEMENT | a minor swing above a zone taken just before the zone's first revisit |
+| breaker block, inverse FVG retest; failed break (sweeps) | BREAKER_RETEST; RECLAIM | a broken zone's or FVG's first return to its far edge, holding beyond or closing back |
+| strong / weak / protected high and low (sweeps) | PROTECTED[STRONG / SWEEP_STRONG / WEAK], PROTECTED_TAKEN | the low that caused a break of structure, and the same having swept a low and displaced |
 | CHoCH, change of character (v2) | CHARACTER_SHIFT | the first break against an established structure |
 
 ## What the walk null shows
