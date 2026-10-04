@@ -1,0 +1,13 @@
+{
+  "frozen": "2026-10-04",
+  "idea": "the desk: the market always comes back to a point it left violently, and delivers - fresh, long-waiting, untested levels",
+  "found_on": "turn_zones.py's own data, read after its run (so in-sample, Binance 12 and MT5 10): zones first returned to after 10-20 days reached 2R 0.36-0.38 of the time against 0.29-0.33 on iid and GARCH walks, while shorter waits matched the walks; the test then stopped waiting at 20 days",
+  "zone": "unchanged from turn_zone_rule.json: a 12-bar low, [low, low + 0.5 ATR], live after a 3-ATR rally ('proven'), limit at the top on the FIRST return only (untested), stop 0.1 ATR under the low, 0.05 ATR stop slippage, E1 2-ATR trail (primary) and X2 2R, 10 days in the trade",
+  "change": "the zone now waits up to 180 days for its first return (RET_DAYS=180); recorded: the wait, the bars the rally took (dep) and how far price went before coming back (away, in ATR)",
+  "buckets": "wait in days: [0,2), [2,10), [10,30), [30,90), [90,180]",
+  "data_primary": "the 58 fresh Binance coins of turn_confirm_rule.json (no zone study used them), 4h and 1d",
+  "nulls": ["iid walk", "GARCH walk", "256 sub-steps a bar, real timestamps, the real series' cost in ATR units"],
+  "primary": "every origin (ALL), wait at least 10 days, E1, fresh coins, 4h and 1d pooled",
+  "passes_if": "R > 0 with day-bootstrap 90% interval above 0, positive before and after 2024-01-01, above the same cell on both walks, and above the same origins with a wait under 2 days",
+  "also": "the violent origins (SIG) alone; P(N R) for N in 0.5, 1, 2, 4, 10 against 1/(N+1) by bucket; the share of proven zones ever returned to within 180 days, real vs walks (the 'always comes back' half - which a random walk also does); Binance 12 and MT5 reported as in-sample"
+}
