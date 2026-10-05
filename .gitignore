@@ -52,7 +52,12 @@ logs/
 *.parquet
 
 # Claude Code
-.claude/
+# Everything Claude Code keeps here is local - settings, worktrees - except
+# the skills, which are written for whoever works on this next and belong in
+# the repo. `.claude/*` rather than `.claude/`: git will not re-include a path
+# whose parent directory is excluded, so the directory itself has to stay in.
+.claude/*
+!.claude/skills/
 __pycache__/
 .venv-research/
 
