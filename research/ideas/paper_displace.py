@@ -10,6 +10,8 @@ machine, which cannot reach Bybit.
   MODE=loop   the same after every 4h close, forever (nohup it; it stops when this machine sleeps)
   MODE=score  re-fetch each logged signal's bars and trade it as `turn_trade.trades_exits` does
               (entry at the next open, stop 0.1 ATR beyond the 3-bar extreme, E2 and E1, 10 days)
+  MODE=market the frozen market-mirror rule forward (`market_mirror_rule.json`): daily long signals
+              traded on BTC (M1), an equal-weight basket (M2), and breadth (B)
 
   OUT=.data/paper python research/ideas/paper_displace.py
 """
@@ -184,13 +186,59 @@ def score():
               f"E1 {c['E1'].mean():+.3f}R; P(>=4R) {(c['mfe'] >= 4).mean():.3f}")
 
 
+def score_market():
+    """The frozen market-mirror rule (`market_mirror_rule.json`), forward: every logged daily long signal
+    buys BTC (M1) and an equal-weight basket of the live coins (M2) at the next daily open and exits when
+    the alt's own E2 trade exits; B buys BTC for 5 days on closes where 3+ coins signal. Net of 7 bps."""
+    import httpx
+    import market_mirror as MM
+    log = pd.read_csv(LOG)
+    log = log[(log["iv"] == "1d") & (log["side"] == 1)]
+    if not len(log):
+        print("no daily long signals logged yet")
+        return
+    start = int(log["bar_ts"].min()) - 200 * 86400
+    rows = []
+    with httpx.Client() as client:
+        btc = klines(client, "BTC", "1d", start=start, limit=1000)
+        opens = {}
+        for coin in COINS:
+            d = klines(client, coin, "1d", start=start, limit=1000)
+            if d is not None and len(d):
+                opens[coin] = d.set_index("ts")["open"]
+        b_open = btc.set_index("ts")["open"]
+        for coin, g in log.groupby("sym"):
+            d = klines(client, coin, "1d", start=start, limit=1000)
+            if d is None:
+                continue
+            ex = {t: (e, x) for t, e, x in MM.exits(d)}
+            for t in g["bar_ts"]:
+                if t not in ex:
+                    continue
+                e, x = ex[t]
+                done = x <= int(b_open.index[-1]) and x < d["ts"].iat[-1]
+                m1 = (b_open.get(x, np.nan) / b_open.get(e, np.nan) - 1) * 1e4 - MM.FEE_BPS
+                basket = [(o.get(x, np.nan) / o.get(e, np.nan) - 1) for o in opens.values()]
+                m2 = np.nanmean(basket) * 1e4 - MM.FEE_BPS if basket else np.nan
+                rows.append(dict(sym=coin, bar_ts=int(t), entry_ts=e, exit_ts=x, M1_bps=m1, M2_bps=m2, complete=done))
+    d = pd.DataFrame(rows)
+    d.to_csv(OUT / "market_mirror_forward.csv", index=False)
+    c = d[d["complete"]] if len(d) else d
+    cnt = log.groupby("bar_ts").size()
+    bdays = [t for t in cnt[cnt >= 3].index if t + (MM.HOLD_B + 1) * 86400 <= int(b_open.index[-1])]
+    bb = [(b_open[t + (MM.HOLD_B + 1) * 86400] / b_open[t + 86400] - 1) * 1e4 - MM.FEE_BPS for t in bdays
+          if t + 86400 in b_open.index and t + (MM.HOLD_B + 1) * 86400 in b_open.index]
+    print(f"{len(log)} daily long signals; {len(c)} complete: M1 {c['M1_bps'].mean():+.1f} bps, "
+          f"M2 {c['M2_bps'].mean():+.1f} bps; B {len(bb)} days {np.mean(bb) if bb else float('nan'):+.1f} bps")
+
+
 def main():
     mode = os.environ.get("MODE", "once")
     if mode == "once":
         hour = pd.Timestamp.now(tz="UTC").hour
         once(("4h", "1d") if hour < 4 else ("4h",))
     else:
-        {"loop": loop, "score": score}[mode]()
+        {"loop": loop, "score": score, "market": score_market}[mode]()
 
 
 if __name__ == "__main__":

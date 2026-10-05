@@ -1,0 +1,64 @@
+{
+  "frozen": "2026-10-04, before any real-data run (smoke tests on walks only)",
+  "question": "Liquidity sweeps, grabs and 'manipulation' patterns, protected highs and lows, and broken zones on Deriv's synthetic indices: can they be identified, and do they predict anything? Deriv is a real market whose generators are published (generators.md, deriving.md): the expectation is that every pattern occurs at the rate our own walks produce it and predicts nothing. Real MT5 markets are the positive control.",
+  "script": "research/ideas/sweeps.py (MODE=run|plot); entities in research/mcfl/sweeps.py and the MCFL v2 entities it reuses",
+  "data": {
+    "deriv": "the 15 Deriv synthetics in the broker's database (mt5bt.db): Volatility 10/25/50/75/100, Step, Step 200, Step 500, Drift Switch 10/20/30 (DIFFUSIVE); Boom 1000, Crash 1000, Jump 50, Range Break 100 (JUMPY, reported apart)",
+    "real": "secondary, per asset class (amended_before_run): positive control, the same broker: EURUSD, GBPUSD, USDJPY, AUDUSD (FX); XAUUSD, XAGUSD (metals); US SP 500, US Tech 100, Germany 40, Japan 225 (indices); BTCUSD, ETHUSD, SOLUSD (crypto CFDs)",
+    "timeframes": "15m, 1h, 4h and 1d, every bar the database holds; results per timeframe and pooled",
+    "spikes": "pattern 10 only: research.db's 60 days of 1-minute bars of Boom 300/500/1000, Crash 300/500/1000 and Jump 10/25/50/75/100"
+  },
+  "nulls": {
+    "walk": "iid Gaussian walk (mcfl.synth.walk) with the series' close-to-close sd, 256 sub-steps a bar, the real timestamps",
+    "garch": "GARCH(1,1) walk (mcfl.synth.garch), the same sd, 256 sub-steps, the real timestamps",
+    "boot": "iid bar bootstrap: the series' own bars (high, low, close relative to the open) drawn with replacement and chained open = last close - the same per-bar law with every dependence between bars removed; the exact null for a memoryless generator, jumps included",
+    "pub": "Volatility indices only: an iid walk at the published sigma, (N/100) x the series' median close x sqrt(bar seconds / 31,536,000)",
+    "costs_on_nulls": "the real series' cost in ATR units at the same bar index"
+  },
+  "patterns": {
+    "P1_SFP": "wick sweep / swing failure: MCFL BREACH_REVERT - the first bar after a 3/3 swing low is known that trades under it and closes at or above it, before any close under it (mirrored for highs). Long after a low swept",
+    "P2_TURTLE": "close-beyond failure: MCFL CLOSE_REVERT (new) - a swing's first close beyond, and a close back within 3 bars",
+    "P3_POOL": "equal highs/lows swept: MCFL POOL_TAKEN with closed_back (pools.py: swings within 0.1 ATR, still standing)",
+    "P4_CRT": "candle-range sweep: MCFL PURGE - the bar trades beyond the previous bar's high (low) and closes back inside its range",
+    "P5_RAID": "session raid: MCFL SESSION_EXTREME_TAKEN of the ASIA session (22:00-07:00 UTC), closed back; 15m and 1h only",
+    "P5_JUDAS": "the Judas swing: MCFL SESSION_FIRST_MOVE of the LONDON session window, faded (a first swing high is traded short); 15m and 1h only",
+    "P6_SHIFT": "sweep + displacement: MCFL SWEEP_SHIFT (new) - a BREACH_REVERT or CLOSE_REVERT and, on its bar or within 3 bars after, a DISPLACE_C or DELIVERY_SHIFT the other way; the first SWEEP_SHIFT of each sweep is traded",
+    "P7_INDUCE": "inducement: MCFL INDUCEMENT (new) - at an MCFL ZONE's first REVISIT, a swing above the zone taken within the 10 bars before; compared with every first revisit (P7_ZONE)",
+    "P8_BREAKER": "broken zone retested: MCFL BREAKER_RETEST (new) - a ZONE broken by its FAIL or a VOID by its VOID_INVERTED, whose first return to the far edge (within 100 bars) closes on the broken side; traded against the old structure. Reported for zones (P8_BRK_ZONE) and FVGs (P8_BRK_VOID, the inverse FVG)",
+    "P8_RECLAIM": "failed break: MCFL RECLAIM (new) - the same first return closing back inside; traded with the old structure (P8_REC_ZONE, P8_REC_VOID)",
+    "P9_PROTECTED": "MCFL PROTECTED (new): a swing low whose leg broke structure (BREAK, the BOS when WITH) is STRONG; STRONG that swept the previous swing low (SWEEP_PROTECTED) and displaced 2 ATR is SWEEP_STRONG; a leg that timed out (20 bars, no break, never under the low) is WEAK. Known when graded",
+    "P10_SPIKES": "Boom/Crash spikes and Jump-index jumps: a 1-minute bar whose close-open exceeds 8 robust sigmas of the series' 1-minute close-open (Boom up, Crash down, Jump either way)"
+  },
+  "base_rates": "(a) events per 1,000 bars, both directions pooled, per symbol and timeframe, Deriv vs walk, garch, boot (and pub) vs real markets vs their own walks. Reported as the ratio to the walk's rate",
+  "prediction": {
+    "rows": "15m every 6th bar, 1h every 3rd, 4h and 1d every bar, after a 300-bar warm-up, on the chart and on the chart flipped",
+    "level": "the nearest standing swing low below the close: the highest 3/3 swing low known by t that no low has traded under since it was known",
+    "targets": "y_sweep (primary): within N = 10 bars the level is first traded under on a bar that closes back at or above it (a BREACH_REVERT of it); y_take: traded under at all within N; y_sweep|take: among rows taken within N, the take closed back",
+    "G0": "geometry: distance from the close to the level in ATR(14), its log1p, its square, and the timeframe one-hot",
+    "G1": "causal features: pool size (standing swing lows within 0.1 ATR of the level), log age of the swing, wick history (BREACH_REVERTs of lows in the last 20 bars, mean lower-wick share of the last 10 bars), volatility state (ATR5/ATR50, 10-bar range / ATR50, ATR14/ATR100), swing lows taken in the last 20 bars, the 20-bar drift in ATR",
+    "model": "logistic regression on standardised features (L2, C = 1), one model per scope (Deriv diffusive, Deriv jumpy, real) and source, timeframes pooled",
+    "split": "per series, train on rows whose label window closes before the series' time midpoint, score the rest",
+    "score": "held-out AUC gain of G0+G1 over G0 with a 90% interval from 1,000 day-bootstrap draws",
+    "passes_if": "the gain's interval is above 0 and the real gain exceeds both the iid and the GARCH walk's"
+  },
+  "after_a_sweep": {
+    "reversal": "gross, from the signal bar's close: P(price moves k ATR the trade's way before k ATR against), k = 1 and 2; a bar that reaches both counts one half",
+    "entry": "E: the open of the bar after the pattern is known (known_at + 1); L (secondary): a limit back at the swept level, live for 5 bars; P7: a limit at the zone's near edge, filled on the revisit",
+    "stop": "beyond the sweep's wick: the most extreme low (for a long) from the sweep bar to the signal bar, minus 0.1 ATR (P7: the zone's far edge minus 0.1 ATR; P8 breaker: the retest bar's high; P8 reclaim: the lowest low since the break). Trades whose risk is under 0.2 ATR are skipped",
+    "exits": {
+      "E1 (primary)": "2-ATR trail: after each completed bar the stop moves to the best high since entry minus 2 ATR (ATR at the signal); a stop hit fills at the stop, or at the open when it gaps through, minus 0.05 ATR slippage; held at most 10 days (at least 20 bars)",
+      "X2": "a fixed 2R target with the initial stop; a bar reaching both counts as stopped"
+    },
+    "jumpy_fills": "Boom, Crash, Jump, Range Break: bar fills miss the jump through a stop (deriving.md measured +13.96R of spike-side slippage at a 5-spread stop on boom_500). Modelled explicitly: E1w and X2w fill a stop on the jump side at the stopped bar's extreme (its low for a long), the worst price the bar printed - Boom's shorts (spikes up), Crash's longs (spikes down), both sides on Jump and Range Break; the grind side keeps the bar fill. Both fills are reported and E1w is the jumpy verdict",
+    "costs": "the broker's spread floor for each symbol (run.spread_floor: median tick spread, else the quoted spread), in R",
+    "P(N R)": "P(the trade reaches N R before its E1 exit) for N in 0.5, 1, 2, 4, 10, against 1/(N+1)",
+    "halves": "each series split at its time midpoint"
+  },
+  "protected": "for each PROTECTED low: held = the next BREAK of the same direction becomes known before a low trades under the level; lost = PROTECTED_TAKEN first; censored otherwise. Reported per grade (WEAK, STRONG, SWEEP_STRONG; and STRONG with bos = WITH), with the distance from the close to the level in ATR when graded, real vs walks; also P(not taken within 50 bars)",
+  "spikes": "per series: rate per 1,000 one-minute bars; dispersion of hourly counts (variance / mean; Poisson = 1); waiting-time CV (memoryless geometric = sqrt(1 - p)); lag-1 autocorrelation of the spike indicator; and the held-out AUC (second half) of a logistic model predicting a spike in the next bar from log bars since the last spike, the count in the last 60 bars and the last 5 bars' absolute return, against the same model on the indicator shuffled",
+  "primary": "P6_SHIFT traded with E then E1 on the Deriv DIFFUSIVE indices, 15m, 1h, 4h and 1d pooled",
+  "passes_if": "a cell (pattern x symbol x timeframe, and the pooled primary) passes only if: R > 0 with its 90% day-bootstrap interval above 0, R > 0 in both halves, R above the same cell on the iid and on the GARCH walk, and significant after Benjamini-Hochberg at q = 0.10 across every Deriv cell (p = the bootstrap share of draws at or below 0); the number of cells is stated",
+  "look_ahead_checks": "anything that passes is re-run with the signal shifted one bar later and its every input's known_at checked against the entry bar before it is believed (lookahead-in-conditioning-flags); a pass on Deriv is first presumed a bug or a generator property (Range Break, Drift Switch, Boom/Crash)",
+  "expectation": "every Deriv base rate equals its walk's (ratio 1 within noise; Boom/Crash and Jump differ from Gaussian walks by their jumps and should equal their bar bootstrap), no prediction gain, every trade at about minus costs, protected levels holding at the walk's rate; real markets may differ from their walks in base rates (turning-points.md: real levels break slightly less often)",
+  "amended_before_run": "2026-10-04, before any result of the real-data run was read (a launch was stopped within minutes, at the desk's request): the real markets become full secondary results per asset class instead of one pooled control - FX (the broker's 12 pairs), metals (XAU, XAG, XPT, XPD), indices (US SP 500, US Tech 100, Wall Street 30, Germany 40, UK 100, Japan 225, Australia 200), energy (US Oil, UK Brent Oil), crypto CFDs (BTC, ETH, SOL, XRP, LTC, BNB USD) and Binance USDT perpetuals (BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX, LINK, LTC, DOT, TRX; 15m/1h/4h/1d klines, cost 0.07% of price a trade as turn_trade.py); Deriv is split into diffusive, jumpy (Boom 1000, Crash 1000, Jump 50) and Range Break 100 on its own line (still under the jumpy fill model). Every class runs the same base rates, prediction (one model per class and source), trades and protected lows against its own iid, GARCH and bar-bootstrap walks, reported per timeframe and pooled, with an asset-class facet on every plot. Every series is cut to its most recent 100,000 bars (Binance 15m from 2021 is 201,504; nothing else reaches the cap). Benjamini-Hochberg is applied within the Deriv cells (the frozen family) and separately within the real-class cells; both counts are stated. The primary and every pass rule are unchanged."
+}

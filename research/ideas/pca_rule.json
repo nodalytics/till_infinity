@@ -1,0 +1,61 @@
+{
+  "frozen": "2026-10-04",
+  "thesis": "A quant article on trading randomness: a market is a few shared forces plus noise. Take the market, sector and style factors out with PCA, and the stretched residual mean-reverts (Avellaneda-Lee statistical arbitrage).",
+  "harness": "research/ideas/pca_residuals.py",
+  "data": {
+    "crypto": "Binance USDT perpetuals: the 12 coins of turn_trade.COINS (lab data/binance) plus the 131 fresh coins of turn_confirm (FRESH 58 + SET_C 73; 4h/1d from data/binance_fresh, 1h/15m fetched from data.binance.vision). Funding: the 12 coins' funding.csv, the fresh coins' monthly fundingRate files",
+    "mt5": "the broker DB (run.load, MT5BT_DB): FX 12 pairs; metals 5 + indices 7 + energy 2 together ('macro'); Deriv synthetics 15 as a check",
+    "returns": "close to close log returns for PCA and regressions, simple returns for P&L; a coin is in the universe at bar t only with all of its trailing window present (no imputation)"
+  },
+  "study_a": {
+    "window_days": 90,
+    "spike_window_days": 30,
+    "step": "one PCA a day (every bar at 1d, every 6th at 4h); FX/macro 4h windows are 90 x 6 x 5/7 bars",
+    "reports": ["PC1-PC5 share of variance over time", "effective number of bets: exp(entropy of the eigenvalue shares) and the participation ratio", "eigenvalues above the Marchenko-Pastur edge (1 + sqrt(N/T))^2", "PC1 share before and after the worst equal-weight index days"],
+    "crash_days": "the 10 worst equal-weight crypto index days (1d), at least 7 days apart",
+    "deriv_expectation": "no shared driver (generated.md): the spectrum should sit inside the Marchenko-Pastur bulk"
+  },
+  "windows": {"pca": 252, "ou": 60, "unit": "bars, at every timeframe (Avellaneda-Lee's 252 / 60 days on the bar clock)"},
+  "min_coins": 8,
+  "model": "each bar: correlation PCA over the trailing 252 bars; eigenportfolios Q_j = v_j / sigma_i; over the trailing 60 bars regress each coin on the k eigenportfolio returns with an intercept; cumulate the residual; AR(1) fit X[t+1] = a + b X[t] + zeta, valid only for 0 < b < 1; half-life ln2 / -ln b bars; m = a / (1 - b) centred across valid coins; sigma_eq = sqrt(var zeta / (1 - b^2)); s = (X_last - m_centred) / sigma_eq",
+  "trade_rule": "flat -> long when s < -entry, short when s > entry, only if the half-life <= hl_max; long closes when s > -exit, short when s < exit; any position closes when its fit is invalid or the coin leaves the universe. Each residual position is the coin hedged with -beta_j units of each eigenportfolio j; the book's net coin weights are normalised to unit gross every bar, decided at bar t's close and held over bar t+1",
+  "grid": {"k": [1, 3, 5], "entry": [1.25, 1.5, 2.0], "exit": [0.5, 0.75], "hl_max": [10, 20]},
+  "discovery": {
+    "data": "the 12 coins only (PCA on the 12), real, bars before 2024-01-01, 1d and 4h",
+    "procedure": "every one of the 36 grid cells; pick the one with the highest net annualised Sharpe of the pooled daily book (0.5 x 1d + 0.5 x 4h); written to pca_selected.json by MODE=discover and committed before MODE=confirm runs"
+  },
+  "costs": {"fee_per_side": 0.0007, "applied": "0.07% of notional on every change of a coin weight (turnover = sum |w_t - w_{t-1} drifted|), hedge legs included", "funding": "w_i x the funding rates settled during the held bar (a long pays a positive rate); real funding on the synthetic panels too"},
+  "primary": {
+    "book": "study B with the selected cell on the whole crypto universe (PCA on all 143 coins; positions only in the 131 fresh coins, never looked at in discovery), all dates, 1d and 4h pooled as 0.5 x each daily net return",
+    "passes_if": [
+      "annualised net Sharpe > 0 with the 90% circular block-bootstrap interval (20-day blocks) above 0",
+      "net Sharpe > 0 before and after 2024-01-01",
+      "net Sharpe above the same book on the iid-residual null panel",
+      "alpha > 0 with its 90% block-bootstrap interval above 0 in the regression of the daily net book on the daily PC1 eigenportfolio return (from the 1d run)"
+    ]
+  },
+  "synthetic": {
+    "factors": 5,
+    "vol_halflife": 30,
+    "ou_halflife": 10,
+    "construction": "real log returns standardised by their trailing EWMA volatility; 5 eigenvectors of the full-sample pairwise correlation; each bar's factor scores by cross-sectional least squares on the coins present; residual = the rest. Synthetic = real scores x loadings + a new residual, re-scaled by the real trailing volatility, on the real clock and gaps, highs and lows from a 16-step Brownian bridge",
+    "positive_control": "OU residual in level with a 10-bar half-life and the coin's residual variance: the pipeline must find it and earn net",
+    "null_iid": "Gaussian iid residual increments with the coin's residual variance (a random-walk residual): must earn about minus costs",
+    "null_shuffle": "the coin's real residuals permuted in time within its own life: keeps the factor cross-section bar by bar and the fat tails, kills any reversion"
+  },
+  "confirmation_cells": ["u143 real fresh coins 1d, 4h (primary), 1h, 15m", "u12 real after 2024-01-01 at 1d, 4h, 1h, 15m", "every source (ou, iid, shuffle) on u143 and u12 at every timeframe"],
+  "r_trade": {
+    "rule": "each book entry as a single-name trade on the coin itself: entry at the next open; stop at the trigger bar's low (long) / high (short) +- 0.1 ATR, risk at least 0.25 ATR; out at the open after the book closes the position, or at the stop with 0.05 ATR slippage; 0.07% a side",
+    "atr": 14, "stop_atr": 0.1, "min_risk_atr": 0.25, "slip_atr": 0.05, "pnr_bars": 100,
+    "report": "mean R and P(+N R before -1R within 100 bars) for N in 0.5, 1, 2, 4, 10 against 1/(N+1) and the iid-null and OU-control panels"
+  },
+  "study_c": {
+    "trades": "DISPLACE_C at a 12-bar low, E2 structure exit, exactly as turn_confirm (checked trade by trade against turn_trade.trades_exits), on the fresh coins (FRESH 58 and SET_C 73) at 4h and 1d",
+    "beta_window": 60,
+    "split": "R = beta part + residual: beta from the trailing 60 bars' regression of the coin's log returns on the equal-weight index of the 143 coins (and, reported, on BTC); beta part = side x beta x the index's simple return from the signal bar's close to the exit bar's close, in R",
+    "report": "mean R, beta part and residual with day-bootstrap 90% intervals, longs and shorts apart, per set and timeframe"
+  },
+  "tails": "max drawdown, worst day and week of the primary book; its return on the 1% worst equal-weight index days, its beta on index-down against index-up days, and its return in the weeks with the largest rise of the 30-day PC1 share",
+  "multiplicity": "Benjamini-Hochberg at q = 0.10 across the secondary cells: the 35 other grid cells on the primary book, and the selected cell's u143 1h, 15m and u12 2024+ 1d, 4h, 1h, 15m books (one-sided block-bootstrap p of Sharpe <= 0)",
+  "stats": {"boot_draws": 2000, "block_days": 20}
+}
