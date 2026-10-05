@@ -83,6 +83,16 @@ class Notifier(ABC):
             raise TransientError(f"{self.name}: {exc}") from exc
         return self.checked(response)
 
+    async def post_files(
+        self, url: str, data: dict[str, Any], files: dict[str, tuple[str, bytes, str]]
+    ) -> httpx.Response:
+        """POST a multipart form - fields plus files - translating failures as `post` does."""
+        try:
+            response = await self.client.post(url, data=data, files=files)
+        except httpx.HTTPError as exc:
+            raise TransientError(f"{self.name}: {exc}") from exc
+        return self.checked(response)
+
     def checked(self, response: httpx.Response) -> httpx.Response:
         if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
             raise TransientError(

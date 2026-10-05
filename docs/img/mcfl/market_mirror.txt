@@ -1,0 +1,14 @@
+📈 ₿ BTC 1d · Bullish reversal (market) · long
+Tier A · an exit alert will follow
+paper alert, not a trade instruction
+Entry ref: next daily open (last close 108,250.0)
+Breadth: 7 · wide
+Bar: 2026-08-31 00:00 UTC
+2026-10-05 16:36 UTC
+
+🏁 ₿ BTC 1d · Exit
+paper alert, not a trade instruction
+Result: +186 bps net, mean of 7 (marked at this close)
+Opened by: the BTC 1d alert of 2026-08-31 00:00 UTC (ref 3fcd98b045b2)
+Bar: 2026-09-06 00:00 UTC
+2026-10-05 16:36 UTC
