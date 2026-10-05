@@ -1,0 +1,92 @@
+{
+  "frozen": "2026-10-05",
+  "before": "written and committed before any tick was fetched for this study and before any rule ran on real data. Read before freezing: deriving.md section five, spiking.md, deriv-variants.md, generators.md, rebuilding.md, crash-timing.md, lrc-retest.md. Probes made: (1) the bridge serves M1 bars only from 2026-07-28, M5 from 2025-10-23, M15 from 2023-11-28 (the terminal's ~100k-bar cap) and H1/H4/D1 from 2019; it serves ticks from 2025-01-01 on all six indices (404 before; Range Break's tick store starts on the same day); (2) on the published 24 hours of research.db ticks (2026-09, already used by deriving.md) the grind is one-signed on all six: every bid move on the spike side is a spike (0.11% of Boom 1000 ticks, 1/rate), the smallest spike-side move is 3-20x the largest grind step. No rate, state or trend was computed on the study data.",
+  "question": "Do Boom/Crash spikes move with the trend? Boom spikes up and Crash spikes down by design, so the spike direction is fixed per index; the question is whether the HAZARD (how often) or the SIZE of the spike differs when the trend read from closed bars before the spike points the spike's way (aligned), against it (counter), or nowhere (range). HTF 1h, 4h, 1d; LTF 1m, 5m, 15m (amended before the run, desk message of 2026-10-05); and multi-timeframe alignment.",
+
+  "indices": "Boom 300, Boom 500, Boom 1000, Crash 300, Crash 500, Crash 1000 Index (the broker DB holds only Boom/Crash 1000 bars, so every index is fetched from the bridge). The spike direction s = +1 for Boom, -1 for Crash.",
+
+  "data": {
+    "ticks": "the lab's MT5 bridge, /symbols/ticks/{symbol}/range, read-only, one UTC day per request, at least 1.5 s apart, from 2025-01-01 to the last complete UTC day; stored as one npz per index-day (ms, bid, ask) under the study's own lab directory; never written to mt5bt.db",
+    "bars": "bridge /symbols/rates/range H1, H4, D1 bid bars from 2019-01-01, used ONLY to warm up the full-series 1h/4h/1d indicators before the first tick day. From the first tick day on, every bar at every timeframe is built from the ticks' bids (1m OHLC from ticks; 5m/15m/1h/4h/1d resampled from 1m by UTC floor). A minute with no tick has no bar (as MT5).",
+    "swap": "bridge /symbols/info swap_long / swap_short (swap_mode 5 = annual % of price, costs.md)",
+    "split": "the tick history is shorter than the 2024-01-01 convention allows, so: discovery = the first half and confirmation = the second half of the span common to all six indices, cut at the UTC midnight nearest the midpoint (expected about 2025-11-17). Every cut, tercile and null parameter is fitted on discovery only."
+  },
+
+  "spikes": {
+    "tick move": "d = bid[i] - bid[i-1] on consecutive ticks (bid, as MT5 bars; the mid moves half-steps when the spread changes, rebuilding.md)",
+    "grind step": "a move against the spike side or zero: s*d <= 0",
+    "spike tick": "s*d > theta, theta = 3 x the 99.9th percentile of |d| over discovery grind steps of that index",
+    "event": "consecutive spike ticks merge into one spike; its time is the first spike tick's time, its size J = s*(bid after the last spike tick - bid before the first)",
+    "sub-threshold": "spike-side moves 0 < s*d <= theta are counted and reported (expected about none); they are treated as grind",
+    "size units": "primary: J / median J of that index's discovery spikes; secondary: J / ATR(14) of the full-series 1h bars at the last closed 1h bar"
+  },
+
+  "series": {
+    "full": "the bid price as quoted",
+    "ex-spike": "bid minus the cumulative sum of spike sizes (times s) since the first tick: the grind alone. Its bars are built the same way from the ex-spike ticks",
+    "registered expectation (from the probe, not from study data)": "because the grind is one-signed, the ex-spike series is monotone (Boom down, Crash up). Its LRC slope sign is then always counter to the spike, and its 3/3 pivots of one kind never form, so its MCFL state is constant. The ex-spike DIRECTION is therefore expected to be degenerate by construction: every spike counter to the ex-spike trend, no aligned spikes to compare. If on study data an index-timeframe's ex-spike direction puts < 1% of ticks in either state, its ex-spike direction cells are reported as degenerate and not tested. The ex-spike series still carries the grind RATE, so its strength readings (below) are tested.",
+    "what separates 'trend because of spikes' from 'spikes because of trend'": "(1) every reading uses only bars closed before the minute being scored (causal), so a spike cannot be inside its own trend reading; (2) the fitted constant-hazard null runs through the identical pipeline: whatever relation it shows is mechanical; (3) the ex-spike series has no spikes in it; (4) a deliberately non-causal reading (S10: the trend of the bar that CONTAINS the spike) is reported to show how large the mechanical relation is when causality is dropped"
+  },
+
+  "trend readings, per timeframe tf in 1m 5m 15m 1h 4h 1d and per series (full, ex-spike)": {
+    "ATR": "ATR(14), Wilder, of that tf's bars (lrc_retest.atr)",
+    "LRC(100)": "least-squares line through the last 100 closes (lrc_retest.lrc): slope b per bar; Pearson R of the closes against bar index over the same 100 bars",
+    "direction": "aligned when s*b > 0, counter when s*b < 0 (b = 0 is neither and dropped)",
+    "structure": "MCFL v2 as lrc_retest.structure (3/3 pivots known 3 bars later, HH/HL/LH/LL with 0.1 ATR tolerance): state UP / DOWN / MIXED; aligned = UP on Boom, DOWN on Crash; counter = the opposite; range = MIXED",
+    "strength": "|b| / ATR and |R|; terciles WEAK / MID / STRONG cut per index x tf x series on discovery minutes",
+    "range (LRC)": "the WEAK |R| tercile, whatever the sign",
+    "ex-spike grind rate": "ex-spike |b| / the index's discovery mean grind per bar of that tf; terciles on discovery",
+    "known at": "a tf bar opening at t closes at t + tf; its readings apply to every minute starting at or after t + tf until the next bar closes. Minute m is scored with the last tf bar closed at or before m's start, so the 1m reading for minute m is bar m-1"
+  },
+
+  "outcomes": {
+    "hazard": "spikes per tick in a state: (spikes in minutes in that state) / (ticks in those minutes). Reported also per minute and as P(>= 1 spike in the next 1 minute) and P(>= 1 spike in the next 15 minutes) (windows starting on 15-minute boundaries, the state at the window's start)",
+    "hazard ratio": "rate(aligned) / rate(counter); pooled across indices as an O/E ratio: (sum_i spikes_i,A / sum_i ticks_i,A x rate_i) / (same for counter), rate_i = the index's own rate over the half",
+    "size": "mean J / median J (discovery) by state; size ratio aligned / counter; P(J > 2 median J)",
+    "published and measured constant hazard": "the name's 1 / (300, 500, 1000) per tick, the measured discovery rate, and deriving.md's 267.7, 529.4, 908.3, 329.0, 507.7, 973.8 ticks per spike"
+  },
+
+  "nulls": {
+    "fitted constant-hazard null (the matched null)": "a compound-Poisson-jump-plus-grind tick simulator fitted per index on discovery ticks only: on the REAL tick timestamps, each tick is a spike with constant probability p = discovery spikes / discovery ticks; a spike's size is drawn iid from the discovery spike sizes; every other tick moves by a grind step drawn iid from the discovery grind steps (zeros included); spread = the real tick's spread at the same tick index. A 150-day warm-up at the median tick interval is simulated before the first tick so the 1d readings are live on day one. 40 paths per index. Every state, rate, ratio, tercile cut (re-fitted on the path's own discovery half), trade and plot is computed on each path by the identical code. In this null hazard and size are constant by construction, so any relation a reading shows on it is mechanical",
+    "positive control": "the same simulator with the hazard multiplied by 1.25 while the path's own 4h full-series LRC(100) is aligned (state updated at each simulated 4h close); 4 paths per index; the pipeline must recover a primary ratio near 1.25, which shows the test has the power to see an effect of that size",
+    "matched walks": "the desk's iid and GARCH Gaussian walks (mcfl/synth.py) have no spikes and are not a null for a hazard; they are used only for the trade question, matched to the 15m full-series bars"
+  },
+
+  "primary": {
+    "requested and why it cannot be the primary": "the desk asked for the aligned vs counter hazard ratio on the 4h EX-SPIKE trend. By the registered expectation above that ratio has no aligned spikes to put in its numerator. It is computed and reported first (the share of spikes aligned with the ex-spike 4h trend, expected 0%), and the primary moves to the full series, measured against the null that removes what spikes do to the trend",
+    "P1": "the aligned / counter spike hazard ratio, 4h full-series LRC(100) direction, the six indices pooled (O/E), confirmation half",
+    "P1 passes when": "log(real ratio) - mean over null paths of log(null ratio) has |z| >= 1.645 against the null paths' sd, AND the real ratio's day-bootstrap 90% interval (1000 draws, days resampled jointly across indices) excludes the null mean ratio, AND the discovery half shows the same sign. Otherwise the HTF trend does not move the spike hazard",
+    "P2 (co-primary, multi-timeframe, amended before the run)": "the hazard ratio HTF and LTF BOTH aligned / BOTH counter, HTF = 4h, LTF = 15m, full-series LRC(100) direction, six pooled (O/E), confirmation, same pass rule as P1",
+    "both primaries": "each judged on its own; Bonferroni is not applied between the two (both are reported with their z); the trade question opens only if P1 or P2 passes"
+  },
+
+  "secondaries (Benjamini-Hochberg at q = 0.10 across every tested secondary cell, confirmation half; p two-sided from z against the 40 null paths)": {
+    "S1 direction": "aligned / counter hazard ratio by LRC sign, per index x tf (6) x series (full; ex-spike if not degenerate)",
+    "S2 structure": "MCFL aligned / counter and range (MIXED) / (aligned or counter) hazard ratios, per index x tf x series",
+    "S3 strength": "hazard ratio STRONG / WEAK tercile of |b|/ATR and of |R|, within aligned and within counter (full), per index x tf; ex-spike: STRONG / WEAK of |b|/ATR, |R| and the grind rate",
+    "S4 size": "size ratio aligned / counter (J / median J) per index x tf x series; and by strength tercile; and J / ATR(1h) reported, not tested (ATR contains the spikes)",
+    "S5 next-window probabilities": "P(spike in next 1m) and P(spike in next 15m) by state, reported against the constant-hazard value, not tested separately (monotone in the rate)",
+    "S6 alignment count (amended before the run)": "at each minute, the number of the six tf (1m 5m 15m 1h 4h 1d) whose full-series LRC(100) direction is aligned, 0-6; the slope of log hazard on the count (Poisson regression), per index and pooled; plus a strength-weighted score sum_tf (+1 aligned / -1 counter) x |R_tf|, hazard ratio top / bottom quintile (discovery cuts). Ex-spike version reported where not degenerate",
+    "S7 nested states (amended before the run)": "for every HTF in (1h 4h 1d) x LTF in (1m 5m 15m), full series: BOTH aligned, HTF aligned + LTF counter (pullback), HTF counter + LTF aligned, BOTH counter; tested: both-aligned / both-counter, pullback / both-aligned, and each state's rate / the index's rate, per index and pooled",
+    "S8 clustering": "inter-arrival gap in ticks: CV against a geometric's sqrt(1-p); dispersion (variance / mean) of spike counts per 15m, 1h, 1d window; lag-1 autocorrelation of counts per minute and per 15m; each against the null paths; and gap CV and dispersion within aligned vs counter 4h states",
+    "S9 the trade (only if P1 or P2 passes; otherwise reported as descriptive, no verdict)": "see trade",
+    "S10 the mechanical relation, shown": "the same ratios with the state read from the bar that CONTAINS the minute (non-causal, look-ahead by design), real and null, to show the size of 'trend because of spikes'; never a verdict"
+  },
+
+  "trade": {
+    "sides": "the spike side only: long Boom, short Crash",
+    "entry": "at each 15m full-series bar close: buy at the ask of the first tick at or after the close (Crash: sell at the bid); one entry per 15m close, trades may overlap",
+    "variants": "T-with: 4h full-series LRC(100) aligned at the last closed 4h bar; T-against: counter; T-all: unconditioned; also T-with-ex: 4h ex-spike grind rate in its STRONG tercile",
+    "stop": "structural: Boom: the lowest bid low of the last 3 closed 15m bars - 0.1 ATR(14, 15m); risk = max(entry - stop, 0.25 ATR); Crash mirrored with highs. Filled at the first bid at or beyond the stop (the grind side does not gap)",
+    "exit": "market-decided: at the first spike after entry, out at the bid of the tick after the last spike tick (the first price available after seeing it; Crash: the ask); else a 24-hour time stop at the bid (ask)",
+    "R": "s x (exit - entry) / risk, spread inside the prices (buy ask, sell bid); swap charged pro rata per second held at the bridge's annual rate; no commission (Deriv synthetics charge none); gross R also reported (bid to bid)",
+    "report": "mean R net with day-bootstrap 90% interval; P(R >= N) for N = 1, 2, 4, 10 against 1/(N+1) and against the same rule on the fitted null paths and on iid / GARCH walks matched to the 15m bars (walks: same entries, stop and a target-free hold to the 24-hour stop, spread in ATR units); per index and pooled; verdict for T-with vs T-against vs T-all only if P1 or P2 passed"
+  },
+
+  "kill conditions, written before the run": [
+    "P1 fails: the 4h trend does not change how often a Boom/Crash spike comes",
+    "the positive control's recovered ratio is below 1.10 or its interval covers 1: the test cannot see an effect of 1.25, and a P1 failure is reported as underpowered, not as a null",
+    "the measured discovery rate is more than 15% away from deriving.md's tick-level rate: the spike detector is wrong and nothing downstream is read",
+    "the fitted null fails to reproduce the real gap CV and the real 1h dispersion within its own 90% band on discovery: the null is mis-specified and the S8 comparisons are withdrawn"
+  ]
+}
