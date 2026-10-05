@@ -218,7 +218,7 @@ def jobs_main():
 
 def run_jobs(jobs):
     OUT.mkdir(parents=True, exist_ok=True)
-    with ProcessPoolExecutor(int(os.environ.get("WORKERS", 8)), max_tasks_per_child=4) as pool:
+    with ProcessPoolExecutor(int(os.environ.get("WORKERS", 8))) as pool:
         for _ in pool.map(one, jobs):
             pass
 
@@ -567,18 +567,23 @@ def plot():
                                        ("turn R2", "T_any", "T_any_old", "", "r_grid_tany_2r.png"),
                                        ("zone E1", "SIG", "SIG_old", "proven", "r_grid_sig_zone.png")):
         fig, axes = plt.subplots(1, len(IVS), figsize=(22, 5.5), sharey=True)
+        cls_r = [c for c in classes if c != "deriv range break"]  # Range Break reported apart (bar fills miss its jumps)
         for ax, iv in zip(axes, IVS, strict=True):
-            x = np.arange(len(classes))
+            x = np.arange(len(cls_r))
             sub = g[(g["test"] == test) & (g["act"].fillna("") == act)]
-            cor = sub[sub["family"] == fam].set_index("scope").reindex([f"{c} | {iv}" for c in classes])
-            od = sub[sub["family"] == old].set_index("scope").reindex([f"{c} | {iv}" for c in classes])
+            cor = sub[sub["family"] == fam].set_index("scope").reindex([f"{c} | {iv}" for c in cls_r])
+            od = sub[sub["family"] == old].set_index("scope").reindex([f"{c} | {iv}" for c in cls_r])
             ax.bar(x - 0.3, cor["R"], 0.2, color=C["real"], label="corrected, real")
             ax.errorbar(x - 0.3, cor["R"], yerr=[cor["R"] - cor["lo"], cor["hi"] - cor["R"]], fmt="none", ecolor="k", lw=0.8)
             ax.bar(x - 0.1, od["R"], 0.2, color=C["old"], label="old side, real")
             ax.bar(x + 0.1, cor["R_walk"], 0.2, color=C["walk"], label="corrected, iid walk")
             ax.bar(x + 0.3, cor["R_garch"], 0.2, color=C["garch"], label="corrected, GARCH walk")
             ax.axhline(0, color="grey", lw=0.8)
-            ax.set_xticks(x, classes, rotation=30, fontsize=8)
+            ax.set_ylim(-0.6, 0.35)
+            for xi, v in zip(x, cor["R"], strict=True):
+                if pd.notna(v) and not -0.6 <= v <= 0.35:
+                    ax.annotate(f"{v:+.2f}", (xi - 0.3, -0.58 if v < 0 else 0.33), fontsize=7, ha="center")
+            ax.set_xticks(x, cls_r, rotation=30, fontsize=8)
             ax.set_title(f"{iv}", fontsize=10)
         axes[0].set_ylabel("mean R a trade (90% day-bootstrap interval)")
         axes[0].legend(fontsize=8)
