@@ -9,6 +9,8 @@ the Discord board is a partial success and the caller should see exactly that.
 from __future__ import annotations
 
 import asyncio
+import base64
+import re
 from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from dataclasses import replace
@@ -136,6 +138,7 @@ def from_message(payload: dict[str, Any]) -> Notification | None:
         return None
     raw = payload.get("fields")
     fields = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+    image, image_name = _image(payload.get("image"))
     return Notification(
         title=title,
         body=str(payload.get("body") or ""),
@@ -143,7 +146,39 @@ def from_message(payload: dict[str, Any]) -> Notification | None:
         url=str(payload.get("url") or ""),
         fields=fields,
         source=str(payload.get("source") or ""),
+        image=image,
+        image_name=image_name,
     )
+
+
+#: The largest picture a bus message may carry. Both providers take more; a
+#: chart is a few tens of kilobytes, and anything near this is not one.
+MAX_IMAGE_BYTES = 5_000_000
+
+_MAGIC = {b"\x89PNG\r\n\x1a\n": ".png", b"\xff\xd8\xff": ".jpg"}
+
+
+def _image(raw: Any) -> tuple[bytes | None, str]:
+    """An image from an alert payload - `{"name": ..., "data": base64}` - or none.
+
+    Untrusted like the rest of the payload: the bytes must decode, be a PNG or
+    JPEG by their own header, and fit `MAX_IMAGE_BYTES`; the name is reduced to
+    a plain file name with the matching extension. Anything else is dropped and
+    the alert goes out as text, because a bad picture is no reason to lose it.
+    """
+    if not isinstance(raw, dict) or not raw.get("data"):
+        return None, ""
+    try:
+        data = base64.b64decode(str(raw["data"]), validate=True)
+    except (ValueError, TypeError):
+        log.warning("alerts: dropped an image that is not base64")
+        return None, ""
+    suffix = next((ext for magic, ext in _MAGIC.items() if data.startswith(magic)), None)
+    if suffix is None or len(data) > MAX_IMAGE_BYTES:
+        log.warning("alerts: dropped an image (%d bytes, not a PNG/JPEG or too large)", len(data))
+        return None, ""
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "-", str(raw.get("name") or "chart").rsplit(".", 1)[0])
+    return data, f"{stem.strip('-')[:60] or 'chart'}{suffix}"
 
 
 async def listen(
