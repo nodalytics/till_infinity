@@ -95,6 +95,7 @@
   "amended_before_run": [
     "2026-10-05, before any MT5 run: the broker's bars are used from 2019-01-01 (the Binance sample's era), because its fixed spread floor is many ATR on the 2011-2016 BTC bars; bars and spread floors (run.spread_floor: BTCUSD 2.424, ETHUSD 1.58, SOLUSD 0.14 in price) exported read-only from the lab db, the study running on the desk's local machine",
     "2026-10-05, before any real-data run: DISPLACE_C and DELIVERY_SHIFT come from mcfl.parse(df, v2=False, time=False), which gives the same entities as the full parse (checked on walks in test_cdt.py) about six times faster",
-    "2026-10-05, before any 1h or 15m run: the 1h check runs on core12 + fresh58 and the 15m check on core12 alone (real, one iid and one GARCH walk each); the v1 parse costs about 3-10 ms a bar on the desk's 8-core machine, so the frozen sets (1h fresh131, 15m fresh58) would take about a day. The 1d and 4h scopes are unchanged"
+    "2026-10-05, before any 1h or 15m run: the 1h check runs on core12 + fresh58 and the 15m check on core12 alone (real, one iid and one GARCH walk each); the v1 parse costs about 3-10 ms a bar on the desk's 8-core machine, so the frozen sets (1h fresh131, 15m fresh58) would take about a day. The 1d and 4h scopes are unchanged",
+    "2026-10-05, during the 4h run (implementation only): DISPLACE_C and DELIVERY_SHIFT read from MCFL's words alone (candles.table, ids, frames, words), the step of parse() that produces them; identical entities to the full parse on real and walk series at 1d and 4h, 30-50x faster. Jobs finished before the switch are unchanged"
   ]
 }

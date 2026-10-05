@@ -676,9 +676,9 @@ def plot():
         for ax, lab in zip(axes[1], ("P1 AGREE", "P2 DCS")):
             g = S["bk"][lab]["real0"][sl]
             k = S["btc"][sl].std() / g.std() if g.std() > 0 else 1
-            for v, col, nm in ((g * k, "k", lab), (S["btc"][sl], "#f2a900", "BTC"), (S["ew"][sl], "purple", "EW basket")):
+            for v, col, nm in ((S["ew"][sl], "purple", "EW basket"), (S["btc"][sl], "#f2a900", "BTC"), (g * k, "k", lab)):
                 eq = np.cumprod(1 + v)
-                ax.fill_between(days, eq / np.maximum.accumulate(eq) - 1, 0, color=col, alpha=0.35, label=nm)
+                ax.plot(days, eq / np.maximum.accumulate(eq) - 1, color=col, lw=1.2 if col == "k" else 0.9, label=nm)
             ax.set_title(f"drawdown at BTC's volatility: {lab}")
             ax.legend(fontsize=8)
             ax.grid(alpha=0.3)
