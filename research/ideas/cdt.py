@@ -53,17 +53,24 @@ WALK_SEEDS = {"1d": 5, "4h": 1, "1h": 1, "15m": 1}
 # ------------------------------------------------------------------------------------------ signals
 
 def ups_v1(df):
-    """DISPLACE_C up and DELIVERY_SHIFT down known at each bar (turn_trade.ups' two arrays), from the v1
-    chart alone - the same entities as the full parse, about six times faster. Series over 60k bars are
+    """DISPLACE_C up and DELIVERY_SHIFT down known at each bar (turn_trade.ups' two arrays), from MCFL's
+    words alone - the same entities as the full parse, 30-50 times faster. Series over 60k bars are
     parsed in 50k-bar segments with 5k bars of warm-up (as tail_scan)."""
-    from mcfl.parse import parse
+    from mcfl import candles
+    from mcfl.grammar import frames, words
     n = len(df)
     dc, dsd = np.zeros(n, bool), np.zeros(n, bool)
     seg, warm = (50_000, 5_000) if n > 60_000 else (n, 0)
     for s0 in range(0, n, seg):
         a = max(0, s0 - warm)
         sub = df.iloc[a:min(n, s0 + seg)].reset_index(drop=True)
-        for e in parse(sub, v2=False, time=False).entities:
+        T = candles.table(sub)
+        cid, rid = candles.ids(T)
+        # DISPLACE_C and DELIVERY_SHIFT are words: parse() computes them before any grammar, so the
+        # words alone give the same entities (checked against parse on real and walk series) 5-8x faster
+        for e in words(T, cid, rid, fr=frames(T)):
+            if e.type not in ("DISPLACE_C", "DELIVERY_SHIFT"):
+                continue
             k = e.known_at + a
             if not (s0 <= k < min(n, s0 + seg)):
                 continue
