@@ -1,0 +1,64 @@
+{
+  "frozen": "2026-10-05",
+  "question": "Range Break 100 is where every Benjamini-Hochberg survivor of lrc-retest.md (R2, R5s) and the Deriv positives of mean-reversion.md (Bollinger / z-score / Keltner / IBS fades with a structural stop) live. On data those rules were not run on for this test, net of the broker's real spread and swap, do they earn; is what they earn reproduced by a simulator of the published range-break mechanism fitted on discovery data only (so it is the generator's design, not an edge); and does it survive executable fills on the broker's own 1-second ticks, where a break is a single jump tick that a stop cannot be filled inside",
+  "prior": "deriving.md (the range is real and sub-diffusive, the break pays for it to a flat variance ratio), generators.md (breaks at the stated relative rate, memoryless, a fade of 60-tick extremes earns 11% of the spread), lrc-retest.md (9 BH survivors, all RB100: R2 and R5s 15m), mean-reversion.md (RB100 bb/z50 with a structural stop +2.9 to +3.0R, P(>=4R) 0.37-0.42), expansion.md / fuzzy-logic.md / sweeps.md (RB100 positives are bar-fill optimism; coin twins earn as much; a jump-side fill turns them negative), fx-reopen lesson (never trust bar prices at a discontinuity)",
+  "instruments": {
+    "RB100": "Range Break 100 Index, the broker's MT5 bars and ticks (read-only bridge fetch into the lab's rb100/data)",
+    "RB200": "Range Break 200 Index, the second instrument: no rule in this book has been run on it, so all of its history is unseen for these rules"
+  },
+  "data": {
+    "bars": "bridge copy_rates_range: 1h/4h/1d from 2020-04-09 (RB100; RB200 where served), 15m from 2023-11-28 (the bridge's 100,000-bar cap), 1m from 2026-07-28 (characterisation only)",
+    "ticks": "bridge copy_ticks_range, every day the bridge serves (about 2024-10 onward), bid and ask, about one tick a second; held as a per-second bid array (last tick in each second, forward-filled across gaps)",
+    "timeframes": ["15m", "1h", "4h", "1d"]
+  },
+  "periods": {
+    "split_bars": "1h, 4h, 1d: discovery = entry before 2024-01-01, confirmation = on or after (desk convention)",
+    "split_15m_and_ticks": "15m bars and all tick-level work: discovery = before 2025-10-01, confirmation = on or after 2025-10-01 (15m and ticks start in 2023-11 and 2024-10, so the first half is the discovery half)",
+    "note": "the earlier studies ran these rules on RB100 over all of this history (their BH survivors were read on 2024+ 15m); the RB100 confirmation is therefore 'not tuned here' rather than never seen. RB200 is genuinely unseen. Rule parameters are not tuned in this study: all are copied from lrc_rule.json and mr_rule.json"
+  },
+  "rules": {
+    "orientation": "every rule is the long-side code on the chart and on the flipped (negated) chart, as in the source studies",
+    "R2": "lrc_retest.rules_r1_r2, unchanged: LRC(100) slope up at the break bar; break = first close above the most recent confirmed 3/3 swing high; the first confirmed swing low within 20 bars of the break, labelled HL (0.1 ATR tolerance) and within 1 ATR of the broken level; buy at the open of the bar after it is confirmed; stop 0.1 ATR(14) below that low; skip if risk < 0.25 ATR",
+    "R5s": "lrc_retest.levels_r5, unchanged: a BOS or CHoCH level (a broken swing high), armed 20 bars after its break, within the 10 most recent breaks of its type, live 500 bars; the first touch whose bar wicks below the level and closes back above, with LRC(100) slope up; buy the next open; stop 0.1 ATR below that wick; risk >= 0.25 ATR",
+    "lrc_exits": "X2 (a 2R target), TR (a 2-ATR trail behind completed bars' best high), BAND (a limit at the previous bar's upper LRC(100) 2-dev band); cap 100 bars (lrc_retest.exits)",
+    "bb": "mean_reversion.signals: close < SMA20 - 2 sd20 (population), onset bar; exit when close >= SMA20 (at the next open)",
+    "z50": "close < SMA50 - 2 sd50, onset; exit when close >= SMA50",
+    "kelt": "close < EMA20 - 2 ATR10, onset; exit when close >= EMA20",
+    "ibs1": "IBS = (close - low) / (high - low) < 0.2; exit after one bar",
+    "mr_entry_and_exits": "enter at the next bar's open; 'st' = the rule's own exit plus a structural stop 0.1 ATR(14) below the signal bar's low (risk 0.1-10 ATR); 'own' = the own exit with no price stop, R in units of the same stop distance; time stop 20 bars (mean_reversion.sim)"
+  },
+  "fills": {
+    "bar": "as the source studies did (lrc_retest.exits; mean_reversion.sim): OHLC path convention, stops at min(open, stop) less 0.05 ATR slippage, targets at max(open, target). Reported to reproduce the earlier numbers; it cannot see a jump inside a bar",
+    "tick": "executable, on the per-second bid series b(t) with ask = bid + the tick spread: a long is bought at the ask of the first tick of its entry bar and sold at the bid; a short is sold at the bid and bought back at the ask (a short is the long-side replay on b'(t) = -ask(t)). A stop is triggered by the first tick at or through it and filled at that tick's price (on a break that is the jump's landing). A target or band limit fills at the first tick at or through it, at that tick's price. Trail and own-exit decisions are taken at bar closes and executed on the next bar's ticks or open, as on bars. No extra slippage. R = (exit - entry fill) / (bar open - stop), so the denominator is the same as the bar replay's",
+    "tick_coverage": "a trade is tick-replayed when its whole cap window lies inside the tick history; real tick-replayed trades are therefore 2024-10 onward"
+  },
+  "costs": {
+    "spread": "the broker's spread, measured on the ticks: ask - bid = 1.0 price unit on every RB100 and RB200 tick checked (the spec's 10 points x 0.1), charged by construction in the tick replay and as cost_px = 1.0 in the bar replay",
+    "commission": "none: the MT5 spec carries no commission for Deriv synthetics and the bars' spread field equals the tick spread",
+    "swap": "swap_long = swap_short = -30 points (swap_mode 1, points) = 3.0 price units per lot per night; charged 3.0 for every 00:00 UTC rollover a trade is held across, in both replays (primary). Results without swap are also reported",
+    "walks": "on the iid and GARCH walks the spread and swap are scaled by the ratio of the walk's median ATR(14) to the real one's per timeframe (cost in ATR units, desk convention); on the fitted simulator they are the real 1.0 and 3.0 units, since it is in the instrument's own units"
+  },
+  "nulls": {
+    "rbsim": "the fitted range-break simulator, one step a second. A range of integer width W; inside it the price takes +/-1 steps with probability 1/2; on a boundary tick it breaks outward with probability p, else steps inward. A break is a single jump of |J| outward; the new range is drawn with the landing price at its far edge (an up break lands at the new range's top, a down break at its bottom), so the price then reverts toward the old range. W and |J| are drawn iid from their fitted discovery distributions; p is fitted on discovery ticks as breaks per tick at a known boundary (the landing edge). The W distribution is the discovery distribution of exactly-observed widths (ranges that ended by breaking at the far edge from their landing) reweighted by the simulated probability of being so observed. Fitted on discovery ticks only (before 2025-10-01), per instrument, written to rb_sim_params.json and committed before any rule runs on real data",
+    "iid": "an iid Gaussian walk at one step a second, sigma per second matched to the real discovery 1h close-to-close variance / 3600 (the all-bars variance ratio is flat, deriving.md), on the real bar calendar",
+    "garch": "the same with a GARCH(1,1) (0.08, 0.90) variance multiplier of mean 1 drawn per hour",
+    "seeds": "4 paths per null per instrument, each the whole calendar of the real bars; every rule, both fills",
+    "coin_twin": "on the real data: the same entry tick and stop distance on a random side, out at the original's exit time or its own stop, tick fill",
+    "pnr": "P(+N R before -1R), N = 0.5, 1, 2, 4, 10, gross of cost, against 1/(N+1); tick version within 200 bars of the entry, bar version as the source studies (1000 bars LRC, 100 bars MR)"
+  },
+  "primary": {
+    "cell": "RB100, bb, exit 'st', 15m, both sides, confirmation (entry on or after 2025-10-01), TICK fill, net of spread and swap",
+    "why": "the largest RB100 claim in the book (mean-reversion.md: bb with the structural stop +2.89R [2.73, 3.04]), the 'mean reversion inside the range' family, at the timeframe where it was strongest, with the fill that a break jump cannot flatter",
+    "earns": "mean R > 0 with its 90% day-bootstrap interval above 0, and positive in both halves of the confirmation period",
+    "explained_by_generator": "the real minus fitted-simulator difference (same cell, same fill) has a 90% interval (day bootstrap of the real, plus the spread across the 4 simulator paths) that contains 0. If the simulator reproduces it, the result is the generator's published design, not an edge, whatever its sign",
+    "tradeable": "earns, and the bar-fill and tick-fill results agree in sign, and the result holds without the trades whose stop was filled by a break jump being re-priced (i.e. the tick result is the number to trade)"
+  },
+  "secondary": {
+    "cells": "instrument (RB100, RB200) x rule (R2, R5s with X2, TR, BAND; bb, z50, kelt, ibs1 with st, own) x timeframe (15m, 1h, 4h, 1d) x fill (bar, tick) on confirmation, n >= 30",
+    "multiplicity": "Benjamini-Hochberg at q = 0.10 within the tick-fill family and separately within the bar-fill family; one-sided day-bootstrap p of mean <= 0",
+    "pass": "R > 0 with the 90% interval above 0, BH-significant, positive in both halves, above both walks, and above the fitted simulator by more than the simulator's seed spread",
+    "reported": "per cell real / rbsim / iid / garch / twin, P(N R) at N = 1, 2, 4, 10 with 1/(N+1); the discovery period beside the confirmation; Range Break never pooled with any other class"
+  },
+  "characterisation": "on ticks: step sizes, the spread, jumps (|d bid| >= 5), ranges between jumps (width, duration, boundary touches, inward step at a boundary), break direction against the boundary touched, landing position in the new range, jump size against width, p per boundary tick, the martingale check p E|J| against (1 - p) x 1; on 15m/1h/4h/1d bars: range width, duration and break size in ATR(14) and bars, by year 2020-2026 (stability); the variance ratio real against the fitted simulator on both periods",
+  "code": "research/ideas/rb100.py (MODE=char|fit|run|agg|plot), reusing lrc_retest.py and mean_reversion.py unchanged"
+}
