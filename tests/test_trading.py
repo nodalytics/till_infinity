@@ -9888,3 +9888,125 @@ def test_the_opportunity_space_still_sets_its_own_floor_over_the_class_default()
     engine = strategy("opportunity")
     engine._wear(td.strategies.opportunity.Shape(stop=1.0, target=1.0, reward_floor=2.5))
     assert engine.reward_floor == 2.5
+
+
+# ------------------------------------------- the desk's own trend reading
+
+
+def _trend_intent(**over):
+    """An intent on a timeframe, ready for `_read_the_trend`."""
+    fields = {
+        "feed": "gold",
+        "symbol": "XAUUSD",
+        "side": td.Side.BUY,
+        "volume": 0.1,
+        "entry": 4400.0,
+        "stop": 4390.0,
+        "target": 4420.0,
+        "interval": "5m",
+        "features": {},
+    }
+    fields.update(over)
+    return Intent(**fields)
+
+
+def _rising(n=260, step=0.5):
+    return [
+        _candle(10 + step * i, 10.5 + step * i, 9.5 + step * i, 10 + step * i) for i in range(n)
+    ]
+
+
+def test_a_decision_carries_the_desks_own_trend_reading():
+    """The feature function has existed since the channel was added and no
+    caller ever ran it, so nothing in the journal could score its thresholds -
+    and `trend_card` in `_announce_fill` rendered nothing for its whole life."""
+    trader = _with_bars(_rising())
+    trader._vol_bps["gold"] = 10.0
+    intent = _trend_intent()
+    asyncio.run(trader._read_the_trend(intent))
+
+    assert intent.features["regression_span"] == 100.0
+    assert intent.features["regression_r2"] == pytest.approx(1.0)
+    assert intent.features["regression_correlation"] == pytest.approx(1.0)
+    assert intent.features["regression_slope_vol"] > 0
+    # Every reference length, the other two suffixed with their own span.
+    assert intent.features["regression_span_50"] == 50.0
+    assert intent.features["regression_span_200"] == 200.0
+
+
+def test_the_trend_is_quoted_in_the_same_unit_as_the_stop():
+    """`features` falls back to its own ATR when it is given no unit, and an
+    ATR-scaled slope is not comparable with a volatility-unit stop. Two numbers
+    on one decision that look like the same unit and are not is the kind of
+    thing this repository keeps finding years later."""
+    trader = _with_bars(_rising())
+    trader._vol_bps["gold"] = 10.0
+    intent = _trend_intent()
+    asyncio.run(trader._read_the_trend(intent))
+    # One unit is 10bps of 4400, so $4.40. The line climbs 0.5 a bar.
+    unit = price_distance(4400.0, 10.0, 1.0)
+    assert intent.features["regression_slope_vol"] == pytest.approx(0.5 / unit)
+
+
+def test_a_broker_with_no_bars_leaves_the_trend_absent_rather_than_zero():
+    """Zeroes written on every decision read, later, as a measurement."""
+    trader = _with_bars([])
+    trader._vol_bps["gold"] = 10.0
+    intent = _trend_intent()
+    asyncio.run(trader._read_the_trend(intent))
+    assert not [k for k in intent.features if k.startswith("regression_")]
+
+
+def test_a_broker_that_raises_does_not_take_the_decision_with_it():
+    class _Angry:
+        async def bars(self, *_a, **_k):
+            raise RuntimeError("no bars today")
+
+    trader = _with_bars([])
+    trader.paper = _Angry()
+    trader._vol_bps["gold"] = 10.0
+    intent = _trend_intent()
+    asyncio.run(trader._read_the_trend(intent))
+    assert not [k for k in intent.features if k.startswith("regression_")]
+
+
+def test_an_intent_with_no_timeframe_asks_for_no_bars():
+    asked = []
+
+    class _Counting:
+        async def bars(self, *a, **k):
+            asked.append((a, k))
+            return []
+
+    trader = _with_bars([])
+    trader.paper = _Counting()
+    asyncio.run(trader._read_the_trend(_trend_intent(interval="")))
+    assert asked == []
+
+
+def test_the_trend_card_renders_once_something_publishes_the_fit():
+    """The card was written against features nothing produced. This is the
+    line it was always meant to print."""
+    from till_infinity.trading.regression import card_line
+
+    trader = _with_bars(_rising())
+    trader._vol_bps["gold"] = 10.0
+    intent = _trend_intent()
+    assert card_line(intent.features) == [], "nothing published yet"
+    asyncio.run(trader._read_the_trend(intent))
+    got = card_line(intent.features)
+    assert len(got) == 1
+    assert "trend" in got[0]
+    assert "r²" in got[0]
+    assert "over 100" in got[0]
+
+
+def test_a_feed_with_no_volatility_unit_publishes_nothing_rather_than_another_scale():
+    """`features` falls back to its own ATR without a unit, which is a good
+    number in a different scale. Publishing it under the same keys would put one
+    journal column in two units, and both readings would look fine."""
+    trader = _with_bars(_rising())
+    # Deliberately not setting `_vol_bps`, which is a feed nothing has quoted.
+    intent = _trend_intent()
+    asyncio.run(trader._read_the_trend(intent))
+    assert not [k for k in intent.features if k.startswith("regression_")]

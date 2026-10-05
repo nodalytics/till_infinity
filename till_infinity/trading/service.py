@@ -67,7 +67,9 @@ from .context import Context
 from .manage import Move, Take
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
+from .regression import SPANS as TREND_SPANS
 from .regression import card_line as trend_card
+from .regression import features_across as trend_features
 from .risk import Guard
 from .sessions import Sessions
 from .shadow import ShadowGates
@@ -2577,6 +2579,10 @@ class Trader:
             key = f"{by}:already_open"
             self.passed_over[key] = self.passed_over.get(key, 0) + 1
             return Refusal("already_open", f"{by} already holds {intent.feed}", intent.feed)
+        # **Published, not consulted.** The fit gates nothing; it is written
+        # onto the decision so the thresholds can be scored against outcomes
+        # instead of argued about. See `trading/regression.py`.
+        await self._read_the_trend(intent)
         ref = await self._record_intent(intent, by)
 
         if not self.settings.live:
@@ -4366,6 +4372,58 @@ class Trader:
             )
 
     # ---------------------------------------------------------------- record
+
+    async def _read_the_trend(self, intent: Intent) -> None:
+        """Fit the regression channel on this intent's own timeframe and write
+        it onto the features, where the journal will pick it up.
+
+        **This is the desk's own trend reading and not `structures`'.** The
+        three movement numbers already on a decision - `speeds`, `efficiency`,
+        `momentum_agree` - all answer "is something happening". None of them
+        answers "is price on a line, and which way does the line point", and
+        strategies have been reading them as though they did.
+
+        It decides nothing. `regression.py` says why: the thresholds have never
+        been scored against outcomes, and the way to settle that is to publish
+        `regression_slope_vol` and `regression_r2` on every decision and read
+        the record later. Until these are in the journal there is nothing to
+        score, which is the state this fixes - the feature function has existed
+        since PR #60 and no caller ever ran it, so `trend_card` in
+        `_announce_fill` has rendered nothing for its whole life.
+
+        A broker that cannot serve the bars leaves the features absent rather
+        than zeroed, for the reason `features` returns `{}` rather than NaNs: a
+        dict of zeros written on every decision reads, later, as a measurement.
+        """
+        if not intent.interval:
+            return
+        # The longest reference window plus the acceleration's own lookback,
+        # which `features` takes as a quarter of the span when it is not told.
+        want = max(TREND_SPANS) + max(TREND_SPANS) // 4
+        try:
+            bars = await self.execution.bars(intent.symbol, intent.interval, count=want)
+        except Exception as exc:
+            log.debug("trading: no bars for a trend on %s: %s", intent.feed, exc)
+            return
+        if not bars:
+            return
+        # The same volatility unit every distance on this decision is quoted
+        # in, so a slope is comparable with a stop.
+        #
+        # **And nothing when that unit is unknown.** `features` falls back to
+        # its own ATR when it is given no scale, which is a perfectly good
+        # number and a *different* one - so a feed whose volatility has not
+        # been seen yet would publish ATR-scaled slopes under the same keys as
+        # everything else, and the journal would hold one column in two units.
+        # That is the failure this desk has found in its own record more than
+        # once, and it is invisible precisely because both numbers look fine.
+        unit = price_distance(intent.entry, self._vol_bps.get(intent.feed, 0.0), 1.0)
+        if not unit > 0:
+            log.debug("trading: no volatility unit for a trend on %s", intent.feed)
+            return
+        got = trend_features(bars, unit=unit)
+        if got:
+            intent.features.update(got)
 
     async def _record_intent(self, intent: Intent, by: str) -> str:
         return await decide(
