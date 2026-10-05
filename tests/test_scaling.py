@@ -1193,26 +1193,47 @@ def test_the_floor_actually_bites_on_an_alert_shaped_payload():
 
 
 def test_every_swing_analyses_slow_and_enters_fast():
-    """Asked for on 2026-09-03: analysis on 1h-4h, entry below the hour, the
-    exit horizon at an hour or more. It is what `swing-level` already argued
-    for - the slow frame says *whether*, the fast one says *when* - and it was
-    only true of the context, never of the entries."""
+    """Asked for on 2026-09-03: analysis on the slow frames, entry on the fast
+    ones, the exit horizon at an hour or more. It is what `swing-level` already
+    argued for - the slow frame says *whether*, the fast one says *when* - and
+    it was only true of the context, never of the entries.
+
+    Written as the literal tuples, which made the two impossible to move
+    together: `fade-to-value` was asked for a 1h entry on 2026-10-05, and a 1h
+    entry is only coherent if its context starts at 2h. So the claim here is
+    now the **relation** - every entry strictly faster than the fastest context
+    frame - which is what "slow says whether, fast says when" actually means,
+    and which the old literal only happened to satisfy.
+    """
     import till_infinity.trading as td
+    from till_infinity.structures.levels import SECONDS
     from till_infinity.trading.config import Settings
 
     made = Settings()
+    #: Allowed to enter at or above the hour. Named rather than skipped, so a
+    #: second strategy widening that far trips this test and has to argue for
+    #: it: 1h entries are the slowest band `swing` has, and the measurement
+    #: behind the one exception is in research/docs/lrc-retest.md.
+    at_the_hour = {"fade-to-value"}
     for name, cls in td.STRATEGIES.items():
         if cls.style != "swing":
             continue
         engine = cls(made)
-        # Widened below 15m on 2026-09-22 - see research/break-trade.md - and
-        # still stopping short of the hour, which is where `context` begins.
-        assert engine.entries == ("1m", "3m", "5m", "15m", "30m"), name
-        assert engine.context == ("1h", "2h", "4h"), name
-        # Nothing enters at or above the hour.
-        assert all(iv in ("1m", "3m", "5m", "15m", "30m") for iv in engine.entries), name
-        # And the exit horizon stays at an hour or more.
-        assert engine.hold_for("15m") >= 3600.0, name
+        assert engine.entries, name
+        assert engine.context, name
+        slowest_entry = max(SECONDS[iv] for iv in engine.entries)
+        fastest_context = min(SECONDS[iv] for iv in engine.context)
+        assert slowest_entry < fastest_context, name
+        # Widened below 15m on 2026-09-22 - see research/break-trade.md.
+        assert "15m" in engine.entries, name
+        if name not in at_the_hour:
+            assert slowest_entry < SECONDS["1h"], name
+            assert engine.entries == ("1m", "3m", "5m", "15m", "30m"), name
+            assert engine.context == ("1h", "2h", "4h"), name
+        # And the exit horizon stays at an hour or more, on every frame it
+        # enters on - not just the one the old test happened to sample.
+        for interval in engine.entries:
+            assert engine.hold_for(interval) >= 3600.0, f"{name} on {interval}"
 
 
 # ------------------------------- the trail-only exit, beside the target one

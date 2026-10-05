@@ -874,7 +874,7 @@ class FadeToValue(LevelStrategy):
     #: has already happened. See `Strategy.momentum_leads`.
     momentum_leads: ClassVar[bool] = True
 
-    #: **Analysis on 1h-4h.** Where the level is judged, not where it is
+    #: **Analysis on 2h-4h.** Where the level is judged, not where it is
     #: triggered. Asked for on 2026-09-03, and it is what this file already
     #: argued for: the slow frame says *whether* a price is worth trading and
     #: the fast one says *when*.
@@ -884,9 +884,14 @@ class FadeToValue(LevelStrategy):
     #: a day agrees with is not more tradable than one 4h agrees with - the
     #: break rate flattens past 30m (2.8% at 30m, 1.4% at 1h, 0.0% at 2h, 4.3%
     #: at 4h) rather than continuing to fall.
-    context: ClassVar[tuple[str, ...]] = ("1h", "2h", "4h")
+    #:
+    #: **1h left this set on 2026-10-04**, when 1h became an entry. That is the
+    #: swing contract at the top of this class restored rather than loosened -
+    #: "entry on 1h; 2h, 4h ... are compulsory context" - and of the three, 1h
+    #: is the one the break rates just quoted argue least for keeping.
+    context: ClassVar[tuple[str, ...]] = ("2h", "4h")
 
-    #: **Entry below the hour.** The trigger fixes the stop, and a stop
+    #: **Entry at the hour and below.** The trigger fixes the stop, and a stop
     #: measured on 15m is a fraction of one measured on 4h for the identical
     #: idea - that is risk reduction, not a different trade.
     #:
@@ -910,12 +915,23 @@ class FadeToValue(LevelStrategy):
     #: `Settings.interval_weight`, which carries the measured default that
     #: makes this widening survivable.
     #:
-    #: **It stops at 30m, not 1h**, though the desk's band is 1m-1h. The
-    #: trigger has to sit strictly below every timeframe that judges it and
-    #: `context` starts at 1h, so a 1h entry would collapse the gap that makes
-    #: this a swing at all. The 1h end of the band is `cycle-turn`, which
-    #: already enters there and carries no 1h context.
-    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m")
+    #: **Extended to 1h on 2026-10-04**, on the desk's instruction, which
+    #: completes the 1m-1h band this strategy has always been described as
+    #: trading.
+    #:
+    #: It stopped at 30m before, and that reason was real rather than cautious:
+    #: the trigger has to sit strictly below every timeframe that *judges* it,
+    #: and `context` began at 1h, so a 1h entry would have been judged by its
+    #: own bar. The gap between "whether" and "when" that makes this a swing
+    #: rather than a scalp would have closed.
+    #:
+    #: **So the gap is kept from the other side:** `context` now starts at 2h.
+    #: 1h was the weakest of those three by the measurement already recorded
+    #: above - the break rate flattens past 30m (2.8% at 30m, 1.4% at 1h, 0.0%
+    #: at 2h, 4.3% at 4h) - so dropping it costs less than dropping either of
+    #: the others. The alternative, keeping 1h as context and letting a 1h
+    #: entry be its own judge, is the one thing that rule exists to prevent.
+    entries: ClassVar[tuple[str, ...]] = ("1m", "3m", "5m", "15m", "30m", "1h")
     needs_context: ClassVar[bool] = True
 
     #: The rejection has to show on 4h. A pin bar there is a claim that several
