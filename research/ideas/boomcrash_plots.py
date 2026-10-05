@@ -92,7 +92,7 @@ def fig_mtf(rep):
     for i, s in enumerate(cc["share"]):
         ax.annotate(f"{100 * s:.0f}%", (i, 0), xycoords=("data", "axes fraction"), xytext=(0, 3),
                     textcoords="offset points", ha="center", fontsize=7, color=MUTED)
-    ax.set_xlabel("timeframes of 1m 5m 15m 1h 4h 1d aligned with the spike (share of time at the foot)")
+    ax.set_xlabel("aligned timeframes of six (share of time at the foot)")
     ax.set_ylabel("spike hazard, observed / expected")
     ax.set_title("Alignment count, six indices pooled", fontsize=9)
     ax.legend(fontsize=7, frameon=False)
@@ -155,7 +155,7 @@ def fig_mech(rep):
     ax.axhline(1, color=INK, lw=0.6)
     ax.set_xticks(x, TFS)
     ax.set_ylabel("aligned / counter hazard, pooled")
-    ax.set_title("Trend because of spikes: the mechanical relation appears only with look-ahead", fontsize=9)
+    ax.set_title("Causal reading (the study) against a look-ahead reading that contains the spike", fontsize=9)
     ax.legend(fontsize=7, frameon=False)
     save(fig, "mechanical.png")
 

@@ -90,16 +90,18 @@ def warm_bars(sym, tf):
 # ------------------------------------------------------------------------------------------- mechanics
 
 def theta_of(bid, ms, s, disc_end_ms):
-    d = np.diff(bid)
+    d = np.diff(np.log(bid))
     ok = (np.diff(ms) <= OUTAGE_MS) & (ms[1:] < disc_end_ms)
     g = np.abs(d[ok & (s * d <= 0)])
     return 3.0 * float(np.quantile(g, 0.999))
 
 
 def detect(ms, bid, s, theta):
-    """Spike events on ticks. Returns (first tick, last tick, size J > 0) per event, the ex-spike bid,
-    the count of sub-threshold spike-side moves and the outage mask (moves across a > 60 s hole)."""
-    d = np.diff(bid)
+    """Spike events on ticks, in log-price units (the indices are multiplicative: Boom 300 went from 715
+    to 4,359 and back to 1,055 in the sample, and its grind and spikes scaled with it). Returns (first
+    tick, last tick, log size J > 0) per event, the ex-spike bid, the count of sub-threshold spike-side
+    moves and the outage mask (moves across a > 60 s hole)."""
+    d = np.diff(np.log(bid))
     outage = np.diff(ms) > OUTAGE_MS
     sp = (s * d > theta) & ~outage
     sub = int(((s * d > 0) & (s * d <= theta) & ~outage).sum())
@@ -109,12 +111,12 @@ def detect(ms, bid, s, theta):
         st = np.flatnonzero(new)
         en = np.r_[st[1:], len(t)] - 1
         first, last = t[st], t[en]
-        J = s * (bid[last] - bid[first - 1])
+        J = s * (np.log(bid[last]) - np.log(bid[first - 1]))
     else:
         first = last = np.zeros(0, np.int64)
         J = np.zeros(0)
     inc = np.where(sp | outage, 0.0, d)
-    ex = bid[0] + np.r_[0.0, np.cumsum(inc)]
+    ex = bid[0] * np.exp(np.r_[0.0, np.cumsum(inc)])
     return first, last, J, ex, sub, outage
 
 
@@ -192,7 +194,7 @@ def terc(x, disc, k=3):
 def fit_null(ms, bid, s, first, last, J, outage, disc_end_ms, rng):
     n_disc = int(np.searchsorted(ms, disc_end_ms))
     k = first < n_disc
-    d = np.diff(bid[:n_disc])
+    d = np.diff(np.log(bid[:n_disc]))
     is_sp = np.zeros(len(d), bool)
     for a, b in zip(first[k], last[k]):
         is_sp[a - 1:b] = True
@@ -224,7 +226,7 @@ def simulate(ms, start_px, par, s, seed, feedback=False, warm=None):
         px = start_px
         for a in range(0, n, 5_000_000):
             d = sim_steps(min(5_000_000, n - a), par, s, rng)
-            bid[a:a + len(d)] = px + np.cumsum(d)
+            bid[a:a + len(d)] = px * np.exp(np.cumsum(d))
             px = bid[a + len(d) - 1]
         return bid
     closes = list(warm[:, 4]) if warm is not None and len(warm) else []
@@ -242,7 +244,7 @@ def simulate(ms, start_px, par, s, seed, feedback=False, warm=None):
                 # the control changes the hazard without making the trend feed itself
                 p, js = par["p"] * CTRL_MULT, 1.0 / CTRL_MULT
         d = sim_steps(b - a, par, s, rng, p, js)
-        bid[a:b] = px + np.cumsum(d)
+        bid[a:b] = px * np.exp(np.cumsum(d))
         px = bid[b - 1]
         closes.append(px)
     return bid
@@ -255,7 +257,7 @@ def sim_warm(ms0, start_px, par, s, seed):
     n = WARM_DAYS * 86400 * 1000 // step
     ms = ms0 - step * np.arange(n, 0, -1)
     d = sim_steps(n, par, s, rng)
-    bid = start_px - d.sum() + np.cumsum(d)        # ends next to the real start price
+    bid = start_px * np.exp(np.cumsum(d) - d.sum())   # ends next to the real start price
     return ms, bid
 
 
@@ -354,7 +356,7 @@ def analyse(sl, ms, bid, ask, theta, meta, warm1m=None, warm_bridge=None, by_day
     spk_m = np.bincount(sp_min, minlength=nm).astype(float)
     hit_m = (spk_m > 0).astype(float)
     big = (sizerel > 2).astype(float)
-    satr = J / atr1h[sp_min]
+    satr = (bid[last] - bid[first - 1]) * s / atr1h[sp_min]
     unit = day_m if by_day else (~disc_m).astype(np.int64)
     nu = ndays if by_day else 2
     unit_sp = unit[sp_min]
@@ -507,9 +509,12 @@ def meta_info():
     for sym in SYMS:
         fs = [f for f in sorted((DATA / "ticks" / slug(sym)).glob("*.npz")) if f.stat().st_size > 50_000]
         days = [int(np.datetime64(f.stem, "D").astype(np.int64)) for f in fs]
-        spans[slug(sym)] = (min(days), max(days))
+        if days:
+            spans[slug(sym)] = (min(days), max(days))
     day0 = max(v[0] for v in spans.values())
     day_end = min(v[1] for v in spans.values())
+    if os.environ.get("META_DAYS"):          # the span fixed in advance, so indices can run as their fetch completes
+        day0, day_end = (int(x) for x in os.environ["META_DAYS"].split(","))
     split_day = int(round((day0 + day_end + 1) / 2))
     info = json.loads((DATA / "info.json").read_text())
     swap = {slug(k): float(v.get("swap_long", 0.0)) for k, v in info.items()}
@@ -633,19 +638,24 @@ def walk_trades(sym):
     return f"walks {sl}"
 
 
+def only():
+    o = os.environ.get("ONLY")
+    return [s for s in SYMS if not o or slug(s) in o.split(",")]
+
+
 def run_prep():
     meta_info()
     with ProcessPoolExecutor(min(WORKERS, 6)) as ex:
-        for r in ex.map(prep_one, SYMS):
+        for r in ex.map(prep_one, only()):
             print(r, flush=True)
 
 
 def run_sim():
-    jobs = [(sym, "null", k) for k in range(N_NULL) for sym in SYMS] + [(sym, "ctrl", k) for k in range(N_CTRL) for sym in SYMS]
+    jobs = [(sym, "null", k) for k in range(N_NULL) for sym in only()] + [(sym, "ctrl", k) for k in range(N_CTRL) for sym in only()]
     with ProcessPoolExecutor(WORKERS) as ex:
         for r in ex.map(sim_one, jobs):
             print(r, flush=True)
-        for r in ex.map(walk_trades, SYMS):
+        for r in ex.map(walk_trades, only()):
             print(r, flush=True)
 
 
