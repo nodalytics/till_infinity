@@ -149,30 +149,28 @@ def finding(
     return Card(k, _payload(title, _body(*lines), fields), spec, meta)
 
 
-def mirror(alt: str, bars: Bars, signal_at: int, btc: float | None) -> Card:
-    """M1: an alt's daily signal, traded on BTC. The alt is machine-side only."""
-    bar_ts = int(bars.ts[signal_at])
-    k = key("M1", "BTC", "1d", bar_ts, alt)
+def mirror_day(day_ts: int, count: int, broad: bool, btc: float | None) -> Card:
+    """The market mirror's one card for a daily close: BTC long, M1 and B together.
+
+    The alts behind it stay machine-side; the card carries their number only.
+    """
+    k = key("M1", "BTC", "1d", day_ts)
     fields = _routing("BTC", "1d", k, side=1, shape="pattern")
     entry = "next daily open" + (f" (last close {px(btc)})" if btc is not None else "")
-    fields.update({"Entry ref": entry, "Bar": when(bar_ts)})
+    fields.update(
+        {
+            "Entry ref": entry,
+            "Breadth": f"{count}" + (" · wide" if broad else ""),
+            "Bar": when(day_ts),
+        }
+    )
     tier = registry.tier("M1", "1d", "crypto")
-    proof = registry.evidence("M1", "1d", "crypto").text
-    meta = {"pattern": "M1", "trigger": alt, "evidence": proof}
+    meta = {
+        "pattern": "M1+B" if broad else "M1",
+        "signals": count,
+        "evidence": registry.evidence("M1", "1d", "crypto").text,
+    }
     title = f"BTC 1d · {registry.label('M1', 1)} · long"
-    return Card(k, _payload(title, _body(f"{tier} · {FOLLOWS}"), fields), None, meta)
-
-
-def breadth(bar_ts: int, coins: list[str], btc: float | None) -> Card:
-    """B: several alts signalled on one daily close. The alts are machine-side only."""
-    k = key("B", "BTC", "1d", bar_ts)
-    fields = _routing("BTC", "1d", k, side=1, shape="pattern")
-    entry = "next daily open" + (f" (last close {px(btc)})" if btc is not None else "")
-    fields.update({"Entry ref": entry, "Bar": when(bar_ts)})
-    tier = registry.tier("B", "1d", "crypto")
-    proof = registry.evidence("B", "1d", "crypto").text
-    meta = {"pattern": "B", "alts": sorted(coins), "evidence": proof}
-    title = f"BTC 1d · {registry.label('B', 1)} · long"
     return Card(k, _payload(title, _body(f"{tier} · {FOLLOWS}"), fields), None, meta)
 
 
@@ -221,24 +219,21 @@ def exited(
 
 
 def mirror_exited(
-    alt: str, m1_key: str, entry_ref: float | None, btc: float | None, bar_ts: int, how: str
+    day_ts: int, day_key: str, mean_bps: float | None, count: int, bar_ts: int
 ) -> Card:
-    """M1's exit: the BTC position closes at the next open."""
-    k = key("M1:exit", "BTC", "1d", bar_ts, m1_key)
-    bps = (btc / entry_ref - 1) * 1e4 - 7.0 if entry_ref and btc else None
-    result = f"{bps:+.0f} bps net (at the next open; marked here)" if bps is not None else "n/a"
-    opened = f"the BTC 1d alert (ref {_ref(m1_key)})"
-    meta = {"pattern": "M1", "trigger": alt, "reason": how}
-    return _exit_card("BTC", "1d", k, result, opened, bar_ts, meta)
+    """The daily mirror card's exit: the last of its trades has ended.
 
-
-def breadth_exited(signal_ts: int, entry_ref: float | None, btc: float | None, bar_ts: int) -> Card:
-    k = key("B:exit", "BTC", "1d", bar_ts, signal_ts)
-    bps = (btc / entry_ref - 1) * 1e4 - 7.0 if entry_ref and btc else None
-    result = f"{bps:+.0f} bps net (at the next open; marked here)" if bps is not None else "n/a"
-    ref = _ref(key("B", "BTC", "1d", signal_ts))
-    opened = f"the BTC 1d alert of {when(signal_ts)} (ref {ref})"
-    return _exit_card("BTC", "1d", k, result, opened, bar_ts, {"pattern": "B"})
+    The result is the mean over the day's signals - M1's per-signal mean, so the
+    paper record compares with the research - marked at this BTC close.
+    """
+    k = key("M1:exit", "BTC", "1d", bar_ts, day_ts)
+    result = (
+        f"{mean_bps:+.0f} bps net, mean of {count} (marked at this close)"
+        if mean_bps is not None
+        else f"no BTC reference, mean of {count}"
+    )
+    opened = f"the BTC 1d alert of {when(day_ts)} (ref {_ref(day_key)})"
+    return _exit_card("BTC", "1d", k, result, opened, bar_ts, {"pattern": "M1", "day": day_ts})
 
 
 def _payload(title: str, body: str, fields: dict) -> dict:

@@ -121,3 +121,15 @@ def test_no_matplotlib_means_no_picture_and_no_error(monkeypatch):
     assert ch.render(spec) is None
     assert ch.render(spec) is None
     assert ch._said == {"import"}
+
+
+def test_the_market_card_is_text_only():
+    """The BTC daily card has no chart: its trigger is not shown."""
+    day = 1_788_134_400  # 2026-08-31 00:00 UTC
+    card = cards.mirror_day(day, 7, True, 108_250.0)
+    shut = cards.mirror_exited(day, card.key, 186.0, 7, day + 6 * 86_400)
+    assert card.chart is None
+    assert shut.chart is None
+    if os.environ.get("MCFL_WRITE_EXAMPLES"):
+        EXAMPLES.mkdir(parents=True, exist_ok=True)
+        (EXAMPLES / "market_mirror.txt").write_text(_text(card) + "\n" + _text(shut))

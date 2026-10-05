@@ -381,7 +381,9 @@ wins over it.
 ## Pattern alerts (mcfl)
 
 Alert-only: publishes cards to `alerts`, never reaches `trading`. Off unless `MCFL_ENABLED=1`.
-Example cards: `docs/img/mcfl/`.
+Example cards: `docs/img/mcfl/`. The market mirror (`M1`, with `B` folded in) sends one BTC card
+per daily close however many alts signal, and one exit card when the last of that day's trades ends,
+so it cannot fill the hourly notification cap.
 
 | Variable | Default | What it does | Change |
 |---|---|---|---|

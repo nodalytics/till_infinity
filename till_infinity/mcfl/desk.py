@@ -49,6 +49,8 @@ FRESH_MIN = 600.0
 BREADTH_MIN = 3
 #: Days the breadth position is held.
 HOLD_B = 5
+#: Round-trip cost of the BTC position, in bps (the research's 7).
+FEE_BPS = 7.0
 DAY = 86_400
 
 #: Patterns that open the frozen trade (and so have exits).
@@ -76,6 +78,9 @@ class Desk:
     def __init__(self, settings: Settings, state: State | None = None) -> None:
         self.settings = settings
         self.state = state or State()
+        #: Set by the service during a pass over the alt universe, so the
+        #: day's mirror card waits for the whole close (`flush`).
+        self.hold_mirror = False
 
     # ------------------------------------------------------------- the loop
 
@@ -106,10 +111,12 @@ class Desk:
             quiet = not fresh or closed <= quiet_before
             out += self._step(series, window, quiet)
             if series.timeframe == "1d" and series.symbol == TARGET:
-                out += self._btc_day(window, quiet)
+                self._btc_day(window)
             if not quiet:
                 out += self._findings(series, window)
             self.state.last[series.id] = int(bars.ts[i])
+        if not self.hold_mirror:
+            out += self.flush()
         return out
 
     # ----------------------------------------------------------- the trades
@@ -162,49 +169,63 @@ class Desk:
         return [c for c in out if self._fresh_key(c)]
 
     def _close_mirrors(self, trade_key: str, ts: int, done: Exit, quiet: bool) -> list[cards.Card]:
+        """Record one alt trade's exit in its day; the day's exit card goes out
+        when the last of its trades has exited."""
         out = []
-        for mk, m in list(self.state.mirrors.items()):
-            if m["alt_trade"] != trade_key:
+        btc = self.state.btc.get("close")
+        for day, d in list(self.state.mirrors.items()):
+            sig = d["signals"].get(trade_key)
+            if sig is None or not sig["open"]:
                 continue
-            del self.state.mirrors[mk]
-            if quiet:
+            ref = d.get("entry_ref")
+            sig.update(
+                open=False,
+                reason=done.reason,
+                r=done.r,
+                bps=(btc / ref - 1) * 1e4 - FEE_BPS if ref and btc else None,
+            )
+            # Per signal, machine-side: M1 stays scorable exactly as research scores it.
+            log.info(
+                "mcfl: M1 %s on day %s exited %s, BTC %s bps",
+                sig["alt"],
+                day,
+                done.reason,
+                "n/a" if sig["bps"] is None else f"{sig['bps']:+.1f}",
+            )
+            if any(x["open"] for x in d["signals"].values()):
                 continue
-            how = {"stop": "its stop", "shift": "an opposite CISD", "time": "ten days"}.get(
-                done.reason, done.reason
-            )
-            out.append(
-                cards.mirror_exited(
-                    m["alt"], mk, m.get("entry_ref"), self.state.btc.get("close"), ts, how
-                )
-            )
+            del self.state.mirrors[day]
+            if quiet or not d.get("sent"):
+                continue
+            scored = [x["bps"] for x in d["signals"].values() if x["bps"] is not None]
+            mean = sum(scored) / len(scored) if scored else None
+            out.append(cards.mirror_exited(int(day), d["card"], mean, len(d["signals"]), ts))
         return out
 
-    def _btc_day(self, window: Bars, quiet: bool) -> list[cards.Card]:
-        """BTC's daily close: the mirror's reference prices and the breadth exits."""
+    def _btc_day(self, window: Bars) -> None:
+        """BTC's daily close: the mirror's entry references, and B scored machine-side."""
         last = len(window) - 1
         ts = int(window.ts[last])
-        self.state.btc = {
-            "ts": ts,
-            "open": float(window.open[last]),
-            "close": float(window.close[last]),
-        }
+        close = float(window.close[last])
+        self.state.btc = {"ts": ts, "open": float(window.open[last]), "close": close}
         for book in (self.state.mirrors, self.state.holds):
             for m in book.values():
                 if m.get("entry_ref") is None and ts == m["signal_ts"] + DAY:
                     m["entry_ref"] = float(window.open[last])
-        out = []
+        # B is folded into the daily card; its 5-day hold is still scored, in
+        # the log, so the paper record stays comparable to the research.
         for hk, h in list(self.state.holds.items()):
             if ts < h["signal_ts"] + HOLD_B * DAY:
                 continue
             del self.state.holds[hk]
-            if quiet or ts > h["signal_ts"] + HOLD_B * DAY:
-                continue
-            out.append(
-                cards.breadth_exited(
-                    h["signal_ts"], h.get("entry_ref"), float(window.close[last]), ts
-                )
+            ref = h.get("entry_ref")
+            bps = (close / ref - 1) * 1e4 - FEE_BPS if ref else None
+            log.info(
+                "mcfl: B of %s held %d days: %s bps",
+                hk,
+                HOLD_B,
+                "n/a" if bps is None else f"{bps:+.1f}",
             )
-        return [c for c in out if self._fresh_key(c)]
 
     # ---------------------------------------------------------- the findings
 
@@ -264,36 +285,47 @@ class Desk:
         }
 
     def _mirror(self, k: str, f: Finding, series: Series, window: Bars) -> list[cards.Card]:
-        """M1 and B: an alt's daily long signal, traded on BTC."""
+        """M1 and B: an alt's daily long signal joins its day. The day's one card
+        goes out at `flush`, once every alt of that close has been read."""
         if not (
             f.side > 0
             and series.timeframe == "1d"
             and series.klass == "crypto"
             and series.symbol != TARGET
+            and any(p in self.settings.patterns for p in ("M1", "B"))
         ):
             return []
         bar_ts = int(window.ts[f.at])
-        btc = self.state.btc.get("close") if self.state.btc.get("ts") == bar_ts else None
+        day = self.state.mirrors.setdefault(
+            str(bar_ts),
+            {"signal_ts": bar_ts, "signals": {}, "entry_ref": None, "sent": False, "card": ""},
+        )
+        if k not in day["signals"]:
+            day["signals"][k] = {"alt": series.symbol, "open": True, "bps": None, "r": None}
+            log.info("mcfl: M1 signal %s on day %s", series.symbol, bar_ts)
+        return []
+
+    def flush(self) -> list[cards.Card]:
+        """One BTC card per daily close with unsent signals - M1 and B together.
+
+        Called after a pass over the alt universe, so a day's count is the
+        whole close; a signal arriving later joins the day's exit but not its
+        card.
+        """
         out = []
-        if "M1" in self.settings.patterns:
-            card = cards.mirror(series.symbol, window, f.at, btc)
-            if not self.state.seen(card.key):
-                self.state.mark(card.key)
-                self.state.mirrors[card.key] = {
-                    "alt": series.symbol,
-                    "alt_trade": k,
-                    "signal_ts": bar_ts,
-                    "entry_ref": None,
-                }
-                out.append(card)
-        day = self.state.breadth.setdefault(str(bar_ts), [])
-        if series.symbol not in day:
-            day.append(series.symbol)
-        if "B" in self.settings.patterns and len(day) >= BREADTH_MIN:
-            card = cards.breadth(bar_ts, day, btc)
-            if not self.state.seen(card.key):
-                self.state.mark(card.key)
-                self.state.holds[card.key] = {"signal_ts": bar_ts, "entry_ref": None}
+        for day, d in sorted(self.state.mirrors.items()):
+            if d["sent"]:
+                continue
+            n = len(d["signals"])
+            broad = n >= BREADTH_MIN and "B" in self.settings.patterns
+            if "M1" not in self.settings.patterns and not broad:
+                continue
+            btc = self.state.btc.get("close") if self.state.btc.get("ts") == int(day) else None
+            card = cards.mirror_day(int(day), n, broad, btc)
+            d["sent"], d["card"] = True, card.key
+            if broad:
+                self.state.holds[card.key] = {"signal_ts": int(day), "entry_ref": None}
+            if self._fresh_key(card):
                 out.append(card)
         return out
 

@@ -11,8 +11,9 @@ did or did not go out:
   two sources carrying one coin produce one alert.
 * `trades` - the frozen trades still open, so their exits are alerted after a
   restart exactly as they would have been without one.
-* the market mirror's bookkeeping: open M1 and B positions, the alts that
-  signalled on each daily close, and BTC's last daily close for reference.
+* the market mirror's bookkeeping: per daily close, the alt trades behind its
+  one BTC card (each kept so M1 is scored per signal), the B holds, and BTC's
+  last daily close for reference.
 
 Written atomically (a temp file, then a rename), so a process killed mid-save
 leaves the previous state rather than half of one.
@@ -40,7 +41,6 @@ class State:
     sent: deque[str] = field(default_factory=lambda: deque(maxlen=SENT_MEMORY))
     trades: dict[str, dict] = field(default_factory=dict)
     mirrors: dict[str, dict] = field(default_factory=dict)
-    breadth: dict[str, list[str]] = field(default_factory=dict)
     holds: dict[str, dict] = field(default_factory=dict)
     btc: dict[str, float] = field(default_factory=dict)
     adopted: dict[str, str] = field(default_factory=dict)
@@ -64,7 +64,6 @@ class State:
             "sent": list(self.sent),
             "trades": self.trades,
             "mirrors": self.mirrors,
-            "breadth": self.breadth,
             "holds": self.holds,
             "btc": self.btc,
             "adopted": self.adopted,
@@ -77,16 +76,16 @@ class State:
             sent=deque((str(x) for x in raw.get("sent") or ()), maxlen=SENT_MEMORY),
             trades=dict(raw.get("trades") or {}),
             mirrors=dict(raw.get("mirrors") or {}),
-            breadth={str(k): list(v) for k, v in (raw.get("breadth") or {}).items()},
             holds=dict(raw.get("holds") or {}),
             btc=dict(raw.get("btc") or {}),
             adopted=dict(raw.get("adopted") or {}),
         )
 
     def prune(self, now: float, keep: float = 30 * 86_400) -> None:
-        """Forget breadth days older than `keep` seconds."""
-        for day in [d for d in self.breadth if int(d) < now - keep]:
-            del self.breadth[day]
+        """Forget mirror days older than `keep` seconds whose trades never closed
+        (a source that went away mid-trade)."""
+        for day in [d for d in self.mirrors if int(d) < now - keep]:
+            del self.mirrors[day]
 
 
 def load(path: Path) -> State:

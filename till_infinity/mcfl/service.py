@@ -325,6 +325,18 @@ class Service:
             return 0
         coins = tuple(dict.fromkeys((TARGET, *self.settings.alt_coins)))
         sent = 0
+        self.desk.hold_mirror = True
+        try:
+            sent += await self._pass(fetcher, coins, timeframes)
+        finally:
+            self.desk.hold_mirror = False
+        for card in self.desk.flush():
+            sent += await self.send(card)
+        st.save(self.desk.state, self.settings.state_file)
+        return sent
+
+    async def _pass(self, fetcher: Fetcher, coins: tuple[str, ...], timeframes) -> int:
+        sent = 0
         for tf in timeframes:
             for coin in coins:
                 if self.paused():

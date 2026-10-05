@@ -186,19 +186,59 @@ def test_stale_bars_are_processed_quietly(tmp_path):
     assert out == []
 
 
-def test_breadth_fires_on_the_third_alt(tmp_path):
+def test_one_btc_card_per_daily_close_however_many_alts(tmp_path):
+    """Ten alts on one close: one BTC card carrying the count, B folded in, and
+    one exit card once the last of the ten trades has ended."""
     desk = Desk(settings(tmp_path))
     bars = load("ARBUSDT.1d")
-    i = 369  # ARB's daily long signal
-    now = float(bars.ts[i]) + 86_400 + 60
-    sent = []
-    for coin in ("AAA", "BBB", "CCC"):
-        s = Series(f"alt:{coin}:1d", coin, "1d", "crypto")
+    i = 369  # ARB's daily long signal, given to ten coins
+    coins = [f"C{n:02d}" for n in range(10)]
+    series = [Series(f"alt:{c}:1d", c, "1d", "crypto") for c in coins]
+    for s in series:
         desk.state.last[s.id] = int(bars.ts[i - 1])
-        sent += desk.observe(s, bars.upto(i), now)
-    rules = [c.key.split("|")[0] for c in sent]
-    assert rules.count("M1") == 3
-    assert rules.count("B") == 1
+    desk.hold_mirror = True  # as the service does during a pass
+    sent = []
+    for s in series:
+        sent += desk.observe(s, bars.upto(i), float(bars.ts[i]) + 86_460)
+    desk.hold_mirror = False
+    sent += desk.flush()
+    mirror = [c for c in sent if c.key.startswith(("M1|", "B|"))]
+    assert len(mirror) == 1
+    assert mirror[0].key == f"M1|BTC|1d|{int(bars.ts[i])}"
+    assert mirror[0].payload["title"] == "BTC 1d · Bullish reversal (market) · long"
+    assert mirror[0].payload["fields"]["Breadth"] == "10 · wide"
+    assert len(desk.state.mirrors[str(int(bars.ts[i]))]["signals"]) == 10  # kept per signal
+    exits = []
+    btc = Series("alt:BTC:1d", "BTC", "1d", "crypto")  # the reference prices
+    desk.state.last[btc.id] = int(bars.ts[i])
+    for j in range(i + 1, len(bars)):
+        desk.observe(btc, bars.upto(j), float(bars.ts[j]) + 86_460)
+        for s in series:
+            exits += desk.observe(s, bars.upto(j), float(bars.ts[j]) + 86_460)
+    mirror_exits = [c for c in exits if c.key.startswith("M1:exit")]
+    assert len(mirror_exits) == 1
+    assert "mean of 10" in mirror_exits[0].payload["fields"]["Result"]
+    assert not desk.state.mirrors
+
+
+def test_a_narrow_day_is_not_marked_wide(tmp_path):
+    card = cards.mirror_day(0, 2, False, None)
+    assert card.payload["fields"]["Breadth"] == "2"
+
+
+def test_overlapping_days_each_get_their_card(tmp_path):
+    """A new close signals while an earlier day's card is still open."""
+    from till_infinity.mcfl.detect import Finding
+
+    desk = Desk(settings(tmp_path))
+    bars = load("ARBUSDT.1d")
+    s = Series("alt:AAA:1d", "AAA", "1d", "crypto")
+    for at in (300, 302):
+        f = Finding("DISPLACE_C_LOW12", "DISPLACE_C_LOW12", 1, at, at)
+        desk._mirror(f"k{at}", f, s, bars)
+    keys = [c.key for c in desk.flush()]
+    assert keys == [f"M1|BTC|1d|{int(bars.ts[300])}", f"M1|BTC|1d|{int(bars.ts[302])}"]
+    assert desk.flush() == []  # each day once
 
 
 def test_btc_is_never_its_own_mirror(tmp_path):
@@ -360,22 +400,20 @@ def test_no_card_leaks_the_method(tmp_path):
                         assert hit is None, f"{card.key}: {hit.group(0)!r} in {text[:200]!r}"
                     checked += 1
     for card in (
-        cards.mirror("AAA", load("ARBUSDT.1d"), 369, 1.0),
-        cards.breadth(0, ["A", "B", "C"], 1.0),
-        cards.mirror_exited("AAA", "k", 1.0, 1.1, 0, "stop"),
-        cards.breadth_exited(0, 1.0, 1.1, 5),
+        cards.mirror_day(0, 7, True, 1.0),
+        cards.mirror_exited(0, "k", 12.0, 7, 5 * 86_400),
     ):
         for text in _rendered(card):
             assert LEAKS.search(text) is None, text
     assert checked > 50
 
 
-def test_two_mirror_cards_are_two_findings_to_the_filter(tmp_path):
-    """Same shape, same instrument (BTC), same minute - different alts."""
+def test_two_mirror_days_are_two_findings_to_the_filter(tmp_path):
+    """Same shape and instrument (BTC) - different closes - both get through."""
     from till_infinity.notifications import Filter
 
-    a = cards.mirror("AAA", load("ARBUSDT.1d"), 369, None)
-    b = cards.mirror("BBB", load("ARBUSDT.1d"), 369, None)
+    a = cards.mirror_day(0, 4, True, None)
+    b = cards.mirror_day(86_400, 1, False, None)
     f = Filter()
     assert f.accept(a.payload, when=1.0)
     assert f.accept(b.payload, when=2.0)
@@ -478,7 +516,7 @@ async def test_paused_means_no_fetches_and_no_sends(tmp_path):
     assert await service.alt_cycle(("4h", "1d")) == 0
     assert fetcher.asked == []
     assert await service.on_bar(_notice("eth", "BINANCE", "ETHUSDT", "1d", 0)) == 0
-    card = cards.breadth(0, ["A", "B", "C"], None)
+    card = cards.mirror_day(0, 3, True, None)
     assert await service.send(card) == 0
 
 
@@ -523,11 +561,14 @@ async def test_the_alt_cycle_alerts_a_fresh_signal_and_declares_its_effect(tmp_p
     assert await service.alt_cycle(("1d",)) == 2  # the alt's card and M1
     got = await _collect(bus)
     titles = {p["title"]: p for p in got}
-    assert set(titles) == {"ARB 1d · Bullish reversal · long", "BTC 1d · Bullish reversal · long"}
+    assert set(titles) == {
+        "ARB 1d · Bullish reversal · long",
+        "BTC 1d · Bullish reversal (market) · long",
+    }
     # The alt's card carries its chart; the BTC card has none - its trigger is not shown.
     alt = titles["ARB 1d · Bullish reversal · long"]
     assert base64.b64decode(alt["image"]["data"]) == PNG
-    assert "image" not in titles["BTC 1d · Bullish reversal · long"]
+    assert "image" not in titles["BTC 1d · Bullish reversal (market) · long"]
     assert effects.report()["mcfl.alerts"]["count"] == 2
     assert from_message(alt).image == PNG
     effects.reset()
