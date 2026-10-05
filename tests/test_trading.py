@@ -9795,13 +9795,33 @@ def test_fade_to_value_enters_at_the_hour_and_is_judged_above_it():
 #: `Strategy.reward_floor`.
 FLOORED = {
     "thesis-only": 0.40,
+    "approach-scalp": 0.51,
     "level-scalp": 0.55,
+    "inverse": 0.60,
     "momentum-scalp": 0.61,
     "snap": 0.94,
-    "inverse": 0.60,
-    "approach-scalp": 0.51,
+    "cycle-scalp": 1.03,
     "fade-to-value": 1.27,
+    "runner": 1.49,
+    "confluence-scalp": 2.69,
+    # The best geometry on the desk, and it still placed the EURUSD short at
+    # 0.22 that this whole floor came from. 5% of 514 calls is 26 trades.
+    "sweep-aware": 2.71,
 }
+
+#: Registered, and with no live decisions in the journal to quote a median
+#: from, so their floor rests on the arithmetic alone.
+FLOORED_UNMEASURED = (
+    "origin-swing",
+    "swing-level",
+    "council",
+    "cycle-turn",
+    "cycle-turn-scalp",
+)
+
+#: The two that take their floor from `opportunity.Shape` instead of a class
+#: attribute, because they are a parameter space rather than a point in one.
+SHAPED = ("opportunity", "ride")
 
 
 def test_the_reward_floor_is_declared_rather_than_guessed_at():
@@ -9823,14 +9843,35 @@ def test_the_strategies_with_broken_geometry_carry_a_floor():
         assert engine.reward_floor == 1.0, f"{name} (median RR {measured})"
 
 
-def test_the_strategies_whose_geometry_is_sound_are_left_alone():
-    """A floor can only move a target out, so applying it everywhere would be
-    free. It is not applied everywhere because `sweep-aware` is the only
-    profitable strategy of size and 95% of its calls already clear 1.0 - there
-    is nothing to repair and a change would be a change for its own sake."""
+def test_every_strategy_carries_a_floor_except_the_parameter_space():
+    """It was first set only on the seven with a sub-1.0 *median*, which left it
+    off `sweep-aware` - the strategy that placed the 0.22 EURUSD short the floor
+    was written for. A median above 1.0 says nothing about the tail, and the
+    floor cannot cost a sound trade anything because it only moves a target out.
+
+    `opportunity` and `ride` are excluded because `_wear` assigns theirs from
+    `Shape.reward_floor`, which is the knob's original home.
+    """
     made = settings()
-    for name in ("sweep-aware", "confluence-scalp", "runner"):
+    missing = {
+        name: cls(made).reward_floor
+        for name, cls in td.STRATEGIES.items()
+        if name not in SHAPED and cls(made).reward_floor <= 0
+    }
+    assert missing == {}
+    for name in SHAPED:
         assert td.STRATEGIES[name](made).reward_floor == 0.0, name
+
+
+def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
+    """These five have no live decisions to quote, so a reader should be able to
+    tell which floors rest on a measurement and which on the arithmetic."""
+    made = settings()
+    for name in FLOORED_UNMEASURED:
+        assert name in td.STRATEGIES, name
+        assert td.STRATEGIES[name](made).reward_floor == 1.0, name
+    assert not set(FLOORED) & set(FLOORED_UNMEASURED)
+    assert set(FLOORED) | set(FLOORED_UNMEASURED) | set(SHAPED) == set(td.STRATEGIES)
 
 
 def test_a_floor_moves_the_target_out_to_meet_the_real_risk():
@@ -9853,7 +9894,9 @@ def test_a_floor_never_pulls_a_target_in():
 
 
 def test_no_floor_means_the_target_is_returned_untouched():
-    engine = strategy("sweep-aware")
+    # `opportunity` rather than a named strategy: it is the only family left
+    # with a zero class default, because `_wear` assigns its floor per shape.
+    engine = strategy("opportunity")
     assert engine.reward_floor == 0.0
     assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 99.99) == 99.99
 
@@ -10010,3 +10053,28 @@ def test_a_feed_with_no_volatility_unit_publishes_nothing_rather_than_another_sc
     intent = _trend_intent()
     asyncio.run(trader._read_the_trend(intent))
     assert not [k for k in intent.features if k.startswith("regression_")]
+
+
+def test_a_magic_resolves_through_strategy_for_and_not_by_hand():
+    """The arithmetic that cost a day.
+
+    `magic_for` is `base + 1 + MAGIC_ORDER.index(name)` and `DEFAULT_MAGIC` is
+    777701, so reading a magic against 777700 shifts **every** strategy to its
+    neighbour in `MAGIC_ORDER` - and because every neighbour is a real strategy
+    name, the resulting attribution table reads as a finding rather than as a
+    bug. A whole per-strategy broker breakdown was reported that way on
+    2026-10-05: `sweep-aware`'s positions were labelled `fade-to-value`,
+    `cycle-scalp`'s were labelled `cycle-turn`, and so on down the list.
+    """
+    from till_infinity.trading.config import DEFAULT_MAGIC, magic_for, strategy_for
+
+    assert DEFAULT_MAGIC == 777_701
+    # Round-trips for every named strategy, which is the only check that
+    # matters and the one a hand-written base cannot pass.
+    for name in td.STRATEGIES:
+        magic = magic_for(DEFAULT_MAGIC, name)
+        assert strategy_for(DEFAULT_MAGIC, magic) == name, name
+    # And the off-by-one is not a near miss: it names a *different* strategy.
+    wrong = strategy_for(777_700, magic_for(DEFAULT_MAGIC, "sweep-aware"))
+    assert wrong == "fade-to-value"
+    assert wrong != "sweep-aware"

@@ -68,6 +68,18 @@ class CycleTurnScalp(LevelStrategy):
     """
 
     name: ClassVar[str] = "cycle-turn-scalp"
+
+    #: No live decisions among the 2,563 the journal holds, so there is no
+    #: measured sub-1.0 share to quote here. The floor is set on the arithmetic
+    #: rather than on a measurement: reward below risk needs a win rate nothing
+    #: on this desk reaches, and a floor that only moves a target further out
+    #: cannot cost a trade whose geometry is already sound. If this strategy
+    #: starts trading, the share will appear in the record and this comment
+    #: should be replaced by it.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     refines: ClassVar[str] = "level-scalp"
     description: ClassVar[str] = (
         "A 1m-to-15m reversion scalp entered at the line a structure broke, "
