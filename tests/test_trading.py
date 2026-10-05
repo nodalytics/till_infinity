@@ -1448,6 +1448,77 @@ async def test_a_closed_trade_is_scored_in_r_not_money(tmp_path):
     assert found[0].won
 
 
+async def test_a_trade_open_across_a_restart_is_still_scored(tmp_path):
+    """A position this process did not open is rebuilt by `_intent_from`, which
+    has the broker's position and no sizing to state - so its `risk_money` is the
+    dataclass default and the close record spreads that zero over the figure the
+    decision recorded.
+
+    The trade was then dropped entirely rather than scored badly: 839 of 1,486
+    closed trades in the live journal carried this zero on 2026-10-04, so 56% of
+    the record was invisible to every report.
+    """
+    from till_infinity.journal import decide, outcome
+
+    async with Journal(tmp_path / "j.db") as book:
+        ref = await decide(
+            book,
+            "paper: buy 0.05 eurusd @ 1.1",
+            rationale="up from above",
+            actor="trading",
+            context={
+                "strategy": "level-scalp",
+                "mode": "paper",
+                "feed": "eurusd",
+                "side": "buy",
+                "risk_money": 20.0,
+                "reward_to_risk": 1.4,
+            },
+        )
+        await outcome(
+            book,
+            ref,
+            "eurusd closed +40.00 from 1.1",
+            actor="trading",
+            context={
+                "profit": 40.0,
+                "seconds": 300,
+                "reason": "target",
+                "exit_source": "broker",
+                # What a rebuilt intent spreads over the decision's own figure.
+                "risk_money": 0.0,
+            },
+        )
+    found = tr.trades(tmp_path / "j.db")
+    assert len(found) == 1
+    assert found[0].risk_money == pytest.approx(20.0)
+    assert found[0].r == pytest.approx(2.0)
+
+
+async def test_a_trade_with_no_risk_anywhere_is_still_skipped(tmp_path):
+    """The fallback reaches for the decision's figure, not for any figure: a
+    trade neither record sized is still not scoreable, and counting it at zero
+    risk would land as an infinite R."""
+    from till_infinity.journal import decide, outcome
+
+    async with Journal(tmp_path / "j.db") as book:
+        ref = await decide(
+            book,
+            "paper: buy 0.05 eurusd @ 1.1",
+            rationale="up from above",
+            actor="trading",
+            context={"strategy": "level-scalp", "mode": "paper", "feed": "eurusd", "side": "buy"},
+        )
+        await outcome(
+            book,
+            ref,
+            "eurusd closed +40.00 from 1.1",
+            actor="trading",
+            context={"profit": 40.0, "seconds": 300, "reason": "target", "risk_money": 0.0},
+        )
+    assert tr.trades(tmp_path / "j.db") == []
+
+
 async def test_a_small_sample_is_refused_rather_than_characterised(tmp_path):
     """A 70% win rate over ten trades is a coin that came up heads seven times."""
     async with Journal(tmp_path / "j.db") as book:

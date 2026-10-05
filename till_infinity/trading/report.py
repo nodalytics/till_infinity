@@ -253,6 +253,23 @@ def trades(path: Path | str = DEFAULT_DB, *, limit: int = 100_000) -> list[Trade
         context = {**parent.context, **outcome.context}
         risk = _number(context, "risk_money")
         if risk <= 0:
+            # **The one field an outcome can zero over a decision that knew it.**
+            # A position this process did not open comes back through
+            # `_intent_from`, which has a broker position and no sizing to state,
+            # so its `risk_money` is the dataclass default. The close record
+            # spreads that intent last, so the zero lands on top of the figure
+            # the decision recorded - and the skip below then drops the trade.
+            #
+            # That is every trade open across a restart, and this desk deploys
+            # often: 839 of 1,486 closed trades in the live journal carry a zero
+            # here, so **56% of the record was invisible to every report** - not
+            # scored badly, absent. Measured 2026-10-04.
+            #
+            # Falling back to the decision's own figure rather than recomputing
+            # one: `risk_price` is a price distance and turning it into money
+            # needs the tick value, which is not in either record.
+            risk = _number(parent.context, "risk_money")
+        if risk <= 0:
             continue
         # Present only when the depth head was warm enough to suggest one, so
         # its absence is the common case rather than a fault.
