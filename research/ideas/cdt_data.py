@@ -109,7 +109,7 @@ def fetch_funding(coin):
 def jobs():
     j = [(c, "1d") for c in CORE + FRESH131 + SETD]
     j += [(c, iv) for iv in ("4h", "1h") for c in CORE + FRESH131]
-    j += [(c, "15m") for c in CORE + FRESH58]
+    j += [(c, "15m") for c in CORE]
     return j
 
 

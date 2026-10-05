@@ -369,8 +369,8 @@ def job(spec):
 
 
 def specs(iv):
-    coins = {"1d": D.CORE + D.FRESH131 + D.SETD, "4h": D.CORE + D.FRESH131, "1h": D.CORE + D.FRESH131,
-             "15m": D.CORE + D.FRESH58}[iv]
+    coins = {"1d": D.CORE + D.FRESH131 + D.SETD, "4h": D.CORE + D.FRESH131, "1h": D.CORE + D.FRESH58,
+             "15m": D.CORE}[iv]  # 1h and 15m narrowed before their runs (cdt_rule.json amended_before_run)
     coins = [c for c in coins if D.kpath(c, iv).exists()]
     coins += [f"mt5:{s}" for s in D.MT5_COST if D.load(f"mt5:{s}", iv) is not None]
     if iv in ("1d", "4h") and os.environ.get("OTHER", "1") == "1":

@@ -139,8 +139,10 @@ def table(d, iv, rng):
     samples = ("fresh131", "fresh58", "setC", "core12_disc", "core12_conf")
     if iv == "1d":
         samples += ("setD",)
-    if iv == "15m":
+    if iv == "1h":
         samples = ("fresh58", "core12_disc", "core12_conf")
+    if iv == "15m":
+        samples = ("core12_disc", "core12_conf")
     samples += ("mt5",)
     if iv in ("1d", "4h"):
         samples += tuple(k for k in SAMPLES if k.startswith("cls_"))
@@ -475,7 +477,7 @@ def report():
             d1, files1 = d, files
     T = pd.concat(tabs, ignore_index=True)
     # BH over the secondary cells on the confirmation sample
-    conf = (T["sample"] == "fresh131") | ((T["iv"] == "15m") & (T["sample"] == "fresh58"))
+    conf = (T["sample"] == "fresh131") | ((T["iv"] == "1h") & (T["sample"] == "fresh58")) | ((T["iv"] == "15m") & (T["sample"] == "core12_conf"))
     prim = (T["iv"] == "1d") & (T["sample"] == "fresh131") & (T["filt"] == "none") & (T["exit"] == "STATE") & T["cell"].isin(["AGREE", "DCS"])
     sec = conf & ~prim & T["p"].notna()
     T["bh"] = False
@@ -559,7 +561,7 @@ def report():
     say(T[T["survives"]][["cell", "filt", "exit", "iv", "sample", "n", "R", "lo", "hi", "p", "R_iid", "R_garch", "twin",
                           "R_long", "R_short", "R_before", "R_after"]].round(3).to_string(index=False))
     say(f"({int(sec.sum())} secondary cells tried, {int(T['bh'].sum())} pass BH, {int(T['survives'].sum())} survive)")
-    say("\nALL CELLS (fresh131; 15m fresh58):")
+    say("\nALL CELLS (fresh131; 1h fresh58; 15m core12 from 2024):")
     cols = ["cell", "filt", "exit", "iv", "n", "R", "lo", "hi", "R_before", "R_after", "R_long", "R_short", "R_iid",
             "R_garch", "twin", "ex_twin", "P4", "iid_P4", "twin_P4", "P10", "iid_P10", "twin_P10", "bh"]
     say(T[conf][cols].round(3).to_string(index=False))
@@ -603,7 +605,7 @@ def plot():
     # 2. R by cell and timeframe (fresh131), with walks and twin
     fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
     for ax, filt in zip(axes, FILTERS):
-        x = T[(T["filt"] == filt) & (T["exit"] == "STATE") & ((T["sample"] == "fresh131") | ((T["iv"] == "15m") & (T["sample"] == "fresh58")))]
+        x = T[(T["filt"] == filt) & (T["exit"] == "STATE") & ((T["sample"] == "fresh131") | ((T["iv"] == "1h") & (T["sample"] == "fresh58")) | ((T["iv"] == "15m") & (T["sample"] == "core12_conf")))]
         ivs = [iv for iv in ("1d", "4h", "1h", "15m") if iv in set(x["iv"])]
         w = 0.8 / max(1, len(ivs))
         for k, iv in enumerate(ivs):
@@ -620,7 +622,7 @@ def plot():
         ax.grid(alpha=0.3, axis="y")
     axes[0].set_ylabel("net R a trade (90% day bootstrap)")
     axes[0].legend(title="timeframe; - iid walk, x twin", fontsize=8)
-    fig.suptitle("Net R per trade by strategy, regime filter and timeframe (fresh131; 15m: fresh58)")
+    fig.suptitle("Net R per trade by strategy, regime filter and timeframe (fresh131; 1h: fresh58; 15m: core12 from 2024)")
     fig.tight_layout()
     fig.savefig(IMG / "r_by_cell.png", dpi=90)
     plt.close(fig)
