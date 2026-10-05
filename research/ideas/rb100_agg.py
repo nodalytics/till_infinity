@@ -103,6 +103,9 @@ def cells(t):
                 for N in (1, 2, 4, 10):
                     row[f"P{N}_{src}"] = float((s[mfe] >= N).mean()) if len(s) else np.nan
             s = gg[gg["src"] == "real"]
+            row["spread_R"] = float((R.SPREAD / s["risk"]).mean()) if len(s) else np.nan  # the theorem's -c/risk
+            row["swap_R"] = float((s[f"{col}_noswap"] - s[col]).mean()) if len(s) else np.nan
+            row["gross_real"] = row["Rns_real"] + row["spread_R"] if len(s) else np.nan
             if len(s) >= 2:
                 row["lo"], row["hi"], row["p"] = boot(s["day"], s[col], 1)
                 for hname in ("h1", "h2"):
@@ -311,9 +314,9 @@ def plot_primary(plt):
                 if not len(r):
                     continue
                 r = r.iloc[0]
-                hatch = "" if fill == "bar" else "//"
-                ax[i].bar(x + off - 0.1, r["R_real"], 0.2, color=COL["real"], hatch=hatch, label="real" if x == 0 and fill == "bar" else None)
-                ax[i].bar(x + off + 0.1, r["R_rbsim"], 0.2, color=COL["rbsim"], hatch=hatch, label="fitted simulator" if x == 0 and fill == "bar" else None)
+                cr, cs = (COL["real"], COL["rbsim"]) if fill == "bar" else ("#9dc3e6", "#f4b183")
+                ax[i].bar(x + off - 0.1, r["R_real"], 0.2, color=cr, label=f"real, {fill} fill" if x == 0 else None)
+                ax[i].bar(x + off + 0.1, r["R_rbsim"], 0.2, color=cs, label=f"fitted simulator, {fill} fill" if x == 0 else None)
                 if np.isfinite(r.get("lo", np.nan)):
                     ax[i].plot([x + off - 0.1] * 2, [r["lo"], r["hi"]], color="k", lw=1)
             labs.append(f"{rule}\n{ex}")
@@ -321,8 +324,9 @@ def plot_primary(plt):
         ax[i].set_xticks(range(len(labs)), labs, fontsize=7)
         ax[i].axhline(0, color="k", lw=0.7)
         ax[i].set_ylabel("mean R a trade, net of spread and swap")
-        ax[i].set_title(f"{inst} 15m, confirmation: bar fill (plain) and tick fill (hatched)")
+        ax[i].set_title(f"{inst} 15m, confirmation")
         ax[i].legend(fontsize=7)
+    fig.suptitle("Bar fill (dark) against tick fill (light), real and fitted simulator; 90% day-bootstrap interval on the real")
     fig.tight_layout()
     fig.savefig(IMG / "bar_vs_tick_15m.png")
     plt.close(fig)
@@ -331,7 +335,7 @@ def plot_primary(plt):
 def plot_heat(plt):
     C = pd.read_csv(OUT / "cells.csv")
     for fill in ("bar", "tick"):
-        fig, ax = plt.subplots(1, 4, figsize=(15, 4.2))
+        fig, ax = plt.subplots(1, 4, figsize=(17, 4.4), gridspec_kw={"wspace": 0.45})
         k = 0
         for inst in R.INST:
             for src in ("real", "rbsim"):
