@@ -1,0 +1,62 @@
+{
+  "frozen": "2026-10-05, before any real-data run of the switching study (the only real data read so far: the per-strategy means of the live closes export, already published in edge.md and auditing.md)",
+  "question": "the desk: 'we have a portfolio of strategies; like yesterday when fade-to-value was hot, how do we know when to resume or pause a strategy?'",
+  "necessary_condition": "pausing and resuming can only add value if a strategy's next R is predictable from its own record. Measured before any rule is judged",
+  "streams": {
+    "PROD": "production's registered LevelStrategy classes that enter on 15m/30m calls, replayed through production's own Engine and strategy code (switch_replay.py, R4b's method): approach-scalp, confluence-scalp, cycle-scalp, fade-to-value, inverse, level-scalp, momentum-scalp, opportunity, origin-swing, ride, runner, snap, sweep-aware, swing-level, thesis-only (any that produces no trades is reported as absent). Series: R4b's (FX, metals, indices, energy, crypto CFD majors, Deriv diffusive/jumpy/Range Break via MT5 15m; the 12 Binance perpetuals 15m from 2019; Deriv 1s indices). Timeframe label: entry 15m and 30m",
+    "LRC": "the desk-drawn research rules of lrc_retest.py, already run on the lab (lrc_trades.pkl.gz): R1 (LRC trend + BOS retest), R4 (LRC band fade to value), R5s (sweep-then-reject of an earlier BOS level); exit X2 (2R target, net of cost); timeframes 15m, 1h, 4h, 1d",
+    "sources": "real; iid walk; GARCH walk (each matched to its series, the seeds the source studies used). Walks are the null: a stream matching its walks has zero edge before costs",
+    "classes": "FX, METAL, INDEX, ENERGY, CRYPTO_CFD, BINANCE, FRESH (LRC 4h/1d only), DERIV_1S, DERIV_DIFFUSIVE, DERIV_JUMPY reported per class; RANGE_BREAK reported apart and never pooled; KNOWN_BAD (alt-coin crypto CFD 15m/30m) excluded",
+    "minimum_risk": "trades with risk under 0.25 ATR are dropped (PROD at simulation; LRC already built with MIN_RISK 0.25)",
+    "order_and_knowledge": "trades ordered by entry time; a trade's R is known only from its exit time (exact bar timestamps). A decision for trade j uses only trades with exit_ts <= entry ts of j",
+    "opportunity_set": "the always-on stream (one open position per strategy per series). Pausing never creates new trades; the paused trades are tracked in shadow (the desk's untaken record already observes them), so every rule sees every outcome",
+    "live": "the closes export (.data/closes.json, 688 closes to 2026-09-11) per strategy with >= 25 closes. R per close: r_multiple where present, else profit / risk_money where risk_money > 0, else profit / the strategy's median risk_money. Ordered by close time"
+  },
+  "scopes": {
+    "BOOK": "primary for PROD: one rule state per strategy across its whole book (all classes except RANGE_BREAK, trades interleaved by time) - how the desk would pause fade-to-value",
+    "CELL": "per strategy x class x timeframe; primary for LRC, secondary for PROD; this is what the per-class tables report"
+  },
+  "split": "discovery before 2024-01-01, confirmation from 2024-01-01 (only Binance and the MT5 1h/4h/1d histories have discovery data). Self-adaptive rules have no fitted parameters, so both halves are out of sample for them; the regime gates and Hedge are fitted/selected on discovery only",
+  "necessary_condition_stats": {
+    "pred_N": "Pearson correlation between R_j and the mean R of the last N trades closed before j's entry, N in {10, 30, 100}; pred_30 primary",
+    "ac1": "lag-1 autocorrelation of R in entry order",
+    "runs_z": "Wald-Wolfowitz runs z on win/loss signs in entry order (negative = streakier than chance)",
+    "month_persistence": "correlation of consecutive calendar-month mean R (months with >= 10 trades)",
+    "minimum_n": 100,
+    "verdict": "met in a cell if real pred_30 exceeds the larger of the iid and GARCH walks' pred_30 with the day-bootstrap 90% interval of (real - walk) above 0 on confirmation; BH at q = 0.10 across cells; reported pooled per class and timeframe. Live: permutation p (10,000) for pred_10 and ac1 per strategy"
+  },
+  "rules": {
+    "EQ20": "equity-curve filter: take trade j iff the shadow cumulative R (over closed trades) is above the mean of its last 20 values; on while fewer than 20 have closed",
+    "EQ50": "the same with 50",
+    "DD": "drawdown stop: pause when shadow equity falls 8R below its running peak; resume when shadow equity has risen 4R off its lowest point since the pause (peak then resets to the resume point)",
+    "CUSUM": "Page's CUSUM between mu1 = +0.10R and mu0 = 0, reference k = 0.05R, threshold h = 5R. On: S = max(0, S + k - R), pause when S > h. Paused: U = max(0, U + R - k), resume when U > h. Statistics reset at every switch",
+    "PH": "Page-Hinkley on the R since the last switch, delta = 0.05R, lambda = 5R. On: m_t = sum_{i<=t}(R_i - xbar_t + delta), pause when max_{s<=t} m_s - m_t > lambda (a fall in the mean). Paused: m'_t = sum(R_i - xbar_t - delta), resume when m'_t - min_{s<=t} m'_s > lambda (a rise). Reset at every switch",
+    "SPRT": "repeated Wald SPRT of H0 mu = 0 against H1 mu = +0.10R, Gaussian with sigma the running sd of all shadow R (1.0 until 20 closed), alpha 0.05, beta 0.20. On: LLR <= ln(beta/(1-alpha)) pauses ('dead'), LLR >= ln((1-beta)/alpha) confirms ('alive') and resets. Paused: LLR >= ln((1-beta)/alpha) resumes; LLR <= ln(beta/(1-alpha)) resets and stays paused",
+    "BAYES_ALL": "posterior on mean R, prior N(0, 0.10^2) (most strategies here have none), Gaussian likelihood with the running sd, all shadow trades: pause when P(mu > 0) < 0.20, resume when P(mu > 0) > 0.50. R is already net of costs, so 'mean R > cost' is 'net mean > 0'",
+    "BAYES_100": "the same with exponential forgetting, effective memory 100 trades (weight decay 0.01 per close)",
+    "REGIME_VOL": "market-state gate, knowable before entry: vol_ratio = ATR(14) at the bar before entry over its rolling median (PROD: 2,880 15m bars = 30 days; LRC: 500 bars of the cell's timeframe). Tercile cuts and the traded tercile (the one with the highest discovery mean R, >= 30 trades in each) chosen per cell on discovery and applied unchanged to confirmation. Cells with < 90 discovery trades are not gated (reported as such)",
+    "REGIME_TREND": "the same on signed efficiency = efficiency ratio x (+1 trading with the move, -1 against) over the last 96 bars (PROD) / 24 bars (LRC)",
+    "HEDGE": "portfolio allocation, not on/off: exponential weights over the portfolio's strategy arms plus a CASH arm (reward 0). Daily reward of an arm = sum of its always-on R exiting that day, clipped to [-10, +10]; G_i = discounted sum of past daily rewards (factor 0.99 a day); w_i proportional to exp(eta * G_i), eta in {0.02, 0.10} (HEDGE_02, HEDGE_10); weights for day d use rewards to d-1. Portfolio return = (number of strategy arms) x sum_i w_i r_i, so uniform weights on the strategies equal the always-on book. Portfolios: PROD per source (arms = strategies, BOOK scope); LRC per source and timeframe (arms = rule x class, non-Deriv and Deriv separately)"
+  },
+  "metrics": {
+    "primary": "timing value = switched net R per opportunity minus the random-pause twin's (same pause mask circularly shifted by a random offset in [10%, 90%] of the stream, 200 shifts; for the regime gates an iid random mask with the same take fraction; for Hedge the weight series shifted in days). Per-trade difference d_j = (m_j - mean twin m_j) R_j",
+    "secondary": "value over always-on (switched minus always-on per opportunity: the kill value; on a negative-mean stream any pause shows it, so it is never read as timing); mean R per trade taken; pause fraction; number of switches; portfolio daily Sharpe (annualised by sqrt(365)) switched vs always-on vs twin",
+    "intervals": "day-bootstrap 90% (entry days resampled, 1,000 draws), one-sided p = share of draws <= 0",
+    "multiplicity": "Benjamini-Hochberg at q = 0.10 across all rule x cell confirmation tests on real data (CELL scope), and separately across rule x strategy (BOOK scope)",
+    "tails": "P(+N R before the stop) for N in {0.5, 1, 2, 4, 10} against 1/(N+1) and the walks, always-on vs the taken subset of each rule"
+  },
+  "walk_check": "every rule runs on the iid and GARCH walk streams. A rule whose pooled timing value on walks has its 90% interval above 0 is fitting the walk's structure, not a market, and cannot pass",
+  "passes_if": "a rule is recommended for pausing/resuming only if, on real data, (i) its pooled confirmation timing value (all non-Range-Break cells, BOOK scope for PROD and CELL scope for LRC, opportunity-weighted) is > 0 with its 90% interval above 0, (ii) its discovery timing value has the same sign, (iii) it exceeds the same rule's pooled timing value on both walks with the interval of the difference above 0, and (iv) at least one class's cell survives BH. Otherwise the recommendation is kill/keep on accumulated evidence (the posterior / SPRT side) and Hedge-style weighting, judged by their own value over always-on and against the walks",
+  "kill_math": {
+    "true_edges": [
+      -0.5,
+      -0.15,
+      0.05,
+      0.2
+    ],
+    "sigma": "the pooled sd of real PROD R (and 1.0 as a reference); paths resampled from the pooled real PROD R distribution, centred and shifted to each true edge, 5,000 paths of up to 3,000 closes",
+    "report": "expected and p10/p50/p90 closes to the first decision, and the share of decisions that are right: SPRT (both sides), BAYES_ALL first pause and P(mu > 0) < 0.05, CUSUM run length to pause; plus what each rule said on each live strategy's record, and at which close / date"
+  },
+  "hot_streaks": "on zero-edge streams (walk streams, and the pooled real PROD R centred to zero and resampled iid): for stream lengths 30, 100, 300, 1,000, the median / p90 / p95 of the longest win run, the best rolling 10, 20 and 30-trade mean R and the best rolling cumulative R, so a hot streak can be told from a regime",
+  "outputs": "research/docs/strategy-switching.md, figures in research/docs/img/switching/, one row in research/docs/README.md"
+}
