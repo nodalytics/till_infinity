@@ -23,6 +23,11 @@ timestamps and, for the trades, the real costs in ATR units.
 > UP-labelled (bearish) one. **DISPLACE_C (T1) and DELIVERY_SHIFT (T3) are labelled the other way (UP =
 > bullish) and are unaffected**, so the result that passed on fresh coins (DISPLACE_C, `turn_confirm_rule.json`)
 > stands. `ups()` is fixed; T2 and T_any have not been re-run with the right side.
+>
+> **Re-run, 2026-10-05 ([turn-retrade.md](turn-retrade.md)).** With the right side, T2 fires at about 13% of 12-bar
+> lows and trades like a walk. No verdict changes: T_any at 2R is −0.113R [−0.125, −0.101] (was −0.015), and with the
+> trail −0.147R [−0.166, −0.130] (was −0.045), at or below walks of −0.132 / −0.139. The bullish BREACH_REVERT's lift
+> of P(major turn) is 0.75-0.92, the same as on walks; the 2.58 in section 1 is the bearish event's.
 
 ## 1. What turns share (`ideas/turns.py`)
 

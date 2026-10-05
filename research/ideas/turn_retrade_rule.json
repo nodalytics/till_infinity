@@ -1,0 +1,23 @@
+{
+  "frozen": "2026-10-05",
+  "after": "turning-points.md correction of 2026-10-04: turn_trade.ups read the UP-labelled BREACH_REVERT (a swing high swept, the bearish one) as the bullish turn, so T2, T_any and the violent-origin flag SIG in turn_rule.json, turn_rule2.json, turn_zone_rule.json and deriv_turns.py were run with a wrong-side, nearly empty T2. ups() is fixed on main (e8a029e)",
+  "amended_before_run": "2026-10-05, before any re-run: the ONLY amendment to turn_rule.json, turn_rule2.json, turn_zone_rule.json and deriv_turns.py's pre-registration is the side of T2. T2 is now a BREACH_REVERT labelled DOWN by MCFL (a swing low traded through and closed back above) completing at bar t, read on the chart for longs and on the flipped chart for shorts. T_any and SIG include that T2. Signal, 12-bar low, entry, stop, slippage, exits, caps, costs, primaries and pass rules are unchanged",
+  "primaries_unchanged": {
+    "P1 turn_rule.json": "T_any at 2R (fixed targets), Binance 12 coins, 1h and 4h pooled: R > 0 with day-bootstrap 90% interval above 0, positive before and after 2024-01-01, above every 12-bar low (2R) and above the same cell on walks",
+    "P2 turn_rule2.json": "T_any with E1 (2-ATR trail), Binance 12 coins, 1h and 4h pooled: the same pass rule with E1",
+    "P3 turn_zone_rule.json": "SIG, proven, E1, Binance 12 coins, 1h/4h/1d pooled: R > 0 with interval above 0, positive in both halves, above ALL proven E1, above the same cell on iid and GARCH walks"
+  },
+  "walks": "iid (synth.walk at the series' close-to-close sigma) and GARCH(1,1) (synth.garch), 256 sub-steps a bar, the real timestamps, the real cost in ATR units at the same bar. One walk per (market, timeframe, source) serves the trade and the zone test, so both read the same path. Where a frozen rule names one walk, the corrected primary must beat both (stricter, never looser)",
+  "old_side_alongside": "T2_old, T_any_old and SIG_old (the UP-labelled BREACH_REVERT, the code as it ran) are computed on the same bars and walks in the same run, so old against corrected is like for like; the original CSVs are compared as a reproduction check",
+  "reported_not_judged": {
+    "coverage": "Binance 12 coins, the 10 MT5 markets of the original tests reported per asset class (fx, metal, index, energy, crypto CFD), and the 15 Deriv synthetics (diffusive; Boom/Crash/Jump; Range Break apart) on 15m, 1h, 4h and 1d. 15m is new for every test and 1d new for the turn trades; the 15m range_z threshold for RZ is violence.py's MT5 value 2.637",
+    "cells": "T2 and T_any (fixed 1R/2R/3R, E1, E2) and the zone families SIG and SIG_RZ (proven and left, E1 and X2), per class and timeframe, with T1 and every low as references",
+    "tail": "P(N R) for N in 0.5, 1, 2, 4, 10 against 1/(N+1) and against both walks",
+    "multiple_testing": "Benjamini-Hochberg at q = 0.10 over every reported corrected cell (T2, T_any, SIG, SIG_RZ; per class x timeframe x exit): p for mean R above the better of the two walks (one-sided, day bootstrap of the real cell, walk mean as given), and p for P(>=4R) and P(>=10R) above the pooled walks (one-sided two-proportion z)"
+  },
+  "confirmation": {
+    "trigger": "a corrected primary that passes, or a reported cell whose mean-R excess survives BH with R > 0, interval above 0, positive in both halves and above every 12-bar low with the same exit; a cell whose P(>=4R) or P(>=10R) excess survives BH is also carried forward and judged on its tail",
+    "data": "the 58 fresh coins (turn_confirm_rule.json) and SET_C (73 coins, turn_confirm2_rule.json) on 4h and 1d from data.binance.vision; a cell on 15m or 1h is fetched for the same coins",
+    "passes_if": "the same rule as turn_confirm_rule.json: on each set, R > 0 with day-bootstrap 90% interval above 0, positive before and after 2024-01-01, above every 12-bar low with the same exit, and above the same cell on iid and GARCH walks; a tail cell passes if its P(>=N R) is above both walks and 1/(N+1) with a one-sided p below 0.05 on each set"
+  }
+}
