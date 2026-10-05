@@ -240,10 +240,15 @@ class CcxtSource(Source):
         # basis between them is small but the liquidations that move a
         # perpetual do not exist on spot at all.
         kind = (getattr(self.settings, "ccxt_market_type", "") or "swap").strip()
+        # Per-exchange extras, deep-merged by ccxt into its own description.
+        # Nothing in the prices service sets them; `mcfl` uses them to keep
+        # Binance's market load to spot and to point it at the public
+        # market-data host. Absent, the constructor is exactly what it was.
+        overrides = getattr(self.settings, "ccxt_overrides", None) or {}
         for name, maker in makers.items():
-            self._exchanges[name] = maker(
-                {"enableRateLimit": True, "options": {"defaultType": kind}}
-            )
+            extra = dict(overrides.get(name) or {})
+            options = {"defaultType": kind, **(extra.pop("options", None) or {})}
+            self._exchanges[name] = maker({"enableRateLimit": True, "options": options, **extra})
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
@@ -302,6 +307,12 @@ class CcxtSource(Source):
                 float(size) if isinstance(size, int | float) and size > 0 else 1.0,
             )
         return out
+
+    async def listed(self, exchange_name: str = "") -> set[str]:
+        """Every symbol one exchange lists, from a single market load."""
+        exchange = self._pick(exchange_name)
+        markets = await exchange.load_markets()
+        return {str(symbol) for symbol in markets}
 
     async def board(self, exchange_name: str = "") -> list[Board]:
         """Every pair one exchange lists, as the filters want to see it.

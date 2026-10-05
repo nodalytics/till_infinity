@@ -256,7 +256,7 @@ def reach(h, l, f, entry, stop, risk, best0):
     return max(0.0, (best - entry) / risk)
 
 
-def exits(o, h, l, c, f, entry, stop, a_t, cost_px, band=None, fill="down"):
+def exits(o, h, l, c, f, entry, stop, a_t, cost_px, band=None, fill="down", tgts=None):
     """A long filled at `entry` on bar f with its stop: X2 (2R target), TR (2-ATR trail behind completed
     bars' best high) and BAND (a limit at band[j-1] from bar f+1). R net of cost, plus each exit's bar.
     The fill bar is read with `fill_path`: a stop reached after the fill is a loss, X2's target counts
@@ -274,21 +274,39 @@ def exits(o, h, l, c, f, entry, stop, a_t, cost_px, band=None, fill="down"):
     first, best_f = fill_bar(o, h, l, c, f, entry, stop, tgt, fill)
     stopped = fill_bar(o, h, l, c, f, entry, stop, None, fill)[0] == "stop"
     res = {}
-    # X2
-    if first == "stop":
-        r, xb = stopR, f
-    elif first == "target":
-        r, xb = 2.0, f
-    else:
-        jt = np.flatnonzero(hh >= tgt)
+
+    def to_target(t):
+        """R and exit bar for a limit at `t`. The X2 path, with the multiple
+        read from the price rather than assumed, so a per-trade target uses
+        exactly the same fill and stop conventions as the fixed one."""
+        got = fill_bar(o, h, l, c, f, entry, stop, t, fill)[0]
+        if got == "stop":
+            return stopR, f
+        if got == "target":
+            return (t - entry) / risk, f
+        jt = np.flatnonzero(hh >= t)
         jt = jt[0] if len(jt) else None
         if js is not None and (jt is None or js <= jt):
-            r, xb = (min(oo[js], stop) - SLIP * a_t - entry) / risk, f + 1 + js
-        elif jt is not None:
-            r, xb = (max(oo[jt], tgt) - entry) / risk, f + 1 + jt
-        else:
-            r, xb = (c[end] - entry) / risk, end
+            return (min(oo[js], stop) - SLIP * a_t - entry) / risk, f + 1 + js
+        if jt is not None:
+            return (max(oo[jt], t) - entry) / risk, f + 1 + jt
+        return (c[end] - entry) / risk, end
+
+    # X2
+    r, xb = to_target(tgt)
     res["X2"], res["x2_bar"] = r - cost, xb
+    # Structural targets, each as a price the caller worked out from the chart.
+    # `d_*` is how far that target sits in R, which is the number the whole
+    # question turns on: a fixed 2R target has one N for every trade and these
+    # have one per trade, so P(reach) can be read against 1/(1+N) per trade
+    # rather than pooled.
+    for name, t in (tgts or {}).items():
+        if t is None or not np.isfinite(t) or t <= entry:
+            res[f"R_{name}"], res[f"d_{name}"] = np.nan, np.nan
+            continue
+        r, xb = to_target(float(t))
+        res[f"R_{name}"] = r - cost
+        res[f"d_{name}"] = (float(t) - entry) / risk
     # TR
     if stopped:
         r, xb = stopR, f
@@ -361,10 +379,67 @@ def strength(F, b, level, p, end):
     return dict(b_size=bsz, b_speed=bsp, a_size=asz, a_speed=asz / (k + 1))
 
 
+def leg_top(F, b, end):
+    """The extreme of the displacement leg: the highest high over bars b..end.
+
+    The same window `strength` measures `a_size` over, so the two agree by
+    construction. This is the desk's structural target in its plainest form -
+    "price broke, ran here, pulled back; go back to where it ran".
+    """
+    end = max(b, min(end, b + WINDOW))
+    w = F.h[b:end + 1]
+    return float(w.max()) if len(w) else np.nan
+
+
+def imbalance_top(F, b, end, entry):
+    """The far side of the last unfilled imbalance in the displacement leg, or NaN.
+
+    An imbalance (fair value gap) is the three-bar pattern where the middle bar
+    displaces so fast that the wicks either side do not overlap: on the long
+    frame, `low[k+1] > high[k-1]`. Its far side is `low[k+1]`, and "way past the
+    imbalance candles" is above that.
+
+    **Unfilled, and measured at the entry.** A gap price has already traded back
+    through is not a target; it is history. The last one that still sits above
+    the fill is the one the desk is pointing at.
+
+    NaN when the leg left no gap, which is most quiet legs - the caller falls
+    back to `leg_top`, because "past the imbalance" has no meaning without one.
+    """
+    end = max(b, min(end, b + WINDOW))
+    best = np.nan
+    for k in range(b + 1, min(end, F.n - 1)):
+        lo_next, hi_prev = F.l[k + 1], F.h[k - 1]
+        if lo_next > hi_prev and lo_next > entry:
+            # Still open at the fill: nothing since has traded back under it.
+            if F.l[k + 1:end + 1].min() >= hi_prev:
+                best = float(lo_next) if not (best == best) else max(best, float(lo_next))
+    return best
+
+
 def trade_row(F, rule, f, entry, stop, a_t, band, at_open=False, **kw):
-    """A limit at `entry` fills while price falls to it, unless the bar opened through it."""
+    """A limit at `entry` fills while price falls to it, unless the bar opened through it.
+
+    Carries three structural targets beside the fixed 2R, for the rules that
+    know which break they came from (`b`):
+
+    * **XL** - the displacement leg's extreme. Always available.
+    * **XI** - the far side of the last unfilled imbalance in that leg. NaN when
+      the leg left no gap, which is most quiet legs, and left NaN rather than
+      substituted so the subset that *has* one can be read on its own.
+    * **XF** - XI when there is one, XL otherwise. The rule as a desk would
+      actually trade it.
+    """
     fill = "open" if (at_open or F.o[f] <= entry) else "down"
-    res = exits(F.o, F.h, F.l, F.c, f, entry, stop, a_t, F.cost[f], band, fill)
+    tgts = None
+    b = kw.get("b")
+    if b is not None and f - 1 >= b:
+        leg = leg_top(F, b, f - 1)
+        imb = imbalance_top(F, b, f - 1, entry)
+        has = np.isfinite(imb)
+        tgts = {"XL": leg, "XI": imb if has else np.nan, "XF": imb if has else leg}
+        kw["has_imb"] = bool(has)
+    res = exits(F.o, F.h, F.l, F.c, f, entry, stop, a_t, F.cost[f], band, fill, tgts)
     return dict(rule=rule, f=f, ts=int(F.ts[f]), entry=entry, stop=stop, risk_atr=(entry - stop) / a_t,
                 fill=fill, **res, **kw)
 

@@ -41,6 +41,9 @@ mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
 # Talking to a Windows terminal from anywhere, by proxying the module itself
 # out of a Wine prefix. No platform marker: this half runs on the Linux side.
 rpyc = ["rpyc>=6.0.0"]
+# Chart images on `mcfl` alert cards. Optional: without it the cards go out as
+# text, and the service says so once.
+chart = ["matplotlib>=3.8"]
 # Retraining the offline models (`till-infinity models retrain`). Only the trainer
 # needs it: the engine evaluates the exported trees in plain Python.
 train = ["scikit-learn>=1.5.0"]
@@ -143,6 +146,9 @@ max-returns = 8
 # synchronous `consider` exists only to refuse - the council is async, so it
 # takes the port's arguments and uses none of them.
 "till_infinity/trading/strategies/council.py" = ["ARG002", "PLR0911"]
+# `Parse.kind` is a dispatch table written as code: one return per event kind,
+# beside the cached parse step it reads.
+"till_infinity/mcfl/detect.py" = ["PLR0911"]
 # `Guard.allows` is the same shape: one return per gate, each naming itself.
 "till_infinity/trading/risk.py" = ["PLR0911"]
 # `Tracker.update` advances one touch through its states - first contact, wick,

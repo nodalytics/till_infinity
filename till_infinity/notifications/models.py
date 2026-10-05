@@ -60,6 +60,10 @@ SHAPES: dict[str, str] = {
     #: account. A reader scanning a phone should be able to tell a trade from
     #: an observation without reading a word.
     "trade": "💰",
+    #: A chart pattern the `mcfl` service found - an observation, never an order.
+    "pattern": "🧩",
+    #: The end of a paper trade an earlier `mcfl` alert opened.
+    "exit": "🏁",
 }
 
 #: The direction wins over the shape when there is one, because it is the whole
@@ -124,7 +128,12 @@ INSTRUMENTS: dict[str, str] = {
 #: body. `interval` joined them when the alert layout started carrying the
 #: timeframe itself: it was arriving twice, once inside the message and once
 #: as a bare `interval: 15m` line underneath the closing rule.
-ROUTING: frozenset[str] = frozenset({"shape", "instrument", "venue", "direction", "interval"})
+#: `ref` is an alert's own identity for the repeat check, for a publisher whose
+#: alerts share a shape and instrument but are different findings (`mcfl`: two
+#: alts each sending "BTC long" inside the cooldown). Routing only, never shown.
+ROUTING: frozenset[str] = frozenset(
+    {"shape", "instrument", "venue", "direction", "interval", "ref"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +187,12 @@ class Notification:
     #: event; a caller that knows the event's own time should pass it, because
     #: a delivery delayed by a retry would otherwise be stamped with the retry.
     at: float = field(default_factory=time.time)
+    #: An optional picture - PNG or JPEG bytes - and the file name it is sent
+    #: under. Absent, every destination sends exactly what it always did; a
+    #: destination that fails to send it retries once without it, because an
+    #: alert must never be lost for its picture.
+    image: bytes | None = field(default=None, repr=False)
+    image_name: str = ""
 
     @property
     def colour(self) -> int:
@@ -233,7 +248,7 @@ class Notification:
         return truncate(text, limit) if limit else text
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "title": self.title,
             "body": self.body,
             "level": self.level.name,
@@ -242,6 +257,22 @@ class Notification:
             "source": self.source,
             "at": self.at,
         }
+        if self.image:
+            # The name and size only: bytes are for the transport, not a log.
+            out["image"] = {"name": self.image_name, "bytes": len(self.image)}
+        return out
+
+    def without_image(self) -> Notification:
+        """The same message with no picture - the fallback when one will not send."""
+        return Notification(
+            title=self.title,
+            body=self.body,
+            level=self.level,
+            url=self.url,
+            fields=dict(self.fields),
+            source=self.source,
+            at=self.at,
+        )
 
 
 def truncate(text: str, limit: int) -> str:

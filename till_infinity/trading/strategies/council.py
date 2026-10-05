@@ -340,6 +340,18 @@ class CouncilStrategy(Strategy):
     """A panel of agents that reasons its own way to a trade, or to no trade."""
 
     name: ClassVar[str] = "council"
+
+    #: No live decisions among the 2,563 the journal holds, so there is no
+    #: measured sub-1.0 share to quote here. The floor is set on the arithmetic
+    #: rather than on a measurement: reward below risk needs a win rate nothing
+    #: on this desk reaches, and a floor that only moves a target further out
+    #: cannot cost a trade whose geometry is already sound. If this strategy
+    #: starts trading, the share will appear in the record and this comment
+    #: should be replaced by it.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     description: ClassVar[str] = (
         "Four agents with different reasoning modes decide independently, discuss "
         "once, then need a quorum. Costs a model call per voice per round."

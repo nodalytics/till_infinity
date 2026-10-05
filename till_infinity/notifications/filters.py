@@ -120,7 +120,8 @@ class Filter:
             str(fields.get("shape") or source),
             str(fields.get("instrument") or ""),
             str(fields.get("venue") or ""),
-            str(fields.get("event") or ""),
+            # `ref` where a publisher names the finding itself (see `ROUTING`).
+            str(fields.get("event") or fields.get("ref") or ""),
         )
 
     def rejects(self, payload: dict[str, Any], when: float | None = None) -> str:

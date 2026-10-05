@@ -246,6 +246,12 @@ class Runner(LevelStrategy):
     """
 
     name: ClassVar[str] = "runner"
+
+    #: Median 1.49 over 143 live decisions, 17% below 1.0, floor 0.35.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     #: Its thesis is duration. See `Strategy.stale_exempt`.
     stale_exempt: ClassVar[bool] = True
 
@@ -345,6 +351,18 @@ class SwingLevel(LevelStrategy):
     """
 
     name: ClassVar[str] = "swing-level"
+
+    #: No live decisions among the 2,563 the journal holds, so there is no
+    #: measured sub-1.0 share to quote here. The floor is set on the arithmetic
+    #: rather than on a measurement: reward below risk needs a win rate nothing
+    #: on this desk reaches, and a floor that only moves a target further out
+    #: cannot cost a trade whose geometry is already sound. If this strategy
+    #: starts trading, the share will appear in the record and this comment
+    #: should be replaced by it.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     #: Its thesis is duration. See `Strategy.stale_exempt`.
     stale_exempt: ClassVar[bool] = True
 
@@ -628,6 +646,18 @@ class OriginSwing(LevelStrategy):
     """
 
     name: ClassVar[str] = "origin-swing"
+
+    #: No live decisions among the 2,563 the journal holds, so there is no
+    #: measured sub-1.0 share to quote here. The floor is set on the arithmetic
+    #: rather than on a measurement: reward below risk needs a win rate nothing
+    #: on this desk reaches, and a floor that only moves a target further out
+    #: cannot cost a trade whose geometry is already sound. If this strategy
+    #: starts trading, the share will appear in the record and this comment
+    #: should be replaced by it.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     #: Its thesis is duration. See `Strategy.stale_exempt`.
     stale_exempt: ClassVar[bool] = True
     style: ClassVar[str] = "swing"
@@ -857,11 +887,15 @@ class FadeToValue(LevelStrategy):
 
     name: ClassVar[str] = "fade-to-value"
 
-    #: **The live trade this was written for.** Its median is 1.27, which is
-    #: sound, and its tail is not: 42% of 183 live decisions below 1.0, 13%
-    #: below 0.5, and a floor of 0.11. On 2026-10-05 it sold EURUSD with a 44.1
-    #: pip stop against a 9.8 pip target - 0.22, needing an 82% win rate - and
-    #: three days earlier it took the same shape on the same feed at 0.114.
+    #: Its median is 1.27, which is sound, and its tail is not: 42% of 183 live
+    #: decisions below 1.0, 13% below 0.5, and a floor of 0.11. The worst of
+    #: them is in the journal - a EURUSD sell at **0.114**, a 68 pip stop
+    #: against a 7.8 pip target - and on the broker's own 26-day record this
+    #: strategy is -425.18 over 96 positions, -4.43 a trade.
+    #:
+    #: (An earlier version of this comment claimed the 2026-10-05 EURUSD sell at
+    #: 0.22 as well. That one was `sweep-aware`'s; see
+    #: `Strategy.floored_target`.)
     #:
     #: Its geometry has no floor path at all: this class overrides `consider`
     #: and composes its own stop and target, so neither `_aim` nor
